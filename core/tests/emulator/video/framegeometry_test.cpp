@@ -9,6 +9,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "base/featuremanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/zx/zxgeometry.h"
 
@@ -106,7 +107,9 @@ protected:
     }
 };
 
-/// The geometry a frame claims must be where the picture really is
+/// The geometry a frame claims must be where the picture really is, on BOTH renderers: the batch one
+/// (ScreenHQ off, what test machines use) and the per-T-state one (ScreenHQ on, the shipped default). They
+/// draw the same picture through different code, and the overscan mode places it differently in each
 TEST_F(FrameGeometry_Test, WorkingWindowIsWherePaperIsDrawn)
 {
     struct Case
@@ -120,32 +123,94 @@ TEST_F(FrameGeometry_Test, WorkingWindowIsWherePaperIsDrawn)
         {"48K", false, M_ZX48, 352, 288},
         {"128k", false, M_ZX128, 352, 288},
         {"PENTAGON", false, M_PENTAGON128K, 352, 288},
-        {"PENTAGON", true, M_P384, 384, 304},  // the table was believed wrong for this one; measured, it is right
+        {"PENTAGON", true, M_P384, 384, 304},
     };
-    for (const Case& c : cases)
+    for (const bool perTState : {false, true})
     {
-        SCOPED_TRACE(testing::Message() << c.model << (c.overscan ? " overscan" : ""));
-        Boot(c.model);
-        if (c.overscan)
-            ASSERT_TRUE(_emulator->SetOverscanMode(true));
+        for (const Case& c : cases)
+        {
+            SCOPED_TRACE(testing::Message() << c.model << (c.overscan ? " overscan" : "")
+                                            << (perTState ? ", ScreenHQ on (per T-state)" : ", ScreenHQ off (batch)"));
+            Boot(c.model);
+            _context->pFeatureManager->setFeature(Features::kScreenHQ, perTState);
+            _screen->UpdateFeatureCache();
+            ASSERT_EQ(_screen->IsScreenHQEnabled(), perTState);
+            if (c.overscan)
+                ASSERT_TRUE(_emulator->SetOverscanMode(true));
+            PaintAndFreeze();
+
+            FrameSnapshot snap;
+            ASSERT_TRUE(_screen->SnapshotPresented(snap));
+            const PictureGeometry& g = snap.geometry;
+            EXPECT_EQ(g.videoMode, c.mode);
+            EXPECT_EQ(g.width, c.width);
+            EXPECT_EQ(g.height, c.height);
+            EXPECT_EQ(g.stride, static_cast<uint32_t>(c.width) * 4);
+            EXPECT_EQ(snap.pixels.size(), static_cast<size_t>(g.stride) * g.height);
+            EXPECT_EQ(g.source, FrameSource::Native);
+            EXPECT_GT(g.frameNumber, 0u);
+
+            const Box paper = FindColor(snap.pixels, g.width, g.height, ZxGeometry::Colour(kPaperColor));
+            printf("MEASURE %s%s hq=%d paper x=%d..%d y=%d..%d; geometry window (%d,%d) %dx%d\n", c.model,
+                   c.overscan ? "-overscan" : "", perTState, paper.x0, paper.x1, paper.y0, paper.y1, g.screenWindow.x,
+                   g.screenWindow.y, g.screenWindow.width, g.screenWindow.height);
+            EXPECT_EQ(g.screenWindow.x, paper.x0);
+            EXPECT_EQ(g.screenWindow.y, paper.y0);
+            EXPECT_EQ(g.screenWindow.width, paper.Width());
+            EXPECT_EQ(g.screenWindow.height, paper.Height());
+            TearDown();
+        }
+    }
+}
+
+/// The overscan viewport presets, applied to a painted frame, must cut what their names say: Screen only is exactly
+/// the paper, Standard is a 352x288 frame with the paper centered (48 pixels of border on every side). They were
+/// written for a paper at y=56 while the renderer puts it at y=64, so both were off by lines
+TEST_F(FrameGeometry_Test, OverscanViewportPresetsCutWhatTheyName)
+{
+    for (const bool perTState : {false, true})
+    {
+        SCOPED_TRACE(perTState ? "ScreenHQ on" : "ScreenHQ off");
+        Boot("PENTAGON");
+        _context->pFeatureManager->setFeature(Features::kScreenHQ, perTState);
+        _screen->UpdateFeatureCache();
+        ASSERT_TRUE(_emulator->SetOverscanMode(true));
         PaintAndFreeze();
 
         FrameSnapshot snap;
         ASSERT_TRUE(_screen->SnapshotPresented(snap));
-        const PictureGeometry& g = snap.geometry;
-        EXPECT_EQ(g.videoMode, c.mode);
-        EXPECT_EQ(g.width, c.width);
-        EXPECT_EQ(g.height, c.height);
-        EXPECT_EQ(g.stride, static_cast<uint32_t>(c.width) * 4);
-        EXPECT_EQ(snap.pixels.size(), static_cast<size_t>(g.stride) * g.height);
-        EXPECT_EQ(g.source, FrameSource::Native);
-        EXPECT_GT(g.frameNumber, 0u);
+        ASSERT_EQ(snap.geometry.width, 384);
+        ASSERT_EQ(snap.geometry.height, 304);
 
-        const Box paper = FindColor(snap.pixels, g.width, g.height, ZxGeometry::Colour(kPaperColor));
-        EXPECT_EQ(g.screenWindow.x, paper.x0);
-        EXPECT_EQ(g.screenWindow.y, paper.y0);
-        EXPECT_EQ(g.screenWindow.width, paper.Width());
-        EXPECT_EQ(g.screenWindow.height, paper.Height());
+        auto cropped = [&](const DisplayViewport& vp, int& width, int& height) {
+            width = vp.GetDisplayWidth(384);
+            height = vp.GetDisplayHeight(304);
+            std::vector<uint8_t> out(static_cast<size_t>(width) * height * 4);
+            for (int y = 0; y < height; y++)
+                std::memcpy(&out[static_cast<size_t>(y) * width * 4],
+                            &snap.pixels[(static_cast<size_t>(y + vp.cropTop) * 384 + vp.cropLeft) * 4],
+                            static_cast<size_t>(width) * 4);
+            return out;
+        };
+
+        int w = 0, h = 0;
+        const std::vector<uint8_t> screenOnly = cropped(ViewportPresets::SCREEN_ONLY, w, h);
+        EXPECT_EQ(w, 256);
+        EXPECT_EQ(h, 192);
+        const uint32_t* px = reinterpret_cast<const uint32_t*>(screenOnly.data());
+        size_t paper = 0;
+        for (size_t i = 0; i < static_cast<size_t>(w) * h; i++)
+            paper += px[i] == ZxGeometry::Colour(kPaperColor) ? 1 : 0;
+        EXPECT_EQ(paper, static_cast<size_t>(w) * h) << "Screen only is the paper and nothing else";
+
+        const std::vector<uint8_t> standard = cropped(ViewportPresets::STANDARD, w, h);
+        EXPECT_EQ(w, 352);
+        EXPECT_EQ(h, 288);
+        const Box box = FindColor(standard, w, h, ZxGeometry::Colour(kPaperColor));
+        EXPECT_EQ(box.x0, 48) << "left border";
+        EXPECT_EQ(w - 1 - box.x1, 48) << "right border";
+        EXPECT_EQ(box.y0, 48) << "top border";
+        EXPECT_EQ(h - 1 - box.y1, 48) << "bottom border";
         TearDown();
     }
 }

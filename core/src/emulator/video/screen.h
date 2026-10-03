@@ -382,15 +382,15 @@ struct DisplayViewport
 };
 
 /// Preset viewports for M_P384 overscan mode
-/// M_P384 framebuffer layout (from raster descriptor screenOffsetLeft=48):
+/// M_P384 framebuffer layout (the paper is at (48, 64), measured by FrameGeometry_Test):
 ///   Left border: 48px, Paper: 256px, Right border: 80px = 384px total
-///   Top border: 56px, Paper: 192px, Bottom border: 56px = 304px total
-/// Extra pixels vs Pentagon (352x288): 32 on right, 8 top + 8 bottom
+///   Top border: 64px, Paper: 192px, Bottom border: 48px = 304px total
+/// Extra border vs Pentagon (352x288): 32 pixels on the right, 16 lines on top
 namespace ViewportPresets
 {
     // Raster descriptor values
     static constexpr uint16_t SCREEN_OFFSET_LEFT = 48;   // Paper starts at x=48
-    static constexpr uint16_t SCREEN_OFFSET_TOP = 56;    // Paper starts at y=56
+    static constexpr uint16_t SCREEN_OFFSET_TOP = 64;    // Paper starts at y=64
     static constexpr uint16_t SCREEN_WIDTH = 256;
     static constexpr uint16_t SCREEN_HEIGHT = 192;
     static constexpr uint16_t P384_WIDTH = 384;
@@ -400,7 +400,7 @@ namespace ViewportPresets
 
     // Derived: right/bottom borders
     static constexpr uint16_t RIGHT_BORDER = P384_WIDTH - SCREEN_OFFSET_LEFT - SCREEN_WIDTH;   // 80
-    static constexpr uint16_t BOTTOM_BORDER = P384_HEIGHT - SCREEN_OFFSET_TOP - SCREEN_HEIGHT; // 56
+    static constexpr uint16_t BOTTOM_BORDER = P384_HEIGHT - SCREEN_OFFSET_TOP - SCREEN_HEIGHT; // 48
 
     // Full overscan (384x304) - show everything including extra border areas
     constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
@@ -416,8 +416,8 @@ namespace ViewportPresets
     constexpr DisplayViewport STANDARD = {
         0,
         static_cast<uint16_t>(RIGHT_BORDER - SCREEN_OFFSET_LEFT),  // 32
-        static_cast<uint16_t>(SCREEN_OFFSET_TOP - 48),             // 56 - 48 = 8
-        static_cast<uint16_t>(BOTTOM_BORDER - 48)                  // 56 - 48 = 8
+        static_cast<uint16_t>(SCREEN_OFFSET_TOP - 48),             // 64 - 48 = 16
+        static_cast<uint16_t>(BOTTOM_BORDER - 48)                  // 48 - 48 = 0
     };
 
     // Screen only (256x192) - paper area only
@@ -521,9 +521,11 @@ public:
         // M_P384: Pentagon Overscan - larger framebuffer with same timing as Pentagon
         // Timing must be IDENTICAL to M_PENTAGON128K for correct border effects
         // Only fullFrameWidth/Height differ for larger framebuffer allocation
-        // Screen position (48,48) same as Pentagon - extra border rendered around it
-        // Frame: 16 vSync + 16 vBlank + 288 visible = 320 lines, same 71680 T-states
-        {384, 304, 256, 192, 48, 48, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
+        // Screen position (48,64): the frame starts 16 lines earlier than Pentagon's (inside what is vBlank
+        // there), so the paper sits 16 lines lower in the buffer; 32 more pixels on the right, none at the left.
+        // The beam timing (GetTimingDescriptor) stays the Pentagon row. Frame: 16 vSync + 16 vBlank + 288
+        // visible = 320 lines, same 71680 T-states. Measured against both renderers (FrameGeometry_Test)
+        {384, 304, 256, 192, 48, 64, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PHR
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_TIMEX
         // TS-Conf modes (ScreenTSConf; TSConf hardware-spec §4.1): one geometry for every

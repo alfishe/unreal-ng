@@ -210,7 +210,8 @@ void ScreenZX::CreateTstateLUT()
 
     // For M_P384, we render 16 more lines from vBlank (at top) and 32 more pixels horizontally
     // No framebuffer offset needed - the extra content fills the larger buffer directly
-    // The screen position shifts within the buffer (48,48 → 72,64) because more border is visible
+    // The paper sits 16 lines lower in the buffer than in the other ZX modes, (48,48) -> (48,64): the extra
+    // lines are border on top, the extra 32 pixels border on the right
     const int overscanExtraLines = (_mode == M_P384) ? ZxGeometry::kP384ExtraTopLines : 0;
     const int overscanExtraPixels = (_mode == M_P384) ? ZxGeometry::kP384ExtraPixels : 0;
 
@@ -513,7 +514,9 @@ bool ScreenZX::TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, 
     // window only, Profi hires 512 px between 48 px borders).
     const RasterDescriptor& timing = GetTimingDescriptor(_mode);
     const RasterDescriptor& storage = rasterDescriptors[_mode];
-    const int line = static_cast<int>(tstate / _rasterState.tstatesPerLine) - (timing.vSyncLines + timing.vBlankLines);
+    // P384 stores 16 lines more on top: its first stored line is 16 raster lines earlier
+    const int extraTop = (_mode == M_P384) ? ZxGeometry::kP384ExtraTopLines : 0;
+    const int line = static_cast<int>(tstate / _rasterState.tstatesPerLine) - (timing.vSyncLines + timing.vBlankLines) + extraTop;
     const int t = static_cast<int>(tstate % _rasterState.tstatesPerLine);
     const int paperStart = _rasterState.screenLineAreaStart;
     const int paperEnd = _rasterState.screenLineAreaEnd + 1;
