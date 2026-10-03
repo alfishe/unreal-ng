@@ -595,6 +595,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/keyboardmanager_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/keyboardmanager.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/keyboardmanager.h"
+        # The UI's TTD observers poll a session other threads record, stop and invalidate
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdsessionobserver_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
