@@ -1132,7 +1132,6 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         {
             const uint8_t turboBefore = _pld.turbo;
             const uint8_t cnfBefore = _pld.cnf;
-            const uint8_t arom16Before = _pld.arom16;
             _pld.ramSys = (port & 0x40) ? 0 : 1;  // #24 / #3C: 1, #74 / #7C: 0
             if (value & 0x02)
             {
@@ -1155,13 +1154,12 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
                 if (_pld.cnf & 0x20)
                     _pld.pn &= 0xE0;
             }
-            if (JournalOn() && (turboBefore != _pld.turbo || cnfBefore != _pld.cnf || arom16Before != _pld.arom16))
+            // The vROM set switch (bit 1 = 0) is left out: ZX-mode BIOS calls flip it on every call (#3FD3)
+            if (JournalOn() && (turboBefore != _pld.turbo || cnfBefore != _pld.cnf))
             {
                 std::string text = StringHelper::Format("CNF/SYS <- #%02X via port #%04X:", value, port);
                 if (value & 0x02)
                     text += StringHelper::Format(" turbo request %s", _pld.turbo ? "on" : "off");
-                else
-                    text += StringHelper::Format(" vROM set %u", _pld.arom16);
                 if (value & 0x04)
                     text += StringHelper::Format("; CNF #%02X: map %u, #7FFD %s, #1FFD %s, #7FFD bits 7-6 %s", _pld.cnf,
                                                  (_pld.cnf >> 3) & 3, (_pld.cnf & 0x20) ? "off (clean)" : "on",

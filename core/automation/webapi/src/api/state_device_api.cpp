@@ -459,6 +459,55 @@ void EmulatorAPI::postSprinterBios(const HttpRequestPtr& req, std::function<void
     ReplyState(report, callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/zx-mode - the ZX (Spectrum) mode report: active, the launcher
+/// configuration from the hardware and the launcher's RAM, best-matching mode file, clock, frame / INT, ROMs, the key
+/// ZX port decodes (DeviceState::SprinterZxMode)
+void EmulatorAPI::getStateSprinterZxMode(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    const std::string deep = req->getParameter("deep");
+    ReplyState(DeviceState::SprinterZxMode(emulator->GetContext(), deep != "0" && deep != "false"), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/pld-journal?kinds=&since=&from=&to=&limit=&source=live|ttd - who
+/// changed the PLD's setup, when (frame, T, PC) (DeviceState::SprinterJournal)
+void EmulatorAPI::getStateSprinterPldJournal(const HttpRequestPtr& req,
+                                             std::function<void(const HttpResponsePtr&)>&& callback,
+                                             const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    DeviceState::SprinterJournalQuery query;
+    std::string error;
+    if (!DeviceState::SprinterJournalQueryFromStrings(req->getParameter("kinds"), req->getParameter("since"),
+                                                      req->getParameter("from"), req->getParameter("to"),
+                                                      req->getParameter("limit"), req->getParameter("source"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::SprinterJournal(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/sprinter/pld-journal {"enabled": true|false, "clear": true} - switch / clear
+/// the PLD journal (DeviceState::SprinterJournalControl)
+void EmulatorAPI::postSprinterPldJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    ReplyState(DeviceState::SprinterJournalControl(emulator->GetContext(), enable, clear), callback);
+}
+
 /// endregion </Sprinter>
 
 /// region <CMOS clock>

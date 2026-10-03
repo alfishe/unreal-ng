@@ -14,6 +14,10 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/state/devicestate.h"
+#include "base/featuremanager.h"
+#include "common/stringhelper.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdportsearch.h"
 
 class SprinterZxMode_Test : public SprinterZxSession_Test
 {
@@ -100,6 +104,126 @@ TEST_F(SprinterZxMode_Test, RetFn_CtrlAltDelReturnsToDssEveryTime)
         EXPECT_EQ(_decoder->GetPldState().allMode, 0xFF) << "DSS's screen and keyboard";
         EXPECT_EQ(_decoder->GetPldState().turbo, 1) << "the reset presets the turbo bit";
         EXPECT_TRUE(ScreenHas("C:\\TRD>")) << ScreenText();
+    }
+}
+
+namespace
+{
+const StateNode* Find(const StateNode& node, const std::string& key)
+{
+    return node.find(key);
+}
+std::string S(const StateNode& node, const std::string& key)
+{
+    const StateNode* m = Find(node, key);
+    return m ? m->s : std::string();
+}
+bool OptionOn(const StateNode& report, const std::string& option)
+{
+    for (const StateNode& o : report.find("config")->find("options")->items)
+        if (S(o, "option") == option)
+            return o.find("on")->b;
+    ADD_FAILURE() << "no option " << option;
+    return false;
+}
+}  // namespace
+
+// The ZX mode report and the PLD journal on the real launcher (tdd-zx-mode.md §12): SP.ZX, P128.ZX and ORIGIN.ZX
+// as a user starts them. The report names the mode file from the launcher's text in RAM and from the hardware
+// (they agree: confidence "certain"), the options, the ROM set by CRC; the journal holds the launcher's CNF write
+// with its PC; #01FD reaches the #1FFD latch in SP.ZX only. The SP.ZX launch is recorded with TTD: the port
+// journal answers who wrote CNF, the same write the live journal saw.
+// Boot-bound (BIOS, DSS 1.71, three launcher runs with Ctrl+Alt+Del between): ~4 s host time
+TEST_F(SprinterZxMode_Test, LauncherModes_ReportAndJournal)
+{
+    ASSERT_NO_FATAL_FAILURE(BootToPrompt());
+    Dss("cd \\trd", 20);
+    struct Mode
+    {
+        const char* file;
+        const char* expectFile;
+        const char* name;
+        uint8_t cnf;
+        bool turbo, sprinter, p1ffd, origin, lines312;
+        const char* romSet;
+    };
+    const Mode modes[] = {
+        {"sp.zx", "SP.ZX", "Sprinter ZX", 0x07, true, true, true, false, false, "sprinter-community"},
+        {"p128.zx", "P128.ZX", "Pentagon 128", 0x4E, false, false, false, false, false, "sprinter-community"},
+        {"origin.zx", "ORIGIN.ZX", "Original ZX Spectrum", 0x4E, false, false, false, true, true, "original"},
+    };
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+
+    for (const Mode& mode : modes)
+    {
+        SCOPED_TRACE(mode.file);
+        const bool record = std::string(mode.file) == "sp.zx";
+        DeviceState::SprinterJournalControl(_context, 1, true);
+        if (record)
+            ASSERT_TRUE(ttd->StartRecording());
+        ASSERT_NO_FATAL_FAILURE(Launch(std::string(mode.file) + " atarin.trd"));
+        if (record)
+            ttd->StopRecording();
+
+        const StateNode report = DeviceState::SprinterZxMode(_context);
+        ASSERT_TRUE(report.find("active")->b) << DeviceState::ToText(report);
+        const StateNode& best = *report.find("config")->find("best_match");
+        EXPECT_EQ(S(best, "file"), mode.expectFile) << DeviceState::ToText(*report.find("config"));
+        EXPECT_EQ(S(best, "confidence"), "certain") << S(best, "explanation");
+        EXPECT_EQ(S(*report.find("launcher"), "mode_name"), mode.name) << DeviceState::ToText(*report.find("launcher"));
+        EXPECT_EQ(S(*report.find("config"), "cnf"), StringHelper::Format("0x%02X", mode.cnf));
+        EXPECT_EQ(OptionOn(report, "/turbo"), mode.turbo);
+        EXPECT_EQ(OptionOn(report, "/sprinter"), mode.sprinter);
+        EXPECT_EQ(OptionOn(report, "/1FFD"), mode.p1ffd);
+        EXPECT_EQ(OptionOn(report, "/origin"), mode.origin);
+        EXPECT_EQ(OptionOn(report, "/lines312"), mode.lines312);
+        EXPECT_EQ(S(*report.find("rom"), "set"), mode.romSet);
+        EXPECT_NE(S(*report.find("config"), "return").find("/ret-fn"), std::string::npos) << S(*report.find("config"), "return");
+
+        // #01FD: the #1FFD latch with /1FFD, the cell only without
+        for (const StateNode& row : report.find("ports")->find("rows")->items)
+        {
+            if (S(row, "port") != "0x01FD")
+                continue;
+            const std::string effect = S(*row.find("tr_dos_off")->find("out"), "effect");
+            EXPECT_NE(effect.find(mode.p1ffd ? "Scorpion paging" : "SC clean"), std::string::npos) << effect;
+        }
+
+        // The launcher's CNF write in the live journal, with its PC
+        DeviceState::SprinterJournalQuery q;
+        std::string error;
+        ASSERT_TRUE(DeviceState::SprinterJournalQueryFromStrings("cnf", "", "", "", "0", "", q, error));
+        const StateNode journal = DeviceState::SprinterJournal(_context, q);
+        const StateNode* cnfEvent = nullptr;
+        for (const StateNode& e : journal.find("events")->items)
+            if ((e.find("text")->s.find(StringHelper::Format("CNF #%02X", mode.cnf)) != std::string::npos))
+                cnfEvent = &e;
+        ASSERT_NE(cnfEvent, nullptr) << DeviceState::ToText(journal);
+
+        if (record)
+        {
+            // The TTD recording answers the same question from its port journal
+            DeviceState::SprinterJournalQuery tq;
+            ASSERT_TRUE(DeviceState::SprinterJournalQueryFromStrings("cnf", "", "", "", "0", "ttd", tq, error));
+            const StateNode fromTtd = DeviceState::SprinterJournal(_context, tq);
+            EXPECT_EQ(fromTtd.find("error"), nullptr) << DeviceState::ToText(fromTtd);
+            bool same = false;
+            for (const StateNode& e : fromTtd.find("events")->items)
+                same |= S(e, "pc") == S(*cnfEvent, "pc") && S(e, "value") == S(*cnfEvent, "value");
+            EXPECT_TRUE(same) << "live: " << DeviceState::ToText(*cnfEvent) << "\nttd: " << DeviceState::ToText(fromTtd);
+        }
+
+        CtrlAltDel(20);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !InZxMode(); }, 300, 10);
+        ASSERT_FALSE(InZxMode());
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 200);
+        ASSERT_TRUE(DeviceState::SprinterJournalQueryFromStrings("ctrl_alt_del", "", "", "", "", "", q, error));
+        EXPECT_FALSE(DeviceState::SprinterJournal(_context, q).find("events")->items.empty());
+        EXPECT_FALSE(DeviceState::SprinterZxMode(_context).find("active")->b);
     }
 }
 

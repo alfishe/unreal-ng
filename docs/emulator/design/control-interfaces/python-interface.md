@@ -181,6 +181,16 @@ class Emulator:
     def sprinter_sound_ring(self) -> dict:
         """The Covox-Blaster ring: 256 words, play / write index"""
 
+    def sprinter_zx_mode(self, deep=True) -> dict:
+        """The ZX (Spectrum) mode: active, config (options with evidence, best_match file and confidence), launcher
+        (its .ZX text in RAM), clock, frame / INT, rom, ports (#7FFD / #1FFD / #01FD ... decodes, ttd_query)"""
+
+    def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
+        """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
+
+    def sprinter_pld_journal_control(self, enabled=None, clear=False) -> dict:
+        """Switch or clear the PLD journal"""
+
     def sprinter_bios(self) -> dict:
         """BIOS images, the one loaded (CRC-32), the configured one, start options"""
 

@@ -2116,6 +2116,33 @@ namespace PythonBindings
             }, py::arg("bios") = py::none(), py::arg("fast_start") = py::none(), py::arg("accel_int_suspend") = py::none(),
                py::arg("reset") = true,
                "Select the Sprinter BIOS (3.04 / 3.06 / 3.07 / a file) and start options; the image loads at the reset (now unless reset=False)")
+            .def("sprinter_zx_mode", [](Emulator& self, bool deep) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterZxMode(self.GetContext(), deep));
+            }, py::arg("deep") = true,
+               "Sprinter ZX (Spectrum) mode: active, the launcher configuration (each .ZX option from the hardware, the "
+               "launcher's text in RAM), best-matching mode file with confidence, clock (CNF request, F12, MHz), frame / INT, "
+               "ROMs by CRC, the decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F; deep=False skips the whole-RAM search")
+            .def("sprinter_pld_journal", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
+                                            py::object to_frame, py::object limit, const std::string& source) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                DeviceState::SprinterJournalQuery query;
+                std::string error;
+                if (!DeviceState::SprinterJournalQueryFromStrings(text(kinds), text(since), text(from_frame), text(to_frame),
+                                                                  text(limit), source, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterJournal(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("since") = py::none(), py::arg("from_frame") = py::none(),
+               py::arg("to_frame") = py::none(), py::arg("limit") = py::none(), py::arg("source") = "live",
+               "Sprinter PLD journal: who changed the PLD setup (port table, CNF / turbo, clock, #7FFD / #1FFD, ALL_MODE, RGMOD, "
+               "HOLD, frame length, PLD load, F12, Ctrl+Alt+Del, resets) with frame, T, PC; source='ttd' reads the recording")
+            .def("sprinter_pld_journal_control", [](Emulator& self, py::object enabled, bool clear) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::SprinterJournalControl(self.GetContext(), enable, clear));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, "Switch (enabled=True/False) or clear the Sprinter PLD journal")
             .def("sprinter_sound_ring", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterSoundRing(self.GetContext()));
             }, "Sprinter Covox-Blaster ring: 256 words, play / write index; available=False on other machines")
