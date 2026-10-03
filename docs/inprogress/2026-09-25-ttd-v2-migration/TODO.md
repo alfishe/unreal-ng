@@ -60,6 +60,12 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 - [ ] 18 `ttd.ksy:532` NeoGS memory note
 - [ ] Fill the registry's Size and Variability columns from per-stream benchmark measurements
 
+## Phase 1 check ([phase-1-results.md](phase-1-results.md))
+
+- [x] Full matrix against decision 33: bytes, memory, counted work not above v1 on all 46 configurations (`tools/verification/ttd-bench/ttd_engine_d33.py`; baseline `testdata/ttd/bench/engine-phase1-full.json`). Fixed on the way: checkpoint records in a deque, arena chunks growing from 64 KB
+- [x] v1 → engine oracle on the whole corpus (9 sessions)
+- [ ] Timings on an idle host (load < 12), twice: PR-3 capture p99 ≤ 3 × p50; PR-5 holds already under load
+
 ## Phase 2 — Device state with versions
 
 Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
