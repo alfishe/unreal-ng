@@ -164,6 +164,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - [ ] Owner's report (a), `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del: not reproduced (tdd-zx-mode §11
     finding 3); the turbo-after-reset fix may be it. Ask for the exact steps (BIOS, mode, what ran, which keys; a held
     SPACE / ESC right after the reset swaps `/ret-fn` and `/ret-zx` by design)
+  - [x] Owner's report (c), 2026-10-02: Flex Navigator's video mode not back after the ZX mode and a reset - done
+    2026-10-02 (branch `sprinter-zx-reset-video`, tdd-zx-mode §11 finding 5): `/RESET` presets ALL_MODE `#FF`,
+    clears RGMOD / PORT_Y (PLD), BIOS 3.07 BETA 1 reads ALL_MODE back; MAME gap B8
   - [ ] Owner's report (b), "Disk Error after the catalog" from a RAM-disk TRD: not reproduced on 11 images; ask for
     the image. The "comdos" catalog was TWIX's disk (finding 4)
   - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)

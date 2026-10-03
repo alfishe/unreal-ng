@@ -209,7 +209,25 @@ void PortDecoder_Sprinter::PowerCycle()
 
 void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
 {
-    // MAME machine_reset: the cells, ALL_MODE, PORT_Y, RGMOD and HOLD keep their values
+    // The board's /RESET (every kind here: Ctrl+Alt+Del, a write to page #A0, the RESET button, the end of a
+    // load) presets or clears the video and mode registers (PLD SP2_ACEX.TDF / SP2_1K30.TDF): ALL_MODE to #FF
+    // (:1041, ALL_MODE[].prn = /RESET), RGMOD to 0 (:958) and PORT_Y to 0 (ACCELER.TDF:204, AGR[].clrn). MAME
+    // machine_reset keeps them; the BIOS relies on the preset: 3.07 BETA 1 reads ALL_MODE back at the reset
+    // intercept and writes the value it read, so a kept #FE (the ZX mode's) left the accelerator, the keyboard
+    // INT and the Sprinter screen addressing off after the return to DSS / Flex Navigator. HOLD is cleared by the
+    // configuration's own /RES only (SP2_ACEX.TDF:827-830, DCP.TDF:258): a new configuration starts at #77
+    if (kind == SprinterResetKind::SoftReset)
+        CatchUpScreen();  // the picture up to the reset in the old mode
+    _input.BeforeAllModeWrite();
+    _pld.allMode = 0xFF;
+    _pld.Cell(SprinterCode::AllMode) = 0xFF;  // the register reads back (3.07 BETA 1 table)
+    _pld.rgMod = 0;
+    _pld.Cell(SprinterCode::RgMod) = _pld.Cell(0xCD) = 0;
+    _pld.portY = 0;
+    _pld.Cell(SprinterCode::PortY) = _pld.Cell(0xCC) = 0;
+    if (kind == SprinterResetKind::Configured)
+        _pld.hold = _pld.Cell(SprinterCode::Hold) = 0x77;
+    // The cells #C0-#EF and the border keep their values
     _pld.starting = 1;
     _pld.dos = 1;
     _pld.romOff = 0;
@@ -240,7 +258,9 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
 
     _intSource.Reset();
     _intSource.SetFrameLines(320);
+    _intSource.SetModePage(0);  // RGMOD bit 0
     _accelerator.Reset();  // the PLD's /RESET (MAME machine_reset: m_acc_dir = 0, m_alt_acc = 0)
+    NoteVideoLatches();
 
     ActiveModule().OnReset(kind, _pld);
 }
