@@ -7,11 +7,11 @@ The FT812 emulator library for the TS-Conf VDAC2 card, developed in its own repo
 
 | | |
 |---|---|
-| Source | eve-emu `main`, commit `feee248` (2026-10-03: PALETTED8 on the fast path, filled shapes as spans; ROM layouts on the fast path, adding blends and modulation in SIMD; shapes reach only nearby lines; lines kept by their own steps; unchanged lines kept; display list walked once per frame, tag buffer only where read, blend shortcuts; rotated NEAREST fast path, palettes kept across lines; BILINEAR fast path, SIMD masking blends, skipped empty glyphs; frame metrics block, state version 8) |
+| Source | eve-emu `main`, commit `262b3f7` (2026-10-03: `if constexpr` for compile-time conditions (MSVC `/W4 /WX`); PALETTED8 on the fast path, filled shapes as spans; ROM layouts on the fast path, adding blends and modulation in SIMD; shapes reach only nearby lines; lines kept by their own steps; unchanged lines kept; display list walked once per frame, tag buffer only where read, blend shortcuts; rotated NEAREST fast path, palettes kept across lines; BILINEAR fast path, SIMD masking blends, skipped empty glyphs; frame metrics block, state version 8) |
 | Copied | `CMakeLists.txt`, `LICENSE`, `README.md`, `cmake/CheckSymbols.cmake`, `include/`, `src/`, `docs/performance.md`, `vendor/README.md`, `vendor/config/` |
 | Vendored decoders | only the files the library compiles: `vendor/miniz/` (`miniz.h`, `miniz_common.h`, `miniz_tdef.h`, `miniz_tinfl.h`, `miniz_tinfl.c`, `miniz_zip.h`, `LICENSE`; miniz 3.1.2) and `vendor/stb/` (`stb_image.h`, `LICENSE`; stb `2c980bb`) - in eve-emu they are git submodules |
 | Not copied | the library's tests, benchmarks, tools (`eve-replay`), golden cases and oracle harness: they live in eve-emu |
-| Local changes | `src/eve-dl.cpp`, `src/eve-bitmap.cpp`, `src/eve-pixel.cpp`: use `if constexpr` for constant context-reset and template-mode comparisons so MSVC builds with `/W4 /WX` |
+| Local changes | none: change the library in eve-emu, then copy again |
 
 Update: copy the same files from an eve-emu checkout (with its submodules initialized),
 replace the commit above, build with `ENABLE_VDAC2=ON` and run the VDAC2 tests
