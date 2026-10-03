@@ -321,6 +321,44 @@ struct FramebufferDescriptor
     size_t memoryBufferSize = 0;
 };
 
+/// A rectangle inside a frame, in frame pixels
+struct FrameRect
+{
+    uint16_t x = 0;
+    uint16_t y = 0;
+    uint16_t width = 0;
+    uint16_t height = 0;
+};
+
+/// Where a frame comes from
+enum class FrameSource : uint8_t
+{
+    Native,    ///< the machine's own renderer
+    External,  ///< a video card's picture (the FT812 of the TS-Conf VDAC2 card)
+};
+
+/// What a consumer needs to know about a frame to use its pixels: its size and where the
+/// working picture (the paper of a Spectrum, the graphics window of a TS-Conf, the whole picture of
+/// an external card) sits inside it. Latched together with the pixels, so the two always agree
+/// (docs/inprogress/2026-10-03-screenshotter/design.md). Pixels are RGBA8888, `stride` bytes per line
+struct PictureGeometry
+{
+    uint16_t width = 0;
+    uint16_t height = 0;
+    uint32_t stride = 0;
+    FrameRect screenWindow;  ///< the working picture; the whole frame when the frame has no border
+    VideoModeEnum videoMode = M_NUL;
+    FrameSource source = FrameSource::Native;
+    uint64_t frameNumber = 0;  ///< emulated frame the pixels belong to
+};
+
+/// One presented frame: pixels and geometry taken together, under one lock
+struct FrameSnapshot
+{
+    std::vector<uint8_t> pixels;
+    PictureGeometry geometry;
+};
+
 /// Display viewport configuration for cropping framebuffer to display
 /// Used with M_P384 overscan mode to allow symmetric display output
 struct DisplayViewport
@@ -911,6 +949,11 @@ protected:
     std::atomic<bool> _externalActive{false};  // read by GUI threads (descriptor, present delay)
     FramebufferDescriptor _external;
     uint32_t _externalFramePeriodUs = 0;
+    /// Geometry of the frame in each present slot (under _presentMutex)
+    PictureGeometry _presentSlotGeometry[PRESENT_SLOTS];
+    /// The geometry of the machine's own frame as it is now / of the external picture (emulation thread)
+    PictureGeometry DescribeNativeFrame() const;
+    PictureGeometry DescribeExternalFrame() const;
     /// The present queue's slots for frames of `size` bytes (caller holds _presentMutex)
     void ResizePresentSlotsLocked(size_t size);
     /// Copy one frame into the next present slot (caller holds _presentMutex)
@@ -999,6 +1042,17 @@ public:
     /// @param dstSize Destination size in bytes; must be >= framebuffer size
     /// @return true if a frame was copied
     bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
+
+    /// @brief The presented frame and its geometry as one atomic pair (any thread).
+    /// The geometry was latched with the frame, so a mode switch or a resize between the two reads
+    /// cannot give a size that disagrees with the pixels
+    /// @return false when there is no presented frame
+    bool SnapshotPresented(FrameSnapshot& out);
+
+    /// The working picture's rectangle in the machine's own frame, for the current video mode:
+    /// the raster descriptor's screen window; modes whose window moves (TS-Conf) override this.
+    /// Emulation thread (it reads renderer state)
+    virtual FrameRect WorkingWindow() const;
 
     /// The picture the monitor shows: the machine's framebuffer, or the
     /// external picture while one is active (SetExternalPicture)
