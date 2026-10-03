@@ -12,6 +12,7 @@
 #include "network/ttdzxnetusb.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/emulatorcontext.h"
+#include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/joystick/joystick.h"
@@ -99,6 +100,15 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     if (context->pPortDecoder && context->pPortDecoder->HasKempstonJoystick())
         registry.Register(PeripheralId::KempstonJoystick, context->pJoystick);
     registry.Register(PeripheralId::BetaDisk, context->pBetaDisk);
+    // The WD1793's command in flight (queued steps, transfer pointers): a
+    // restore inside a multi-frame command (an ID search, a sector half read)
+    // continues it instead of ending it Not Ready. Every Beta machine
+    if (context->pBetaDisk)
+    {
+        auto wdContext = std::make_unique<TTDWd1793Context>(*context->pBetaDisk);
+        registry.Register(PeripheralId::Wd1793Context, wdContext.get());
+        ownedSerializers.push_back(std::move(wdContext));
+    }
 
     // IDE board (any machine with [HDD] Scheme): controller state, not the media
     if (context->pIdeController && context->pIdeController->Enabled())

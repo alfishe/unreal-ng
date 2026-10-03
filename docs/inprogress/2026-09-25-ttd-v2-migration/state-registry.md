@@ -63,7 +63,7 @@ One row per device blob; the device's memory is in section 1.
 |---|---|---|---|---|---|---|---|---|
 | TurboSound / AY chips, queues, phases | TS slot fitted | id 0 | blob | R | | | ok | `sound/chips/soundchip_turbosound.cpp:482/539` |
 | WD1793 + 4 drives (Beta Disk) | all Beta machines | id 1 | blob | R | | | ok | `io/fdc/wd1793.cpp:4170/4284` |
-| WD1793 command context (FIFO, transfer) | Sprinter only today | id 35 | blob | R | | | gap 4 | `ttdwd1793context.h:13-15` |
+| WD1793 command context (rate retry, transfer pointers: the sector, the track being read or written, the position) | every Beta machine | id 35, registered with the BetaDisk | blob | R | | | ok | `debugger/ttd/ttdmachineperipherals.cpp`; `ttdwd1793context.h` |
 | Tape | all | id 2 | blob | R | | | ok | `io/tape/tape.cpp:1175/1197` |
 | Covox / Soundrive latches | Covox / Soundrive fitted | id 3 | blob | R | | | ok | `sound/covox.cpp:388/401` |
 | TSFM: 2 × YM2203, timers | TurboSound FM | id 4 | blob | R | | | ok | `soundchip_turbosoundfm.cpp:820/883` |
@@ -177,7 +177,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 1 | *v1 only, not fixed (decided 2026-10-02):* v1's history limit (`SetHistoryLimit`) renumbers network payload records on eviction, but references held inside surviving checkpoints (ZXNETUSB, COM port, ZiFi, ATM2 I/O ESP, serial peer) keep the old numbers. The engine does not evict history from memory (decision 28: memory is a cache of the session file) and keeps every payload a checkpoint refers to (decision 24); record numbers there are absolute | Wrong bytes or zeros after a v1 eviction, with a history limit set and unread network bytes | v1 only |
 | 2 | *Closed 2026-10-02 by design:* the lightweight GS is not recorded (class N, named in the header); it runs live through seeks | — | — |
 | 3 | NeoGS RAM and flash, MoonSound wave SRAM exist only as engine regions; the engine has no restore path yet | Card memory not restored | breaks replay until the engine restores (Phase 5) |
-| 4 | WD1793 command context declared only on the Sprinter | A checkpoint inside a multi-frame disk command ends it early on every other Beta machine | breaks replay |
+| 4 | *Fixed 2026-10-02:* WD1793 command context declared only on the Sprinter | A checkpoint inside a multi-frame disk transfer ended it early on every other Beta machine | — |
 | 5 | *Fixed 2026-10-02:* ZX keyboard matrix in no checkpoint | Machines without the port journal read the live matrix in replay; stuck or missing keys after seek + resume | breaks replay |
 | 6 | *Fixed 2026-10-02:* `scorpion_turbo` not stored, waits not resynced after a restore | Wait states, step hook, INT pulse diverge | breaks replay |
 | 7 | *Fixed 2026-10-02:* `current_z80_frequency` not restored | ATM2 keyboard-controller waits use a stale frequency | breaks replay |

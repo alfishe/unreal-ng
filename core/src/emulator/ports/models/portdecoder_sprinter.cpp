@@ -8,7 +8,6 @@
 
 #include "debugger/ttd/sprinter/ttdsprinter.h"
 #include "debugger/ttd/ttdds12887.h"
-#include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -1102,8 +1101,6 @@ std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
     std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887,
                                           ttd::PeripheralId::SprinterVideoRam, ttd::PeripheralId::Z84C15,
                                           ttd::PeripheralId::SprinterInput, ttd::PeripheralId::SprinterCovoxBlaster};
-    if (_context->pBetaDisk)
-        ids.push_back(ttd::PeripheralId::Wd1793Context);  // a restore inside a floppy command continues it
     if (_sprinterMemory)
         ids.push_back(ttd::PeripheralId::SprinterFastRam);
     return ids;
@@ -1121,8 +1118,6 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateT
     serializers.push_back(std::make_unique<ttd::TTDSprinterVideoRam>(self));
     if (_sprinterMemory)
         serializers.push_back(std::make_unique<ttd::TTDSprinterFastRam>(self));
-    if (_context->pBetaDisk)
-        serializers.push_back(std::make_unique<ttd::TTDWd1793Context>(*_context->pBetaDisk));
     return serializers;
 }
 

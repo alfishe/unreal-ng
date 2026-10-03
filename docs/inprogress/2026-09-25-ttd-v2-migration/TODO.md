@@ -45,7 +45,7 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 - [x] 1 Network references after eviction: v1 only, not fixed (v1 is for verification); the engine keeps referenced payloads (D24) and evicts memory to its file, not history (D28). Phase 3 test: a payload referenced by a surviving checkpoint survives a retention cut, record numbers absolute
 - [x] 2 GS lightweight: not recorded by design, named in the header (flag bit 11); region 2 stays unused
 - [ ] 3 Region-only memories restored (NeoGS, MoonSound): needs the engine restore path, or v1 blobs until Phase 5
-- [ ] 4 WD1793 command context on every Beta machine (re-record the TTD fixtures)
+- [x] 4 WD1793 command context on every Beta machine (registered with the BetaDisk; fixtures re-recorded). Test FDCCommandInFlight_RestoreContinuesIt: restore inside a Read Track
 - [x] 5 ZX keyboard matrix in the checkpoint (decision 37); keys held on the host at a resume enter as new events
 - [x] 6 `scorpion_turbo` stored, waits resynced after a restore
 - [x] 7 `current_z80_frequency` restored (derived from the multiplier)

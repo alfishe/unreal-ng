@@ -641,6 +641,51 @@ TEST_F(TTD_Subsystem_Restore_Test, FDCRegisters_SeekRestoresAllRegisters)
         << "FDC state blob differs after seek -- some field not captured/restored";
 }
 
+/// A checkpoint inside a multi-frame FDC transfer: Read Track reads a whole
+/// track, one revolution (200 ms, ten frames) from the index pulse. Restored
+/// in the middle of the transfer, the command continues on the same byte and
+/// ends exactly as in the recording. The BetaDisk blob alone nulls the
+/// transfer pointers; the WD1793 context blob (the track being read, the
+/// position in it), registered on every Beta machine, carries them. The test
+/// reads the controller only through its state blob: a status-port read
+/// advances the controller's own clock, so polling would make the runs differ
+TEST_F(TTD_Subsystem_Restore_Test, FDCCommandInFlight_RestoreContinuesIt)
+{
+    EnableTTD();
+    WD1793* fdc = _context->pBetaDisk;
+    if (fdc == nullptr)
+        GTEST_SKIP() << "Model has no Beta Disk controller";
+    const std::string diskPath = TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd");
+    ASSERT_TRUE(_emulator->LoadDisk(diskPath)) << diskPath;
+    auto blob = [&]() {
+        std::vector<uint8_t> b(fdc->TTDStateSize());
+        fdc->TTDSaveState(b.data());
+        return b;
+    };
+    constexpr size_t kStatus = 4;   // blob layout: command, track, sector, data, status (wd1793.cpp)
+    constexpr uint8_t kBusy = 0x01;
+
+    fdc->portDeviceOutMethod(WD1793::PORT_FF, 0x3C);   // drive A, out of reset, head loaded
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xE0);   // Read Track
+    RunFrames(14);                                     // past the index pulse, into the revolution
+    const size_t mid = _ttd->GetCheckpointCount() - 1;
+    ASSERT_NE(blob()[kStatus] & kBusy, 0) << "still reading at the checkpoint";
+
+    RunFrames(40);
+    const std::vector<uint8_t> expected = blob();
+    ASSERT_EQ(expected[kStatus] & kBusy, 0) << "the recording's Read Track ends";
+    const uint64_t endFrame = _context->emulatorState.frame_counter;
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo({_ttd->GetCheckpoint(mid)->time.frame, 0}));
+    EXPECT_NE(blob()[kStatus] & kBusy, 0) << "restored inside the command";
+    RunFrames(static_cast<unsigned>(endFrame - _context->emulatorState.frame_counter));
+    ASSERT_EQ(_context->emulatorState.frame_counter, endFrame);
+    EXPECT_EQ(blob(), expected) << "the FDC ends as in the recording";
+}
+
 // ===========================================================================
 // 5. AY TURBOSOUND REGISTERS
 //
