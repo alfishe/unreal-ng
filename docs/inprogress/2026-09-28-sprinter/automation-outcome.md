@@ -119,6 +119,8 @@ The P1 and P2 gaps of [automation-audit-2026-10-02.md](automation-audit-2026-10-
 | Accelerator, waits, Z84C15 detail | `GET /state/sprinter` (`accelerator`, `clock.waits`, `z84c15.wait_generator` / `daisy_chain`) | `state sprinter` | `sprinter_state()` | aspect `sprinter` |
 | Which BIOS runs; switch it | `GET /state/sprinter/bios`, `POST /sprinter/bios`, create `"sprinter": {...}` | `state sprinter bios [<name>]`, `create SPRINTER --sprinter-bios` | `sprinter_bios()`, `sprinter_bios_select{}` | aspect `sprinter_bios`, `emulator_manage create sprinter_bios` |
 | The Covox-Blaster ring | `GET /state/sprinter/sound/ring` | `state sprinter ring` | `sprinter_sound_ring()` | aspect `sprinter_sound_ring` |
+| Which Spectrum mode runs (SP.ZX / P128.ZX ...), its options, clock, INT, ROMs, how `#01FD` decodes (2026-10-03, tdd-zx-mode §12) | `GET /state/sprinter/zx-mode` | `state sprinter zx` | `sprinter_zx_mode()` | aspect `sprinter_zx_mode` |
+| Who changed CNF / turbo / `#1FFD` / the port table, when (frame, T, PC); from a TTD recording | `GET /state/sprinter/pld-journal[?source=ttd]`, `POST /sprinter/pld-journal` | `state sprinter journal [source=ttd]` | `sprinter_pld_journal()` | aspect `sprinter_pld_journal` |
 | Mute / solo / volume one sound device; record only it | `GET /audio/mixer`, `PUT /audio/mixer/{source}`, `/audio/capture {source}` | `mixer`, `audiocapture start <s> <source>` | `audio_mixer[_set]`, `audio_capture_start(s, source)` | aspect `audio_mixer`, `capture_media audio_capture source` |
 
 **Verified against a running unreal-qt** (this branch, `UNREAL_WEBAPI_PORT` / `UNREAL_CLI_PORT` /

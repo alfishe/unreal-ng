@@ -386,6 +386,9 @@ GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/spri
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
 GET  /api/v1/emulator/{id}/state/sprinter/sound/ring  The Covox-Blaster ring: 256 words, play / write index
+GET  /api/v1/emulator/{id}/state/sprinter/zx-mode ?deep=0 - the ZX (Spectrum) mode: active, config (options with evidence, best_match file + confidence), launcher (its .ZX text and option table in RAM), clock, frame / INT, rom, paging, ports (decodes + ttd_query)
+GET  /api/v1/emulator/{id}/state/sprinter/pld-journal ?kinds=&since=&from=&to=&limit=&source=live|ttd - who changed the PLD setup, when (frame, T, line, PC), ttd_queries
+POST /api/v1/emulator/{id}/sprinter/pld-journal   {"enabled": true|false, "clear": true} - switch / clear the PLD journal
 GET  /api/v1/emulator/{id}/state/sprinter/bios    BIOS images, the one loaded (CRC-32), the configured one, start options
 POST /api/v1/emulator/{id}/sprinter/bios          {"bios": "3.04|3.06|3.07|<file>", "fast_start", "accel_int_suspend", "reset": true} - select; the image loads at the reset
 GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, applicable, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)

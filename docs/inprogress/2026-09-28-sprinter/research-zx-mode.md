@@ -127,7 +127,7 @@ The `.ZX` options and what each one does on the hardware:
 | `/7FFD`, `/1FFD` | the 128 / Scorpion paging ports work | CNF "clean" bits (the PLD clears `#7FFD` / `#1FFD` bits otherwise; hardware-reference §5) |
 | `/mem512` | Pentagon 512 (`#7FFD` bits 6-7) | CNF bit 7; 32 Spectrum pages |
 | `/lines312` | 312-line frame (69 888 T) instead of 320 (71 680 T) | PLD codes `#2C` / `#2D` via `FN_SYNC` |
-| `/sc-int`, `/origin` | INT position: Scorpion, or original Spectrum; default Pentagon | `FN_SYNC` mode 1 / 3 (2 = Pentagon) |
+| `/sc-int`, `/origin` | INT position: Scorpion, or original Spectrum; default Pentagon | `FN_SYNC` mode 1 / 3 (2 = Pentagon). **Correction 2026-10-03:** both launchers' option tables know the word `int-sc` (`spectrum.asm` PARAMS `._Int_sc`, the Peters Plus table at `#88C8`); `/sc-int` in SC256.ZX / SCORPION.ZX matches nothing, so the Scorpion INT is never asked for - which is why §7.2 measured line 287 there |
 | `/origin` (also) | "original waits" on | ALL_MODE = `#FA` instead of `#FE` (bit 2 = 0) |
 | `/to-trdos` | start TR-DOS and run `boot` | the stub jumps to `#3D29` with `#7FFD` = `#10` |
 | `/ret-zx`, `/ret-fn` | after Ctrl+Alt+Del: restart the Spectrum, or go back to DSS | BIOS reset intercept (`RST_CONF.CUSTOM`) |

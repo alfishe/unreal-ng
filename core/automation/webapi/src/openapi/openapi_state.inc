@@ -228,7 +228,8 @@
             "rate, drive), cmos (DS12887A; the full report is /state/rtc), ide (the adapter's channel latch; drives in /state/ide), accelerator (enabled = ALL_MODE bit 0, mode / "
             "mode_name, armed, length, function, blocked by an INT, int_suspend, alt / xcnt / aagr, operations, "
             "last_extra_clocks, buffer_crc32 / buffer_head; available=false while the PLD loads) and bios (the configured ROM file, the image loaded by CRC-32, the pages identified by signature, the "
-            "shipped images, the start options and how to select one: POST /sprinter/bios). 404 on other machines.";
+            "shipped images, the start options and how to select one: POST /sprinter/bios) and zx_mode (the ZX mode report "
+            "of /state/sprinter/zx-mode without the whole-RAM search). 404 on other machines.";
         paths[kState]["get"]["parameters"][0]["name"] = "id";
         paths[kState]["get"]["parameters"][0]["in"] = "path";
         paths[kState]["get"]["parameters"][0]["required"] = true;
@@ -410,6 +411,87 @@
         paths[kSelect]["post"]["responses"]["200"]["description"] = "Selected (the BIOS report)";
         paths[kSelect]["post"]["responses"]["400"]["description"] = "Unknown image, bad flag";
         paths[kSelect]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kZx = "/api/v1/emulator/{id}/state/sprinter/zx-mode";
+        paths[kZx]["get"]["summary"] = "Get the Sprinter ZX (Spectrum) mode report";
+        paths[kZx]["get"]["tags"].append("Machine State");
+        paths[kZx]["get"]["description"] =
+            "Which Spectrum mode the Sprinter runs and how (core DeviceState::SprinterZxMode; also the zx_mode section of "
+            "/state/sprinter; CLI `state sprinter zx`, Lua / Python sprinter_zx_mode(), MCP inspect_state aspect "
+            "sprinter_zx_mode). Fields: active and active_rule (vROM in window 0, ALL_MODE bit 0 = 0), picture, summary (the "
+            "status bar line, e.g. \"ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)\"), config (options[]: /turbo, /sprinter, "
+            "/7FFD, /1FFD, /mem512, /lines312, /origin, /int-sc each with on and the hardware evidence - CNF bits, map, "
+            "ALL_MODE, the frame latch, the INT position; option_line; return /ret-fn | /ret-zx; best_match: file, name, "
+            "launcher (community v2.03 | peters-plus), confidence certain | high | medium | low | none, explanation, "
+            "differences; other_candidates), launcher (what SPECTRUM.EXE left in RAM: mode_name and option_line from its "
+            "copy of the .ZX file - page #FF (community) or #41 (Peters Plus) -, hardware_disagrees, option_table flags "
+            "found by the names block, reset_intercept - cell #EE, #41:#FFF0-#FFF6 -, bios_system_page CNF copy), clock "
+            "(requested by CNF, f12_switch, mhz, why), frame (lines, t_states, int: kind pentagon | spectrum (original) | "
+            "scorpion, line, t_in_line), rom (vROM cells #E0-#E3: page, CRC-32, the ROM file; set), paging, ports (rows "
+            "for #7FFD, #1FFD, #01FD, #3FFD, #5FFD, #9FFD, #BFFD, #DFFD, #FFFD, #FE, #1F: tr_dos_off / tr_dos_on, out and "
+            "in code, name, effect now; ttd_query port / port_mask for POST /ttd/port-events). Query deep=0 skips the "
+            "whole-RAM search for the launcher's option table. 404 on other machines.";
+        paths[kZx]["get"]["parameters"][0]["name"] = "id";
+        paths[kZx]["get"]["parameters"][0]["in"] = "path";
+        paths[kZx]["get"]["parameters"][0]["required"] = true;
+        paths[kZx]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kZx]["get"]["parameters"][1]["name"] = "deep";
+        paths[kZx]["get"]["parameters"][1]["in"] = "query";
+        paths[kZx]["get"]["parameters"][1]["description"] = "0: do not search all RAM for the launcher's option table";
+        paths[kZx]["get"]["parameters"][1]["schema"]["type"] = "string";
+        paths[kZx]["get"]["responses"]["200"]["description"] = "The ZX mode report";
+        paths[kZx]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kJournal = "/api/v1/emulator/{id}/state/sprinter/pld-journal";
+        paths[kJournal]["get"]["summary"] = "Get the Sprinter PLD journal (who changed the PLD setup, when)";
+        paths[kJournal]["get"]["tags"].append("Machine State");
+        paths[kJournal]["get"]["description"] =
+            "The PLD's configuration events (core DeviceState::SprinterJournal; CLI `state sprinter journal`, Lua / "
+            "Python sprinter_pld_journal(), MCP inspect_state aspect sprinter_pld_journal; the events of a frame also in "
+            "/video/changes as machine_events). Each event: seq, epoch (machine resets), frame, t (base T), line, "
+            "t_in_line, pc, kind, port, value, previous, text, details. Kinds: port_table (page #40 written, one event a "
+            "frame, with the key ZX port decodes it changed), cnf, clock, port_7ffd, port_1ffd (on a new value or latch "
+            "change, with the port used: #01FD is #1FFD), all_mode, rgmod, hold, frame_lines, pld_load, pld_configured, "
+            "f12, ctrl_alt_del, reset. source=ttd lists the OUTs of the TTD recording that change one of those PLD codes (CNF "
+            "writes with the turbo or CNF bit, other codes on a new value) through "
+            "the port table as it decodes now (the TTD write journal). ttd_queries[]: per kind the port / port_mask of "
+            "POST /ttd/port-events. Not appended while a TTD replay re-executes; a TTD seek followed by live running "
+            "drops the events after that moment (rewound). 400 on a bad parameter, 404 on other machines.";
+        const char* kJournalParams[][2] = {{"kinds", "comma list of kinds (empty = all)"},
+                                           {"since", "events after this seq"},
+                                           {"from", "first frame"},
+                                           {"to", "last frame"},
+                                           {"limit", "the newest N matches (default 200, 0 = all)"},
+                                           {"source", "live (default) or ttd"}};
+        paths[kJournal]["get"]["parameters"][0]["name"] = "id";
+        paths[kJournal]["get"]["parameters"][0]["in"] = "path";
+        paths[kJournal]["get"]["parameters"][0]["required"] = true;
+        paths[kJournal]["get"]["parameters"][0]["schema"]["type"] = "string";
+        for (Json::ArrayIndex i = 0; i < 6; i++)
+        {
+            Json::Value& qp = paths[kJournal]["get"]["parameters"][i + 1];
+            qp["name"] = kJournalParams[i][0];
+            qp["in"] = "query";
+            qp["description"] = kJournalParams[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kJournal]["get"]["responses"]["200"]["description"] = "The journal";
+        paths[kJournal]["get"]["responses"]["400"]["description"] = "Bad parameter";
+        paths[kJournal]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kJournalCtl = "/api/v1/emulator/{id}/sprinter/pld-journal";
+        paths[kJournalCtl]["post"]["summary"] = "Switch or clear the Sprinter PLD journal";
+        paths[kJournalCtl]["post"]["tags"].append("Machine State");
+        paths[kJournalCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true}, both optional. On by default; off costs nothing (no port "
+            "table watch, no event built). Answers enabled, held, appended.";
+        paths[kJournalCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kJournalCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kJournalCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kJournalCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kJournalCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kJournalCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kJournalCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
     }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";

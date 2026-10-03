@@ -197,7 +197,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
     border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
     change 8 lines off in the bottom border
-  - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
+  - [x] Z4 (2026-10-03, branch `sprinter-zx-mode-report`; [tdd-zx-mode.md](tdd-zx-mode.md) §12): the ZX mode report
+    (which mode file - SP.ZX / P128.ZX / ORIGIN.ZX ... - from the hardware and from the launcher's own text and option
+    table in RAM, each option with its evidence, clock request / F12 / MHz, INT, ROMs by CRC, the decode of `#01FD` and
+    the other ZX ports), the PLD journal (who changed CNF, turbo, `#1FFD`, `#7FFD`, ALL_MODE, the port table ... with
+    frame, T, PC; also from a TTD recording), the TTD port journals on the Sprinter (no NeoGS without a ZX-bus), the
+    Qt status line "ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)"; all five surfaces
+  - [ ] The launchers parse `int-sc`, not the `/sc-int` that SC256.ZX and SCORPION.ZX carry: the Scorpion INT is never
+    applied (both launchers' option tables; research §4 corrected). Report upstream (the `.ZX` files or the parser)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
     2026-10-02 (owner: yes, via the shared pipeline, lower priority): built on the shared snapshot pipeline

@@ -35,6 +35,8 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "debugger/ttd/ttdportsearch.h"
+#include "emulator/state/devicestate.h"
 #include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -594,6 +596,41 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
                                  ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse})
         EXPECT_EQ(cp->peripheralBlobs.count(static_cast<uint8_t>(id)), 1u) << "id " << int(id);
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
+}
+
+/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; no NeoGS without a ZX-bus): a
+/// recording answers "who wrote this port" (/ttd/port-events) and the PLD journal's TTD source, and its replay
+/// feeds the recorded IN results with no divergence. Boot-bound: BIOS POST frames, replayed once
+TEST_F(TTDSprinterMachine_Test, PortJournal_RecordsAndAnswersPortEvents)
+{
+    EXPECT_EQ(_context->pSoundManager->getGeneralSound(), nullptr) << "no ZX-bus: [SOUND] GSType is not fitted";
+    PowerOn(true);
+    Skip(5);
+    StartRecording();
+    Record(30);
+    _ttd->StopRecording();
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    ASSERT_TRUE(info.portJournalActive) << info.portJournalOffReason;
+    EXPECT_GT(info.portReadCount, 0u);
+    EXPECT_GT(info.portWriteCount, 0u);
+
+    ttd::TTDPortQuery q;
+    std::string error;
+    ASSERT_TRUE(ttd::BuildPortEventQuery("out", "", q, error)) << error;
+    const ttd::TTDPortSearchResult hits = _ttd->SearchPortEvents(q);
+    ASSERT_TRUE(hits.ok) << hits.error;
+    EXPECT_FALSE(hits.hits.empty());
+
+    DeviceState::SprinterJournalQuery jq;
+    jq.ttd = true;
+    const StateNode fromTtd = DeviceState::SprinterJournal(_context, jq);
+    EXPECT_EQ(fromTtd.find("error"), nullptr) << DeviceState::ToText(fromTtd);
+
+    ExpectExactReplay(0, 30, "BIOS POST with the port journals");
+    const ttd::TTDSessionInfo after = _ttd->GetSessionInfo();
+    EXPECT_EQ(after.portReplayDivergences, 0u);
+    EXPECT_EQ(after.portReplayValueMismatches, 0u);
 }
 
 /// Mid PLD load: the full start, a checkpoint while the ROM's loader feeds the PLD (the bitstream count,

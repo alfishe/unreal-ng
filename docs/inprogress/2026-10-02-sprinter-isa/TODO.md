@@ -16,7 +16,9 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
 
 - [ ] Owner review; answers to Q1-Q4 before I1 / I2
 - [ ] I0 references (MAME ProPlay + NeoGS capture, ISA I/O tap), MOD generator (S)
-- [ ] I1 ISA bus core (M), after `sprinter-s6` is merged
+- [ ] I1 ISA bus core (M), after `sprinter-s6` is merged. `PortDecoder::ZxBusPresent()` is already on master
+  (2026-10-03, the Sprinter answers `false`: no GS / NeoGS fitted, TTD port journals on); I1 / I2 make it follow
+  the adapter in a slot ([tdd.md](tdd.md) §2 "As built ahead of I1")
 - [ ] I2 ZX-bus adapter + GS / NeoGS, ProPlay end to end vs MAME (M)
 - [ ] I3 ISA RAM (S), I4 PIO IRQ lines (S)
 - [ ] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial):

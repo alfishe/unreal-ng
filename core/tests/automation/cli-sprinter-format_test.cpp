@@ -60,6 +60,22 @@ TEST_F(CliSprinterMachine_Test, SubcommandsRenderTheReports)
     EXPECT_NE(Run({"sprinter", "bogus"}).find("Error: unknown subcommand"), std::string::npos);
 }
 
+// zx / journal (tdd-zx-mode.md §12): the ZX mode summary line first, the journal one event a line
+TEST_F(CliSprinterMachine_Test, ZxModeAndJournalRenderAsText)
+{
+    OpenDcp();
+    EXPECT_EQ(Run({"sprinter", "zx"}).rfind("ZX: off", 0), 0u) << Run({"sprinter", "zx"});
+    SetCodeAll(0x1FFD, false, 0xC0);
+    Out(0x01FD, 0x10);
+    const std::string journal = Run({"sprinter", "journal", "kinds=port_1ffd"});
+    EXPECT_NE(journal.find("port_1ffd: #1FFD <- #10 via port #01FD"), std::string::npos) << journal;
+    EXPECT_NE(journal.find("TTD port-events queries"), std::string::npos) << journal;
+    EXPECT_EQ(Run({"sprinter", "journal", "off"}).rfind("PLD journal off, ", 0), 0u);
+    EXPECT_EQ(Run({"sprinter", "journal", "clear"}), "PLD journal off, 0 event(s) held\n");
+    EXPECT_NE(Run({"sprinter", "journal", "kinds=bogus"}).find("Error: unknown kind"), std::string::npos);
+    EXPECT_NE(Run({"sprinter", "zx", "deep=7"}).find("Error"), std::string::npos);
+}
+
 // video / palette / ring (automation audit G3, G4, G10): the map, 16 pens a line, the ring rows
 TEST_F(CliSprinterMachine_Test, VideoPaletteAndRingRenderAsText)
 {

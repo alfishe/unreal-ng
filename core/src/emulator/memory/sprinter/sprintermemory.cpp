@@ -150,6 +150,8 @@ void SprinterMemory::MapRamToBank(uint8_t bank, uint8_t ramPage, bool writable)
         SetBankWriteProtected(bank);
     else if (ramPage == kCblPage)
         _action[bank & 3] = BankAction::CblPage;
+    else if (ramPage == kPortTablePage && _decoder && _decoder->PldJournal().Enabled())
+        _action[bank & 3] = BankAction::PortTable;  // the PLD journal notes table writes (nothing when it is off)
 }
 
 void SprinterMemory::MapFastRamToBank(uint8_t bank, uint8_t fastRamPage)
@@ -273,7 +275,10 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
         case BankAction::Isa:
             return;
         case BankAction::ResetPage:
-            _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+            _decoder->OnResetPageWrite();
+            break;
+        case BankAction::PortTable:
+            _decoder->OnPortTableWrite(addr);
             break;
         case BankAction::CblPage:
             _decoder->OnCblPageWrite(addr, value);

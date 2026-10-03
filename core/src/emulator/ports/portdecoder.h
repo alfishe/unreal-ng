@@ -33,6 +33,7 @@ class Mouse;
 class PortDevice;
 class Ds12887;
 class IDeviceMemoryRegion;
+class MachineEventJournal;
 
 /// region <Constants>
 
@@ -691,6 +692,16 @@ public:
     /// Model-specific state this machine carries beyond TTDChipsetState.
     virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
 
+    /// The TTD port journals isolate a replay when every outside input reaches the CPU through IN
+    /// (ttd-port-read-journal.md §2). Two machine traits make TTD refuse the journals by default: an
+    /// interrupt source that puts the IM2 vector on the bus, and an engine stepped with the CPU
+    /// (IMachineStepHook). A machine answers true when both are fed by recorded state only: the vector
+    /// and the engines follow the machine state in the checkpoints and the host input in the TTD input
+    /// journal, never a medium or the host directly (Sprinter: the Z84C15 daisy chain and the PLD's INT,
+    /// the PLD resets and the loader watchdog - s7-ttd-outcome.md). Then the port journals are recorded
+    /// and `/ttd/port-events` answers on the machine's recordings
+    virtual bool TtdEnginesSealed() const { return false; }
+
     /// TTD time units per base T-state: the least common multiple of every
     /// hardware CPU clock ratio the model can select (EmulatorState::
     /// ttd_clock_units). 1 for models without a hardware turbo
@@ -871,6 +882,17 @@ public:
         std::function<void()> waitPortInterrupt;
     };
     virtual NetworkCapabilities DescribeNetwork() { return NetworkCapabilities(); }
+
+    /// Whether the machine has a ZX-bus that Spectrum peripheral cards (General Sound / NeoGS) plug into
+    /// through the exact-match port map (RegisterPortHandler / PeripheralPortIn/Out). Every Spectrum-like
+    /// machine has; the Sprinter has none until its ISA ZX-bus adapter exists (Sprinter ISA design
+    /// 2026-10-02-sprinter-isa/tdd.md §2, phase I2): a card built there would run for nothing, unreachable
+    /// by the software, and SoundManager does not fit it
+    virtual bool ZxBusPresent() const { return true; }
+
+    /// The machine's own configuration events (machineeventjournal.h: the Sprinter's PLD changes), null for
+    /// machines that keep none. The video change log lists the events of its frames (/video/changes)
+    virtual MachineEventJournal* GetMachineEventJournal() { return nullptr; }
 
     /// Remove a low-byte full-decode observer. The device pointer must match
     /// the registration - a stale observer would keep firing into a dead object.
