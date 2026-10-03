@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -554,3 +555,137 @@ TEST_F(SoundManagerCd_Test, HeadRunsOnEmulatedTimeAtAnySpeed)
 }
 
 /// endregion </ATAPI CD drives>
+
+/// Host output hold (SoundManager::holdHostOutput): a run not paced to real time - API run_frames and the other
+/// direct runs, TTD seek / replay, turbo - hands nothing to the host audio callback, while every device still
+/// renders exactly what it renders at normal speed (TTD determinism: only the host boundary changes).
+class SoundManagerHostOutput_Test : public ::testing::Test
+{
+protected:
+    SoundCardScope _turboSound{TestSound::TurboSound};
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+
+    struct Sink
+    {
+        size_t calls = 0;
+        size_t nonSilentCalls = 0;
+    };
+    Sink _sink;
+
+    static void Collect(void* obj, int16_t* samples, size_t count)
+    {
+        Sink* sink = static_cast<Sink*>(obj);
+        sink->calls++;
+        for (size_t i = 0; i < count; i++)
+        {
+            if (samples[i] != 0)
+            {
+                sink->nonSilentCalls++;
+                break;
+            }
+        }
+    }
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << "Failed to create emulator";
+        _context = _emulator->GetContext();
+        _context->config.frame = PENTAGON_FRAME;
+        _context->pAudioManagerObj.store(&_sink, std::memory_order_release);
+        _context->pAudioCallback.store(&Collect, std::memory_order_release);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
+
+    /// A fresh sound stack playing an AY tone, a beeper square and a Covox swing
+    std::unique_ptr<SoundManager> MakeSound()
+    {
+        auto sound = std::make_unique<SoundManager>(_context);
+        sound->reset();
+        ProgramTone(*sound->getTurboSound());
+        return sound;
+    }
+
+    static void ProgramTone(ITurboSoundDevice& device)
+    {
+        auto poke = [&](uint8_t reg, uint8_t value) {
+            device.portDeviceOutMethod(0xFFFD, reg);
+            device.portDeviceOutMethod(0xBFFD, value);
+        };
+        poke(0, 0x40);
+        poke(1, 0x00);
+        poke(7, 0b00111110);
+        poke(8, 15);
+    }
+
+    /// One frame as the main loop runs it, beeper toggling inside; returns the mixed output of the frame
+    std::vector<int16_t> RunFrame(SoundManager& sound)
+    {
+        Z80* z80 = _context->pCore->GetZ80();
+        z80->tt = 0;
+        sound.handleFrameStart();
+        for (int i = 0; i < 64; i++)
+            sound.getBeeper().handlePortOut((i & 1) ? 0x10 : 0x00, 500 + i * 1000);
+        z80->tt = static_cast<uint64_t>(PENTAGON_FRAME / 2) << 8;
+        sound.handleStep();
+        z80->tt = static_cast<uint64_t>(PENTAGON_FRAME) << 8;
+        sound.handleStep();
+        sound.handleFrameEnd();
+
+        const AudioFrameDescriptor& desc = sound.getAudioBufferDescriptor();
+        const int16_t* out = reinterpret_cast<const int16_t*>(desc.memoryBuffer);
+        return std::vector<int16_t>(out, out + MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    }
+};
+
+/// Held frames never reach the host, and the machine computes bit-identical samples held or not
+TEST_F(SoundManagerHostOutput_Test, HeldFramesReachNoHostAndRenderIdentically)
+{
+    constexpr int kFrames = 4;
+
+    std::vector<std::vector<int16_t>> live;
+    {
+        auto sound = MakeSound();
+        for (int i = 0; i < kFrames; i++)
+            live.push_back(RunFrame(*sound));
+        EXPECT_EQ(sound->hostFramesDelivered(), static_cast<uint64_t>(kFrames));
+        EXPECT_GT(sound->hostFramesAudible(), 0u) << "control: the drive must be audible when not held";
+        EXPECT_EQ(sound->hostFramesHeld(), 0u);
+    }
+    ASSERT_EQ(_sink.calls, static_cast<size_t>(kFrames));
+    ASSERT_GT(_sink.nonSilentCalls, 0u) << "control: the host got sound when not held";
+
+    _sink = Sink{};
+    auto sound = MakeSound();
+    sound->holdHostOutput();
+    sound->holdHostOutput();  // nested: an API run inside a TTD replay
+    EXPECT_TRUE(sound->isHostOutputHeld());
+    for (int i = 0; i < kFrames; i++)
+    {
+        EXPECT_EQ(RunFrame(*sound), live[i]) << "held frame " << i << " rendered differently";
+    }
+    EXPECT_EQ(_sink.calls, 0u) << "a held frame reached the host audio callback";
+    EXPECT_EQ(sound->hostFramesDelivered(), 0u);
+    EXPECT_EQ(sound->hostFramesHeld(), static_cast<uint64_t>(kFrames));
+
+    // One release still leaves the outer hold; the last one restores delivery; extra releases are harmless
+    sound->releaseHostOutput();
+    EXPECT_TRUE(sound->isHostOutputHeld());
+    sound->releaseHostOutput();
+    sound->releaseHostOutput();
+    EXPECT_FALSE(sound->isHostOutputHeld());
+    RunFrame(*sound);
+    EXPECT_EQ(_sink.calls, 1u) << "delivery did not resume after the last release";
+    EXPECT_EQ(sound->hostFramesDelivered(), 1u);
+}

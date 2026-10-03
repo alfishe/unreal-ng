@@ -342,6 +342,15 @@ POST /api/v1/emulator/{id}/run_frame         Run exactly one video frame
 POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N})
 ```
 
+> [!NOTE]
+> **Host audio during direct runs.** These commands run at full host speed, not real time. For the run, the
+> host audio output (the speakers) gets nothing, on every machine and from every sound source (beeper, AY,
+> Covox / Sprinter Covox-Blaster, GS, FM, MoonSound, CD): the same as while paused. The machine computes exactly
+> the same samples as at normal speed (TTD stays deterministic), and audio captures (`/audio/capture`) and
+> recordings still get them. TTD seek / replay and turbo mode hold the host output the same way. `resume`
+> restores sound. `GET /audio/mixer` -> `host_output` shows it: `held`, `frames_delivered`, `frames_audible`,
+> `frames_held` (emulated frames since the instance was created).
+
 ### Debug Mode
 ```
 GET  /api/v1/emulator/{id}/debugmode     Get debug mode state
@@ -380,7 +389,7 @@ GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binar
 GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
-GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]

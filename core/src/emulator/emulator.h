@@ -159,7 +159,9 @@ private:
     uint16_t _passExecBreakpointPc = 0;
     /// A direct run's loops end on a stop request or on a breakpoint stop
     bool RunHalted() const { return _stopRequested || _directStop.hit; }
-    /// Marks a direct-stepping call for its duration; the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
+    /// Marks a direct-stepping call for its duration and holds the host audio output meanwhile (a direct run is
+    /// never paced to real time: the machine computes the same samples, the speakers get nothing, as while
+    /// paused); the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
     /// skipped updates meanwhile refreshes once, at the end. The first one in starts a new run: no breakpoint
     /// stop yet, and the first instruction may leave the execution breakpoint the emulator is stopped at
     class DirectStepScope
@@ -172,6 +174,9 @@ private:
 
     private:
         Emulator& _emulator;
+        /// The host audio hold this direct run takes (SoundManager::holdHostOutput): it is not paced to real
+        /// time, so its frames must not reach the speakers sped up
+        SoundManager* _heldSound = nullptr;
     };
 
     // Emulator state

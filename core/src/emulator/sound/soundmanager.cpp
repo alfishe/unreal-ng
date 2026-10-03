@@ -1285,7 +1285,12 @@ void SoundManager::handleFrameEnd()
     AudioCallback callback = _context->pAudioCallback.load(std::memory_order_acquire);
     void* obj = _context->pAudioManagerObj.load(std::memory_order_acquire);
 
-    if (callback && obj)
+    // A run not paced to real time (holdHostOutput): the host gets nothing, as while paused
+    if (callback && obj && isHostOutputHeld())
+    {
+        _hostFramesHeld.fetch_add(1, std::memory_order_relaxed);
+    }
+    else if (callback && obj)
     {
         // If muted, send silence instead of actual audio.
         // No need to send silence if sound generation is disabled -
@@ -1327,6 +1332,12 @@ void SoundManager::handleFrameEnd()
         }
         size_t deviceFrames =
             _drcResampler.process(deviceIn, deviceInFrames, _deviceBuffer, DEVICE_BUFFER_FRAMES);
+
+        _hostFramesDelivered.fetch_add(1, std::memory_order_relaxed);
+        const int16_t* const deviceBegin = _deviceBuffer;
+        const int16_t* const deviceEnd = deviceBegin + deviceFrames * AUDIO_CHANNELS;
+        if (std::any_of(deviceBegin, deviceEnd, [](int16_t v) { return v != 0; }))
+            _hostFramesAudible.fetch_add(1, std::memory_order_relaxed);
 
         try
         {

@@ -2383,10 +2383,28 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
         if (limit > 1000) limit = 1000;
         
         ret["limit"] = limit;
-        ret["message"] = "Call trace active";
-        
-        // TODO: Add actual call trace entries when CallTraceManager exposes API
-        ret["entries"] = Json::arrayValue;
+
+        // The same buffer GET /profiler/calltrace/entries reads; it fills while a calltrace
+        // profiler session is capturing (POST /profiler/calltrace/start)
+        Json::Value entriesJson(Json::arrayValue);
+        auto* memory = ctx->pMemory;
+        auto* calltraceBuffer = memory ? memory->GetAccessTracker().GetCallTraceBuffer() : nullptr;
+        if (calltraceBuffer)
+        {
+            for (const auto& entry : calltraceBuffer->GetRecentEntries(limit))
+            {
+                Json::Value e;
+                e["type"] = static_cast<int>(entry.type);
+                e["from_address"] = entry.m1_pc;
+                e["to_address"] = entry.target_addr;
+                e["sp"] = entry.sp;
+                e["loop_count"] = entry.loop_count;
+                entriesJson.append(e);
+            }
+            ret["total_count"] = static_cast<Json::UInt>(calltraceBuffer->GetCount());
+        }
+        ret["message"] = "Call trace active; entries are filled while a calltrace profiler session is capturing";
+        ret["entries"] = entriesJson;
     }
     else
     {

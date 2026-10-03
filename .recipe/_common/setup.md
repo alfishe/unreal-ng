@@ -195,7 +195,7 @@ curl -s "$BASE/emulator/$EMU_ID/capture/screen" | jq '{format, width, height, si
 
 MCP: `inspect_state` with `aspects: ["screen_ocr"]` /
 `["screen_digest"]` / `["screen_image"]`. Read the digest from
-`structuredContent.screen_digest.combined` (the text summary line does not show it).
+`structuredContent.screen_digest.combined` (the text summary line shows the same combined value).
 To compare digests across instances, create them with `ram_power_on:"zero"`
 (see [machines.md](machines.md)) — the default random power-on noise in screen
 pages 5 and 7 makes digests differ run to run.

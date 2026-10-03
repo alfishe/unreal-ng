@@ -77,6 +77,7 @@ BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
 
 docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
   -v "$ROOT":/src -w /src/unreal-qt \
+  --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
   -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \
   "$IMAGE" bash -c '

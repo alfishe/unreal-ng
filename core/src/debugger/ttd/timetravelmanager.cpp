@@ -1691,6 +1691,9 @@ void TimeTravelManager::EnterReplayMode()
     {
         _soundMuteBeforeReplay = _context->pSoundManager->isMuted();
         _context->pSoundManager->mute();
+        // Replay runs as fast as the host goes: nothing reaches the host audio callback at all (the mute
+        // alone would still feed it silence at that speed)
+        _context->pSoundManager->holdHostOutput();
     }
     else
     {
@@ -1749,6 +1752,7 @@ void TimeTravelManager::ExitReplayMode()
             _context->pSoundManager->mute();
         else
             _context->pSoundManager->unmute();
+        _context->pSoundManager->releaseHostOutput();
     }
 
     MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (sound mute restored)");

@@ -557,7 +557,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["drive"]["type"] = "string";
     schema["properties"]["drive"]["default"] = "A";
-    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A or B)";
+    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A-D or 0-3; autostart needs A)";
     schema["properties"]["play"]["type"] = "boolean";
     schema["properties"]["play"]["default"] = false;
     schema["properties"]["play"]["description"] = "Start tape playback immediately after loading a tape";
@@ -1906,9 +1906,9 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 out << "\n[breakpoints] " << value["count"].asUInt() << " active";
                             }
-                            else if (aspect == "screen_digest" && value.isMember("digest"))
+                            else if (aspect == "screen_digest" && value.isMember("combined"))
                             {
-                                out << "\n[screen_digest] " << value["digest"].asString();
+                                out << "\n[screen_digest] " << value["combined"].asString();
                             }
                             else if (aspect == "contention")
                             {
