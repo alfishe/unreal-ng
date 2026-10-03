@@ -80,7 +80,7 @@ So since the v1 amendments the input and the external events **are** saved (the 
                          machine time (u64, top-clock units)
  frame table   |  f100 (430,080)  |  f101 (419,328)  |  f102  | ...         Phase 1
                |                  |                  |        |
- event log     .   Key            .   Reset->cut     .        .             Step 1 (sparse)
+ event log     .   Key            .   Edit           .        .             Step 1 (sparse)
  bus journals  ||||||||||||||||||||||||||||||||||||||||||||||||  IN, OUT,   Step 1 (dense)
                                                                vector, DMA
  payload store [net bytes][edit bytes][DMA bytes] <- refcounts from events and checkpoints
@@ -106,9 +106,9 @@ enum class TTDEventKind : uint16_t   // stable: stored in files, appended, never
 {
     // 0x0000-0x00FF input: the value of TTDInputKind (Key = 0 ... FrontPanelSwitch = 15)
     // 0x0100-0x01FF markers: 0x0100 + TTDExternalEventKind
-    TapeControl = 0x0100, MediaWrite = 0x0101, DebuggerEdit = 0x0102, HardwareReset = 0x0103,
+    TapeControl = 0x0100, MediaWrite = 0x0101, DebuggerEdit = 0x0102, HardwareReset = 0x0103,   // HardwareReset: v1 import only (D39)
     // 0x0200-0x02FF frame-boundary cuts
-    SnapshotLoad = 0x0200, MediaChange = 0x0201, ConfigChange = 0x0202, DeviceSetChange = 0x0203,
+    SnapshotLoad = 0x0200, MediaChange = 0x0201, ConfigChange = 0x0202,   // 0x0203 reserved (was DeviceSetChange, D38)
     // 0x0300-0x03FF facts the machine produces itself
     ClockChange = 0x0300, FrameLengthChange = 0x0301, ReplaySourceChange = 0x0302, InterruptFrame = 0x0303,
     OtherMarker = 0x01FF,
@@ -125,7 +125,7 @@ struct TTDEvent
     uint32_t seq = 0;            // order among events at the same machineTime
     TTDEventKind kind;
     TTDCpuId cpu = TTDCpuId::Main;   // the CPU whose boundary applies it (Step 3)
-    uint8_t args[16] = {};       // kind-specific: a TTDInputEvent's fields, a clock rate, a reset type
+    uint8_t args[16] = {};       // kind-specific: a TTDInputEvent's fields, a clock rate
     TTDPayloadRef payload;       // network bytes, edit bytes, a reason string
 };
 
@@ -152,8 +152,8 @@ The kind ranges make the v1 mapping an identity: a v1 input kind keeps its numbe
 | `TapeControl` | Input (with tape media versions) | instruction boundary | — | external event; a barrier until the tape is under media versions (Step 4) |
 | `DebuggerEdit` | Input | instruction boundary | target + bytes (memory region and offset, register id, device register) | external event; a v1 edit has no data, so it imports as `Barrier` |
 | `MediaWrite` | Fact | — | slot id | external `DiskWrite`; a barrier until media versions exist (Step 4) |
-| `HardwareReset` | Cut | instruction boundary, then the frame ends | reset type | not emitted in v1 (a reset stops recording) |
-| `SnapshotLoad`, `MediaChange`, `ConfigChange`, `DeviceSetChange` | Cut | frame boundary | what changed | none: v1 ends or invalidates the session (D10, D26) |
+| `HardwareReset` | — | — | — | not emitted: a reset ends the session (D39); the kind number stays for v1 files |
+| `SnapshotLoad`, `MediaChange`, `ConfigChange` | Cut | frame boundary | what changed | none: v1 ends or invalidates the session (D10, D26). The device set is fixed for a session (D38) |
 | `ClockChange`, `FrameLengthChange`, `InterruptFrame` | Fact | — | rate, length, RZX frame | none |
 | `ReplaySourceChange` | Fact | instruction boundary | source (Step 2) | none |
 | `IN` result | bus data | on access | — | port read journal, unchanged blocks |
@@ -186,7 +186,7 @@ With these, `PortJournalUnsupportedReason` (TTM:2050-2086) has no reason left on
 
 **Debugger edits as input.** D9: an edit at the present is journaled. With its bytes in the payload, a replay re-applies it, so an edited session replays through the edit instead of stopping. An edit in the past starts a branch (Phase 5, [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md)). `Emulator::EditMemoryFromTool` (emulator.cpp:680-697) passes the edit's target and bytes, not only its source name.
 
-**Built in now, used later.** Events carry the branch through their position (Phase 1); per-branch event data is a separate stream in the file ([what-if §8](../2026-09-29-model-what-if/design.md)). `DeviceSetChange` content comes from Phase 2. `MediaChange` becomes exact with media versions (Step 4).
+**Built in now, used later.** Events carry the branch through their position (Phase 1); per-branch event data is a separate stream in the file ([what-if §8](../2026-09-29-model-what-if/design.md)). `MediaChange` becomes exact with media versions (Step 4).
 
 **File consequences (Phase 4).** An event-log stream (records grouped per frame, delta-coded times); a payload stream; the four bus journals in v1's block layout with one cursor per checkpoint each; a kind table in the header so a reader names kinds it does not know and treats unknown `Input` kinds as barriers.
 
@@ -266,7 +266,7 @@ computed with exact integer arithmetic (128-bit intermediate), in both direction
 
 **Variable frames.** Phase 1's frame table holds each frame's start. This step adds what ends a frame and what changes its length:
 - `FrameLengthChange` fact: a Sprinter `#2C` / `#2D` write takes effect at the next frame boundary;
-- a `HardwareReset` or another cut ends the frame early;
+- a cut ends the frame early (a reset ends the session, D39);
 - RZX frames are not video frames ([RZX design §6](../2026-09-29-rzx-replay/design.md)): they are `InterruptFrame` facts, not frame-table entries.
 
 Everything that turned a frame number into time - `GlobalT`, `EmulatedMicroseconds`, the write journal's `globalT` - uses the frame table instead.
@@ -470,7 +470,7 @@ Every test is checked by mutation: it must fail when the mechanism it guards is 
 | 1 | A payload referenced only by a checkpoint's network device state survives dropping the events before it; restore delivers the same bytes. Mutation: free on event drop → fails | payload retention by dependency |
 | 1 | Sprinter and TSConf: record, then seek into frames with interrupts and SD DMA; port journal on; zero divergences. Mutation: skip the vector tap → divergence | bus data beyond `IN` (FR-21) |
 | 1 | A debugger edit while recording, then a seek across it: the seek does not stop, memory after equals the recording | edits replay |
-| 1 | A reset while recording: the session continues; a seek into the frame before and after the reset is exact | reset is a cut, not an end |
+| 1 | A reset while recording ends the session (D39); with the setting on, a new session starts, linked to the one it ended | reset ends the session |
 | 2 | A session recorded while an RZX plays: seek to RZX frame N via the engine equals `RzxKeyframeStore` seek to N (registers, all RAM, `#7FFD`) on the 16 archive recordings | `InValues` mode; parity before the RZX store retires |
 | 2 | `Events` mode on the fixture corpus: `ValueMismatches` = 0 | devices and media are exact; the CPU feed hides nothing |
 | 2 | Branch from frame F with the parent's events: the branch continues past the end of recorded `IN` values without a desync | `Events` mode serves branches |

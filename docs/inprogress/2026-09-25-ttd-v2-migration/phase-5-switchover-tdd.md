@@ -151,7 +151,7 @@ public:
     // Running
     virtual void OnFrameBoundary() = 0;                         // MainLoop, once per frame
     virtual void ServiceInput() = 0;                            // Z80, only when kStepWorkTtdInput is set
-    virtual void OnMachineReset() = 0;                          // a reset is an event, recording goes on
+    virtual void OnMachineReset() = 0;                          // a reset ends the session; optionally a new one starts (D39)
 
     // Things that happen to the machine (D10, D25, D26): events, not the end of the session
     virtual void OnLoad(TTDLoadKind kind, const std::string& source) = 0;   // snapshot, tape, disk, disk create, media change
@@ -321,7 +321,7 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 | GS card switch | `gs-card-switch` | The device set is fixed for a session (D38): refused while recording; otherwise a new session linked to its parent, as a model transfer |
 | ROM reload, model transfer | `rom-reload`, `state-transfer` | `OnModelTransfer`: a new session linked to its parent (D26). The parent stays openable |
 | Host speed multiplier change | `speed-multiplier-change` | An event, if Phase 3's configuration fingerprint shows the speed affects replay; otherwise nothing at all (open question 5) |
-| Reset | Stops the recording | An event; the recording goes on (Phase 3 reset marker) |
+| Reset | Stops the recording | Ends the session; recording again (a setting) starts a new session linked to it (D39) |
 
 "Invalidate" stays: it is the explicit discard of the session (FR-24 allows explicit deletion), still refused while capturing.
 
