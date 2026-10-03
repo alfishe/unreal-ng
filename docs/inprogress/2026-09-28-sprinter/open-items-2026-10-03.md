@@ -10,6 +10,10 @@ come the ISA slots and the network cards (section 3).
 - Checked with the demo runner ([tools/machines/sprinter/demo-runner](../../../tools/machines/sprinter/demo-runner/README.md)):
   15 of 21 run. No verdict yet for STARWAY and the ones after it, GAME_00, KOSAREW, LDCONF, NU, SDK, XENON2.
 - To re-check after the CTC fix (counter mode, TRG inputs): FBIRD, NOTHENG.
+- dontBlink freezes at 5:05-5:10 (the "flowers" part) with BIOS 3.07: a race in the demo, not an emulation fault
+  ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2). An interrupt between `LD SP,#3F74` and
+  `LD HL,(#031D)` makes its SP-repair loop overwrite its own return address. MAME misses the 35-T window by 566
+  clocks, and with BIOS 3.06 Hotfix 2 the emulator plays it to the end. Open: report it to deMarche (TmK) with the window, and ask the owner whether a real board ever froze there.
 - scroller.trd: the switch to 21 MHz in the middle of the demo (seen in one owner window with CNF `#07` and
   a SIO A overrun) is postponed; it may be gone with the PS/2 keyboard fix (SIO overrun per the data sheet,
   F12 decoded from the wire). Re-check.
