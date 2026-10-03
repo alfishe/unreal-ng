@@ -4,8 +4,6 @@
 #include <string>
 #include <vector>
 
-class Emulator;
-struct FramebufferDescriptor;
 
 /// @brief Capture mode: screen area only or full framebuffer with border
 enum class CaptureMode
@@ -14,8 +12,10 @@ enum class CaptureMode
     FullFramebuffer ///< Full rendered framebuffer including border
 };
 
-/// @brief Screen capture utility for exporting screen to image formats
-/// Located in video module since it works with framebuffer data directly
+/// @brief Legacy entry point of the screenshot, kept for the surfaces that have not moved yet
+/// (WebAPI, CLI, Python). It is a thin shim over Screenshotter (screenshotter.h): the frame is the
+/// presented one and the screen area is the frame's own working window, whatever the machine.
+/// New code uses Screenshotter directly.
 class ScreenCapture
 {
 public:
@@ -56,26 +56,4 @@ public:
                                         const std::string& format = "gif",
                                         CaptureMode mode = CaptureMode::ScreenOnly,
                                         const std::string& filePath = "");
-
-private:
-    /// @brief Encode image data to GIF format
-    static std::vector<uint8_t> encodeToGif(const uint8_t* data, uint16_t width, uint16_t height);
-    
-    /// @brief Encode image data to PNG format
-    static std::vector<uint8_t> encodeToPng(const uint8_t* data, uint16_t width, uint16_t height);
-    
-    /// @brief Extract screen area from framebuffer
-    /// @param fb Full framebuffer
-    /// @param outData Output buffer (resized to screenWidth*screenHeight*4)
-    /// @param screenWidth Width of screen area to extract
-    /// @param screenHeight Height of screen area to extract
-    /// @param offsetX X offset from framebuffer origin
-    /// @param offsetY Y offset from framebuffer origin
-    /// @return true if extraction succeeded
-    static bool extractScreenArea(const FramebufferDescriptor& fb, std::vector<uint8_t>& outData,
-                                   uint16_t screenWidth, uint16_t screenHeight,
-                                   uint16_t offsetX, uint16_t offsetY);
-    
-    /// @brief Base64 encode binary data
-    static std::string base64Encode(const std::vector<uint8_t>& data);
 };
