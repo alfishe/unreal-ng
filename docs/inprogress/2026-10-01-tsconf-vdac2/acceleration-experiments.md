@@ -234,3 +234,6 @@ Bit-exact everywhere (all eve-emu tests with the six `bilinear-*` goldens; rtype
 now led by **rotated bitmaps** (the frog, the balls: PALETTED4444 / ARGB4 NEAREST with a
 rotation matrix, no fast path, ~50 % of play) and the display list walk (768 commands per
 line, ~20 %) - the next task.
+
+Round by round with all numbers (incl. the rotated sprites, done in `5f47ded`: 3.8x):
+[optimization-walkthrough.md](optimization-walkthrough.md).

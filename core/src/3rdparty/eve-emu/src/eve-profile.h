@@ -51,6 +51,7 @@ struct ProfileCounters
     std::map<uint8_t, ProfileCell> primitives;  // by BEGIN value, bitmaps excluded
     ProfileCell lines;                           // every drawn line: commands in `pixels`
     std::map<std::string, uint64_t> fastRejects; // why the fast path declined a span
+    uint64_t opcodes[256] = {};                  // display list words executed, by opcode byte
 };
 
 ProfileCounters& Profile();

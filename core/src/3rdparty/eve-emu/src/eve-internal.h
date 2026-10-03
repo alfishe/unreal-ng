@@ -407,6 +407,20 @@ static_assert(std::is_trivially_copyable<ControlState>::value, "ControlState mus
 constexpr uint32_t kStateMagic = 0x31455645; // "EVE1"
 constexpr uint32_t kStateVersion = 8; // 8: FrameMetricsState
 
+struct PaletteCache
+{
+    bool valid;
+    uint8_t format;
+    uint32_t source;
+    uint64_t ramGWrites;  // EveChip::ramGWrites when it was decoded
+    uint32_t entry[kPaletteEntries];
+};
+
+// Decoded palettes kept across lines: a frame's sprites each bring their own PALETTE_SOURCE
+// and every line draws them all. An entry holds while RAM_G was not written since
+// (EveChip::ramGWrites); no write happens while a line is drawn (CatchUp runs first)
+constexpr uint32_t kPaletteCacheEntries = 16;
+
 } // namespace EveLib
 
 // --- The chip context (one allocation in EveCreate) -------------------------------------
@@ -458,6 +472,11 @@ struct EveChip
     std::unique_ptr<uint8_t[]> lineTag;
     std::unique_ptr<uint32_t[]> lineTexels;  // a span's decoded texels (kMaxLineWidth)
     std::unique_ptr<uint32_t[]> lineBilinear; // a BILINEAR span's scratch (kBilinearScratch)
+    // Palettes decoded for the fast path, valid while ramGWrites is unchanged: every RAM_G
+    // write (BusWrite), a memory restore and a reset count
+    std::unique_ptr<EveLib::PaletteCache[]> palettes; // kPaletteCacheEntries
+    uint32_t paletteNext = 0;
+    uint64_t ramGWrites = 1;
     std::unique_ptr<uint8_t[]> probeColor;   // the same for EveProbePixel
     std::unique_ptr<uint8_t[]> probeStencil;
     std::unique_ptr<uint8_t[]> probeTag;

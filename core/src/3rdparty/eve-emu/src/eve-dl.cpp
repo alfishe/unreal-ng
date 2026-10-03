@@ -81,7 +81,7 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
     run.texels = chip.lineTexels.get();
     run.bilinear = chip.lineBilinear.get();
     run.savedCount = 0;
-    run.palette.valid = false;
+    run.paletteNext = 0;
     run.primitive = kPrimNone;
     run.vertexCount = 0;
     run.previous = Vertex{};
@@ -590,6 +590,10 @@ void ExecuteLine(LineRun& run)
             break; // ran off the end of RAM_DL (spec §6.2, V15)
         const uint32_t word = LoadLe32(list + kDlWordBytes * pc);
         ++run.commands;
+#ifdef EVE_PROFILE
+        if constexpr (Mode == LineMode::Draw)
+            Profile().opcodes[word >> 24]++;
+#endif
         run.commandIndex = pc;
         run.commandWord = word;
         uint32_t target = pc + 1;
@@ -616,11 +620,12 @@ bool InitDrawing(EveChip& chip)
     chip.lineTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineTexels.reset(new (std::nothrow) uint32_t[kMaxLineWidth]());
     chip.lineBilinear.reset(new (std::nothrow) uint32_t[kBilinearScratch]());
+    chip.palettes.reset(new (std::nothrow) PaletteCache[kPaletteCacheEntries]());
     chip.probeColor.reset(new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]());
     chip.probeStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.probeTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineCosts.reset(new (std::nothrow) EveLineCost[kMaxLines]());
-    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.probeColor && chip.probeStencil &&
+    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.palettes && chip.probeColor && chip.probeStencil &&
            chip.probeTag && chip.lineCosts;
 }
 
@@ -673,6 +678,7 @@ void DisplayListSwapped(EveChip& chip)
 
 void DrawingInvalidate(EveChip& chip)
 {
+    ++chip.ramGWrites;  // memory restored or reset: decoded palettes no longer hold
     // The current frame is drawn again from line 0 by the next catch-up (arch §7.4).
     chip.drawnLines = 0;
     for (uint32_t i = 0; i < kMaxLines; ++i)

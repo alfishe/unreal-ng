@@ -44,7 +44,8 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] Acceleration experiments (CPU line threads, native GPU, three profiles): results in
   [acceleration-experiments.md](acceleration-experiments.md), experiments in `tools/poc/021-eve-accel/`
 - [x] BILINEAR fast path + SIMD masking blends + skipped empty glyphs (eve-emu `61a3f19`): Zuma 0.48x -> 2.74x real time ([acceleration-experiments.md](acceleration-experiments.md) §3.6)
-- [ ] Rotated bitmaps on a fast path (Zuma play ~50 %), then the display list walk
+- [x] Rotated NEAREST fast path + palettes kept across lines (eve-emu `5f47ded`): Zuma 2.66x -> 3.8x; every round: [optimization-walkthrough.md](optimization-walkthrough.md)
+- [ ] The display list walk (40 % of Zuma play after round 3)
 - [ ] Build the rest of the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
   graphics memory writes, skip unchanged frames; then the GPU backend per batch
 - [ ] Integration I3-I5; the TO VERIFY list in design §12.1

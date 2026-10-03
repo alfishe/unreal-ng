@@ -365,16 +365,35 @@ bool DefaultPipeline(const GraphicsContext& ctx)
 // Palette of the line run, decoded once per line (memory does not change during a line).
 const uint32_t* LinePalette(LineRun& run, uint8_t format)
 {
-    PaletteCache& cache = run.palette;
-    if (cache.valid && cache.source == run.ctx.paletteSource && cache.format == format)
-        return cache.entry;
+    EveChip& chip = *run.chip;
+    const uint32_t source = run.ctx.paletteSource;
+    for (uint32_t k = 0; k < kPaletteCacheEntries; ++k)
+    {
+        const PaletteCache& c = chip.palettes[k];
+        if (c.valid && c.source == source && c.format == format && c.ramGWrites == chip.ramGWrites)
+            return c.entry;
+    }
+    PaletteCache& cache = chip.palettes[chip.paletteNext];
+    chip.paletteNext = (chip.paletteNext + 1) % kPaletteCacheEntries;
     // The 16-bit decode tables hold exactly Pack(Direct(v, layout)) for every v
     const uint32_t* table = TableFor(format == kFormatPaletted565 ? kFormatRgb565 : kFormatArgb4);
-    for (uint32_t i = 0; i < kPaletteEntries; ++i)
-        cache.entry[i] = table[Read16(*run.chip, run.ctx.paletteSource + kPalette16Bytes * i)];
-    cache.valid = true;
-    cache.source = run.ctx.paletteSource;
+    const bool inRamG = static_cast<uint64_t>(source) + kPalette16Bytes * kPaletteEntries <= kRamGSize;
+    if (inRamG)
+    {
+        const uint8_t* p = chip.regions[RegionRamG].base + source;
+        for (uint32_t i = 0; i < kPaletteEntries; ++i)
+            cache.entry[i] = table[p[2 * i] | (static_cast<uint32_t>(p[2 * i + 1]) << kBitsPerByte)];
+    }
+    else
+    {
+        for (uint32_t i = 0; i < kPaletteEntries; ++i)
+            cache.entry[i] = table[Read16(chip, source + kPalette16Bytes * i)];
+    }
+    // Outside RAM_G (registers, the ROM) the palette is not kept across lines
+    cache.valid = inRamG;
+    cache.source = source;
     cache.format = format;
+    cache.ramGWrites = chip.ramGWrites;
     return cache.entry;
 }
 
@@ -492,6 +511,40 @@ void WithRowFetch(LineRun& run, const BitmapHandle& h, const uint8_t* row, Sink 
         sink([=](uint32_t u) {
             const uint32_t shift = kBitsPerByte - bpp * (1 + (u & indexMask));
             return luminance[(row[u >> perByteShift] >> shift) & lumMask];
+        });
+    }
+}
+
+// Calls sink(fetch) with the decoder of the whole layout: fetch(u, v) is the packed texel at
+// column u of row v (rows `stride` bytes apart from `layout`), in the handle's format
+template <typename Sink>
+void WithLayoutFetch(LineRun& run, const BitmapHandle& h, const uint8_t* layout, uint32_t stride, Sink sink)
+{
+    const uint32_t* table16 = TableFor(h.format);
+    const uint32_t* table8 = ByteTableFor(h.format);
+    const uint32_t* luminance = LuminanceTableFor(h.format);
+    const uint32_t* palette =
+        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565) ? LinePalette(run, h.format) : nullptr;
+    const uint32_t bpp = BitsPerPixel(h.format);
+    if (table16 != nullptr)
+        sink([layout, stride, table16](uint32_t u, uint32_t v) {
+            const uint8_t* p = layout + static_cast<size_t>(v) * stride + 2 * u;
+            return table16[p[0] | (static_cast<uint32_t>(p[1]) << kBitsPerByte)];
+        });
+    else if (palette != nullptr)
+        sink([layout, stride, palette](uint32_t u, uint32_t v) { return palette[layout[static_cast<size_t>(v) * stride + u]]; });
+    else if (table8 != nullptr)
+        sink([layout, stride, table8](uint32_t u, uint32_t v) { return table8[layout[static_cast<size_t>(v) * stride + u]]; });
+    else if (bpp == kBitsPerByte)
+        sink([layout, stride, luminance](uint32_t u, uint32_t v) { return luminance[layout[static_cast<size_t>(v) * stride + u]]; });
+    else
+    {
+        const uint32_t lumMask = (1u << bpp) - 1;
+        const uint32_t perByteShift = bpp == 1 ? 3 : bpp == 2 ? 2 : 1;
+        const uint32_t indexMask = (1u << perByteShift) - 1;
+        sink([=](uint32_t u, uint32_t v) {
+            const uint32_t shift = kBitsPerByte - bpp * (1 + (u & indexMask));
+            return luminance[(layout[static_cast<size_t>(v) * stride + (u >> perByteShift)] >> shift) & lumMask];
         });
     }
 }
@@ -626,15 +679,65 @@ bool DrawBitmapBilinearFast(LineRun& run, const BitmapHandle& h, uint32_t base, 
     return true;
 }
 
+// NEAREST under any matrix (rotation, shear): x' and y' step by A and D per pixel, each
+// texel is decoded straight from the layout - the general path's sample positions and its
+// wrap arithmetic on both axes, without its per-texel format switch. The whole layout must
+// lie in RAM_G (else the general path reads it through the bus).
+// SIMD-CANDIDATE(EVE-AFFINE): a gather per pixel; the coordinate stepping and the BORDER
+// tests vectorize, the fetches do not (NEON / SSE2 have no byte gather)
+bool DrawBitmapAffineFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t stride, uint32_t layoutWidth,
+                          uint32_t layoutHeight, int64_t rely, int32_t first, int32_t last, int64_t vx)
+{
+    const int32_t* t = run.ctx.transform;
+    const uint64_t rowBytes = (static_cast<uint64_t>(layoutWidth) * BitsPerPixel(h.format) + kBitsPerByte - 1) / kBitsPerByte;
+    const uint64_t layoutEnd = static_cast<uint64_t>(base) + static_cast<uint64_t>(layoutHeight - 1) * stride + rowBytes;
+    if (layoutEnd > kRamGSize)
+        return false;
+    const int64_t a = t[0], b = t[1], c = t[2], d = t[3], e = t[4], f = t[5];
+    const int64_t relFirst = static_cast<int64_t>(first) * kSubpixel + kPixelCenter - vx;
+    int64_t sx = ((a * relFirst + b * rely) >> kSubpixelShift) + c;
+    int64_t sy = ((d * relFirst + e * rely) >> kSubpixelShift) + f;
+    const uint32_t count = static_cast<uint32_t>(last - first);
+    const int32_t width = static_cast<int32_t>(layoutWidth);
+    const int32_t rows = static_cast<int32_t>(layoutHeight);
+    const bool wrapX = h.wrapX != 0, wrapY = h.wrapY != 0;
+    uint32_t* texels = run.texels;
+    const uint8_t* layout = run.chip->regions[RegionRamG].base + base;
+    WithLayoutFetch(run, h, layout, stride, [&](auto fetch) {
+        for (uint32_t i = 0; i < count; ++i, sx += a, sy += d)
+        {
+            int32_t tx = static_cast<int32_t>(sx >> kFixedShift);
+            int32_t ty = static_cast<int32_t>(sy >> kFixedShift);
+            if (wrapX)
+                tx = ((tx % width) + width) % width;
+            else if (tx < 0 || tx >= width)
+            {
+                texels[i] = 0;
+                continue;
+            }
+            if (wrapY)
+                ty = ((ty % rows) + rows) % rows;
+            else if (ty < 0 || ty >= rows)
+            {
+                texels[i] = 0;
+                continue;
+            }
+            texels[i] = fetch(static_cast<uint32_t>(tx), static_cast<uint32_t>(ty));
+        }
+    });
+    FinishFastSpan(run, first, texels, count);
+    return true;
+}
+
 bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t stride, uint32_t layoutWidth,
                     uint32_t layoutHeight, int64_t rely, int32_t first, int32_t last, int64_t vx)
 {
     const GraphicsContext& ctx = run.ctx;
     const int32_t* t = ctx.transform;
-    if (!FastFormat(h.format) || t[1] != 0 || t[3] != 0)
+    if (!FastFormat(h.format))
     {
 #ifdef EVE_PROFILE
-        Profile().fastRejects[!FastFormat(h.format) ? "format" : "matrix"]++;
+        Profile().fastRejects["format"]++;
 #endif
         return false;
     }
@@ -644,6 +747,15 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
         Profile().fastRejects["empty layout, handle " + std::to_string(&h - run.chip->state.handles)]++;
 #endif
         return DrawTransparentSpan(run, first, last);
+    }
+    if (t[1] != 0 || t[3] != 0)
+    {
+        if (!h.filter)
+            return DrawBitmapAffineFast(run, h, base, stride, layoutWidth, layoutHeight, rely, first, last, vx);
+#ifdef EVE_PROFILE
+        Profile().fastRejects["BILINEAR under a rotated matrix"]++;
+#endif
+        return false;
     }
     if (h.filter)
         return DrawBitmapBilinearFast(run, h, base, stride, layoutWidth, layoutHeight, rely, first, last, vx);
@@ -658,10 +770,12 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
     const uint32_t bpp = BitsPerPixel(h.format);
     const uint64_t rowStart = static_cast<uint64_t>(base) + static_cast<uint64_t>(ty) * stride;
     const uint64_t rowBytes = (static_cast<uint64_t>(layoutWidth) * bpp + kBitsPerByte - 1) / kBitsPerByte;
-    if (ty < 0 || ty >= layoutRows || rowStart + rowBytes > kRamGSize)
+    if (ty < 0 || ty >= layoutRows)
+        return DrawTransparentSpan(run, first, last);  // BORDER: every texel transparent
+    if (rowStart + rowBytes > kRamGSize)
     {
 #ifdef EVE_PROFILE
-        Profile().fastRejects[ty < 0 || ty >= layoutRows ? "row outside the layout (BORDER)" : "row beyond RAM_G"]++;
+        Profile().fastRejects["row beyond RAM_G"]++;
 #endif
         return false;
     }

@@ -157,13 +157,6 @@ struct Vertex
 };
 
 // A palette decoded for one line (memory does not change while a line is drawn).
-struct PaletteCache
-{
-    bool valid;
-    uint8_t format;
-    uint32_t source;
-    uint32_t entry[kPaletteEntries];
-};
 
 // One execution of the display list for one line.
 struct LineRun
@@ -186,7 +179,7 @@ struct LineRun
     uint32_t commands;
     uint64_t fillCost;     // in 1/kFillCostScale clock
     uint32_t events;       // stack misuse, unknown opcodes, cut loops
-    PaletteCache palette;
+    uint32_t paletteNext;  // unused (the cache lives in EveChip)
     // Probe.
     int32_t probeX;
     EvePixelSource* probe;

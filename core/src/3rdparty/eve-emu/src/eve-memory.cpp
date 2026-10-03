@@ -116,6 +116,7 @@ bool InitRegions(EveChip& chip)
 
 void ClearRegions(EveChip& chip)
 {
+    ++chip.ramGWrites;
     for (Region& region : chip.regions)
     {
         std::memset(region.base, 0, region.size);
@@ -169,6 +170,7 @@ void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
     {
         if (chip.drawing)
             CatchUp(chip);
+        ++chip.ramGWrites;
         Region& region = chip.regions[RegionRamG];
         region.base[address] = value;
         region.MarkDirty(address);
