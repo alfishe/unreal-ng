@@ -13,7 +13,8 @@ Each program goes through three steps:
    comes from the disk's own directory listing (`..`, folders, then files, by name), read with
    mtools from a raw copy of the same disk.
 3. **probe** — run the program for `--seconds` of emulated time, take a screenshot every two
-   seconds and classify it:
+   seconds and classify it (the picture is compared by `/state/screen/digest` `combined`: video
+   memory + border):
 
 | Verdict | Meaning |
 |:--|:--|
@@ -21,6 +22,10 @@ Each program goes through three steps:
 | `static` | the picture does not change and the CPU is not parked in a `HALT` |
 | `waits-for-int` | parked in a `HALT` with no picture change; with IM 2 the result lists the vectors the program installed, so an interrupt source nobody raises shows up at once |
 | `exited-to-fn` | back in Flex Navigator's idle loop |
+| `pld-reload` | the program reloaded the PLD (code `#2E`, seen in the PLD journal): the machine restarted with another logic configuration, e.g. the "Game" bitstream `GAME_00.ACX` / `GC.BIN`; the picture and the PC no longer say anything about the program |
+
+A `running` verdict means only that the picture changes: look at the screenshots (the contact sheet)
+before calling a program good.
 
 Every result also carries the Covox-Blaster state (mode, rate, interrupt requests).
 
@@ -47,7 +52,27 @@ tools/machines/sprinter/demo-runner/demo-runner.py --port 8097 \
 | `--bios` | `3.07` | firmware for a new instance |
 | `--id` | | an existing `SPRINTER` instance instead of a new one |
 | `--seconds` | 8 | emulated seconds per program |
-| `--out` | `scratch/demos` | screenshots, `results.json`, `contact-sheet.png` |
+| `--out` | `scratch/demos` | screenshots, `results.json`, `contact-sheet.png`, kept `.ttd` sessions |
+| `--ttd` / `--no-ttd` | on | record TTD from the Enter on each program (development mode, write journal on) |
+| `--ttd-keep` | `failures` | `failures`: save the session as `<out>/<program>.ttd` for every verdict other than `running`; `all`: for every program |
+| `--ttd-history-frames` | 8 820 (about 3 min) | rolling history limit while recording |
+
+### TTD on every run
+
+Every program runs under a TTD recording, so a hang can be rewound and inspected instead of
+reproduced: the recording starts right before the Enter that launches the program (after the boot
+and the panel walk) and stops after the probe. A kept session (`"ttd"` in the result, about 50 MB
+for 8 s) loads into a `SPRINTER` instance with `POST /ttd/load {"path": ...}`; then seek, step back
+and read the port events (`POST /ttd/port-events`) and the PLD journal
+(`GET /state/sprinter/pld-journal`). Recipe:
+[`.recipe/analysis/ttd-recording.md`](../../../../.recipe/analysis/ttd-recording.md),
+[`.recipe/analysis/sprinter-ttd.md`](../../../../.recipe/analysis/sprinter-ttd.md). For a hand-driven
+run outside the runner, start the recording first:
+
+```bash
+curl -s -X POST "$BASE/emulator/$ID/ttd/start" -H 'Content-Type: application/json' \
+     -d '{"history_limit_frames": 8820}'
+```
 
 The layers are importable on their own (`Emu`, `boot`, `navigate`, `probe`), for scripts that
 boot once and then type a command line in Flex Navigator, e.g. a Spectrum-mode launch:

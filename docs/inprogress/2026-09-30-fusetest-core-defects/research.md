@@ -246,9 +246,9 @@ grey +2 decoders must keep BFFD reads undecoded (floating bus).
 ## Files and links consulted
 
 - `/Volumes/TB4-4Tb/Projects/mister/cores/ZX-Spectrum_MISTer-alfishe/ZX-Spectrum.sv`, `rtl/ula.sv`, `rtl/T80/T80pa.vhd`
-- `/Volumes/TB4-4Tb/Projects/Test/unreal-ng/scratch/wt-m1/scratch/coemu-sources/fuse-1.6.0/` (`periph.c`, `peripherals/ula.c`, `peripherals/ay.c`, `spectrum.c`, `machines/spec128.c`, `ChangeLog`)
-- `/Volumes/TB4-4Tb/Projects/Test/unreal-ng/scratch/wt-m1/scratch/coemu-sources/zesarux/src/operaciones.c`
-- `/Volumes/TB4-4Tb/Projects/Test/unreal-ng/scratch/wt-coemu/scratch/fusetest-repo/fusetest/tests.asm`, `fusetest.asm`
+- `../../../scratch/wt-m1/scratch/coemu-sources/fuse-1.6.0` (`periph.c`, `peripherals/ula.c`, `peripherals/ay.c`, `spectrum.c`, `machines/spec128.c`, `ChangeLog`)
+- `../../../scratch/wt-m1/scratch/coemu-sources/zesarux/src/operaciones.c`
+- `../../../scratch/wt-coemu/scratch/fusetest-repo/fusetest/tests.asm`, `fusetest.asm`
 - `/Volumes/TB4-4Tb/Projects/emulators/github/jnext/src/core/emulator.cpp`
 - `/Volumes/TB4-4Tb/Projects/emulators/github/mame/src/mame/sinclair/spec128.cpp`, `specpls3.cpp`
 - `/Volumes/TB4-4Tb/Projects/emulators/github/ZXMAK2/src/ZXMAK2.Hardware/Spectrum/MemorySpectrum128.cs`, `General/AY8910.cs`

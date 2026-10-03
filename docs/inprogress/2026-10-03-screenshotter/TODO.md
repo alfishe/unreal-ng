@@ -43,10 +43,11 @@ fixed with a test; none was reproduced yet):
    windows); follow the current window and scale into the locked size with bars (tight crop, a jump of scale at every
    mode change, scaling cost per frame); document the limit. Start with a test that reproduces the cut picture (record
    from the 256x192 window, switch `V_CONFIG` to 360x288, compare the recorded frame with the screen), then choose.
-3. **`source=live` when the emulation thread serves no frame:** during a TTD replay (`ttdReplayActive` skips the serve
-   call) and under heavy turbo render decimation (`_renderThisFrame` false) the request waits out its 1 s timeout and
-   the answer is 409 `no-frame`. Confirm, then serve the request from those paths too (or answer at once with a
-   specific reason instead of waiting).
+3. **`source=live` when the emulation thread serves no frame: DONE 2026-10-03.** Checked by reading `MainLoop::OnFrameEnd`:
+   the request was served only on rendered, non-replay frames. A TTD seek needs no fix (the machine is parked, the buffer is read
+   directly); a throwaway replay pass is not a real frame and keeps waiting for the next one. Turbo render decimation was
+   the real wait (up to the next rendered frame, many at unlimited speed): a frame that was not rendered now serves the request
+   with the last rendered, finished frame (what the window shows). Not run live (port 8090 was held by another session's app).
 4. **GIF writer and non-ASCII paths (Windows): DONE 2026-10-03.** The vendored gif-h (`core/src/3rdparty/gif`) opened its
    file with the narrow `fopen`, which reads a path in the ANSI code page on Windows; the recording GIF encoder had the
    same exposure (`GifBegin(..., filename.c_str())` with a UTF-8 path). Owner allowed a local change: `GifBegin` takes a

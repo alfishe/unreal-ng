@@ -77,7 +77,7 @@ How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such 
 1. ~~**Probe engine for Even M1 machines**~~ - done (`3952bdc8`, see Done).
 2. ~~**Snow**~~ - done 2026-09-29 on branch `ula-snow`: snow and double in the core, anchored on Snow Hold's
    photos from three real 48K machines; the visual test program snowtest; the floating-bus check dropped as not
-   observable ([2026-09-29-ula-snow](../2026-09-29-ula-snow/TODO.md)).
+   observable ([2026-09-29-ula-snow](../2026-09-29-ula-snow/DONE.md)).
 3. ~~**Real-hardware kit**~~ - done 2026-09-29: [tools/verification/contention/README.md](../../../tools/verification/contention/README.md)
    lists what only hardware settles (P-05 on the 128K, Even M1 per Scorpion board, the Even M1 start offset,
    snow on the 128K / +2 and on the +2A / +3 / clones), what to run with ctprobe and snowtest, what to send
@@ -85,13 +85,13 @@ How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such 
 4. ~~**Not modeled yet**~~ - done 2026-09-29 on branch `not-modeled-waits`: the ZX-Evo's 14 MHz waits (its
    DRAM's code and data cache words, from the RTL and a Verilator run) and the Scorpion Turbo+ slot waits (the
    SC15.1 firmware, decoded from its fuse map) as host bus overlays installed only in turbo
-   ([2026-09-29-machine-waits](../2026-09-29-machine-waits/TODO.md)). Still open there: the ZX-Evo's 48K /
+   ([2026-09-29-machine-waits](../2026-09-29-machine-waits/DONE.md)). Still open there: the ZX-Evo's 48K /
    128K raster contention (the rasters are not modeled, PLAN #55), the Scorpion's 3.5 MHz while /INT is
    active, SC15.3. TS-Conf cache misses belong to the TSConf machine (PLAN #41).
 5. ~~**Harness follow-ups**~~ - done 2026-09-30 on branch `coemu-followups`: MAME's `scorpio` restart explained
    (Even M1 against the old engine), runners for Kozynax, ZX-M8XXX and spec_chum, fusetest built and run
-   (`FuseTest_Test`; the three unreal-ng defects it found are fixed: [2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/TODO.md)), X-04 (`CtProbeTimeOnly_Test`)
-   ([2026-09-29-coemu-followups](../2026-09-29-coemu-followups/TODO.md)).
+   (`FuseTest_Test`; the three unreal-ng defects it found are fixed: [2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/DONE.md)), X-04 (`CtProbeTimeOnly_Test`)
+   ([2026-09-29-coemu-followups](../2026-09-29-coemu-followups/DONE.md)).
 6. ~~**This TODO brought up to date**~~ - done 2026-09-29.
 
 Ideas backlog (performance of the contended machines): [baseline.md](baseline.md) §3.2.

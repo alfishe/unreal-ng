@@ -265,6 +265,9 @@ Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
 
 ### 4. Spectrum mode and TR-DOS
 
+The shortest paths with the hard disk (native programs, SP / P128 / SC256 launcher modes, TR-DOS `RUN`):
+[sprinter-software.md](sprinter-software.md). This section boots from floppies.
+
 The community BIOS (3.06 / 3.07, the default) carries the ZX ROMs: ESC at its boot prompt starts the
 Spectrum 128 menu "Sprinter" directly. BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
 `A:\ZX\ROMS`. So put a second copy of the floppy in drive A **before the
@@ -330,7 +333,7 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `registers`, `cells` | ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD (mode page), HOLD, SCALE; cells `#C0-#FF` as hex rows |
 | `clock`, `frame` | turbo requested / front-panel switch, `ratio` 1 or 6, `mhz` 3.5 / 21; `lines` 320 / 312, `t_states` 71 680 / 69 888 |
 | `clock.waits` | the 21 MHz rule, `active`, `windows_waiting[4]` (main RAM waits, ROM and fast RAM not), the taken clocks |
-| `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `phase_t` (a placeholder until a board is measured), `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
+| `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `ct5_rise_t` 2 (frame T mod 4 of the CT5 rise = every INT edge), `waits_by_t1_from_int` `[0, 2, 1, 0]`, `phase_note`, `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
 | `tape` | `time_base`: `base_clock` - the tape input counts real time, so load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX); at 21 MHz the ROM loader fails, as on the board |
 | `video` | `picture_mode` (the dominant content kind of the 640 x 256 picture; `picture_mode_key`, e.g. `spectrum` in the Spectrum mode, `graphics_640` in Flex Navigator), `picture_mixed` (more than one content kind), `picture_brief` (the GUI status bar's words), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
 | `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |

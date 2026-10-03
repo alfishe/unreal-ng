@@ -654,6 +654,12 @@ void MainLoop::OnFrameEnd()
         _frameEndHook(false);
     }
 
+    // A frame that was not rendered (turbo render decimation) leaves the last rendered, finished frame in the
+    // buffer, which is what the window shows: a waiting live screenshot gets it now instead of waiting for the next
+    // rendered frame (at unlimited speed that can be many frames). A throwaway TTD replay pass is not a frame
+    if (!_renderThisFrame && !_context->ttdReplayActive)
+        _context->pScreen->ServeLiveRequest();
+
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)
         return;  // Invalid frame timing suggests corruption

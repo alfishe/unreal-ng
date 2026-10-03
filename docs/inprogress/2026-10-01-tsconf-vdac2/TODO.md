@@ -4,7 +4,9 @@ Status 2026-10-03: implemented and on master. The `eve-emu` library (own reposit
 at `core/src/3rdparty/eve-emu`), the machine variant `TSL-VDAC2`, the FT812 interrupt and
 picture, TTD, the line budget metrics with the FT812 Debug window, the bus capture, every
 automation surface. Open: what needs a card or TTD v2, two review questions, the drawing
-optimization (paused).
+optimization (paused). PLAN #87 (remainder), related to #41 and #40.
+
+History (2026-10-01): research done, design written, nothing implemented.
 
 - Design: [vdac2-tdd.md](vdac2-tdd.md).
 - Games for testing (untracked): `testdata/machines/tsconf/vdac2/` (R-Type 1.01, Zuma 1.1,
