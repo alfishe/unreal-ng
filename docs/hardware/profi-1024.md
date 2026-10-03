@@ -5,7 +5,7 @@ The Profi came as two board families, and both are creatable on this build:
 | Model | Board | RAM | Default ROM | Config |
 |:--|:--|:--|:--|:--|
 | `PROFI` (alias `PROFI5`) | v5.0x (Kondor, 1993-94) | 512K, **1024K** | `data/rom/profi.rom` (Bios 2.0 + TR-DOS 6.08 + STS monitor) | `data/configs/profi/unreal.ini` |
-| `PROFI3` | v3.x (TOO "Profi" / JV Kramis, 1990) | **512K**, 1024K | `data/rom/profi/kramis-v02.rom` (factory BIOS V0.2 + TR-DOS 5.03) | `data/configs/profi3/unreal.ini` |
+| `PROFI3` | v3.x (TOO "Profi" / JV Kramis, 1990) | **512K**, 1024K | `data/rom/profi/kramis-v03.rom` (factory BIOS V0.3 + TR-DOS 5.04T) | `data/configs/profi3/unreal.ini` |
 
 Create one with `emulator_manage action=create model=PROFI3` (or `PROFI`), CLI `create PROFI3`, or
 `POST /api/v1/emulator/start {"model": "PROFI3"}`. The factory system ROMs of both boards are in `data/rom/profi/`

@@ -41,8 +41,9 @@ at their address; it is not a full disassembly:
 | `testdata/machines/profi/rom/profi_v450.ROM` (untracked) | `81cb4529...` (`PB45TREX`) | P.C.C.C. "Award" BIOS 4.50PG (1996) | none |
 
 `data/rom/profi.rom` stays the default of the v5 model: the tests depend on it, and UnrealSpeccy, zx-evo-unreal
-and ZX-M8XXX ship the same file. The v3 model defaults to `profi/kramis-v02.rom`, the image whose TR-DOS 5.03
-came with the board.
+and ZX-M8XXX ship the same file. The v3 model defaults to `profi/kramis-v03.rom` (TR-DOS 5.04T) since 2026-10-03:
+`kramis-v02.rom`'s TR-DOS 5.03 double-steps on Klug CP/M's 5 x 1024-byte disk and cannot load it
+(testdata/machines/profi/cpm/v3/README.md); V0.2 stays selectable through `[ROM] PROFI3=`.
 
 ## 3. Sync PROMs, manuals and everything else used
 

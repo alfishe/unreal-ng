@@ -11583,7 +11583,11 @@ IMPLEMENTATION
 #if defined(MA_ARM)
     #if !defined(MA_NO_NEON) && (defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64))
         #define MA_SUPPORT_NEON
+        #if defined(_MSC_VER) && defined(_M_ARM64)
+        #include <arm64_neon.h>
+        #else
         #include <arm_neon.h>
+        #endif
     #endif
 #endif
 
