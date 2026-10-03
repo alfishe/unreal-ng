@@ -23,9 +23,11 @@
 #include <vector>
 
 #include "3rdparty/lodepng/lodepng.h"
+#include "emulator/video/profi/profigeometry.h"
 #include "emulator/video/screen.h"
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -317,6 +319,45 @@ TEST_F(ProfiBoot_Test, BiosSpeedTestReadsWhatARealBoardReads)
     }
 }
 
+/// @brief Pixel lines of the hi-res screen that hold anything (ProfiGeometry: 240 lines of 64 bytes)
+static uint32_t HiresLinesWithInk(EmulatorContext* context)
+{
+    const uint8_t* page = context->pMemory->RAMPageAddress(ProfiGeometry::PixelPage(context->emulatorState.p7FFD));
+    uint32_t lines = 0;
+    for (uint32_t v = 0; v < ProfiGeometry::kScreenLines; v++)
+    {
+        bool any = false;
+        for (uint32_t b = 0; b < 64 && !any; b++)
+            any = page[ProfiGeometry::ByteOffset(v, b)] != 0;
+        lines += any ? 1u : 0u;
+    }
+    return lines;
+}
+
+/// @brief CP/M boots on the v5 from the BIOS menu's "Загрузка системы CP/M" entry: the Kondor "Copy K" system disk
+///        (testdata/machines/profi/cpm/v5, README there) loads its drivers from CONFIG.SYS, signs on in hi-res and
+///        runs its AUTOEXEC.BAT (KEYHELP, PRSCR, then PAUSE, which waits for Space)
+TEST_F(ProfiBoot_Test, CpmBootsFromTheKondorSystemDisk)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and CP/M boot from a floppy
+    const std::string disk = TestPathHelper::GetTestDataPath("machines/profi/cpm/v5/kondor-system-copyk.fdi");
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(600, true);   // the BIOS menu
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
+    TapKeys("ENT");                      // the first entry: CP/M
+    _emulator->RunNFrames(2500, true);
+
+    EXPECT_NE(context->emulatorState.pDFFD & 0x20, 0) << "CP/M mode";
+    EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
+    const uint16_t pc = context->pCore->GetZ80()->pc;
+    EXPECT_FALSE(pc >= 0x8000 && pc < 0x8300) << "stuck in the boot loader, pc=" << std::hex << pc;
+    const uint32_t lines = HiresLinesWithInk(context);
+    std::cout << "hi-res lines with ink: " << lines << "\n";
+    EXPECT_GE(lines, 80u) << "the sign-on and the AUTOEXEC output fill the screen";
+}
+
 /// @brief The CP/M switch at power-on: the board holds #DFFD at #00 (research-profi-v5-open-items.md Q6), so the
 ///        BIOS cannot raise its hi-res menu and goes straight to Spectrum 128 - what the v5.0 manual says the switch
 ///        does ("pressed = Spectrum 128"). No other emulator models the switch; the behavior comes from the BIOS alone
@@ -353,7 +394,8 @@ TEST_F(ProfiBoot_Test, DISABLED_ProbeMenuKeys)
 }
 
 /// @brief Development probe (disabled): run a program as a user would and save screenshots.
-///        PROFI_PROGRAM = a .tap / .tzx (Sinclair 48 + LOAD "") or a .trd (TR-DOS + RUN); PROFI_MODEL = PROFI / PROFI3;
+///        PROFI_PROGRAM = a .tap / .tzx (Sinclair 48 + LOAD "") or a .trd (TR-DOS + RUN), a .udi / .fdi / .td0 boot disk
+///        (drive A, then PROFI_BOOT_KEYS in the BIOS menu, default Enter: CP/M); PROFI_MODEL = PROFI / PROFI3;
 ///        PROFI_TURBO=1 / PROFI_CPM=1 press the TURBO / CP/M switch (PROFI_PROGRAM=none: the BIOS only); PROFI_CONTENTION=0 turns the waits off; PROFI_FRAMES = frames to run after the load starts (default 1500);
 ///        PROFI_SHOTS = comma list of frame numbers to save as scratch/profi/<PROFI_NAME>-<frame>.png; PROFI_KEYS =
 ///        keys to tap after the load (TapKeys format), at frame PROFI_KEYS_AT (default: at once) and again every
@@ -395,8 +437,20 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
     else
         _emulator->RunNFrames(600, true);   // the BIOS menu
     const bool disk = path.size() > 4 && (path.substr(path.size() - 4) == ".trd" || path.substr(path.size() - 4) == ".TRD");
+    const bool bootDisk = path.size() > 4 && (path.substr(path.size() - 4) == ".udi" || path.substr(path.size() - 4) == ".UDI" ||
+                                              path.substr(path.size() - 4) == ".fdi" || path.substr(path.size() - 4) == ".FDI" ||
+                                              path.substr(path.size() - 4) == ".td0" || path.substr(path.size() - 4) == ".TD0");
     if (!profi || bootOnly)
     {
+    }
+    else if (bootDisk)
+    {
+        // A boot disk (CP/M): in drive A before the BIOS menu entry is chosen (PROFI_BOOT_KEYS, default the first
+        // entry: Enter)
+        std::string error;
+        ASSERT_TRUE(_emulator->LoadDisk(path, 0, &error)) << error;
+        const char* bootKeys = std::getenv("PROFI_BOOT_KEYS");
+        TapKeys(bootKeys ? bootKeys : "ENT");
     }
     else if (disk)
     {
@@ -444,6 +498,30 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
         const std::string file = "scratch/profi/" + name + "-" + std::to_string(f) + ".png";
         lodepng_encode32_file(file.c_str(), fb.memoryBuffer, fb.width, fb.height);
+    }
+    if (std::getenv("PROFI_DUMP"))
+    {
+        // Registers and the code around PC (development aid)
+        Z80* z = context->pCore->GetZ80();
+        std::cout << std::hex << "af=" << z->af << " bc=" << z->bc << " de=" << z->de << " hl=" << z->hl << " ix=" << z->ix
+                  << " iy=" << z->iy << " sp=" << z->sp << " iff1=" << int(z->iff1) << " im=" << int(z->im) << std::dec << "\n";
+        std::cout << "code";
+        for (int i = -16; i < 48; i++)
+            std::cout << " " << std::hex << int(z->DirectRead(static_cast<uint16_t>(z->pc + i)));
+        std::cout << std::dec << "\n";
+    }
+    if (const char* memFile = std::getenv("PROFI_DUMP_MEM"))
+    {
+        // The Z80's 64K view at the end (development aid)
+        std::vector<uint8_t> mem(65536);
+        for (uint32_t a = 0; a < 65536; a++)
+            mem[a] = context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a));
+        FILE* f = std::fopen(memFile, "wb");
+        if (f)
+        {
+            std::fwrite(mem.data(), 1, mem.size(), f);
+            std::fclose(f);
+        }
     }
     std::cout << "pc=" << std::hex << context->pCore->GetZ80()->pc << " p7FFD=" << int(context->emulatorState.p7FFD)
               << " pDFFD=" << int(context->emulatorState.pDFFD) << std::dec << " frame T=" << context->config.frame

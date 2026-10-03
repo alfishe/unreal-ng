@@ -85,4 +85,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   emulated v5, as termik's real 5.06 with a 20 MHz ZQ3 did (zx-pk 21644 p.11); without the waits it reads 1.65 / 3.35
   (`ProfiBoot_Test.BiosSpeedTestReadsWhatARealBoardReads`)
 - [x] A/B of H1-H4 and the AY clock: no measurable cost on 48K / Pentagon / Scorpion / TurboSound ([design-hires.md](design-hires.md) 5)
-
+- [x] CP/M on v5: images per board in `testdata/machines/profi/cpm/` (README there); the Kondor, HC and DN disks boot
+  from "Загрузка системы CP/M" (`CpmBootsFromTheKondorSystemDisk`). The old `CPM.UDI` stops at its loader's trap:
+  its LSTP driver loads `KOI8.FNT`, which the disk lacks (an inconsistent user disk, not an emulation bug)
+- [ ] CP/M on v3: Klug CP/M 2.3 crashes from the Kramis "Profi-DOS" entry (it asks to "Toggle RAM/ROM switch" on
+  boards that cannot page the ROM out: check how the v3.2 board turns the ROM off); no Kramis SP-DOS image found

@@ -78,7 +78,8 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | PROFI-XT keyboard controller (`[PROFI] Keyboard=XT`, v5 default): PC keys, EXT on `#BFFE` bit 5, the Z80 wait, Ctrl + Alt + Del; `XTTable` (no firmware), `Matrix` (v3 default) | implemented — see [Keyboard](#keyboard) |
 | Hi-res (`#DFFD` bit 7) timing: the CPU on its hi-res clock (v3 3 MHz, v5 ZQ3 / 4 = 5 MHz; turbo doubles), frame and INT from the sync PROM's upper half (v3: 320 lines, 48.83 Hz), hi-res waits (v5 model), v3 hi-res floating bus | implemented — see [Hi-res](#hi-res-512x240) |
 | The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads | not implemented |
-| BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards; CP/M boots from a disk |
+| BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards |
+| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M crashes on the Kramis "Profi-DOS" entry, under investigation |
 
 ### Hi-res (512x240)
 
