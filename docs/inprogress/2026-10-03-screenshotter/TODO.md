@@ -47,10 +47,20 @@ fixed with a test; none was reproduced yet):
    call) and under heavy turbo render decimation (`_renderThisFrame` false) the request waits out its 1 s timeout and
    the answer is 409 `no-frame`. Confirm, then serve the request from those paths too (or answer at once with a
    specific reason instead of waiting).
-4. **GIF temp file with a non-ASCII temp path (Windows).** `Screenshotter` writes the GIF through `GifBegin(const char*)`
-   into `temp_directory_path()`: a TEMP folder with non-ASCII characters may not open (the project rule is UTF-8
-   `std::string` paths through `FileHelper`). Confirm on Windows (or the MinGW cross build), then encode GIF in memory
-   or write through `FileHelper::OpenFile`.
+4. **GIF writer and non-ASCII paths (Windows): DONE 2026-10-03.** The vendored gif-h (`core/src/3rdparty/gif`) opened its
+   file with the narrow `fopen`, which reads a path in the ANSI code page on Windows; the recording GIF encoder had the
+   same exposure (`GifBegin(..., filename.c_str())` with a UTF-8 path). Owner allowed a local change: `GifBegin` takes a
+   UTF-8 path on every platform (Windows: UTF-16 and `_wfopen_s`, an invalid-UTF-8 string falls back to the ANSI open as
+   before) and `GifBeginFile` starts a GIF on a file the caller opened (`FileHelper::OpenFile`). The screenshotter's temp
+   file path is UTF-8 (`u8string`) and the file is read back through `FileHelper`. Tests: `Gif_Test` (Cyrillic, CJK and
+   emoji folder and file names, `GifBeginFile`, null file, missing folder), `Screenshotter_Test.GifWorksWithANonAsciiTempFolder...`
+   (TMPDIR with a non-ASCII name, the temp file removed). The Windows branch is not executed anywhere here (the tests
+   pass on macOS where UTF-8 is native): it was compiled warning-free with MinGW (`x86_64-w64-mingw32-g++`); run `Gif_Test`
+   on a Windows build when one is at hand.
+5. **Found by the MinGW check of item 4: `FrameRect` broke the Windows build.** My phase-1 type `FrameRect` clashes with the
+   Win32 GDI function `FrameRect` in `winuser.h` (any `windows.h` before `screen.h` turns `FrameRect screenWindow;` into
+   an error). It was on master since `e7b6f60fd`; renamed to `PictureRect` everywhere, every touched translation unit of
+   the screenshotter work compiles with MinGW.
 
 Possible follow-ups, not part of this work: the Qt "Take Screenshot" (clipboard) still crops to the window's
 viewport by design; `StoresHalfHeightLines` doubling in recordings of TS-Conf.
