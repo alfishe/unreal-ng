@@ -6,6 +6,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 
 std::set<uint8_t> KeyboardManager::_heldPcKeys;
+std::multiset<uint8_t> KeyboardManager::_heldMatrixKeys;
 
 /// Populate mapping from Qt keycodes to unified emulator format
 std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
@@ -254,8 +255,14 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
                            new PcKeyEvent(static_cast<uint8_t>(pcKey), type, targetId));
     }
     if (matrixKey != ZXKEY_NONE)
+    {
+        if (type == KEY_PRESSED)
+            _heldMatrixKeys.insert(matrixKey);
+        else if (auto it = _heldMatrixKeys.find(matrixKey); it != _heldMatrixKeys.end())
+            _heldMatrixKeys.erase(it);
         messageCenter.Post(type == KEY_PRESSED ? MC_KEY_PRESSED : MC_KEY_RELEASED,
                            new KeyboardEvent(matrixKey, type, targetId));
+    }
 }
 
 void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
@@ -264,6 +271,9 @@ void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
     for (uint8_t pcKey : _heldPcKeys)
         messageCenter.Post(MC_PCKEY_RELEASED, new PcKeyEvent(pcKey, KEY_RELEASED, targetId));
     _heldPcKeys.clear();
+    for (uint8_t matrixKey : _heldMatrixKeys)
+        messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(matrixKey, KEY_RELEASED, targetId));
+    _heldMatrixKeys.clear();
 }
 
 bool KeyboardManager::machineOwnsKey(const QKeyEvent* event, const Keyboard* keyboard)

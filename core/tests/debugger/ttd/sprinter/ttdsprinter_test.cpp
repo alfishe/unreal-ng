@@ -253,6 +253,7 @@ TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
     ASSERT_TRUE(input.KeyboardStream().Busy());
     ASSERT_LT(input.SerialMouse().GetState().sent, 3);
     input.SetKeyboardOverruns(3);
+    input.SetPldKeyboardFlags(SprinterInput::kPldCtrl | SprinterInput::kPldAlt | SprinterInput::kPldOff);
 
     ttd::TTDSprinterInput serializer(*_decoder);
     EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterInput::kSize);
@@ -271,6 +272,8 @@ TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
     EXPECT_EQ(board.x, 31 + 12) << "the board mouse counters are in the blob";
     EXPECT_EQ(board.y, 85 - 1);
     EXPECT_EQ(board.buttons, 0xFD);
+    EXPECT_EQ(input.PldKeyboardFlags(), SprinterInput::kPldCtrl | SprinterInput::kPldAlt | SprinterInput::kPldOff)
+        << "the PLD's keyboard block (Ctrl and Alt down, a break prefix seen) is in the blob";
 }
 
 TEST_F(TTDSprinter_Test, VideoRam_RoundTripsWithThePaletteAndTheIntList)

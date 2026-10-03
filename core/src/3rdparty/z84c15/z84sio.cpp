@@ -19,14 +19,23 @@ void Z84Sio::ResetChannel(uint8_t ch)
     c.wr[2] = vector;
 }
 
+void Z84Sio::LatchTopStatus(Channel& c)
+{
+    if (c.fifoCount && (c.overrun & EntryFlag(0)))
+        c.overrun |= kOverrunLatch;
+}
+
 bool Z84Sio::Receive(uint8_t ch, uint8_t value)
 {
     Channel& c = _ch[ch & 1];
     if (c.fifoCount >= kFifoDepth)
     {
-        c.overrun = 1;
+        // The completed character overwrites the newest one in the FIFO and carries the overrun flag
+        c.fifo[kFifoDepth - 1] = value;
+        c.overrun |= EntryFlag(kFifoDepth - 1);
         return false;
     }
+    c.overrun &= static_cast<uint8_t>(~EntryFlag(c.fifoCount));
     c.fifo[c.fifoCount++] = value;
     if (c.rxFirstArmed && ((c.wr[1] >> 3) & 3) == 1)
     {
@@ -43,9 +52,16 @@ uint8_t Z84Sio::ReadData(uint8_t ch)
     if (c.fifoCount == 0)
         return c.lastData;
     c.lastData = c.fifo[0];
+    // Interrupt on the first character: a special receive condition holds the FIFO until Error Reset
+    if (((c.wr[1] >> 3) & 3) == 1 && (c.overrun & kOverrunLatch))
+        return c.lastData;
     for (uint8_t i = 1; i < c.fifoCount; i++)
         c.fifo[i - 1] = c.fifo[i];
     c.fifoCount--;
+    // The entry flags move with their characters; the new top's status reaches RR1
+    const uint8_t entries = static_cast<uint8_t>((c.overrun >> 1) & 0x07);
+    c.overrun = static_cast<uint8_t>((c.overrun & kOverrunLatch) | (((entries >> 1) & 0x03) << 1));
+    LatchTopStatus(c);
     return c.lastData;
 }
 
@@ -66,7 +82,7 @@ uint8_t Z84Sio::ReadControl(uint8_t ch)
             // bit 0 Rx character available, bit 2 Tx buffer empty (transmit is instant)
             return static_cast<uint8_t>((c.fifoCount ? 0x01 : 0x00) | 0x04);
         case 1:
-            return static_cast<uint8_t>(0x01 | (c.overrun ? 0x20 : 0x00));  // all sent; overrun
+            return static_cast<uint8_t>(0x01 | ((c.overrun & kOverrunLatch) ? 0x20 : 0x00));  // all sent; overrun
         case 2:
             // The vector (both channels read channel B's WR2 here), status-modified when WR1B bit 2 is set
             if (_ch[1].wr[1] & 0x04)
@@ -106,8 +122,8 @@ void Z84Sio::WriteControl(uint8_t ch, uint8_t value)
         case 4:  // enable INT on next Rx character
             c.rxFirstArmed = 1;
             break;
-        case 6:  // error reset
-            c.overrun = 0;
+        case 6:  // error reset: the latch clears; characters still in the FIFO keep their own flags
+            c.overrun &= static_cast<uint8_t>(~kOverrunLatch);
             break;
         case 7:  // return from INT (channel A only): the SIO's RETI
             if ((ch & 1) == 0 && onReturnFromInt)

@@ -6,21 +6,38 @@
 ///
 /// The board (hardware-reference §13; PLD SP2_1K30.TDF / KBD.TDF; MAME
 /// sprinter.cpp:1987-2008):
-///   - the AT keyboard's clock and data lines go to SIO channel A (the clock as
-///     the receive clock, x1) and to the PLD. The SIO receives the raw set 2
-///     scan codes (3-byte FIFO); BIOS 3.04 SETUP and DSS poll channel A from
+///   - the AT keyboard's clock and data lines go to SIO channel A (KBD_CLKR to
+///     /RXCA and /TXCA, KBD_DATR to RXDA; the clock as the receive clock, x1)
+///     and, through the XA bus latch, to the PLD. The SIO receives the raw
+///     set 2 scan codes (3-byte FIFO); BIOS SETUP and DSS poll channel A from
 ///     their frame interrupt handler (SETUP KEYSCAN, DSS keyinter.asm RESCAN)
-///     and translate the codes themselves. Nothing holds the keyboard off: a
-///     byte that finds the FIFO full is an overrun (RR1 bit 5);
+///     and translate the codes themselves;
+///   - nothing holds the keyboard off: the only path that could pull the
+///     keyboard's clock or data low (DD16 KR1533TM9 Q3 / Q4 -> DD17C / DD17D
+///     onto KBD_CLK / KBD_DAT) is written with KBD_CX = KBD_DX = GND by the
+///     PLD (SP2_1K30.TDF:351-352, :729; the LED-command sender is commented
+///     out), and the SIO's /RTSA, /DTRA, /W/RDYA go elsewhere. A byte that
+///     finds the FIFO full overwrites its newest character (RR1 bit 5, see
+///     Z84Sio): the bytes are lost on the board too. BIOS SETUP up to 3.05
+///     and DSS up to 1.62.93 take one key event per frame INT and never look
+///     at RR1; BIOS 3.06 / 3.07 and DSS 1.71 (community sources, 2024-02-18 /
+///     -29; the check is in those binaries) drain the FIFO and, on an overrun,
+///     empty it, send Error Reset and forget the shift state;
 ///   - the PLD decodes the same stream into the ZX matrix read at #FE (code
 ///     #40). Here the matrix comes from the host's ZX key events (Keyboard),
 ///     which travel next to the PC key (KeyboardEvent / PcKeyEvent, one
 ///     journaled input each);
 ///   - keyboard INT: with ALL_MODE bits 0 and 3 set, an INT (vector #FF, the
 ///     PLD's) when a byte arrives (MAME on_kbd_data);
-///   - Ctrl + Alt + Del pulls the CPU's /RESET (KBD.TDF KB_RESET; the PLD keeps
-///     its configuration); F12 without Shift / Ctrl / Alt toggles the hardware
-///     turbo switch (KB_F12 -> TEST_SWITCH -> TURBO_HAND; MAME F12 "TURBO");
+///   - the PLD's keyboard block (KBD.TDF) decodes the wire itself, byte by
+///     byte as each frame ends, not the SIO: Ctrl (#14), Alt (#11) and Shift
+///     (#12, #59) flags set by their make and cleared after #F0; #71 (Delete,
+///     keypad .) with Ctrl and Alt pulls the CPU's /RESET (KB_RESET; the PLD
+///     keeps its configuration); every #07 (F12) not after #F0 toggles the
+///     turbo switch when no Shift / Ctrl / Alt is down (KB_F12 -> TEST_SWITCH
+///     -> TURBO_HAND), so the keyboard's typematic repeats of F12 toggle it
+///     again, as on the board. An SIO overrun cannot touch it. MAME instead
+///     toggles on the host F12 key ("TURBO", no repeats);
 ///   - the serial mouse on SIO channel B (1 200 baud, Microsoft protocol; SIO B
 ///     receives with CTC ZC/TO0 as its clock: the characters arrive only while
 ///     the software programs ~1 200 baud there, DSS 1.71: 875 kHz / 45 / 16;
@@ -40,7 +57,9 @@
 /// Worked example: the user presses F4 at the IDE wait. The host's PcKeyEvent
 /// is journaled and applied here; F4's make code #0C arrives at SIO A 917 us
 /// later; SETUP's next frame INT reads RR0 bit 0 = 1, then #0C from #18, and
-/// skips the drive.
+/// skips the drive. F12 instead: its #07 ends its frame 917 us after the press
+/// and the PLD flips the turbo switch then; held past 500 ms, each typematic
+/// #07 (every 92 ms) flips it again.
 
 #include <atomic>
 #include <cstdint>
@@ -107,8 +126,21 @@ public:
     /// Deliver everything due by now (the step hook, tests)
     void Advance();
 
-    /// A byte will arrive that must raise the keyboard INT on time
-    bool NeedsStepHook() const { return KeyboardIntEnabled() && _keyboard.Busy(); }
+    /// A byte will arrive that must raise the keyboard INT on time, or that the PLD acts on (#07, #71; a held F12 /
+    /// Delete / keypad . repeating)
+    bool NeedsStepHook() const { return (KeyboardIntEnabled() && _keyboard.Busy()) || PldActionPending(); }
+
+    /// region <The PLD's keyboard block watching the wire (KBD.TDF)>
+    static constexpr uint8_t kPldExt = 0x01;    ///< KB_EXT: the last byte was #E0
+    static constexpr uint8_t kPldOff = 0x02;    ///< KB_OFF: the last byte other than #E0 was #F0
+    static constexpr uint8_t kPldCtrl = 0x04;   ///< KB_CTRL
+    static constexpr uint8_t kPldAlt = 0x08;    ///< KB_ALT
+    static constexpr uint8_t kPldShift = 0x10;  ///< KB_SH
+    uint8_t PldKeyboardFlags() const { return _pldKeyboard; }
+    void SetPldKeyboardFlags(uint8_t flags) { _pldKeyboard = flags; }  ///< TTD restore
+    /// A byte on its way (or a key repeating) the PLD acts on
+    bool PldActionPending() const;
+    /// endregion
 
     /// The machine reset (the cumulative clock restarted): keys stay held, times move to now
     void Rebase();
@@ -141,6 +173,8 @@ public:
 
 private:
     uint64_t Now() const;
+    /// One byte's frame ended on the wire: the PLD's keyboard block decodes it
+    void OnWireByte(uint8_t value);
     /// The board's mouse counters (one source for the serial and the Kempston view)
     void SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const;
 
@@ -156,6 +190,7 @@ private:
     Ps2KeyboardStream _keyboard;
     MsSerialMouse _mouse;
     uint64_t _keyboardOverruns = 0;
+    uint8_t _pldKeyboard = 0;  ///< kPld* flags
     uint64_t _mouseFramingErrors = 0;
     /// An asynchronous receiver samples mid-bit: about half a bit over the 9.5 bits up to the stop bit, shared by
     /// both ends; 5 % is the usual budget

@@ -102,16 +102,19 @@ TEST_F(SprinterInput_Test, KeyReachesSioAAfterOneFrame)
     EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0xF0, 0x0C}));
 }
 
-// Nothing holds the keyboard off: a fourth byte into the 3-byte FIFO is an overrun (RR1 bit 5),
-// which SETUP's KEYSCAN checks (KEY.ASM Receiver_Overrun)
+// Nothing holds the keyboard off: a fourth byte into the 3-byte FIFO overwrites the newest character and flags it
+// (RR1 bit 5 once it reaches the top), which the community SETUP's KEYSCAN checks (KEY.asm Receiver_Overrun)
 TEST_F(SprinterInput_Test, FullFifoOverruns)
 {
     DrainA();
     Key(PcKey::Delete, true);   // E0 71
     Key(PcKey::Delete, false);  // E0 F0 71
     Wait(5 * kByteT);
+    EXPECT_EQ(Rr1() & 0x20, 0) << "the top character is good";
+    EXPECT_EQ(In(0x0018), 0xE0);
+    EXPECT_EQ(In(0x0018), 0x71);
     EXPECT_NE(Rr1() & 0x20, 0) << "overrun";
-    EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0xE0, 0x71, 0xE0}));
+    EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0x71})) << "the last #71 wrote over E0, then F0";
     EXPECT_EQ(Input().KeyboardOverruns(), 2u);
 }
 
@@ -182,28 +185,136 @@ TEST_F(SprinterInput_Test, HostKeyAlsoReachesTheZxMatrix)
     EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0x1C}));
 }
 
-// The PLD's keyboard block: Ctrl + Alt + Del pulls the CPU's /RESET (the configuration stays)
+// The PLD's keyboard block decodes the wire (KBD.TDF): Ctrl + Alt + Del pulls the CPU's /RESET when the #71 byte
+// ends its frame (the configuration stays)
 TEST_F(SprinterInput_Test, CtrlAltDelResetsTheCpu)
 {
-    Key(PcKey::LeftCtrl, true);
-    Key(PcKey::Delete, true);
+    Key(PcKey::LeftCtrl, true);  // 14
+    Key(PcKey::Delete, true);    // E0 71
+    Wait(3 * kByteT);
+    Input().Advance();
     EXPECT_EQ(Pld().resetPending, 0) << "Ctrl + Del alone is a key";
-    Key(PcKey::Delete, false);
-    Key(PcKey::LeftAlt, true);
-    Key(PcKey::Delete, true);
-    EXPECT_EQ(Pld().resetPending, static_cast<uint8_t>(static_cast<uint8_t>(SprinterResetKind::SoftReset) + 1));
+    Key(PcKey::Delete, false);  // E0 F0 71: a break is no reset
+    Key(PcKey::LeftAlt, true);  // 11
+    Wait(4 * kByteT);
+    Input().Advance();
+    EXPECT_EQ(Pld().resetPending, 0);
+    Key(PcKey::Delete, true);  // E0 71
+    EXPECT_TRUE(Input().NeedsStepHook()) << "the #71 must act on time";
+    Wait(kByteT);
+    _decoder->OnMachineStep(0);
+    EXPECT_EQ(Pld().resetPending, 0) << "E0 so far";
+    Wait(kByteT);
+    _decoder->OnMachineStep(0);
+    EXPECT_EQ(Pld().resetPending, static_cast<uint8_t>(static_cast<uint8_t>(SprinterResetKind::SoftReset) + 1))
+        << "at the end of the #71 frame";
 }
 
-// F12 alone flips the turbo switch (KB_F12 -> TURBO_HAND); with Shift it is a key
+// F12 (#07) flips the turbo switch when its make code ends its frame on the wire (KB_F12 -> TEST_SWITCH ->
+// TURBO_HAND); its break (F0 07) and Shift + F12 do not
 TEST_F(SprinterInput_Test, F12TogglesTheTurboSwitch)
 {
     const uint8_t before = Pld().turboHard;
     Key(PcKey::Function12, true);
+    EXPECT_EQ(Pld().turboHard, before) << "the byte is still on the wire";
+    EXPECT_TRUE(Input().NeedsStepHook()) << "the PLD acts on #07: the byte is delivered on time";
+    Wait(kByteT);
+    _decoder->OnMachineStep(0);
     EXPECT_EQ(Pld().turboHard, before ^ 1);
     Key(PcKey::Function12, false);
+    Wait(2 * kByteT);
+    _decoder->OnMachineStep(0);
+    EXPECT_EQ(Pld().turboHard, before ^ 1) << "F0 07 is a break";
     Key(PcKey::LeftShift, true);
     Key(PcKey::Function12, true);
+    Wait(2 * kByteT);
+    _decoder->OnMachineStep(0);
     EXPECT_EQ(Pld().turboHard, before ^ 1) << "Shift + F12 does not switch";
+    EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0x07, 0xF0, 0x07}))
+        << "the SIO's view (the FIFO held three; the last two bytes, 12 07, overran it)";
+}
+
+// The PLD hears every #07 the keyboard sends: held past the typematic delay, F12 repeats and each repeat flips the
+// switch again, as on the board (the host's single press is not what the PLD sees)
+TEST_F(SprinterInput_Test, HeldF12RepeatsAndTogglesAgain)
+{
+    const uint8_t before = Pld().turboHard;
+    Ps2KeyboardStream& stream = Input().KeyboardStream();
+    Key(PcKey::Function12, true);
+    Wait(kByteT);
+    Input().Advance();
+    ASSERT_EQ(Pld().turboHard, before ^ 1);
+    EXPECT_TRUE(Input().NeedsStepHook()) << "a repeating F12 keeps the hook";
+    Wait(stream.TypematicDelayTStates());
+    Input().Advance();
+    EXPECT_EQ(Pld().turboHard, before) << "the first repeat";
+    Wait(stream.TypematicPeriodTStates());
+    Input().Advance();
+    EXPECT_EQ(Pld().turboHard, before ^ 1) << "the second repeat";
+    Key(PcKey::Function12, false);
+    Wait(2 * kByteT);
+    Input().Advance();
+    EXPECT_EQ(Pld().turboHard, before ^ 1);
+    EXPECT_FALSE(Input().NeedsStepHook());
+}
+
+// The owner's case: the CPU reads nothing for many frames (DI in a demo, a long ISR) while keys go down and up. The
+// SIO overruns and keeps two old characters plus the newest, as the chip does. The software then sees a wrong
+// stream (here a phantom F12 make: F0 07 lost its F0), but the PLD decodes the wire, not the SIO: no turbo switch.
+// The keyboard sends exactly the bytes of the host's keys - nothing repeats after the release
+TEST_F(SprinterInput_Test, OverrunWithTheCpuDeafLosesBytesButInventsNothing)
+{
+    constexpr uint64_t kFrame = 71680;  // one 3.5 MHz frame
+    const uint8_t turbo = Pld().turboHard;
+    Ps2KeyboardStream& stream = Input().KeyboardStream();
+    DrainA();
+
+    // Enter tapped, then Down held through the typematic delay, then released; then F12 pressed + released with Shift
+    Key(PcKey::Enter, true);
+    Wait(kFrame);
+    Key(PcKey::Enter, false);
+    Wait(kFrame);
+    Key(PcKey::Down, true);
+    Wait(stream.TypematicDelayTStates() + 2 * stream.TypematicPeriodTStates() + kByteT);
+    Key(PcKey::Down, false);
+    Wait(kFrame);
+    Key(PcKey::LeftShift, true);
+    Key(PcKey::Function12, true);
+    Wait(kFrame);
+    Key(PcKey::LeftShift, false);
+    Wait(kFrame);
+    Key(PcKey::Function12, false);  // F0 07
+    Wait(30 * kFrame);              // the CPU still deaf
+    Input().Advance();
+
+    EXPECT_FALSE(stream.Busy()) << "every byte sent, no key repeating";
+    EXPECT_FALSE(stream.IsHeld(PcKey::Down));
+    EXPECT_GT(Input().KeyboardOverruns(), 0u);
+    EXPECT_EQ(Pld().turboHard, turbo) << "Shift + F12, then F12's break: the PLD never switched";
+    EXPECT_EQ(Pld().resetPending, 0);
+
+    // What the CPU finds: the first two characters, and the newest one (the 07 of F12's break) in the third slot,
+    // flagged: RR1 bit 5 rises when it reaches the top
+    EXPECT_EQ(Rr1() & 0x20, 0x00);
+    EXPECT_EQ(In(0x0018), 0x5A);
+    EXPECT_EQ(In(0x0018), 0xF0);
+    EXPECT_NE(Rr1() & 0x20, 0x00) << "the overrun shows with the written-over character";
+    EXPECT_EQ(In(0x0018), 0x07) << "a phantom F12 make for the software; the board's turbo did not move";
+    EXPECT_EQ(Rr0() & 0x01, 0);
+
+    // Read in time again, the stream is whole
+    Out(0x0019, 0x30);  // Error Reset, as the community BIOS / DSS 1.71 do
+    Key(PcKey::Up, true);
+    Key(PcKey::Up, false);
+    std::vector<uint8_t> got;
+    for (int i = 0; i < 6; i++)
+    {
+        Wait(kByteT);
+        const std::vector<uint8_t> part = DrainA();
+        got.insert(got.end(), part.begin(), part.end());
+    }
+    EXPECT_EQ(got, (std::vector<uint8_t>{0xE0, 0x75, 0xE0, 0xF0, 0x75}));
+    EXPECT_EQ(Rr1() & 0x20, 0);
 }
 
 // The serial mouse: a move from the mouse manager (host, automation, TTD replay) arrives at SIO B as a

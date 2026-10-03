@@ -39,9 +39,14 @@ public:
     /// targetId broadcasts
     static void postHostKey(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId);
 
-    /// Post releases of the physical keys still held (the window lost the key
-    /// events: focus change, full screen toggle), so a PS/2 machine sees them go up
+    /// Post releases of every key still held (the window lost the key events:
+    /// focus change, full screen toggle): the physical keys, so a PS/2 machine
+    /// sees them go up, and the ZX matrix keys, whose press counters would
+    /// otherwise keep the key down even through a later press and release
     static void postHeldKeyReleases(const std::string& targetId);
+    /// The keys posted as held (tests)
+    static size_t heldPcKeyCount() { return _heldPcKeys.size(); }
+    static size_t heldMatrixKeyCount() { return _heldMatrixKeys.size(); }
 
     /// Menu shortcuts and PC keyboards (docs/features/keyboard.md "Function keys on PC-keyboard machines"):
     /// while the emulator view has focus, a bare function key F1-F12 (Shift allowed; no Ctrl / Alt / Cmd)
@@ -56,6 +61,9 @@ public:
 protected:
     static std::map<quint32, ZXKeysEnum> _keyMap;
     static std::set<uint8_t> _heldPcKeys;
+    /// One entry per matrix press posted and not released (a key forwarded twice counts twice, as the
+    /// keyboard's press counters do)
+    static std::multiset<uint8_t> _heldMatrixKeys;
 };
 
 #endif // KEYBOARDMANAGER_H
