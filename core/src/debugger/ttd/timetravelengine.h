@@ -64,8 +64,8 @@ enum class TTDRestoreIssueKind : uint8_t
 enum class TTDLiveStateAction : uint8_t
 {
     NotApplicable,
-    KeptLive,         ///< the device cannot reset itself: what it held before the restore
-    ResetToPowerOn,   ///< the same restore always gives the same machine
+    KeptLive,         ///< what it held before the restore (D38: within a session every checkpoint holds
+                      ///< every device; this happens only on a machine whose devices differ, or on damage)
 };
 
 struct TTDRestoreIssue
@@ -231,8 +231,8 @@ public:
     /// order, then call their after-restore hooks. Run after the memory regions
     /// are restored (RestoreToMemory): a device whose state the engine keeps
     /// without its region memory loads only that state. A device without state
-    /// in the checkpoint resets to power-on when it can (else keeps its live
-    /// state); state for a device this machine lacks, a state of the wrong size
+    /// in the checkpoint keeps its live state; state for a device this
+    /// machine lacks, damaged state, a state of the wrong size
     /// and a different firmware are reported. Each problem is an issue of the
     /// result, naming the device and what it holds now
     TTDRestoreResult RestoreDevices(size_t index, const TTDRestoreContext& context);

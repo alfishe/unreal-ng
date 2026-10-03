@@ -862,21 +862,16 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
         if (read == DeviceStateRead::Damaged)
         {
             TTDRestoreIssue damage = DamageIssue(index, static_cast<uint32_t>(_deviceRegionOf[id]), damagedPiece);
-            damage.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
-                                                          : TTDLiveStateAction::KeptLive;
-            damage.detail += damage.action == TTDLiveStateAction::ResetToPowerOn ? ", reset to power-on"
-                                                                                 : ", kept its live state";
+            damage.action = TTDLiveStateAction::KeptLive;
+            damage.detail += ", kept its live state";
             result.Add(damage);
             continue;
         }
         if (read != DeviceStateRead::Ok || state.empty())
         {
             issue.kind = TTDRestoreIssueKind::DeviceMissingState;
-            issue.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
-                                                         : TTDLiveStateAction::KeptLive;
-            issue.detail = issue.action == TTDLiveStateAction::ResetToPowerOn
-                               ? "no state at this position, reset to power-on"
-                               : "no state at this position, kept its live state";
+            issue.action = TTDLiveStateAction::KeptLive;
+            issue.detail = "no state at this position, kept its live state";
             result.Add(issue);
             continue;
         }
@@ -891,8 +886,7 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
         if (!loaded)
         {
             issue.kind = TTDRestoreIssueKind::SizeMismatch;
-            issue.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
-                                                         : TTDLiveStateAction::KeptLive;
+            issue.action = TTDLiveStateAction::KeptLive;
             issue.detail = "stored state of " + std::to_string(state.size()) + " bytes does not fit (" +
                            std::to_string(d.stateSize) + ")";
             result.Add(issue);

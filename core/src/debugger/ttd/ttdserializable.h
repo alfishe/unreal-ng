@@ -364,11 +364,6 @@ public:
     /// in TTDLoadState stays there
     virtual void TTDAfterRestore(const TTDRestoreContext& context) { (void)context; }
 
-    /// Put the device in its power-on state, for a restore whose checkpoint
-    /// has no state for it (the same restore then always gives the same
-    /// machine). False: the device cannot, it keeps its live state
-    virtual bool TTDResetToPowerOn() { return false; }
-
     /// A device that runs its own clock behind the CPU (runsBehindCpu: a card
     /// CPU, a sound chip synced lazily): is that clock where a frame boundary
     /// needs it - caught up to the current frame's start, and not past the

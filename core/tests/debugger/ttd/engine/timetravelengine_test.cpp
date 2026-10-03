@@ -281,19 +281,12 @@ namespace
 class FakeDevice : public TTDSerializable
 {
 public:
-    FakeDevice(PeripheralId id, bool canReset) : _id(id), _canReset(canReset) {}
+    explicit FakeDevice(PeripheralId id) : _id(id) {}
     size_t TTDStateSize() const override { return 4; }
     void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, 4); }
     void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, 4); }
     std::string TTDDeviceName() const override { return "Fake" + std::to_string(static_cast<int>(_id)); }
     PeripheralId TTDPeripheralId() const override { return _id; }
-    bool TTDResetToPowerOn() override
-    {
-        if (!_canReset)
-            return false;
-        std::memset(state, 0, 4);
-        return true;
-    }
     TTDDeviceDescriptor TTDDescribe() const override
     {
         TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
@@ -308,7 +301,6 @@ public:
 
 private:
     PeripheralId _id;
-    bool _canReset;
 };
 
 std::vector<uint8_t> Blob(PeripheralId id, std::vector<uint8_t> state)
@@ -329,10 +321,10 @@ TEST(TimeTravelEngine_RestoreDevices_Test, EachProblemIsReportedWithTheDevice)
     r.memory = ram.data();
     r.pieces = 1;
     r.bytes = kTTDPieceSize;
-    FakeDevice tape(PeripheralId::Tape, true);        // no state at the checkpoint, can reset
-    FakeDevice covox(PeripheralId::Covox, false);     // no state, cannot reset
-    FakeDevice mouse(PeripheralId::KempstonMouse, false);   // state of the wrong size
-    FakeDevice beta(PeripheralId::BetaDisk, false);   // restored, firmware changed since
+    FakeDevice tape(PeripheralId::Tape);       // no state at the checkpoint
+    FakeDevice covox(PeripheralId::Covox);     // no state
+    FakeDevice mouse(PeripheralId::KempstonMouse);   // state of the wrong size
+    FakeDevice beta(PeripheralId::BetaDisk);   // restored, firmware changed since
     beta.firmware = 0x1111;
     ASSERT_TRUE(engine.BeginSession({r},
                                     {{tape.TTDDescribe(), &tape, nullptr},
@@ -363,8 +355,8 @@ TEST(TimeTravelEngine_RestoreDevices_Test, EachProblemIsReportedWithTheDevice)
     };
     const TTDRestoreIssue* t = find(TTDRestoreIssueKind::DeviceMissingState, "fake2");
     ASSERT_NE(t, nullptr) << result.message;
-    EXPECT_EQ(t->action, TTDLiveStateAction::ResetToPowerOn);
-    EXPECT_EQ(tape.state[0], 0) << "reset to power-on";
+    EXPECT_EQ(t->action, TTDLiveStateAction::KeptLive);
+    EXPECT_EQ(tape.state[0], 1) << "kept its live state";
     const TTDRestoreIssue* c = find(TTDRestoreIssueKind::DeviceMissingState, "fake3");
     ASSERT_NE(c, nullptr) << result.message;
     EXPECT_EQ(c->action, TTDLiveStateAction::KeptLive);
