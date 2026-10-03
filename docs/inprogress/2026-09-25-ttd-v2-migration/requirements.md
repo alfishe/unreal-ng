@@ -182,9 +182,12 @@ Release build), reference workloads of §5.3.
   comparison, v1 measures +27% (no journal) and +28% (journal) on Pentagon +
   TSFM.
 - **PR-2 (SHOULD)** Frame overhead ≤ 10% without the write journal.
-- **PR-3 (MUST)** No periodic spikes: the p99 per-frame capture time is at most
-  3× the median for the same workload (v1 re-stores all RAM every 50 frames:
-  5.4 ms on a 4 MB machine).
+- **PR-3 (MUST)** No spikes: capturing a frame takes at most 1 ms (p99 over the
+  workload; the first frame, which stores every memory once, is not counted).
+  v1 re-stores all RAM every 50 frames: 5.4 ms on a 4 MB machine. *Changed
+  2026-10-03:* it was "p99 at most 3× the median", a ratio that fails whenever a
+  program changes more memory in some frames than in others (loading, demos),
+  whatever the engine does; the Phase 1 check showed it ([phase-1-results.md](phase-1-results.md#timings)).
 - **PR-4 (MUST)** **Cost follows change**: with no memory written in a frame,
   capture time on a 4 MB configuration is within 20% of a 128 KB configuration
   with the same devices. With N dirty 4 KB pieces, capture time grows with N,

@@ -130,7 +130,8 @@ recorded bytes, memory and counted capture work per frame, the engine never
 above v1, with the decision's exceptions applied (memory v1 does not record at
 all; the engine's fixed delta base and arena slack printed apart). Exit status
 1 when a condition fails. `--timings` adds the capture and memory-restore
-timings, which are not judged (run on an idle host, load < 12, twice).
+timings and judges them too: capture p99 at most 1 ms (PR-3), memory restore
+p99 at most 5 ms (PR-5); run on an idle host (load < 12).
 
 ```bash
 UNREAL_TTD_BENCH_ENGINE=all UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_FRAMES=600 UNREAL_TTD_BENCH_SEEKS=0 \

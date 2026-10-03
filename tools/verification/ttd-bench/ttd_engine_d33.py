@@ -22,8 +22,10 @@ three deterministic conditions of decision 33 and the timings:
   left out.
 
 A condition fails when the engine is larger than v1 (memory: by more than 2%,
-the allocator tolerance). Timings are printed, not judged: they depend on the
-host's load (run on an idle host, load < 12, twice).
+the allocator tolerance). With --timings the two time limits are judged too
+(run on an idle host, load < 12): capture p99 at most 1 ms (PR-3; p99 of a
+600-frame run already leaves the first frame, which stores every memory once,
+out) and memory restore p99 at most 5 ms (PR-5).
 
 Usage:
     python3 tools/verification/ttd-bench/ttd_engine_d33.py <run.json> [--timings]
@@ -33,6 +35,10 @@ Exit status 1 when a condition fails.
 import argparse
 import json
 import sys
+
+
+CAPTURE_P99_LIMIT_US = 1000.0   # PR-3
+RESTORE_P99_LIMIT_US = 5000.0   # PR-5
 
 
 def load(path):
@@ -70,6 +76,8 @@ def check(v, x):
                 + g(b, "bm2_work_device_state_bpf") + g(b, "bm2_work_delta_base_bpf"))
 
     return {
+        "capture_ok": g(x, "bm2_capture_us_p99") <= CAPTURE_P99_LIMIT_US,
+        "restore_ok": g(x, "bm6_restore_memory_us_p99") <= RESTORE_P99_LIMIT_US,
         "bytes": (bytes_v1, bytes_engine, bytes_engine <= bytes_v1 * 1.0005),
         "memory": (mem_v1, mem_engine, mem_engine <= mem_v1 * 1.02),
         "work": (work(v, 0.0), work(x, g(x, "bm2_work_scanned_v1_lacks_bpf")), None),
@@ -100,16 +108,19 @@ def main():
         wv, we, _ = c["work"]
         wok = we <= wv
         ok = bok and mok and wok
+        if args.timings:
+            ok = ok and c["capture_ok"] and c["restore_ok"]
         failed += 0 if ok else 1
         mark = lambda good: "" if good else " X"
         line = (f"{cfg:28s} {bv:11.0f} -> {be:8.0f}{mark(bok):2s} {mv:7.0f} -> {me:6.0f}{mark(mok):2s} "
                 f"{wv:9.0f} -> {we:8.0f}{mark(wok):2s} {c['fixed'][0]:9.0f} {c['fixed'][1]:6.0f}")
         if args.timings:
             line += (f" {g(v, 'bm2_capture_us_p50'):7.1f} -> {g(x, 'bm2_capture_us_p50'):5.1f} "
-                     f"{g(x, 'bm2_capture_us_p99'):6.1f} {g(v, 'bm6_restore_memory_us_p50'):7.0f} -> "
-                     f"{g(x, 'bm6_restore_memory_us_p50'):5.0f} {g(x, 'bm6_restore_memory_us_p99'):6.0f}")
+                     f"{g(x, 'bm2_capture_us_p99'):6.1f}{mark(c['capture_ok'])} {g(v, 'bm6_restore_memory_us_p50'):7.0f} -> "
+                     f"{g(x, 'bm6_restore_memory_us_p50'):5.0f} {g(x, 'bm6_restore_memory_us_p99'):6.0f}{mark(c['restore_ok'])}")
         print(line)
-    print(f"\n{len(rows)} configurations, {failed} failing a deterministic condition")
+    what = "a condition" if args.timings else "a deterministic condition"
+    print(f"\n{len(rows)} configurations, {failed} failing {what}")
     return 1 if failed else 0
 
 

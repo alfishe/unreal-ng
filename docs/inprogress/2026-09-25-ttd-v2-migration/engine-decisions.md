@@ -99,7 +99,7 @@ Fixed as part of this change, without further discussion:
 | Memory | not larger than v1 for the same history kept (v1 with exact-size allocation) | benchmark, with the allocator tolerance |
 | Capture work | counted work per frame (`bm2_work_*`: pages walked, bytes copied, zstd calls) not larger than v1 | deterministic, CI gate, no clock |
 | Seek time | may be slower than v1, but p99 ≤ 5 ms on every configuration (PR-5), and from Phase 1, Step 5 (restore only the pieces that differ) on no slower than E4's estimates by more than 25% (E4's own accuracy) | benchmark on an idle host (load < 12), run twice |
-| Capture time | p99 ≤ 3× the median (PR-3) | benchmark |
+| Capture time | p99 ≤ 1 ms, the first frame not counted (PR-3; changed 2026-10-03 from "p99 ≤ 3× the median") | benchmark on an idle host |
 
 **Same history kept.** v1's write-journal ring drops old writes after 1–3 minutes of active content, while the engine keeps them ([E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e6-v1-v2-model/README.md): Eye Ache after 5 minutes, v1 81 MB against the engine's 177 MB, because the engine holds five times the journal). Sizes are therefore compared per stream, per frame of history actually kept, or on recordings where v1's ring did not wrap.
 

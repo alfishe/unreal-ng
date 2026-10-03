@@ -13,7 +13,7 @@ Measured 2026-10-02 on branch `ttd-engine`, commit `d7c609051`, Release, on the 
 | Memory not larger than v1 | Yes, on all 46, for the parts both engines have |
 | Counted capture work not larger than v1 | Yes, on all 46: 2× to 50× less |
 | Seek time within PR-5 (p99 ≤ 5 ms) | Yes, even under heavy load: the worst memory restore p99 is 1.8 ms (Sprinter), measured at load 17–139 |
-| Capture time p99 ≤ 3 × p50 (PR-3) | Not as a ratio on 25 of 46 configurations (v1: 39): the slow captures are frames with more changed content, the time follows the work (see [Timings](#timings)); p99 at most 280 µs after the first frame |
+| Capture time p99 ≤ 1 ms (PR-3) | Yes, on all 46: at most 280 µs (Sprinter). PR-3 was "p99 ≤ 3 × p50" until 2026-10-03; see [Timings](#timings) |
 
 The check is a tool: `tools/verification/ttd-bench/ttd_engine_d33.py` (exit status 1 when a condition fails). The baseline is `testdata/ttd/bench/engine-phase1-full.json`.
 
@@ -164,7 +164,9 @@ Run 2026-10-02 at load 5.7–12.4 (one-minute average at the start and the end),
 - demos and disk loading have frames with 8-11 compressions against 1-2 in a quiet frame;
 - one capture was host noise: Profi frame 447, 2.4 ms for a single compression.
 
-With full reference tables switched off (snapshot interval 1,000,000) the p99 stays the same, so the periodic full table is not the cause. The engine's capture p99 is at most 280 µs after the first frame (1.4% of a 20 ms frame). Whether PR-3 should be judged per unit of work or against an absolute budget instead of the ratio is open.
+With full reference tables switched off (snapshot interval 1,000,000) the p99 stays the same, so the periodic full table is not the cause. The engine's capture p99 is at most 280 µs after the first frame (1.4% of a 20 ms frame).
+
+**PR-3 changed (2026-10-03)**: a frame's capture takes at most 1 ms (p99; the first frame not counted). The ratio measured how unevenly a program writes memory, not the engine. The engine meets the new limit on all 46 configurations with a margin of more than three times.
 
 ## Migration v1 → engine
 
@@ -174,4 +176,3 @@ With full reference tables switched off (snapshot interval 1,000,000) the p99 st
 
 - The delta base of mostly-zero regions (TODO).
 - Media versions: written sectors, write-protect toggles, queued swaps (registry gaps 11–13; decision 25, Phase 3).
-- PR-3: decide whether it is judged per unit of work or against an absolute budget (the ratio follows the workload).
