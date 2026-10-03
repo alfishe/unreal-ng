@@ -621,7 +621,7 @@ void TtdWidget::onLoadSession()
     else
     {
         ttd->SetSessionSourcePath(path);
-        ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+        ttd::TTDSessionInfo info = ttd->ReadSessionInfo();
         ttd->SeekTo(ttd::TTDTimePoint{info.sessionStartFrame, 0});
         _mainWindow->refreshViewport();
     }

@@ -1421,6 +1421,11 @@ void Emulator::WaitWhilePaused()
     if (!_isPaused)
         return;
 
+    // Parking mid-frame: publish the TTD summary first (see MainLoop::Run's
+    // park). The caller executes the machine, so it may read the session
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->OnMachineParking();
+
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
     // Re-confirm on EVERY park iteration, not just the first. A rapid
     // Resume()->Pause() flip-flop (e.g. adapter resume immediately followed

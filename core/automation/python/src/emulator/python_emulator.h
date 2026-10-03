@@ -3334,7 +3334,7 @@ namespace PythonBindings
                     return info;
                 }
                 ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-                ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+                ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
                 info["state"]                    = ttd::TTDSessionStateToString(si.state);
                 info["session_start_frame"]      = py::cast(si.sessionStartFrame);
                 info["current_end_frame"]        = py::cast(si.currentEndFrame);
@@ -3461,11 +3461,11 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager)
                     throw std::runtime_error("TTD not available");
-                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
                 ctx->pTimeTravelManager->SetHistoryLimit(
                     framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
                     bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
-                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
                 return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
             }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
                "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
@@ -3592,7 +3592,7 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return markers;
                 const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-                for (const auto& e : journal.Events())
+                for (const auto& e : journal.SnapshotEvents())
                 {
                     py::dict marker;
                     marker["frame"]    = py::cast(e.time.frame);
@@ -3744,7 +3744,7 @@ namespace PythonBindings
                     result["error"] = err;
                     return result;
                 }
-                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
                 result["ok"] = true;
                 result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
                 result["session_start_frame"] = info.sessionStartFrame;
@@ -4040,7 +4040,7 @@ namespace PythonBindings
                     return d;
                 }
                 auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
+                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
                 ttd::TTDCoverageKindFromString(kindStr, kind);
                 std::optional<ttd::PhysPage> physPage;
@@ -4081,7 +4081,7 @@ namespace PythonBindings
                     return d;
                 }
                 auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
+                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 std::optional<ttd::TTDCoverageKind> optKind;
                 if (!kindObj.is_none())
                 {

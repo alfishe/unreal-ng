@@ -3424,7 +3424,7 @@ public:
                 return info;
             }
             ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-            ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+            ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
             info["state"]                    = ttd::TTDSessionStateToString(si.state);
             info["session_start_frame"]      = si.sessionStartFrame;
             info["current_end_frame"]        = si.currentEndFrame;
@@ -3549,10 +3549,10 @@ public:
             if (!emulator) return {0, 0};
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
-            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
             ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
                                                      bytes.value_or(si.historyLimitBytes));
-            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
             return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
@@ -3704,7 +3704,7 @@ public:
             if (!ctx || !ctx->pTimeTravelManager) return result;
             const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
             int idx = 1;  // Lua tables are 1-based
-            for (const auto& e : journal.Events())
+            for (const auto& e : journal.SnapshotEvents())
             {
                 sol::table marker = lua_view.create_table();
                 marker["frame"]    = e.time.frame;
@@ -3865,7 +3865,7 @@ public:
                 result["error"] = err;
                 return result;
             }
-            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
             result["ok"] = true;
             result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
             result["session_start_frame"] = info.sessionStartFrame;
@@ -4228,7 +4228,7 @@ public:
             auto* mgr = emulator->GetContext()->pTimeTravelManager;
             uint64_t fromFrame = 0;
             if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
             if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
             std::string kindStr = "executed";
             if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
@@ -4288,7 +4288,7 @@ public:
             auto* mgr = emulator->GetContext()->pTimeTravelManager;
             uint64_t fromFrame = 0;
             if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
             if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
             std::optional<ttd::TTDCoverageKind> optKind;
             if (argsTable["kind"].valid())
