@@ -66,6 +66,26 @@ static std::shared_ptr<Emulator> getEmulatorOrError(
 
 // region Stepping Commands
 
+namespace
+{
+/// The end of a step as the protocol's PauseEvent describes it (docs/inprogress/2026-09-28-debugger-model/
+/// protocol.md §3.16): reason "step", or "breakpoint" with which one, where and on what access
+Json::Value StepStopJson(const Emulator& emulator)
+{
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    Json::Value json;
+    json["cpu"] = "main";
+    json["reason"] = stop.hit ? "breakpoint" : "step";
+    if (stop.hit)
+    {
+        json["breakpoint_id"] = stop.breakpointId;
+        json["address"] = stop.address;
+        json["access"] = BreakpointHitKindName(stop.kind);
+    }
+    return json;
+}
+}  // namespace
+
 /// @brief POST /api/v1/emulator/{id}/step
 /// @brief Execute single CPU instruction
 void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -93,13 +113,19 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
     try
     {
         // Execute single instruction
-        emulator->RunSingleCPUCycle(false); // Don't skip breakpoints
+        // Don't skip breakpoints: an execution breakpoint stops the step before its instruction,
+        // a memory or port breakpoint after it (the reply's "stop" says which)
+        emulator->RunSingleCPUCycle(false);
+        const Emulator::BreakpointStop& stop = emulator->LastDirectStop();
+        const bool executed = !(stop.hit && stop.kind == BreakpointHitKind::Execute);
         
         Z80State* z80 = emulator->GetZ80State();
         
         Json::Value ret;
         ret["status"] = "success";
-        ret["message"] = "Executed 1 instruction";
+        ret["message"] = executed ? "Executed 1 instruction" : "Stopped at a breakpoint before the instruction";
+        ret["executed"] = executed ? 1 : 0;
+        ret["stop"] = StepStopJson(*emulator);
         if (z80)
         {
             ret["pc"] = z80->pc;
@@ -156,15 +182,17 @@ void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const Http
         if (count < 1) count = 1;
         if (count > 100000) count = 100000; // Safety limit
         
-        // Execute N instructions
-        emulator->RunNCPUCycles(count, false); // Don't skip breakpoints
+        // Execute N instructions; a breakpoint ends the run early (the reply's "stop" says which)
+        const unsigned executed = emulator->RunNCPUCycles(count, false);
         
         Z80State* z80 = emulator->GetZ80State();
         
         Json::Value ret;
         ret["status"] = "success";
-        ret["message"] = "Executed " + std::to_string(count) + " instructions";
+        ret["message"] = "Executed " + std::to_string(executed) + " instructions";
         ret["count"] = count;
+        ret["executed"] = executed;
+        ret["stop"] = StepStopJson(*emulator);
         if (z80)
         {
             ret["pc"] = z80->pc;

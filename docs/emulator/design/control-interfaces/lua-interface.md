@@ -459,8 +459,10 @@ success = emu:init()
 emu:reset()
 emu:pause()
 emu:resume()
-pc = emu:step()          -- Returns PC after step
-pc = emu:steps(count)    -- Returns PC after N steps
+r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
+r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run early
+-- r = {executed, stopped, breakpoint_id, address, access}: an execution breakpoint stops
+-- before its instruction, a memory / port one after it (.recipe/analysis/breakpoints-and-events.md)
 emu:run_frame()          -- Run exactly one video frame
 emu:run_frames(count)    -- Run exactly N video frames
 

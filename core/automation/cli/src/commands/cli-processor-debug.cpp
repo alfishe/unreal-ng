@@ -20,6 +20,22 @@
 #include <sstream>
 
 // HandleStepIn - lines 879-1033
+
+namespace
+{
+/// "Stopped at breakpoint #3 (write) at $9000" when a breakpoint ended the last steps, else nothing
+std::string StepStopLine(const Emulator& emulator)
+{
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    if (!stop.hit)
+        return {};
+    std::stringstream ss;
+    ss << "Stopped at breakpoint #" << std::dec << stop.breakpointId << " (" << BreakpointHitKindName(stop.kind)
+       << ") at $" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << stop.address << CLIProcessor::NEWLINE;
+    return ss.str();
+}
+}  // namespace
+
 void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -89,11 +105,19 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
     std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
                                                                                       z80State, memory, &decodedBefore);
 
-    // Execute the requested number of CPU cycles
+    // Execute the requested number of CPU cycles. Breakpoints are not skipped: one ends the steps
+    // (an execution breakpoint before its instruction, a memory or port one after it)
+    int executedCount = 0;
     for (int i = 0; i < stepCount; ++i)
     {
-        emulator->RunSingleCPUCycle(false);  // false = don't skip breakpoints
+        emulator->RunSingleCPUCycle(false);
+        const Emulator::BreakpointStop& stop = emulator->LastDirectStop();
+        if (!(stop.hit && stop.kind == BreakpointHitKind::Execute))
+            executedCount++;
+        if (stop.hit)
+            break;
     }
+    stepCount = executedCount;
 
     // Get the Z80 state after execution
     z80State = emulator->GetZ80State();  // Refresh state after execution
@@ -120,6 +144,7 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
     // Format response with CPU state information
     std::stringstream ss;
     ss << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << NEWLINE;
+    ss << StepStopLine(*emulator);
 
     // Show executed instruction
     ss << std::hex << std::uppercase << std::setfill('0');
@@ -508,11 +533,19 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
                                                                                       z80State, memory, &decodedBefore);
 
-    // Execute the requested number of CPU cycles
+    // Execute the requested number of CPU cycles. Breakpoints are not skipped: one ends the steps
+    // (an execution breakpoint before its instruction, a memory or port one after it)
+    int executedCount = 0;
     for (int i = 0; i < stepCount; ++i)
     {
-        emulator->RunSingleCPUCycle(false);  // false = don't skip breakpoints
+        emulator->RunSingleCPUCycle(false);
+        const Emulator::BreakpointStop& stop = emulator->LastDirectStop();
+        if (!(stop.hit && stop.kind == BreakpointHitKind::Execute))
+            executedCount++;
+        if (stop.hit)
+            break;
     }
+    stepCount = executedCount;
 
     // Get the Z80 state after execution
     z80State = emulator->GetZ80State();  // Refresh state after execution
@@ -539,6 +572,7 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     // Format response with CPU state information
     std::stringstream ss;
     ss << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << NEWLINE;
+    ss << StepStopLine(*emulator);
 
     // Show executed instruction
     ss << std::hex << std::uppercase << std::setfill('0');
@@ -927,11 +961,12 @@ void CLIProcessor::HandleRunNCycles(const ClientSession& session, const std::vec
         return;
     }
 
-    emulator->RunNCPUCycles(count, false);
+    const unsigned executed = emulator->RunNCPUCycles(count, false);
 
     Z80State* z80 = emulator->GetZ80State();
     std::stringstream ss;
-    ss << "Ran " << count << " CPU cycles" << NEWLINE;
+    ss << "Ran " << executed << " CPU cycles" << NEWLINE;
+    ss << StepStopLine(*emulator);
     if (z80)
     {
         ss << std::hex << std::uppercase << std::setfill('0');

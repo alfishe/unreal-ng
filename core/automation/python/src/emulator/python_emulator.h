@@ -91,6 +91,23 @@ namespace py = pybind11;
 /// Shared page-index validation for the page_* bindings: an invalid index
 /// must raise instead of silently returning zeros or touching memory outside
 /// the page (a negative cache/misc page reads before the buffer)
+
+/// How a direct run ended, for emu.step / emu.steps
+inline py::dict StepOutcome(const Emulator& emulator, unsigned executed)
+{
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    py::dict result;
+    result["executed"] = executed;
+    result["stopped"] = stop.hit;
+    if (stop.hit)
+    {
+        result["breakpoint_id"] = stop.breakpointId;
+        result["address"] = stop.address;
+        result["access"] = BreakpointHitKindName(stop.kind);
+    }
+    return result;
+}
+
 inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
 {
     int maxPage;
@@ -1137,12 +1154,18 @@ namespace PythonBindings
             }, "List all disk drives")
             
             // Execution control
+            // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
+            // (stopped: a breakpoint ended it - an execution one before its instruction)
             .def("step", [](Emulator& self, bool skipBreakpoints) {
                 self.RunSingleCPUCycle(skipBreakpoints);
-            }, "Execute single CPU instruction", py::arg("skip_breakpoints") = true)
+                const Emulator::BreakpointStop& stop = self.LastDirectStop();
+                return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
+            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
+               py::arg("skip_breakpoints") = true)
             .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
-                self.RunNCPUCycles(count, skipBreakpoints);
-            }, "Execute N CPU instructions", py::arg("count"), py::arg("skip_breakpoints") = false)
+                return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
+            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
+               py::arg("count"), py::arg("skip_breakpoints") = false)
             .def("stepover", &Emulator::StepOver, "Step over call instructions")
 
             // Frame stepping

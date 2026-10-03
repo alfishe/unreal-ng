@@ -1314,14 +1314,36 @@ public:
         });
 
         // Execution control
-        lua.set_function("step", [this](sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
-            effectiveEmulator()->RunSingleCPUCycle(skipBP.value_or(true));
+        // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
+        // (stopped: a breakpoint ended it - an execution one before its instruction)
+        auto stepOutcome = [](sol::state_view state, Emulator& emulator, unsigned executed) {
+            const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+            sol::table result = state.create_table();
+            result["executed"] = executed;
+            result["stopped"] = stop.hit;
+            if (stop.hit)
+            {
+                result["breakpoint_id"] = stop.breakpointId;
+                result["address"] = stop.address;
+                result["access"] = BreakpointHitKindName(stop.kind);
+            }
+            return result;
+        };
+
+        lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            Emulator& emulator = *effectiveEmulator();
+            emulator.RunSingleCPUCycle(skipBP.value_or(true));
+            const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+            const unsigned executed = (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0 : 1;
+            return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("steps", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
-            effectiveEmulator()->RunNCPUCycles(count, skipBP.value_or(false));
+        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            Emulator& emulator = *effectiveEmulator();
+            const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
+            return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
         lua.set_function("stepover", [this]() {
