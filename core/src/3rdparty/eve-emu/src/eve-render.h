@@ -8,6 +8,8 @@
 
 #include "eve-internal.h"
 
+#include <vector>
+
 namespace EveLib
 {
 
@@ -179,12 +181,63 @@ struct LineRun
     uint32_t commands;
     uint64_t fillCost;     // in 1/kFillCostScale clock
     uint32_t events;       // stack misuse, unknown opcodes, cut loops
-    uint32_t paletteNext;  // unused (the cache lives in EveChip)
     // Probe.
     int32_t probeX;
     EvePixelSource* probe;
     uint32_t commandIndex;
     uint32_t commandWord;
+    LinePlan* recording;   // set while a line's walk is recorded (ExecuteLine)
+    // The tag buffer is read for this line: REG_TAG's line (REG_TAG_Y) or a probe. On
+    // every other line nothing reads it and nothing in the pixel pipeline tests it, so
+    // its writes are skipped (WritesTag)
+    bool tagLive;
+};
+
+inline bool WritesTag(const LineRun& run)
+{
+    return run.tagLive && run.ctx.tagMask;
+}
+
+// The walk of one line, recorded for the lines after it (eve-dl.cpp, ExecuteLine).
+//
+// What a line's walk does to the state does not depend on the line: the words of the
+// active list, REG_MACRO_0 / 1, the bitmap handles at the start of the line and the
+// context (reset every line) decide it. Only the drawing depends on the line. So a walk is
+// recorded once as its drawing steps - every vertex and CLEAR with the context, the handle
+// and the primitive state it saw - and a later line with the same inputs replays the
+// steps instead of walking the list. A bitmap step whose rows miss the line is skipped by
+// the same test DrawBitmap starts with; every other step is replayed. The line's command
+// count, its events and the handles it leaves behind come from the recording.
+struct LinePlanStep
+{
+    bool clear;              // CLEAR, else a vertex
+    bool rowTest;            // a bitmap vertex: skip when rely is outside [0, rowsSubpixel)
+    uint8_t primitive;
+    uint32_t context;        // index into LinePlan::contexts
+    uint32_t vertexCount;    // since BEGIN, before this vertex
+    uint32_t clearMask;
+    int64_t rowsSubpixel;    // the handle's height in 1/16 pixel
+    Vertex v;
+    Vertex previous;
+    BitmapHandle handle;     // handles[v.handle] when the vertex executed
+    uint32_t commandIndex;
+    uint32_t commandWord;
+};
+
+struct LinePlan
+{
+    bool valid = false;
+    // The inputs of the recorded walk.
+    uint32_t activeDl = 0;
+    uint64_t dlVersion = 0;
+    uint32_t macro0 = 0, macro1 = 0;
+    BitmapHandle startHandles[kHandleCount] = {};
+    // What it did.
+    BitmapHandle endHandles[kHandleCount] = {};
+    uint32_t commands = 0;
+    uint32_t events = 0;
+    std::vector<GraphicsContext> contexts;
+    std::vector<LinePlanStep> steps;
 };
 
 // --- eve-dl.cpp --------------------------------------------------------------------------------

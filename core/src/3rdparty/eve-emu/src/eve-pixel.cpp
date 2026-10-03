@@ -108,7 +108,7 @@ bool BlendSpanFast(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t c
     }
     else
         return false;
-    if (ctx.tagMask)
+    if (WritesTag(run))
         std::memset(run.tag + first, ctx.tag, count);
     return true;
 }
@@ -157,7 +157,7 @@ void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t
     for (uint32_t c = 0; c < kChannels; ++c)
         if (ctx.colorMask & mask[c])
             dst[c] = out[c];
-    if (ctx.tagMask)
+    if (WritesTag(run))
         run.tag[x] = ctx.tag;
     if (Mode == LineMode::Probe && x == run.probeX)
     {
@@ -231,7 +231,7 @@ void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count
                     if (ctx.colorMask & mask[c])
                         dst[c] = out[c];
         }
-        if (ctx.tagMask)
+        if (WritesTag(run))
             run.tag[x] = ctx.tag;
     }
 }
@@ -278,7 +278,7 @@ void ClearLine(LineRun& run, uint32_t mask)
                 run.stencil[x] = static_cast<uint8_t>((run.stencil[x] & ~ctx.stencilWriteMask) |
                                                       (ctx.clearStencil & ctx.stencilWriteMask));
     }
-    if ((mask & kClearTag) && ctx.tagMask)
+    if ((mask & kClearTag) && WritesTag(run))
         std::memset(run.tag + first, ctx.clearTag, count);
     if (Mode == LineMode::Probe && (mask & kClearColor) && run.probeX >= first && run.probeX < last)
     {

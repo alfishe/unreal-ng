@@ -1,9 +1,9 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-3 done (eve-emu `5f47ded`, vendored); next round open.
+**Created:** 2026-10-03. **Status:** rounds 0-6 done (eve-emu `abf8aca`, vendored); next round open.
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
-speed of the real card to almost four times faster than it. Each round records what we
+speed of the real card to more than five times faster than it. Each round records what we
 started from, what was slow and why, what we changed, and what the numbers mean.
 Background on the drawing model: [acceleration-experiments.md](acceleration-experiments.md),
 line costs: [line-budget-model.md](line-budget-model.md).
@@ -137,22 +137,107 @@ gameplay profile (frames 7000-8600):
 machine). R-Type unchanged (6.1x on boot). **Meaning:** every kind of bitmap Zuma draws is on
 the fast path now. Drawing is 60 % of gameplay time; the other 40 % is the walk itself.
 
+## Round 4: walking the display list once, not on every line
+
+**Start.** Measured right before the round: **37.3 s, 3.9x**. Gameplay profile: 4.67 ms of
+drawing per frame, **40 % of it outside the bitmaps**. Per line the chip walked the whole
+display list, 508 - 768 commands: `CELL` 102, `BITMAP_SIZE` 50, `BITMAP_SOURCE` 50,
+`BITMAP_HANDLE` 18, `BITMAP_LAYOUT(_H)` 17 + 17, `COLOR_RGB` 17, `BEGIN` 12, the bitmap
+transform 11 each, plus the vertices.
+
+**What was slow and why.** Of the 107 bitmap vertices on every line, **96.7 (90 %) did not
+touch that line**: a sprite covers a few dozen of the 768 lines. Yet every line decoded all
+768 commands and set up every sprite, only to find it missed the line. The real chip does
+the same (its time per line is part of the line budget), but an emulator only needs the
+result.
+
+**Change.** A line's walk changes the state the same way whatever the line: the words of
+the list, `REG_MACRO_0 / 1` and the bitmap handles at the start of the line decide it (the
+context is reset every line); only the drawing depends on the line. So the walk of one line
+is recorded as its drawing steps (every vertex and `CLEAR`, with the context, the handle and
+the primitive state they saw), and each later line with the same inputs replays just those
+steps. A bitmap step whose rows miss the line is skipped by the same test the bitmap drawing
+starts with. The line's command count (the line cost), its events and the handles it leaves
+behind come from the recording.
+
+- Inputs compared before every line: which display list buffer is active, a version counter
+  of its contents (a swap, a restore, a reset), both macro registers, all 32 handles (768
+  bytes). A miss records the line again, so the first line of a frame (handles still from the
+  previous frame) and a macro written in the middle of a frame are handled.
+- Tests: a list with every kind of step (bitmaps plain, rotated, paletted, a handle changed
+  after it was drawn; points, line strip, edge strip, rectangles from a subroutine and a
+  macro, a saved context, a scissored `CLEAR`), the macro and memory changed mid-frame, a new
+  list: picture and every line's cost equal with and without the recording. Each check of
+  the inputs was removed once to see the tests fail.
+
+**Result.** 99.9 % of the lines are replayed. Gameplay drawing **4.67 -> 3.18 ms** per frame,
+the part outside the bitmaps **40 % -> 12.5 %**. Whole capture **37.3 -> 30.8 s, 3.9x ->
+4.73x**; rtype-boot 2.92 -> 2.69 s (6.1x -> 6.6x). **Meaning:** the brief's target of 4x
+for Zuma on one core is reached; the cost is now the pixels themselves.
+
+## Round 5: the tag buffer only where it is read
+
+**Start.** The loading screen still drew 23 600 fully transparent spans per frame (the text
+in ROM fonts without the ROM image, round 1), 21 % of its time; each only wrote the tag
+buffer. Every other drawing step writes the tag too.
+
+**What was slow and why.** The tag buffer of a line is read only on the line `REG_TAG_Y`
+names (the touch tag register) and by a probe (which has its own buffers); nothing in the
+pixel pipeline tests it. On every other line all tag writes were wasted.
+
+**Change.** A line knows whether its tag buffer is read (`LineRun::tagLive`); every tag
+write checks it. Tests: `REG_TAG` from a rectangle, from a fully transparent bitmap and from
+`CLEAR`'s tag value (they fail when the tag line is not kept).
+
+**Result.** Small: rounds 4 and 5 together 37.8 -> 30.0 s against `5f47ded`, of which round
+5 is about 3 %. The transparent spans stayed at 0.13 ns per pixel: their cost is setting up
+23 600 spans per frame, not the tag writes. **Meaning:** a correct saving everywhere, but the
+loading screen needs the span setup gone (next round).
+
+## Round 6: opaque and transparent pixels take a shortcut
+
+**Start.** **29.7 s, 4.9x.** Gameplay: scaled paletted sprites (PALETTED4444 NEAREST, the
+ball rows and the background, 1.1 million pixels per frame) at 1.41 ns per pixel, half of
+the drawing. The profile split the fast spans into decoding (583 ms) and the blend tail
+(756 ms): the blend cost more than the decoding, although it was already SIMD.
+
+**What was slow and why.** The default blend (`SRC_ALPHA / ONE_MINUS_SRC_ALPHA`) ran the
+full formula on every pixel, but sprites are almost all fully opaque (alpha 255) or fully
+transparent (alpha 0). For those the formula gives the source or keeps the destination,
+exactly.
+
+**Change.** `Simd::BlendSrcAlpha` checks the alphas of each group (8 pixels with NEON, 2
+with SSE2, 1 in C++): all 0 skips the group, all 255 stores the source, anything else takes
+the formula as before.
+
+**Result.** Scaled paletted sprites **1.41 -> 1.00 ns** per pixel; gameplay drawing **3.18 ->
+2.59 ms** per frame. Whole capture **29.7 -> 26.7 s, 4.9x -> 5.46x**. **Meaning:** decoding
+(the palette lookups, ~31 % of the time) and the remaining blends (~18 %) are now the main
+costs, both per pixel and close to what scalar code can do.
+
 ## Summary
 
-| Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame |
-|:--|--:|--:|--:|
-| Start | 305 s | 0.48x | 133 ms |
-| 1. invisible font | | | 31 ms |
-| 2. BILINEAR + masking blends | 53 s | 2.74x | 7.5 ms |
-| 3. rotated sprites + palettes | 38.3 s | 3.8x | 7.5 ms |
+| Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
+|:--|--:|--:|--:|--:|
+| Start | 305 s | 0.48x | 133 ms | |
+| 1. invisible font | | | 31 ms | |
+| 2. BILINEAR + masking blends | 53 s | 2.74x | 7.5 ms | |
+| 3. rotated sprites + palettes | 38.3 s | 3.8x | 7.5 ms | 4.67 ms |
+| 4. display list walked once | 30.8 s | 4.73x | 7.4 ms | 3.18 ms |
+| 5. tag buffer where read | ~30 s | ~4.86x | 7.2 ms | |
+| 6. opaque / transparent shortcut | 26.7 s | **5.46x** | | 2.59 ms |
 
-## Next round: the display list walk
+From 305 to 26.7 seconds: the same capture now needs 11 times less CPU. Picture and line
+costs are unchanged in every round (the gate above). Note: the CPU figure includes
+`eve-replay`'s own timing of every call (about 5 %); the library alone is a little faster.
 
-Gameplay profile after round 3: 4.67 ms of drawing per frame; **40 % outside the bitmaps**:
-walking the display list (768 commands per line, every line), clearing and line output.
-Commands per drawn line by opcode: `CELL` 102, `BITMAP_SIZE` 50, `BITMAP_SOURCE` 50,
-`BITMAP_HANDLE` 18, `BITMAP_LAYOUT(_H)` 17 + 17, `COLOR_RGB` 17, `BITMAP_SIZE_H` 13,
-`BEGIN` 12, `BITMAP_TRANSFORM_C..F` 11 each, plus the vertices. Most of these set state that
-is the same on every line; the candidates are a cheaper command dispatch and skipping
-primitives whose vertical extent misses the line. The target in the acceleration brief is
-4x for Zuma on one core.
+## Next round
+
+- **Span setup** (`DrawBitmap` before the pixels, ~12 %): per step the handle's size,
+  stride, layout, the span's first and last pixel are the same on every line; the recorded
+  walk can keep them. It also removes the cost of the loading screen's transparent spans
+  (their line cost must still be counted).
+- **Decoding** (~31 %): palette lookups have no SIMD gather on NEON / SSE2; candidates are
+  magnified spans (transform A 100 and 160 in Zuma: one texel covers 1.6 - 2.6 pixels).
+- **R-Type**: profile its loader and demo the same way.
+- The rest of the acceleration brief: line threads, skipping unchanged frames.

@@ -401,7 +401,7 @@ const uint32_t* LinePalette(LineRun& run, uint8_t format)
 void BlendDefault(LineRun& run, int32_t x, uint32_t rgba)
 {
     const uint32_t a = rgba & kChannelMax;
-    if (run.ctx.tagMask)
+    if (WritesTag(run))
         run.tag[x] = run.ctx.tag;
     if (a == 0)
         return; // x 0 + dst x 255: the destination stays
@@ -468,7 +468,7 @@ bool DrawTransparentSpan(LineRun& run, int32_t first, int32_t last)
     const uint32_t count = static_cast<uint32_t>(last - first);
     if (DefaultPipeline(run.ctx))
     {
-        if (run.ctx.tagMask)
+        if (WritesTag(run))
             std::memset(run.tag + first, run.ctx.tag, count);
         return true;
     }
@@ -559,6 +559,11 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
     const uint32_t colorR = (ctx.colorRgb >> kRedShift) & kChannelMax;
     const uint32_t colorG = (ctx.colorRgb >> kGreenShift) & kChannelMax;
     const uint32_t colorB = ctx.colorRgb & kChannelMax;
+#ifdef EVE_PROFILE
+    Profile().finishPixels += count;
+    Profile().modulatePixels += modulate ? count : 0;
+    Profile().simdBlendPixels += simple && kMultiplyRoundDiv255 ? count : 0;
+#endif
     if (modulate)
     {
         // SIMD-CANDIDATE: four channels times COLOR_RGB / COLOR_A per texel.
@@ -571,7 +576,7 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
     }
     if (simple && kMultiplyRoundDiv255)
     {
-        if (ctx.tagMask)
+        if (WritesTag(run))
             std::memset(run.tag + first, ctx.tag, count);
         Simd::BlendSrcAlpha(run.color + kChannels * static_cast<uint32_t>(first), texels, count);
     }
@@ -785,8 +790,19 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
     uint32_t* texels = run.texels;
     const bool wrapX = h.wrapX != 0;
     // Decode the span's texels, one loop per format and wrap mode
+#ifdef EVE_PROFILE
+    Profile().scaleAPixels[a] += count;
+    const uint64_t decodeStart = ProfileNow();
+#endif
     WithRowFetch(run, h, row, [&](auto fetch) { DecodeSpan(texels, count, sx, a, width, wrapX, fetch); });
+#ifdef EVE_PROFILE
+    const uint64_t finishStart = ProfileNow();
+    Profile().decodeNanos += finishStart - decodeStart;
+#endif
     FinishFastSpan(run, first, texels, count);
+#ifdef EVE_PROFILE
+    Profile().finishNanos += ProfileNow() - finishStart;
+#endif
     return true;
 }
 
@@ -822,15 +838,31 @@ void DrawBitmap(LineRun& run, const Vertex& v)
     const int32_t height = static_cast<int32_t>(HandleHeight(h));
     // Sample positions are relative to the vertex, at pixel centers (spec §6.5, V3).
     const int64_t rely = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter - v.y;
+#ifdef EVE_PROFILE
+    if constexpr (Mode == LineMode::Draw)
+        Profile().bitmapVertices++;
+#endif
     if (rely < 0 || rely >= static_cast<int64_t>(height) * kSubpixel)
+    {
+#ifdef EVE_PROFILE
+        if constexpr (Mode == LineMode::Draw)
+            Profile().bitmapMissY++;
+#endif
         return;
+    }
     // Pixels whose centers lie in [v.x, v.x + width).
     int32_t first = FloorDiv(static_cast<int64_t>(v.x) - kPixelCenter + kSubpixel - 1, kSubpixel);
     int32_t last = FloorDiv(static_cast<int64_t>(v.x) + static_cast<int64_t>(width) * kSubpixel - kPixelCenter +
                                 kSubpixel - 1,
                             kSubpixel);
     if (!ScissorSpan(run, first, last))
+    {
+#ifdef EVE_PROFILE
+        if constexpr (Mode == LineMode::Draw)
+            Profile().bitmapMissX++;
+#endif
         return;
+    }
     run.fillCost += static_cast<uint64_t>(last - first) * (kFillCostScale / PixelsPerClock(h.format, h.filter));
 #ifdef EVE_PROFILE
     struct SpanProfile
