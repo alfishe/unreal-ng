@@ -36,6 +36,7 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
     _ram.assign(pairs * RAM_PAIR_SIZE, 0x00);
 
     _rom.assign(ROM_SIZE, 0x00);
+    _romHash = ttd::FirmwareFingerprint(_rom.data(), _rom.size());
 
     // Dedicated coprocessor wired to the static trampolines below - never the
     // main emulator Z80 (design §4.3: context hardwiring, debug traps)
@@ -132,6 +133,12 @@ void SoundChip_GeneralSound::hostReset()
 }
 
 void SoundChip_GeneralSound::loadROM(const std::string& romPath)
+{
+    readROM(romPath);
+    _romHash = ttd::FirmwareFingerprint(_rom.data(), _rom.size());
+}
+
+void SoundChip_GeneralSound::readROM(const std::string& romPath)
 {
     _romLoaded = false;
 

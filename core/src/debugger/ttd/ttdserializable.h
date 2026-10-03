@@ -232,6 +232,20 @@ struct TTDTimeField
     uint8_t width = 0;     ///< 1, 2, 4 or 8 bytes, little endian
 };
 
+/// The fingerprint of a firmware image a device runs but a session does not
+/// record (TTDDeviceDescriptor::firmwareFingerprint): FNV-1a, 64 bits, over
+/// the whole image (the MoonSound wave ROM's hash since TTD D6)
+inline uint64_t FirmwareFingerprint(const uint8_t* data, size_t size)
+{
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < size; ++i)
+    {
+        hash ^= data[i];
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
 /// What the engine needs to know about a device, given once at registration
 struct TTDDeviceDescriptor
 {

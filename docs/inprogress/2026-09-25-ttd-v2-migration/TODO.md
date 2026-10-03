@@ -72,7 +72,7 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
 
 - [x] Step 1 — Device registry: type id u16 + instance name, layout version, restore order, firmware fingerprint (2026-10-03; descriptor and device table, see the TDD's as-built note)
-  - [ ] Firmware fingerprints of the GS ROM, the ATM2 keyboard controller ROM and the Sprinter BIOS (MoonSound's wave ROM done)
+  - [x] Firmware fingerprints (`ttd::FirmwareFingerprint`, taken when the image loads): GS ROM, ATM2 keyboard controller ROM, MoonSound wave ROM (2026-10-03). The Sprinter BIOS is the machine ROM: with every model's ROMs it belongs to the configuration fingerprint (Phase 3, Step 4)
 - [ ] Step 2 — Unchanged state shared, changed fields only, time-derived counters
   - [x] Device states stored only when they change, as differences (device-state regions, 2026-10-03): device bytes 3-10x below v1, D33 on all 46
   - [x] Time fields (engine-side residual from a line; MoonSound, NeoGS, TSFM declare theirs): device bytes 7-28% lower, none worse (2026-10-03)
@@ -91,7 +91,7 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 - [ ] Step 1 — One event stream (input, external events, markers, port reads, bus data, DMA, network)
 - [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
-- [ ] Step 4 — Configuration fingerprint and media versions
+- [ ] Step 4 — Configuration fingerprint and media versions (the machine ROMs of every model, the Sprinter BIOS among them)
 - [ ] Step 5 — Emulated real-time clocks
 - [ ] Step 6 — No writes outside the session during replay
 - [ ] Step 7 — Write journal as a derived index with a retention policy (experiment E7 first)

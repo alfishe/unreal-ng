@@ -46,4 +46,11 @@ uint64_t TTDAtm2Kbc::TTDHashState() const
     return h;
 }
 
+TTDDeviceDescriptor TTDAtm2Kbc::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    d.firmwareFingerprint = _kbc.FirmwareHash();
+    return d;
+}
+
 }  // namespace ttd

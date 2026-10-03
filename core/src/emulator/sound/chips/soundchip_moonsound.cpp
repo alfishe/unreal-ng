@@ -153,14 +153,7 @@ void SoundChip_Moonsound::loadWaveRom()
     // the Tier A blob - restore warns when the loaded image differs from
     // the recorded one (7.3). Hashing the region (not just the loaded
     // prefix) keeps short images distinguishable from full ones.
-    const uint8_t* romRegion = _waveMemory.RomData();
-    uint64_t hash = 0xcbf29ce484222325ULL;
-    for (uint32_t i = 0; i < romSize; i++)
-    {
-        hash ^= static_cast<uint64_t>(romRegion[i]);
-        hash *= 0x100000001b3ULL;
-    }
-    _romHash = hash;
+    _romHash = ttd::FirmwareFingerprint(_waveMemory.RomData(), romSize);
     if (loaded < romSize)
     {
         MLOGWARNING("MoonSound wave ROM image is short: %u of %u bytes - the tail stays zero-filled",

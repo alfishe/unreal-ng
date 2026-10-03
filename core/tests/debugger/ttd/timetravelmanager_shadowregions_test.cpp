@@ -278,3 +278,49 @@ TEST(TimeTravelManagerGeneralSound_ShadowRegions_Test, CardRamIsARegion_Register
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// The GS ROM is configuration, not recorded: its fingerprint is the card's
+/// descriptor's. Restoring a checkpoint after another ROM was loaded restores
+/// the card exactly and reports FirmwareDiffers for it (a replay from there may
+/// differ); with the recorded ROM back the restore is Exact
+TEST(TimeTravelManagerGeneralSound_ShadowRegions_Test, AnotherRomIsReportedAsFirmwareDiffers)
+{
+    SoundCardScope cards{TestSound::GeneralSound};
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    GeneralSoundCard* gs = context->pSoundManager->getGeneralSound();
+    ASSERT_NE(gs, nullptr);
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* v1 = context->pTimeTravelManager;
+
+    // Record on gs104 (whatever the config fits, the test picks its two ROMs)
+    gs->loadROM("rom/gs104.rom");
+    ASSERT_TRUE(gs->isROMLoaded());
+    const uint64_t recorded = gs->TTDDescribe().firmwareFingerprint;
+    ttd::TimeTravelEngine engine;
+    v1->SetShadowEngine(&engine);
+    ASSERT_TRUE(v1->StartRecording());
+    emulator->RunNFrames(20, /*skipBreakpoints=*/true);
+    v1->StopRecording();
+    v1->SetShadowEngine(nullptr);
+    ASSERT_GT(engine.CheckpointCount(), 10u);
+
+    gs->loadROM("rom/gs105a.rom");
+    ASSERT_TRUE(gs->isROMLoaded());
+    ASSERT_NE(gs->TTDDescribe().firmwareFingerprint, recorded);
+    ttd::TTDRestoreResult r = engine.RestoreDevices(10, {});
+    EXPECT_EQ(r.status, ttd::TTDRestoreStatus::NotBitExact) << r.message;
+    ASSERT_EQ(r.issues.size(), 1u) << r.message;
+    EXPECT_EQ(r.issues[0].kind, ttd::TTDRestoreIssueKind::FirmwareDiffers);
+    EXPECT_EQ(r.issues[0].device.type, ttd::TTDDeviceType::GeneralSound);
+
+    gs->loadROM("rom/gs104.rom");
+    r = engine.RestoreDevices(10, {});
+    EXPECT_EQ(r.status, ttd::TTDRestoreStatus::Exact) << r.message;
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

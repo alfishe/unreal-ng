@@ -232,6 +232,7 @@ public:
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.runsBehindCpu = true;
+        d.firmwareFingerprint = _romHash;   // the 32 KB ROM: configuration, not recorded
         return d;
     }
     /// Synced: as NeoGS - the card at or after its frame base (where its CPU
@@ -257,6 +258,9 @@ public:
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
+    /// The ROM file into _rom (loadROM then takes its fingerprint)
+    void readROM(const std::string& romPath);
+
     /// TTD load, split around the RAM the engine restores as a region
     void loadFixedState(const uint8_t* src);
     void finishLoad(const uint8_t* src);
@@ -334,6 +338,7 @@ private:
     ttd::TTDRegionTracker _ramTracker;
     ttd::TTDRegionTracker* _ramTrackerArmed = nullptr;   // set while the engine records
     bool _romLoaded = false;
+    uint64_t _romHash = 0;   ///< ttd::FirmwareFingerprint of _rom, kept with every change of it
 
     // Memory banking (§2.3 MPAG: 0 -> ROM pair, V>=1 -> RAM pair (V-1))
     uint8_t _mpag = 0;
