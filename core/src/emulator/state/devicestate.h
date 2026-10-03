@@ -164,7 +164,7 @@ StateNode SprinterPaging(EmulatorContext* context);
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces
 StateNode SprinterText(EmulatorContext* context);
 /// The mode table per square (`SprinterVideo()`, /state/sprinter/video): HOLD, frame length, RGMOD,
-/// PORT_Y, ALL_MODE, counts per kind, a one-letter map per row (G 320, g 640, T text 40, t text 80,
+/// PORT_Y, ALL_MODE, counts per kind, a one-letter map per row (G 320, g 640, T text 40, t text 80, Z Spectrum cell,
 /// B border, . blank, * blank + INT), the palettes the picture uses and (squares) every square
 /// decoded: kind, mode bytes, palette / source column / row / low-res quarter, or the characters
 struct SprinterVideoQuery

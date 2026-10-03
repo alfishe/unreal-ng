@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 class SprinterVideoRam;
 
@@ -67,14 +68,28 @@ struct SprinterVideoInputs
 
 /// One square of the mode table, decoded by the renderer's rules (the classifier every report
 /// shares: DeviceState::Sprinter's video summary, the per-square map, the screen text,
-/// ScreenSprinter::DescribeScreenState and the video mapper's text layer).
+/// ScreenSprinter::DescribeScreenState, the GUI status bar and the video mapper's text layer).
+/// The renderer draws by the same predicates (IsSymbol / IsBlank / IsBorder below).
 ///
 ///   m0 bit 4 = 0: graphics, bit 5 = 1: 320 (a byte per 2 pixels), 0: 640 (a nibble per pixel)
 ///   m0 bit 4 = 1: %1111 11xx blank (%1111 11x1: blank + frame INT), %1111 xxxx border,
-///                 otherwise text, bit 5 = 1: 40 columns, 0: 80 columns (two characters)
+///                 otherwise a symbol square, bit 5 = 1: 40 columns, 0: 80 columns (two characters)
 ///
-/// Worked example: m0 = #A2, m1 = #19, m2 = #00 is graphics 320 with palette 2, source
-/// column #080 + 8 = #088, source row 24; m0 = #FD is blank with the frame INT.
+/// A symbol square is either text or a Spectrum screen cell: the hardware has no separate Spectrum
+/// mode (ALL_MODE bit 0 only turns on the Spectrum screen shadow, the CPU writes into video RAM; it does
+/// not change what the beam draws). The ZX picture is the mode table the BIOS / launcher write: 32 x 24
+/// ZX-40 squares (text 40, font block = the shadow's block) inside border squares. The renderer reads a
+/// symbol square's font byte at row m1, columns block | m0 bits 7-6 << 3 | pixel row, and its attribute
+/// at row m2, columns block | %11 << 3 | m0 bits 7-6. The shadow stores a Spectrum character cell's
+/// eight bitmap bytes at row A7..A0, columns block | A12..A8 (third << 3 | pixel row) and its attribute
+/// at the same row A7..A0, columns block | %110 << 2 | third: so a square shows a Spectrum cell exactly
+/// when m1 = m2 (its bitmap and its own attribute) and m0 bits 7-6 name a third 0-2.
+/// Text uses m1 as the character code and m2 as the attribute row: independent bytes.
+///
+/// Worked examples: m0 = #A2, m1 = #19, m2 = #00 is graphics 320 with palette 2, source column
+/// #080 + 8 = #088, source row 24; m0 = #FD is blank with the frame INT; m0 = #70, m1 = m2 = #25 is
+/// the Spectrum cell in the middle third (bits 7-6 = 1), character row 8 + (#25 >> 5) = 9, column 5
+/// (pixels #4825.., attribute #5925 - the 128 menu's table, testdata zx-mode reference).
 struct SprinterSquare
 {
     enum class Kind : uint8_t
@@ -83,6 +98,7 @@ struct SprinterSquare
         Graphics640,
         Text40,
         Text80,
+        Spectrum,  ///< a ZX-40 square: one Spectrum character cell (bitmap + its attribute), 16 x 8 pixels
         Border,
         Blank,
         Count
@@ -93,14 +109,28 @@ struct SprinterSquare
     uint8_t m1 = 0;
     uint8_t m2 = 0;
 
-    static Kind Classify(uint8_t m0)
+    /// The renderer's decisions on Mode0 (DrawSpan, SymbolPen, the video mapper)
+    static constexpr bool IsSymbol(uint8_t m0) { return (m0 & 0x10) != 0; }
+    static constexpr bool IsBlank(uint8_t m0) { return (m0 & 0xFC) == 0xFC; }
+    static constexpr bool IsBorder(uint8_t m0) { return !IsBlank(m0) && (m0 >> 5) == 7; }
+    /// A 40-column symbol square showing one Spectrum character cell (see above)
+    static constexpr bool IsSpectrumCell(uint8_t m0, uint8_t m1, uint8_t m2)
     {
-        if (!(m0 & 0x10))
+        return IsSymbol(m0) && !IsBlank(m0) && !IsBorder(m0) && (m0 & 0x20) && (m0 >> 6) < 3 && m1 == m2;
+    }
+
+    /// The kind of the square whose Line1 bytes are `mode` (Mode0..Mode2 at mode[0..2])
+    static Kind Classify(const uint8_t* mode)
+    {
+        const uint8_t m0 = mode[0];
+        if (!IsSymbol(m0))
             return (m0 & 0x20) ? Kind::Graphics320 : Kind::Graphics640;
-        if ((m0 & 0xFC) == 0xFC)
+        if (IsBlank(m0))
             return Kind::Blank;
-        if ((m0 >> 5) == 7)
+        if (IsBorder(m0))
             return Kind::Border;
+        if (IsSpectrumCell(m0, mode[1], mode[2]))
+            return Kind::Spectrum;
         return (m0 & 0x20) ? Kind::Text40 : Kind::Text80;
     }
     /// The square at Line1 bytes `mode` (Mode0..Mode2 at mode[0..2])
@@ -110,12 +140,14 @@ struct SprinterSquare
         s.m0 = mode[0];
         s.m1 = mode[1];
         s.m2 = mode[2];
-        s.kind = Classify(s.m0);
+        s.kind = Classify(mode);
         return s;
     }
 
     bool IsGraphics() const { return kind == Kind::Graphics320 || kind == Kind::Graphics640; }
     bool IsText() const { return kind == Kind::Text40 || kind == Kind::Text80; }
+    /// Drawn from the text palettes (paper / ink / flash): text and Spectrum squares
+    bool UsesTextPalettes() const { return IsText() || kind == Kind::Spectrum; }
     /// Blank with the frame INT mark (%1111 11x1, SprinterIntSource)
     bool IntArmed() const { return (m0 & 0xFD) == 0xFD; }
     /// Graphics: palette 0-3 (pens palette x 256 + value)
@@ -126,19 +158,53 @@ struct SprinterSquare
     /// Graphics: 2x2 pixels from one quarter (m2 bit 2), the quarter (m2 bits 1-0: bit 0 right, bit 1 lower)
     bool LowRes() const { return IsGraphics() && (m2 & 0x04) != 0; }
     uint8_t Quarter() const { return static_cast<uint8_t>(m2 & 0x03); }
+    /// Spectrum: the character cell shown (row 0-23, column 0-31 of the 256 x 192 screen)
+    uint8_t ZxRow() const { return static_cast<uint8_t>((m0 >> 6) * 8 + (m1 >> 5)); }
+    uint8_t ZxColumn() const { return static_cast<uint8_t>(m1 & 0x1F); }
 
     /// The character of text cell `half` (0 left, 1 right) of the square whose Line1 bytes are `line1`
     /// (Line2 = line1 + 1024): an 80-column square shows Line1's Mode1, then Line2's (the renderer takes
     /// every byte of the right half from Line2, its Mode0 too); a 40-column square one character and a
-    /// space. False (code = #20) when that half is not a text character
+    /// space. False (code = #20) when that half is not a text character (Spectrum cells are bitmaps)
     static bool TextCode(const uint8_t* line1, unsigned half, uint8_t& code);
 
-    /// One letter per kind for compact maps: G 320, g 640, T text 40, t text 80, B border, . blank, * blank + INT
+    /// One letter per kind for compact maps: G 320, g 640, T text 40, t text 80, Z Spectrum, B border,
+    /// . blank, * blank + INT
     char Letter() const;
     /// "graphics_320" ... (JSON keys)
     static const char* Key(Kind kind);
     /// "graphics 320 x 256, 256 colors" ... (people)
     static const char* Name(Kind kind);
+};
+
+/// What the 640 x 256 picture (the 40 x 32 squares from (0, 0)) shows, by SprinterSquare: the one summary
+/// behind DescribeScreenState (the GUI status bar), DeviceState::Sprinter's video summary and the
+/// screen-text / OCR choice. Border and blank squares frame a picture, they do not mix modes: `mixed` =
+/// more than one content kind (graphics 320 / 640, text 40 / 80, Spectrum).
+///
+/// Worked example: the 128 menu in the Spectrum mode - 768 Spectrum squares, 512 border: mode Spectrum,
+/// not mixed, Brief(0) = "Spectrum 256x192, screen 5". Flex Navigator: 1280 graphics 640 squares.
+struct SprinterPicture
+{
+    static constexpr uint8_t kColumns = 40;
+    static constexpr uint8_t kRows = 32;
+
+    int counts[static_cast<int>(SprinterSquare::Kind::Count)] = {};
+    SprinterSquare::Kind mode = SprinterSquare::Kind::Blank;  ///< the dominant content kind (border / blank: none)
+    bool mixed = false;
+
+    int Count(SprinterSquare::Kind kind) const { return counts[static_cast<int>(kind)]; }
+    static bool IsContent(SprinterSquare::Kind kind)
+    {
+        return kind != SprinterSquare::Kind::Border && kind != SprinterSquare::Kind::Blank &&
+               kind != SprinterSquare::Kind::Count;
+    }
+
+    /// The picture squares of mode page `modePage` in `vram` (256 KB)
+    static SprinterPicture Of(const uint8_t* vram, uint8_t modePage);
+    /// A few words for a status bar: "Spectrum 256x192, screen 5", "640x256 16c", "text 80", "320x256 256c (mixed)";
+    /// `textPage` = #7FFD bit 3 (the Spectrum screen shown: 5 or 7)
+    std::string Brief(uint8_t textPage) const;
 };
 
 /// The standard configuration's picture. A configuration module with its own

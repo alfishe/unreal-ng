@@ -6,6 +6,7 @@
 // only convert the trees, so these tests pin the content once.
 
 #include "sprinterfixture.h"
+#include "sprintermodetable.h"
 
 #include <string>
 
@@ -413,6 +414,103 @@ TEST_F(SprinterDeviceState_Test, ScreenDescriptionSharesTheClassifier)
     EXPECT_EQ(Int(squares, "border"), Int(counts, "border")) << "no border squares outside the picture here";
 }
 
+// The Spectrum mode's picture (the launcher's mode table, SprinterModeTable::WriteSpectrumScreen): ZX-40 squares
+// (Mode1 = Mode2: a Spectrum cell's bitmap and its own attribute) inside border squares. Every report says
+// Spectrum, not "text 40 (mixed)" (the owner's report of 2026-10-02): the squares decide, as in the renderer, not
+// ALL_MODE (here #FF: the shadow is off, the table alone draws a ZX screen)
+TEST_F(SprinterDeviceState_Test, SpectrumScreenIsItsOwnMode)
+{
+    SprinterVideoRam& vram = _decoder->GetVideoRam();
+    Pld().rgMod = 0x00;
+    Pld().allMode = 0xFF;
+    Pld().pn = 0x10;  // #7FFD: screen 5
+    SprinterModeTable::WriteSpectrumScreen(vram, 0);
+
+    const ScreenState screen = _context->pScreen->DescribeScreenState();
+    EXPECT_EQ(screen.videoModeBrief, "Spectrum 256x192, screen 5");
+    EXPECT_NE(screen.videoMode.find("text 40 0, text 80 0, graphics 320 0, graphics 640 0, spectrum 768, border 512, blank 0"),
+              std::string::npos)
+        << screen.videoMode;
+    Pld().pn = 0x18;  // #7FFD bit 3: screen 7 (the font block's bit 0)
+    EXPECT_EQ(_context->pScreen->DescribeScreenState().videoModeBrief, "Spectrum 256x192, screen 7");
+
+    DeviceState::SprinterVideoQuery query;
+    const StateNode video = DeviceState::SprinterVideo(_context, query);
+    EXPECT_EQ(Str(video, "picture_mode"), "spectrum");
+    EXPECT_FALSE(Bool(video, "picture_mixed"));
+    EXPECT_EQ(Str(video, "picture_brief"), "Spectrum 256x192, screen 7");
+    EXPECT_EQ(Int(Member(video, "counts"), "spectrum"), 768);
+    const StateNode& map = Member(video, "map");
+    ASSERT_EQ(map.items.size(), 32u);
+    EXPECT_EQ(map.items[3].s, std::string(40, 'B'));
+    EXPECT_EQ(map.items[13].s, std::string(4, 'B') + std::string(32, 'Z') + std::string(4, 'B'));
+    const StateNode& cell = Member(video, "squares").items[13].items[5];  // character row 9, column 1
+    EXPECT_EQ(Str(cell, "kind"), "spectrum");
+    EXPECT_EQ(Int(cell, "zx_row"), 9);
+    EXPECT_EQ(Int(cell, "zx_column"), 1);
+
+    const StateNode machine = DeviceState::Sprinter(_context);
+    EXPECT_EQ(Str(Member(machine, "video"), "picture_mode_key"), "spectrum");
+    EXPECT_FALSE(Bool(Member(machine, "video"), "picture_mixed"));
+
+    // The screen text: the cells are bitmaps, the OCR reads the ZX screen instead
+    const StateNode text = DeviceState::SprinterText(_context);
+    EXPECT_TRUE(Bool(text, "spectrum_screen"));
+    EXPECT_FALSE(Bool(text, "picture_is_text"));
+    EXPECT_EQ(Int(text, "text_squares"), 0);
+}
+
+// Native pictures keep their modes; "mixed" only when content kinds really mix (border / blank squares frame a
+// picture, they do not mix it)
+TEST_F(SprinterDeviceState_Test, NativeModesAndMixedPictures)
+{
+    SprinterVideoRam& vram = _decoder->GetVideoRam();
+    Pld().rgMod = 0x00;
+    Pld().allMode = 0xFE;  // the shadow on: still the squares decide
+    auto brief = [&] { return _context->pScreen->DescribeScreenState().videoModeBrief; };
+
+    SprinterModeTable::Fill(vram, 0, 0x00);  // Flex Navigator: graphics 640 everywhere
+    EXPECT_EQ(brief(), "640x256 16c");
+    SprinterModeTable::Fill(vram, 0, 0xA0);  // graphics 320
+    EXPECT_EQ(brief(), "320x256 256c");
+    SprinterModeTable::Fill(vram, 0, 0x10, 'A', 0x07);  // DSS text 80
+    EXPECT_EQ(brief(), "text 80");
+    SprinterModeTable::Fill(vram, 0, 0x10, 0x07, 0x07);  // an 80-column square is never a Spectrum cell
+    EXPECT_EQ(brief(), "text 80");
+    SprinterModeTable::Fill(vram, 0, 0x30, 'A', 0x07);  // text 40: character and attribute row differ
+    EXPECT_EQ(brief(), "text 40");
+    EXPECT_FALSE(Bool(DeviceState::SprinterText(_context), "spectrum_screen"));
+    EXPECT_TRUE(Bool(DeviceState::SprinterText(_context), "picture_is_text"));
+
+    // Text inside a border frame: not mixed
+    SprinterModeTable::Fill(vram, 0, 0xF0);
+    for (uint8_t a = 4; a < 36; a++)
+        vram.Write(SprinterVideoRam::ModeAddress(a, 10, 0), 0x10);
+    EXPECT_EQ(brief(), "text 80");
+
+    // Graphics 320 over the top half, text 80 below: mixed, the larger kind first
+    SprinterModeTable::Fill(vram, 0, 0x10, 'A', 0x07);
+    for (uint8_t b = 0; b < 20; b++)
+        for (uint8_t a = 0; a < 40; a++)
+            vram.Write(SprinterVideoRam::ModeAddress(a, b, 0), 0xA0);
+    EXPECT_EQ(brief(), "320x256 256c (mixed)");
+    DeviceState::SprinterVideoQuery query;
+    query.squares = false;
+    EXPECT_TRUE(Bool(DeviceState::SprinterVideo(_context, query), "picture_mixed"));
+
+    // A Spectrum screen with a native status line below it: mixed
+    SprinterModeTable::WriteSpectrumScreen(vram, 0);
+    for (uint8_t a = 0; a < 40; a++)
+        vram.Write(SprinterVideoRam::ModeAddress(a, 30, 0), 0x10);
+    EXPECT_EQ(brief(), "Spectrum 256x192, screen 5 (mixed)");
+
+    // Nothing but border / blank
+    SprinterModeTable::Fill(vram, 0, 0xF0);
+    EXPECT_EQ(brief(), "border");
+    SprinterModeTable::Fill(vram, 0, 0xFC);
+    EXPECT_EQ(brief(), "blank");
+}
+
 // The palettes: R, G, B as video RAM holds them, the pen's red byte address
 TEST_F(SprinterDeviceState_Test, PaletteReadsRgbInVideoRamOrder)
 {
@@ -583,7 +681,7 @@ TEST_F(SprinterDeviceState_Test, VideoChangesLogLatchesAndTables)
 TEST_F(SprinterDeviceState_Test, VideoTextAndScreenModeCoverTheSprinter)
 {
     EXPECT_FALSE(Bool(DeviceState::VideoText(_context, 0), "available")) << "no text squares: no text layer";
-    Pld().allMode = 0x01;  // Sprinter mode (bit 0 = 0: the Spectrum screen, read with the ZX OCR)
+    Pld().allMode = 0x01;  // Sprinter mode (bit 0 = 0: the Spectrum screen shadow on)
     SprinterVideoRam& vram = _decoder->GetVideoRam();
     Pld().rgMod = 0x00;
     const uint32_t square = SprinterVideoRam::ModeAddress(0, 1, 0);
@@ -594,7 +692,11 @@ TEST_F(SprinterDeviceState_Test, VideoTextAndScreenModeCoverTheSprinter)
     EXPECT_EQ(Str(text, "layer"), "sprinter_text");
     EXPECT_EQ(Int(text, "columns"), 80);
     EXPECT_EQ(Str(Member(text, "lines").items[1], "text"), "Z");
+    // The squares decide, as the renderer does: ALL_MODE bit 0 = 0 (the Spectrum screen shadow) changes nothing
+    // here; the launcher's ZX-40 squares make the picture a ZX screen
     Pld().allMode = 0x00;
+    EXPECT_TRUE(Bool(DeviceState::VideoText(_context, 0), "available")) << "a text square, whatever ALL_MODE says";
+    SprinterModeTable::WriteSpectrumScreen(vram, 0);
     EXPECT_FALSE(Bool(DeviceState::VideoText(_context, 0), "available")) << "Spectrum mode: a ZX screen";
 
     const StateNode mode = DeviceState::ScreenMode(_context);

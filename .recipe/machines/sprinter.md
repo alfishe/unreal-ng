@@ -312,7 +312,7 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `clock.waits` | the 21 MHz rule, `active`, `windows_waiting[4]` (main RAM waits, ROM and fast RAM not), the taken clocks |
 | `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `phase_t` (a placeholder until a board is measured), `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
 | `tape` | `time_base`: `base_clock` - the tape input counts real time, so load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX); at 21 MHz the ROM loader fails, as on the board |
-| `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
+| `video` | `picture_mode` (the dominant content kind of the 640 x 256 picture; `picture_mode_key`, e.g. `spectrum` in the Spectrum mode, `graphics_640` in Flex Navigator), `picture_mixed` (more than one content kind), `picture_brief` (the GUI status bar's words), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
 | `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |
 | `sound` | the AY (chips, clock, stereo from its config) and the Covox-Blaster (control, rate, indices, counters; the ring: `sprinter_sound_ring`) - [sprinter-sound.md](sprinter-sound.md) |
 | `z84c15` | WCR / MWBR / CSBR / MCR, `wait_generator` (WCR / MWBR decoded), `daisy_chain` (priority order, IP / IUS per source), watchdog with `deadline_clock`, `ctc` (`time_base_hz`, `cpu_clock_hz`; per channel the mode, prescaler, edge, timer start, `trigger_input` - `clock` 875 kHz / `cascade` ZC/TO2 -, the live `count`, `zero_counts`, `zc_to_hz` and what ZC/TO drives), SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
@@ -327,8 +327,10 @@ Verified on Flex Navigator 1.15 (DSS 1.71 from the HDD, BIOS 3.07) and on the BI
 ```text
 inspect_state {"aspects":["sprinter_video"]}         # one letter a square (squares[b][a] decoded: invoke_api GET /state/sprinter/video)
 #   → [sprinter_video] page 1, RGMOD 0x01, HOLD 0x77, 320 lines, PORT_Y 0xC0, palettes 4 5 6 7
-#       G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, B border, . blank, * blank with the frame INT
+#       G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, Z Spectrum screen cell (ZX-40), B border, . blank, * blank with the frame INT
 #       tttttttttttttttttttttttttttttttttttttttt          (the BIOS: 40 x 32 squares of 80-column text; FN: all "g")
+#       BBBBZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZBBBB          (the Spectrum mode: rows 4-27; rows 0-3 and 28-31 all "B";
+#                                                     picture_mode "spectrum", the status bar "Spectrum 256x192, screen 5")
 inspect_state {"aspects":["sprinter_palette"]}       # the palettes the picture uses, R G B as video RAM holds them
 #   → [sprinter_palette] used by the picture (R G B per pen)
 #       0 graphics 0: 000000 FF0000 008000 ...

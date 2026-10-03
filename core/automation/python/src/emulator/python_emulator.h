@@ -2082,7 +2082,7 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return StateNodeToPy(DeviceState::SprinterVideo(self.GetContext(), query));
             }, py::arg("page") = py::none(), py::arg("all") = false, py::arg("squares") = true,
-               "Sprinter mode table per square: HOLD, frame length, RGMOD, PORT_Y, counts, map (one letter a square: G 320, g 640, T text 40, t text 80, B border, . blank, * INT), palettes used, squares[b][a] decoded; page 0/1 (default RGMOD's), all=True = 56 x 40")
+               "Sprinter mode table per square: HOLD, frame length, RGMOD, PORT_Y, counts, map (one letter a square: G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT), palettes used, squares[b][a] decoded; page 0/1 (default RGMOD's), all=True = 56 x 40")
             .def("sprinter_palette", [](Emulator& self, py::object k) -> py::object {
                 int palette = DeviceState::kSprinterPalettesUsed;
                 std::string error;

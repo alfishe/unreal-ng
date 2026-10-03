@@ -374,7 +374,7 @@ ROM image in RAM), RAM, graphics (pages #50-#5F, PORT_Y row), ISA. `inspect_stat
 `address` / `size`; write: `invoke_api POST /api/v1/emulator/{id}/memory/region/vram {"offset":"0x17F0","hex":"0000A8"}`).
 
 ## Video
-`sprinter_video` = the mode table as a map (one letter a square: G 320, g 640, T text 40, t text 80, B border,
+`sprinter_video` = the mode table as a map (one letter a square: G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border,
 . blank, * INT) with HOLD, frame length, RGMOD, PORT_Y; `sprinter_palette` = the pens (R, G, B as video RAM holds
 them); `video_changes` = mode / palette / frame-length / border writes with frame T, line and PC. Text screens:
 `sprinter_text`, and `video_text` / `screen_ocr` read a text picture too (Spectrum mode stays a ZX screen).

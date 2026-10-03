@@ -1127,7 +1127,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "pattern; one port or another map: invoke_api GET /api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC "
         "and /state/sprinter/ports?map=0&dos=1&rw=r), 'sprinter_text' = its screen text (80 x 32 from the mode table's "
         "text squares: BIOS SETUP, DSS; video_text and screen_ocr fall back to it), 'sprinter_video' = the mode table "
-        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, B border, . blank, * INT) "
+        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT) "
         "with HOLD / frame length / RGMOD / PORT_Y and the palettes in use (every square decoded: invoke_api GET "
         "/api/v1/emulator/{id}/state/sprinter/video), 'sprinter_palette' = the palettes the picture uses (R, G, B per pen "
         "as video RAM holds them; ?k=0-7|all through invoke_api), 'sprinter_sound_ring' = the Covox-Blaster sample ring, "

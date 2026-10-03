@@ -215,11 +215,10 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
     const uint16_t lines = screen ? screen->FrameLines() : (pld.frameLines ? 312 : 320);
 
-    // The 56 x 40 squares of the mode page; the picture is the 40 x 32 squares from (0, 0)
-    // (SprinterSquare: the classifier ScreenSprinter::DescribeScreenState shares)
+    // The 56 x 40 squares of the mode page (SprinterSquare: the classifier ScreenSprinter::DescribeScreenState
+    // shares); the picture, the 40 x 32 squares from (0, 0), by SprinterPicture below
     constexpr int kKinds = static_cast<int>(SprinterSquare::Kind::Count);
     int all[kKinds] = {};
-    int picture[kKinds] = {};
     int lowres = 0;
     int intArmed = 0;
     for (uint8_t b = 0; b < kSquareRowsAll; b++)
@@ -228,8 +227,6 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
         {
             const SprinterSquare square = SprinterSquare::Decode(vram.Data() + SprinterVideoRam::ModeAddress(a, b, modePage));
             all[static_cast<int>(square.kind)]++;
-            if (a < kPictureColumns && b < kPictureRows)
-                picture[static_cast<int>(square.kind)]++;
             lowres += square.LowRes() ? 1 : 0;
             intArmed += square.IntArmed() ? 1 : 0;
         }
@@ -237,12 +234,14 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
 
     StateNode v = StateNode::Object();
     v["mode_page"] = int(modePage);
-    int best = 0;
-    for (int k = 1; k < kKinds; k++)
-        if (picture[k] > picture[best])
-            best = k;
-    v["picture_mode"] = SprinterSquare::Name(static_cast<SprinterSquare::Kind>(best));
-    v["picture_mode_squares"] = StringHelper::Format("%d of 1280", picture[best]);
+    // The picture's mode by the summary the GUI status bar shows (SprinterPicture: border / blank squares
+    // frame a picture, a Spectrum screen is its ZX-40 squares)
+    const SprinterPicture shown = SprinterPicture::Of(vram.Data(), modePage);
+    v["picture_mode"] = SprinterSquare::Name(shown.mode);
+    v["picture_mode_key"] = SprinterSquare::Key(shown.mode);
+    v["picture_mode_squares"] = StringHelper::Format("%d of 1280", shown.Count(shown.mode));
+    v["picture_mixed"] = shown.mixed;
+    v["picture_brief"] = shown.Brief(static_cast<uint8_t>((pld.pn >> 3) & 1));
     StateNode squares = StateNode::Object();
     for (int k = 0; k < kKinds; k++)
         squares[SprinterSquare::Key(static_cast<SprinterSquare::Kind>(k))] = all[k];
@@ -1026,10 +1025,11 @@ StateNode SprinterText(EmulatorContext* context)
     ret["columns"] = 80;
     ret["rows"] = int(kPictureRows);
     ret["text_squares"] = textSquares;
-    // Spectrum mode (ALL_MODE bit 0 = 0: the Spectrum screen shadow on) draws the ZX screen with text
-    // squares whose "font" is the screen bitmap: their codes are not text, the screen OCR reads that
-    // picture as a ZX screen. Otherwise text is the picture when most squares are text (BIOS, DSS)
-    const bool spectrumScreen = (decoder->GetPldState().allMode & 0x01) == 0;
+    // The Spectrum mode draws the ZX screen with ZX-40 squares whose "font" is the screen bitmap
+    // (SprinterSquare::Kind::Spectrum: not text, TextCode skips them): the screen OCR reads that picture as a
+    // ZX screen. The squares decide, as the renderer does - not ALL_MODE bit 0, which only turns on the
+    // Spectrum screen shadow. Otherwise text is the picture when most squares are text (BIOS, DSS)
+    const bool spectrumScreen = SprinterPicture::Of(vram.Data(), modePage).mode == SprinterSquare::Kind::Spectrum;
     ret["spectrum_screen"] = spectrumScreen;
     ret["picture_is_text"] = !spectrumScreen && textSquares * 2 > kPictureColumns * kPictureRows;
     ret["lines"] = lines;
@@ -1115,7 +1115,7 @@ uint8_t PalettesOf(const SprinterSquare& square)
 {
     if (square.IsGraphics())
         return static_cast<uint8_t>(1u << square.Palette());
-    if (square.IsText())
+    if (square.UsesTextPalettes())
         return 0xF0;
     return 0x10;
 }
@@ -1170,8 +1170,8 @@ StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& quer
                             : "the picture: 40 x 32 squares from (0, 0), 16 x 8 pixels each (all=1: the whole table)";
     ret["mode_table"] = "square (a, b): Mode0-Mode2 at video RAM row 1 + 2a + #80 x page, column #300 + 4b; Line2 "
                         "(the right character of an 80-column text square) one row lower";
-    ret["legend"] = "G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, B border, "
-                    ". blank, * blank with the frame INT";
+    ret["legend"] = "G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, Z Spectrum "
+                    "screen cell (ZX-40), B border, . blank, * blank with the frame INT";
 
     constexpr int kKinds = static_cast<int>(SprinterSquare::Kind::Count);
     int counts[kKinds] = {};
@@ -1223,6 +1223,11 @@ StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& quer
                 if (square.kind == SprinterSquare::Kind::Text80)
                     n["line2_m0"] = Hex8(line1[SprinterVideoRam::kRowBytes]);
             }
+            else if (square.kind == SprinterSquare::Kind::Spectrum)
+            {
+                n["zx_row"] = int(square.ZxRow());
+                n["zx_column"] = int(square.ZxColumn());
+            }
             else if (square.IntArmed())
                 n["int"] = true;
             row.push(n);
@@ -1237,6 +1242,11 @@ StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& quer
         summary[SprinterSquare::Key(static_cast<SprinterSquare::Kind>(k))] = counts[k];
     summary["low_res"] = lowres;
     ret["counts"] = summary;
+    // What the picture shows (SprinterPicture, the GUI status bar's summary): the dominant content kind
+    const SprinterPicture shown = SprinterPicture::Of(vram.Data(), page);
+    ret["picture_mode"] = SprinterSquare::Key(shown.mode);
+    ret["picture_mixed"] = shown.mixed;
+    ret["picture_brief"] = shown.Brief(static_cast<uint8_t>((pld.pn >> 3) & 1));
     StateNode used = StateNode::Array();
     for (unsigned k = 0; k < 8; k++)
         if (palettes & (1u << k))

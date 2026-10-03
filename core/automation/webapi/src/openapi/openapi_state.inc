@@ -321,11 +321,14 @@
             "video`, Lua / Python sprinter_video(), MCP aspect sprinter_video): mode_page (RGMOD bit 0 unless page= "
             "is given; displayed tells whether it is the one on screen), rgmod, text_page (#7FFD bit 3), hold (value "
             "and the x / y shift), frame (lines requested / in force, T-states), port_y, border, all_mode; counts per "
-            "kind; map[] = one string per square row, one letter per square (G graphics 320, g graphics 640, T text "
-            "40, t text 80, B border, . blank, * blank with the frame INT); palettes_used (0-3 graphics, 4-7 text "
+            "kind; picture_mode (the dominant content kind: graphics_320 / graphics_640 / text_40 / text_80 / spectrum, "
+            "border / blank when nothing else), picture_mixed (more than one content kind; border / blank squares do "
+            "not mix), picture_brief (the GUI status bar's words); map[] = one string per square row, one letter per "
+            "square (G graphics 320, g graphics 640, T text 40, t text 80, Z Spectrum screen cell - a ZX-40 square "
+            "with m1 = m2, B border, . blank, * blank with the frame INT); palettes_used (0-3 graphics, 4-7 text "
             "paper / ink / flash phase); squares[b][a] = {a, b, kind, m0, m1, m2, and per kind: palette, "
-            "source_column, source_row, low_res, quarter (graphics), chars (text, hex), line2_m0 (80 columns), int "
-            "(blank + INT)}. The picture is 40 x 32 squares; all=1 gives the whole 56 x 40 table. 404 on other "
+            "source_column, source_row, low_res, quarter (graphics), chars (text, hex), line2_m0 (80 columns), "
+            "zx_row, zx_column (Spectrum: the character cell shown), int (blank + INT)}. The picture is 40 x 32 squares; all=1 gives the whole 56 x 40 table. 404 on other "
             "machines.";
         paths[kVideo]["get"]["parameters"][0]["name"] = "id";
         paths[kVideo]["get"]["parameters"][0]["in"] = "path";

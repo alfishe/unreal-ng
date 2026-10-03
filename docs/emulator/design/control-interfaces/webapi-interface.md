@@ -383,7 +383,7 @@ POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write t
 GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
-GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
+GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
 GET  /api/v1/emulator/{id}/state/sprinter/sound/ring  The Covox-Blaster ring: 256 words, play / write index
 GET  /api/v1/emulator/{id}/state/sprinter/bios    BIOS images, the one loaded (CRC-32), the configured one, start options

@@ -744,6 +744,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/hostkeyboardmenu.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/emulatorbinding.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/emulatorbinding.h"
+        # The status bar's video mode label (Sprinter: Spectrum mode vs native modes)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

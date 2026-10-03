@@ -272,28 +272,18 @@ ScreenState ScreenSprinter::DescribeScreenState() const
     s.contention = false;
 
     // A summary of the squares on screen (tdd-video §7): the 40 x 32 picture squares, classified by
-    // SprinterSquare (the classifier DeviceState::Sprinter's video summary uses too)
-    int counts[static_cast<int>(SprinterSquare::Kind::Count)] = {};
-    if (in.vram)
-    {
-        for (uint8_t b = 0; b < 32; b++)
-            for (uint8_t a = 0; a < 40; a++)
-                counts[static_cast<int>(SprinterSquare::Classify(in.vram[SprinterVideoRam::ModeAddress(a, b, in.modePage)]))]++;
-    }
-    auto count = [&](SprinterSquare::Kind kind) { return counts[static_cast<int>(kind)]; };
+    // SprinterSquare through SprinterPicture (the summary DeviceState::Sprinter's video report uses too).
+    // The Spectrum mode is no mode of its own: the ZX screen is the ZX-40 squares the launcher writes
+    const SprinterPicture picture = SprinterPicture::Of(in.vram, in.modePage);
+    using Kind = SprinterSquare::Kind;
     s.videoMode = StringHelper::Format("Sprinter %u lines, mode page %u: text 40 %d, text 80 %d, graphics 320 %d, "
-                                       "graphics 640 %d, border %d, blank %d squares",
+                                       "graphics 640 %d, spectrum %d, border %d, blank %d squares",
                                        static_cast<unsigned>(_frameLines), static_cast<unsigned>(in.modePage),
-                                       count(SprinterSquare::Kind::Text40), count(SprinterSquare::Kind::Text80),
-                                       count(SprinterSquare::Kind::Graphics320), count(SprinterSquare::Kind::Graphics640),
-                                       count(SprinterSquare::Kind::Border), count(SprinterSquare::Kind::Blank));
-    // The dominant kind for a status line ("text 80", "320x256", "mixed")
-    int best = 0;
-    for (int k = 1; k < static_cast<int>(SprinterSquare::Kind::Count); k++)
-        if (counts[k] > counts[best])
-            best = k;
-    static const char* const kBrief[] = {"320x256 256c", "640x256 16c", "text 40", "text 80", "border", "blank"};
-    s.videoModeBrief = counts[best] == 40 * 32 ? kBrief[best] : std::string(kBrief[best]) + " (mixed)";
+                                       picture.Count(Kind::Text40), picture.Count(Kind::Text80),
+                                       picture.Count(Kind::Graphics320), picture.Count(Kind::Graphics640),
+                                       picture.Count(Kind::Spectrum), picture.Count(Kind::Border), picture.Count(Kind::Blank));
+    // A few words for a status line ("Spectrum 256x192, screen 5", "text 80", "320x256 256c (mixed)")
+    s.videoModeBrief = picture.Brief(in.textPage);
     return s;
 }
 

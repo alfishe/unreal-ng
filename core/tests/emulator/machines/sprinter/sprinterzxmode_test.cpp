@@ -13,6 +13,7 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
+#include "emulator/state/devicestate.h"
 
 class SprinterZxMode_Test : public SprinterZxSession_Test
 {
@@ -333,4 +334,63 @@ TEST_F(SprinterZxResetFn307_Test, EveryResetFromZxMode_FlexNavigatorAsAfterColdS
 TEST_F(SprinterZxResetFn_Test, EveryResetFromZxMode_FlexNavigatorAsAfterColdStart)
 {
     RunResetWays();
+}
+
+// The owner's report of 2026-10-02: in the Spectrum mode the status bar said "text 40 (mixed)". The hardware has
+// no Spectrum mode of its own: the launcher writes ZX-40 squares (Mode1 = Mode2 = the cell's address low byte)
+// inside border squares, and the renderer draws them as symbol squares whose font is the screen bitmap. The
+// classifier reads all three mode bytes as the renderer does: the status bar, the machine report, the per-square
+// map and the screen text all say Spectrum in the 128 menu and at the TR-DOS prompt, and the native mode in
+// Flex Navigator before.
+// Boot-bound (BIOS, DSS 1.71, Flex Navigator, the launcher, TR-DOS): ~5 s host time
+TEST_F(SprinterZxModeFn_Test, PictureMode_FlexNavigatorThenSpectrum)
+{
+    auto video = [&] {
+        DeviceState::SprinterVideoQuery query;
+        query.squares = false;
+        return DeviceState::SprinterVideo(_context, query);
+    };
+    auto field = [](const StateNode& node, const char* key) {
+        const StateNode* member = node.find(key);
+        return member ? *member : StateNode();
+    };
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 2000, 5);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);
+    EXPECT_EQ(_context->pScreen->DescribeScreenState().videoModeBrief, "640x256 16c");
+    EXPECT_EQ(field(video(), "picture_mode").s, "graphics_640");
+
+    for (int i = 0; i < 12; i++)
+        Tap("pc.down", 10);
+    Tap("pc.enter", 150);
+    for (int i = 0; i < 3; i++)
+        Tap("pc.down", 10);
+    Tap("pc.enter", 150);
+    Tap("pc.down", 10);
+    Tap("pc.enter", 10);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return InZxMode() && SpectrumHas("TR-DOS"); }, 1500, 10);
+    ASSERT_TRUE(InZxMode()) << PldLine();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 50);
+
+    for (const char* where : {"128 menu", "TR-DOS prompt"})
+    {
+        SCOPED_TRACE(where);
+        if (std::strcmp(where, "TR-DOS prompt") == 0)
+        {
+            Zx("enter", 100);
+            ASSERT_TRUE(SpectrumHas("TR-DOS")) << SpectrumText();
+        }
+        const ScreenState screen = _context->pScreen->DescribeScreenState();
+        EXPECT_EQ(screen.videoModeBrief, "Spectrum 256x192, screen 5") << screen.videoMode;
+        EXPECT_NE(screen.videoMode.find("spectrum 768, border 512"), std::string::npos) << screen.videoMode;
+        const StateNode map = video();
+        EXPECT_EQ(field(map, "picture_mode").s, "spectrum");
+        EXPECT_FALSE(field(map, "picture_mixed").b);
+        const StateNode machine = DeviceState::Sprinter(_context);
+        EXPECT_EQ(field(field(machine, "video"), "picture_mode_key").s, "spectrum");
+        const StateNode text = DeviceState::SprinterText(_context);
+        EXPECT_TRUE(field(text, "spectrum_screen").b);
+        EXPECT_EQ(field(text, "text_squares").i, 0) << "Spectrum cells are bitmaps, not characters";
+    }
+    EXPECT_NE(SpectrumText().find("TR-DOS"), std::string::npos) << "the screen OCR reads the ZX screen";
 }

@@ -126,6 +126,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
        base differs); a per-T table-write history (not only first / last) if a tool needs it;
      - a Qt view of the mode map / palettes / video RAM (the debugger-model work; the data is all in the reports);
      - G18-G21 (P3) unchanged.
+     - ~~the GUI status bar said "text 40 (mixed)" in the Spectrum mode~~ **fixed** (2026-10-02, branch
+       `sprinter-statusbar-zx`): the classifier reads all three mode bytes, ZX-40 squares are `spectrum`
+       ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference.
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
