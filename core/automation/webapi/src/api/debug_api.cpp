@@ -886,6 +886,8 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
             }
             
             bpObj["address"] = bp->z80address;
+            if (bp->matchType == BRK_MATCH_BANK_ADDR)
+                bpObj["page"] = BreakpointManager::PageSpecName(*bp);
             
             // Type-specific access flags
             switch (bp->type)
@@ -988,22 +990,53 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    // Optional "page": "ram:32" | "rom:3" | "cache:0" - the memory breakpoint fires only while that page is
+    // mapped at the address
+    const Json::Value& body = *json;
+    bool inPage = false;
+    uint8_t page = 0;
+    MemoryBankModeEnum pageType = BANK_RAM;
+    if (body.isMember("page") && !body["page"].isNull())
+    {
+        std::string pageError;
+        const bool memory = type == "execution" || type == "exec" || type == "bp" || type == "read" || type == "r" ||
+                            type == "write" || type == "w";
+        if (!memory)
+            pageError = "'page' applies to execution, read and write breakpoints";
+        else if (!BreakpointManager::ParsePageSpec(body["page"].asString(), page, pageType, pageError))
+            ;
+        else if (!bpm->HasPage(page, pageType))
+            pageError = "this machine has no page " + body["page"].asString();
+        if (!pageError.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = pageError;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        inPage = true;
+    }
+
     uint16_t bpId = 0;
     bool success = false;
     
     if (type == "execution" || type == "exec" || type == "bp")
     {
-        bpId = bpm->AddExecutionBreakpoint(address);
+        bpId = inPage ? bpm->AddExecutionBreakpointInPage(address, page, pageType) : bpm->AddExecutionBreakpoint(address);
         success = true;
     }
     else if (type == "read" || type == "r")
     {
-        bpId = bpm->AddMemReadBreakpoint(address);
+        bpId = inPage ? bpm->AddMemReadBreakpointInPage(address, page, pageType) : bpm->AddMemReadBreakpoint(address);
         success = true;
     }
     else if (type == "write" || type == "w")
     {
-        bpId = bpm->AddMemWriteBreakpoint(address);
+        bpId = inPage ? bpm->AddMemWriteBreakpointInPage(address, page, pageType) : bpm->AddMemWriteBreakpoint(address);
         success = true;
     }
     else if (type == "port_in" || type == "in")
@@ -1034,6 +1067,8 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     ret["id"] = bpId;
     ret["type"] = type;
     ret["address"] = address;
+    if (inPage)
+        ret["page"] = BreakpointManager::PageSpecName(*bpm->GetAllBreakpoints().at(bpId));
     ret["message"] = "Breakpoint added";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -1245,6 +1280,8 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
         ret["last_triggered_access"] = bpInfo.access;
         ret["last_triggered_active"] = bpInfo.active;
         ret["last_triggered_note"] = bpInfo.note;
+        if (!bpInfo.page.empty())
+            ret["last_triggered_page"] = bpInfo.page;
         ret["last_triggered_info"] = bpm->FormatBreakpointInfo(bpInfo.id);
         ret["paused_by_breakpoint"] = emulator->IsPaused();
     }
@@ -1318,7 +1355,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     special["pc"] = z80->pc;
     special["sp"] = z80->sp;
     special["i"] = z80->i;
-    special["r"] = (z80->r_hi << 7) | (z80->r_low & 0x7F);
+    special["r"] = Z80::RegisterR(z80);
+    special["memptr"] = z80->memptr;
     ret["special"] = special;
     
     // Interrupt state
@@ -1326,7 +1364,14 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     interrupt["iff1"] = z80->iff1;
     interrupt["iff2"] = z80->iff2;
     interrupt["im"] = z80->im;
+    interrupt["halted"] = z80->halted != 0;
     ret["interrupt"] = interrupt;
+
+    // Where in time: CPU T-states since the frame's start, and the frame number
+    Json::Value timing;
+    timing["t"] = static_cast<Json::UInt>(z80->t);
+    timing["frame"] = static_cast<Json::UInt64>(emulator->GetContext()->emulatorState.frame_counter);
+    ret["timing"] = timing;
     
     // Flags decoded
     uint8_t f = z80->af & 0xFF;
@@ -1412,7 +1457,18 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    Z80::SetRegisterValue(z80, name, value);
+    if (!Z80::SetRegisterValue(z80, name, value))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = std::string(regInfo->name) + " cannot hold " + std::to_string(value) + " (at most " +
+                           std::to_string(regInfo->maxValue) + ")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     // Read back to confirm
     uint16_t readBack;

@@ -59,6 +59,10 @@ EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json'
       -d '{"model":"TSL"}' | jq -r .id)
 curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '.video, .memory.pages'
 curl -s "$BASE/emulator/$EMU/state/tsconf/tsu" | jq '[.sprites[] | select(.active)]'   # the visible sprites
+# Debugger board: the write-only registers as last written, DMA as programmed vs live, the line's tile pages
+curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '{sys_config, cache_en, fm_maps: .memory.fm_maps,
+     dma: (.dma | {programmed_source, source, programmed_destination, destination, ctrl}),
+     line_tiles: (.video.line | {t0_gpage, t1_gpage}), dma_regs: .regs[26:32]}'
 curl -s "$BASE/emulator/$EMU/video/pixel?layer=1&x=100&y=50" | jq '.layer, .sources'  # which TSU object drew a pixel
 curl -s -X POST "$BASE/emulator/$EMU/snapshot/load" -H 'Content-Type: application/json' \
      -d '{"path":"testdata/machines/tsconf/spg/sprites.spg"}' | jq .emulator_id

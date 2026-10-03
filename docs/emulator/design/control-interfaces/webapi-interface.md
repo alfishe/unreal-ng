@@ -353,7 +353,8 @@ PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true}
 
 ### State Inspection
 ```
-GET /api/v1/emulator/{id}/registers           Get CPU registers (AF, BC, DE, HL, PC, SP, etc.)
+GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr), interrupt (iff1, iff2, im, halted), timing (t = CPU T in the frame, frame), flags
+PUT /api/v1/emulator/{id}/registers/{name}    Set a register (body {"value":N}): the register table names, memptr / wz, im (0-2), iff1 / iff2 (0-1); 400 out of range
 GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
 PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
 GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N)
@@ -407,7 +408,7 @@ GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, stat
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks, status (11h-15h), head (LBA, MSF, track, index), play range, page 0Eh volume, mixer row (available=false without a CD drive)
 POST /api/v1/emulator/{id}/cdaudio/{verb}      CD audio control: status | play (track, to | lba, frames | msf, end) | pause | resume | stop | volume (left, right, route, sotc) | mixer (volume, mute, solo); drive picks the drive. 409 recording / no-disc / not-playing, 404 no-cd-drive
-GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD (404 on other machines)
+GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map (+ fm_maps raw), video (mode, geometry, TSU, the engine's line with t0_gpage / t1_gpage), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs[72] = the register file as last written (404 on other machines)
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity); 404 without an adapter
@@ -637,10 +638,16 @@ GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakp
 {
   "type": "execution|read|write|port_in|port_out",
   "address": 32768,
+  "page": "ram:32",
   "note": "optional annotation",
   "group": "optional group name"
 }
 ```
+
+`page` (optional, execution / read / write): `ram:N`, `rom:N` or `cache:N`. The breakpoint fires only
+while that page is mapped at the address - for example code in TS-Conf RAM page 32 at `#C000`, not
+whatever else is paged in there. 400 for a page the machine does not have. The list and
+`/breakpoints/status` (`last_triggered_page`) name it back the same way.
 
 ### Analyzers
 ```

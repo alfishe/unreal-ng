@@ -1174,3 +1174,46 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
     /// endregion </Release>
 }
 
+
+/// The page condition every automation surface writes ("ram:32", "rom:3", "cache:0"), checked against the
+/// machine's pages, named back the same way and shown in the text listing
+TEST_F(BreakpointManager_test, PageSpec_ParseNameAndMachinePages)
+{
+    uint8_t page = 0;
+    MemoryBankModeEnum type = BANK_INVALID;
+    std::string error;
+    EXPECT_TRUE(BreakpointManager::ParsePageSpec("RAM:0x20", page, type, error));
+    EXPECT_EQ(page, 0x20);
+    EXPECT_EQ(type, BANK_RAM);
+    EXPECT_TRUE(BreakpointManager::ParsePageSpec("rom:$3", page, type, error));
+    EXPECT_EQ(page, 3);
+    EXPECT_EQ(type, BANK_ROM);
+    EXPECT_TRUE(BreakpointManager::ParsePageSpec("cache:1", page, type, error));
+    EXPECT_EQ(type, BANK_CACHE);
+    for (const char* bad : {"ram", "ram:", "ram:256", "ram:12x", "vram:1", "32"})
+    {
+        error.clear();
+        EXPECT_FALSE(BreakpointManager::ParsePageSpec(bad, page, type, error)) << bad;
+        EXPECT_FALSE(error.empty()) << bad;
+    }
+
+    _context->config.ramsize = 128;  // a 128K machine: RAM pages 0-7
+    EXPECT_TRUE(_brkManager->HasPage(7, BANK_RAM));
+    EXPECT_FALSE(_brkManager->HasPage(8, BANK_RAM));
+    EXPECT_FALSE(_brkManager->HasPage(MAX_CACHE_PAGES, BANK_CACHE));
+
+    error.clear();
+    EXPECT_EQ(_brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram:8", error), BRK_INVALID);
+    EXPECT_NE(error.find("no page"), std::string::npos) << error;
+    const uint16_t id = _brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram:7", error);
+    ASSERT_NE(id, BRK_INVALID);
+    const BreakpointDescriptor* bp = _brkManager->GetAllBreakpoints().at(id);
+    EXPECT_EQ(bp->matchType, BRK_MATCH_BANK_ADDR);
+    EXPECT_EQ(bp->page, 7);
+    EXPECT_EQ(BreakpointManager::PageSpecName(*bp), "ram:7");
+    EXPECT_NE(_brkManager->GetBreakpointListAsString().find("in ram:7"), std::string::npos);
+
+    const uint16_t plain = _brkManager->AddMemoryBreakpointInPageSpec(0x8000, BRK_MEM_WRITE, "", error);
+    EXPECT_EQ(BreakpointManager::PageSpecName(*_brkManager->GetAllBreakpoints().at(plain)), "")
+        << "no page: the address in any page";
+}

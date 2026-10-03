@@ -205,6 +205,7 @@ public:
         bool active = false;        // Current enable state
         std::string note;           // User annotation
         std::string group;          // Group name
+        std::string page;           // "ram:32" for a breakpoint bound to a page, "" otherwise
     };
 
     /// Get structured info about the last triggered breakpoint
@@ -244,6 +245,18 @@ public:
     uint16_t AddCombinedMemoryBreakpointInPage(uint16_t z80address, uint8_t memoryType, uint8_t page,
                                                MemoryBankModeEnum pageType,
                                                const std::string& owner = OWNER_INTERACTIVE);
+
+    /// A page condition as every automation surface writes it: "ram:32", "rom:3", "cache:0" (the page in
+    /// decimal or as 0x.. / #.. / $..). False with the reason in `error` for anything else
+    static bool ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType, std::string& error);
+    /// "ram:32" for a breakpoint bound to a page, "" for one that matches the address in any page
+    static std::string PageSpecName(const BreakpointDescriptor& breakpoint);
+    /// Whether this machine has the page (RAM: config ramsize; ROM, cache: the emulator's page ceilings)
+    bool HasPage(uint8_t page, MemoryBankModeEnum pageType) const;
+    /// A memory breakpoint (memoryType: BRK_MEM_* bits) at the address, bound to `pageSpec` when it is not
+    /// empty. BRK_INVALID with the reason in `error` for a bad or missing page
+    uint16_t AddMemoryBreakpointInPageSpec(uint16_t z80address, uint8_t memoryType, const std::string& pageSpec,
+                                           std::string& error);
 
     // Breakpoint listing
     const BreakpointMapByID& GetAllBreakpoints() const;

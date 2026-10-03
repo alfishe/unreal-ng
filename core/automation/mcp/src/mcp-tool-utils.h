@@ -106,6 +106,8 @@ inline std::string FormatRegisters(const Json::Value& registers)
     {
         out << "IX=" << Hex16(index["ix"].asUInt()) << " IY=" << Hex16(index["iy"].asUInt());
     }
+    if (registers["interrupt"]["halted"].asBool())
+        out << " HALT";
     return out.str();
 }
 
