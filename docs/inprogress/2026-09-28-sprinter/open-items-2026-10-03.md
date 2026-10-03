@@ -7,12 +7,13 @@ come the ISA slots and the network cards (section 3).
 
 ## 1. Demos from the MAME-pack hard disk (`DEMOS/`, 21 items)
 
-- Checked with the demo runner ([tools/machines/sprinter/demo-runner](../../../tools/machines/sprinter/demo-runner/README.md)):
-  15 of 21 run. No verdict yet for STARWAY and the ones after it, GAME_00, KOSAREW, LDCONF, NU, SDK, XENON2.
-- To re-check after the CTC fix (counter mode, TRG inputs): FBIRD, NOTHENG.
-- scroller.trd: the switch to 21 MHz in the middle of the demo (seen in one owner window with CNF `#07` and
-  a SIO A overrun) is postponed; it may be gone with the PS/2 keyboard fix (SIO overrun per the data sheet,
-  F12 decoded from the wire). Re-check.
+- **Pass done 2026-10-03** ([demo-status.md](demo-status.md)): all 76 programs below `DEMOS/` verdicted with the
+  fixed demo runner (the earlier "15 of 21 run" came from a runner bug that called every program running). They run,
+  except: GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred);
+  BUYAN/20X20 stops with interrupts off (open, compare with MAME); WILDSND needs the ISA Wild Sound card;
+  DNTBLINK is investigated separately. FBIRD and NOTHENG run after the CTC fix.
+- scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
+  reproduce (likely cured by the PS/2 overrun fix).
 
 ## 2. Spectrum (ZX) mode
 

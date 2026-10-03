@@ -265,6 +265,9 @@ Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
 
 ### 4. Spectrum mode and TR-DOS
 
+The shortest paths with the hard disk (native programs, SP / P128 / SC256 launcher modes, TR-DOS `RUN`):
+[sprinter-software.md](sprinter-software.md). This section boots from floppies.
+
 The community BIOS (3.06 / 3.07, the default) carries the ZX ROMs: ESC at its boot prompt starts the
 Spectrum 128 menu "Sprinter" directly. BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
 `A:\ZX\ROMS`. So put a second copy of the floppy in drive A **before the

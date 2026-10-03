@@ -148,7 +148,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
        `sprinter-statusbar-zx`): the classifier reads all three mode bytes, ZX-40 squares are `spectrum`
        ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
-     picture, no sound - find and fix each cause with MAME's code as the reference.
+     picture, no sound - find and fix each cause with MAME's code as the reference. **Pass done 2026-10-03:
+     [demo-status.md](demo-status.md)** (open: BUYAN/20X20; the Game PLD configuration for GAME_00 / LDConf START.BAT).
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.

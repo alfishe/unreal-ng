@@ -141,6 +141,7 @@ call.
 | [machines/sprinter-accelerator.md](machines/sprinter-accelerator.md) | Sprinter Sp2000 block accelerator: run `ACCTEST.EXE` from a DSS floppy, check its picture in the graphics RAM, the accelerator state |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
+| [machines/sprinter-software.md](machines/sprinter-software.md) | Sprinter Sp2000: run software the shortest way - a native `.EXE` from Flex Navigator's command line, a Spectrum TRD in the SP (21 MHz) and P128 (3.5 MHz) launcher modes from the hard disk, the Scorpion SC256 mode from a floppy; TTD first |
 | [machines/sprinter.md](machines/sprinter.md) | Sprinter Sp2000 (`SPRINTER`): BIOS selection at create / runtime and full / fast start, DSS from a 1.44 MB floppy, typing DSS commands, Spectrum mode + TR-DOS, `state sprinter` (PLD, windows, accelerator, waits, Z84C15), video modes per square, palettes, video RAM (`vram` region), the video change log, digest / raw framebuffer, the port table and its codes, screen text |
 
 ### `peripherals/` — sound cards and DACs

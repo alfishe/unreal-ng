@@ -79,11 +79,24 @@ class Emu:
         return self.call("GET", f"/memory/read/{hex(addr)}?length={n}&format=full")["data"]
 
     def digest(self):
+        """The picture's digest: video memory + border (`combined`). The response also carries the frame number and
+        the previous digest, so the whole JSON differs on every call and must not be compared"""
         d = self.call("GET", "/state/screen/digest")
-        return d.get("digest") or d.get("hash") or json.dumps(d, sort_keys=True)
+        value = d.get("combined") or (d.get("active_surface") or {}).get("digest")
+        if not value:
+            raise RuntimeError(f"no digest in /state/screen/digest: {d}")
+        return value
 
     def shot(self, path):
         self.call("GET", f"/capture/screen?area=full&format=png&path={path}")
+
+    def journal_seq(self):
+        """The PLD journal's count of events so far (the next event gets this sequence number)"""
+        return self.call("GET", "/state/sprinter/pld-journal").get("appended", 0)
+
+    def journal_since(self, seq, kinds):
+        events = self.call("GET", "/state/sprinter/pld-journal").get("events", [])
+        return [e for e in events if e.get("seq", -1) >= seq and e.get("kind") in kinds]
 
     def cbl(self):
         cb = self.call("GET", "/state/sprinter").get("sound", {}).get("covox_blaster", {})
@@ -127,23 +140,52 @@ def listing(image, folder):
     return ([".."] if folder.strip("/") else []) + sorted(dirs, key=key) + sorted(files, key=key)
 
 
-def navigate(emu, image, path):
-    """From FN's freshly booted left panel at C:\\ to `path`, then Enter on the file."""
+def navigate(emu, image, path, before_enter=None):
+    """From FN's freshly booted left panel at C:\\ to `path`, then Enter on the file. `before_enter` runs once the
+    cursor is on the file, right before that last Enter (the TTD recording starts there)."""
     parts = path.strip("/").split("/")
     folder = ""
-    for name in parts:
+    for k, name in enumerate(parts):
         entries = listing(image, folder)
         lower = [e.rstrip("/").lower() for e in entries]
         if name.lower() not in lower:
             raise ValueError(f"{name} not in {folder or 'C:'}: {entries}")
         for _ in range(lower.index(name.lower())):
             emu.tap("down")
+        if k == len(parts) - 1 and before_enter:
+            before_enter()
         emu.tap("enter")
         emu.frames(FRAMES_PER_SECOND)  # the panel re-reads the folder
         folder = f"{folder}/{name}".strip("/")
 
 
-def probe(emu, name, out_dir, seconds=8, step=2):
+class Ttd:
+    """TTD recording around one program: started right before the Enter that launches it, stopped after the probe.
+    A run that did not end `running` (a hang, waits-for-int, static, an error) keeps its session as a .ttd file, so
+    the hang can be rewound and inspected (port events, the PLD journal); see .recipe/analysis/ttd-recording.md"""
+
+    def __init__(self, emu, history_frames):
+        self.emu = emu
+        self.history_frames = history_frames
+
+    def start(self):
+        self.emu.call("POST", "/ttd/invalidate")  # a clean session per program
+        self.emu.call("POST", "/ttd/start", {"mode": "development", "history_limit_frames": self.history_frames})
+
+    def finish(self, keep_path=None):
+        """Stop; save to `keep_path` when given; drop the history. Returns the saved path or None"""
+        saved = None
+        try:
+            self.emu.call("POST", "/ttd/stop")
+            if keep_path:
+                r = self.emu.call("POST", "/ttd/dump", {"path": keep_path}, timeout=600)
+                saved = keep_path if not isinstance(r, dict) or r.get("success", True) else None
+        finally:
+            self.emu.call("POST", "/ttd/invalidate")
+        return saved
+
+
+def probe(emu, name, out_dir, seconds=8, step=2, journal_from=None):
     pcs, digests = [], []
     for i in range(0, seconds, step):
         emu.frames(step * FRAMES_PER_SECOND)
@@ -155,7 +197,13 @@ def probe(emu, name, out_dir, seconds=8, step=2):
     opcode = emu.mem(pc, 1)[0]
     result = {"program": name, "pc": hex(pc), "im": im, "cbl": emu.cbl(),
               "picture_changes": len(set(digests)) - 1}
-    if pc == FN_IDLE_PC and len(set(pcs)) == 1:
+    reloads = emu.journal_since(journal_from, ("pld_load",)) if journal_from is not None else []
+    if reloads:
+        # The program reloaded the PLD (code #2E: back to the ROM loader, e.g. a custom .acx bitstream): the
+        # machine restarts, so the picture and the PC say nothing about the program itself
+        result["verdict"] = "pld-reload"
+        result["pld_load"] = [{k: e.get(k) for k in ("frame", "pc", "text")} for e in reloads[:2]]
+    elif pc == FN_IDLE_PC and len(set(pcs)) == 1:
         result["verdict"] = "exited-to-fn"
     elif opcode == 0x76 and len(set(pcs)) == 1 and result["picture_changes"] == 0:
         result["verdict"] = "waits-for-int"
@@ -202,6 +250,15 @@ def main():
     ap.add_argument("--seconds", type=int, default=8, help="emulated seconds per program")
     ap.add_argument("--start-at", help="skip the programs before this path (resume a broken run)")
     ap.add_argument("--out", default="scratch/demos")
+    ap.add_argument("--ttd", dest="ttd", action="store_true", default=True,
+                    help="record TTD from the Enter on each program; keep a .ttd of every run that is not 'running' "
+                         "(default on)")
+    ap.add_argument("--no-ttd", dest="ttd", action="store_false", help="do not record TTD")
+    ap.add_argument("--ttd-keep", choices=("failures", "all"), default="failures",
+                    help="which sessions to save as .ttd: runs that are not 'running' (default), or every run "
+                         "(a 'running' verdict can still hide a reset or a wrong picture)")
+    ap.add_argument("--ttd-history-frames", type=int, default=FRAMES_PER_SECOND * 180,
+                    help="rolling TTD history limit in frames (default: about 3 minutes)")
     a = ap.parse_args()
 
     programs = list(a.programs)
@@ -223,18 +280,40 @@ def main():
     out_dir = os.path.abspath(a.out)
 
     emu = Emu(a.port, a.id)
+    ttd = Ttd(emu, a.ttd_history_frames) if a.ttd else None
     results = []
+    names = set()
     for prog in programs:
-        name = re.sub(r"[^A-Za-z0-9]+", "-", prog).strip("-").lower()
+        # FBIRD.EXE, FBIRD_.EXE and _FBIRD.EXE must not share a name (their screenshots would overwrite each other)
+        base = re.sub(r"[^A-Za-z0-9_]+", "-", prog).strip("-").lower()
+        name, n = base, 2
+        while name in names:
+            name, n = f"{base}-{n}", n + 1
+        names.add(name)
         t0 = time.time()
         if not boot(emu, a.bios, a.hdd):
             results.append({"program": name, "verdict": "fn-not-ready", "cbl": {}})
             continue
         try:
-            navigate(emu, a.listing_image, prog)
-            r = probe(emu, name, out_dir, a.seconds)
+            mark = {}
+
+            def before_enter():
+                mark["seq"] = emu.journal_seq()
+                if ttd:
+                    ttd.start()
+
+            navigate(emu, a.listing_image, prog, before_enter=before_enter)
+            r = probe(emu, name, out_dir, a.seconds, journal_from=mark.get("seq"))
         except Exception as e:  # keep going: one broken program must not stop the run
             r = {"program": name, "verdict": f"error: {e}", "cbl": {}}
+        if ttd:
+            try:
+                keep = os.path.join(out_dir, f"{name}.ttd") if a.ttd_keep == "all" or r["verdict"] != "running" else None
+                saved = ttd.finish(keep)
+                if saved:
+                    r["ttd"] = saved
+            except Exception as e:
+                r["ttd_error"] = str(e)
         r["path"] = prog
         r["wall_seconds"] = round(time.time() - t0, 1)
         results.append(r)
