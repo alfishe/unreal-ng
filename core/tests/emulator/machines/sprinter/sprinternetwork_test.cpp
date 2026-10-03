@@ -157,13 +157,14 @@ TEST_F(SprinterNetwork_Test, OtherPopulations)
         config.sprinter.isa.slot[0].base = 0x340;
         config.sprinter.isa.slot[1].kind = static_cast<uint8_t>(sprinterisa::CardKind::SprinterEsp);
     });
-    ASSERT_EQ(Network()->SlotCards().size(), 1u);
-    EXPECT_EQ(Network()->SlotCards()[0].slotId, "isa1");
+    ASSERT_EQ(Network()->SlotCards().size(), 2u);
     EXPECT_EQ(IsaIo("io_read", 1, 0x34A), 0x50) << "the NE2000 at #340 in slot 1";
+    ASSERT_NE(Network()->SerialCard("isa2"), nullptr) << "the SprinterESP in slot 2 (network phase SN3)";
+    IsaIo("io_write", 2, 0x3EF, 0x55);
+    EXPECT_EQ(IsaIo("io_read", 2, 0x3EF), 0x55) << "its 16550's scratch register";
     const StateNode isa = DeviceState::Isa(_context);
-    const StateNode* why = isa.find("slots")->items[1].find("not_fitted");
-    ASSERT_NE(why, nullptr) << "the SprinterESP is not built yet";
-    EXPECT_NE(why->s.find("SN3"), std::string::npos) << why->s;
+    EXPECT_EQ(isa.find("slots")->items[1].find("not_fitted"), nullptr);
+    EXPECT_EQ(isa.find("slots")->items[1].find("card")->s, "sprinteresp");
 }
 
 TEST_F(SprinterNetwork_Test, TheCardIsHardware_NetworkFeatureOffKeepsIt)

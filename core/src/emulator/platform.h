@@ -740,7 +740,9 @@ struct CONFIG
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
-		/// ESP module of ComPort=ESPNET / AT: 0 = ESP32 (8 sockets), 1 = ESP8266 (4 sockets)
+		/// ESP module of ComPort=ESPNET / AT (EspModule::Firmware): 0 = ESP32 (8 sockets, AT 2.2.0), 1 = ESP8266
+		/// (4 sockets, NonOS AT 1.7.4), 2 = ESP8266 ESP-AT 2.2.1, 3 = ESP8266 ESP-AT 2.2.2. The SprinterESP card's
+		/// ESP-12F takes an ESP8266 value from here, else 2.2.2 (the Sprinter ESP Network Kit's firmware)
 		uint8_t espChip;
 	} network;
 

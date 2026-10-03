@@ -23,10 +23,24 @@ public:
     static constexpr uint32_t kMaxSend = 2048;
     static constexpr uint32_t kIpdChunk = 1460;   ///< one TCP segment per +IPD
 
+    /// ESP8266: NonOS AT 1.7.4, ESP32: AT 2.2.0
     AtModule(VirtualNetwork* network, Chip chip);
+    /// A firmware preset (network tdd §8.3) and the station MAC (nullptr: the chip family's)
+    AtModule(VirtualNetwork* network, Firmware firmware, const std::array<uint8_t, 6>* mac = nullptr);
 
     const char* Kind() const override { return "at"; }
     void OnFrame() override;
+    Firmware GetFirmware() const { return _firmware; }
+
+    /// Session settings a status view shows (AT+CIPMUX, AT+CIPRECVMODE, AT+SYSSTORE, AT+CIPDNS)
+    bool Mux() const { return _mux; }
+    bool Passive() const { return _passive; }
+    bool Echo() const { return _echo; }
+    bool SysStore() const { return _sysStore; }
+    uint32_t ManualDns(int n) const { return n == 0 ? _dns[0] : _dns[1]; }
+    /// Link `n` (0..4) as AT+CIPSTATUS shows it: open, UDP, remote
+    bool LinkOpen(int n) const;
+    bool LinkUdp(int n) const { return n >= 0 && n < kLinks && _links[n].udp; }
 
 protected:
     void Process() override;
@@ -59,6 +73,13 @@ private:
     void HandleLine(const std::string& line);
     void Reply(const std::string& text) { Send(text); }
     void Ok() { Send("\r\nOK\r\n"); }
+    /// ESP-AT 2.x (ESP32 AT 2.2.0, ESP8266 2.2.1 / 2.2.2) rather than NonOS 1.7
+    bool At2() const { return _firmware != Firmware::Esp8266NonOs174; }
+    /// The ESP8266 ESP-AT 2.2 builds (their reply forms: +PING:, +CIPRECVDATA:<len>,)
+    bool Esp8266At2() const { return _firmware == Firmware::Esp8266At221 || _firmware == Firmware::Esp8266At222; }
+    void OnHardwareReset() override;
+    void OnHardwareBoot() override;
+    void ResetSession();
     void Error() { Send("\r\nERROR\r\n"); }
     void EmitUrcs();
     void FinishSend();
@@ -80,8 +101,17 @@ private:
     std::string LinkPrefix(int link) const { return _mux ? std::to_string(link) + "," : std::string(); }
     void FlushTransparent();
 
+    Firmware _firmware = Firmware::Esp32At220;
+
     // Settings
     bool _echo = true;
+    bool _sysStore = true;           ///< AT+SYSSTORE (2.x): settings go to flash
+    bool _sysLog = false;            ///< AT+SYSLOG
+    bool _dnsManual = false;         ///< AT+CIPDNS=1,...: DNS servers set by the ZX
+    uint32_t _dns[2] = {0, 0};
+    uint16_t _lapOptMask = 0x7FF;    ///< AT+CWLAPOPT: which +CWLAP fields
+    uint8_t _maxConn = 5;            ///< AT+CIPSERVERMAXCONN
+    uint8_t _uartFlow = 3;           ///< the flow field of the last AT+UART_CUR (query)
     bool _mux = false;
     bool _dinfo = false;
     bool _passive = false;

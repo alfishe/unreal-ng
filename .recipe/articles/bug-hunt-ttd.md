@@ -43,7 +43,7 @@ time_travel        {"action":"reverse_continue","pcs":[33156]}
 # phase 3 — replay and confirm:
 time_travel        {"action":"seek","frame":11781}
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/breakpoints",
-                   "body":{"type":"memory","address":16384,"write":true}}
+                   "body":{"type":"write","address":16384}}
 time_travel        {"action":"resume"}      # truncates the future, records again, resumes the emulator
 ```
 
@@ -147,7 +147,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
 # arm a watchpoint-style breakpoint on the address, then resume live
 curl -s -X POST "$BASE/emulator/$EMU_ID/breakpoints" \
      -H 'Content-Type: application/json' \
-     -d '{"type":"memory","address":16384,"write":true,"note":"corruption watch"}' | jq .
+     -d '{"type":"write","address":16384}' | jq .
 # ttd/resume truncates the recorded future at this point, records again
 # and resumes the emulator itself (the extra /resume is a harmless no-op)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'

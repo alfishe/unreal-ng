@@ -20,7 +20,7 @@ capture as `index` / `code`.
 ## MCP (preferred)
 
 ```text
-emulator_manage   {"action":"create","model":"SPRINTER"}      # [SPRINTER] FastStart=0 (the default): the full start, like MAME
+emulator_manage   {"action":"create","model":"SPRINTER","sprinter_bios":"3.04"}   # the MAME capture is BIOS 3.04 (the default is 3.07). [SPRINTER] FastStart=0 (the default): the full start, like MAME
 control_execution {"action":"pause"}
 invoke_api {"method":"PUT", "path":"/api/v1/emulator/{id}/feature/porttrace","body":{"enabled":true}}
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/profiler/porttrace/config","body":{"capacity":20000,"overflow":"stop"}}
@@ -37,7 +37,7 @@ invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/profiler/porttrace/sav
 
 ```bash
 BASE=http://localhost:8090/api/v1
-EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"SPRINTER"}' | jq -r .id)
+EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"SPRINTER","sprinter":{"bios":"3.04"}}' | jq -r .id)
 curl -s -X POST "$BASE/emulator/$EMU/pause" >/dev/null
 curl -s -X PUT  "$BASE/emulator/$EMU/feature/porttrace" -H 'Content-Type: application/json' -d '{"enabled":true}' >/dev/null
 curl -s -X POST "$BASE/emulator/$EMU/profiler/porttrace/config" -H 'Content-Type: application/json' \

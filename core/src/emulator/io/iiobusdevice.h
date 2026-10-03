@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 #include "emulator/state/statenode.h"
 
@@ -27,6 +28,10 @@ public:
 
     /// Whether the device answers this bus address, and at which register offset
     virtual bool Decodes(uint32_t address, uint16_t& offset) const = 0;
+    /// The card's decoder does not look at AEN (ISA): it answers DMA-flagged cycles too (the SprinterESP's 74HC30)
+    virtual bool IgnoresAen() const { return false; }
+    /// How the card decodes, in words, for the slot report (empty: the bus's generic text)
+    virtual std::string DecodeNote() const { return {}; }
     /// A real bus cycle (side effects)
     virtual uint8_t Read(uint16_t offset) = 0;
     virtual void Write(uint16_t offset, uint8_t value) = 0;

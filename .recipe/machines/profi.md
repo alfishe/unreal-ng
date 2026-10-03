@@ -40,7 +40,7 @@ emulator_manage {"action":"create","model":"PROFI3"}   # v3, boots into the Kram
 
 emulator_manage {"action":"list_models"}
 #   → models[].name (NOT .id, which is a numeric index) == "PROFI",
-#     creatable:true, available_ram_sizes_kb:[1024]
+#     creatable:true, available_ram_sizes_kb:[512,1024]
 
 inspect_state {"aspects":["paging"]}
 #   → profi_board (v3 / v5), p7FFD + pDFFD with decoded fields extended_ram_bank, sco, worom, cpm,

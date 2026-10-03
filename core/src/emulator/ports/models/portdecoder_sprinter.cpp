@@ -1453,7 +1453,16 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
         uint8_t mac[6];
         sprinterisa::EffectiveMac(config, n, NetworkInstanceIndex(), mac);
         std::copy(mac, mac + 6, slot.mac.begin());
-        slot.portKey = slot.id + ".eth";
+        slot.portKey = slot.id + (kind == sprinterisa::CardKind::SprinterEsp ? ".uart0" : ".eth");
+        slot.macAuto = config.macAuto != 0;
+        slot.instance = NetworkInstanceIndex();
+        slot.peer.assign(config.peer, strnlen(config.peer, sizeof(config.peer)));
+        if (kind == sprinterisa::CardKind::SprinterEsp)
+        {
+            // Fixed on the board (decoder and IRQ wiring): the config's Base / Irq do not apply
+            slot.base = sprinterisa::kSprinterEspBase;
+            slot.irq = sprinterisa::kSprinterEspIrq;
+        }
         slot.fit = [this, n](IIoBusDevice* device, std::string& why) {
             (void)why;
             if (!device)
@@ -1465,6 +1474,11 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
             return true;
         };
         slot.notFitted = [this, n](const std::string& why) { _isaBus.SetRefusal(n, why); };
+        slot.setPeer = [this, n](const std::string& peer) {
+            _isaBus.SetConfiguredPeer(n, peer);
+            sprinterisa::SlotConfig& cfg = _context->config.sprinter.isa.slot[n];
+            std::snprintf(cfg.peer, sizeof(cfg.peer), "%s", peer.c_str());
+        };
         caps.expansionSlots.push_back(std::move(slot));
     }
     return caps;
