@@ -1,9 +1,9 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-7 done; next round open.
+**Created:** 2026-10-03. **Status:** rounds 0-8 done; next round open.
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
-speed of the real card to thirteen times faster than it. Each round records what we
+speed of the real card to twenty times faster than it. Each round records what we
 started from, what was slow and why, what we changed, and what the numbers mean.
 Background on the drawing model: [acceleration-experiments.md](acceleration-experiments.md),
 line costs: [line-budget-model.md](line-budget-model.md).
@@ -256,6 +256,47 @@ screen **7.2 -> 1.06 ms** (87 %), gameplay 2.59 -> 2.22 ms (18 %). Whole capture
 screens cost almost nothing now; Zuma's gameplay (balls moving on every line of the track)
 is what remains, at 2.2 ms per frame.
 
+## Round 8: a line is kept when its own steps did not change
+
+**Start.** **11.3 s, 12.9x.** Gameplay drew 2.22 ms per frame and kept only 18 % of its lines:
+round 7 keeps a line only while nothing at all changed, and Zuma rewrites its display list
+every frame (the balls move) and writes a little graphics memory every frame. Counting the
+gameplay lines whose own steps (the steps of the recorded walk that reach the line) were the
+same as when the line was last drawn: 54 % of them, but only 16 % with the graphics memory
+unchanged.
+
+**What was slow and why.** Two inputs were too coarse. The display list as a whole: a ball
+moving on line 300 made line 600 count as changed. And graphics memory as a whole: Zuma
+writes about 1.2 KB per frame at 0x80400 - 0x808FF (game data, not drawn), next to the ball
+palettes at 0x80000 and 0x80200; any write made every line count as changed.
+
+**Change.** A line drawn from the recorded walk remembers the steps that reached it (each
+with its context and handle), its fill cost and the graphics memory change count. A later
+line is left in the frame buffer when its reaching steps are equal to those and none of the
+graphics memory those steps read changed since:
+
+- equal steps: the same vertex, handle and context as drawing reads them (the display list
+  position, the vertex count and the previous vertex do not matter to bitmaps and points);
+- the memory a step reads, a superset: the bitmap rows its sample positions fall on (the
+  whole layout under a rotation or REPEAT in y) and its palette (512 bytes, 1 KB for
+  PALETTED8); text and bargraph formats count any write;
+- graphics memory changes are tracked per 4 KB page and, inside a changed page, per 256-byte
+  block: the first attempt used pages only and kept nothing more, because the game's data
+  shares a page with the palettes; the first palette size was 1 KB for every format and
+  reached into that data.
+
+The line's command count comes from the new list (it depends on the whole list). A line
+drawn without remembering (the tag line, no recorded walk) forgets what it was drawn from.
+Tests: a moved bitmap leaves the other lines alone (a mark written into the frame buffer
+stays), a bitmap moved sideways on the same lines, a palette change, a write next to the
+palette (kept), the tag line forgetting; each check (memory reads, vertex, tag line, palette
+size) was removed once to see the tests fail.
+
+**Result.** Drawing per frame: gameplay **2.22 -> 1.26 ms** (543 000 more lines kept),
+loading screen 1.06 -> 0.44 ms, power-on 0.31 -> 0.05 ms. Whole capture **11.3 -> 7.05 s,
+12.9x -> 20.7x**; rtype-boot **12.5x -> 24x**. **Meaning:** what a line costs now follows what
+changes on it; Zuma's remaining drawing is the lines with a moving or fading sprite.
+
 ## Summary
 
 | Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
@@ -267,22 +308,19 @@ is what remains, at 2.2 ms per frame.
 | 4. display list walked once | 30.8 s | 4.73x | 7.4 ms | 3.18 ms |
 | 5. tag buffer where read | ~30 s | ~4.86x | 7.2 ms | |
 | 6. opaque / transparent shortcut | 26.7 s | 5.46x | | 2.59 ms |
-| 7. unchanged lines kept | 11.0 s | **13.3x** | 1.06 ms | 2.22 ms |
+| 7. unchanged lines kept | 11.0 s | 13.3x | 1.06 ms | 2.22 ms |
+| 8. lines kept by their own steps | 7.05 s | **20.7x** | 0.44 ms | 1.26 ms |
 
-From 305 to 11 seconds: the same capture now needs 28 times less CPU. Picture and line
+From 305 to 7 seconds: the same capture now needs 43 times less CPU. Picture and line
 costs are unchanged in every round (the gate above). Note: the CPU figure includes
 `eve-replay`'s own timing of every call (about 5 %); the library alone is a little faster.
 
 ## Next round
 
-Zuma's gameplay is now the slowest part (2.2 ms of drawing per frame, 82 % of its lines
-change every frame):
-
-- **Decoding** (~31 % there): palette lookups have no SIMD gather on NEON / SSE2; candidates
-  are magnified spans (transform A 100 and 160: one texel covers 1.6 - 2.6 pixels).
-- **Span setup** (~12 %): the handle's size, stride and layout, the span's first and last
-  pixel are the same on every line for a step of the recorded walk.
-- **Keeping parts of lines**: a line changes where a ball moves, but the background under
-  the rest of the line is drawn again too.
+- **Rectangles, points and lines** reach every line in the recorded walk (no row test yet):
+  one moving rectangle makes every line count as changed. Their vertical extent is known.
+- **Fading sprites** (`COLOR_A` changing every frame) and moving ones: the drawing itself
+  (decoding ~0.5 ns and blending ~0.4 ns per pixel).
+- **Parts of lines**: a line changes where a ball moves, the rest of it is drawn again too.
 - **R-Type**: profile its loader and demo the same way.
 - The rest of the acceleration brief: line threads.

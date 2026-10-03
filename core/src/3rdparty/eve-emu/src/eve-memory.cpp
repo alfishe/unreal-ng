@@ -119,6 +119,13 @@ bool InitRegions(EveChip& chip)
 void ClearRegions(EveChip& chip)
 {
     ++chip.ramGWrites;
+    if (chip.ramGPageChanges)
+    {
+        for (uint32_t page = 0; page < (kRamGSize >> kPageShift); ++page)
+            chip.ramGPageChanges[page] = chip.ramGWrites;
+        for (uint32_t block = 0; block < (kRamGSize >> kChangeBlockShift); ++block)
+            chip.ramGBlockChanges[block] = chip.ramGWrites;
+    }
     for (Region& region : chip.regions)
     {
         std::memset(region.base, 0, region.size);
@@ -174,7 +181,11 @@ void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
             CatchUp(chip);
         Region& region = chip.regions[RegionRamG];
         if (region.base[address] != value)
+        {
             ++chip.ramGWrites; // counts changes: kept lines and decoded palettes hold over equal writes
+            chip.ramGPageChanges[address >> kPageShift] = chip.ramGWrites;
+            chip.ramGBlockChanges[address >> kChangeBlockShift] = chip.ramGWrites;
+        }
         region.base[address] = value;
         region.MarkDirty(address);
         return;
