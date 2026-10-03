@@ -1,0 +1,24 @@
+NTP.EXE - network time setup
+
+Purpose
+  Gets the current network time and sets the DSS system clock.
+
+Usage
+  NTP.EXE
+
+Configuration
+  NTP reads these environment variables, published by NETUP.EXE from NET.CFG:
+
+  NET_TZ   Time zone offset, for example +6, +5:30 or -3:30.
+  NET_NTP  Time server name, for example pool.ntp.org.
+
+  NTP does not read NET.CFG itself; run NETUP.EXE first.
+
+Typical sequence
+  NETUP.EXE
+  NTP.EXE
+
+Exit status
+  0  Time was received and DSS SETTIME succeeded.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP communication, SNTP, parse or DSS SETTIME error.

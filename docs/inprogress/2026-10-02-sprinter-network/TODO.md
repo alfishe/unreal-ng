@@ -5,8 +5,12 @@ Nothing built. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28
 roadmap row **S6c**); builds on the ISA design ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/TODO.md)); its
 shared pieces (`IIoBusDevice`, slot list in `DescribeNetwork()`, guest registry) are early parts of PLAN row #82.
 
-Owner decisions so far (2026-10-02): NE2000-class Ethernet is built and comes first; maximum reuse of the shared
-network stack, no Sprinter-only parallel paths.
+Owner decisions so far (2026-10-02): NE2000-class Ethernet is built and comes first (Q1 = B: fitted by default in
+slot 2); maximum reuse of the shared network stack, no Sprinter-only parallel paths; Q2 the host-LAN bridge wanted
+(SN6 no longer optional); Q9 = A our own gateway, tested well.
+
+Built so far (branch `sprinter-isa-network`, as-built notes in [tdd.md](tdd.md) §18): ISA I1 (the bus the cards sit
+on), SN0.
 
 ## Documents
 
@@ -18,7 +22,11 @@ network stack, no Sprinter-only parallel paths.
 ## Remaining
 
 - [ ] Owner review; Q9 (gateway implementation) before SN2, Q7 (order) and Q1 (default card) before SN1
-- [ ] SN0 fixtures (kit releases), MAME-fork reference captures, scripted host test server (S)
+- [x] SN0 (2026-10-03): kit releases as fixtures (`testdata/machines/sprinter/network/`: RTL8019AS kit 0.3.8, ESP kit
+  0.2.1, byte for byte, `.gitattributes` `-text`), the scripted host server `core/tests/_helpers/scriptedhostnet.h`
+  (HTTP, echo, Gopher, banner, UDP echo, NTP, DNS names, ping, host clients for forwards) with its own test
+- [ ] MAME-fork reference captures (T-NET-16): not cheap (the fork's RTL8019AS / SprinterESP cards need a MAME build
+  of `witchcraft2001/mame_sprinter`); deferred, the kit programs on the emulator are the acceptance instead
 - [ ] SN1 `IIoBusDevice`, slots in `DescribeNetwork()`, guest registry, `Dp8390` + `Ne2000Board`, TTD blob 39 (M) -
   after ISA I1
 - [ ] SN2 Ethernet gateway, RTL kit end to end, frame capture, recipe (M-L)

@@ -1,0 +1,38 @@
+NETCFG.EXE - Network configuration editor
+
+Purpose
+  Shows or edits the shared NET.CFG file used by Sprinter ESP Network Kit
+  utilities.
+
+Usage
+  NETCFG.EXE
+      Show current NET.CFG values.
+
+  NETCFG.EXE /W
+      Open the interactive editor and save NET.CFG.
+
+Configuration
+  The recommended runtime location is:
+
+      C:\WIFI\NET.CFG
+
+  Keep NET.CFG with the installed network kit files. Do not distribute a real
+  NET.CFG containing private Wi-Fi credentials.
+
+Important fields
+  SSID       Wi-Fi network name.
+  PASS       Wi-Fi password, stored as clear text.
+  DHCP       1 for DHCP, 0 for static IP.
+  IP         Static station IP when DHCP=0.
+  GATEWAY    Static gateway when DHCP=0.
+  NETMASK    Static netmask when DHCP=0.
+  DNS1/DNS2  DNS servers.
+  TZ         Time zone offset for NTP.EXE, for example +6 or +5:30.
+  NTP        Time server for NTP.EXE.
+  BAUD       UART speed after NETUP configures ESP. Supported values:
+             230400, 115200, 57600, 38400, 19200, 9600.
+
+Exit status
+  0  Success.
+  1  Invalid command line or usage error.
+  4  Configuration read/write error.

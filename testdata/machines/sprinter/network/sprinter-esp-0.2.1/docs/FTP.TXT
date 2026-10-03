@@ -1,0 +1,54 @@
+FTP.EXE - FTP passive file transfer and directory listing
+=========================================================
+
+Purpose
+-------
+  Downloads or uploads files through an FTP server. Directory listing is
+  available with the -l and -n flags.
+
+Usage
+-----
+  FTP.EXE host[:port] file [-o output] [-u user] [-p pass] [-y|-f] [-r]
+  FTP.EXE host[:port] PUT local [-o remote] [-u user] [-p pass]
+  FTP.EXE host[:port] [path] -l [-u user] [-p pass]
+  FTP.EXE host[:port] [path] -n [-u user] [-p pass]
+  FTP.EXE /?
+
+Flags
+  -o name   write to this local file (download) / remote name (PUT).
+  -u user   -p pass   FTP login credentials.
+  -y, -f    overwrite an existing local file without asking.
+  -r        resume: append to an existing file (FTP REST).
+  -l / -n   directory listing (LIST / NLST).
+  When the local file exists, FTP asks [R]esume / [O]verwrite / [C]ancel;
+  -y (or -f) forces overwrite and -r forces resume, with no prompt.
+
+Run NETUP first. FTP.EXE uses the active network connection and does not join
+Wi-Fi by itself.
+
+Examples
+--------
+  FTP.EXE 192.168.1.36 fbird.zip
+  FTP.EXE 192.168.1.36 fbird.zip -o folder\newfile.zip
+  FTP.EXE 192.168.1.36 fbird.zip -y
+  FTP.EXE 192.168.1.36 PUT LOCAL.BIN -o upload.bin
+  FTP.EXE 192.168.1.36 -l
+  FTP.EXE 192.168.1.36 pub -n
+  FTP.EXE 192.168.1.36:2121 -l -u test -p secret
+  FTP.EXE ftp.example.org / -l -u anonymous -p anonymous@
+
+Current Limits
+--------------
+  - FTP works in passive mode;
+  - password is passed on the command line;
+
+If FTP cannot start, run NETRESET, NETUP, then retry the command.
+
+Exit Codes
+----------
+  0  FTP login, PASV and file download, upload or directory listing completed.
+  1  Invalid command line.
+  2  Sprinter-WiFi card was not found.
+  3  ESP/TCP communication error.
+  4  FTP server returned an unexpected or negative reply.
+  5  Local file create, read, write, or close failed.

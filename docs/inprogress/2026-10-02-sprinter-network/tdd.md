@@ -27,6 +27,7 @@
 15. [Tests](#15-tests)
 16. [Phased plan](#16-phased-plan)
 17. [Risks](#17-risks)
+18. [As built](#18-as-built)
 
 ## 1. Goal and scope
 
@@ -614,3 +615,18 @@ network cards ahead of ISA RAM if the owner agrees (Q7).
 | Real-board ISA timing ("missed cycles") is not modeled | a bug that only shows on real hardware will not show here | documented as out of scope; the kit is hardened against it anyway |
 | Host data floods a slow guest | memory growth | per-connection limit + `PauseReceive` (§7.4) |
 | Bridge mode needs admin rights / Npcap | users without them | NAT is the default and complete; bridge is optional (SN6) |
+
+## 18. As built
+
+### SN0 (2026-10-03, branch `sprinter-isa-network`)
+
+- **Fixtures** (Q6): `testdata/machines/sprinter/network/rtl8019a-0.3.8/` (release 0.3.8, 30 files) and
+  `sprinter-esp-0.2.1/` (release 0.2.1, for SN3), byte for byte as the archives hold them (`.gitattributes`: `-text`,
+  the CRLF text files stay CRLF for DSS); hashes and the slot numbering of `RTL_HW=` in the folder's `README.md`;
+  `testdata/NOTICE.md` lists them.
+- **Scripted host server**: `core/tests/_helpers/scriptedhostnet.h` (`ScriptedHostNet : FakeHostNet`): HTTP/1.0 GET
+  with Content-Length, TCP echo, Gopher, a banner server (telnet), UDP echo, NTP (fixed time), DNS names (NXDOMAIN
+  otherwise), pingable addresses, and host clients for a guest server (`ConnectClient`, the Forward= path); every
+  answer is a host event the virtual network journals at the frame boundary. Test: `scriptedhostnet_test.cpp`.
+- **Not done:** the MAME-fork reference captures (T-NET-16) - building the fork with its RTL8019AS card is not cheap;
+  the kit's own programs on the emulator are the acceptance (T-NET-8, 9).

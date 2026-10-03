@@ -1,0 +1,25 @@
+NETRESET.EXE - Reset and reinitialize ESP
+
+Purpose
+  Performs a hardware reset of the SprinterESP / Sprinter-WiFi ESP module and
+  applies basic ESP defaults used by the network kit.
+
+Usage
+  NETRESET.EXE
+
+When to use
+  Use NETRESET when the ESP-AT stream is confused, after a manual WTERM session,
+  or before repeating diagnostics after a failed network command.
+
+Typical recovery sequence
+  NETRESET.EXE
+  NETPROBE.EXE
+  NETUP.EXE
+  PING.EXE example.com
+
+Exit status
+  0  Reset and initialization completed.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP communication error.
+
+After NETRESET, run NETUP again before using network utilities.

@@ -1,0 +1,163 @@
+NICEEP.EXE
+
+Dumps the 93C46 configuration EEPROM of a jumperless NE2000 card.
+
+Read only.  Nothing in this utility writes to the EEPROM.  The only
+chip writes it performs are to CR and to the EEPROM control register,
+and those are the ones the serial protocol itself requires to clock data
+out.  It leaves the controller stopped on page 0.
+
+Use it when a jumperless card behaves oddly and you want to see how it is
+actually configured -- I/O base, IRQ, media, compatibility marks -- without
+a DOS machine and the vendor's setup utility.
+
+Usage
+
+NICEEP
+
+No arguments.  The card is located exactly the way every other utility in
+the kit locates it: NET_RTL_HW from the environment if set (see
+NETCFG.TXT), otherwise an auto-scan.  NET_RTL_RESET is honoured too,
+though NICEEP performs no reset of its own.
+
+Output
+
+RTL8019AS NICEEP v0.2.53
+[P0] Slot/Addr: 0/#300
+[P1] ID=20 01 EEPROM ctrl = page3 reg 07 (UM9003x layout)
+93C46 contents, 64 words:
+EEP 00: 0000 0601 8187 ED03 FFFF FFFF FFFF 5757 |.............WW.|
+EEP 08: 4242 FFFF FFFF FFFF FFFF FFFF 0120 0008 |BB.............|
+EEP 10: FFFF ... (unused to the end)
+[P2] MAC (words 0-2) = 00:00:01:06:87:81
+[P3] W7=5757  W8=4242
+     5757='WW' NE2000/16-bit, 4242='BB' NE1000/8-bit
+[P4] CFG W0E=xxxx  W0F=xxxx
+     base idx=0 (0300)  irq idx=4 (IRQ 10) - absent on ISA-8
+RESULT OK
+
+Words are printed as numbers (high byte first).  The byte order on the
+wire is the other way round -- word N supplies PROM byte 2N from its
+low half and byte 2N+1 from its high half -- which is why [P2] can
+read words 0..2 straight out as a MAC.  Cross-check that line against
+NICINFO's PROM MAC=; they come from two different paths and should
+agree.
+
+The compatibility marks
+
+W7 and W8 are the NE2000 / NE1000 signatures a classic driver reads to
+decide whether the card is 16-bit with 16 KB of packet RAM or 8-bit with
+8 KB.  A healthy jumperless card carries both: W7=5757 ('WW') and
+W8=4242 ('BB').  That is not redundancy -- the card exposes whichever
+one matches the bus width it detected, at PROM bytes 14/15.
+
+Measured on a UM9003AF in a Sprinter ISA-8 slot:
+
+NICEEP  : W7=5757  W8=4242              <- both marks stored in the EEPROM
+NICINFO : PROM bytes 14/15 = 42 42      <- the card reports 'BB' = 8-bit
+
+The two agree on every other byte and differ only there, which is what
+makes the substitution visible.  So 'BB' in NICINFO is the card
+correctly announcing an 8-bit bus, not a damaged mark -- and it explains
+why LANSET's rescue path maintains both words.
+
+The marks are a hint to driver software, not a hardware strap.  This
+kit does not use them (the spec treats the PROM signature as a sanity
+check, not a gate; NICINFO accepts either mark), and neither can make a
+card usable or unusable on an ISA-8 bus:
+
+- /IOCS16, the signal a card uses to claim a 16-bit cycle, exists only
+  on the 36-pin extension connector that an 8-bit slot does not have;
+- the transfer width is chosen by the driver through DCR.WTS, and this
+  kit always clears it (DCR=0x48).
+
+So a "16-bit" card is not excluded from an 8-bit slot, and rewriting the
+mark would change nothing here.  The marks are worth reading only to
+understand what a previous owner's setup utility left behind.
+
+The configuration words
+
+W0E / W0F hold the jumperless settings.  The low byte of W0E carries
+the I/O base index in bits 0..2 and the IRQ index in bits 3..5.  Both
+tables are read out of LANSET's own UMC menu block:
+
+base: 0=300H 1=240H 2=280H 3=2C0H 4=320H 5=340H 6=360H   (7 undefined)
+irq : 0=3 1=4 2=5 3=2/9 4=10 5=11 6=12 7=15
+
+The base table is confirmed against hardware: a UM9003AF reading
+base idx=0 answers at 0x300, which is where [P0] found it.  The IRQ
+table comes from the same menu list but has not been checked by
+measurement -- this kit polls and never arms an interrupt.
+
+NICEEP flags an IRQ index of 4 or higher with - absent on ISA-8.
+IRQ 9..15 are carried on the 36-pin extension connector that an 8-bit
+slot does not have, so a card configured that way is unreachable by any
+interrupt-driven driver in such a slot.  Harmless here, but it is exactly
+the sort of setting that makes a working card look dead elsewhere.
+
+Failure
+
+[E1] no 93C46 answer (dummy bit set) at word 00
+RESULT FAIL
+
+After the 9-bit read command a 93C46 answers with a zero bit before the
+data.  If that bit reads back as 1, either there is no EEPROM on the
+selected control register or the register is at a different offset for
+this controller.  The check is the vendor utility's own, kept because it
+distinguishes "talking to a 93C46" from "reading a floating bus" for free.
+
+NICEEP picks the control register from the 8019 ID: page 3 offset 0x01
+(9346CR) when the ID reads Pp, page 3 offset 0x07 otherwise.  Both
+locations are confirmed on hardware -- 0x07 was extracted from the
+disassembly of UMC's own LANSET.EXE and read back a coherent UM9003AF
+EEPROM; 0x01 comes from the Realtek datasheet and reads back a coherent
+RTL8019AS one.
+
+Exit codes
+
+Code  |  Meaning
+0  |  OK
+2  |  No card found
+3  |  EEPROM did not answer the read protocol
+
+RTL8019AS: a different map entirely
+
+A Realtek part does not use the classic NE2000 field layout.  Its
+93C46 carries an ISA Plug and Play resource block, so NICEEP prints the
+dump and stops rather than decoding fields that are not there:
+
+[P1] ID=50 70 EEPROM ctrl = page3 reg 01 (RTL8019AS 9346CR)
+EEP 10: 4E00 3245 3030 2030 4C50 4755 2620 5020 |.NE2000 PLUG & P|
+EEP 18: 414C 2059 5445 4548 4E52 5445 4320 5241 |LAY ETHERNET CAR|
+EEP 20: 0044 0016 9500 0219 1C00 D041 D680 0047 |D.........A...G.|
+[P2] no field decode: RTL8019AS does not use the classic
+     NE2000 EEPROM map.  Read the ASCII column above.
+
+That is exactly why the dump carries an ASCII column.  Two things are
+worth knowing how to spot in it:
+
+- the PnP identifier string, plain text (NE2000 PLUG & PLAY
+  ETHERNET CARD above);
+- the PnP device ID, a compressed EISA triplet.  Bytes 41 D0
+  decode to PNP, and the two that follow are the device number in hex.
+  41 D0 80 D6 at word 0x25 is PNP80D6, the standard ID for an
+  NE2000-compatible network adapter.
+
+Its presence means the card is PnP-capable silicon.  It says nothing
+about whether PnP is active: that is the JP pin's business.  A card
+strapped into PnP mode decodes no I/O address at all until a PnP
+isolation sequence configures it, and would look completely absent to
+this kit -- whereas the card dumped above answers at 0x300 and works.
+
+An earlier build decoded the classic map here regardless and reported a
+"MAC" of 10:00:90:00:00:00 (bytes cut out of the PnP serial
+identifier), marks of 2020 (ASCII spaces from the string padding) and
+a plausible-looking base idx=0 (0300) that was pure coincidence.
+Confident nonsense is worse than no answer, hence the skip.
+
+Writing
+
+Not implemented, on purpose.  A wrong word can move the card to an I/O
+base you can no longer find it at, and recovery then needs the vendor's
+DOS utility or a programmer clipped onto the chip.  Reading has to prove
+the protocol and the field decoding on real cards first.

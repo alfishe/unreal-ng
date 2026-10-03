@@ -1,0 +1,240 @@
+Sprinter RTL8019AS Network Kit -- HOWTO
+
+Conventions, configuration, exit codes and batch examples shared
+across every utility in the kit.  Per-utility command details
+live in the matching <NAME>.TXT document.
+
+Command-line flags
+
+All utilities follow a DOS / Windows convention:
+
+- Flags are single ASCII characters with either prefix: -x and
+  /x are equivalent.  Letter case is not significant.
+- A flag that takes a value reads the next token: -n 5, not
+  -n5 or -n=5.
+- Long flags (--xxx) are NOT supported.
+- Help is requested with /?, -?, or -h (any of these).
+
+
+Exit codes
+
+Every utility writes one of these values to ERRORLEVEL on exit
+(register B at DSS_EXIT).  Batch scripts can branch on them:
+
+Code  |  Meaning
+0  |  OK
+1  |  Usage error (unknown / missing / malformed argument)
+2  |  RTL8019AS not detected at the configured I/O base
+3  |  Network unreachable (ARP / TCP connect / RX timeout, no link,
+  |  DNS resolution failure)
+4  |  Configuration error (NET.CFG missing, or NET_* env var
+  |  not set -- run NETCFG -i first)
+5  |  Local file create / write / close / delete failure
+6  |  Server-side rejection (HTTP 4xx/5xx, FTP non-2xx incl. 550,
+  |  TFTP OP_ERROR, redirect failure)
+7  |  Cancelled by user (Esc / Ctrl+C)
+
+Each utility prints RESULT OK (B=0) or RESULT FAIL (B != 0)
+as its last line, so visual inspection and machine-readable batch
+checks agree.
+
+
+Cancelling a wait
+
+Utilities that wait for the network respond to Esc and
+Ctrl+C while polling for replies.  A cancelled run prints
+Aborted by user (Esc/Ctrl+C). and returns B=7.
+
+
+Hostnames vs IPv4 literals
+
+Utilities that take a destination (PING, TFTP,
+NTP, WGET, FTP, TELNET) accept either a dotted-decimal IPv4 address
+or a DNS hostname.  When a hostname is supplied, the utility issues
+a DNS A-record query to NET_DNS1 before the actual operation.
+If NET_DNS1 is unset, the utility prints a configuration error
+-- pass an IPv4 literal or run NETCFG -i / IFUP first.
+
+For off-subnet destinations (anything outside NET_IP &
+NET_MASK) the utility ARPs NET_GW instead of the target itself;
+without a valid NET_GW the operation fails with
+[E] off-subnet but NET_GW unset.
+
+NSLOOKUP is a separate utility for explicit DNS testing; the
+inline resolver in the other utilities uses the same library.
+
+
+Output paths (-o)
+
+Utilities that download (WGET, FTP, TFTP) accept an output
+filename that may include a directory part.  The default
+(when -o is omitted) is the basename of the source --
+WGET http://host/pub/foo.zip saves as foo.zip, FTP host
+pub/foo.zip saves as foo.zip.  Override with -o:
+
+Form  |  Effect
+file.zip  |  save in current working dir
+test\file.zip  |  save into existing test\ dir
+\file.zip  |  save in volume root
+C:\foo\bar\file.zip  |  absolute path, drive included
+
+The kit splits the path at the last / or \ (both accepted),
+CHDIRs into the directory for the duration of the file create,
+then restores the previous working directory before returning.
+A non-existent directory prints [E] directory not found: <dir>
+and the utility exits with B=1; the kit does NOT auto-create
+intermediate directories.
+
+
+Configuration
+
+The kit relies on DSS environment variables populated by
+NETCFG -i from NET.CFG:
+
+Variable  |  Source / role
+NET_IP_SRC  |  STATIC or DHCP (selects how IFUP runs)
+NET_IP  |  Local IPv4 (set by NETCFG -i for STATIC,
+  |  by IFUP for DHCP)
+NET_MASK  |  Subnet mask
+NET_GW  |  Default gateway
+NET_MAC  |  Local MAC (always populated by NETCFG -i)
+NET_DNS1/2  |  DNS servers
+NET_NTP  |  Default NTP server
+NET_TZ  |  Timezone offset (signed integer hours)
+NET_RTL_HW  |  ISA slot + I/O base for the chip, S/#HHH form
+  |  (e.g. 1/#300); set by NETCFG -i from
+  |  RTL_HW= or by the auto-scan in INIT_BASE
+  |  when net.cfg doesn't pin it down
+NET_RTL_RESET  |  SOFT -> the driver skips the NE2000 board
+  |  reset port at BASE+0x1F; absent -> standard
+  |  hard reset.  Set by NETCFG -i from RTL_RESET=
+NET_DHCP_SRV  |  DHCP server that issued the lease (DHCP only)
+NET_LEASE_SEC  |  Remaining lease seconds (DHCP only)
+
+Bring-up sequence (typical AUTOEXEC.BAT):
+
+NETCFG -i
+IF ERRORLEVEL 4 GOTO NOCFG
+IFUP
+IF ERRORLEVEL 3 GOTO NOLINK
+
+Without NETCFG -i the network utilities exit B=4 with a
+diagnostic.  IFUP picks STATIC vs DHCP from NET_IP_SRC.
+
+NETCFG -i itself fails (2 / 3 / 4) when it cannot obtain a MAC for
+NET_MAC -- see NETCFG.TXT.  Nothing downstream works without it, and
+it now says so at the point of failure instead of reporting success and
+letting IFUP surface the symptom.
+
+NET.CFG keys recognised by the parser:
+
+IP=192.168.7.5            IPv4 literal -> static config
+IP=DHCP                   request a DHCP lease from IFUP
+NETMASK=255.255.255.0     ignored when IP=DHCP
+GATEWAY=192.168.7.1       ignored when IP=DHCP
+RTL_MAC=02:80:19:11:22:33 optional MAC override (empty -> use PROM)
+RTL_HW=1/#300             ISA slot + I/O base ("S/HHH"); accept
+                          optional "#" or "0x" prefix on HHH;
+                          omit to auto-scan
+RTL_RESET=SOFT            skip the board reset port at BASE+0x1F
+                          (some NE2000 clones stall the ISA cycle
+                          there); RTL_RESET=HARD always pulses it;
+                          omit to let the driver decide from the
+                          chip ID -- this is what you want
+DNS1=1.1.1.1              ignored when IP=DHCP
+DNS2=8.8.8.8              ignored when IP=DHCP
+NTP=pool.ntp.org          for NTP.EXE
+TZ=+3                     signed integer hours
+
+Lines starting with # are comments; unknown keys are ignored.
+
+RTL_RESET
+
+The standard NE2000 bring-up pulses the board reset port at
+BASE+0x1F before programming the controller.  Some NE2000-compatible
+clones stall the ISA bus cycle on that port instead of completing it.
+A bus cycle that never finishes cannot be timed out in software, so
+the symptom is a dead machine right after a utility prints
+[N1] RESET -- not an error message.
+
+Leave the key out.  With no RTL_RESET= line the driver reads the
+chip ID before it goes anywhere near that port, and pulses BASE+0x1F
+only when the card answers with the Realtek signature Pp.  Anything
+else -- a UMC UM9003AF, any other clone, or an ID that comes back
+garbled -- takes the soft path instead.  The asymmetry is the whole
+argument: a hard reset on a clone kills the machine with nothing on
+screen, while a soft reset on a genuine Realtek costs only a cleaner
+starting state that INIT_NORMAL re-establishes anyway.
+
+NETCFG -i reports the outcome when the card turns out to be a clone:
+
+[W03] non-Realtek clone: board reset port skipped
+
+and publishes NET_RTL_RESET=SOFT so every later utility, and
+UNETRTL.DLL in particular, skips the probe and inherits the answer.
+A Realtek deliberately leaves the variable unset, so swapping the card
+for a clone later cannot carry a stale HARD over into a freeze.
+
+The two explicit values are overrides you should not normally need:
+
+- RTL_RESET=SOFT never touches BASE+0x1F.  It stops the controller
+  through CR, waits the same 2 ms, and clears ISR.  Utilities print
+  [W02] soft reset: port 1F skipped. while it is active.
+- RTL_RESET=HARD always pulses BASE+0x1F, even on a card that does
+  not report the Realtek ID.  Use it only for a clone that genuinely
+  needs the pulse; on a card that stalls there it freezes the machine.
+
+NETCFG -i sets NET_IP_SRC to STATIC or DHCP based on the
+IP= line.  In DHCP mode it deletes any stale NET_IP / NET_MASK
+/ NET_GW / NET_DNS1 / NET_DNS2 so a previous lease does not
+linger; IFUP then populates them from the DHCP reply.
+
+NETCFG.EXE is the only utility in the kit that opens NET.CFG.
+All other utilities read from environment variables only.
+
+
+Batch examples
+
+A typical AUTOEXEC.BAT fragment to bring the network up:
+
+NETCFG -i
+IF ERRORLEVEL 4 GOTO NOCFG
+IFUP
+IF ERRORLEVEL 3 GOTO NOLINK
+PING -n 1 192.168.7.1
+IF ERRORLEVEL 3 GOTO NOLINK
+ECHO Network up.
+GOTO END
+:NOCFG
+ECHO NET.CFG missing or invalid; copy NETSMPL.CFG to NET.CFG.
+GOTO END
+:NOLINK
+ECHO Gateway unreachable.
+:END
+
+Polling a service before continuing:
+
+:WAIT
+PING -n 1 192.168.7.1
+IF ERRORLEVEL 3 GOTO WAIT
+ECHO Gateway is up.
+
+Conditional download:
+
+TFTP 192.168.7.1 GET BOOT.BIN
+IF ERRORLEVEL 1 ECHO Download failed
+
+HTTP fetch with overwrite + status-aware exit:
+
+WGET http://192.168.7.1/BOOT.BIN -y
+IF ERRORLEVEL 3 ECHO HTTP error -- check the [E] line above
+IF ERRORLEVEL 1 GOTO HFAIL
+ECHO Download OK.
+GOTO :EOF
+:HFAIL
+ECHO Download failed.
+
+Listing a remote FTP directory before pulling a specific file:
+
+FTP server.lan -l -u alice -p secret
+FTP server.lan target.zip -u alice -p secret -y

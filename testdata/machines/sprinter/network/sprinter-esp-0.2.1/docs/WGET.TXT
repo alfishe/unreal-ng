@@ -1,0 +1,61 @@
+WGET.EXE - HTTP downloader
+
+Purpose
+  Downloads a plain HTTP resource through ESP-AT TCP to a local DSS file.
+
+Usage
+  WGET.EXE url [-o output] [-y|-f] [-r]
+  WGET.EXE /?
+
+Flags
+  -o name   write to this local file (default: last component of the URL).
+  -y, -f    overwrite an existing local file without asking.
+  -r        resume: append to an existing file (HTTP Range request).
+
+Examples
+  WGET.EXE http://example.com/ -o INDEX.HTM -y
+  WGET.EXE http://example.com
+  WGET.EXE example.com
+  WGET.EXE http://192.168.1.10:8080/file.txt -o FILE.TXT
+
+Output
+  WGET prints the source URL received on the command line and the output file.
+  If -o is not specified, the output file defaults to the last path component
+  of the URL. A URL ending in "/" saves as INDEX.HTM.
+
+  If the output file already exists, WGET asks: [R]esume / [O]verwrite /
+  [C]ancel. Use -y (or -f) to overwrite without asking, or -r to resume
+  (append) without asking - handy in batch files.
+
+  If the URL does not start with http://, WGET treats it as a plain HTTP URL
+  and prints a warning that http:// was assumed.
+
+  When the server sends a Content-Length header, WGET prints the expected body
+  size before writing the body and prints the downloaded byte count when done.
+  If no Content-Length header is present, the size is shown as unknown.
+
+Current limitations
+  Plain http:// only. HTTPS is not supported.
+  HTTP 2xx responses are downloaded.
+  HTTP redirects with an absolute http:// Location header are followed up to
+  five hops. HTTPS redirects are reported but cannot be downloaded.
+  Chunked transfer and gzip content are detected and reported as unsupported.
+  Unsupported responses print the received HTTP status line when it is present.
+
+Transfer reliability
+  When a Content-Length header is present, WGET verifies that the downloaded
+  body size matches it. If the TCP connection closes before the expected body
+  length is reached, WGET retries the same URL with an HTTP Range request
+  (Range: bytes=<downloaded>-) and appends the missing tail to the same output
+  file. Range retries require an HTTP 206 response; a server that ignores Range
+  is rejected instead of appending a duplicate full file.
+
+  If WGET prints "UART overrun detected", input data were lost. Download the
+  file again after lowering BAUD and running NETUP.
+
+Exit status
+  0  File body downloaded.
+  1  Invalid command line or URL.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP/TCP/HTTP error.
+  5  Local output file error.
