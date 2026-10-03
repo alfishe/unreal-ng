@@ -1,6 +1,6 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-8 done; next round open.
+**Created:** 2026-10-03. **Status:** rounds 0-9 done, live profile taken. Paused 2026-10-03: further rounds wait for captures of other usage patterns (other games and programs).
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
 speed of the real card to twenty times faster than it. Each round records what we
@@ -297,6 +297,39 @@ loading screen 1.06 -> 0.44 ms, power-on 0.31 -> 0.05 ms. Whole capture **11.3 -
 12.9x -> 20.7x**; rtype-boot **12.5x -> 24x**. **Meaning:** what a line costs now follows what
 changes on it; Zuma's remaining drawing is the lines with a moving or fading sprite.
 
+## Round 9: rectangles, points and lines reach only the lines near them
+
+**Start.** In the recorded walk a bitmap step reaches only its own rows, but a point, line
+or rectangle step reached every line: one moving rectangle (a progress bar, a HUD element)
+made every line of the frame count as changed for round 8.
+
+**Change.** Such a step gets the range of line centers it can reach: its vertices (both for
+a line or rectangle) widened by its radius (`POINT_SIZE` / `LINE_WIDTH`) plus the
+antialiasing reach, rounded up (`ShapeReach`), the same bound `DrawPoint`, `DrawLine` and
+`DrawRect` test before drawing. Lines outside are skipped when replaying and are not part of
+the line's steps. Edge strips still reach every line (they fill to the screen edge). Test:
+a thick rectangle, a large point and a line moved by 3 pixels: picture and costs equal with
+keeping on and off, a far line kept; shrinking the reach fails eight tests.
+
+**Result.** Small on these captures: Zuma's gameplay rectangles do not move (543 000 ->
+555 000 lines kept by their steps, 1.26 -> 1.25 ms per frame). **Meaning:** a safeguard for
+games with moving shapes, not a speedup for these two.
+
+## Live profile: where unreal-qt spends its time now
+
+R-Type in unreal-qt (TSL-VDAC2, demo, 600 frames at the real frame rate, `sample` on the
+process): the emulation thread is busy about **33 % of real time** (6.8 of 20.5 ms per frame);
+the Qt main thread about 3 %, audio about 2 %. Of the emulation thread:
+
+| Part | Share | ms per frame |
+|:--|--:|--:|
+| Z80 and TS-Conf (CPU, memory, interrupts, video) | ~50 % | ~3.4 |
+| FT812 (eve-emu) | ~33 % | ~2.3 |
+| Frame end (sound: TurboSound FM, OPL4, NeoGS mixing) | ~15 % | ~1.0 |
+
+The FT812 is no longer the largest part. What remains of it in R-Type is real drawing: the
+background scrolls, so every line changes every frame and nothing can be kept.
+
 ## Summary
 
 | Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
@@ -310,17 +343,25 @@ changes on it; Zuma's remaining drawing is the lines with a moving or fading spr
 | 6. opaque / transparent shortcut | 26.7 s | 5.46x | | 2.59 ms |
 | 7. unchanged lines kept | 11.0 s | 13.3x | 1.06 ms | 2.22 ms |
 | 8. lines kept by their own steps | 7.05 s | **20.7x** | 0.44 ms | 1.26 ms |
+| 9. shapes reach only nearby lines | 7.05 s | 20.7x | 0.44 ms | 1.25 ms |
 
 From 305 to 7 seconds: the same capture now needs 43 times less CPU. Picture and line
 costs are unchanged in every round (the gate above). Note: the CPU figure includes
 `eve-replay`'s own timing of every call (about 5 %); the library alone is a little faster.
 
-## Next round
+## Next round (paused)
 
-- **Rectangles, points and lines** reach every line in the recorded walk (no row test yet):
-  one moving rectangle makes every line count as changed. Their vertical extent is known.
-- **Fading sprites** (`COLOR_A` changing every frame) and moving ones: the drawing itself
-  (decoding ~0.5 ns and blending ~0.4 ns per pixel).
-- **Parts of lines**: a line changes where a ball moves, the rest of it is drawn again too.
-- **R-Type**: profile its loader and demo the same way.
-- The rest of the acceleration brief: line threads.
+The optimization is paused here: the two games measured (Zuma, R-Type) no longer show a
+single dominant cost, and choosing the next round needs captures of other usage patterns:
+other games, the TS-Labs SDK demos, programs drawing text, shapes or video. Candidates
+known so far:
+
+
+- **Parts of lines**: a line changes where a ball moves; the rest of it is drawn again too.
+  Helps Zuma's gameplay, not R-Type (its whole background scrolls).
+- **Fading and moving sprites**: the drawing itself (decoding ~0.5 ns and blending ~0.4 ns
+  per pixel), close to what scalar code does.
+- **Outside the FT812**: Z80 and TS-Conf are now half of the emulation time in the live
+  profile, the sound mixing at the frame end another 15 %.
+- The rest of the acceleration brief: line threads (less to gain now that a frame costs
+  little).

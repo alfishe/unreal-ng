@@ -48,7 +48,8 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] Display list walked once per frame (recorded walk), tag buffer only on REG_TAG's line, blend shortcuts for alpha 0 / 255: Zuma 3.9x -> 5.46x ([optimization-walkthrough.md](optimization-walkthrough.md) rounds 4-6)
 - [x] Unchanged lines kept in the frame buffer (inputs: graphics memory, drawing registers, display list contents, output, recorded walk): Zuma 5.75x -> 13.3x, R-Type boot 6.9x -> 12.6x (walkthrough round 7)
 - [x] Lines kept by their own steps (reaching steps equal, RAM_G read by them unchanged per 256-byte block): Zuma 12.9x -> 20.7x, R-Type boot 12.5x -> 24x (walkthrough round 8)
-- [ ] Next drawing round: row test for rectangles / points / lines, fading and moving sprites, parts of lines, R-Type profile
+- [x] Rectangles / points / lines reach only nearby lines (walkthrough round 9); live profile of unreal-qt with R-Type: FT812 ~1/3 of the emulation thread
+- [ ] Drawing optimization paused (2026-10-03) until captures of other usage patterns exist; candidates in optimization-walkthrough.md "Next round"
 - [ ] Build the rest of the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
   graphics memory writes, skip unchanged frames; then the GPU backend per batch
 - [ ] Integration I3-I5; the TO VERIFY list in design §12.1

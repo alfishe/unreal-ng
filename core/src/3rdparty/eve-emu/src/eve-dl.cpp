@@ -334,6 +334,18 @@ void RecordStep(LineRun& run, const Vertex& v, bool clear, uint32_t clearMask)
         step.handle = run.chip->state.handles[v.handle];
         step.rowTest = run.primitive == kPrimBitmaps;
         step.rowsSubpixel = static_cast<int64_t>(HandleHeight(step.handle)) * kSubpixel;
+        // Points, lines and rectangles draw only near their vertices (DrawPoint / DrawLine /
+        // DrawRect return early beyond the radius); edge strips reach to the screen edge
+        const bool pair = run.primitive == kPrimLines || run.primitive == kPrimLineStrip || run.primitive == kPrimRects;
+        if (run.primitive == kPrimPoints || pair)
+        {
+            const int64_t reach = ShapeReach(run.primitive == kPrimPoints ? run.ctx.pointSize : run.ctx.lineWidth);
+            const int64_t y0 = pair && run.vertexCount > 0 && run.previous.y < v.y ? run.previous.y : v.y;
+            const int64_t y1 = pair && run.vertexCount > 0 && run.previous.y > v.y ? run.previous.y : v.y;
+            step.extentTest = true;
+            step.yFirst = y0 - reach;
+            step.yLast = y1 + reach;
+        }
     }
     plan.steps.push_back(step);
 }
@@ -376,6 +388,8 @@ void FinishRecording(LineRun& run)
 
 bool StepReachesLine(const LinePlanStep& s, int64_t lineSubpixel)
 {
+    if (s.extentTest)
+        return lineSubpixel >= s.yFirst && lineSubpixel <= s.yLast;
     if (!s.rowTest)
         return true;
     const int64_t rely = lineSubpixel - s.v.y;
@@ -571,12 +585,8 @@ void ReplaySteps(LineRun& run, const LinePlan& plan)
     uint32_t context = UINT32_MAX;
     for (const LinePlanStep& s : plan.steps)
     {
-        if (s.rowTest)
-        {
-            const int64_t rely = lineSubpixel - s.v.y;
-            if (rely < 0 || rely >= s.rowsSubpixel)
-                continue; // DrawBitmap's first test: no row of the bitmap on this line
-        }
+        if (!StepReachesLine(s, lineSubpixel))
+            continue; // the drawing's own first test: nothing of it on this line
         if (s.context != context)
         {
             context = s.context;

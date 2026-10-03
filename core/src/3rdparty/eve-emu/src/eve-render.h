@@ -215,6 +215,8 @@ struct LinePlanStep
 {
     bool clear;              // CLEAR, else a vertex
     bool rowTest;            // a bitmap vertex: skip when rely is outside [0, rowsSubpixel)
+    bool extentTest;         // a point, line or rectangle: skip lines outside [yFirst, yLast]
+    int64_t yFirst, yLast;   // 1/16 pixel, the line centers it can reach (a superset)
     uint8_t primitive;
     uint32_t context;        // index into LinePlan::contexts
     uint32_t vertexCount;    // since BEGIN, before this vertex
@@ -270,6 +272,10 @@ uint32_t HandleStride(const BitmapHandle& h);
 uint32_t HandleLayoutHeight(const BitmapHandle& h);
 
 // --- eve-raster.cpp: points, lines, rectangles, edge strips --------------------------------------
+
+// How far a point, line or rectangle of this radius (POINT_SIZE / LINE_WIDTH, 1/16 pixel)
+// can reach beyond its vertices, 1/16 pixel, rounded up: lines farther away are not drawn
+int64_t ShapeReach(uint32_t radius);
 
 template <LineMode Mode>
 void DrawPoint(LineRun& run, const Vertex& v);

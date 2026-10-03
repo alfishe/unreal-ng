@@ -157,6 +157,11 @@ bool CapsuleInterval(double y, double ax, double ay, double bx, double by, doubl
 
 } // namespace
 
+int64_t ShapeReach(uint32_t radius)
+{
+    return static_cast<int64_t>(std::ceil(static_cast<double>(radius) + kHalfRamp)) + 1;
+}
+
 template <LineMode Mode>
 void DrawPoint(LineRun& run, const Vertex& v)
 {
