@@ -67,6 +67,8 @@ void WriteRegisterByte(EveChip& chip, const RegInfo& info, uint32_t address, uin
     }
     const uint32_t byteIndex = address & 3;
     const uint8_t mask = kRegistersKeepAllBits ? kAllBits : static_cast<uint8_t>(info.mask >> (8 * byteIndex));
+    if ((info.flags & RegDrawing) && bytes[byteIndex] != static_cast<uint8_t>(value & mask))
+        ++chip.drawRegChanges; // a register drawing reads changed: no line is kept
     bytes[byteIndex] = static_cast<uint8_t>(value & mask);
     region.MarkDirty(info.address - base);
     if (byteIndex == 3)
@@ -170,8 +172,9 @@ void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
     {
         if (chip.drawing)
             CatchUp(chip);
-        ++chip.ramGWrites;
         Region& region = chip.regions[RegionRamG];
+        if (region.base[address] != value)
+            ++chip.ramGWrites; // counts changes: kept lines and decoded palettes hold over equal writes
         region.base[address] = value;
         region.MarkDirty(address);
         return;

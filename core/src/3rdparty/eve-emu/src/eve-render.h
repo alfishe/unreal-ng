@@ -227,8 +227,8 @@ struct LinePlanStep
 struct LinePlan
 {
     bool valid = false;
-    // The inputs of the recorded walk.
-    uint32_t activeDl = 0;
+    uint64_t record = 0;     // counts recordings: a kept line names the walk it replayed
+    // The inputs of the recorded walk (dlVersion follows the active list's contents).
     uint64_t dlVersion = 0;
     uint32_t macro0 = 0, macro1 = 0;
     BitmapHandle startHandles[kHandleCount] = {};

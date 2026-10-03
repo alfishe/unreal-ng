@@ -421,6 +421,14 @@ struct PaletteCache
 // (EveChip::ramGWrites); no write happens while a line is drawn (CatchUp runs first)
 constexpr uint32_t kPaletteCacheEntries = 16;
 
+// A screen line kept from its last drawing (eve-dl.cpp DrawVisibleLine): the inputs it was
+// drawn with. While none changed, drawing it again would give the same pixels and cost
+struct LineKept
+{
+    bool valid;
+    uint64_t ramGChanges, drawRegChanges, dlVersion, outputVersion, planRecord;
+};
+
 struct LinePlan; // eve-render.h
 struct LinePlanDelete
 {
@@ -488,6 +496,16 @@ struct EveChip
     std::unique_ptr<EveLib::LinePlan, EveLib::LinePlanDelete> linePlan;
     bool linePlanEnabled = true;  // false: every line walks the list (tests compare both)
     uint64_t dlVersion = 1;
+    // Unchanged lines are not drawn again (LineKept). The inputs of a line: RAM_G
+    // (ramGWrites counts changes of its contents), the registers drawing reads
+    // (drawRegChanges: RegDrawing registers whose value changed), the display list
+    // (dlVersion: a swap to different contents), the output (outputVersion: EveSetOutput
+    // with another buffer, size or drawing switch) and the recorded walk with its handles
+    std::unique_ptr<EveLib::LineKept[]> lineKept;  // kMaxLines
+    bool lineKeepEnabled = true;           // false: every line is drawn (tests compare both)
+    uint64_t drawRegChanges = 0;
+    uint64_t outputVersion = 1;
+    bool lineFromPlan = false;             // the line just drawn came from the recorded walk
     std::unique_ptr<uint8_t[]> probeColor;   // the same for EveProbePixel
     std::unique_ptr<uint8_t[]> probeStencil;
     std::unique_ptr<uint8_t[]> probeTag;
@@ -610,7 +628,7 @@ void DrawingReset(EveChip& chip);             // handles and derived drawing sta
 uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
-void DisplayListSwapped(EveChip& chip);       // a new active list
+void DisplayListSwapped(EveChip& chip, bool changed); // a new active list (changed: other words)
 void DrawingInvalidate(EveChip& chip);        // derived drawing state is stale (restore)
 void GetLineCost(const EveChip& chip, uint32_t line, EveLineCost& out);
 void FoldFrameMetrics(EveChip& chip);          // the frame's line costs into state.metrics (frame end)

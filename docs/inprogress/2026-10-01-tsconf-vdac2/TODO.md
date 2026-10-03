@@ -46,7 +46,8 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] BILINEAR fast path + SIMD masking blends + skipped empty glyphs (eve-emu `61a3f19`): Zuma 0.48x -> 2.74x real time ([acceleration-experiments.md](acceleration-experiments.md) §3.6)
 - [x] Rotated NEAREST fast path + palettes kept across lines (eve-emu `5f47ded`): Zuma 2.66x -> 3.8x; every round: [optimization-walkthrough.md](optimization-walkthrough.md)
 - [x] Display list walked once per frame (recorded walk), tag buffer only on REG_TAG's line, blend shortcuts for alpha 0 / 255: Zuma 3.9x -> 5.46x ([optimization-walkthrough.md](optimization-walkthrough.md) rounds 4-6)
-- [ ] Next drawing round: span setup kept in the recorded walk, magnified decoding, R-Type profile
+- [x] Unchanged lines kept in the frame buffer (inputs: graphics memory, drawing registers, display list contents, output, recorded walk): Zuma 5.75x -> 13.3x, R-Type boot 6.9x -> 12.6x (walkthrough round 7)
+- [ ] Next drawing round: Zuma gameplay (decoding, span setup, parts of lines), R-Type profile
 - [ ] Build the rest of the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
   graphics memory writes, skip unchanged frames; then the GPU backend per batch
 - [ ] Integration I3-I5; the TO VERIFY list in design §12.1

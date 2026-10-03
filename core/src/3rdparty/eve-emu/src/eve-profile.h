@@ -54,6 +54,7 @@ struct ProfileCounters
     uint64_t opcodes[256] = {};
     uint64_t bitmapVertices = 0, bitmapMissY = 0, bitmapMissX = 0;
     uint64_t planReplays = 0;                    // lines drawn from a recorded walk
+    uint64_t linesKept = 0;                      // lines left in the frame buffer (inputs unchanged)
     uint64_t finishPixels = 0, modulatePixels = 0, simdBlendPixels = 0; // fast span tails
     uint64_t decodeNanos = 0, finishNanos = 0;
     std::map<int64_t, uint64_t> scaleAPixels;    // fast NEAREST axis-aligned rows: pixels by transform A   // fast NEAREST spans: decode vs tail                  // display list words executed, by opcode byte
