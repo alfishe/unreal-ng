@@ -1,6 +1,6 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-10 done, live profile taken. Round 10 came from the TS-Labs SDK test programs; further rounds wait for captures of other usage patterns.
+**Created:** 2026-10-03. **Status:** rounds 0-11 done, live profile taken. Rounds 10-11 came from the TS-Labs SDK programs and the golden cases; further rounds wait for captures of other usage patterns.
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
 speed of the real card to twenty times faster than it. Each round records what we
@@ -380,6 +380,48 @@ Zuma 21.1x -> 21.4x, R-Type boot 24.7x -> 26.0x. **Meaning:** both programs now 
 room to spare in unreal-qt; text, gradients and additive full-screen passes - typical of
 menus and effects - are on the fast path.
 
+## Round 11: the ROM image, the golden cases, PALETTED8 and filled shapes
+
+**Start.** Two blind spots of every measurement so far: all captures were replayed without
+the FT81x ROM image (so ROM-font text was never drawn), and the captured programs use only a
+few of the chip's features.
+
+- **With the ROM image** (`eve-replay --rom` on the existing captures, pictures not compared):
+  nothing new. test9 draws its text through L1 / L4 glyphs on the fast path and costs 1.9 ms
+  per frame (less than without the image); Zuma's loading screen 0.11 ms.
+- **The golden cases** (113 single-frame cases from the real chip, covering almost every
+  feature): `eve-tests-profile`, the golden test on the profiling build, prints per case the
+  bitmap pixels left to the general path and the pixels blended pixel by pixel (by blend
+  setting, alpha test, stencil). 36 cases had such work:
+
+| Outside the fast paths | Cases | Weight for real programs |
+|:--|:--|:--|
+| PALETTED8 bitmaps (4-byte palette, one channel per pass), every matrix and BILINEAR | `bitmap-format-16` | high: EVE Asset Builder's usual image format |
+| rectangles, points, lines, edge strips: every pixel on its own | `rects`, `lines`, `points`, `edge-strips`, `stencil-*` | medium: user interfaces, frames, bars |
+| TEXT8X8, TEXTVGA, BARGRAPH | `format-text-*` | low |
+| stencil, alpha test, unusual blend factors | `stencil-*`, `bilinear-alpha-*`, `blend-factors` | low |
+
+**Change.**
+
+- **PALETTED8 on the fast path:** its texel is one palette byte (`PALETTE_SOURCE + 4 x
+  index`, the source's offset picking the channel byte) in every channel; the palette cache
+  of round 3 holds these 256 entries too.
+- **Filled shapes as spans:** inside a rectangle (pixel centers between its x ends) the
+  distance to the core, so the coverage, is the same along the line, and EDGE_STRIP_R / L
+  fill whole runs at full coverage: such runs go through the pipeline as one span
+  (`BlendSpan`: the default blend in SIMD, as for bitmaps); the rounded ends stay pixel by
+  pixel. `EveChip::rasterSpanFill` switches it off for tests.
+- Tests: PALETTED8 in the fast-vs-general bitmap test; filled frames equal with and
+  without span fill (odd and subpixel coordinates, line widths, a color mask, an additive
+  blend, the scissor) and the colors equal to the per-pixel probe. Each change broken once
+  to see the tests fail: a wrong edge-strip span first passed - the test's edge strips had
+  x beyond 511 with `VERTEX2II` and wrapped off the checked area (now `VERTEX2F`).
+
+**Result.** R-Type play 17.6x -> 18.5x, Zuma 20.5x -> 21.4x (their rectangles); PALETTED8
+pays where a program uses it. The golden cases now leave only the low-weight items above
+outside the fast paths. **Meaning:** the features a typical EVE program uses are all on the
+fast path; what remains is rare enough to wait for a program that needs it.
+
 ## Summary
 
 | Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
@@ -395,6 +437,7 @@ menus and effects - are on the fast path.
 | 8. lines kept by their own steps | 7.05 s | **20.7x** | 0.44 ms | 1.26 ms |
 | 9. shapes reach only nearby lines | 7.05 s | 20.7x | 0.44 ms | 1.25 ms |
 | 10. SDK programs: ROM layouts, adding blends, SIMD modulation | 6.8 s | 21.4x | | |
+| 11. PALETTED8, filled shapes as spans | 6.8 s | 21.4x | | |
 
 From 305 to 7 seconds: the same capture now needs 43 times less CPU. Picture and line
 costs are unchanged in every round (the gate above). Note: the CPU figure includes

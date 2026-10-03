@@ -1,5 +1,6 @@
 // eve-emu - scissor, alpha test, stencil, blend, color mask, tag (spec §6.6).
 #include "eve-render.h"
+#include "eve-profile.h"
 #include "eve-simd.h"
 
 namespace EveLib
@@ -188,6 +189,14 @@ void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count
     // DST_ALPHA / ZERO and ONE_MINUS_DST_ALPHA / ONE), the same arithmetic per pixel
     if (!alphaTest && !stencilActive && BlendSpanFast(run, first, rgba, count))
         return;
+#ifdef EVE_PROFILE
+    {
+        char key[96];
+        std::snprintf(key, sizeof key, "blend %u/%u mask %X%s%s", ctx.blendSrc, ctx.blendDst, ctx.colorMask,
+                      alphaTest ? " alpha-test" : "", stencilActive ? " stencil" : "");
+        Profile().generalBlends[key] += count;
+    }
+#endif
     const uint8_t mask[kChannels] = {kMaskRed, kMaskGreen, kMaskBlue, kMaskAlpha};
     // SIMD-CANDIDATE: the blend of a span, four channels per pixel.
     for (uint32_t i = 0; i < count; ++i)
