@@ -9,6 +9,7 @@
 #define EVE_SIMD_H
 
 #include <cstdint>
+#include <cstring>
 
 #if !defined(EVE_NO_SIMD) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
 #define EVE_SIMD_NEON 1
@@ -91,8 +92,19 @@ inline void BlendSrcAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count)
     {
         // A texel's bytes in memory are A, B, G, R
         const uint8x8x4_t s = vld4_u8(reinterpret_cast<const uint8_t*>(texels + i));
-        uint8x8x4_t d = vld4_u8(dst + 4 * i);
         const uint8x8_t a = s.val[0];
+        // Exact shortcuts of the formula: alpha 0 keeps the destination, alpha 255 gives
+        // the source (sprites are mostly one or the other)
+        const uint64_t alphas = vget_lane_u64(vreinterpret_u64_u8(a), 0);
+        if (alphas == 0)
+            continue;
+        if (alphas == ~uint64_t{0})
+        {
+            const uint8x8x4_t opaque = {{s.val[3], s.val[2], s.val[1], s.val[0]}};
+            vst4_u8(dst + 4 * i, opaque);
+            continue;
+        }
+        uint8x8x4_t d = vld4_u8(dst + 4 * i);
         const uint8x8_t inv = vsub_u8(full, a);
         const uint8x8_t src[4] = {s.val[3], s.val[2], s.val[1], s.val[0]};
         for (int c = 0; c < 4; ++c)
@@ -117,6 +129,16 @@ inline void BlendSrcAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count)
         const uint32_t p0 = texels[i], p1 = texels[i + 1];
         const uint32_t s0 = (p0 >> 24) | ((p0 >> 8) & 0xFF00) | ((p0 << 8) & 0xFF0000) | (p0 << 24);
         const uint32_t s1 = (p1 >> 24) | ((p1 >> 8) & 0xFF00) | ((p1 << 8) & 0xFF0000) | (p1 << 24);
+        // Exact shortcuts: alpha 0 keeps the destination, alpha 255 gives the source
+        const uint32_t a0 = p0 & 0xFF, a1 = p1 & 0xFF;
+        if ((a0 | a1) == 0)
+            continue;
+        if ((a0 & a1) == 0xFF)
+        {
+            std::memcpy(dst + 4 * i, &s0, 4);
+            std::memcpy(dst + 4 * i + 4, &s1, 4);
+            continue;
+        }
         const __m128i s = _mm_unpacklo_epi8(_mm_set_epi32(0, 0, static_cast<int>(s1), static_cast<int>(s0)), zero);
         const __m128i a = _mm_set_epi16(static_cast<short>(p1 & 0xFF), static_cast<short>(p1 & 0xFF),
                                         static_cast<short>(p1 & 0xFF), static_cast<short>(p1 & 0xFF),
@@ -135,9 +157,17 @@ inline void BlendSrcAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count)
     {
         const uint32_t p = texels[i];
         const uint32_t a = p & 0xFF;
+        if (a == 0)
+            continue;
         const uint32_t inv = 255 - a;
         const uint32_t src[4] = {p >> 24, (p >> 16) & 0xFF, (p >> 8) & 0xFF, a};
         uint8_t* d = dst + 4 * i;
+        if (a == 255)
+        {
+            for (int c = 0; c < 4; ++c)
+                d[c] = static_cast<uint8_t>(src[c]);
+            continue;
+        }
         for (int c = 0; c < 4; ++c)
         {
             const uint32_t v = (src[c] * a + 127) / 255 + (d[c] * inv + 127) / 255;

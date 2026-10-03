@@ -421,6 +421,12 @@ struct PaletteCache
 // (EveChip::ramGWrites); no write happens while a line is drawn (CatchUp runs first)
 constexpr uint32_t kPaletteCacheEntries = 16;
 
+struct LinePlan; // eve-render.h
+struct LinePlanDelete
+{
+    void operator()(LinePlan* plan) const;
+};
+
 } // namespace EveLib
 
 // --- The chip context (one allocation in EveCreate) -------------------------------------
@@ -477,6 +483,11 @@ struct EveChip
     std::unique_ptr<EveLib::PaletteCache[]> palettes; // kPaletteCacheEntries
     uint32_t paletteNext = 0;
     uint64_t ramGWrites = 1;
+    // The walk recorded for the next lines (eve-render.h LinePlan). dlVersion counts
+    // changes of the active list's contents: swaps, restores, resets
+    std::unique_ptr<EveLib::LinePlan, EveLib::LinePlanDelete> linePlan;
+    bool linePlanEnabled = true;  // false: every line walks the list (tests compare both)
+    uint64_t dlVersion = 1;
     std::unique_ptr<uint8_t[]> probeColor;   // the same for EveProbePixel
     std::unique_ptr<uint8_t[]> probeStencil;
     std::unique_ptr<uint8_t[]> probeTag;

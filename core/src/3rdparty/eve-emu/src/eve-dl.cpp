@@ -81,7 +81,8 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
     run.texels = chip.lineTexels.get();
     run.bilinear = chip.lineBilinear.get();
     run.savedCount = 0;
-    run.paletteNext = 0;
+    run.recording = nullptr;
+    run.tagLive = probe || logicalLine == RegGet(chip, Reg::TagY);
     run.primitive = kPrimNone;
     run.vertexCount = 0;
     run.previous = Vertex{};
@@ -101,7 +102,8 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
     // At the start of each line the buffers hold color 0 with alpha 0, stencil 0, tag 0.
     std::memset(run.color, 0, static_cast<size_t>(run.width) * kChannels);
     std::memset(run.stencil, 0, run.width);
-    std::memset(run.tag, 0, run.width);
+    if (run.tagLive)
+        std::memset(run.tag, 0, run.width);
 }
 
 void FinishRun(EveChip& chip, const LineRun& run, uint32_t screenLine)
@@ -247,6 +249,101 @@ void SetHandleSize(BitmapHandle& h, uint32_t word)
 
 enum class Flow { Next, Jump, Stop };
 
+// --- Line plan (eve-render.h LinePlan) ------------------------------------------------------
+
+constexpr bool kLinePlanUsable = kContextReset == ContextReset::PerLine;
+
+void RecordStep(LineRun& run, const Vertex& v, bool clear, uint32_t clearMask)
+{
+    LinePlan& plan = *run.recording;
+    if (plan.contexts.empty() || std::memcmp(&plan.contexts.back(), &run.ctx, sizeof(GraphicsContext)) != 0)
+        plan.contexts.push_back(run.ctx);
+    LinePlanStep step{};
+    step.clear = clear;
+    step.primitive = run.primitive;
+    step.context = static_cast<uint32_t>(plan.contexts.size() - 1);
+    step.vertexCount = run.vertexCount;
+    step.clearMask = clearMask;
+    step.v = v;
+    step.previous = run.previous;
+    step.commandIndex = run.commandIndex;
+    step.commandWord = run.commandWord;
+    if (!clear)
+    {
+        step.handle = run.chip->state.handles[v.handle];
+        step.rowTest = run.primitive == kPrimBitmaps;
+        step.rowsSubpixel = static_cast<int64_t>(HandleHeight(step.handle)) * kSubpixel;
+    }
+    plan.steps.push_back(step);
+}
+
+bool PlanMatches(const EveChip& chip, const LinePlan& plan)
+{
+    return plan.valid && plan.activeDl == chip.state.scan.activeDl && plan.dlVersion == chip.dlVersion &&
+           plan.macro0 == RegGet(chip, Reg::Macro0) && plan.macro1 == RegGet(chip, Reg::Macro1) &&
+           std::memcmp(plan.startHandles, chip.state.handles, sizeof(plan.startHandles)) == 0;
+}
+
+void StartRecording(LineRun& run, LinePlan& plan)
+{
+    const EveChip& chip = *run.chip;
+    plan.valid = false;
+    plan.activeDl = chip.state.scan.activeDl;
+    plan.dlVersion = chip.dlVersion;
+    plan.macro0 = RegGet(chip, Reg::Macro0);
+    plan.macro1 = RegGet(chip, Reg::Macro1);
+    std::memcpy(plan.startHandles, chip.state.handles, sizeof(plan.startHandles));
+    plan.contexts.clear();
+    plan.steps.clear();
+    run.recording = &plan;
+}
+
+void FinishRecording(LineRun& run)
+{
+    LinePlan& plan = *run.recording;
+    std::memcpy(plan.endHandles, run.chip->state.handles, sizeof(plan.endHandles));
+    plan.commands = run.commands;
+    plan.events = run.events;
+    plan.valid = true;
+    run.recording = nullptr;
+}
+
+void ReplayPlan(LineRun& run, const LinePlan& plan)
+{
+    EveChip& chip = *run.chip;
+    const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
+    uint32_t context = UINT32_MAX;
+    for (const LinePlanStep& s : plan.steps)
+    {
+        if (s.rowTest)
+        {
+            const int64_t rely = lineSubpixel - s.v.y;
+            if (rely < 0 || rely >= s.rowsSubpixel)
+                continue; // DrawBitmap's first test: no row of the bitmap on this line
+        }
+        if (s.context != context)
+        {
+            context = s.context;
+            run.ctx = plan.contexts[context];
+        }
+        run.commandIndex = s.commandIndex;
+        run.commandWord = s.commandWord;
+        if (s.clear)
+        {
+            ClearLine<LineMode::Draw>(run, s.clearMask);
+            continue;
+        }
+        chip.state.handles[s.v.handle] = s.handle;
+        run.primitive = s.primitive;
+        run.vertexCount = s.vertexCount;
+        run.previous = s.previous;
+        Vertex2<LineMode::Draw>(run, s.v);
+    }
+    std::memcpy(chip.state.handles, plan.endHandles, sizeof(plan.endHandles));
+    run.commands = plan.commands;
+    run.events = plan.events;
+}
+
 template <LineMode Mode>
 Flow ExecuteWord(LineRun& run, uint32_t word, uint32_t& target, uint32_t* stack, uint32_t& depth, uint32_t index)
 {
@@ -276,6 +373,9 @@ Flow ExecuteWord(LineRun& run, uint32_t word, uint32_t& target, uint32_t* stack,
         // VERTEX_TRANSLATE applies to both vertex forms (spec §6.4).
         v.x += ctx.translateX;
         v.y += ctx.translateY;
+        if constexpr (Mode == LineMode::Draw)
+            if (run.recording != nullptr)
+                RecordStep(run, v, false, 0);
         Vertex2<Mode>(run, v);
         run.previous = v;
         ++run.vertexCount;
@@ -436,6 +536,9 @@ Flow ExecuteWord(LineRun& run, uint32_t word, uint32_t& target, uint32_t* stack,
         return ExecuteWord<Mode>(run, macro, target, stack, depth, index);
     }
     case kOpClear:
+        if constexpr (Mode == LineMode::Draw)
+            if (run.recording != nullptr)
+                RecordStep(run, Vertex{}, true, Field(word, 2, 0));
         if constexpr (Mode != LineMode::StateOnly)
             ClearLine<Mode>(run, Field(word, 2, 0));
         break;
@@ -575,6 +678,22 @@ void ContextDefaults(GraphicsContext& ctx)
 template <LineMode Mode>
 void ExecuteLine(LineRun& run)
 {
+    if constexpr (Mode == LineMode::Draw && kLinePlanUsable)
+    {
+        EveChip& chip = *run.chip;
+        if (chip.linePlanEnabled && chip.linePlan)
+        {
+            if (PlanMatches(chip, *chip.linePlan))
+            {
+#ifdef EVE_PROFILE
+                Profile().planReplays++;
+#endif
+                ReplayPlan(run, *chip.linePlan);
+                return;
+            }
+            StartRecording(run, *chip.linePlan);
+        }
+    }
     const uint8_t* list = ActiveDl(*run.chip);
     uint32_t stack[kCallStackDepth] = {};
     uint32_t depth = 0;
@@ -602,11 +721,19 @@ void ExecuteLine(LineRun& run)
             break;
         pc = flow == Flow::Jump ? target : pc + 1;
     }
+    if constexpr (Mode == LineMode::Draw)
+        if (run.recording != nullptr)
+            FinishRecording(run);
 }
 
 template void ExecuteLine<LineMode::Draw>(LineRun&);
 template void ExecuteLine<LineMode::Probe>(LineRun&);
 template void ExecuteLine<LineMode::StateOnly>(LineRun&);
+
+void LinePlanDelete::operator()(LinePlan* plan) const
+{
+    delete plan;
+}
 
 // --- Entry points ---------------------------------------------------------------------------------
 
@@ -621,11 +748,12 @@ bool InitDrawing(EveChip& chip)
     chip.lineTexels.reset(new (std::nothrow) uint32_t[kMaxLineWidth]());
     chip.lineBilinear.reset(new (std::nothrow) uint32_t[kBilinearScratch]());
     chip.palettes.reset(new (std::nothrow) PaletteCache[kPaletteCacheEntries]());
+    chip.linePlan.reset(new (std::nothrow) LinePlan());
     chip.probeColor.reset(new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]());
     chip.probeStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.probeTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineCosts.reset(new (std::nothrow) EveLineCost[kMaxLines]());
-    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.palettes && chip.probeColor && chip.probeStencil &&
+    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.palettes && chip.linePlan && chip.probeColor && chip.probeStencil &&
            chip.probeTag && chip.lineCosts;
 }
 
@@ -672,6 +800,7 @@ void FrameStart(EveChip& chip)
 
 void DisplayListSwapped(EveChip& chip)
 {
+    ++chip.dlVersion;
     if (!chip.drawing)
         StatePass(chip);
 }
@@ -679,6 +808,7 @@ void DisplayListSwapped(EveChip& chip)
 void DrawingInvalidate(EveChip& chip)
 {
     ++chip.ramGWrites;  // memory restored or reset: decoded palettes no longer hold
+    ++chip.dlVersion;   // and the recorded walk
     // The current frame is drawn again from line 0 by the next catch-up (arch §7.4).
     chip.drawnLines = 0;
     for (uint32_t i = 0; i < kMaxLines; ++i)
