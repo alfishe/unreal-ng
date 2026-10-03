@@ -98,6 +98,8 @@ public:
     /// TTD state of the shared part (netstate::EspModuleState); the firmware's
     /// own state rides in the same struct (SaveFirmware / LoadFirmware)
     bool SaveState(netstate::EspModuleState& out) const;
+    /// The line format the ZX side last set (OnLineSettings)
+    const SerialLine& ZxLine() const { return _zxLine; }
     bool LoadState(const netstate::EspModuleState& in, const EspStack::ByteSource& bytes);
     void RebindSockets() { _stack->RebindAll(); }
 

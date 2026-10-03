@@ -1029,6 +1029,7 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     if (cpu)
     {
         out.cpu     = CaptureCpuState(*static_cast<Z80State*>(cpu));
+        out.cpu.nmi_pending = cpu->IsNmiPending() ? 1 : 0;
     }
     // The CPU resumes where the frame's last instruction left it, a few
     // T-states in (the overshoot) - restored with the checkpoint
@@ -1481,6 +1482,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     if (cpu)
     {
         RestoreCpuState(cp.cpu, static_cast<Z80State*>(cpu));
+        cpu->SetNmiPending(cp.cpu.nmi_pending != 0);
     }
 
     // --- Step 2: Chipset port latches + counters (TDD §8.1 step 2b) ---
@@ -6158,7 +6160,10 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
 {
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
     if (z80)
+    {
         out.cpu = CaptureCpuState(*static_cast<Z80State*>(z80));
+        out.cpu.nmi_pending = z80->IsNmiPending() ? 1 : 0;
+    }
     out.chipset = CaptureChipsetState(_context->emulatorState, z80 ? static_cast<uint32_t>(z80->t) : 0u);
     if (_context->pScreen)
     {
@@ -6232,7 +6237,10 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
     // reads, so rebuilding banks first pages from stale values and never
     // re-derives (same reasoning as RestoreCheckpoint's step 2a2).
     if (z80)
+    {
         RestoreCpuState(snap.cpu, static_cast<Z80State*>(z80));
+        z80->SetNmiPending(snap.cpu.nmi_pending != 0);
+    }
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
     if (z80)
     {

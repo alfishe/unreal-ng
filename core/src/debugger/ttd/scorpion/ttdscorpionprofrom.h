@@ -43,11 +43,16 @@ struct ScorpionProfROMState
     uint8_t p7EFD;               ///< Plane window-select latch
     uint8_t p1FFD;               ///< Service / RAM0 / RAM-bank latch
     uint8_t scorpionDosTrigger;  ///< DD50.1 magic-button trigger
-    uint8_t reserved[3];
+    /// Turbo+ flip-flop (EmulatorState::scorpion_turbo): set by an IN from the
+    /// #7FFD family, cleared by one from #1FFD. Not derivable from the clock in
+    /// the chipset state: during the /INT pulse the clock drops to 3.5 MHz with
+    /// the latch still set. Recordings made before it read 0 (turbo off)
+    uint8_t scorpionTurbo;
+    uint8_t reserved[2];
 };
 
 static_assert(sizeof(ScorpionProfROMState) == 8, "ScorpionProfROMState must be 8 bytes");
-static_assert(offsetof(ScorpionProfROMState, reserved) + 3 == sizeof(ScorpionProfROMState),
+static_assert(offsetof(ScorpionProfROMState, reserved) + 2 == sizeof(ScorpionProfROMState),
               "ScorpionProfROMState has implicit trailing padding - resize reserved[]");
 
 /// @brief TTDSerializable implementation for Scorpion ProfROM state.

@@ -45,13 +45,13 @@ Peripheral ids are `ttd::PeripheralId` (one byte, v1); region ids are `ttd::TTDR
 | Item | Machines | Stream v1 | Stream engine | Class | Size | Variability | Status | Source |
 |---|---|---|---|---|---|---|---|---|
 | Z80 registers, MEMPTR, Q, IFF, IM, INT/NMI, HALT cycle | all | `TTDCpuState` (48 B) | same record | R | | | ok | `debugger/ttd/ttdcheckpoint.cpp:22-126` |
-| Z80 `_nmi_pending_count` | all | — | — | R | | | gap 16 | `emulator/cpu/z80.h:493` |
+| Z80 pending NMI | all | `TTDCpuState::nmi_pending` (former pad byte 31) | same record | R | | | ok | `emulator/cpu/z80.h` `IsNmiPending` |
 | Z80 ZX-Poly local INT fields, `frameIntMasked` | ZX-Poly | — | — | R | | | ZX-Poly is refused | `z80.h:496-501, 828` |
 | Chipset: t-states, frame counter, ports 7FFD / FE / EFF7 / BFFD / FFFD / FF77, ULA+, turbo ratio, multiplier | all | `TTDChipsetState` (120 B) | same record | R | | | ok | `ttdcheckpoint.h:156-218` |
-| `current_z80_frequency` | all, read by the ATM2 keyboard controller | — | — | R | | | gap 7 | `emulator/platform.h:1117`; `io/keyboard/atm2kbc.cpp:552` |
-| `scorpion_turbo` | Scorpion, ProfScorpion | — | — | R | | | gap 6 | `platform.h:1120`; `ports/models/portdecoder_scorpion256.cpp:143-211` |
-| `pFFBA` / `p7FBA` (SMUC routing) | Scorpion with SMUC | — | — | R | | | gap 8 | `platform.h:1300` |
-| +3 contention: last contended byte (floating bus) | +2A, +3 | — | — | R | | | gap 16 | `video/ulacontention.h:327` |
+| `current_z80_frequency` (Hz) | all, read by the ATM2 keyboard controller and the COM port | derived on restore from the multiplier | same | D | | | ok | `debugger/ttd/ttdcheckpoint.cpp` `RestoreChipsetState` |
+| `scorpion_turbo` (Turbo+ latch) | Scorpion, ProfScorpion | ScorpionProfROM (id 6) byte 5; restore re-syncs the wait overlay and the /INT step hook | blob | R | | | ok | `debugger/ttd/scorpion/ttdscorpionprofrom.cpp` |
+| `pFFBA` / `p7FBA` (SMUC routing) | Scorpion, ProfScorpion | Smuc (id 44) | blob | R | | | ok | `debugger/ttd/scorpion/ttdsmuc.cpp` |
+| +3 floating-bus byte (last contended byte) | +2A, +3 | Plus3Paging (id 13) byte 1, flag in byte 2 | blob | R | | | ok | `debugger/ttd/plus3/ttdplus3paging.cpp` |
 | Memory bank caches, contention slot table, wait overlays, flash phase | all | rebuilt | rebuilt | D | | | ok | `UpdateZ80Banks` after restore |
 | Frame-cost and screen-digest counters | all | — | — | T | | | ok | `platform.h:1093-1106` |
 
@@ -68,7 +68,7 @@ One row per device blob; the device's memory is in section 1.
 | Covox / Soundrive latches | Covox / Soundrive fitted | id 3 | blob | R | | | ok | `sound/covox.cpp:388/401` |
 | TSFM: 2 × YM2203, timers | TurboSound FM | id 4 | blob | R | | | ok | `soundchip_turbosoundfm.cpp:820/883` |
 | General Sound classic: Z80, registers | GS classic | id 5 | blob without RAM (95 B) | R | | | ok | `soundchip_gs.cpp:844/850` |
-| Scorpion ProfROM, 7EFD, 1FFD | Scorpion, ProfScorpion | id 6 (8 B, 3 reserved) | blob | R | | | gap 6 | |
+| Scorpion ProfROM, 7EFD, 1FFD, Turbo+ latch | Scorpion, ProfScorpion | id 6 (8 B, 2 reserved) | blob | R | | | ok | |
 | Kempston mouse | all | id 7 | blob | R | | | ok | |
 | ATM paging, palettes, AVR volatile bytes | ATM450, ATM710, ATM3 | id 8 | blob | R | | | ok | `debugger/ttd/atm/ttdatmpaging.cpp:35-36` |
 | Profi paging, palette | Profi | id 9 | blob | R | | | ok | |
@@ -79,11 +79,11 @@ One row per device blob; the device's memory is in section 1.
 | uPD765 | +3 | id 14 | blob | R | | | ok | `io/fdc/upd765.cpp:1381/1427` |
 | SD card + Z-Controller | ATM3, TSL | id 15 | blob | R | | | ok | `io/sdcard/sdcardspi.cpp:545/571` |
 | TS-Conf state: registers, CRAM, SFILE, DMA, TSU, INT | TSL | id 16 | blob | R | | | ok | |
-| TS-Conf: ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) | TSL | — | — | R | | | gap 9 | `memory/atm/evoavr.h:178-182`; `portdecoder_tsconf.cpp:1160-1175` |
+| TS-Conf: ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) | TSL | EvoAvrVolatile (id 45) | blob | R | | | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
 | IDE / ATA / ATAPI channel | any `[HDD] Scheme` | id 17 | blob | R | | | ok | `debugger/ttd/ide/ttdatachannel.cpp:68/89` |
 | ATA write-protect switch | IDE | — | — | R | | | gap 12 | `io/ide/ata/atadevice.h:196` |
 | DS12887 / DS1685 real-time clock (emulated time while recording) | ATM3, TSL, Profi v5, Scorpion, Sprinter | id 18 | blob | R | | | ok | `rtc/ds12887.cpp:584/620` |
-| SMUC NVRAM I2C state, SMUC IDE registers | Scorpion with SMUC | — | — | R | | | gap 8 | `portdecoder_scorpion256.h:26` |
+| SMUC serial EEPROM link, IDE window registers | Scorpion, ProfScorpion | Smuc (id 44) | blob | R | | | ok | `io/rtc/smucnvram.h` `LinkState` |
 | ZX-Evo PS/2 keyboard | ATM3, TSL | id 19 | blob | R | | | ok | |
 | ZX-Evo AVR F12 soft reset timer (host clock) | ATM3, TSL | — | — | R | | | gap 15 | `evoavr.cpp:180-190` |
 | ZXNETUSB + W5300 + virtual network | network card | id 20 (30.6 KB fixed) | blob | R | | | gap 1 | `debugger/ttd/network/ttdzxnetusb.cpp:20/42` |
@@ -99,12 +99,12 @@ One row per device blob; the device's memory is in section 1.
 | Sprinter ISA, pads | — | ids 33, 34 reserved | — | — | | | devices not built | |
 | ATM I/O bus | ATM | id 36 | blob | R | | | ok | |
 | ATM2 I/O ESP card | ATM2IOESP | id 37 | blob | R | | | gap 1 | |
-| ESP module serial line `_zxLine` | ESP cards | — | — | R | | | gap 14 | `io/serial/esp/espmodule.h:156` |
+| ESP module serial line `_zxLine` | ESP cards | inside the card's blob (`EspModuleState::zxLineFormat` / `zxLineBaud`, former reserved fields) | blob | R | | | ok | `io/serial/esp/espmodule.cpp` |
 | ZX-Evo PS/2 mouse | ATM3, TSL | id 38 | blob | R | | | ok | |
 | ZiFi line, ZiFi | ZiFi | ids 39, 40 | blob | R | | | gap 1 | |
 | CD drive | IDE with a CD unit | id 41 | blob | R | | | ok | `debugger/ttd/ide/ttdcddrive.cpp:55/74` |
 | VDAC2 card and FT812 control state | TSL-VDAC2 | id 43 | blob | R (metrics: T, see §5) | | | ok | `ttdvdac2.cpp` |
-| ZX keyboard matrix, pressed keys | all | — | — | R | | | gap 5 | `io/keyboard/keyboard.h:332-333, 356-359` |
+| ZX keyboard matrix, pressed keys | all | KeyboardMatrix (id 46), variable size | device state in the checkpoint ([decision 37](engine-decisions.md#h-classes-of-recorded-data)); key changes are events | R | | | ok | `io/keyboard/keyboard.cpp` TTD region |
 | Disk autostart one-shot hook | TR-DOS | — | — | R | | | gap 16 | `io/fdc/diskautostart.h:75-77` |
 | RZX player cursor | RZX playback | — | — | R | | | gap 16 | `rzx/rzxplayer.h:241-257` |
 
@@ -178,18 +178,18 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 2 | GS lightweight blob changes size with its store but is treated as fixed-size; the registry's exact-size check skips it | The whole card stays live after a seek across an upload | breaks replay |
 | 3 | NeoGS RAM and flash, MoonSound wave SRAM exist only as engine regions; the engine has no restore path yet | Card memory not restored | breaks replay until the engine restores (Phase 5) |
 | 4 | WD1793 command context declared only on the Sprinter | A checkpoint inside a multi-frame disk command ends it early on every other Beta machine | breaks replay |
-| 5 | ZX keyboard matrix in no checkpoint | Machines without the port journal read the live matrix in replay; stuck or missing keys after seek + resume | breaks replay |
-| 6 | `scorpion_turbo` not stored, waits not resynced after a restore | Wait states, step hook, INT pulse diverge | breaks replay |
-| 7 | `current_z80_frequency` not restored | ATM2 keyboard-controller waits use a stale frequency | breaks replay |
-| 8 | SMUC: `pFFBA` / `p7FBA`, IDE registers, NVRAM I2C state and contents not stored | RTC and IDE writes routed wrongly after a seek | breaks replay |
-| 9 | TS-Conf has no serializer for the ZX-Evo AVR volatile bytes | EEPROM window and ext type wrong after a seek | breaks replay |
+| 5 | *Fixed 2026-10-02:* ZX keyboard matrix in no checkpoint | Machines without the port journal read the live matrix in replay; stuck or missing keys after seek + resume | breaks replay |
+| 6 | *Fixed 2026-10-02:* `scorpion_turbo` not stored, waits not resynced after a restore | Wait states, step hook, INT pulse diverge | breaks replay |
+| 7 | *Fixed 2026-10-02:* `current_z80_frequency` not restored | ATM2 keyboard-controller waits use a stale frequency | breaks replay |
+| 8 | *Fixed 2026-10-02 except the contents (gap 10):* SMUC: `pFFBA` / `p7FBA`, IDE registers, NVRAM I2C state and contents not stored | RTC and IDE writes routed wrongly after a seek | breaks replay |
+| 9 | *Fixed 2026-10-02:* TS-Conf has no serializer for the ZX-Evo AVR volatile bytes | EEPROM window and ext type wrong after a seek | breaks replay |
 | 10 | ZX-Evo AVR EEPROM and SMUC EEPROM not recorded (region ids 15, 16 reserved) | NVRAM writes survive a seek back | breaks replay |
 | 11 | Sectors written while recording are only barriers; host-side image changes reach replay | A backward seek reads post-write sectors | breaks replay |
 | 12 | Write-protect toggles not recorded; ATA protect switch in no checkpoint | | breaks replay |
 | 13 | A media swap queued before recording can land mid-recording without a marker | | breaks replay |
-| 14 | ESP module `_zxLine` not restored, reapplied stale | | breaks replay |
+| 14 | *Fixed 2026-10-02:* ESP module `_zxLine` not restored, reapplied stale | | breaks replay |
 | 15 | ZX-Evo F12 soft reset reads the host clock | Not sealed | breaks replay |
-| 16 | Edge cases: NMI pending count, +3 floating-bus byte, disk autostart hook, RZX cursor during playback while recording, network state marked "incomplete" with a warning only | | breaks replay, rare |
+| 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02*): disk autostart hook, RZX cursor during playback while recording, network state marked "incomplete" with a warning only | | breaks replay, rare |
 | 17 | Telemetry items stale after a seek (§5) | Wrong LEDs, state report, status bar | wrong UI |
 | 18 | `ttd.ksy:532` says NeoGS memory is in the blob | | documentation |
 

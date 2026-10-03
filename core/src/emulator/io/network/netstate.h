@@ -170,9 +170,12 @@ constexpr int kEspFirmware = 256;     ///< the firmware's own state (EspnetModul
 struct EspModuleState
 {
     uint8_t present, chip, wifi, lineMismatch;
-    uint8_t mac[6], flowControl, reserved;
+    uint8_t mac[6], flowControl;
+    uint8_t zxLineFormat;   ///< the line the ZX side set: bit 7 valid, bits 0-1 data bits - 5, bits 2-4 parity
+                            ///< (0 N, 1 O, 2 E, 3 M, 4 S), bit 5 two stop bits. 0 in recordings made before it
     char ssid[36];
-    uint32_t ip, baud, pendingBaud, rxLength, outLength, reserved2;
+    uint32_t ip, baud, pendingBaud, rxLength, outLength;
+    uint32_t zxLineBaud;    ///< with zxLineFormat
     uint64_t wifiAt, pendingBaudAt, outReadyAt, requests;
     uint8_t rx[kEspRxBytes];
     uint8_t out[kEspOutBytes];

@@ -815,6 +815,10 @@ public:
     void SetDeviceIntLine(uint32_t line, bool asserted);
     uint32_t GetDeviceIntLines() const { return _deviceIntLines; }
 
+    /// An NMI requested and not taken yet (TTD: TTDCpuState::nmi_pending)
+    bool IsNmiPending() const { return _nmi_pending_count > 0; }
+    void SetNmiPending(bool pending) { _nmi_pending_count = pending ? 1 : 0; }
+
     /// Drop pending NMI / local INT requests (a board-level CPU reset)
     void ClearInterruptRequests()
     {

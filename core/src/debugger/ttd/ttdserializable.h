@@ -92,6 +92,9 @@ enum class PeripheralId : uint8_t
                           // page 0Eh volume / routing, the READ CD sector waiting for the data buffer; boards with a CD unit only
     Vdac2Memory = 42,     // TS-Conf VDAC2 card: the FT812's memory regions (RAM_G, display lists, REG, CMD, ...), zero runs dropped, until TTD v2 regions
     Vdac2 = 43,           // TS-Conf VDAC2 card: card time, INT edges, monitor source, FT812 control state (EveSaveState, metrics)
+    Smuc = 44,            // Scorpion SMUC board: #FFBA / #7FBA latches, IDE window registers, serial EEPROM link (not its contents)
+    EvoAvrVolatile = 45,  // ZX-Evo AVR volatile registers (ext type, EEPROM window, LEDs) where the paging blob lacks them: TS-Conf
+    KeyboardMatrix = 46,  // ZX keyboard: the 8 matrix rows and the pressed-key counts (key changes are journal events)
     // Future: SAA1099, GS512, etc.
     Count
 };

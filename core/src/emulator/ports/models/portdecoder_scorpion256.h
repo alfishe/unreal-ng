@@ -100,6 +100,8 @@ public:
 
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
+    /// The SMUC IDE window register file (8 registers; TTD: TTDSmuc)
+    uint8_t* GetSmucIdeRegs() { return _smucIdeRegs; }
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _smucNvram.GetRtc(); }
     RtcBinding GetRtcBinding() override;

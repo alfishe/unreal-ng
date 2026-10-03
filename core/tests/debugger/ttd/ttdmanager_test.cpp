@@ -684,8 +684,12 @@ TEST_F(TimeTravelManager_Test, Checkpoints_CarryABlobPerRegisteredDevice)
 
         const auto decoded =
             ttd::TTDPeripheralRegistry::DecodeBlob(id, cp->peripheralBlobs.at(id));
-        EXPECT_EQ(decoded.size(), device->TTDStateSize())
-            << "blob for '" << device->TTDDeviceName() << "' does not decode to its state size";
+        if (device->TTDVariableSize())
+            EXPECT_TRUE(!decoded.empty() && decoded.size() <= device->TTDStateSize())
+                << "blob for '" << device->TTDDeviceName() << "' is empty or larger than its worst case";
+        else
+            EXPECT_EQ(decoded.size(), device->TTDStateSize())
+                << "blob for '" << device->TTDDeviceName() << "' does not decode to its state size";
     }
 }
 

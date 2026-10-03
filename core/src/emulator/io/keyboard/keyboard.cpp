@@ -194,6 +194,73 @@ void Keyboard::RestoreInputState(const InputState& state)
     _keyboardPressedKeys = state.pressedKeys;
 }
 
+/// region <TTD (PeripheralId::KeyboardMatrix)>
+
+namespace
+{
+constexpr uint8_t kKeyboardTtdVersion = 1;
+constexpr size_t kKeyboardTtdHeader = 1 + 8 + 1;   // version, matrix, pair count
+}  // namespace
+
+size_t Keyboard::TTDStateSize() const
+{
+    // Worst case: every key value held (the blob itself is TTDSaveStateTo's)
+    return kKeyboardTtdHeader + 2 * 256;
+}
+
+void Keyboard::TTDSaveStateTo(std::vector<uint8_t>& out) const
+{
+    out.clear();
+    out.reserve(kKeyboardTtdHeader + 2 * _keyboardPressedKeys.size());
+    out.push_back(kKeyboardTtdVersion);
+    out.insert(out.end(), _keyboardMatrixState, _keyboardMatrixState + 8);
+    out.push_back(static_cast<uint8_t>(std::min<size_t>(_keyboardPressedKeys.size(), 255)));
+    size_t pairs = 0;
+    for (const auto& [key, count] : _keyboardPressedKeys)   // std::map: key order, deterministic
+    {
+        if (pairs++ == 255)
+            break;
+        out.push_back(static_cast<uint8_t>(key));
+        out.push_back(count);
+    }
+}
+
+void Keyboard::TTDSaveState(uint8_t* dst) const
+{
+    if (!dst)
+        return;
+    std::vector<uint8_t> blob;
+    TTDSaveStateTo(blob);
+    std::memset(dst, 0, TTDStateSize());
+    std::memcpy(dst, blob.data(), blob.size());
+}
+
+void Keyboard::TTDLoadState(const uint8_t* src)
+{
+    if (!src || src[0] != kKeyboardTtdVersion)
+        return;
+    std::memcpy(_keyboardMatrixState, src + 1, 8);
+    _keyboardPressedKeys.clear();
+    const uint8_t pairs = src[9];
+    for (uint8_t i = 0; i < pairs; ++i)
+        _keyboardPressedKeys[static_cast<ZXKeysEnum>(src[kKeyboardTtdHeader + 2 * i])] = src[kKeyboardTtdHeader + 2 * i + 1];
+}
+
+uint64_t Keyboard::TTDHashState() const
+{
+    std::vector<uint8_t> blob;
+    TTDSaveStateTo(blob);
+    uint64_t h = 0xcbf29ce484222325ULL;  // FNV-1a
+    for (uint8_t byte : blob)
+    {
+        h ^= byte;
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+/// endregion </TTD>
+
 /// Register key press in keyboard matrix state
 /// @param key ZX Spectrum key pressed
 void Keyboard::PressKey(ZXKeysEnum key)

@@ -120,12 +120,24 @@ Decided 2026-10-02. Every item the engine records belongs to exactly one class, 
 | 34 | Recorded data has three classes, declared per item by the device that owns it: **required**, **derived** and **telemetry** |
 | 35 | Telemetry is an optional frame-boundary stream (decision 19), one stream per kind, switched on and off at run time. It is never part of the state a restore needs |
 | 36 | The [state registry](state-registry.md) lists every item the engine records or deliberately leaves out, with its class, its stream and its size. A device change that adds or drops state updates the registry in the same commit |
+| 37 | **State and inputs, one place each.** A checkpoint holds every device's state: everything the emulated machine can read, the keyboard matrix included. The event journal holds the outside inputs between checkpoints (key and mouse changes, network bytes, media changes), each with its time. A replay restores the checkpoint and applies the events from its time on. No state is recomputed from events and no input is stored in a checkpoint. When the user resumes from a past position, what the host has at that moment (keys held, mouse buttons) enters as ordinary new events at the resume time, recorded in the new branch |
 
 | Class | What it is | Examples | How the engine treats it |
 |---|---|---|---|
 | **Required** | State without which replay from a checkpoint diverges: memory, registers, latches, internal counters of chips (timers, dividers, FIFO positions), the emulated time base of real-time clocks, media versions | RAM pages, AY registers and envelope counters, WD1793 command phase, FT812 memory and its control state | Stored in every checkpoint that changed it; included in integrity checks and in the determinism comparison (QR-3); a missing item is a restore error, never a silent default |
 | **Derived** | Caches a device rebuilds from required state | Sprinter palette RGBA cache and INT list; FT812 state rebuilt by `EveMemoryRestored`; decoded page tables; renderer lookup tables | Not stored. After a restore the engine calls the device's after-restore hook (`onRestored`, decision 23), which rebuilds it |
 | **Telemetry** | Values that emulation never reads back but that a user or a debugger wants to see at a past position | VDAC2 line-budget metrics of the last frame, drive and IDE activity LEDs, per-frame statistics (port accesses, contended cycles), audio peak levels | An optional stream (decision 19): off by default, one mask check per frame when off; outside integrity checks and determinism comparison; dropped first when the memory budget is reached; a position without it shows "no data", and a file without it loads without error |
+
+**Where the outside ends (decision 37 applied to input).** An event is recorded where something from outside enters the emulated hardware, and only there: for a keyboard that is a physical key going down or up, once per key change, whatever the machine does with it. Everything the emulated hardware builds from that change (a matrix line, scan codes, a controller's buffers, typematic repeats) is state of the device that builds it and lives in the checkpoint. Host auto-repeat is never an input (the UI drops it, `isAutoRepeat`); repeats come from the emulated keyboard.
+
+| Keyboard chain | Event in the journal | State in the checkpoint |
+|---|---|---|
+| ZX matrix (48K … Scorpion, Profi, ATM) | `Key`: ZX key, down / up | the matrix and the pressed-key set (`Keyboard`; gap 5 of the registry) |
+| ZX-Evo AVR PS/2 (ATM3, TS-Conf) | `PcKey`: PC key, down / up | AVR PS/2 side: scan-code log, parser, modifiers, held keys (`EvoPs2`, id 19) |
+| ATM Turbo 2+ keyboard controller (MCS-51) | `PcKey` | the controller: RAM, SFRs, timers, UART, its PS/2 keyboard with typematic (`Atm2Kbc`, id 26) |
+| Sprinter AT keyboard on the Z84C15 SIO | `PcKey` | the keyboard byte stream, typematic key and timer (`SprinterInput`, id 31), the SIO FIFO (`Z84C15`, id 29) |
+
+Which chain a key reaches (the machine's routing, for example ZX key or PC key on the ATM Turbo 2+) is decided by the emulation from restored state, not stored per event. A replay restores the checkpoint, then applies each event from its time on through the same routing. Nothing is recomputed from events, and nothing a device generates is journaled.
 
 **How a device decides.** If the emulation of any later instruction can read a value, directly or through a computation, it is *required*. If it can be recomputed from required state at any moment, it is *derived*. Only what neither applies to is *telemetry*. When in doubt, required: a wrong "telemetry" label breaks replay, a wrong "required" label only costs bytes.
 

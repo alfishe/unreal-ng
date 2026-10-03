@@ -335,8 +335,8 @@ types:
       alignment gaps are named members on the C++ side rather than implicit
       padding: these objects are copied by member-wise assignment (which does
       not copy padding) and then hashed byte-wise, so unnamed padding would
-      leak uninitialized bytes into the hash. Offset 31 is ``reserved0``
-      (always zero); offsets 35 and 43 now carry ``boundary`` and
+      leak uninitialized bytes into the hash. Offset 31 is ``nmi_pending``
+      (an NMI requested and not taken yet; zero in sessions recorded before it); offsets 35 and 43 now carry ``boundary`` and
       ``int_acked_in_pulse`` (zero in sessions recorded before them).
     seq:
       - id: pc
@@ -377,12 +377,12 @@ types:
         type: u1
       - id: halted
         type: u1
-      - id: reserved0
+      - id: nmi_pending
         type: u1
         doc: |
           Explicit filler aligning memptr (u2) to a 2-byte boundary after
-          the 7 u8 fields above (offset 31). Named in the C++ struct so
-          member-wise assignment copies it; always zero.
+          the 7 u8 fields above (offset 31), now carrying the pending NMI
+          (0 / 1; Z80::IsNmiPending). Zero in sessions recorded before it.
       - id: memptr
         type: u2
         doc: Undocumented MEMPTR / WZ register.
@@ -578,7 +578,17 @@ types:
           REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
           43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
           u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
-          restored after 42).
+          restored after 42),
+          44 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
+          then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
+          u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
+          45 EvoAvrVolatile (the ZX-Evo AVR's volatile registers on TS-Conf, 4 bytes: u1 version 1, u1 extType,
+          u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode); the ATM3 carries them in 8),
+          46 KeyboardMatrix (the ZX keyboard, variable size: u1 version 1, u1 x 8 matrix rows, u1 pair count,
+          then (u1 ZXKeysEnum key, u1 pressed count) pairs in key order; key changes themselves are input events).
+          ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
+          Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
+          (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

@@ -59,6 +59,24 @@ public:
 	/// Re-arm the power-on line/shift state; battery-backed contents survive
 	void ResetSerialLinkState();
 
+	/// The serial link's state between two #FFBA writes (TTD: TTDSmuc). Fixed
+	/// layout, no padding; the EEPROM contents are not part of it
+	struct LinkState
+	{
+		uint8_t mode;              ///< EEPROMMode
+		uint8_t flags;             ///< bit 0 stable, 1 tx, 2 rx, 3 ack
+		uint8_t bitCount;
+		uint8_t data;
+		uint8_t addressLow;
+		uint8_t addressHigh;
+		uint8_t writePos;
+		uint8_t sda;               ///< 0 / 1
+		uint8_t scl;               ///< 0 / 1
+		uint8_t writeBuffer[16];
+	};
+	LinkState GetLinkState() const;
+	void SetLinkState(const LinkState& state);
+
 // Clock
 public:
 	Ds12887& GetRtc() { return _rtc; }

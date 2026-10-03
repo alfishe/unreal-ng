@@ -84,6 +84,7 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     registry.Register(PeripheralId::Tape, context->pTape);
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
     registry.Register(PeripheralId::KempstonMouse, context->pMouse);
+    registry.Register(PeripheralId::KeyboardMatrix, context->pKeyboard);
     // Kempston joystick: the state byte, only on machines whose decoder answers #1F (a machine without the arm
     // cannot observe it, and its checkpoints stay as they were)
     if (context->pPortDecoder && context->pPortDecoder->HasKempstonJoystick())
