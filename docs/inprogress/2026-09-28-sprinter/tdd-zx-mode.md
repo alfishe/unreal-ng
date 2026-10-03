@@ -386,7 +386,22 @@ re-derived on load (`OnTtdStateLoaded` -> `ApplyTurbo` -> `ApplyOrigWaits`); the
    invisible to them, so they catalog whatever disk is in `fdd.a` (or say "Disc Error" with none), and a catalog of
    one disk followed by loading another fails. Needs the owner's exact mode and image.
 5. **BIOS 3.07 beta 1** returns to DSS with ALL_MODE `#FE` kept (the ZX keyboard and Spectrum screen shadow stay on
-   in DSS); 3.06 sets `#FF`. Noted for the 3.07 notes (bios-versions.md), not changed.
+   in DSS); 3.06 sets `#FF`. **Our bug, fixed 2026-10-02** (branch `sprinter-zx-reset-video`; the owner's report
+   "after the ZX mode and a reset Flex Navigator's accelerated video mode does not always come back"): the board's
+   `/RESET` presets ALL_MODE to `#FF` and clears RGMOD and PORT_Y (PLD `SP2_ACEX.TDF:1041`, `:958`,
+   `ACCELER.TDF:204`); `ResetPld` kept them, as MAME's `machine_reset` does. 3.07 BETA 1's reset intercept reads
+   ALL_MODE back and writes the value it read (3.06 writes `#FF`), so the ZX mode's `#FE` survived Ctrl+Alt+Del and the
+   RESET button: Flex Navigator drew with the accelerator off and the Spectrum screen addressing on (a black, broken
+   picture). Deterministic per path, not timing: 3.07 BETA 1 failed after Ctrl+Alt+Del and after the RESET button
+   every time, 3.06 HF2 never, a power cycle never - the "not always" is the BIOS and the way back. The full
+   comparison with the cold start (PLD registers, accelerator, INT source, the Z84C15's system registers and wait
+   generator, frame length, HOLD) differed only in ALL_MODE (and the accelerator it gates) and in the last CNF write
+   (`#07` instead of `#04`: the same map and turbo, after 3.06 HF2 as well). HOLD now also returns
+   to `#77` with every new configuration (its `/RES`). Tests: `PortDecoderSprinter_Test.CpuReset_PresetsAllModeClearsRgModAndPortY`
+   (no disk), `SprinterZxResetFn_Test` / `SprinterZxResetFn307_Test` (env `UNREAL_SPRINTER_HDD`: Flex Navigator ->
+   Enter on a TRD -> Ctrl+Alt+Del / reset / Ctrl+Alt+Del / reset / power cycle, each compared with the cold start:
+   the mode registers, the accelerator and the picture). BIOS 3.04 cannot boot DSS 1.71 (bios-versions §5.1); the
+   unit test covers it, the reset path is the PLD's, not the BIOS's.
 
 **Live check** (2026-10-02, the GUI build on spare WebAPI / CLI / MCP ports, BIOS 3.06 HF2, the MAME-pack CHD with
 ZXTIME.TRD): ORIGIN.ZX + zxtime printed the table's numbers; `clock.original_waits` (active, windows 1) and `tape`

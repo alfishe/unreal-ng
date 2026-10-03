@@ -240,8 +240,9 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | B2 | PLD configuration load | 4 096 writes, then a reset (`:1157-1163`) | the whole stream, 473 720 writes, or the fast start (`portdecoder_sprinter.cpp:223-313`) | **ours better** | done |
 | B3 | RESET button | MAME's soft reset keeps the configuration (`:1588-1600`) | reloads the PLD as on the board ([tdd-ports-memory.md](tdd-ports-memory.md) §7; `portdecoder_sprinter.cpp:155-165`) | **ours better** | done |
 | B6 | Turbo after a CPU reset (Ctrl+Alt+Del, page `#A0`) | `m_turbo` kept across every reset | preset to 21 MHz (PLD `DCP.TDF:663`, `TB_SW.prn = /RESET`; 2026-10-02): a 3.5 MHz ZX mode returns to DSS in turbo | **MAME wrong** | done (S8) |
+| B8 | ALL_MODE, RGMOD, PORT_Y after a reset | kept across every reset (`machine_reset`, `:1549-1601`) | ALL_MODE `#FF`, RGMOD and PORT_Y 0 on every `/RESET` (PLD `SP2_ACEX.TDF:1041`, `:958`, `ACCELER.TDF:204`; 2026-10-02): with BIOS 3.07 BETA 1 Flex Navigator came back from the ZX mode without its video mode | **MAME wrong** | done (S8) |
 | B7 | BIOS 3.06 Hotfix 2: DSS text at the bottom line | does not scroll (HF2 in MAME's v3.06 slot) | does not scroll either; MAME's own 3.06 (2025) scrolls in both | **equal** (open BIOS question) | TODO |
-| B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.04 (default), 3.06 Hotfix 2, 3.07 BETA 1 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
+| B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.07 BETA 1 (default since 2026-10-02), 3.06 Hotfix 2, 3.04 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
 | B5 | BIOS choice at run time | `-bios v3.06` | at create (`"sprinter": {"bios": "3.06"}`) and on a running machine (`POST /sprinter/bios`, loaded at the reset) on every surface; `[ROM] SPRINTER=` the default ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) G11) | **equal** | done |
 | B6 | BIOS flash writes (updater `UP306.EXE`) | ROM region, not writable | not modeled | **both missing** | Deferred |
 
@@ -306,6 +307,9 @@ Each item names what unreal-ng does instead and the evidence.
     loader (research-zx-mode §9.6). The "original waits" (ALL_MODE bit 2) are not modeled either (T10).
 13. **Turbo kept across a reset** (B6): the PLD presets its turbo bit on `/RESET`; MAME keeps `m_turbo`, so after a
     soft reset from a 3.5 MHz Spectrum mode the BIOS and DSS run at 3.5 MHz.
+14. **ALL_MODE, RGMOD, PORT_Y kept across a reset** (B8): the PLD presets ALL_MODE to `#FF` and clears RGMOD and
+    PORT_Y on `/RESET`; MAME keeps them, so a BIOS that reads ALL_MODE back (3.07 BETA 1) returns from a Spectrum
+    mode with the accelerator off and the Spectrum screen addressing on.
 
 ## 4. Missing in unreal-ng, by priority
 

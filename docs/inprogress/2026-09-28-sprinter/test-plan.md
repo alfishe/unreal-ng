@@ -166,8 +166,10 @@ callback period, interrupt vector. PIO: register file. Keyboard encoder: a press
 
 Location: `core/tests/emulator/machines/sprinter/`. Every test starts with fast start and
 `EnableTurboMode()` unless it checks pixels, stops as soon as its condition holds (`TestWait::For`),
-and skips with a message when the ROM or the image is missing. Each test runs on BIOS 3.04 (the
-default) and 3.06 (review round 1, Q1), as two parameterized instances.
+and skips with a message when the ROM or the image is missing. Each test runs on BIOS 3.04 and 3.06
+(review round 1, Q1), as two parameterized instances. Since 2026-10-02 the shipped default is 3.07 BETA 1
+([bios-versions.md](bios-versions.md) §6.1): a test pinned to one BIOS selects it explicitly
+(`SprinterFixture::SelectBios`).
 
 | ID | Maps to | Condition checked |
 |---|---|---|

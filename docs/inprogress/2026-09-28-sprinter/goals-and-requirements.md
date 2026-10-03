@@ -51,7 +51,7 @@ D1-D4 are the minimum for calling the machine "supported"; D5-D7 complete it.
 | ID | Requirement |
 |---|---|
 | FR-1 | A model `SPRINTER` (full name "Sprinter 2000") exists, is creatable, and is listed by `GET /api/v1/emulator/models` and every surface that lists models |
-| FR-2 | The machine runs a 256 KB BIOS image (default 3.04, 3.06 and others selectable) with no patches; tests run on 3.04 and 3.06 |
+| FR-2 | The machine runs a 256 KB BIOS image (default 3.07 BETA 1 since 2026-10-02, owner decision; 3.04, 3.06 and others selectable) with no patches; tests run on 3.04, 3.06 and 3.07 |
 | FR-3 | Power-on runs the ROM's PLD loader (the user default); the configuration becomes active when the loader has streamed the whole bitstream; an optional **fast start** skips the loader (same resulting state; the default for tests) |
 | FR-4 | The port decoder is **driven by page `#40`** exactly as the hardware: every external port access looks up the table; programs that edit the table see the change at the next access |
 | FR-5 | Memory: 256 pages, window registers, the Spectrum-compatible window 3, vROM, system ROM, fast RAM, graphics pages, the reset page and the ISA pages behave as in hardware-reference §3 |

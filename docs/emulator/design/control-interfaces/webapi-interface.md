@@ -383,12 +383,12 @@ POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write t
 GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
-GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
+GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
 GET  /api/v1/emulator/{id}/state/sprinter/sound/ring  The Covox-Blaster ring: 256 words, play / write index
 GET  /api/v1/emulator/{id}/state/sprinter/bios    BIOS images, the one loaded (CRC-32), the configured one, start options
 POST /api/v1/emulator/{id}/sprinter/bios          {"bios": "3.04|3.06|3.07|<file>", "fast_start", "accel_int_suspend", "reset": true} - select; the image loads at the reset
-GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
+GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, applicable, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
 PUT  /api/v1/emulator/{id}/video/temporal     {"algorithm": "mod-tpgwafsd"} switches it on, "" or "off" switches it off (POST too); answers the new status; 400 {error, message, algorithms[]} on an unknown name or a bad body
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)

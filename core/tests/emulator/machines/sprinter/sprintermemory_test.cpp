@@ -245,3 +245,144 @@ TEST_F(SprinterMemory_Test, LoaderLayout_RomPagesAndFastRamAboveCs0)
     EXPECT_EQ(_sprinterMemory->FastRam()[0xFE20], 0x5D);
     EXPECT_EQ(Pld().bitstreamCount, 1u) << "every write is a configuration bit";
 }
+
+/// region <Tool reads (debugger, WebAPI) - every window, every mapping>
+
+namespace
+{
+/// The memory reads the debugger's widgets make (disassembler, stack, memory views, breakpoint
+/// list, interrupt vector) for window `window`: each must neither crash nor leave the window
+struct ToolReadProbe
+{
+    static void Check(Memory& memory, uint8_t window)
+    {
+        const uint16_t base = static_cast<uint16_t>(window << 14);
+        uint8_t* page = memory.MapZ80AddressToPhysicalAddress(base);
+        ASSERT_NE(page, nullptr) << "window " << int(window);
+        ASSERT_GE(page, memory.RAMBase()) << "window " << int(window);
+        ASSERT_LT(page, memory.RAMBase() + PAGE_SIZE * MAX_PAGES) << "window " << int(window);
+        ASSERT_EQ(memory.GetPhysicalAddressForZ80Page(window), page) << "window " << int(window);
+        for (uint16_t offset : {0x0000, 0x0001, 0x2000, 0x3FFE, 0x3FFF})
+            (void)memory.DirectReadFromZ80Memory(static_cast<uint16_t>(base + offset));
+    }
+};
+}  // namespace
+
+// The 2026-10-02 crash: Core::Reset runs Memory::Reset (the generic 48K layout) before the
+// decoder maps the Sprinter's own; the Sprinter has no 48K ROM role (base_sos_rom == null), so
+// window 0 was null in between and the debugger, refreshing on the UI thread (disassembler around
+// PC = 0, stack at SP), read address 0. This is that intermediate state
+TEST_F(SprinterMemory_Test, ToolReads_ResetIntermediateStateHasNoNullWindow)
+{
+    _memory->Reset();
+    for (uint8_t window = 0; window < 4; window++)
+        ToolReadProbe::Check(*_memory, window);
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0x0000), kRomTagBase + 0) << "window 0: ROM page 0";
+
+    // The ROM-role switches keep the current bank when the model has no such ROM
+    _memory->SetROM48k();
+    _memory->SetROM128k();
+    _memory->SetROMDOS();
+    _memory->SetROMSystem();
+    ToolReadProbe::Check(*_memory, 0);
+
+    // The full reset ends in the Sprinter's own layout
+    _core->Reset();
+    for (uint8_t window = 0; window < 4; window++)
+        ToolReadProbe::Check(*_memory, window);
+}
+
+// A tool read sees what the CPU reads, in every mapping the PLD makes (without the CPU's side
+// effects): ROM, fast RAM, vROM, plain RAM, graphics pages (the video address), the ISA view
+// (#FF), the reset page, the Covox-Blaster page, the port table page while starting
+TEST_F(SprinterMemory_Test, ToolReads_MatchCpuReadsInEveryMapping)
+{
+    const auto expectAllMatch = [&](const char* what) {
+        for (uint8_t window = 0; window < 4; window++)
+        {
+            ToolReadProbe::Check(*_memory, window);
+            for (uint16_t offset : {0x0000, 0x0010, 0x0405, 0x2000, 0x3FFF})
+            {
+                const uint16_t addr = static_cast<uint16_t>((window << 14) | offset);
+                ASSERT_EQ(_memory->DirectReadFromZ80Memory(addr), Peek(addr)) << what << " #" << std::hex << addr;
+            }
+        }
+    };
+
+    expectAllMatch("after reset (starting: page #40 in window 3)");
+    OpenDcp();
+    expectAllMatch("system ROM");
+
+    Pld().cacheOn = 1;
+    _decoder->UpdateBanks();
+    ASSERT_EQ(_memory->GetMemoryBankMode(0), BANK_CACHE);
+    expectAllMatch("fast RAM in window 0");
+    Pld().cacheOn = 0;
+    Pld().romOff = 1;
+    _decoder->UpdateBanks();
+    ASSERT_EQ(_memory->GetMemoryBankMode(0), BANK_RAM);
+    expectAllMatch("vROM in window 0");
+
+    // Graphics pages in windows 1 and 2: the tool read follows the video address, not the CPU address
+    Pld().portY = 3;
+    Ram(0x50, 3 * 1024 + 5) = 0xA5;
+    Pld().Cell(0xE9) = 0x58;
+    Pld().Cell(0xEA) = 0x50;
+    _decoder->UpdateBanks();
+    expectAllMatch("graphics pages");
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0x8005), 0xA5) << "the video address PORT_Y x 1024 + A[9:0]";
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0x4405), 0xA5);
+
+    // The ISA view in window 3: #FF, as the CPU reads it
+    Pld().sc = 0x10;
+    _decoder->UpdateBanks();
+    for (uint8_t isaPage : {0xD0, 0xD2, 0xD4, 0xD6})
+    {
+        Pld().cells[Pld().pg3] = isaPage;
+        _decoder->UpdateBanks();
+        ASSERT_EQ(_sprinterMemory->GetReadRedirect(3), SprinterMemory::ReadRedirect::Isa);
+        expectAllMatch("ISA view");
+        EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xC010), 0xFF);
+    }
+
+    // The reset page (#A0 with #1FFD = #10): a tool read has no side effect
+    Pld().cells[Pld().pg3] = SprinterMemory::kResetPage;
+    _decoder->UpdateBanks();
+    expectAllMatch("reset page");
+    EXPECT_EQ(Pld().resetPending, 0);
+
+    // The Covox-Blaster page and the last RAM page
+    Pld().sc = 0;
+    _decoder->UpdateBanks();
+    for (uint8_t page : {SprinterMemory::kCblPage, uint8_t{0xFF}})
+    {
+        Pld().cells[Pld().pg3] = page;
+        _decoder->UpdateBanks();
+        expectAllMatch("window 3 RAM");
+    }
+
+    // Plain RAM back in windows 1 and 2: no redirect left behind
+    Pld().Cell(0xE9) = 0x05;
+    Pld().Cell(0xEA) = 0x02;
+    _decoder->UpdateBanks();
+    expectAllMatch("plain RAM");
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0x8010), 0x02);
+}
+
+// The loader layout (PLD not configured): ROM pages #C-#F, fast RAM above the Z84C15 CS0 boundary
+TEST_F(SprinterMemory_Test, ToolReads_LoaderLayoutSeesFastRamAboveCs0)
+{
+    _decoder->BeginLoading();
+    _decoder->GetZ84().PowerOn();
+    _decoder->UpdateBanks();
+    Out(0x00EE, 0x02);
+    Out(0x00EF, 0xFE);
+    _sprinterMemory->FastRam()[0xFE10] = 0x3C;
+    for (uint8_t window = 0; window < 4; window++)
+        ToolReadProbe::Check(*_memory, window);
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xFE10), 0x3C);
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xFE10), Peek(0xFE10));
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xEFFF), kRomTagBase + 0x0F);
+}
+
+/// endregion </Tool reads>

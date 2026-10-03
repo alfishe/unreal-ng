@@ -310,7 +310,7 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
 |---|---|---|
 | **SYS** `#7C` / `#3C` (write) | `#7C` puts the system ROM in window 0, `#3C` removes it. bit 1 = 1: bit 0 = turbo on/off; bit 1 = 0: bit 0 = BIOS page half (ROM 0 / ROM 8). bit 2 = 1 enables bits 3-7: bits 4-3 = map number (CNF 0-3), bit 5 = reset Pentagon port bits 0-5, bit 6 = reset Scorpion port, bit 7 = 0 resets Pentagon-512 bits 6-7. A CPU reset of the running configuration (Ctrl+Alt+Del, a write to page `#A0`) presets the turbo bit: the CPU restarts at 21 MHz if the front-panel switch allows | INC `SP2000.inc:226-300`; MAME `sprinter.cpp:691-697`, `:864-885` (MAME keeps `m_turbo` across a reset); PLD `DCP.TDF:649-663` (`TB_SW.prn = /RESET`) |
 | **CNF** `#74` / `#24` | same bits; bit 0 selects vROM set (`#E0-#E3` vs `#E4-#E7`, `#EB` vs `#EF`) when bit 1 = 0 | INC `SP2000.inc:268-290` |
-| **ALL_MODE** `#204E` | bit 0 = 1: accelerator on, keyboard interrupt on, Spectrum screen addressing off; bit 2: Spectrum memory waits; bit 3: keyboard interrupt separate from the accelerator | INC `SP2000.inc:550-560`; MAME `sprinter.cpp:197`, `:1208`, `:1708` |
+| **ALL_MODE** `#204E` | bit 0 = 1: accelerator on, keyboard interrupt on, Spectrum screen addressing off; bit 2: Spectrum memory waits; bit 3: keyboard interrupt separate from the accelerator. Every `/RESET` (Ctrl+Alt+Del, page `#A0`, the RESET button) presets it to `#FF`; RGMOD and PORT_Y are cleared by the same `/RESET` | INC `SP2000.inc:550-560`; MAME `sprinter.cpp:197`, `:1208`, `:1708` (MAME keeps all three across a reset); PLD `SP2_ACEX.TDF:1041` (`ALL_MODE[].prn = /RESET`), `:958` (`RGMOD[].clrn`), `ACCELER.TDF:204` (`AGR[].clrn`, PORT_Y) |
 
 ## 6. Video
 
@@ -554,3 +554,19 @@ Sources: MAN §1.4, §14; BIOS-TT `bios/loader/loader.asm`, `rom/SETUP/MAIN.asm:
 
 Other resets: writing page `#A0` (§3.4) = soft reset; code `#2E` (`OUT` to `#40BC`) = reload the PLD
 (MAME `sprinter.cpp:779-783`); Ctrl+Alt+Del = hardware reset from the keyboard block.
+
+What the board's `/RESET` does to the configured PLD (`SP2_ACEX.TDF:294-306`: the keyboard's Ctrl+Alt+Del and the
+page-`#A0` counter both pull the `/RESET` pin, which the PLD reads back; 2026-10-02):
+
+| Register | On `/RESET` | Source |
+|---|---|---|
+| ALL_MODE | `#FF` (accelerator, keyboard INT on, Spectrum screen addressing off, no original waits) | `SP2_ACEX.TDF:1041` |
+| RGMOD, PORT_Y | 0 | `SP2_ACEX.TDF:958`; `ACCELER.TDF:204` |
+| Turbo | on (if the front-panel switch allows) | `DCP.TDF:663` |
+| CNF, SYS, ROM_RG, AROM16, `#7FFD` / `#1FFD` (clean rules), DOS, CASH_ON, STARTING | cleared / set as in MAME's `machine_reset` | `DCP.TDF:662-713`, `SP2_ACEX.TDF:563-837` |
+| Accelerator mode, ALT_ACC, the Covox-Blaster | off | `ACCELER.TDF:221`, `:270-271`; `SP2_ACEX.TDF:1161-1162` |
+| HOLD | kept: reset by the configuration's own `/RES` only (`#77` after a load) | `SP2_ACEX.TDF:827-830`, `DCP.TDF:258` |
+| Border, the cells `#C0-#EF` | kept | `SP2_ACEX.TDF:313-315` (no reset term) |
+
+BIOS 3.07 BETA 1 depends on the ALL_MODE preset: its reset intercept (`EXP.asm` `Setup_Starter`, the beta's "ALL_MODE
+readable") reads the register back and writes what it read.

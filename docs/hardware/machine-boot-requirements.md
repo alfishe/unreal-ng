@@ -256,7 +256,8 @@ Sources:
 §9, §10, §14 and
 [docs/inprogress/2026-09-28-sprinter/roadmap-and-plan.md](../inprogress/2026-09-28-sprinter/roadmap-and-plan.md).
 
-- **Planned firmware**: the real BIOS, version **3.04** with **3.06 selectable**, plus the
+- **Firmware**: the real BIOS, community **3.07 BETA 1** by default since 2026-10-02 (3.04 and 3.06 selectable;
+  [bios-versions.md](../inprogress/2026-09-28-sprinter/bios-versions.md)), plus the
   **Estex DSS** (disk operating system) that the BIOS chains into.
 - **Planned boot sequence** (hardware-reference.md §14, from PLD-bitstream load through DSS):
   power-on loads the FPGA bitstream from ROM or fast RAM, then the BIOS runs POST, memory test,

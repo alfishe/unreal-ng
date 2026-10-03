@@ -8,6 +8,7 @@
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/memory/sprinter/sprinteraccelerator.h"
 
 class PortDecoderSprinter_Test : public SprinterFixture
 {
@@ -267,6 +268,55 @@ TEST_F(PortDecoderSprinter_Test, Turbo_SysBit1SelectsRatio6)
     Pld().turboHard = 0;
     Out(0x007C, 0x03);
     EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 1);
+}
+
+// The board's /RESET (Ctrl+Alt+Del, a write to page #A0, the RESET button) presets ALL_MODE to #FF and clears RGMOD
+// and PORT_Y (PLD SP2_ACEX.TDF:1041, :958, ACCELER.TDF:204); the border and HOLD keep their values, HOLD returns to
+// #77 only with a new configuration (its /RES, SP2_ACEX.TDF:827-830). The ZX mode's ALL_MODE #FE must not survive
+// a reset: BIOS 3.07 BETA 1 reads the register back at its reset intercept and writes what it read (the owner's
+// report of 2026-10-02: Flex Navigator without its video mode after the ZX mode and a reset)
+TEST_F(PortDecoderSprinter_Test, CpuReset_PresetsAllModeClearsRgModAndPortY)
+{
+    auto program = [&] {
+        OpenDcp();
+        SetCode(0x0001, false, 0xC3);
+        SetCode(0x0001, true, 0xC3);  // the 3.07 BETA 1 table reads ALL_MODE back
+        SetCode(0x0002, false, 0xC4);
+        SetCode(0x0003, false, 0xC5);
+        SetCode(0x0004, false, 0xCB);
+        Out(0x0001, 0xFE);  // the launcher's ZX mode
+        Out(0x0002, 0x55);
+        Out(0x0003, 0x01);
+        Out(0x0004, 0x12);
+        ASSERT_EQ(Pld().allMode, 0xFE);
+        ASSERT_EQ(Pld().rgMod, 0x01);
+        ASSERT_EQ(_decoder->GetIntSource().ModePage(), 1);
+        ASSERT_FALSE(_decoder->GetAccelerator()->IsEnabled());
+    };
+
+    // Ctrl+Alt+Del / page #A0: a CPU reset of the running configuration
+    ASSERT_NO_FATAL_FAILURE(program());
+    _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+    _decoder->OnMachineStep(0);
+    ASSERT_EQ(_z80->pc, 0x0000);
+    EXPECT_EQ(Pld().allMode, 0xFF);
+    EXPECT_EQ(Pld().rgMod, 0x00);
+    EXPECT_EQ(_decoder->GetIntSource().ModePage(), 0);
+    EXPECT_EQ(Pld().portY, 0x00);
+    EXPECT_EQ(Pld().hold, 0x12) << "HOLD follows the configuration's /RES only";
+    EXPECT_TRUE(_decoder->GetAccelerator()->IsEnabled());
+    OpenDcp();
+    EXPECT_EQ(In(0x0001), 0xFF) << "ALL_MODE reads back #FF";
+
+    // The RESET button: the PLD loads again (fast start here), HOLD too starts over
+    ASSERT_NO_FATAL_FAILURE(program());
+    _core->Reset();
+    EXPECT_EQ(Pld().allMode, 0xFF);
+    EXPECT_EQ(Pld().rgMod, 0x00);
+    EXPECT_EQ(_decoder->GetIntSource().ModePage(), 0);
+    EXPECT_EQ(Pld().portY, 0x00);
+    EXPECT_EQ(Pld().hold, 0x77);
+    EXPECT_TRUE(_decoder->GetAccelerator()->IsEnabled());
 }
 
 // The Z84C15's CTC on the board (MAME sprinter.cpp:1993-2008): TRG0-TRG2 are X_SP / 48 = 875 kHz in real time and

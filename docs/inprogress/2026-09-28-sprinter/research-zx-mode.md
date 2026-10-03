@@ -221,6 +221,10 @@ when it holds Spectrum page 5 or 7) are copied into video RAM in the PLD's Spect
 the BIOS writes shows a Spectrum screen with border squares (hardware-reference §6). The border color
 comes from `#FE` bits 0-2 through the border squares. The picture is 256×192 doubled horizontally
 inside the 640×256 picture (MAME screenshot [mame-menu-sprinter.png](../../../testdata/machines/sprinter/reference/zx-mode/mame-menu-sprinter.png)).
+The mode table is not bypassed: the launcher's table (dumped 2026-10-02 from the 128 menu and the TR-DOS
+prompt) has border squares `#F8` around 32 × 24 ZX-40 squares from square (4, 4), `m0` = `#30` | third << 6,
+`m1` = `m2` = the cell's address low byte; the reports classify them as Spectrum squares
+([tdd-video.md](tdd-video.md) §7, "Spectrum screen squares").
 
 ### 7.2 Frame and INT
 
@@ -351,7 +355,7 @@ does not reset).
 | Fast tape loading trap | would fire in ZX mode: all three 48 ROMs on the disk (`BASIC_48`, `SP__48`, `SC__48`) carry the LD-BYTES signature at `#0556` | `tapefastload.cpp:110-129` |
 | "Original waits" (ALL_MODE bit 2) | **built** 2026-10-02 (4-T CT5 period, phase placeholder) | `SprinterOrigWaits` (`sprinterwaits.h`) |
 | Snapshot loading | **wrong**: the SNA/Z80 loaders write physical RAM pages 0-7 (`loader_sna.cpp:657`, `memory.RAMPageAddress`), which on the Sprinter are system pages, not the Spectrum pages; nothing refuses a snapshot on the Sprinter (goals FR-51 asked for a refusal) | `core/src/loaders/snapshot/` |
-| ZX-mode state for automation | only `registers.all_mode.zx_screen_shadow` (automation audit row 14) | `sprinterdevicestate.cpp` |
+| ZX-mode state for automation | `registers.all_mode.zx_screen_shadow` (automation audit row 14); the picture: `picture_mode` `spectrum` (machine report, `/state/sprinter/video`, the GUI status bar "Spectrum 256x192, screen 5", 2026-10-02) | `sprinterdevicestate.cpp`, `SprinterPicture` |
 
 ### 10.1 ZX-Evo / TS-Conf for comparison
 

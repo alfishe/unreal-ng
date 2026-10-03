@@ -78,6 +78,8 @@ protected:
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        // These tests pin BIOS 3.04 (its screens, SETUP 1.58, IDE waits); the shipped default is 3.07 BETA 1
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));
 
         // The test default: skip the loader (FastStart=1); the full start is covered by
         // SprinterPldConfig_Test.FastStartEqualsFullStart_Bios304
@@ -319,13 +321,7 @@ protected:
     /// Another BIOS image from data/rom/sprinter, then the reset (false when the image is not there)
     bool UseBios(const std::string& file)
     {
-        const std::string path = (TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / file).string();
-        if (!FileHelper::FileExists(path))
-            return false;
-        CONFIG& config = _context->config;
-        std::memset(config.sprinter_rom_path, 0, sizeof(config.sprinter_rom_path));
-        std::strncpy(config.sprinter_rom_path, path.c_str(), sizeof(config.sprinter_rom_path) - 1);
-        if (!_context->pCore->GetROM()->LoadROM())
+        if (!SprinterFixture::SelectBios(_context, file))
             return false;
         _emulator->Reset();
         return true;

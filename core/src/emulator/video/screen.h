@@ -747,6 +747,29 @@ public:
 
     virtual void RenderOnlyMainScreen();
 
+    /// Where the temporal effect's ZX frame sits in this machine's framebuffer: ZX frame
+    /// pixel (x, y) is framebuffer pixels x0 + x * scaleX .. + scaleX - 1 on line y0 + y.
+    /// A ZX raster: the whole framebuffer, scale 1. The Sprinter's Spectrum mode: the
+    /// 352 x 288 ZX frame at (16, 0) of its 736 x 288 one, every ZX pixel two 14 MHz pixels
+    struct TemporalWindow
+    {
+        int x0 = 0;
+        int y0 = 0;
+        int scaleX = 1;
+        int width = 0;   ///< ZX frame size (0: no window)
+        int height = 0;
+    };
+    /// What the temporal effect gets from one latched frame (TemporalInput)
+    struct TemporalFrame
+    {
+        const uint16_t* planeB = nullptr;  ///< ZX plane B, width x height (nullptr: none this frame)
+        int width = 0;
+        int height = 0;
+        uint32_t palette[16] = {};         ///< the 16 ZX colors the frame is drawn in (GetRGBAPalette16)
+        TemporalWindow window;
+        std::string notApplicable;         ///< no ZX screen on this machine now, and why ("" = n/a)
+    };
+
     /// region <ZX DLSS plane B>
     /// Per-pixel meaning of the rendered frame (feature zxdlss), written by the
     /// renderer in the same pass as the RGBA pixel, same size and layout as the
@@ -870,6 +893,14 @@ protected:
     bool _temporalRestoreZXDLSS = false;
     TemporalEffects::WriteResult WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height,
                                                      const zxdlss::FrameReport& report);  // worker thread
+    TemporalWindow _presentSlotWindow[PRESENT_SLOTS];  // where each slot's ZX frame is (under _presentMutex)
+    TemporalFrame _temporalFrame;                      // emulation thread: reused every latch
+
+    /// Emulation thread, at the latch, while an algorithm is selected: the frame's ZX
+    /// plane B, palette and window. Default: the live plane B as the framebuffer
+    /// (a ZX raster). A machine whose picture is not a ZX raster (the Sprinter) gives
+    /// its ZX screen in ZX geometry, or none with the reason (notApplicable)
+    virtual void TemporalInput(TemporalFrame& frame);
     void UpdateAudioDelay();                                                              // emulation thread
 
     // User-forced Pentagon overscan (see SetOverscanForced)
@@ -944,6 +975,7 @@ public:
     bool SetTemporalAlgorithm(const std::string& name);
     std::string GetTemporalAlgorithm();
     TemporalEffects::Stats GetTemporalStats();
+
 
     /// Present delay in microseconds at the current frame duration (for the
     /// video presentation latency readout: paint-to-latch delta measures the

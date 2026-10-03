@@ -153,7 +153,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "switch_model: the current machine's mode. A ZX-Poly machine applies it to all four modules";
     schema["properties"]["sprinter_bios"]["type"] = "string";
     schema["properties"]["sprinter_bios"]["description"] =
-        "'create' with model SPRINTER: the BIOS image - 3.04 (default), 3.06, 3.07 (DSS 1.71 needs it) or a file in "
+        "'create' with model SPRINTER: the BIOS image - 3.07 (default), 3.06, 3.04 (DSS 1.71 needs 3.06+) or a file in "
         "rom/sprinter (on a running Sprinter: invoke_api POST /api/v1/emulator/{id}/sprinter/bios {bios, reset})";
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =
@@ -1127,7 +1127,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "pattern; one port or another map: invoke_api GET /api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC "
         "and /state/sprinter/ports?map=0&dos=1&rw=r), 'sprinter_text' = its screen text (80 x 32 from the mode table's "
         "text squares: BIOS SETUP, DSS; video_text and screen_ocr fall back to it), 'sprinter_video' = the mode table "
-        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, B border, . blank, * INT) "
+        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT) "
         "with HOLD / frame length / RGMOD / PORT_Y and the palettes in use (every square decoded: invoke_api GET "
         "/api/v1/emulator/{id}/state/sprinter/video), 'sprinter_palette' = the palettes the picture uses (R, G, B per pen "
         "as video RAM holds them; ?k=0-7|all through invoke_api), 'sprinter_sound_ring' = the Covox-Blaster sample ring, "

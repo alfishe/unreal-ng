@@ -390,7 +390,7 @@ sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
 txt = sprinter_text()       -- the screen text of the mode table's text squares (80 x 32: BIOS SETUP, DSS)
-vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
+vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
 pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
 ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected), loaded, reload_pending, options
@@ -1064,7 +1064,7 @@ emu.video_pixel_at(t)                -- the same for the point under the beam at
 emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_address_in(space, offset [, page]) -- "ram", "sprite_ram" (attribute word, byte offset) or "palette" (cell, byte offset)
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
-emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
+emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason, applicable,
                                      --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
                                      --   correcting, showing_processed, corrected_frames, written, shown_raw, late, restarts,
                                      --   last_ms, average_ms, shown_frame / last_frame = {pattern, period2..period5,

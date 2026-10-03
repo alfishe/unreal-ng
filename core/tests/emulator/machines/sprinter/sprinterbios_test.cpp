@@ -92,7 +92,8 @@ TEST(SprinterBiosReload_Test, ResetLoadsTheSelectedImage)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError, RamPowerOn::Zero);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    EXPECT_EQ(LoadedFile(DeviceState::SprinterBios(context)), "sp2k-3.04.rom");
+    // The shipped config's default (owner decision 2026-10-02, bios-versions.md §6)
+    EXPECT_EQ(LoadedFile(DeviceState::SprinterBios(context)), "sp2k-3.07-beta1.rom");
 
     SprinterBios::Options options;
     std::string error;
@@ -100,7 +101,7 @@ TEST(SprinterBiosReload_Test, ResetLoadsTheSelectedImage)
     StateNode report = DeviceState::SprinterBiosSelect(context, options);
     ASSERT_TRUE(Find(report, "available")->b) << DeviceState::ToText(report);
     EXPECT_TRUE(Find(report, "reload_pending")->b) << "loads at the next reset";
-    EXPECT_EQ(LoadedFile(report), "sp2k-3.04.rom");
+    EXPECT_EQ(LoadedFile(report), "sp2k-3.07-beta1.rom");
 
     emulator->Reset();
     report = DeviceState::SprinterBios(context);

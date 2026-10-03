@@ -1,6 +1,7 @@
 #include <benchmark/benchmark.h>
 
 #include <memory>
+#include <string>
 
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
@@ -10,11 +11,13 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/rom.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/video/screen.h"
 
 /// Sprinter frame cost (Sprinter tdd-video §3, the naive v1 renderer): BIOS 3.04
-/// at its logo (frame 60: graphics squares for the logo, 80-column text, border
+/// (selected explicitly, so the numbers stay comparable; the shipped default is 3.07 BETA 1) at its logo (frame 60: graphics squares for the logo, 80-column text, border
 /// squares), the whole 736x288 frame drawn in one go (RenderFrameBatch), and a
 /// full frame of CPU + per-T catch-up rendering. The square cache (MAME's
 /// tilemap idea) waits in the Sprinter TODO for these numbers.
@@ -31,6 +34,15 @@ static std::shared_ptr<Emulator> BootSprinterToLogo(benchmark::State& state)
         return nullptr;
     }
     EmulatorContext* context = emulator->GetContext();
+    SprinterBios::Options bios;
+    bios.bios = "3.04";
+    std::string error;
+    if (!SprinterBios::ApplyToConfig(context->config, bios, error) || !context->pCore->GetROM()->LoadROM())
+    {
+        state.SkipWithError(("BIOS 3.04 not loaded: " + error).c_str());
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+        return nullptr;
+    }
     context->config.sprinter.fast_start = 1;
     emulator->Reset();
     context->pFeatureManager->setFeature(Features::kScreenHQ, true);

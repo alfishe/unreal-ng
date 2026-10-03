@@ -47,7 +47,8 @@ that the emulator works out of the box, on the following basis:
     `fc910ba4c32f42a8b130b804434f3b449f2f01ed710510a9e8340d8d3ae9a90a`.
   * `sp2k-3.07-beta1.rom`: "Firmware v3.07 BETA 1", branch `beta` commit `f546c4e` (2026-09-24), build date
     2026-09-24 12:00:00, its own bitstream. CRC32 `a06a1a02`, SHA-256
-    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`.
+    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`. The shipped default of
+    `configs/sprinter/unreal.ini` since 2026-10-02 (`[ROM] SPRINTER=`).
 
   No author's build of these versions is public to compare against; how they were made, the boot results and
   how to follow new builds: `docs/inprogress/2026-09-28-sprinter/bios-versions.md`.

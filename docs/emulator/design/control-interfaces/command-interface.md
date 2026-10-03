@@ -746,7 +746,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Sprinter Covox-Blaster ring (256 words, play / write index) | `state sprinter ring` | `GET /state/sprinter/sound/ring` | `sprinter_sound_ring()` | `sprinter_sound_ring()` | `sprinter_sound_ring` |
 | Sprinter BIOS images, loaded image, start options | `state sprinter bios` | `GET /state/sprinter/bios` | `sprinter_bios()` | `sprinter_bios()` | `sprinter_bios` |
 | Sprinter BIOS / start options select (loads at the reset) | `state sprinter bios 3.06 [fast_start=0\|1] [accel_int_suspend=0\|1] [reset=0\|1]` | `POST /sprinter/bios {bios, fast_start, accel_int_suspend, reset}` | `sprinter_bios_select{bios="3.06"}` | `sprinter_bios_select(bios="3.06")` | `invoke_api` POST `/sprinter/bios` |
-| Sprinter BIOS at create | `create SPRINTER --sprinter-bios 3.07 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.07"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
+| Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
 | Device memory regions (the Sprinter's 256 KB video RAM `vram`) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
 | Region read / write | `memory region read vram 0x17F0 3`, `memory region write vram 0x17F0 00 00 A8` | `GET /memory/region/vram?offset=&length=&format=hex\|data\|sparse\|binary`, `POST /memory/region/vram {offset, hex\|data}`, `/memory/page/vram/{0-15}` | `region_read(name, off, len)`, `region_write(name, off, {..}\|"hex")` | `region_read(...)` -> bytes, `region_write(...)` | `memory_region` (region, address, size); `invoke_api` POST |
 | Region save / load (files) | `memory region save\|load vram <file> [offset] [len]` | `POST /memory/region/vram {action: save\|load, path, offset, length}` | `region_save(name, path)`, `region_load(name, path)` | `region_save(...)`, `region_load(...)` | `invoke_api` POST |
@@ -1408,7 +1408,10 @@ The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
 `video_temporal()` / `video_temporal_set(name)`, and the MCP `capture_media`
 actions `temporal_status` / `temporal_set`. Status fields: `algorithm` (empty
-when off), `active`, `inactive_reason`, `correcting` (a detector fired in the
+when off), `active`, `inactive_reason`, `applicable` (false while the machine
+shows no ZX screen: a Sprinter native mode or a frame that is no ZX raster - the
+reason then starts with `not applicable:`; the Sprinter's Spectrum mode is
+applicable), `correcting` (a detector fired in the
 frame on screen and an averaging mask formed - the Qt dialog's LED; every frame
 is analyzed, but a frame with nothing detected passes unchanged),
 `showing_processed` (the frame on screen went through the algorithm, changed

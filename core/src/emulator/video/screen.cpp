@@ -1105,6 +1105,7 @@ void Screen::LatchExternalFrame()
     const size_t index = _presentLatchCounter % PRESENT_SLOTS;
     VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
     _presentPlaneB[index].clear();  // plane B belongs to the ZX raster
+    _presentSlotWindow[index] = TemporalWindow{};  // no temporal output for an external frame
     _presentSlotSerial[index] = ++_presentSerial;
     _presentSlotProcessed[index] = false;
     _presentSlotShown[index] = false;
@@ -1146,14 +1147,19 @@ void Screen::LatchFramebuffer()
         // one back (WriteTemporalOutput takes _presentMutex: Submit must not)
         if (_temporal)
         {
-            // The colors the frame is drawn in now: the live palette, not a copy
-            uint32_t palette[16];
-            GetRGBAPalette16(palette);
-            const bool planeB = _planeBEnabled && !_planeB.empty();
+            // The machine's ZX frame (plane B, the colors it is drawn in now, where it sits
+            // in the framebuffer); nothing to prepare while no algorithm is selected
+            TemporalFrame& frame = _temporalFrame;
+            frame.planeB = nullptr;
+            frame.width = frame.height = 0;
+            frame.window = TemporalWindow{};
+            frame.notApplicable.clear();
+            if (_temporal->IsEnabled())
+                TemporalInput(frame);
+            _presentSlotWindow[index] = frame.window;
             _temporalDelayFrames.store(
-                static_cast<uint8_t>(_temporal->Submit(_presentSerial, planeB ? _planeB.data() : nullptr,
-                                                       static_cast<int>(_framebuffer.width),
-                                                       static_cast<int>(_framebuffer.height), palette)),
+                static_cast<uint8_t>(_temporal->Submit(_presentSerial, frame.planeB, frame.width, frame.height,
+                                                       frame.palette, &frame.notApplicable)),
                 std::memory_order_release);
         }
         UpdateAudioDelay();
@@ -1185,6 +1191,7 @@ void Screen::FlushAndPresentFramebuffer()
     else
         _presentPlaneB[0].clear();
     _presentSlotSerial[0] = ++_presentSerial;
+    _presentSlotWindow[0] = TemporalWindow{};  // never submitted: the effect restarts below
     _presentSlotProcessed[0] = false;
     _presentSlotShown[0] = false;
     _presentSlotReport[0] = zxdlss::FrameReport{};
@@ -1323,23 +1330,60 @@ TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const 
 {
     using Result = TemporalEffects::WriteResult;
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentSlots[0] == nullptr || _framebuffer.width != static_cast<uint32_t>(width) ||
-        _framebuffer.height != static_cast<uint32_t>(height) ||
-        _presentBufferSize != static_cast<size_t>(width) * height * RGBA_SIZE)
+    const int fbWidth = static_cast<int>(_framebuffer.width);
+    const int fbHeight = static_cast<int>(_framebuffer.height);
+    if (_presentSlots[0] == nullptr || _presentBufferSize != static_cast<size_t>(fbWidth) * fbHeight * RGBA_SIZE)
         return Result::Gone;
     for (size_t i = 0; i < PRESENT_SLOTS; i++)
     {
         if (_presentSlotSerial[i] != serial)
             continue;
+        // The ZX frame's place in this slot's framebuffer (recorded at its latch)
+        const TemporalWindow& w = _presentSlotWindow[i];
+        if (w.width != width || w.height != height || w.scaleX < 1 || w.x0 < 0 || w.y0 < 0 ||
+            w.x0 + width * w.scaleX > fbWidth || w.y0 + height > fbHeight)
+            return Result::Gone;
         // Framebuffer format: RGBA8888 (LE uint32 0xAABBGGRR), byte order R, G, B, A
-        uint8_t* dst = _presentSlots[i];
-        const size_t pixels = static_cast<size_t>(width) * height;
-        for (size_t p = 0; p < pixels; ++p)  // SIMD-CANDIDATE(O-14): RGB8 -> RGBA8888 expand
+        uint8_t* const slot = _presentSlots[i];
+        if (w.scaleX == 1 && w.x0 == 0 && width == fbWidth)
         {
-            dst[p * 4 + 0] = rgb[p * 3 + 0];
-            dst[p * 4 + 1] = rgb[p * 3 + 1];
-            dst[p * 4 + 2] = rgb[p * 3 + 2];
-            dst[p * 4 + 3] = 0xFF;
+            // A ZX raster: the output is the frame
+            uint8_t* dst = slot + static_cast<size_t>(w.y0) * fbWidth * RGBA_SIZE;
+            const size_t pixels = static_cast<size_t>(width) * height;
+            for (size_t p = 0; p < pixels; ++p)  // SIMD-CANDIDATE(O-14): RGB8 -> RGBA8888 expand
+            {
+                dst[p * 4 + 0] = rgb[p * 3 + 0];
+                dst[p * 4 + 1] = rgb[p * 3 + 1];
+                dst[p * 4 + 2] = rgb[p * 3 + 2];
+                dst[p * 4 + 3] = 0xFF;
+            }
+        }
+        else
+        {
+            // A ZX frame inside a wider picture (the Sprinter's Spectrum mode): every ZX pixel
+            // scaleX framebuffer pixels; the columns left and right of the window are border,
+            // they repeat the frame's edge pixel so the border stays one color
+            auto rgba = [](const uint8_t* p) {
+                return 0xFF000000u | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[0];
+            };
+            for (int y = 0; y < height; ++y)
+            {
+                uint32_t* row = reinterpret_cast<uint32_t*>(slot) + static_cast<size_t>(w.y0 + y) * fbWidth;
+                const uint8_t* src = rgb + static_cast<size_t>(y) * width * 3;
+                const uint32_t left = rgba(src);
+                const uint32_t right = rgba(src + static_cast<size_t>(width - 1) * 3);
+                int x = 0;
+                for (; x < w.x0; ++x)
+                    row[x] = left;
+                for (int zx = 0; zx < width; ++zx)
+                {
+                    const uint32_t c = rgba(src + static_cast<size_t>(zx) * 3);
+                    for (int k = 0; k < w.scaleX; ++k)
+                        row[x++] = c;
+                }
+                for (; x < fbWidth; ++x)
+                    row[x] = right;
+            }
         }
         _presentSlotProcessed[i] = true;
         _presentSlotReport[i] = report;
@@ -1347,6 +1391,17 @@ TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const 
         return _presentSlotShown[i] ? Result::WrittenAfterShown : Result::Written;
     }
     return Result::Gone;
+}
+
+void Screen::TemporalInput(TemporalFrame& frame)
+{
+    // A ZX raster: plane B is the ZX frame, and the frame is the whole framebuffer
+    frame.planeB = (_planeBEnabled && !_planeB.empty()) ? _planeB.data() : nullptr;
+    frame.width = static_cast<int>(_framebuffer.width);
+    frame.height = static_cast<int>(_framebuffer.height);
+    // The colors the frame is drawn in now: the live palette, not a copy
+    GetRGBAPalette16(frame.palette);
+    frame.window = TemporalWindow{0, 0, 1, frame.width, frame.height};
 }
 
 /// Emulation thread: the audio waits as long as the video beyond the configured

@@ -750,6 +750,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linebudgetview.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linechart.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linechart.h"
+        # The status bar's video mode label (Sprinter: Spectrum mode vs native modes)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

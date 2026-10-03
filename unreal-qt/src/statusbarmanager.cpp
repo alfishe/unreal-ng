@@ -4,6 +4,7 @@
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "widgets/rzxpopover.h"
+#include "widgets/statusbarvideomode.h"
 
 #include "emulator/config.h"
 #include "emulator/io/ide/idecontroller.h"
@@ -675,17 +676,18 @@ void StatusBarManager::updateIde(EmulatorContext* context)
 void StatusBarManager::updateVideoMode(EmulatorContext* context)
 {
     // Machines whose picture mixes modes per area say so in a few words (Sprinter: "text 80",
-    // "320x256 256c (mixed)"); the full description is the tooltip. Read on the GUI tick like the
+    // "Spectrum 256x192, screen 5", "320x256 256c (mixed)"); the full description is the tooltip. Read on the GUI tick like the
     // other indicators: a torn read of the mode table only shows for one tick
     Screen* screen = context ? context->pScreen : nullptr;
     const ScreenState state = screen ? screen->DescribeScreenState() : ScreenState{};
-    if (state.videoModeBrief.empty())
+    const StatusBarVideoMode mode = StatusBarVideoMode::From(state);
+    if (!mode.visible)
     {
         _videoMode->hide();
         return;
     }
-    _videoMode->setText(QString::fromStdString(state.videoModeBrief));
-    _videoMode->setToolTip(QString::fromStdString(state.videoMode));
+    _videoMode->setText(mode.text);
+    _videoMode->setToolTip(mode.toolTip);
     _videoMode->show();
 }
 

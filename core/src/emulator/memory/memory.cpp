@@ -150,6 +150,14 @@ Memory::Memory(EmulatorContext* context)
     base_128_rom = ROMPageHostAddress(2);
     base_sys_rom = ROMPageHostAddress(3);
 
+    // Every window has a valid read source from construction on: tools (debugger, WebAPI)
+    // may read before the first reset maps the model's layout
+    _bank_read[0] = base_sos_rom;
+    _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
+    _bank_read[1] = _bank_write[1] = RAMPageAddress(5);
+    _bank_read[2] = _bank_write[2] = RAMPageAddress(2);
+    _bank_read[3] = _bank_write[3] = RAMPageAddress(0);
+
     // Set default memory banks mode
     _bank_mode[0] = BANK_ROM;
     _bank_mode[1] = BANK_RAM;
@@ -1507,6 +1515,14 @@ MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
 
 void Memory::SetROM48k(bool updatePorts)
 {
+    // Same backstop as SetROMDOS: a model without this ROM role leaves base_sos_rom null,
+    // and installing it would fault on the next read (CPU fetch or a debugger tool read)
+    if (base_sos_rom == nullptr)
+    {
+        MLOGWARNING("Memory::SetROM48k - model has no such ROM; keeping the current ROM bank");
+        return;
+    }
+
     // Switch to 48k (SOS) ROM page
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sos_rom;
@@ -1526,6 +1542,14 @@ void Memory::SetROM48k(bool updatePorts)
 
 void Memory::SetROM128k(bool updatePorts)
 {
+    // Same backstop as SetROMDOS: a model without this ROM role leaves base_128_rom null,
+    // and installing it would fault on the next read (CPU fetch or a debugger tool read)
+    if (base_128_rom == nullptr)
+    {
+        MLOGWARNING("Memory::SetROM128k - model has no such ROM; keeping the current ROM bank");
+        return;
+    }
+
     // Switch to 128k ROM page
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_128_rom;
@@ -1775,6 +1799,12 @@ uint8_t Memory::DirectReadFromZ80Memory(uint16_t address)
     address = address & 0b0011'1111'1111'1111;
     result = *(_bank_read[bank] + address);
 
+    // A window that does not read as its mapped page (Sprinter graphics pages, ISA view,
+    // loader fast RAM): the model says what the CPU would read, without side effects.
+    // One flag test on a tool path; the emulated CPU never comes here
+    if (_toolReadRedirect) [[unlikely]]
+        result = ToolReadRedirect(static_cast<uint16_t>((bank << 14) | address), result);
+
     return result;
 }
 
@@ -1850,7 +1880,11 @@ void Memory::DefaultBanksFor48k()
     // Initialize according Spectrum 128K standard address space settings
     _bank_write[0] =
         _memory + TRASH_MEMORY_OFFSET;  // ROM is not writable - redirect such requests to unused memory bank
-    _bank_read[0] = base_sos_rom;       // 48K (SOS) ROM					for [0x0000 - 0x3FFF]
+    // 48K (SOS) ROM for [0x0000 - 0x3FFF]. A model without that ROM role (the Sprinter: its
+    // Spectrum ROMs live in RAM pages) has base_sos_rom == nullptr and gets ROM page 0: the
+    // decoder maps the model's own layout right after, but a tool reading between the two
+    // (the debugger on the UI thread during a WebAPI reset) must never meet a null window
+    _bank_read[0] = base_sos_rom != nullptr ? base_sos_rom : ROMPageHostAddress(0);
     _bank_write[1] = _bank_read[1] = RAMPageAddress(5);  // Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
     _bank_write[2] = _bank_read[2] = RAMPageAddress(2);  // Set page 2 as default			for [0x8000 - 0xBFFF]
     _bank_write[3] = _bank_read[3] = RAMPageAddress(0);  // Set page 0 as default			for [0xC000 - 0xFFFF]

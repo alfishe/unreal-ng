@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested |
+| **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested; **3.07 BETA 1 is the shipped default since 2026-10-02** (§6.1) |
 | **Related** | [materials.md](materials.md) §5 (ROM provisioning), [tdd-integration.md](tdd-integration.md) §1.1 (`[ROM] SPRINTER=`), `tools/machines/sprinter/bios-build/make-bios.py`, `tools/machines/sprinter/dcp-table/dcp-table.py` |
 
 **In short.** Peters Plus stopped at BIOS 3.04 (2003). The BIOS is alive again as a community
@@ -200,20 +200,39 @@ DSS 1.71.57 boots ("Estex DSS version 1.71.57. Shell version 1.2.522."); 3.05 is
 BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1.62.92 and 1.62.93 boot on
 3.04 and on 3.06 Hotfix 2.
 
-| DSS | Medium | BIOS 3.04 | BIOS 3.06 Hotfix 2 |
-|---|---|---|---|
-| 1.62.92 | floppy, built hard disk image | boots (ACC-3, ACC-4) | boots (`Bios306_DssUsesBothChannels`) |
-| 1.62.93 | ZXMAK2 `sp_disk1.vhd` | boots (`RealHdd_Dss16293BootsFromTheZxmak2Vhd`) | not tried |
-| 1.71.57 | MAME pack `sp_hdd_sys.img`, `dss171u.img` | "Fatal error" (MAME agrees) | boots (`RealHdd_Dss171BootsFromTheMamePackImage`) |
+| DSS | Medium | BIOS 3.04 | BIOS 3.06 Hotfix 2 | BIOS 3.07 BETA 1 (default) |
+|---|---|---|---|---|
+| 1.62.92 | floppy, built hard disk image | boots (ACC-3, ACC-4) | boots (`Bios306_DssUsesBothChannels`) | see §5.2 |
+| 1.62.93 | ZXMAK2 `sp_disk1.vhd` | boots (`RealHdd_Dss16293BootsFromTheZxmak2Vhd`) | not tried | not tried |
+| 1.71.57 | MAME pack `sp_hdd_sys.img` / `.chd`, `dss171u.img` | "Fatal error" (MAME agrees) | boots (`RealHdd_Dss171BootsFromTheMamePackImage`) | boots from the CHD to Flex Navigator 1.15 with proper glyphs (owner, 2026-10-02) |
+
+### 5.2 Known behavior of the community builds (2026-10-02)
+
+- **3.06 Hotfix 2: DSS text does not scroll at the bottom line.** Once DSS output reaches the last text
+  line, new lines overwrite it instead of scrolling the screen up. MAME (`-bios v3.06`) shows the same, so it is
+  the firmware, not the emulation (3.06 Hotfix 1's `LP_PR_LINE_DIR` scrolling switch is the likely area).
+- **3.07 BETA 1 keeps ALL_MODE at `#FE` after the return to DSS** (the readable ALL_MODE of its new bitstream,
+  §4: the SETUP starter reads the port before it clears bit 0). Seen on unreal-ng's Standard configuration; no
+  program has been found to mind it so far.
+- **3.07 BETA 1 boots DSS 1.71.57 from the MAME pack's `sp_hdd_sys.chd`**: Flex Navigator 1.15 comes up with
+  proper glyphs (the owner's run, 2026-10-02; `.recipe/machines/sprinter.md` §6 was checked on it).
+- **The alternative boot device is floppy A on 3.06 / 3.07, floppy B on 3.04** (blank CMOS, SETUP defaults).
+  Checked live 2026-10-02 on unreal-ng: `dss_1_62_92.img` in drive A boots DSS 1.62.92 on 3.07 BETA 1 into Flex
+  Navigator 1.10; in drive B both 3.06 Hotfix 2 and 3.07 BETA 1 print "Alternative Boot from Diskette fail" and
+  stop at the prompt. The DSS-floppy tests and recipe steps use 3.04 with the disk in B (selected explicitly).
 
 ## 6. Picking and testing a BIOS
 
 - **Config.** `[ROM] SPRINTER=` in `data/configs/sprinter/unreal.ini` (read into
-  `config.sprinter_rom_path`, loaded raw as 16 pages; tdd-integration §1.1). The default stays
-  `rom/sprinter/sp2k-3.04.rom`; `rom/sprinter/sp2k-3.06-hf2.rom` or
-  `rom/sprinter/sp2k-3.07-beta1.rom` select a community build. No other selector exists, none is
-  needed.
-- **Tests.** `SprinterBiosVersions_Test` boots each kept community image with the fast start to
+  `config.sprinter_rom_path`, loaded raw as 16 pages; tdd-integration §1.1). The shipped default is
+  `rom/sprinter/sp2k-3.07-beta1.rom` (§6.1); `rom/sprinter/sp2k-3.04.rom` and
+  `rom/sprinter/sp2k-3.06-hf2.rom` stay selectable here, at create (`"sprinter": {"bios": "3.04"}`) and
+  on a running machine (`POST /sprinter/bios`, every automation surface).
+- **Tests.** Tests pinned to one BIOS select it explicitly (`SprinterFixture::SelectBios`): the 3.04
+  suites (`SprinterBoot_Test`, `SprinterInputBoot_Test`, `SprinterReference_Test`, `SprinterVideoBoot_Test`,
+  `TTDSprinterMachine_Test`) select `sp2k-3.04.rom`; `SprinterBiosReload_Test` checks that the shipped config
+  loads 3.07 BETA 1; the TTD corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` is the cold start of the
+  shipped config, so it records 3.07 BETA 1. `SprinterBiosVersions_Test` boots each kept community image with the fast start to
   the boot prompt (banner, memory, port-table CRC, bitstream hash) and with the full start through
   its own loader.
 - **A new build.** Put 256 KB images in a folder and run
@@ -222,6 +241,13 @@ BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1
   decoder opened, the page `#40` CRC, whether the boot prompt came and where the CPU spends its
   time, the screen text, and saves screenshots (prompt, and after ESC). Compare the CRC with
   `dcp-table.py --records` over the build's `DCP.ASM`.
+
+### 6.1 Decision record: the default BIOS
+
+| Date | Decision | Why |
+|---|---|---|
+| 2026-09-28 | 3.04 by default, 3.06 selectable (review round 1, Q1, [roadmap-and-plan.md](roadmap-and-plan.md) §5) | the last Peters Plus release, the one MAME and every capture used |
+| 2026-10-02 | **Owner: switch the default straight to 3.07** (3.07 BETA 1, `sp2k-3.07-beta1.rom`); 3.04 and 3.06 Hotfix 2 stay selectable. Replaces Q1, and an intermediate decision of the same day for 3.06 Hotfix 2 | the main path is now DSS 1.71 from a hard disk, which needs 3.06 or newer (§5.1); 3.06 Hotfix 2 has the bottom-line scroll quirk (§5.2); 3.07 BETA 1 boots the MAME pack's DSS 1.71 / Flex Navigator 1.15 |
 
 ## 7. Who develops it, and how to follow new builds
 
