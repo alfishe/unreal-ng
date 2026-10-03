@@ -13,6 +13,9 @@
 #   --test            run core-tests after a successful build
 #   --filter EXPR     gtest filter for --test (default: all)
 #   --jobs N          parallel jobs (default: half the logical cores)
+#   --cpus N          hard CPU cap for the whole container: configure, link and the
+#                     test run included, not only the compile jobs (default: same as
+#                     --jobs, i.e. half the host cores)
 #   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3)
 #   --type TYPE       CMAKE_BUILD_TYPE (default: Release, like CI)
 #   --clean           remove the build directory first
@@ -35,6 +38,7 @@ FILTER="*"
 CLEAN=0
 CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 JOBS=$(( CORES / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+CPUS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,6 +46,7 @@ while [ $# -gt 0 ]; do
     --test) RUNTESTS=1; shift ;;
     --filter) FILTER="$2"; shift 2 ;;
     --jobs) JOBS="$2"; shift 2 ;;
+    --cpus) CPUS="$2"; shift 2 ;;
     --image) IMAGE="$2"; shift 2 ;;
     --type) TYPE="$2"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
@@ -65,10 +70,12 @@ for sub in lib/googletest lib/benchmark; do
   fi
 done
 
+[ -n "$CPUS" ] || CPUS="$JOBS"
+
 BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
 [ "$CLEAN" = 1 ] && rm -rf "$ROOT/$BUILDDIR"
 
-docker run --rm --platform "linux/$PLATFORM" \
+docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
   -v "$ROOT":/src -w /src/unreal-qt \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
   -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \
