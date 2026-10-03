@@ -1,4 +1,4 @@
-# TODO: three core defects found by fusetest
+# DONE: three core defects found by fusetest
 
 [requirements.md](requirements.md) · [research.md](research.md) · [tdd.md](tdd.md)
 
@@ -13,3 +13,8 @@
 | Full build, core tests | done 2026-09-30: no warnings, 5482 passed |
 | unreal-z80: the same IN ordering, all suites | done 2026-09-30 (branch `in-late-waits` of the library): the `PortInPost` hook before the read callback, one hook test for both IN waits; units + z80test + all ZEX, T-trace (golden: two lines swap places, no T moves), 27/27 interrupt/contention scenarios, 1356/1356 FUSE internal T-states, z80ex differential 0 mismatches with and without contention (the contended IN is `lateWaits` later than z80ex by design); `z80bench` A/B within noise (a first version cost the callback bus's port loop 17 %: two hook tests in a row) |
 | ctprobe: a floating-bus check on a contended-high-byte port (the harness would see this on every emulator) | done 2026-10-01: P-02B ([contention backlog](../2026-10-01-contention-backlog/backlog.md) C4) |
+
+## Closed 2026-10-03
+
+Done (2026-10-01): the late floating-bus sample, the 128K / +2 read-cycle latch and the 128K / +2 #BFFD decode are on master with tests, an A/B and a full green run; fusetest runs with no known deviations (`Z80::FloatingBusAfterLateWaits`; commits `6609cd3cf`, `abaf1cbce`, merge `d350401c7`). PLAN #61 follow-up 3. Not checked here: the unreal-z80 library branch `in-late-waits` (outside this repository).
+

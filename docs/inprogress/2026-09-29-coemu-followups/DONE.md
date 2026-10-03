@@ -1,4 +1,4 @@
-# TODO: co-emulation harness follow-ups
+# DONE: co-emulation harness follow-ups
 
 **Plan:** follow-up 5 of PLAN #61 · [requirements.md](requirements.md)
 
@@ -22,3 +22,8 @@ FUSE 1.6.0 prints `passed` on each; `FuseTest_Test` pins today's output, so a fi
 | Floating bus of a port with a contended high byte read too early | 48K, 128K | unreal-ng takes the byte at IORQ; the CPU takes the data at the end of the stretched I/O cycle, after the late waits (FUSE reads at 43069 T and gets the planted attribute; unreal-ng at 43055, idle, #FF) |
 | `IN` from the #7FFD decode does not latch the data bus into the paging register | 128K, +2 | FUSE `periph.c` and ZEsarUX latch it; needs the defect above fixed too (#7FFD has a contended high byte) |
 | #BFFD reads #FF instead of the selected AY register | +2A, +3 | FUSE `ay_ports_plus3`, ZEsarUX "BFFD R: +2A/+3 mirror of FFFD" |
+
+## Closed 2026-10-03
+
+Done (2026-09-30): all follow-up 5 runners and tests landed on master (`tools/verification/coemu/`, `core/tests/emulator/video/fusetest_test.cpp`); the three unreal-ng defects fusetest found were fixed in [2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/DONE.md), so the "defects found" table below is history. Snow on other emulators is tracked as C6 in the [contention backlog](../2026-10-01-contention-backlog/backlog.md). PLAN #61 follow-up 5.
+

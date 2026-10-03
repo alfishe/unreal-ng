@@ -1,4 +1,4 @@
-# TODO: ULA snow
+# DONE: ULA snow
 
 **Plan:** follow-up 2 of PLAN #61 ([m1-contention TODO](../2026-09-28-m1-contention/TODO.md)) ·
 [research.md](research.md) · [requirements.md](requirements.md) · [tdd.md](tdd.md)
@@ -32,3 +32,8 @@ B and C cost the machines that never snow about 1-2 %: extra code in the hottest
 fetch unchanged by construction (the plain interfaces' `MemoryReadM1` is their plain read), and the measurement
 agrees: every difference within the ±2 % round-to-round noise, signs mixed (2026-09-30, load 6-13, NeoGS and
 overlay benchmarks -0.6 % .. +0.3 % too).
+
+## Closed 2026-10-03
+
+Done in the core (2026-09-30): ULA snow and double on the Ferranti ULA machines, the renderer, the floating bus, tests (`ulasnow_test.cpp`, `snowtest_test.cpp`), the snowtest program and the A/B measurement are on master (`3ef846962`, `acdf1cdcf`). Open and tracked elsewhere: a dump mode to compare snow with other emulators (contention backlog C6) and photos from a real 48K / 128K / +2. PLAN #61 follow-up 2.
+
