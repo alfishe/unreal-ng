@@ -27,6 +27,7 @@
 
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdeventlog.h"
+#include "debugger/ttd/engine/ttdmediajournal.h"
 #include "debugger/ttd/engine/ttdpayloadstore.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "debugger/ttd/engine/ttdframeinput.h"
@@ -129,6 +130,7 @@ struct TTDEngineCheckpoint
     /// starts reading there (Phase 3, Step 1)
     uint64_t busReadCursor = 0;
     uint64_t busWriteCursor = 0;
+    uint64_t mediaReadCursor = 0;   ///< ... and the media read journal
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared
@@ -159,11 +161,12 @@ struct TTDEngineHeapBreakdown
     size_t portReads = 0;           ///< the IN bus journal (compressed blocks + the open block)
     size_t portWrites = 0;          ///< the OUT bus journal
     size_t portJournalSlack = 0;    ///< allocated, not holding records
+    size_t mediaReads = 0;          ///< sectors read from media images (v1 has no such journal)
 
     size_t Total() const
     {
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
-               frameTable + eventLog + portReads + portWrites + portJournalSlack;
+               frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads;
     }
 };
 
@@ -279,6 +282,9 @@ public:
     /// recording; each checkpoint keeps where both stood
     void AppendBusRead(const TTDPortRecord& r) { _busReads.OnRead(r.port, r.value, r.frame, r.tInFrame, r.pc); }
     void AppendBusWrite(const TTDPortRecord& r) { _busWrites.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc); }
+    /// Sectors read from media images while recording (Phase 3)
+    TTDMediaJournal& MediaReads() { return _mediaReads; }
+    const TTDMediaJournal& MediaReads() const { return _mediaReads; }
     const TTDPortJournal& BusReads() const { return _busReads; }
     const TTDPortJournal& BusWrites() const { return _busWrites; }
     /// A replay reads the bus journals from these cursors (a checkpoint's):
@@ -480,6 +486,7 @@ private:
     TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it
     TTDPortJournal _busReads{TTDPortJournal::Direction::Read};
     TTDPortJournal _busWrites{TTDPortJournal::Direction::Write};
+    TTDMediaJournal _mediaReads;
     TTDStreamRegistry _streams;
     /// A deque: no growth reserve (a vector held up to twice the records), and
     /// records never move

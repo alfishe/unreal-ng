@@ -10,6 +10,7 @@
 
 #include "common/logger.h"
 #include "emulator/io/storage/hostwritehold.h"
+#include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/mediawritegate.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
@@ -373,6 +374,10 @@ MediaTransferReport MediaManager::AdoptMediaSet(MediaTransfer transfer)
             state.emptyFramesLeft = 0;
             state.attached = std::move(entry.medium);
             state.writeProtect = entry.writeProtect;
+            if (HostWriteHold* hold = state.attached->Hold())
+                hold->SetHolding(_holdHostWrites);
+            if (MediaReadTap* tap = state.attached->ReadTap())
+                tap->Bind(&_readJournal, entry.slotId);
             state.slot->Attach(*state.attached);
             state.slot->SetWriteProtectSwitch(state.writeProtect);
             state.changedUnits = state.attached->ChangedUnits();
@@ -705,6 +710,8 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         state.attached = std::move(state.incoming);
         if (HostWriteHold* hold = state.attached->Hold())
             hold->SetHolding(_holdHostWrites);
+        if (MediaReadTap* tap = state.attached->ReadTap())
+            tap->Bind(&_readJournal, slotId);
         state.slot->Attach(*state.attached);
         state.slot->SetWriteProtectSwitch(state.writeProtect);
         state.changedUnits = state.attached->ChangedUnits();

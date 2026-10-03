@@ -45,6 +45,8 @@ public:
     std::string Describe() const override { return _base->Describe(); }
     uint64_t ContentId() const override { return _base->ContentId(); }
 
+    IBlockDevice& Base() { return *_base; }
+
     /// Hold host writes (true) or release them (false): releasing writes every
     /// held sector to the file. False when one of them could not be written
     bool SetHolding(bool holding)

@@ -579,6 +579,7 @@ public:
             {"device_blobs", h.deviceBlobs}, {"frame_table", h.frameTable},
             {"event_log", h.eventLog}, {"port_reads", h.portReads},
             {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
+            {"media_reads", h.mediaReads},   // v1 has no such journal: not in D33's sum
         };
     }
 

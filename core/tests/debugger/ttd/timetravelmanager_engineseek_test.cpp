@@ -34,6 +34,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
+#include "_helpers/zcsdtesthelper.h"
 
 namespace fs = std::filesystem;
 
@@ -262,4 +264,97 @@ TEST_F(TimeTravelManager_EngineSeek_Test, AToolEditReplaysWithItsBytes)
     EXPECT_TRUE(recorded.ram == replayed.ram) << "RAM";
     for (const auto& [id, bytes] : recorded.devices)
         EXPECT_TRUE(replayed.devices.at(id) == bytes) << "device " << int(id);
+}
+
+/// The media read journal (Phase 3, sector reads): a ZX-Evo program reads a
+/// sector from its SD card while recording; the image file is then changed.
+/// A seek from the engine's data still lands on the machine the original
+/// image gave (the card's buffer, RAM, CPU), because the sector comes from the
+/// session; a seek from v1's data now differs (the image is read again)
+TEST_F(TimeTravelManager_EngineSeek_Test, SectorReadsComeFromTheSessionNotTheImage)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine("ATM3", GSTypeKind::Z80, true));
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("ttd-media-reads.img");
+    {
+        std::ofstream out(image, std::ios::binary | std::ios::trunc);
+        for (uint32_t i = 0; i < 64 * 512; ++i)
+            out.put(static_cast<char>(i / 512 + i % 7));
+    }
+    ASSERT_TRUE(decoder->InsertSdCard(image, SdCardSpi::WriteMode::Session, false));
+    _context->emulatorState.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    _context->emulatorState.pBF = 0x00;
+    _context->pMemory->UpdateZ80Banks();
+    decoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(zcsdtest::SdInit(decoder, 0x0057));
+
+    // Wait about two frames, then CMD17 (byte address #400: sector 2) through
+    // #57 and the 512 data bytes into #C000
+    const uint8_t program[] = {
+        0xF3, 0x11, 0x00, 0x16, 0x1B, 0x7A, 0xB3, 0x20, 0xFB,                  // DI; LD DE,#1600; delay
+        0x01, 0x57, 0x00, 0x21, 0x3B, 0x80, 0x1E, 0x06,                        // LD BC,#57; LD HL,cmd; LD E,6
+        0x7E, 0xED, 0x79, 0x23, 0x1D, 0x20, 0xF9,                              // send the command
+        0xED, 0x78,                                                            // NCR
+        0xED, 0x78, 0xFE, 0xFF, 0x28, 0xFA,                                    // R1
+        0xED, 0x78, 0xFE, 0xFE, 0x20, 0xFA,                                    // data token
+        0x21, 0x00, 0xC0, 0x11, 0x00, 0x02,                                    // LD HL,#C000; LD DE,512
+        0xED, 0x78, 0x77, 0x23, 0x1B, 0x7A, 0xB3, 0x20, 0xF7,                  // the 512 bytes
+        0xED, 0x78, 0xED, 0x78, 0x18, 0xFE,                                    // CRC; spin
+        0x51, 0x00, 0x00, 0x04, 0x00, 0xFF};                                   // cmd at #803B
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(6, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+    ASSERT_GT(_engine.MediaReads().Size(), 0u) << "the card read a sector while recording";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0xC000), 2 + (2 * 512) % 7) << "sector 2's first byte";
+
+    // The machine at points around the read, from v1's data with the image intact
+    std::vector<ttd::TTDTimePoint> targets;
+    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
+    for (size_t i = 1; i + 1 < _v1->GetCheckpointCount(); ++i)
+        for (uint32_t k : {1u, 2u, 3u})
+            targets.push_back({_v1->GetCheckpoint(i)->time.frame, span * k / 4});
+    std::vector<MachineState> original;
+    for (const ttd::TTDTimePoint& t : targets)
+    {
+        ASSERT_TRUE(_v1->SeekTo(t));
+        original.push_back(Capture());
+    }
+
+    // The image changes on disk
+    {
+        std::fstream f(image, std::ios::binary | std::ios::in | std::ios::out);
+        f.seekp(2 * 512);
+        for (int i = 0; i < 512; ++i)
+            f.put(static_cast<char>(0xE5));
+    }
+    size_t v1Differs = 0;
+    for (size_t n = 0; n < targets.size(); ++n)
+    {
+        SCOPED_TRACE("frame " + std::to_string(targets[n].frame) + " T " + std::to_string(targets[n].tInFrame));
+        _v1->SetReplaySource(&_engine);
+        ASSERT_TRUE(_v1->SeekTo(targets[n]));
+        const MachineState fromEngine = Capture();
+        _v1->SetReplaySource(nullptr);
+        EXPECT_EQ(std::memcmp(&fromEngine.cpu, &original[n].cpu, sizeof(fromEngine.cpu)), 0) << "CPU";
+        EXPECT_TRUE(fromEngine.ram == original[n].ram) << "RAM";
+        for (const auto& [id, bytes] : original[n].devices)
+            EXPECT_TRUE(fromEngine.devices.at(id) == bytes) << "device " << int(id);
+
+        ASSERT_TRUE(_v1->SeekTo(targets[n]));
+        const MachineState fromV1 = Capture();
+        bool same = fromV1.ram == original[n].ram;
+        for (const auto& [id, bytes] : original[n].devices)
+            same = same && fromV1.devices.at(id) == bytes;
+        v1Differs += same ? 0 : 1;
+    }
+    EXPECT_GT(v1Differs, 0u) << "v1 reads the changed image: the test can see a wrong sector";
+    std::remove(image.c_str());
 }

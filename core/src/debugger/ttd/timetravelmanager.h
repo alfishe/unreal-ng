@@ -61,6 +61,7 @@
 #include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
 #include "ttdv1events.h"
+#include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
 #include "ttdcodecpagestore.h"
@@ -1937,6 +1938,25 @@ private:
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
+
+    /// The media manager's read journal (Phase 3): sector reads go into the
+    /// shadow engine while recording and come from the replay engine while
+    /// a seek replays from it
+    class MediaReadAdapter : public IMediaReadJournal
+    {
+    public:
+        explicit MediaReadAdapter(TimeTravelManager& owner) : _owner(owner) {}
+        TimeTravelEngine* engine = nullptr;
+        bool Playing() const override;
+        bool Play(const std::string& slot, uint64_t lba, uint8_t* out, size_t size) override;
+        void Record(const std::string& slot, uint64_t lba, const uint8_t* bytes, size_t size) override;
+
+    private:
+        TimeTravelManager& _owner;
+    };
+    MediaReadAdapter _mediaReads{*this};
+    /// Point the media manager at the journal the session now needs (recording, replaying, none)
+    void SyncMediaReadJournal();
     std::map<uint8_t, std::vector<uint8_t>> _toolEditBefore;   ///< device states when a tool edit began
     bool _toolEditOpen = false;
     std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< v1 marker index -> edit bytes

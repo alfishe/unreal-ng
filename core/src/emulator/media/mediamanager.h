@@ -121,6 +121,7 @@ struct SlotInfo
     bool writeProtect = false;
 };
 
+class IMediaReadJournal;
 class MediaManager
 {
 public:
@@ -203,6 +204,11 @@ public:
     /// the state of that moment). Floppy write-through waits while held.
     /// Emulation thread
     void HoldHostWrites(bool hold);
+
+    /// Time travel's media read journal (null = none): every block medium's
+    /// sector reads are recorded into it, or played back from it. Emulation thread
+    void SetReadJournal(IMediaReadJournal* journal) { _readJournal = journal; }
+    IMediaReadJournal* GetReadJournal() const { return _readJournal; }
     bool HoldingHostWrites() const { return _holdHostWrites; }
 
     /// A slot's peripheral reports a guest write to its medium (emulation
@@ -265,6 +271,7 @@ private:
     mutable std::recursive_mutex _mutex;
     std::map<std::string, SlotState> _slots;
     bool _holdHostWrites = false;
+    IMediaReadJournal* _readJournal = nullptr;   ///< the taps read it through its address
     std::map<std::string, std::unique_ptr<Medium>> _parked;
     std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran
     mutable std::atomic<uint64_t> _revision{0};  // also moved by Post (const)

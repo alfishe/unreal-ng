@@ -339,6 +339,9 @@ bool TimeTravelManager::StartRecording()
              static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes(),
              (_toggledDebugModeOn ? "switched-on" : "already-on"));
 
+    // Sector reads from media go into the shadow engine (Phase 3)
+    SyncMediaReadJournal();
+
     // Resume the emulator if we paused it. The recording OnFrameBoundary
     // hook will now see dirty bits being set correctly.
     if (wasRunning && emu)
@@ -381,6 +384,7 @@ void TimeTravelManager::StopRecording()
         FeedV1Events(*_shadowEngine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr,
                      &_toolEditPayloads);
     }
+    SyncMediaReadJournal();   // no more recording into the engine
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
@@ -1716,6 +1720,7 @@ void TimeTravelManager::EnterReplayMode()
     // Nothing the replayed machine writes reaches a host file (FR-20)
     if (_context->pMediaManager)
         _context->pMediaManager->HoldHostWrites(true);
+    SyncMediaReadJournal();
 
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
@@ -1750,6 +1755,9 @@ void TimeTravelManager::ExitReplayMode()
     _inReplayMode = false;
     if (_context->pMediaManager)
         _context->pMediaManager->HoldHostWrites(false);
+    if (_replayEngine && _replayEngine->MediaReads().GetMode() == TTDMediaJournal::Mode::Play)
+        _replayEngine->MediaReads().Stop();
+    SyncMediaReadJournal();
 
     if (Core* core = _context->pCore)
     {
@@ -2162,6 +2170,7 @@ void TimeTravelManager::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
         {
             const TTDEngineCheckpoint* ecp = _replayEngine->Checkpoint(size_t(index));
             _replayEngine->PlayBus(ecp->busReadCursor, ecp->busWriteCursor);
+            _replayEngine->MediaReads().StartPlayback(ecp->mediaReadCursor);
             _context->ttdPortReads = _replayEngine->BusReadsForPlayback();
             _context->ttdPortWrites = _replayEngine->BusWritesForPlayback();
         }
@@ -3473,6 +3482,39 @@ void TimeTravelManager::ArmShadowRegions(bool on)
     _shadowArmed = on;
 }
 
+bool TimeTravelManager::MediaReadAdapter::Playing() const
+{
+    return engine && engine->MediaReads().GetMode() == TTDMediaJournal::Mode::Play;
+}
+
+bool TimeTravelManager::MediaReadAdapter::Play(const std::string& slot, uint64_t lba, uint8_t* out, size_t size)
+{
+    return engine && engine->MediaReads().PlayNext(slot, lba, out, size);
+}
+
+void TimeTravelManager::MediaReadAdapter::Record(const std::string& slot, uint64_t lba, const uint8_t* bytes,
+                                                 size_t size)
+{
+    if (!engine || engine->MediaReads().GetMode() != TTDMediaJournal::Mode::Record || !_owner._context)
+        return;
+    const EmulatorState& st = _owner._context->emulatorState;
+    const Z80* z80 = _owner._context->pCore ? _owner._context->pCore->GetZ80() : nullptr;
+    engine->MediaReads().Append(st.frame_counter, z80 ? st.TtdTInFrame(z80->t) : 0, slot, lba, bytes, size);
+}
+
+void TimeTravelManager::SyncMediaReadJournal()
+{
+    if (!_context || !_context->pMediaManager)
+        return;
+    if (_inReplayMode && _replayEngine && _replayEngine->MediaReads().GetMode() == TTDMediaJournal::Mode::Play)
+        _mediaReads.engine = _replayEngine;
+    else if (_state == TTDSessionState::Recording && _shadowEngine && _shadowEngine->IsSessionOpen())
+        _mediaReads.engine = _shadowEngine;
+    else
+        _mediaReads.engine = nullptr;
+    _context->pMediaManager->SetReadJournal(_mediaReads.engine ? &_mediaReads : nullptr);
+}
+
 std::vector<TTDRegionDesc> TimeTravelManager::LiveRegions() const
 {
     std::vector<TTDRegionDesc> regions;
@@ -3541,6 +3583,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         _shadowEvents.external = _externalEvents.Size();
         _shadowBusReads = _portReads.Size();
         _shadowBusWrites = _portWrites.Size();
+        SyncMediaReadJournal();   // sector reads go into the engine from here
     }
 
     TTDFrameInput in;

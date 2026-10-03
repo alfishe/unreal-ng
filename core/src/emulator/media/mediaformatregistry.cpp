@@ -3,6 +3,7 @@
 #include "mediaformatregistry.h"
 
 #include "emulator/io/storage/hostwritehold.h"
+#include "emulator/io/storage/mediareadtap.h"
 
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -47,8 +48,12 @@ std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, Acces
             break;
         }
     }
-    auto medium = std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(stack), session, kind);
+    // On top of everything: time travel records the sectors read (Phase 3)
+    auto tap = std::make_unique<MediaReadTap>(std::move(stack));
+    MediaReadTap* tapPtr = tap.get();
+    auto medium = std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(tap), session, kind);
     medium->SetHostWriteHold(hold);
+    medium->SetReadTap(tapPtr);
     return medium;
 }
 

@@ -19,6 +19,7 @@
 
 class CdImage;
 class HostWriteHold;
+class MediaReadTap;
 class SessionWriteMap;
 
 struct MediaSource
@@ -65,6 +66,9 @@ public:
     /// The replay hold on a write-through block stack (FR-20), nullptr otherwise
     HostWriteHold* Hold() { return _hold; }
     void SetHostWriteHold(HostWriteHold* hold) { _hold = hold; }
+    /// The read tap on top of a block stack (time travel's media read journal), nullptr otherwise
+    MediaReadTap* ReadTap() { return _readTap; }
+    void SetReadTap(MediaReadTap* tap) { _readTap = tap; }
     /// The disk image (Floppy kind), nullptr otherwise
     DiskImage* Floppy() { return _disk.get(); }
     const DiskImage* Floppy() const { return _disk.get(); }
@@ -119,6 +123,7 @@ private:
     std::unique_ptr<TapeImage> _tape;
     SessionWriteMap* _session = nullptr;
     HostWriteHold* _hold = nullptr;   ///< in _block's stack (WriteThrough), not owned
+    MediaReadTap* _readTap = nullptr; ///< the top of _block's stack, not owned
     CdImage* _cd = nullptr;
     std::string _sourceKey;
     std::vector<std::string> _report;
