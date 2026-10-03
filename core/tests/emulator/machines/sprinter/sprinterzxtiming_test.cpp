@@ -449,9 +449,9 @@ TEST_F(SprinterZxTimeModes_Test, Tape_LoadsAt35MhzNotInTurbo)
         std::string error;
         ASSERT_TRUE(_emulator->LoadTape(tap, &error)) << error;
         Zx("j", 6);  // LOAD
-        Keys()->TapCombo({"symbol", "p"}, 3);
+        Keys()->TapCombo(std::vector<std::string>{"symbol", "p"}, 3);
         EmulatorTestHelper::RunFramesFast(_emulator.get(), 6);
-        Keys()->TapCombo({"symbol", "p"}, 3);
+        Keys()->TapCombo(std::vector<std::string>{"symbol", "p"}, 3);
         EmulatorTestHelper::RunFramesFast(_emulator.get(), 6);
         Zx("enter", 6);
         EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return _context->pMemory->DirectReadFromZ80Memory(done) == 1; }, 1500, 10);

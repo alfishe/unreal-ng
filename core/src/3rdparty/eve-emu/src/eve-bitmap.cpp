@@ -952,13 +952,16 @@ void DrawBitmap(LineRun& run, const Vertex& v)
     const uint32_t colorR = (ctx.colorRgb >> kRedShift) & kChannelMax;
     const uint32_t colorG = (ctx.colorRgb >> kGreenShift) & kChannelMax;
     const uint32_t colorB = ctx.colorRgb & kChannelMax;
-    if (Mode == LineMode::Draw && run.chip->bitmapFastPath &&
-        DrawBitmapFast(run, h, base, stride, layoutWidth, layoutHeight, rely, first, last, v.x))
+    if constexpr (Mode == LineMode::Draw)
     {
+        if (run.chip->bitmapFastPath &&
+            DrawBitmapFast(run, h, base, stride, layoutWidth, layoutHeight, rely, first, last, v.x))
+        {
 #ifdef EVE_PROFILE
-        spanProfile.key.fast = 1;
+            spanProfile.key.fast = 1;
 #endif
-        return;
+            return;
+        }
     }
 
     // x' = A x + B y + C, y' = D x + E y + F [PG §2.5.5], in 1/256 texel. Pixel x moves
@@ -995,13 +998,16 @@ void DrawBitmap(LineRun& run, const Vertex& v)
         // Every bitmap pixel is multiplied by COLOR_RGB and COLOR_A (spec §6.5, V3).
         Shade<Mode>(run, x, Multiply(t.r, colorR), Multiply(t.g, colorG), Multiply(t.b, colorB),
                     Multiply(t.a, ctx.colorA));
-        if (Mode == LineMode::Probe && x == run.probeX && run.probe->written)
+        if constexpr (Mode == LineMode::Probe)
         {
-            run.probe->handle = v.handle;
-            run.probe->cell = v.cell;
-            run.probe->commandIndex = v.index;
-            run.probe->command = v.word;
-            run.probe->sampleAddress = base;
+            if (x == run.probeX && run.probe->written)
+            {
+                run.probe->handle = v.handle;
+                run.probe->cell = v.cell;
+                run.probe->commandIndex = v.index;
+                run.probe->command = v.word;
+                run.probe->sampleAddress = base;
+            }
         }
     }
 }

@@ -112,7 +112,7 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
 
 void FinishRun(EveChip& chip, const LineRun& run, uint32_t screenLine)
 {
-    if (kContextReset != ContextReset::PerLine)
+    if constexpr (kContextReset != ContextReset::PerLine)
         chip.state.context = run.ctx;
     EveLineCost& cost = chip.lineCosts[screenLine];
     cost.line = screenLine;
@@ -845,7 +845,7 @@ void StatePass(EveChip& chip)
     LineRun run;
     PrepareRun(chip, run, 0, true);
     ExecuteLine<LineMode::StateOnly>(run);
-    if (kContextReset != ContextReset::PerLine)
+    if constexpr (kContextReset != ContextReset::PerLine)
         chip.state.context = run.ctx;
 }
 

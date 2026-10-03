@@ -100,7 +100,7 @@ namespace
 /// region <Constructors / destructors>
 
 ZXPolyGroup::ZXPolyGroup(std::string symbolicPrefix)
-    : _prefix(std::move(symbolicPrefix)), _workers(std::make_unique<ZXPolyWorkers>(MODULES - 1))
+    : _prefix(std::move(symbolicPrefix)), _interceptors{}, _workers(std::make_unique<ZXPolyWorkers>(MODULES - 1))
 {
 }
 
