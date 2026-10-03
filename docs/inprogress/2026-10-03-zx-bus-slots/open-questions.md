@@ -1,0 +1,98 @@
+# ZX-bus slots: open questions for the owner
+
+| | |
+|---|---|
+| **Date** | 2026-10-03 |
+| **For** | the ZX-bus slot design (PLAN row #82); first consumer: [ZX-MultiSound](../2026-10-03-zx-multisound/) |
+| **Order** | most important first |
+
+## Q1. What happens when a card is incompatible with cards already plugged in?
+
+**Owner decision (2026-10-03):**
+- **Qt UI:** the new card replaces the incompatible ones, and the user gets a warning that names what was removed.
+- **Automation (CLI, WebAPI, MCP, Lua, Python):** by default the request is refused with the reason. With an
+  explicit `replaceIfIncompatible` flag the card is plugged in, the incompatible cards are removed, and the reply
+  lists what was incompatible and what replaced it.
+- One new card can push out several installed cards at once. The design must handle that case.
+
+**Rules the design follows (derived from the decision; to be confirmed in review):**
+
+1. **Compatibility is declared, not hard-coded per pair.** Each card declares the *functions* it occupies
+   (`ay-socket` for TS / TSFM, `gs`, `saa`, `soundrive`, `midi`, ...). Two cards that occupy the same function are
+   incompatible. The matrix in the design is generated from these declarations.
+2. **The claims follow the card's current configuration.** A ZX-MultiSound with its GS switched off by its DIP switch
+   does not occupy `gs`, so a separate GS card can stay. Turning the switch back on goes through the same check (and
+   the same replace flow) as plugging a card in.
+3. **One plan, applied atomically.** Before anything changes, the slot manager computes the whole plan: the union of
+   every installed card that clashes with any function of the new card. The plan is applied all at once by restarting
+   the machine with the new configuration (Q6), or not at all.
+   Example: TSFM + GS + a SounDrive card are installed; plugging in a ZX-MultiSound (TSFM, GS, SAA, SounDrive) removes
+   all three in one step.
+4. **Lost functions are reported.** Replacing a card that offered more than the new one loses functions. Example:
+   swapping the ZX-MultiSound for a plain TSFM loses GS, SAA and SounDrive. The UI warning and the API reply both list
+   these lost functions. Nothing is re-added automatically.
+5. **Built-in devices are never removed.** A machine function that is part of the board (for example the ZX-Evo's own
+   TurboSound) is not evictable. The request is refused even with the flag, unless the machine declares that built-in
+   function as switchable. In that case the reply says the built-in function was switched off.
+6. **Removing a card releases its media.** A removed card's media slots (for example the NeoGS `sd.ngs` card) follow
+   the media manager's eject rules. A medium with unsaved changes blocks the replacement unless the request carries a
+   disposition (`save` / `discard`), the same as a media eject.
+7. **The reply can be used to undo.** The reply (and the UI warning) carries the full configuration of every removed
+   card, so a client can put them back. A `dryRun` request returns the plan without applying it.
+8. **Not while TTD records.** The device set is fixed for a TTD session. A replacement while recording is refused
+   (the existing session population guard).
+9. **Accidental port clashes are a separate rule.** Clashes that the function matrix does not cover keep the earlier
+   rule: the clashing card is plugged in but disabled, with the reason, and adding more cards stays possible.
+
+## Q2. What happens to the machine's built-in AY when a bus card answers the same ports?
+
+**Owner decision (2026-10-03): A - model IORQGE faithfully.**
+
+- **Two slot kinds.** The **AY socket** (`ay-socket`) holds the board's own AY, or a TurboSound / TurboSound FM
+  plugged in place of the chip (128K, Pentagon, Scorpion), as `[SOUND]` does today. The **ZX-bus slots** hold cards.
+- **Shadowing.** A bus card that drives IORQGE on the ports of a built-in device *shadows* it: the built-in device
+  stays fitted but neither answers nor sounds. Example: a ZX-MultiSound drives IORQGE on `#FFFD` / `#BFFD` and
+  shadows whatever sits in the AY socket, including the ZX-Evo's TurboSound built into the FPGA.
+- **Reporting.** The API reply and the UI warning list shadowed devices as `shadowed`, separately from `removed`.
+- **Matrix.** "TSFM in the AY socket + ZX-MultiSound" is listed as pointless (the TSFM would be shadowed). The UI puts
+  the plain AY back into the socket and warns; the API refuses without `replaceIfIncompatible`.
+- **To research:** what the real hardware does on a shared `#FFFD` read (which side drives the data bus), recorded in
+  the hardware reference.
+
+## Q3. In what order do existing cards move onto slots?
+
+**Owner decision (2026-10-03): A.** The slot design covers every card from the start, and the compatibility matrix is
+complete. Implementation order: (1) slot core, bus declarations per machine, IORQGE and shadowing; (2) existing cards
+(GS / NeoGS, MoonSound, Covox / SounDrive, network cards) move over one at a time, each with an A/B benchmark of the
+port hot path and a TTD corpus run; (3) the ZX-MultiSound, the first card written for slots from the start. The two
+port-claim mechanisms never live side by side, and the MultiSound is built from modules that already sit on slots.
+
+## Q4. What happens to the old INI keys?
+
+**Owner decision (2026-10-03): A.** One `[SLOTS]` section is the single source of truth (key form decided in the
+design, for example `ay-socket = tsfm`, `zxbus.1 = multisound`, `zxbus.1.dip = ym,saa,gs,sd`). The old keys (`[GS]` /
+`[NGS]`, TSFM in `[SOUND]`, MoonSound, `[NETWORK] Card=`, Covox) are read at load time and translated to slots, with a
+log warning "deprecated key X -> slot Y". The shipped configs in `data/configs` move to the new form at once. The
+old keys are removed after a few releases. User INI files keep working.
+
+## Q5. Does a card have to physically fit the machine's bus?
+
+**Owner decision (2026-10-03): A, with an override.** The machine declares its bus kind and the signals on it
+(NemoBus / ZX-bus: IORQGE, /IODOS, +12 V; the Sinclair edge connector on 48K / 128K / +2 / +3; the Scorpion's own
+layout). A card declares the signals it needs. A missing signal is an incompatibility, the same as in the matrix.
+An explicit **adapter** is a slot entity of its own (for example "ZX-bus to edge connector"); a card behind an
+adapter is shown as such in every report.
+
+- **UI:** explains that this does not work on real hardware and asks the user to confirm an override.
+- **Automation:** refuses by default. With the explicit override flag (the same `replaceIfIncompatible` the owner
+  named for incompatible cards) the card is plugged in.
+- **With the override** the card works logically, as if the bus carried every signal it needs. The slot report
+  marks the fit as `unrealistic`, so it is never mistaken for real-hardware behavior.
+
+## Q6. Are cards changed in a running machine?
+
+**Owner decision (2026-10-03): no.** Every slot change is followed by a restart of the machine with the new
+configuration ("why look for adventures out of nothing"). No hot plug: cards are created only when a machine starts.
+A change goes: plan -> refusal or confirmation -> new configuration written -> restart through the model-switch path
+(media carried over by its rules). The General Sound personality switch, which today rebuilds the card at run time,
+becomes a slot replace with a restart. A model switch carries the slot set and plans it against the new machine.
