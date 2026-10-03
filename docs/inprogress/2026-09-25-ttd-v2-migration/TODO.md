@@ -95,7 +95,8 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] Event log and payload store; no barriers in a sealed replay (only v1 records without data) (2026-10-03)
   - [x] v1's input, network and markers reach the engine: live in shadow mode at every frame boundary, and from v1 files (`FeedV1Events`); the corpus imports one for one (2026-10-03)
   - [x] `IN` / `OUT` bus journals with per-checkpoint cursors (v1's block format; shadow at each boundary and at stop, v1 files whole; counted in D33 memory on both sides) (2026-10-03)
-  - [ ] The engine replays a frame from its own data (seek inside a frame) and matches v1: the first full-scenario A/B
+  - [x] The engine replays a frame from its own data (seek inside a frame) and matches v1: the first full-scenario A/B (2026-10-03). `TimeTravelManager::SetReplaySource(engine)`: restore, input and bus data from the engine, v1's replay loop; `TimeTravelEngine::BindLive` binds a fed session to the machine. Live recording with keys, Dizzy X, Green Beret's tape load: CPU, all RAM and every device equal
+  - [ ] Finding: on Green Beret's tape load the live tape answers differently from the recording during a replay (780-3,444 value mismatches, v1 and engine alike; the CPU reads the recorded values, so the state is exact). Q5 wants zero: look at the tape's restore
   - [ ] Interrupt-vector and DMA taps (Sprinter, TS-Conf, NeoGS); debugger edits with their bytes
 - [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU

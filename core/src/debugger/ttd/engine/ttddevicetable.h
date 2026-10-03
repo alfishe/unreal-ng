@@ -44,6 +44,13 @@ public:
     /// Changes whenever Build adopts a set that differs from the previous one
     uint32_t SetVersion() const { return _setVersion; }
     const std::vector<TTDDeviceEntry>& Entries() const { return _entries; }
+    /// Point entry @p index at a live device (a session read from a file or
+    /// fed from v1 binds to the machine it is restored into)
+    void Bind(size_t index, TTDSerializable* device, ITTDRegionSource* withoutRegions)
+    {
+        _entries[index].device = device;
+        _entries[index].withoutRegions = withoutRegions;
+    }
     /// Indices into Entries(), in restore order
     const std::vector<uint32_t>& RestoreOrder() const { return _order; }
     /// The entry of @p key, or null

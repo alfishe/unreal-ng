@@ -266,6 +266,14 @@ public:
     /// The position of machine time @p t (frame, offset); false before the first frame
     bool PositionOf(TTDMachineTime t, TTDPosition& out) const;
 
+    /// Bind a session that was not recorded from this machine (fed from a v1
+    /// file; Phase 4: read from its own file) to the live machine it restores
+    /// into: each memory region to the live region of the same id and size,
+    /// each device to the live device of the same v1 id. Returns how many
+    /// regions and devices stay unbound; @p unbound names them
+    size_t BindLive(const std::vector<TTDRegionDesc>& liveRegions, const std::vector<TTDDeviceEntry>& liveDevices,
+                    std::string* unbound = nullptr);
+
     /// Bus data (Phase 3, Step 1): every IN result and every OUT of the main
     /// CPU, in execution order, in v1's block format. Appended while
     /// recording; each checkpoint keeps where both stood
@@ -273,6 +281,22 @@ public:
     void AppendBusWrite(const TTDPortRecord& r) { _busWrites.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc); }
     const TTDPortJournal& BusReads() const { return _busReads; }
     const TTDPortJournal& BusWrites() const { return _busWrites; }
+    /// A replay reads the bus journals from these cursors (a checkpoint's):
+    /// reads hand the CPU the recorded values, writes are checked
+    void PlayBus(uint64_t readCursor, uint64_t writeCursor)
+    {
+        _busReads.StartPlayback(readCursor);
+        _busWrites.StartPlayback(writeCursor);
+    }
+    /// The journals while they play (null when a journal has nothing left): the CPU's IN / OUT hooks
+    TTDPortJournal* BusReadsForPlayback()
+    {
+        return _busReads.GetMode() == TTDPortJournal::Mode::Play ? &_busReads : nullptr;
+    }
+    TTDPortJournal* BusWritesForPlayback()
+    {
+        return _busWrites.GetMode() == TTDPortJournal::Mode::Play ? &_busWrites : nullptr;
+    }
 
     /// endregion </Events (Phase 3)>
     TTDStreamRegistry& Streams() { return _streams; }

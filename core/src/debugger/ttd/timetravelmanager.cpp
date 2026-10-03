@@ -1498,24 +1498,35 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     };
     const PerfClock::time_point restoreStart = PerfClock::now();
 
+    // Phase 3 A/B (SetReplaySource): the CPU, the chipset, every memory
+    // region and every device from the engine's checkpoint of this frame;
+    // what follows from them (frame timing, banks, screen) is shared
+    const int64_t engineIndex = _replayEngine ? _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0}) : -1;
+    const TTDEngineCheckpoint* engineCp = engineIndex >= 0 ? _replayEngine->Checkpoint(size_t(engineIndex)) : nullptr;
+    if (_replayEngine && !engineCp)
+        MLOGWARNING("TimeTravelManager::RestoreCheckpoint — the replay engine has no checkpoint of frame %llu",
+                    static_cast<unsigned long long>(cp.time.frame));
+    const TTDCpuState& cpuState = engineCp ? engineCp->cpu : cp.cpu;
+    const TTDChipsetState& chipsetState = engineCp ? engineCp->chipset : cp.chipset;
+
     Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (cpu)
     {
-        RestoreCpuState(cp.cpu, static_cast<Z80State*>(cpu));
-        cpu->SetNmiPending(cp.cpu.nmi_pending != 0);
+        RestoreCpuState(cpuState, static_cast<Z80State*>(cpu));
+        cpu->SetNmiPending(cpuState.nmi_pending != 0);
     }
 
     // --- Step 2: Chipset port latches + counters (TDD §8.1 step 2b) ---
     // RestoreChipsetState is a pure field copy into emulatorState. It does
     // NOT re-run the port decoder — that's the next sub-step.
-    RestoreChipsetState(cp.chipset, &_context->emulatorState);
+    RestoreChipsetState(chipsetState, &_context->emulatorState);
 
     // The CPU's in-frame position (the frame-end overshoot) - before the
     // peripherals load, so devices rebuild their timelines around the
     // position the machine really resumes at
     if (cpu)
     {
-        cpu->t = GetChipsetCpuTInFrame(cp.chipset);
+        cpu->t = GetChipsetCpuTInFrame(chipsetState);
 
         // Frame geometry (frame limit, INT window) derives from the restored
         // multiplier; every run path reads it from the CPU
@@ -1530,6 +1541,22 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // A device set that differs from the checkpoint's (FR-4) leaves devices
     // in the live machine's state; say so instead of restoring silently
     const PerfClock::time_point devicesStart = PerfClock::now();
+    if (engineCp)
+    {
+        // Every region (machine RAM, device memories) first, then the devices
+        _replayEngine->ForgetMemory();
+        const TTDRestoreResult memory = _replayEngine->RestoreToMemory(size_t(engineIndex));
+        const TTDRestoreResult result = _replayEngine->RestoreDevices(
+            size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
+        if (!memory.Ok() || result.status != TTDRestoreStatus::Exact)
+            MLOGWARNING("TimeTravelManager::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
+                        static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
+                        memory.message.empty() ? "" : "; ", result.message.c_str());
+        _memory->UpdateZ80Banks();
+        _shadowRescan = true;
+        ResyncScreenState();
+        return;
+    }
     const TTDRestoreReport devices = _peripherals.RestoreAll(cp.peripheralBlobs);
     const PerfClock::time_point devicesEnd = PerfClock::now();
     if (!devices.Complete())
@@ -1981,7 +2008,34 @@ void TimeTravelManager::ServiceInput()
         return;
 
     // 1. Journal playback: every event due at or before the current machine time
-    if (_inputPlaybackArmed)
+    if (_inputPlaybackArmed && _replayEngine)
+    {
+        // Phase 3 A/B: the engine's event log (input kinds; network bytes from its payloads)
+        const TTDTimePoint now = InputEventTimeNow(_context);
+        TTDMachineTime start = 0;
+        const TTDEventLog& log = _replayEngine->Events();
+        if (_replayEngine->Frames().Start(now.frame, start))
+            while (_engineEventCursor < log.Count() && log.At(_engineEventCursor).machineTime <= start + now.tInFrame)
+            {
+                const TTDEvent& ev = log.At(_engineEventCursor++);
+                if (!IsInputKind(ev.kind))
+                    continue;
+                TTDInputEvent in;
+                TTDEventLog::ToInput(ev, in);
+                TTDNetInput net;
+                const bool isNet = in.kind == TTDInputKind::NetEvent;
+                if (isNet)
+                {
+                    TTDEventLog::UnpackNet(ev, net);
+                    net.payloadLength = static_cast<uint32_t>(_replayEngine->Payloads().Bytes(ev.payload).size());
+                }
+                ApplyInputEvent(in, InputDevicesOf(_context), isNet ? &net : nullptr,
+                                isNet && net.payloadLength ? _replayEngine->Payloads().Bytes(ev.payload).data() : nullptr);
+            }
+        if (_engineEventCursor >= log.Count())
+            _inputPlaybackArmed = false;
+    }
+    else if (_inputPlaybackArmed)
     {
         const TTDTimePoint now = InputEventTimeNow(_context);
         const auto& events = _inputJournal.Events();
@@ -2049,6 +2103,14 @@ void TimeTravelManager::ArmInputPlayback()
     // at them and the first step applies them (Z80::StepInstruction)
     _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
     _inputPlaybackArmed = _inputCursor < _inputJournal.Size();
+    if (_replayEngine)
+    {
+        const TTDTimePoint now = InputEventTimeNow(_context);
+        TTDMachineTime start = 0;
+        _replayEngine->Frames().Start(now.frame, start);
+        _engineEventCursor = _replayEngine->Events().CursorAt(start + now.tInFrame);
+        _inputPlaybackArmed = _engineEventCursor < _replayEngine->Events().Count();
+    }
     UpdateInputWorkFlag();
 }
 
@@ -2081,6 +2143,24 @@ void TimeTravelManager::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
 {
     RestoreCheckpoint(cp);
     ArmInputPlayback();
+
+    // Phase 3 A/B: the engine's bus journals from its checkpoint's cursors
+    if (_replayEngine)
+    {
+        const int64_t index = _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0});
+        _portReads.Stop();
+        _portWrites.Stop();
+        if (index >= 0 && _portJournalValid)
+        {
+            const TTDEngineCheckpoint* ecp = _replayEngine->Checkpoint(size_t(index));
+            _replayEngine->PlayBus(ecp->busReadCursor, ecp->busWriteCursor);
+            _context->ttdPortReads = _replayEngine->BusReadsForPlayback();
+            _context->ttdPortWrites = _replayEngine->BusWritesForPlayback();
+        }
+        else
+            SyncPortJournalHook();
+        return;
+    }
 
     // The CPU replays the recorded IN results from here; the live devices
     // still answer, and a differing answer is counted, not used
@@ -3237,6 +3317,35 @@ void TimeTravelManager::ArmShadowRegions(bool on)
     for (ITTDRegionSource* source : _peripherals.RegionSources())
         source->TTDArmRegions(on);
     _shadowArmed = on;
+}
+
+std::vector<TTDRegionDesc> TimeTravelManager::LiveRegions() const
+{
+    std::vector<TTDRegionDesc> regions;
+    TTDRegionDesc ram;
+    ram.id = TTDRegionId::MachineRam;
+    ram.name = "ram";
+    ram.pieces = static_cast<uint32_t>(_modelRamPages) * 4;
+    ram.bytes = ram.pieces * kTTDPieceSize;
+    ram.memory = _memory ? _memory->RAMPageAddress(0) : nullptr;
+    regions.push_back(ram);
+    std::vector<TTDDeviceRegion> device;
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDRegions(device);
+    for (const TTDDeviceRegion& r : device)
+        regions.push_back(r.desc);
+    return regions;
+}
+
+void TimeTravelManager::SetReplaySource(TimeTravelEngine* engine)
+{
+    _replayEngine = engine;
+    if (!engine)
+        return;
+    // A session fed from a file holds no live pointers: bind it to this machine
+    std::string unbound;
+    if (engine->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
+        MLOGWARNING("TimeTravelManager::SetReplaySource — not bound to this machine: %s", unbound.c_str());
 }
 
 void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)

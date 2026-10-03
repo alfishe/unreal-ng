@@ -540,6 +540,13 @@ public:
     void SetShadowEngine(TimeTravelEngine* engine);
     TimeTravelEngine* GetShadowEngine() const { return _shadowEngine; }
 
+    /// Phase 3 A/B: seeks restore from @p engine's checkpoints and replay its
+    /// event log and bus journals instead of v1's (null: v1's own data). The
+    /// engine must hold the same session (the shadow engine, or a v1 file fed
+    /// into one). The replay itself runs as v1's does
+    void SetReplaySource(TimeTravelEngine* engine);
+    TimeTravelEngine* GetReplaySource() const { return _replayEngine; }
+
     /// @brief Called by FeatureManager when feature flags change.
     /// Deallocates write journal when TimeTravel feature is disabled.
     void UpdateFeatureCache();
@@ -1916,6 +1923,8 @@ private:
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
+    /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
+    std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowBusReads = 0;     ///< ... and v1's port journals
     uint64_t _shadowBusWrites = 0;
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
@@ -2025,6 +2034,8 @@ private:
     /// Journal playback: next event to apply while the machine executes
     /// recorded history (armed by a navigation restore, see ArmInputPlayback)
     size_t _inputCursor = 0;
+    size_t _engineEventCursor = 0;          ///< the replay engine's event log (SetReplaySource)
+    TimeTravelEngine* _replayEngine = nullptr;
     bool _inputPlaybackArmed = false;
 
     /// Live input and machine tasks waiting for the machine's thread

@@ -188,6 +188,51 @@ bool TimeTravelEngine::AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent e
     return _events.Append(ev);
 }
 
+size_t TimeTravelEngine::BindLive(const std::vector<TTDRegionDesc>& liveRegions,
+                                  const std::vector<TTDDeviceEntry>& liveDevices, std::string* unbound)
+{
+    size_t missing = 0;
+    auto note = [&](const std::string& what) {
+        ++missing;
+        if (unbound)
+            *unbound += (unbound->empty() ? "" : ", ") + what;
+    };
+    for (uint32_t r = 0; r < _regions.size(); ++r)
+    {
+        if (IsDeviceStateRegion(r))
+            continue;
+        TTDRegionDesc& desc = _regions[r];
+        const TTDRegionDesc* live = nullptr;
+        for (const TTDRegionDesc& l : liveRegions)
+            if (l.id == desc.id && l.pieces == desc.pieces && l.bytes == desc.bytes)
+                live = &l;
+        if (!live)
+        {
+            note("region " + desc.name);
+            continue;
+        }
+        desc.memory = live->memory;
+        desc.restorePiece = live->restorePiece;
+        desc.onRestored = live->onRestored;
+    }
+    for (size_t i = 0; i < _devices.Entries().size(); ++i)
+    {
+        const TTDDeviceEntry& e = _devices.Entries()[i];
+        const TTDDeviceEntry* live = nullptr;
+        for (const TTDDeviceEntry& l : liveDevices)
+            if (l.descriptor.legacyId == e.descriptor.legacyId)
+                live = &l;
+        if (!live)
+        {
+            note("device " + e.descriptor.instance);
+            continue;
+        }
+        _devices.Bind(i, live->device, live->withoutRegions);
+    }
+    ForgetMemory();   // live memory is not what the engine last wrote
+    return missing;
+}
+
 bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 {
     uint64_t frame = 0;
