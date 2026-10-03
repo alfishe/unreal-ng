@@ -17,12 +17,9 @@ Done (owner decisions 1-7 in [design.md](design.md)):
 - Checked on a running app: WebAPI (all words, statuses, save, FT812 1024x768 by default), CLI, Lua, live on a running
   and a paused machine, recording sizes (Pentagon 256x192, TS-Conf 640x480).
 
-Not verified:
-- Python `capture_screen`: Python automation is OFF in this build; it was only syntax-checked against the vendored
-  pybind11 (three older warnings in `python_emulator.h`, lines 316 / 2601 / 2604, fail a `-Werror` Python build and are
-  not from this work).
-- The Qt Tools > Save Screenshot As dialog was built, not clicked.
-- The ZX-Poly composed screenshot is covered by a test, not run in the app.
+Dropped by the owner (2026-10-03): live runs of the Python `capture_screen`, the Qt "Save Screenshot As" dialog and the
+ZX-Poly composed screenshot, and `Gif_Test` on Windows (all built and covered by tests, not exercised live). If one of
+them misbehaves it comes back as a bug.
 
 Follow-up tasks (owner: valid, one at a time; each is a suspicion from reading the code, to be confirmed first, then
 fixed with a test; none was reproduced yet):

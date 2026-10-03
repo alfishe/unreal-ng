@@ -376,7 +376,7 @@ TEST_F(TapeLoaderFollow_Test, QuietInsideBlockFreezesAndRewindsOnlyThePilot)
     ASSERT_GT(pilotEdges, 100u);
     _tape->_currentOffsetWithinPulse = 100;
 
-    for (uint32_t i = 0; i < TAPE_BLOCK_HOLD_FRAMES; i++)
+    for (uint32_t i = 0; i < TAPE_PILOT_HOLD_FRAMES; i++)
         Frame(EAR_LOOP_AT, 0);
     EXPECT_FALSE(_tape->IsPlaying());
     EXPECT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Paused);
@@ -391,6 +391,29 @@ TEST_F(TapeLoaderFollow_Test, QuietInsideBlockFreezesAndRewindsOnlyThePilot)
     EXPECT_FALSE(_tape->IsPlaying());
     EXPECT_EQ(_tape->_currentOffsetWithinPulse, pilotEdges + 20) << "Frozen data keeps the exact pulse";
     EXPECT_EQ(_tape->GetConsumptionCursor(), 0u);
+}
+
+// A loader that sits out a fixed delay inside a pilot (DIZZY X KID__DR waits 50.07 frames after the first pilot
+// pulses, then checks that the pilot goes on) must find the same pilot still running, not a fresh one: the delay
+// is longer than the data hold but shorter than the pilot hold
+TEST_F(TapeLoaderFollow_Test, DelayInsidePilotLongerThanTheDataHoldDoesNotRewindIt)
+{
+    StartAt(0);
+    ASSERT_GT(_tape->_currentTapeBlock->pilotEdgeCount, 100u);
+    _tape->_currentOffsetWithinPulse = 100;
+
+    const uint32_t delay = TAPE_BLOCK_HOLD_FRAMES + 5;
+    ASSERT_LT(delay, TAPE_PILOT_HOLD_FRAMES);
+    for (uint32_t i = 0; i < delay; i++)
+        Frame(EAR_LOOP_AT, 0);
+
+    EXPECT_TRUE(_tape->IsPlaying()) << "no pause inside the pilot before the pilot hold";
+    EXPECT_GE(_tape->_currentOffsetWithinPulse, 100u) << "the pilot was not rewound";
+
+    // The loader listens again: it is still the same pilot, now further on
+    Frame(EAR_LOOP_AT, TAPE_START_LISTEN_READS);
+    EXPECT_TRUE(_tape->IsPlaying());
+    EXPECT_GE(_tape->_currentOffsetWithinPulse, 100u);
 }
 
 // Test T12 (P3): the ROM gave up inside a block's data (BREAK) and LOAD "" calls LD-BYTES again. A fresh
@@ -426,7 +449,7 @@ TEST_F(TapeLoaderFollow_Test, RomLoadAfterParkStartsTheNextBlock)
 TEST_F(TapeLoaderFollow_Test, RomLoadAfterFreezeInPilotStartsThePilot)
 {
     StartAt(300);
-    for (uint32_t i = 0; i < TAPE_BLOCK_HOLD_FRAMES; i++)
+    for (uint32_t i = 0; i < TAPE_PILOT_HOLD_FRAMES; i++)
         Frame(EAR_LOOP_AT, 0);
     ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Paused);
 
