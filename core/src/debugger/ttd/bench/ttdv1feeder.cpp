@@ -162,6 +162,8 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
     std::vector<uint32_t> decoded;
     const uint64_t span = v1.FrameSpan();
     FeedStats local;
+    uint64_t busReads = v1.GetPortReadJournal().FirstIndex();
+    uint64_t busWrites = v1.GetPortWriteJournal().FirstIndex();
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -217,12 +219,30 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
         for (const TTDChangedPiece& c : in.changed)
             local.changedRamPieces += c.region == 0 ? 1 : 0;
 
+        // Bus data up to this checkpoint's cursors (a file's cursors are relative to its first record)
+        {
+            const TTDPortJournal& reads = v1.GetPortReadJournal();
+            const TTDPortJournal& writes = v1.GetPortWriteJournal();
+            TTDPortRecord r;
+            for (; busReads < reads.FirstIndex() + cp->portReadCursor && reads.Get(busReads, r); ++busReads)
+                engine.AppendBusRead(r);
+            for (; busWrites < writes.FirstIndex() + cp->portWriteCursor && writes.Get(busWrites, r); ++busWrites)
+                engine.AppendBusWrite(r);
+        }
         if (!engine.CaptureFrame(in, error))
             return false;
         if (hasGs)
             gsPrev = gsRam;
         prevSlots.swap(slots);
         local.checkpoints++;
+    }
+    // Bus data after the last checkpoint: its frame's, which a replay from it reads
+    {
+        TTDPortRecord r;
+        for (; busReads < v1.GetPortReadJournal().Size() && v1.GetPortReadJournal().Get(busReads, r); ++busReads)
+            engine.AppendBusRead(r);
+        for (; busWrites < v1.GetPortWriteJournal().Size() && v1.GetPortWriteJournal().Get(busWrites, r); ++busWrites)
+            engine.AppendBusWrite(r);
     }
     // The session's events: input, network, markers (Phase 3, Step 1)
     TTDV1EventCursor cursor;

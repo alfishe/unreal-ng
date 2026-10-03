@@ -577,6 +577,8 @@ public:
             {"arena_slack", h.arenaSlack}, {"reference_tables", h.referenceTables},
             {"delta_base", h.deltaBase}, {"checkpoints", h.checkpoints},
             {"device_blobs", h.deviceBlobs}, {"frame_table", h.frameTable},
+            {"event_log", h.eventLog}, {"port_reads", h.portReads},
+            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
         };
     }
 

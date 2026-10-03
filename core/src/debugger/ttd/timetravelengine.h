@@ -28,6 +28,7 @@
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdeventlog.h"
 #include "debugger/ttd/engine/ttdpayloadstore.h"
+#include "debugger/ttd/ttdportjournal.h"
 #include "debugger/ttd/engine/ttdframeinput.h"
 #include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdreftable.h"
@@ -124,6 +125,10 @@ struct TTDEngineCheckpoint
     /// v1 ids of device states this frame offered for devices the table
     /// does not have (reported as DeviceNotPresent on restore); usually empty
     std::vector<uint8_t> unclaimedDevices;
+    /// Where the bus journals stood at this boundary: a replay from here
+    /// starts reading there (Phase 3, Step 1)
+    uint64_t busReadCursor = 0;
+    uint64_t busWriteCursor = 0;
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared
@@ -150,11 +155,15 @@ struct TTDEngineHeapBreakdown
     size_t checkpoints = 0;     ///< checkpoint records
     size_t deviceBlobs = 0;
     size_t frameTable = 0;
+    size_t eventLog = 0;            ///< event records and their payloads (Phase 3)
+    size_t portReads = 0;           ///< the IN bus journal (compressed blocks + the open block)
+    size_t portWrites = 0;          ///< the OUT bus journal
+    size_t portJournalSlack = 0;    ///< allocated, not holding records
 
     size_t Total() const
     {
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
-               frameTable;
+               frameTable + eventLog + portReads + portWrites + portJournalSlack;
     }
 };
 
@@ -256,6 +265,14 @@ public:
     const TTDPayloadStore& Payloads() const { return _payloads; }
     /// The position of machine time @p t (frame, offset); false before the first frame
     bool PositionOf(TTDMachineTime t, TTDPosition& out) const;
+
+    /// Bus data (Phase 3, Step 1): every IN result and every OUT of the main
+    /// CPU, in execution order, in v1's block format. Appended while
+    /// recording; each checkpoint keeps where both stood
+    void AppendBusRead(const TTDPortRecord& r) { _busReads.OnRead(r.port, r.value, r.frame, r.tInFrame, r.pc); }
+    void AppendBusWrite(const TTDPortRecord& r) { _busWrites.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc); }
+    const TTDPortJournal& BusReads() const { return _busReads; }
+    const TTDPortJournal& BusWrites() const { return _busWrites; }
 
     /// endregion </Events (Phase 3)>
     TTDStreamRegistry& Streams() { return _streams; }
@@ -437,6 +454,8 @@ private:
     TTDFrameTable _frames;
     TTDPayloadStore _payloads;
     TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it
+    TTDPortJournal _busReads{TTDPortJournal::Direction::Read};
+    TTDPortJournal _busWrites{TTDPortJournal::Direction::Write};
     TTDStreamRegistry _streams;
     /// A deque: no growth reserve (a vector held up to twice the records), and
     /// records never move

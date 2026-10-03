@@ -214,10 +214,11 @@ TEST_F(TTDV1Feeder_Test, FeedsOnlyRealChanges)
 
 /// Phase 3, Step 1: every v1 session's input journal (network records and
 /// received bytes included) and external events go into the engine's event
-/// log, each at its time, kind numbers kept; nothing is refused
+/// log, each at its time, kind numbers kept; nothing is refused. Its port
+/// journals become the engine's bus journals, cursors per checkpoint equal
 TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
 {
-    size_t total = 0, markers = 0, net = 0;
+    size_t total = 0, markers = 0, net = 0, busRecords = 0;
     for (const fs::path& file : CorpusFiles())
     {
         SCOPED_TRACE(file.filename().string());
@@ -230,6 +231,8 @@ TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
         const uint64_t span = _v1->FrameSpan();
         ASSERT_NO_FATAL_FAILURE(ttdtest::ExpectEventsEqualV1(engine, _v1->GetInputJournal(), _v1->GetExternalEvents(), 0,
                                                              0, [span](uint64_t frame) { return frame * span; }));
+        ASSERT_NO_FATAL_FAILURE(ttdtest::ExpectBusEqualV1(engine, *_v1));
+        busRecords += engine.BusReads().Size() + engine.BusWrites().Size();
         total += stats.events;
         markers += _v1->GetExternalEvents().Size();
         for (const ttd::TTDInputEvent& e : _v1->GetInputJournal().Events())
@@ -237,5 +240,6 @@ TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
     }
     EXPECT_GT(total, 0u) << "the corpus holds input";
     EXPECT_GT(markers, 0u) << "the corpus holds markers";
+    EXPECT_GT(busRecords, 0u) << "the corpus holds port journals";
     (void)net;
 }

@@ -21,6 +21,8 @@
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -211,9 +213,16 @@ TEST_F(TimeTravelManager_Shadow_Test, RestoreToMemoryWritesOnlyWhatDiffers_AndMa
 }
 
 /// Phase 3, Step 1: while recording, the shadow engine gets what v1 journals -
-/// key presses and releases, a marker with its reason - each at the same time
+/// key presses and releases, a marker with its reason - each at the same time,
+/// and every IN and OUT, with the journals' positions at each checkpoint
 TEST_F(TimeTravelManager_Shadow_Test, EveryJournaledEventReachesTheEngineAtItsTime)
 {
+    // A program that reads the keyboard and writes the border all the time:
+    // DI; loop: IN A,(#FE); OUT (#FE),A; JR loop
+    const uint8_t program[] = {0xF3, 0xDB, 0xFE, 0xD3, 0xFE, 0x18, 0xFA};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
     _v1->SetShadowEngine(&_engine);
     ASSERT_TRUE(_v1->StartRecording());
     _emulator->RunNFrames(5, /*skipBreakpoints=*/true);
@@ -239,4 +248,6 @@ TEST_F(TimeTravelManager_Shadow_Test, EveryJournaledEventReachesTheEngineAtItsTi
             return start;
         }));
     EXPECT_EQ(_engine.Events().FirstBarrierIn(0, ~ttd::TTDMachineTime(0)), nullptr) << "a tape command is input";
+    ASSERT_GT(_v1->GetPortReadJournal().Size(), 1000u) << "the program reads the keyboard";
+    ASSERT_NO_FATAL_FAILURE(ttdtest::ExpectBusEqualV1(_engine, *_v1));
 }

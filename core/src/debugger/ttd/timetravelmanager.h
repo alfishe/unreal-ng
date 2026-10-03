@@ -1916,6 +1916,8 @@ private:
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
+    uint64_t _shadowBusReads = 0;     ///< ... and v1's port journals
+    uint64_t _shadowBusWrites = 0;
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
     void FeedShadow(const TTDCheckpoint& out, bool baseline);

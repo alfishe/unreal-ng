@@ -73,4 +73,31 @@ inline void ExpectEventsEqualV1(const ttd::TimeTravelEngine& engine, const ttd::
     }
 }
 
+/// The engine's bus journals hold v1's port journals record for record, and
+/// every engine checkpoint's cursors equal v1's checkpoint of the same index
+/// (the engine session began with v1's)
+inline void ExpectBusEqualV1(const ttd::TimeTravelEngine& engine, const ttd::TimeTravelManager& v1)
+{
+    const ttd::TTDPortJournal* v1Journals[2] = {&v1.GetPortReadJournal(), &v1.GetPortWriteJournal()};
+    const ttd::TTDPortJournal* engineJournals[2] = {&engine.BusReads(), &engine.BusWrites()};
+    for (int j = 0; j < 2; ++j)
+    {
+        const uint64_t first = v1Journals[j]->FirstIndex();
+        ASSERT_EQ(engineJournals[j]->Size(), v1Journals[j]->Size() - first) << (j ? "OUT" : "IN") << " records";
+        ttd::TTDPortRecord a, b;
+        for (uint64_t i = 0; i < engineJournals[j]->Size(); ++i)
+        {
+            ASSERT_TRUE(engineJournals[j]->Get(i, a));
+            ASSERT_TRUE(v1Journals[j]->Get(first + i, b));
+            ASSERT_TRUE(a.SameAccess(b) && a.value == b.value) << (j ? "OUT" : "IN") << " record " << i;
+        }
+    }
+    ASSERT_EQ(engine.CheckpointCount(), v1.GetCheckpointCount());
+    for (size_t i = 0; i < engine.CheckpointCount(); ++i)
+    {
+        ASSERT_EQ(engine.Checkpoint(i)->busReadCursor, v1.GetCheckpoint(i)->portReadCursor) << "checkpoint " << i;
+        ASSERT_EQ(engine.Checkpoint(i)->busWriteCursor, v1.GetCheckpoint(i)->portWriteCursor) << "checkpoint " << i;
+    }
+}
+
 }  // namespace ttdtest

@@ -155,6 +155,8 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     }
     _syncMissCount = 0;
     _syncMisses.clear();
+    _busReads.StartRecording();
+    _busWrites.StartRecording();
     _open = true;
     return true;
 }
@@ -200,6 +202,8 @@ void TimeTravelEngine::EndSession()
 {
     _events.Clear();
     _payloads.Clear();
+    _busReads.Clear();
+    _busWrites.Clear();
     _timeLines.clear();
     _timeFields.clear();
     _deviceRegionOf.fill(-1);
@@ -285,6 +289,8 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     TTDEngineCheckpoint cp;
     cp.position = input.position;
     cp.start = input.start;
+    cp.busReadCursor = _busReads.Size();
+    cp.busWriteCursor = _busWrites.Size();
     cp.cpu = input.cpu;
     cp.chipset = input.chipset;
 
@@ -645,6 +651,10 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
         h.deviceBlobs += cp.unclaimedDevices.capacity();
     }
     h.frameTable = _frames.HeapBytes();
+    h.eventLog = _events.Events().capacity() * sizeof(TTDEvent) + _payloads.LiveBytes();
+    h.portReads = _busReads.HeapBytes() - _busReads.CompressedSlackBytes();
+    h.portWrites = _busWrites.HeapBytes() - _busWrites.CompressedSlackBytes();
+    h.portJournalSlack = _busReads.CompressedSlackBytes() + _busWrites.CompressedSlackBytes();
     return h;
 }
 

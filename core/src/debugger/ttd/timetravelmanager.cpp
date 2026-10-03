@@ -365,6 +365,20 @@ void TimeTravelManager::StopRecording()
     _portReads.Stop();
     _portWrites.Stop();
     SyncPortJournalHook();
+    // The shadow engine gets the last frame's journals too (a replay from the
+    // last checkpoint reads them); it otherwise gets them at the next boundary
+    if (_shadowEngine && _shadowEngine->IsSessionOpen())
+    {
+        if (_portJournalValid)
+        {
+            TTDPortRecord r;
+            for (; _shadowBusReads < _portReads.Size() && _portReads.Get(_shadowBusReads, r); ++_shadowBusReads)
+                _shadowEngine->AppendBusRead(r);
+            for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
+                _shadowEngine->AppendBusWrite(r);
+        }
+        FeedV1Events(*_shadowEngine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX);
+    }
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
@@ -3259,9 +3273,11 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         }
         ArmShadowRegions(true);
         _shadowRescan = true;
-        // Events the engine gets from here on: what v1 journals after this point
+        // Events and bus data the engine gets from here on: what v1 journals after this point
         _shadowEvents.input = _inputJournal.Size();
         _shadowEvents.external = _externalEvents.Size();
+        _shadowBusReads = _portReads.Size();
+        _shadowBusWrites = _portWrites.Size();
     }
 
     TTDFrameInput in;
@@ -3343,6 +3359,16 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         addDevicePieces(static_cast<uint32_t>(i + 1), _shadowDeviceRegions[i],
                         _shadowRescan || _shadowDeviceRegions[i].compareEachCapture);
     _shadowRescan = false;
+
+    // Bus data up to this boundary (the checkpoint keeps where it stands)
+    if (_portJournalValid)
+    {
+        TTDPortRecord r;
+        for (; _shadowBusReads < _portReads.Size() && _portReads.Get(_shadowBusReads, r); ++_shadowBusReads)
+            engine.AppendBusRead(r);
+        for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
+            engine.AppendBusWrite(r);
+    }
 
     if (!engine.CaptureFrame(in, error))
     {
