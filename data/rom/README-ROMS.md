@@ -68,6 +68,10 @@ that the emulator works out of the box, on the following basis:
   | `bios20.rom` | v5 | ROM Bios 2.0 of 17.04.94, TR-DOS 5.04T | `36F5F7BD` | `02877e403f22d10d12ef0296ccb96f60` | xpeccy-plus `profi-bios20.rom`, ZXMAK2 `PROF-M.ROM` |
   | `bios20-font.rom` | v5 | as `bios20.rom` with one glyph of the 48K font changed (`#3D99`-`#3D9A`) | `DA81DED7` | `2f7549cd9fff863f68867f7d944de2a1` | - |
 
+* **ZX Profi PROFI-XT keyboard controller** (`profixt/profi-xt-v1.27.rom`): firmware "JV KRAMIS (C) 28.10.1992
+  vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever
+  `PROFI_XT-9A8E2686.ROM`) never enables interrupts and so receives no key; 5 bytes at `02Eh`-`032h` are replaced.
+  The patch, why, and how it was checked: [`profixt/README.md`](profixt/README.md). CRC32 `59C7A98C`.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's
