@@ -1,5 +1,6 @@
 #include "soundchip_turbosound.h"
 
+#include <cstdint>
 #include <cstring>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -18,6 +19,88 @@ int64_t SoundChip_TurboSound::nowT() const
     return int64_t(_context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t));
 }
 
+namespace
+{
+// A clock marker on the SSG write queue (SetPsgClock): register numbers stop
+// at 15, so bit 7 of `reg` tells it apart; the clock rides in 15 bits of
+// 100 Hz (reg bits 0-6 high, value low). Queue entries are TTD state, so a
+// switch still pending at a checkpoint is restored with its T-state
+constexpr uint8_t kSsgClockMarker = 0x80;
+
+SsgWrite ClockMarker(int64_t t, uint32_t hz)
+{
+    const uint32_t code = hz / SoundChip_TurboSound::kPsgClockStepHz;
+    return SsgWrite{t, static_cast<uint8_t>(kSsgClockMarker | ((code >> 8) & 0x7F)), static_cast<uint8_t>(code & 0xFF)};
+}
+
+uint32_t ClockMarkerHz(const SsgWrite& write)
+{
+    return ((uint32_t(write.reg & 0x7F) << 8) | write.value) * SoundChip_TurboSound::kPsgClockStepHz;
+}
+}  // namespace
+
+void SoundChip_TurboSound::applySsgWrite(int chipIndex, const SsgWrite& write)
+{
+    if (write.reg & kSsgClockMarker) [[unlikely]]
+    {
+        applyPsgClock(ClockMarkerHz(write));
+        return;
+    }
+    (chipIndex == 0 ? _chip0 : _chip1)->applyRegister(write.reg, write.value);
+}
+
+void SoundChip_TurboSound::applyPsgClock(uint32_t hz)
+{
+    _psgClock = hz;
+
+    // One tick = 8 AY clocks = 8 x CPU_CLOCK_RATE / hz base T, in 1/120 T
+    const uint64_t sub = (uint64_t(CPU_CLOCK_RATE) * 8u * kRenderSubUnits + hz / 2) / hz;
+    _tickT = int64_t(sub / kRenderSubUnits);
+    _tickSubT = uint32_t(sub % kRenderSubUnits);
+    if (_tickSubT == 0)
+        _renderSub = 0;
+
+    const double rate = generatorRate();
+    _lqTicksPerSample = rate / (double)_coreRate;
+    _decimationStep = rate / (double)(_coreRate * FilterInterpolate::DECIMATE_FACTOR);
+    _chip0->decimatorLeft().setInputRate(rate);
+    _chip0->decimatorRight().setInputRate(rate);
+    _chip1->decimatorLeft().setInputRate(rate);
+    _chip1->decimatorRight().setInputRate(rate);
+    _chip0->setGeneratorRate(rate);
+    _chip1->setGeneratorRate(rate);
+}
+
+bool SoundChip_TurboSound::SetPsgClock(uint32_t hz)
+{
+    hz = (hz + kPsgClockStepHz / 2) / kPsgClockStepHz * kPsgClockStepHz;
+    if (hz < kMinPsgClock || hz > kMaxPsgClock)
+        return false;
+    if (hz == _psgClockRequested)
+        return true;
+    _psgClockRequested = hz;
+
+    if (_synthesisSuppressed)
+    {
+        // Nothing renders: the queue drains in order, then the clock follows
+        applyAllSsgWrites();
+        applyPsgClock(hz);
+        return true;
+    }
+
+    // At this T-state on the render timeline (the port write scheme)
+    _lastSeenT = nowT();
+    _seenT = true;
+    SsgWriteQueue& q = _ssgWrites[0];
+    if (q.full())
+    {
+        applySsgWrite(0, q.front());
+        q.pop();
+    }
+    q.push(ClockMarker(_lastSeenT, hz));
+    return true;
+}
+
 void SoundChip_TurboSound::queueSsgWrite(int chipIndex, uint8_t reg, uint8_t value)
 {
     SoundChip_AY8910* chip = chipIndex == 0 ? _chip0 : _chip1;
@@ -31,7 +114,7 @@ void SoundChip_TurboSound::queueSsgWrite(int chipIndex, uint8_t reg, uint8_t val
     SsgWriteQueue& q = _ssgWrites[chipIndex];
     if (q.full())
     {
-        chip->applyRegister(q.front().reg, q.front().value);
+        applySsgWrite(chipIndex, q.front());
         q.pop();
     }
     q.push(SsgWrite{_lastSeenT, reg, value});
@@ -41,11 +124,10 @@ void SoundChip_TurboSound::applySsgWrites(int64_t t)
 {
     for (int i = 0; i < 2; i++)
     {
-        SoundChip_AY8910* chip = i == 0 ? _chip0 : _chip1;
         SsgWriteQueue& q = _ssgWrites[i];
         while (!q.empty() && q.front().t <= t)
         {
-            chip->applyRegister(q.front().reg, q.front().value);
+            applySsgWrite(i, q.front());
             q.pop();
         }
     }
@@ -55,11 +137,10 @@ void SoundChip_TurboSound::applyAllSsgWrites()
 {
     for (int i = 0; i < 2; i++)
     {
-        SoundChip_AY8910* chip = i == 0 ? _chip0 : _chip1;
         SsgWriteQueue& q = _ssgWrites[i];
         while (!q.empty())
         {
-            chip->applyRegister(q.front().reg, q.front().value);
+            applySsgWrite(i, q.front());
             q.pop();
         }
     }
@@ -88,6 +169,7 @@ void SoundChip_TurboSound::handleFrameStart()
     if (_renderReanchor || _renderT < -4 * kTurboSoundRenderLagT || _renderT > 0)
     {
         _renderT = -kTurboSoundRenderLagT;
+        _renderSub = 0;
         _renderReanchor = false;
     }
     if (_synthesisSuppressed)
@@ -204,7 +286,7 @@ void SoundChip_TurboSound::handleStep()
                 // ========== HIGH QUALITY MODE ==========
                 // Native clock rendering + FIR decimation
                 //
-                // Generators tick at PSG_CLOCK_RATE/8 = 218.75 kHz
+                // Generators tick at _psgClock / 8 = 218.75 kHz by default
                 // FIR decimates to 44.1 kHz (~4.96:1 ratio)
 
                 // Feed generator samples to decimator until we have an output
@@ -214,7 +296,7 @@ void SoundChip_TurboSound::handleStep()
                     // register writes timed up to this tick applied first
                     applySsgWrites(_renderT);
                     updateState(true);
-                    _renderT += 16;
+                    advanceRenderCursor();
 
                     // Native-rate tap for DSD capture (pre-decimation, both chips summed)
                     if (tapActive)
@@ -257,7 +339,7 @@ void SoundChip_TurboSound::handleStep()
                 int sampleCount = 0;
 
                 // Run generator ticks for this output sample period
-                // Generator rate = PSG_CLOCK_RATE / 8 (~218.75 kHz)
+                // Generator rate = _psgClock / 8 (~218.75 kHz by default)
                 // Ticks per output sample = (PSG_CLOCK_RATE / 8) / core rate (~4.96 @44.1k)
                 _decimationPhase += _lqTicksPerSample;
 
@@ -269,7 +351,7 @@ void SoundChip_TurboSound::handleStep()
                     // with the register writes timed up to this tick applied
                     applySsgWrites(_renderT);
                     updateState(true);
-                    _renderT += 16;
+                    advanceRenderCursor();
 
                     double l = _chip0->mixedLeft() + _chip1->mixedLeft();
                     double r = _chip0->mixedRight() + _chip1->mixedRight();
@@ -452,8 +534,39 @@ namespace
 {
 // Timeline tail (the same scheme as TSFM's v4): render cursor offset + per
 // chip pending SSG writes {count, kCapacity x {i32 t offset, u8 reg, u8 value}}
+// (clock markers included, see kSsgClockMarker)
+//
+// The cursor is an i64 whose value always fits an i32 (it sits within a few
+// render lags of the frame end), so its upper half is pure sign extension.
+// The AY clock state rides there, XORed onto the sign extension: bits 0-6 the
+// cursor's fraction (_renderSub), bits 7-21 the generators' clock in 100 Hz
+// (0 = the default PSG_CLOCK_RATE). Both are 0 at the default clock, so every
+// existing capture keeps its bytes and loads as the default clock
 constexpr size_t kSsgQueueStateSize = 1 + SsgWriteQueue::kCapacity * (4 + 1 + 1);
 constexpr size_t kTimelineStateSize = 8 + 2 * kSsgQueueStateSize;
+constexpr uint32_t kCursorSubMask = 0x7F;
+constexpr uint32_t kCursorClockShift = 7;
+constexpr uint32_t kCursorClockMask = 0x7FFF;
+
+uint64_t PackCursor(int64_t cursor, uint32_t renderSub, uint32_t clockCode)
+{
+    if (cursor > INT32_MAX)
+        cursor = INT32_MAX;
+    if (cursor < INT32_MIN)
+        cursor = INT32_MIN;
+    const uint32_t extra = (renderSub & kCursorSubMask) | ((clockCode & kCursorClockMask) << kCursorClockShift);
+    return uint64_t(cursor) ^ (uint64_t(extra) << 32);
+}
+
+void UnpackCursor(uint64_t raw, int64_t& cursor, uint32_t& renderSub, uint32_t& clockCode)
+{
+    const int32_t low = static_cast<int32_t>(static_cast<uint32_t>(raw & 0xFFFFFFFFu));
+    const uint32_t extension = low < 0 ? 0xFFFFFFFFu : 0u;
+    const uint32_t extra = static_cast<uint32_t>(raw >> 32) ^ extension;
+    cursor = low;
+    renderSub = extra & kCursorSubMask;
+    clockCode = (extra >> kCursorClockShift) & kCursorClockMask;
+}
 
 // Render-phase tail (the same accumulators as TSFM's v2/v3 fixes): the
 // render loop's free-running sample phase, the LQ boxcar phase and the four
@@ -505,7 +618,8 @@ void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
     // checkpoint): the cursor decides on which tick every SSG write lands,
     // and a write pending at the checkpoint has not reached the generators
     const int64_t base = _lastSeenT;
-    const int64_t cursor = _renderT - base;
+    const uint32_t clockCode = _psgClock == PSG_CLOCK_RATE ? 0u : _psgClock / kPsgClockStepHz;
+    const uint64_t cursor = PackCursor(_renderT - base, _renderSub, clockCode);
     std::memcpy(cur, &cursor, 8);
     cur += 8;
     for (const SsgWriteQueue& q : _ssgWrites)
@@ -561,10 +675,20 @@ void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
     const int64_t base = nowT();
     _lastSeenT = base;
     _seenT = true;
-    int64_t cursor = 0;
-    std::memcpy(&cursor, cur, 8);
+    uint64_t rawCursor = 0;
+    std::memcpy(&rawCursor, cur, 8);
     cur += 8;
+    int64_t cursor = 0;
+    uint32_t renderSub = 0;
+    uint32_t clockCode = 0;
+    UnpackCursor(rawCursor, cursor, renderSub, clockCode);
+    // The generators' clock first (it redesigns the decimators, whose phases
+    // are put back below), then the cursor's fraction on its tick grid
+    const uint32_t clock = clockCode == 0 ? static_cast<uint32_t>(PSG_CLOCK_RATE) : clockCode * kPsgClockStepHz;
+    if (clock != _psgClock)
+        applyPsgClock(clock);
     _renderT = base + cursor;
+    _renderSub = _tickSubT != 0 ? renderSub % kRenderSubUnits : 0;
     _renderReanchor = false;
     for (SsgWriteQueue& q : _ssgWrites)
     {
@@ -581,6 +705,13 @@ void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
                 q.push(SsgWrite{base + offset, reg, value});
         }
     }
+    // The latest request: a clock marker still pending, else the clock now.
+    // The machine re-derives it after the restore (the Profi from #DFFD) and
+    // finds it equal, so nothing more is queued
+    _psgClockRequested = _psgClock;
+    for (size_t k = 0; k < _ssgWrites[0].size(); ++k)
+        if (_ssgWrites[0].at(k).reg & kSsgClockMarker)
+            _psgClockRequested = ClockMarkerHz(_ssgWrites[0].at(k));
 
     // Render-phase tail: historical tick-gating accumulators
     std::memcpy(&_samplePhase, cur, 8);

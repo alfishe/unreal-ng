@@ -72,6 +72,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | IDE (`[HDD] Scheme=PROFI`, answers in EXT mode): slots `ide0.master` / `ide0.slave`; the SYS ROM boots from a hard disk image; geometry from the disk's ProfiHiDD header (16 x 16 without one) | implemented — see [Hard disk](#hard-disk-ide) |
 | Kempston joystick at `#1F`, Covox extended-mode aliases (v5) | implemented |
 | TURBO front-panel switch (7 MHz; on v3 a loaded floppy head holds 3.5 MHz), recorded by TTD | implemented — see [TURBO switch](#turbo-switch) |
+| AY clock 1.5 MHz in hi-res (v3 always; v5 jumper SB7 `[PROFI] AyClock=old`, the default; `new` keeps 1.75 MHz) | implemented for `TurboSound=AY` / `Single`; the shipped `TurboSound=FM` (TSFM) stays at 1.75 MHz — see [AY clock](#ay-clock-in-hi-res) |
 | v5 video WAIT at 3.5 MHz (`[PROFI] WaitPhase` / `WaitConfig` / `RomWait`), v3 turbo waits, v5 turbo waits (approximation) | implemented (feature `contention`) |
 | v3 floating bus (pixel byte on an unanswered `IN` with A0 = 1) | implemented |
 | PROFI-XT keyboard controller (`[PROFI] Keyboard=XT`, v5 default): PC keys, EXT on `#BFFE` bit 5, the Z80 wait, Ctrl + Alt + Del; `XTTable` (no firmware), `Matrix` (v3 default) | implemented — see [Keyboard](#keyboard) |
@@ -147,6 +148,26 @@ The same with `{"model": "PROFI", "profi": {"keyboard": "xttable"}}` (controller
 keyboard name is a 400. Lua / Python: `paging_state().profi_keyboard`, `keyboard_controller()`. The BIOS turns the
 letter + EXT into its code (F1 = `75h`, routine `127Ah`), tested in `profixtkbc_test.cpp`. TTD records the keys and
 the controller (PeripheralId ProfiXtKbc, 44).
+
+### AY clock in hi-res
+
+The board clocks the AY from its video divider: 1.75 MHz in Spectrum mode, **1.5 MHz while `#DFFD` bit 7 (DS80)
+is set** - on v3 always, on v5 with jumper SB7 in "CLCAY OLD" (`[PROFI] AyClock=old`, the default).
+`AyClock=new` keeps 1.75 MHz in both modes. Turbo does not change it. Music therefore plays 6/7 lower in hi-res.
+The switch takes effect at the T-state of the `#DFFD` write and is part of TTD state.
+
+It applies to the plain AY slot (`[SOUND] TurboSound=AY` or `Single` in `data/configs/profi*/unreal.ini`). The
+shipped configs fit `TurboSound=FM`; the TSFM keeps 1.75 MHz (open item in
+[design-hires.md](../../docs/inprogress/2026-10-01-profi-v3-v5/design-hires.md)).
+
+Read the clock the AY runs at now (`psg_clock_hz`, the same report on every surface: WebAPI below, MCP
+`inspect_state` aspect `audio_ay`, Lua / Python `audio_ay_state()`, CLI `state audio ay` line `AY Clock:`):
+
+```bash
+curl -s "$BASE/emulator/$ID/state/audio/ay" | jq '{slot_device, psg_clock_hz}'
+#   {"slot_device": "TurboSound", "psg_clock_hz": 1500000}   while a program has hi-res on (TurboSound=AY)
+#   {"slot_device": "TSFM",       "psg_clock_hz": 1750000}   shipped config: TSFM keeps 1.75 MHz
+```
 
 ### TURBO switch
 

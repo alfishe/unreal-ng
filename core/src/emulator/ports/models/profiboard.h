@@ -140,6 +140,16 @@ constexpr uint8_t ProfiHiresClockNum(bool v5, uint8_t zq3MHz, bool turbo)
     return turbo ? static_cast<uint8_t>(num * 2) : num;
 }
 
+/// The AY clock (CLCAY) in Hz: the video divider's master / 8, 14 MHz / 8 = 1.75 MHz in Spectrum mode and 12 MHz / 8 =
+/// 1.5 MHz in hi-res (DS80). The v3 always; the v5 with jumper SB7 in "CLCAY OLD" (the default), while "CLCAY NEW"
+/// ([PROFI] AyClock=new) feeds 1.75 MHz in both modes. Turbo never touches it (research-profi-hires-timing.md 5)
+constexpr uint32_t kProfiAyClockHz = 1'750'000;
+constexpr uint32_t kProfiHiresAyClockHz = 1'500'000;
+constexpr uint32_t ProfiAyClockHz(bool v5, bool ayClockNew, bool hires)
+{
+    return (hires && !(v5 && ayClockNew)) ? kProfiHiresAyClockHz : kProfiAyClockHz;
+}
+
 /// TTD time units per base T for a board: the least common multiple of the numerators it can select (1, 2 in
 /// Spectrum mode; the hi-res pair) - EmulatorState::ttd_clock_units
 constexpr uint8_t ProfiTtdClockUnits(bool v5, uint8_t zq3MHz)

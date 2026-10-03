@@ -54,9 +54,49 @@ numerators the model selects (v5 with ZQ3 20 MHz: 1, 2, 10, 20 -> 20 units per b
 | H3 | Waits in DS80 (v5 model rule; v3 turbo keeps its 2/3 rule at 6 MHz), the v3 DS80 floating bus | `ProfiWaitOverlay` tests for DS80; the speed-test figures |
 | H4 | Automation (the ZQ3 and AY clock options on every surface, the DS80 clock in state reports), recipes, docs, TTD round trip of a DS80 switch | the parity checklist |
 
+### 3.1 H2b: the AY clock (built, branch `profi-ay-clock`)
+
+The AY clock used to be a compile-time constant (`PSG_CLOCK_RATE`, 1.75 MHz). It is now a property of the
+TurboSound device that the machine sets at run time:
+
+- **Request.** `SoundManager::SetPsgClock(hz)` -> `ITurboSoundDevice::SetPsgClock`. `PortDecoder_Profi::SyncTurbo`
+  calls it right after `SyncFrame`, with `ProfiAyClockHz(v5, AyClock=new, hires)` (`profiboard.h`): 1.5 MHz in
+  hi-res on v3, and on v5 unless `[PROFI] AyClock=new`; 1.75 MHz in Spectrum mode. Turbo does not touch it.
+  SyncTurbo also runs on reset and after a TTD restore (`UpdateModelMemoryBanks`), so the clock always follows
+  `#DFFD`.
+- **Timing.** A request is queued as a *clock marker* on chip 0's SSG write queue (`reg` bit 7 set, the clock in
+  15 bits of 100 Hz), at the CPU T-state of the request. The render loop applies it when its cursor reaches that
+  T-state, exactly like a register write: writes before the switch render at the old clock, the switch itself lands
+  on the generator tick it falls in.
+- **What follows the clock.** One generator tick (8 AY clocks) is `8 x 3.5 MHz / clock` base T: 16 at 1.75 MHz,
+  18 2/3 at 1.5 MHz. The render cursor keeps a fraction in 1/120 T (`_renderSub`), exact for 1.5 MHz; at
+  1.75 MHz the fraction is 0 and its code is skipped (the fast path). The LQ boxcar ratio and the HQ FIR decimators'
+  input rate (`FilterDecimator::setInputRate`: redesigned for the new rate, history and phase kept, so no click)
+  follow too. The pitch therefore drops by 6/7 in hi-res.
+- **TTD.** No new bytes: the blob's i64 render-cursor offset always fits an i32, so its upper half was pure sign
+  extension; the clock (100 Hz units, 0 = default) and the cursor fraction now ride there, XORed onto the sign
+  extension. At 1.75 MHz both are 0, so every existing capture keeps its bytes and loads as the default clock. A
+  switch still queued at a checkpoint is a queue entry and restores with its T-state. After the restore the Profi
+  re-derives the same clock from `#DFFD` and finds nothing to do.
+- **TSFM** keeps 1.75 MHz (`SetPsgClock` returns false): its YM2203 core, FM timers and FM decimators (437.5 kHz,
+  slaves of the SSG decimator) are built around the fixed socket clock. See Open.
+- **Automation.** `psg_clock_hz` in the AY overview report (`DeviceState::Ay`: WebAPI `/state/audio/ay`, MCP
+  `audio_ay`, Lua / Python `audio_ay_state()`), `AY Clock:` in the CLI `state audio ay`.
+- **Tests.** `soundchip_turbosound_test.cpp` (pitch ratio 6/7 in HQ and LQ, the switch landing on its T-state with a
+  constant level unbroken, default clock bit-identical and the capture layout unchanged, TTD round trip with a
+  queued switch), `portdecoder_profi_test.cpp` (v5 old / new, v3), `ttdayserializer_test.cpp` (a Profi v5 program
+  flipping hi-res several times a frame replays byte for byte from three restore points).
+
 ## 4. Open
 
 - The v3 DS80 floating bus: which screen page each of the two latches holds (O).
 - The v5 DS80 wait rule is a model (M); the forum's speed-test figures fit it but do not prove it.
 - 5.0-5.02 unmodified boards select ZQ3 with the CP/M button, not with DS80; two-crystal 5.0/5.01 builds stay at
   3.5 MHz in DS80. Board variants for these come later if anyone needs them.
+- The AY clock reaches only the plain AY / TurboSound slot. The shipped Profi configs fit `TurboSound=FM` (TSFM),
+  which stays at 1.75 MHz in hi-res: H2b is audible with `TurboSound=AY` (or `Single`) until the TSFM follows the
+  socket clock (its YM2203 timers would change with it, and those are CPU-visible).
+- The native-rate DSD capture tap assumes 218.75 kHz; in hi-res the AY feeds it at 187.5 kHz.
+- TTD across a v3 hi-res switch: the same driver on `PROFI3` (the switch also changes the frame to 320 lines) does
+  not replay exactly - the CPU itself diverges, with or without the AY clock (found while building H2b; the v5,
+  whose frame stays 312 lines, replays exactly). Part of H4's "TTD round trip of a DS80 switch".

@@ -722,7 +722,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 | Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| AY / SSG overview | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
 | AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |

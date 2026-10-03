@@ -370,7 +370,7 @@ The same reports the WebAPI, Python, CLI and MCP return
 as Lua tables (arrays are 1-based sequences):
 
 ```lua
-ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, psg_clock_hz, chips[]
 ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...

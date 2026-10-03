@@ -7,6 +7,8 @@
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/profifixture.h"
 #include "emulator/video/profi/profigeometry.h"
+#include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/soundmanager.h"
 
 #include <fstream>
 #include <iterator>
@@ -854,6 +856,44 @@ TEST_F(ProfiPortDecoder_Test, TtdUnitsCoverTheHiresClock)
     State().ttd_clock_units = _context->pPortDecoder->TtdClockUnits();
     WritePort(0xDFFD, 0x80);
     EXPECT_EQ(State().TtdUnitsPerTState(), 14u) << "a 5 MHz T is 7/10 base T: 20 x 7 / 10";
+}
+
+/// The AY clock (CLCAY) comes from the video divider: 1.5 MHz in hi-res, 1.75 MHz in Spectrum mode (design-hires.md
+/// H2b). The request lands on the AY's render timeline, so the requested clock is what the decoder controls
+static uint32_t RequestedAyClock(EmulatorContext* context)
+{
+    auto* device = dynamic_cast<SoundChip_TurboSound*>(context->pSoundManager->getTurboSound());
+    return device ? device->GetRequestedPsgClock() : 0;
+}
+
+/// v5, jumper SB7 in "CLCAY OLD" (the default): 1.5 MHz in hi-res; turbo does not touch it
+TEST_F(ProfiPortDecoder_Test, HiresClocksTheAyAtOneAndAHalfMegahertz)
+{
+    ASSERT_EQ(RequestedAyClock(_context), 1'750'000u) << "the fixture's AY slot";
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(RequestedAyClock(_context), 1'500'000u);
+    EXPECT_TRUE(Decoder()->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
+    EXPECT_EQ(RequestedAyClock(_context), 1'500'000u) << "turbo is a CPU clock, not CLCAY";
+    WritePort(0xDFFD, 0x00);
+    EXPECT_EQ(RequestedAyClock(_context), 1'750'000u);
+}
+
+/// v5, SB7 in "CLCAY NEW" ([PROFI] AyClock=new): 1.75 MHz in both modes
+TEST_F(ProfiPortDecoder_Test, AyClockNewKeepsOneSeventyFiveInHires)
+{
+    _context->config.profi_ay_clock_new = 1;
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(RequestedAyClock(_context), 1'750'000u);
+}
+
+/// v3: no jumper, always 1.5 MHz in hi-res (AyClock=new is a v5 option)
+TEST_F(ProfiV3PortDecoder_Test, HiresClocksTheAyAtOneAndAHalfMegahertz)
+{
+    _context->config.profi_ay_clock_new = 1;
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(RequestedAyClock(_context), 1'500'000u);
+    WritePort(0xDFFD, 0x00);
+    EXPECT_EQ(RequestedAyClock(_context), 1'750'000u);
 }
 
 /// endregion </Hi-res timing>
