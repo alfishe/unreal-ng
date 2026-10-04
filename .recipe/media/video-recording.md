@@ -88,7 +88,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/video/record -H 'Content-Type: applicatio
 ## CLI, Lua, Python
 
 ```text
-videorecord start h264 scratch/run.mp4 --scale 2 --audio aac [--audio-bitrate 192] [--video-bitrate 8000]
+videorecord start h264 scratch/run.mp4 --scale 2 --audio aac [--audio-bitrate 192] [--video-bitrate 8000] [--region full|screen]
 videorecord status          # ... Audio: aac, 44100 Hz, 2 ch / Audio samples: N (S s)
 videorecord stop
 ```
