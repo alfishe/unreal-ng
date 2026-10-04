@@ -18,6 +18,9 @@ Index: [README.md](README.md).
 
 ## Remaining
 
+- MoonSound under NedoOS: the release (2026-10-04) has no OPL4 player; `ngsplay.com` is the NeoGS MOD/S3M/MP3 player (plays MOD on ATM3 + NeoGS in the emulator). The MoonSound pack (MoonBlaster `.MWM`, OPL `.VGZ`) needs a player written or ported; decision pending with the owner.
+- "SD card lost" with the whole release as the `sd.zc` folder (`nedogame/`, 6245 files): bisect by file count / size, find whether `HostFolderFat` or the NedoOS FAT reader is at fault ([overview](nedoos-overview-and-release.md)).
+
 - Network adapters ([tdd-network.md](tdd-network.md) §15): N0, N1a, N1b (ZXNETUSB / W5300 +
   virtual network) and the card INT on master; N2 COM port on master
   ([reference-evo-com-port.md](reference-evo-com-port.md)); N3 ESP modules (ESPNET 1.27 and AT)
