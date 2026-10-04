@@ -194,6 +194,8 @@ std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specTex
     {
         case ComPortSpec::Kind::Loopback:
             return std::make_unique<LoopbackPeer>();
+        case ComPortSpec::Kind::Plug:
+            return std::make_unique<LoopbackPeer>(true);
         case ComPortSpec::Kind::Tcp:
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);

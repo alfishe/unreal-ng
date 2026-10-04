@@ -95,6 +95,11 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Loopback;
         return true;
     }
+    if (upper == "PLUG")
+    {
+        out.kind = Kind::Plug;
+        return true;
+    }
     // ESPNET / AT, optionally with the module's rate: ESPNET,38400
     {
         const size_t comma = upper.find(',');
@@ -179,7 +184,7 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Serial;
         return true;
     }
-    error = "unknown value (NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | AT[,<baud>] | "
+    error = "unknown value (NONE | LOOPBACK | PLUG | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | AT[,<baud>] | "
             "MODEM[,<guest port>])";
     return false;
 }
@@ -189,6 +194,7 @@ std::string ComPortSpec::ToString() const
     switch (kind)
     {
         case Kind::Loopback: return "LOOPBACK";
+        case Kind::Plug: return "PLUG";
         case Kind::Tcp:
             return "TCP:" + host + ":" + std::to_string(port);
         case Kind::Serial: return "SERIAL:" + device + "," + std::to_string(baud);

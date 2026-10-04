@@ -73,7 +73,8 @@ takes the same values for the card's side:
 | `ComPort=` / `ZxWifi=` | Peer |
 |:--|:--|
 | `NONE` | nothing on the line (the ZX-Evo's registers still answer) |
-| `LOOPBACK` | every byte the ZX sends comes back |
+| `LOOPBACK` | every byte the ZX sends comes back; CTS / DSR / DCD held active |
+| `PLUG` | an RS-232 loopback test plug: bytes come back, the UART's own RTS drives CTS and DTR drives DSR / DCD (only the inputs the card wires to its connector) |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
 | `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
 | `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |

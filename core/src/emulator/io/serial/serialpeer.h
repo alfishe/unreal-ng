@@ -47,6 +47,10 @@ public:
     virtual bool Dcd() const { return true; }
     virtual bool Ri() const { return false; }
 
+    /// A loopback test plug: the UART reads its own RTS on CTS and its own DTR on DSR / DCD instead of the
+    /// lines above (they are wires of the plug, so they need no state of their own: MCR is the UART's)
+    virtual bool MirrorsModemLines() const { return false; }
+
     /// RTS / DTR the ZX drives (MCR)
     virtual void OnModemLines(bool rts, bool dtr)
     {
@@ -102,10 +106,13 @@ public:
     virtual bool Connected() const { return true; }
 };
 
-/// Echo: every byte the ZX sends comes back (tests, a quick self-check)
+/// Echo: every byte the ZX sends comes back (tests, a quick self-check). As a test plug (PLUG) its wires also
+/// loop the ZX's RTS to CTS and DTR to DSR and DCD; plain LOOPBACK holds those inputs active
 class LoopbackPeer final : public ISerialPeer
 {
 public:
+    explicit LoopbackPeer(bool plug = false) : _plug(plug) {}
+    bool MirrorsModemLines() const override { return _plug; }
     void Transmit(uint8_t byte) override { _queue.push_back(byte); }
     bool HasByte() const override { return !_queue.empty(); }
     uint8_t TakeByte() override
@@ -115,7 +122,7 @@ public:
         return b;
     }
     void Reset() override { _queue.clear(); }
-    const char* Kind() const override { return "loopback"; }
+    const char* Kind() const override { return _plug ? "plug" : "loopback"; }
     size_t Pending() const override { return _queue.size(); }
 
     /// TTD state: the echo queue holds bytes the ZX wrote, stored as they are
@@ -123,6 +130,7 @@ public:
     void SetQueue(const uint8_t* data, size_t length) { _queue.assign(data, data + length); }
 
 private:
+    bool _plug = false;
     std::deque<uint8_t> _queue;
 };
 

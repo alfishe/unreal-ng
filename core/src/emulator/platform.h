@@ -722,7 +722,7 @@ struct CONFIG
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
 		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:
-		/// the AVR's 16550): NONE | LOOPBACK | TCP:<host>:<port> |
+		/// the AVR's 16550): NONE | LOOPBACK | PLUG | TCP:<host>:<port> |
 		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
