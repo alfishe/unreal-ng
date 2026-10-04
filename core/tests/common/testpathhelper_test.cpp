@@ -12,8 +12,9 @@ TEST(TestPathHelper_Test, UniqueScratchPathLivesInProcessDirectory)
     const fs::path path(TestPathHelper::GetUniqueTestScratchPath("pathhelper-probe.bin"));
     const fs::path processDir = path.parent_path();
 
-    // Parallel shards stay isolated via <scratch>/<pid>; the scratch root itself stays clean
-    EXPECT_EQ(processDir.parent_path().filename().string(), "scratch");
+    // Parallel shards stay isolated via <scratch>/<pid>; the scratch root itself stays clean.
+    // The root is <project>/scratch, or UNREAL_TEST_SCRATCH_DIR when the run moves it (the Linux Docker run)
+    EXPECT_EQ(processDir.parent_path().lexically_normal(), TestPathHelper::GetScratchDir().lexically_normal());
     EXPECT_FALSE(processDir.filename().string().empty());
     EXPECT_EQ(processDir.filename().string().find_first_not_of("0123456789"), std::string::npos)
         << "process directory must be PID-named: " << processDir;
