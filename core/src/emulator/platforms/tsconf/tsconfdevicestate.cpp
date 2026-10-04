@@ -11,6 +11,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/platforms/tsconf/tsconftsu.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/tsconf/screentsconf.h"
 
@@ -52,6 +53,17 @@ namespace
         n["available"] = false;
         n["description"] = description;
         return n;
+    }
+
+    /// The active descriptors the TSU processes (the ones behind the third LEAP are never reached)
+    int ProcessedActiveSprites(const TsConfState& ts)
+    {
+        uint32_t bounds[4];
+        TsConfTsu::LayerBounds(ts, bounds);
+        int active = 0;
+        for (uint32_t d = 0; d < bounds[3]; d++)
+            active += (ts.sfile[d * 3] & 0x2000) ? 1 : 0;
+        return active;
     }
 
     uint16_t Nine(uint8_t low, uint8_t high) { return static_cast<uint16_t>(low | ((high & 1u) << 8)); }
@@ -141,10 +153,7 @@ StateNode TsConf(EmulatorContext* context)
         tsu["tile0_page"] = int(r[TsConfReg::T0GPage]);
         tsu["tile1_page"] = int(r[TsConfReg::T1GPage]);
         tsu["sprite_page"] = int(r[TsConfReg::SGPage]);
-        int active = 0;
-        for (uint32_t d = 0; d < 85; d++)
-            active += (ts.sfile[d * 3] & 0x2000) ? 1 : 0;
-        tsu["active_sprites"] = active;
+        tsu["active_sprites"] = ProcessedActiveSprites(ts);
         v["tsu"] = tsu;
 
         // The line the engine is on and the registers it is displayed with
@@ -280,8 +289,8 @@ StateNode TsConfTsu(EmulatorContext* context)
 
     // Sprites: every SFILE descriptor, the layer its LEAP position puts it in
     StateNode sprites = StateNode::Array();
-    uint32_t layer = 0;
-    int active = 0;
+    uint32_t bounds[4];
+    TsConfTsu::LayerBounds(ts, bounds);
     for (uint32_t d = 0; d < 85; d++)
     {
         const uint16_t w0 = ts.sfile[d * 3];
@@ -291,7 +300,8 @@ StateNode TsConfTsu(EmulatorContext* context)
         sp["index"] = int(d);
         sp["active"] = (w0 & 0x2000) != 0;
         sp["leap"] = (w0 & 0x4000) != 0;
-        sp["layer"] = layer == 0 ? "s0" : (layer == 1 ? "s1" : (layer == 2 ? "s2" : "ended"));  // "ended": behind the third LEAP, never processed
+        // "ended": behind the third LEAP, never processed
+        sp["layer"] = d < bounds[1] ? "s0" : (d < bounds[2] ? "s1" : (d < bounds[3] ? "s2" : "ended"));
         sp["x"] = int(w1 & 0x1FF);
         sp["y"] = int(w0 & 0x1FF);
         sp["width"] = int((((w1 >> 9) & 0x07) + 1) * 8);
@@ -307,11 +317,8 @@ StateNode TsConfTsu(EmulatorContext* context)
             words.items.push_back(StateNode(hex(w, 4)));
         sp["words"] = words;
         sprites.items.push_back(sp);
-        active += (w0 & 0x2000) && layer < 3 ? 1 : 0;
-        if ((w0 & 0x4000) && layer < 3)
-            layer++;  // LEAP: the next descriptor starts the next sprite layer (the third ends them)
     }
-    ret["active_sprites"] = active;
+    ret["active_sprites"] = ProcessedActiveSprites(ts);
     ret["sprites"] = sprites;
 
     // CRAM: the 256 palette cells with their colors (no-VDAC curve, as drawn)
