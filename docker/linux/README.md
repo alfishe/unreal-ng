@@ -17,7 +17,8 @@ Compiler errors such as a missing `#include <algorithm>` depend on the gcc and
 libstdc++ versions, which are identical in both variants - use `--platform`
 only to chase an architecture-specific problem.
 
-Build output lands in `scratch/linux-<arch>-<type>/` (git-ignored). Delete it
+Works from the main checkout and from any git worktree (the main repository's `.git` is
+mounted read-only at its own path). Build output lands in `scratch/linux-<arch>-<type>/` (git-ignored). Delete it
 when finished: `rm -rf scratch/linux-*`.
 
 The tests' own scratch files (copies of test data, written images) go to a container-local tmpfs
