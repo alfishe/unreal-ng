@@ -7,6 +7,7 @@
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/ayioport.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 /// Information:
@@ -423,6 +424,12 @@ protected:
     // Tracks whether this chip has received any register writes (for TurboSound detection)
     bool _hasBeenWritten = false;
 
+    // I/O port pins (ayioport.h). The pins are a function of R7 / R14 / R15; the cache only tells a
+    // listener's change from a repeat and is refreshed whenever a listener attaches, after reset and
+    // after a TTD load, so it carries no state of its own (not in the TTD blob)
+    IAyIoPortListener* _ioPortListener = nullptr;
+    uint8_t _ioPortPins[AyIoPort::PortCount] = { AyIoPort::InputPins, AyIoPort::InputPins };
+
     /// endregion </Fields>
 
     /// region <Interfacing fields>
@@ -470,14 +477,17 @@ public:
 
     // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
-    /// latchRegister + applyRegister at once
-    void writeRegister(uint8_t regAddr, uint8_t value);
+    /// latchRegister + applyRegister at once. t: the write's time for an I/O port listener
+    void writeRegister(uint8_t regAddr, uint8_t value, uint64_t t = 0);
 
     // Split write for devices that time register writes to their T-state:
     // the CPU sees the value at once (latch), the generators get it when the
     // render loop reaches the write's time (apply). Tone and envelope
-    // periods combine the halves as the generators know them
-    void latchRegister(uint8_t regAddr, uint8_t value);
+    // periods combine the halves as the generators know them.
+    // The I/O port pins change at the latch (the board sees them at the OUT),
+    // reported to the listener with time t (the owner's axis; 0 when the
+    // caller has no time, e.g. a snapshot load)
+    void latchRegister(uint8_t regAddr, uint8_t value, uint64_t t = 0);
     void applyRegister(uint8_t regAddr, uint8_t value);
     uint8_t getCurrentRegisterIndex() const { return _currentRegister; }
 
@@ -491,6 +501,18 @@ public:
     }
 
     void setStereoMode(AYStereoMode mode);
+
+    /// I/O port pins (tdd-midi-line.md §2.1): a listener hears every change of the pins of port A / B
+    /// (R14 / R15 while R7 bit 6 / 7 makes the port an output, #FF while it is an input). Null detaches.
+    /// Zero cost without a listener: one pointer test per register latch, nothing on the render path.
+    /// reset() is silent: the owner resets its listeners on its own time axis
+    void setIoPortListener(IAyIoPortListener* listener);
+    IAyIoPortListener* ioPortListener() const { return _ioPortListener; }
+    /// The pins of `port` as the board sees them now (computed from the register file)
+    uint8_t ioPortPins(int port) const
+    {
+        return AyIoPort::Pins(_registers[AY_MIXER_CONTROL], port, _registers[AY_PORTA + port]);
+    }
     void setChipModel(AYChipModel model);
     void setChannelMuted(uint8_t channel, bool muted);
     void setChannelVolume(uint8_t channel, double volume);
@@ -503,6 +525,12 @@ public:
     double getChannelVolume(uint8_t channel) const;
 
     /// endregion </Methods>
+
+    /// region <I/O port helpers>
+protected:
+    void refreshIoPortPins();
+    void notifyIoPortPins(uint64_t t);
+    /// endregion </I/O port helpers>
 
     /// region <Debug access methods>
 public:

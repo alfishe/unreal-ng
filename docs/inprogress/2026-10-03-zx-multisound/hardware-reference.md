@@ -221,6 +221,8 @@ Transfer function [RTL, measured in simulation, exact]: the pin outputs the sign
 
 - SAM2695 pin 16 (MIDI IN) is wired **directly to U4 pin 14 = IOA2** [SCH], no level shifter / inverter. This is the
   128K convention (AY register 14 bit 2 is MIDI out). The YM is 5 V, the SAM2695 3.3 V (works in practice).
+- IOA2 output stage (YM2203 datasheet, [tdd-midi-line.md](tdd-midi-line.md) §2.0): pull-up 60-600 kOhm while the
+  port is an input (reset state: the line idles high), actively driven both ways as an output (VOH >= 2.4 V at 0.4 mA).
 - Software bit-bangs the serial line at 31 250 baud by writing register 14 of YM chip 1 (and must set register 7 bit 6
   to make port A an output).
 - SAM2695 straps: XDIV tied high (= 12 MHz clock mode, datasheet; matches the 12 MHz DDS clock), MICIN grounded, parallel bus unused (/CS, /RD, A0 grounded, /WR high), reset shared
@@ -288,5 +290,4 @@ ports and `#FF` removed from IORQGE (2023-12), YM chips swapped (2024-01, "fixes
 |---|---|
 | YM3014B output impedance (FM low-pass corner) | YM3014B datasheet / measurement |
 | Absolute output levels of SSG, SAA1099, SAM2695 relative to each other | measurement on a real card (owner) or chip datasheets |
-| YM2203 IOA output type (push-pull vs pull-up) | YM2203 datasheet (affects nothing logical) |
 | Bus fight result on a `#DFFD` read | machine schematics (slots design SL-0) |

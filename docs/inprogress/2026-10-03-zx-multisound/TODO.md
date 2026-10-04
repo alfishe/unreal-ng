@@ -39,7 +39,13 @@ ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also wait: `ttd
 - [ ] SAM-3 the rest of the MIDI chart (GS SysEx, NRPN 01xx / 18-1Exx / 37xx, sostenuto, soft pedal, portamento,
   part assignment, voice reserve, assignable controllers), SAM-4 effects (reverb, chorus, spatial, EQ, clipping,
   codec gain) and render modes, SAM-5 verification consolidation (Dream-board recordings, `data/midi/` bank pinned)
-- [ ] Independent modules (can start before the slots work): ML-0..2
+- [x] ML-0..2 MIDI line ([tdd-midi-line.md](tdd-midi-line.md) §2.0, §5 "As built", 2026-10-04, not committed):
+  datasheet facts of the I/O port stage (input = `#FF`, push-pull output, reset = inputs), `IAyIoPortListener` on
+  `SoundChip_AY8910` (pins, called on change only, one pointer test per register latch without a listener),
+  `MidiLine` feeding `sam2695::Synth::WriteLine` with its TTD blob; `AyIoPort_Test` and `MidiLine_Test` in core-tests
+- [ ] ML follow-ups with the card: the YM2203 SSG drives the same listener (MS-1, `Ym2203Pair`), `MidiLine` wired to
+  YM chip 1 and carried in the card's blob set, `MidiLine_Test.Chip2DoesNotDrive`, the program-level Z80 send-routine
+  test under TTD, `Describe` on the automation surfaces
 - [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
   `tools/verification/saa1099/` (SAASound, MAME, MiSTer RTL under Verilator; consensus table in its README), the
   module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 48; not registered in any machine
