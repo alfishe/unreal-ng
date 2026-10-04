@@ -2,6 +2,8 @@
 
 #include "smucnvram.h"
 
+#include "debugger/ttd/ttdserializable.h"
+
 #include <cstring>
 
 //
@@ -180,6 +182,53 @@ void SMUCNvram::ResetSerialLinkState()
 	_writePos = 0;
 	_sda = 1;
 	_scl = 1;
+}
+
+void SMUCNvram::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+	_eepromTracker.Bind(_nvram, sizeof(_nvram));
+	ttd::TTDDeviceRegion r;
+	r.desc.id = ttd::TTDRegionId::SmucEeprom;
+	r.desc.name = "smuc.eeprom";
+	r.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::Smuc);
+	r.desc.memory = _nvram;
+	r.desc.bytes = static_cast<uint32_t>(sizeof(_nvram));
+	r.desc.pieces = _eepromTracker.Pieces();
+	r.tracker = &_eepromTracker;
+	r.compareEachCapture = true;
+	out.push_back(r);
+}
+
+SMUCNvram::LinkState SMUCNvram::GetLinkState() const
+{
+	LinkState s{};
+	s.mode = static_cast<uint8_t>(_mode);
+	s.flags = static_cast<uint8_t>((_stable ? 0x01 : 0) | (_tx ? 0x02 : 0) | (_rx ? 0x04 : 0) | (_ack ? 0x08 : 0));
+	s.bitCount = _bitCount;
+	s.data = _data;
+	s.addressLow = static_cast<uint8_t>(_address & 0xFF);
+	s.addressHigh = static_cast<uint8_t>(_address >> 8);
+	s.writePos = _writePos;
+	s.sda = _sda ? 1 : 0;
+	s.scl = _scl ? 1 : 0;
+	std::memcpy(s.writeBuffer, _writeBuffer, sizeof(s.writeBuffer));
+	return s;
+}
+
+void SMUCNvram::SetLinkState(const LinkState& s)
+{
+	_mode = s.mode <= NV_WRITE ? static_cast<EEPROMMode>(s.mode) : NV_IDLE;
+	_stable = (s.flags & 0x01) != 0;
+	_tx = (s.flags & 0x02) != 0;
+	_rx = (s.flags & 0x04) != 0;
+	_ack = (s.flags & 0x08) != 0;
+	_bitCount = s.bitCount;
+	_data = s.data;
+	_address = static_cast<uint16_t>((s.addressLow | (s.addressHigh << 8)) & 0x7FF);
+	_writePos = s.writePos;   // any value: the write path masks it (& 0x0F)
+	_sda = s.sda ? 1 : 0;
+	_scl = s.scl ? 1 : 0;
+	std::memcpy(_writeBuffer, s.writeBuffer, sizeof(_writeBuffer));
 }
 
 /// endregion </Serial-link EEPROM (SMUC #FFBA)>

@@ -19,11 +19,13 @@
 /// interrupts off, the T-state counter rewound every block so every read falls in the picture.
 ///
 /// Arguments: model index (kModels) x port (0 = #00FF: no device, uncontended high byte, the floating bus;
-/// 1 = #40FF: the same with the high byte in contended memory, ULA waits after IORQ; 2 = #00FE: the ULA port)
+/// 1 = #40FF: the same with the high byte in contended memory, ULA waits after IORQ; 2 = #00FE: the ULA port;
+/// 3 = #FFFD with AY register 14 selected and port A an input: the I/O port read, where the 128K-family boards
+/// add their wiring (Spectrum128AyIoPort) and every other machine reads the chip's pull-ups)
 namespace
 {
 const char* const kModels[] = { "48K", "128k", "PENTAGON" };
-const uint16_t kPorts[] = { 0x00FF, 0x40FF, 0x00FE };
+const uint16_t kPorts[] = { 0x00FF, 0x40FF, 0x00FE, 0xFFFD };
 constexpr int kBlock = 1000;
 }  // namespace
 
@@ -57,6 +59,10 @@ static void BM_PortIn(benchmark::State& state)
     memory->DirectWriteToZ80Memory(a++, 0x00);
     memory->DirectWriteToZ80Memory(a, 0x80);
 
+    // #FFFD reads the selected AY register: select R14 (port A, an input after reset)
+    if (SoundChip_AY8910* ay = context->pSoundManager ? context->pSoundManager->getAYChip(0) : nullptr)
+        ay->setRegister(14);
+
     const uint32_t start = context->config.intstart + 1 + 14300;
     z80->iff1 = 0;
     z80->iff2 = 0;
@@ -78,10 +84,10 @@ static void BM_PortIn(benchmark::State& state)
     state.SetLabel(label);
     manager->RemoveEmulator(emulator->GetUUID());
 }
-BENCHMARK(BM_PortIn)->ArgsProduct({ { 0, 1, 2 }, { 0, 1, 2 } })->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_PortIn)->ArgsProduct({ { 0, 1, 2 }, { 0, 1, 2, 3 } })->Unit(benchmark::kMicrosecond);
 
 /// CPU cost of the I/O write path (Z80::out): the full-decode observer tap, the port decoder, the ULA's I/O waits.
-/// A block of `OUT (C),A` as BM_PortIn. Arguments: model index (kModels) x port (kPorts; #00FE writes the border)
+/// A block of `OUT (C),A` as BM_PortIn. Arguments: model index (kModels) x port (kPorts[0..2]; #00FE writes the border)
 static void BM_PortOut(benchmark::State& state)
 {
     const char* model = kModels[state.range(0)];

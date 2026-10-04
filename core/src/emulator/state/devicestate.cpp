@@ -26,6 +26,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
@@ -57,6 +58,11 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index, double clockHz)
     ret["chip_type"] = "AY-3-8912";
 
     const uint8_t* regs = chip->getRegisters();
+
+    // The register #FFFD last selected: the one IN / OUT on #BFFD and IN on #FFFD reach next
+    const uint8_t latched = chip->getCurrentRegister();
+    ret["latched_register"] = int(latched);
+    ret["latched_register_name"] = latched < 16 ? SoundChip_AY8910::AYRegisterNames[latched] : "";
 
     StateNode registers = StateNode::Object();
     for (int reg = 0; reg < 16; reg++)
@@ -589,6 +595,8 @@ StateNode Ay(EmulatorContext* context)
     // The AY input clock the generators run at now: 1750000 except where the machine switches it (the Profi in
     // hi-res: 1500000, [PROFI] AyClock)
     ret["psg_clock_hz"] = static_cast<int64_t>(sm->GetPsgClock());
+    // The chip the ports talk to now (TurboSound / TSFM select one with #FF / #FE on #FFFD)
+    ret["active_chip"] = ts ? ts->getSelectedChip() : 0;
     if (ayCount == 0)
         ret["description"] = "No AY chips available";
     else if (ayCount == 1)
@@ -611,6 +619,7 @@ StateNode Ay(EmulatorContext* context)
             const uint8_t mixerReg = chip->getRegisters()[7];
             info["active_channels"] = (mixerReg & 0x3F) != 0x3F;
             info["envelope_active"] = chip->getEnvelopeGenerator().out() > 0;
+            info["latched_register"] = int(chip->getCurrentRegister());
         }
         info["sound_played_since_reset"] = false;
         chips.push(info);
@@ -627,7 +636,11 @@ StateNode AyChip(EmulatorContext* context, int chip)
     SoundChip_AY8910* ay = sm->getAYChip(chip);
     if (!ay)
         return Unavailable("AY chip not available");
-    return AyChipNode(ay, chip, double(sm->GetPsgClock()));
+    StateNode node = AyChipNode(ay, chip, double(sm->GetPsgClock()));
+    // Whether the ports talk to this chip now (a single AY always; TurboSound / TSFM: the selected one)
+    ITurboSoundDevice* ts = sm->getTurboSound();
+    node["selected"] = !ts || ts->getSelectedChip() == chip;
+    return node;
 }
 
 StateNode Fm(EmulatorContext* context)
@@ -789,6 +802,10 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
         StateNode& zx = dma["zx"];
         zx["mode"] = ngs.zxMode;
         zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["host_memory_bus"] = ngs.zxHostMemoryBus;
+        if (!ngs.zxHostMemoryBus)
+            zx["note"] = "no host memory cycles on this ZX-bus (the Sprinter's ISA ZX-bus adapter passes I/O only): "
+                         "the module never sees a host access, the overlay is never installed";
         zx["read_latch"] = int(ngs.zxReadLatch);
         zx["pending"] = ngs.zxPending;
         zx["pending_address"] = ngs.zxPendingAddress;
@@ -1860,7 +1877,7 @@ StateNode Ide(EmulatorContext* context)
             u["channel"] = channelIndex ? "secondary" : "primary";
             u["selected"] = ide->Channel(channelIndex).Selected() == unit;
         }
-        u["kind"] = cd ? "cdrom" : "disk";
+        u["kind"] = IdeController::UnitKindName(ide->KindOf(index));  // disk / cdrom / cf (a CompactFlash card)
         u["present"] = device->IsPresent();
 
         if (IBlockDevice* medium = device->Medium())
@@ -2043,6 +2060,9 @@ StateNode Network(EmulatorContext* context)
     set["atm2ioesp"] = st.settings.atm2IoEsp;
     set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
     set["zifi"] = st.settings.zifi;
+    set["modem_phonebook"] = st.settings.modemPhonebook;   // the numbers a Hayes modem peer dials (ModemPhonebook=)
+    set["ethernet_mode"] = st.settings.ethernetMode;       // the frame cards: NAT | BRIDGE (network SN6)
+    set["bridge_adapter"] = st.settings.bridgeAdapter;
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
@@ -2123,17 +2143,22 @@ StateNode Network(EmulatorContext* context)
         node["peer_pending"] = uint64_t(c.pending);
         if (c.peerBaud)
             node["peer_baud"] = c.peerBaud;   // an ESP module's own rate: a mismatch with "baud" garbles both sides
+        if (c.modem.isObject())
+            node["modem"] = c.modem;          // a Hayes modem peer: mode, lines, call, settings, counters, journal
+        if (c.esp.isObject())
+            node["esp"] = c.esp;              // an ESP module peer: firmware, state, Wi-Fi, AT / ZiFi native session
     };
 
     // The machine's own serial port when it is no 16550 (ATM Turbo 2+
-    // keyboard controller): the MCU's UART line and its peer
+    // keyboard controller, ZX Profi v5 8251): the line and its peer
     StateNode& machineSerial = ret["machine_serial"];
     machineSerial["fitted"] = st.machineSerial.fitted;
     if (st.machineSerial.fitted)
     {
         const NetworkManager::Status::Com& m = st.machineSerial;
         machineSerial["flavor"] = m.flavor;
-        machineSerial["kbc_firmware"] = m.firmware;
+        if (!m.firmware.empty())
+            machineSerial["kbc_firmware"] = m.firmware;
         peerFields(machineSerial, m);
         machineSerial["rts"] = m.rts;
         machineSerial["dtr"] = m.dtr;
@@ -2418,6 +2443,108 @@ StateNode Rtc(EmulatorContext* context)
         dump.push(line);
     }
     ret["dump"] = dump;
+    return ret;
+}
+
+StateNode ProfiPeripherals(EmulatorContext* context)
+{
+    if (!context || !context->pPortDecoder)
+        return Unavailable("No emulator");
+    auto* decoder = dynamic_cast<PortDecoder_Profi*>(context->pPortDecoder);
+    if (!decoder)
+        return Unavailable("Not a ZX Profi machine");
+    const ProfiBoard& board = decoder->GetBoard();
+    const EmulatorState& state = context->emulatorState;
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["board"] = board.extendedPorts ? "v5" : "v3";
+
+    // Which port map answers now
+    static const char* const kExtPortsName[] = {"cpm", "sys", "v003"};
+    const uint8_t extPorts = context->config.profi_ext_ports;
+    StateNode map = StateNode::Object();
+    map["ext_ports"] = kExtPortsName[extPorts < 3 ? extPorts : 0];
+    map["dos_latch"] = (state.flags & CF_TRDOS) != 0;
+    map["cpm"] = (state.pDFFD & 0x20) != 0;
+    map["rom14"] = (state.p7FFD & 0x10) != 0;
+    map["hires"] = (state.pDFFD & 0x80) != 0;
+    map["extended_map"] = decoder->IsExtMode();
+    map["long_ports_beside_vg93"] = decoder->IsLongBesideShort();
+    ret["port_map"] = map;
+
+    // The 8255: A / B / C at #1F..#7F, and at #87..#E7 in the extended map
+    const Ppi8255& ppi = decoder->GetPpi();
+    const Ppi8255::State& p = ppi.GetState();
+    StateNode ppiNode = StateNode::Object();
+    ppiNode["control"] = int(p.control);
+    ppiNode["mode"] = 0;
+    auto portNode = [](bool input, uint8_t latch) {
+        StateNode n = StateNode::Object();
+        n["direction"] = input ? "in" : "out";
+        n["output_latch"] = int(latch);
+        return n;
+    };
+    ppiNode["port_a"] = portNode(ppi.IsInputA(), p.outA);
+    ppiNode["port_b"] = portNode(ppi.IsInputB(), p.outB);
+    ppiNode["port_c_upper"] = portNode(ppi.IsInputCUpper(), static_cast<uint8_t>(p.outC >> 4));
+    ppiNode["port_c_lower"] = portNode(ppi.IsInputCLower(), static_cast<uint8_t>(p.outC & 0x0F));
+    ret["ppi8255"] = ppiNode;
+
+    if (!board.extendedPorts)
+        return ret;   // the v3 board has no COM port
+
+    // The 8253: counters 0 / 1 / 2 at #8F / #AF / #CF, control #EF; the clock is 1.5 MHz
+    const Pit8253& pit = decoder->GetPit();
+    StateNode pitNode = StateNode::Object();
+    pitNode["clock_hz"] = int(pit.ClockHz());
+    StateNode counters = StateNode::Array();
+    for (uint8_t i = 0; i < 3; ++i)
+    {
+        const Pit8253::Counter& c = pit.GetState().counter[i];
+        StateNode n = StateNode::Object();
+        n["index"] = int(i);
+        n["mode"] = int(Pit8253::ModeOf(c));
+        n["rw"] = int(Pit8253::RwOf(c));
+        n["bcd"] = Pit8253::BcdOf(c);
+        n["count_register"] = int(c.cr);
+        n["count"] = int(pit.PeekCount(i));
+        n["out"] = c.out != 0;
+        n["gate"] = c.gate != 0;
+        n["counting"] = c.counting != 0;
+        n["output_period_clk"] = int(pit.OutputPeriod(i));
+        counters.push(n);
+    }
+    pitNode["counters"] = counters;
+    ret["pit8253"] = pitNode;
+
+    // The 8251: data #D3, control / status #F3; the board latch is #B3 (D0 = COM interrupt enable)
+    const Usart8251& usart = decoder->GetUsart();
+    const Usart8251::State& u = usart.GetState();
+    const uint8_t status = usart.Status();
+    StateNode usartNode = StateNode::Object();
+    usartNode["mode_word"] = int(u.mode);
+    usartNode["command_word"] = int(u.command);
+    usartNode["async"] = usart.IsAsync();
+    usartNode["baud"] = int(usart.Baud());
+    usartNode["data_bits"] = int(usart.DataBits());
+    usartNode["stop_half_bits"] = int(usart.StopHalfBits());
+    usartNode["rts"] = usart.Rts();
+    usartNode["dtr"] = usart.Dtr();
+    StateNode flags = StateNode::Object();
+    flags["value"] = int(status);
+    flags["tx_ready"] = (status & Usart8251::kTxRdy) != 0;
+    flags["rx_ready"] = (status & Usart8251::kRxRdy) != 0;
+    flags["tx_empty"] = (status & Usart8251::kTxEmpty) != 0;
+    flags["parity_error"] = (status & Usart8251::kPe) != 0;
+    flags["overrun_error"] = (status & Usart8251::kOe) != 0;
+    flags["framing_error"] = (status & Usart8251::kFe) != 0;
+    usartNode["status"] = flags;
+    usartNode["bytes_in"] = uint64_t(u.bytesIn);
+    usartNode["bytes_out"] = uint64_t(u.bytesOut);
+    usartNode["overruns"] = uint64_t(u.overruns);
+    usartNode["com_interrupt_enable"] = (usart.BoardLatch() & 0x01) != 0;
+    ret["usart8251"] = usartNode;
     return ret;
 }
 

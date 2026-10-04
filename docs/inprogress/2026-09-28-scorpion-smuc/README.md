@@ -5,7 +5,7 @@
 | **Date** | 2026-09-28 |
 | **Question** | What does it take to integrate the Scorpion **SMUC** card fully and make the Scorpion ZS-256 (and the Scorpion with ProfROM) work with it? |
 | **Code state analyzed** | branch `ide-atapi` (IDE rollout 1: the ATA disk core, ATAPI, slots, image formats, IDE TTD), on `master` since `f5fc5f05` |
-| **Status** | analysis and plan; nothing implemented. See [TODO.md](TODO.md) |
+| **Status** | analysis and plan. Update 2026-10-04: the clock moved onto the shared `Ds12887` (emulated time, TTD) with PLAN #60(c); the rest is open - the readiness table in [TODO.md](TODO.md) is the current state |
 
 ## Answer in short
 

@@ -14,6 +14,13 @@ machines here
 | Extended ports (CP/M + ROM14), RTC, IDE | none | yes |
 | Frame (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
 
+**`PROFI-PLUS`** (alias `PROFIPLUS`, a machine variant, Machine menu in unreal-qt): a `PROFI` with Djoni's V0.03
+port decoder PROM (`[PROFI] ExtPorts=v003`: the extended ports also from the SYS ROM, and the RTC / long ports in TR-DOS) running Vadim's ROM BIOS Plus
+0.41h1 (`rom/profi/bios-plus-041h1.rom`). It boots PQ-DOS from a floppy or an IDE disk (`ide0.master`) and runs DOS
+Navigator. Its start-up board test passes the FDC, drives, parallel port (8255), serial port (8253 + 8251, see
+[Serial port](#serial-port-com)), RTC and AY. PQ-DOS disks and a 2 GB HDD image: see
+`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`.
+
 `[PROFI] SyncProm=` picks another sync PROM: `0a1d`, `samx6`, `fb0579b6`
 (71680 T, INT 48 T before paper) or `v503`.
 
@@ -79,7 +86,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | Hi-res (`#DFFD` bit 7) timing: the CPU on its hi-res clock (v3 3 MHz, v5 ZQ3 / 4 = 5 MHz; turbo doubles), frame and INT from the sync PROM's upper half (v3: 320 lines, 48.83 Hz), hi-res waits (v5 model), v3 hi-res floating bus | implemented — see [Hi-res](#hi-res-512x240) |
 | The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads | not implemented |
 | BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards |
-| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M (`cpm/v3/klug-cpm-2.3.td0`) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it. SP-DOS (`cpm/sp-dos/unicopy-sp-dos.td0`, MicroDOS with the BIOS by V. Tereschenko) boots on both boards from the same entries to its hi-res shell |
+| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/kondor-system-copyk.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: the Kramis "Profi-DOS" entry. Klug CP/M 2.3 needs the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it. SP-DOS (`cpm/sp-dos/unicopy-sp-dos.td0`, MicroDOS with the BIOS by V. Tereschenko) boots on both boards from the same entries to its hi-res shell |
 
 ### Hi-res (512x240)
 
@@ -180,7 +187,7 @@ curl -s -X POST "$BASE/emulator/$ID/switches" -H 'Content-Type: application/json
 
 CLI: `switch turbo on`; Lua / Python: `set_switch("turbo", true)`, `get_switch("turbo")`; Qt: Machine > TURBO
 Switch; `[PROFI] Turbo=1` turns it on at power-on. The v5 CP/M switch works the same way (`"cpm"`, Machine > CP/M
-Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
+Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. `[PROFI] ExtPorts=sys` decodes the extended ports (VG93 `#83..`, RTC, IDE) from the SYS ROM too, as Karabas Pro: ROM BIOS Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk (default `cpm`; `docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md`). `ExtPorts=v003` is Djoni's V0.03 PROM of `PROFI-PLUS`: `sys` with CP/M off, and with TR-DOS on and ROM14 = 1 the RTC (`#9F #BF #DF`), 8255, IDE and VG93 `#83 #A3 #C3` answer beside the VG93 at `#1F..#7F` (`#E3 #E7 #EB #EF #F3 #F7 #FB #FF` stay the system register). In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
 its DRAM slot), code in ROM 2x.
 
 ## WebAPI
@@ -220,6 +227,63 @@ boots from the disk; the geometry comes from the disk's ProfiHiDD header
 TTD on Profi follows the standard recipes —
 [recording](../analysis/ttd-recording.md),
 [reverse debugging](../analysis/ttd-reverse-debugging.md).
+
+## Serial port (COM)
+
+The v5 board (`PROFI`, `PROFI-PLUS`) has an RS-232 port: a KR580VV51A (8251 USART) whose clock is counter 0 of a
+KR580VI53 (8253 timer) running at 1.5 MHz. It answers only in the extended port map (CP/M + ROM14; with
+`[PROFI] ExtPorts=sys`, or `v003` as on `PROFI-PLUS`, also in the SYS ROM). The v3 board has none.
+
+| Port (low byte) | Device |
+|:--|:--|
+| `#8F` / `#AF` / `#CF` | 8253 counters 0 / 1 / 2 (counter 0 = the 8251's TxC / RxC) |
+| `#EF` | 8253 control word |
+| `#D3` | 8251 data |
+| `#F3` | 8251 mode / command words (write), status (read) |
+| `#B3` (and `#93`) | COM control: write D0 = interrupt enable; read D0 = RI, D7 = DCD |
+
+Baud rate = 1 500 000 / (counter 0's count x the 8251's baud factor): ROM BIOS Plus programs mode 3, count 156 and
+factor x1 for 9600 baud. Only the asynchronous mode moves bytes (sync mode words are accepted); the COM interrupt
+(`#B3` D0) is kept as a latch but raises no INT.
+
+The peer on the other end is picked like every machine's own serial port, with `ComPort=` (`[NETWORK] ComPort=` in
+the INI): `LOOPBACK`, `PLUG` (a test plug: DTR to DSR / DCD, RTS to CTS / RI, like the Profi's TESTCOM.COM plug),
+`TCP:<host>:<port>`, `SERIAL:<device>[,baud]`, `MODEM`, `ESPNET`, `AT`; `NONE` (the default) = nothing connected
+(CTS / DSR / DCD inactive: the 8251 does not send).
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"com_port": "loopback"}}}
+```
+
+CLI `network set com_port=plug`, Lua `network_configure{com_port="tcp:127.0.0.1:2323"}`, Python
+`emu.network_configure(com_port="modem")`; Qt: Tools > Network. `inspect_state network` shows the port as
+`machine.serial_port = "profi-8251"` and `machine_serial` (flavor `usart8251`, the peer, `baud`, `frame_bits`,
+`rts`, `dtr`, `bytes_in`, `bytes_out`, `lost` = overruns). The 8253, the 8251 and the peer are recorded in TTD.
+
+### Board chip report (`profi`)
+
+One report for the whole board. Checked live through the WebAPI and the CLI on `PROFI-PLUS` (BIOS Plus programs the 8253
+counters and the 8251 at start-up), on `PROFI3` (no COM port: `pit8253` and `usart8251` are absent) and on `48K` (not a
+Profi: 404); the MCP, Lua and Python calls are the same report and are built, not yet driven live:
+
+| Surface | Call |
+|:--|:--|
+| CLI | `state profi` |
+| WebAPI | `GET /api/v1/emulator/{id}/state/profi` (404 with the reason on a machine that is not a Profi) |
+| MCP | `inspect_state` with `aspects: ["profi"]` |
+| Lua / Python | `profi_state()` / `emu.profi_state()` |
+
+```json
+{"tool": "inspect_state", "arguments": {"aspects": ["profi"]}}
+```
+
+The answer has `board` (`v5` / `v3`), `port_map` (`ext_ports` = `cpm` / `sys` / `v003`, `dos_latch`, `cpm`, `rom14`,
+`hires`, `extended_map` = the long port map answers now, `long_ports_beside_vg93` = V0.03 only: TR-DOS with ROM14 = 1),
+`ppi8255` (control word and the direction / output latch of A, B, C upper, C lower), `pit8253` (`counters[]`: `mode`,
+`count_register`, `count`, `out`, `gate`, `counting`, `output_period_clk`) and `usart8251` (`mode_word`, `command_word`,
+`baud`, `data_bits`, `status` flags, `bytes_in`, `bytes_out`, `overruns`, `com_interrupt_enable` = the `#B3` latch D0).
+It only reads: nothing is cleared or advanced, so it is safe in the middle of a TTD replay.
 
 ## Pitfalls
 

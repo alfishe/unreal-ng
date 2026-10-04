@@ -50,6 +50,7 @@ protected:
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);

@@ -11,6 +11,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/hayesmodempeer.h"
 
 ComPort::ComPort(EmulatorContext* context, const Uart16550::Params& params, std::unique_ptr<ISerialPeer> peer,
                  RegisterOf registerOf)
@@ -95,6 +96,8 @@ INetGuest* ComPort::NetGuestOf(ISerialPeer* peer)
 {
     if (auto* esp = dynamic_cast<EspModule*>(peer))
         return &esp->Stack();
+    if (auto* modem = dynamic_cast<HayesModemPeer*>(peer))
+        return modem;   // its link's sockets and its listener are the modem's
     return dynamic_cast<StreamPeer*>(peer);
 }
 
@@ -123,7 +126,11 @@ SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
             for (int n = 0; n < 2; ++n)
             {
                 if (const PcSerialCard* card = manager->SerialCard("isa" + std::to_string(n + 1)))
-                    guests.slotUart[n] = card->Com().NetGuest();
+                {
+                    guests.slotUart[n] = card->Com(0).NetGuest();
+                    if (card->Channels() > 1)
+                        guests.slotUartB[n] = card->Com(1).NetGuest();
+                }
             }
         }
     }
@@ -146,6 +153,57 @@ bool ComPort::LoadState(const netstate::Com& in, const ByteSource& bytes)
     return LoadPeer(_peer.get(), in, bytes);
 }
 
+bool ComPort::SaveStream(const StreamPeer& stream, netstate::Com& out)
+{
+    bool complete = true;
+    stream.SaveLink(out.link);
+    // Received bytes as runs of one journal record
+    for (const StreamPeer::RxByte& b : stream.Received())
+    {
+        netstate::Reference* last = out.runCount ? &out.runs[out.runCount - 1] : nullptr;
+        if (last && last->source == b.source && last->sourceOffset + last->length == b.offset && b.source != 0)
+        {
+            ++last->length;
+            continue;
+        }
+        if (out.runCount >= static_cast<uint32_t>(netstate::kMaxComRuns) || b.source == 0)
+        {
+            complete = false;   // too fragmented, or bytes that were not journaled
+            break;
+        }
+        out.runs[out.runCount++] = {b.source, b.offset, 1};
+    }
+    const auto& tx = stream.Unsent();
+    const size_t n = tx.size() < static_cast<size_t>(netstate::kMaxComBytes) ? tx.size() : netstate::kMaxComBytes;
+    std::memcpy(out.unsent, tx.data(), n);
+    out.unsentLength = static_cast<uint32_t>(n);
+    return complete && n == tx.size();
+}
+
+bool ComPort::LoadStream(StreamPeer& stream, const netstate::Com& in, const ByteSource& bytes)
+{
+    bool complete = true;
+    std::deque<StreamPeer::RxByte> rx;
+    std::vector<uint8_t> chunk;
+    for (uint32_t r = 0; r < in.runCount && r < static_cast<uint32_t>(netstate::kMaxComRuns); ++r)
+    {
+        const netstate::Reference& ref = in.runs[r];
+        if (!bytes || !bytes(ref.source, ref.sourceOffset, ref.length, chunk) || chunk.size() != ref.length)
+        {
+            complete = false;
+            continue;
+        }
+        for (uint32_t i = 0; i < ref.length; ++i)
+            rx.push_back({chunk[i], ref.source, ref.sourceOffset + i});
+    }
+    stream.SetReceived(std::move(rx));
+    stream.SetUnsent(in.unsent, in.unsentLength < static_cast<uint32_t>(netstate::kMaxComBytes)
+                                    ? in.unsentLength
+                                    : static_cast<uint32_t>(netstate::kMaxComBytes));
+    stream.LoadLink(in.link);
+    return complete;
+}
+
 bool ComPort::SavePeer(const ISerialPeer* peer, netstate::Com& out)
 {
     bool complete = true;
@@ -161,34 +219,20 @@ bool ComPort::SavePeer(const ISerialPeer* peer, netstate::Com& out)
     }
     else if (const auto* esp = dynamic_cast<const EspModule*>(peer))
     {
-        out.peerKind = std::strcmp(esp->Kind(), "espnet") == 0 ? 4 : 5;
+        // 4 ESPNET, 5 AT, 7 the ZiFi native firmware (netstate::Com::peerKind)
+        out.peerKind = std::strcmp(esp->Kind(), "espnet") == 0 ? 4 : std::strcmp(esp->Kind(), "zifi-native") == 0 ? 7 : 5;
         complete = esp->SaveState(out.esp) && complete;
     }
     else if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
     {
         out.peerKind = std::strcmp(stream->Kind(), "tcp") == 0 ? 2 : 3;
-        stream->SaveLink(out.link);
-        // Received bytes as runs of one journal record
-        for (const StreamPeer::RxByte& b : stream->Received())
-        {
-            netstate::Reference* last = out.runCount ? &out.runs[out.runCount - 1] : nullptr;
-            if (last && last->source == b.source && last->sourceOffset + last->length == b.offset && b.source != 0)
-            {
-                ++last->length;
-                continue;
-            }
-            if (out.runCount >= static_cast<uint32_t>(netstate::kMaxComRuns) || b.source == 0)
-            {
-                complete = false;   // too fragmented, or bytes that were not journaled
-                break;
-            }
-            out.runs[out.runCount++] = {b.source, b.offset, 1};
-        }
-        const auto& tx = stream->Unsent();
-        const size_t n = tx.size() < static_cast<size_t>(netstate::kMaxComBytes) ? tx.size() : netstate::kMaxComBytes;
-        std::memcpy(out.unsent, tx.data(), n);
-        out.unsentLength = static_cast<uint32_t>(n);
-        complete = complete && n == tx.size();
+        complete = SaveStream(*stream, out) && complete;
+    }
+    else if (const auto* modem = dynamic_cast<const HayesModemPeer*>(peer))
+    {
+        out.peerKind = 6;
+        modem->SaveState(out.modem);
+        complete = SaveStream(modem->Link(), out) && complete;
     }
     return complete;
 }
@@ -204,29 +248,20 @@ bool ComPort::LoadPeer(ISerialPeer* peer, const netstate::Com& in, const ByteSou
     }
     else if (auto* esp = dynamic_cast<EspModule*>(peer))
     {
-        if (in.esp.present)
+        if (in.esp.present && (in.peerKind == 4 || in.peerKind == 5 || in.peerKind == 7))
             complete = esp->LoadState(in.esp, bytes) && complete;
     }
     else if (auto* stream = dynamic_cast<StreamPeer*>(peer))
     {
-        std::deque<StreamPeer::RxByte> rx;
-        std::vector<uint8_t> chunk;
-        for (uint32_t r = 0; r < in.runCount && r < static_cast<uint32_t>(netstate::kMaxComRuns); ++r)
+        complete = LoadStream(*stream, in, bytes) && complete;
+    }
+    else if (auto* modem = dynamic_cast<HayesModemPeer*>(peer))
+    {
+        if (in.peerKind == 6)
         {
-            const netstate::Reference& ref = in.runs[r];
-            if (!bytes || !bytes(ref.source, ref.sourceOffset, ref.length, chunk) || chunk.size() != ref.length)
-            {
-                complete = false;
-                continue;
-            }
-            for (uint32_t i = 0; i < ref.length; ++i)
-                rx.push_back({chunk[i], ref.source, ref.sourceOffset + i});
+            modem->LoadState(in.modem);   // first: it gives the link its dial target
+            complete = LoadStream(modem->Link(), in, bytes) && complete;
         }
-        stream->SetReceived(std::move(rx));
-        stream->SetUnsent(in.unsent, in.unsentLength < static_cast<uint32_t>(netstate::kMaxComBytes)
-                                          ? in.unsentLength
-                                          : static_cast<uint32_t>(netstate::kMaxComBytes));
-        stream->LoadLink(in.link);
     }
     return complete;
 }

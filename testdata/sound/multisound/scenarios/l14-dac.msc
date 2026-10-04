@@ -1,0 +1,25 @@
+# L14, L15: the four DAC channels shared by the GS and the SounDrive
+out 000F 00     # sample conversion: #00 -> #7F (sign 0, magnitude 127)
+out 000F 7F     # -> #00
+out 000F 80     # -> #80
+out 000F FF     # -> #FF
+out 001F 40
+out 004F C0
+out 005F 01
+gout 0006 20    # GS volume channel 0 (6 bits)
+gout 0007 FF    # -> #3F
+gout 0008 00
+gmr 6000 40     # GS sample, channel = A9-A8
+gmr 6100 41
+gmr 6200 BF
+gmr 7F00 C2     # #7F00: A9-A8 = 3
+gmr 5FFF 11     # below the window: no sample
+gmr 8000 12     # above the window: no sample
+gmw 6000 13     # GS writes do not set samples
+out 000F 33     # the SounDrive takes channel 0 back: volume 63
+# overlapping strobes: the strobe whose last active 32 MHz edge is later wins
+par out 000F 11 | gmr 6000 22 @0     # GS read ends first: SounDrive sample wins
+par out 000F 11 | gmr 6000 22 @60    # GS read ends last: GS sample wins
+par out 000F 11 | gout 0006 05 @10   # GS volume inside the SounDrive strobe: volume 63
+par out 000F 11 | gout 0006 05 @56   # GS volume ends last: volume 5
+par out 001F 10 | gmr 6100 20 @40    # different channels do not interact

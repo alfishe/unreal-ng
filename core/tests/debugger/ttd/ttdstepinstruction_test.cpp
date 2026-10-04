@@ -44,6 +44,7 @@ protected:
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -145,6 +146,7 @@ TEST_F(TTD_StepInstruction_Test, StepForward_AtSessionEnd_ReturnsFalse)
 TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Populate the journal with known records
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);
@@ -189,6 +191,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     q.addrFrom = 0x1000;
     q.addrTo   = 0x1000;
     q.access   = ttd::TTDAccessType::Write;
+    q.beforeGlobalT = ttd2->GlobalT(ttd2->SessionEndPosition());   // the loaded machine sits at the start
     auto result = ttd2->FindLastAccess(q);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->value, 0x42u);

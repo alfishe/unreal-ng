@@ -355,7 +355,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
             // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
             const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
-            _context->ttdProbe.RecordHit(tp, pc, result, readPhysPage,
+            _context->ttdProbe.RecordHit(tp, addr, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
         }
     }
@@ -453,7 +453,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
                 // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
                 const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
                 const ttd::TTDTimePoint t{st.frame_counter, tin};
-                _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
+                _context->ttdProbe.RecordHit(t, addr, pc, value, physPage, ttd::TTDAccessType::Write);
             }
         }
     }
@@ -1468,7 +1468,20 @@ MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
         case BANK_RAM:
             result.page = GetRAMPageFromAddress(_bank_read[bank]);
             break;
+        case BANK_CACHE:
+        {
+            // The Sprinter's fast RAM: page 0..MAX_CACHE_PAGES-1 counted from the cache base (a page-bound
+            // breakpoint keys on it; left unset, it matched or missed at random)
+            const ptrdiff_t offset = _bank_read[bank] - _cacheBase;
+            const ptrdiff_t pageSize = static_cast<ptrdiff_t>(PAGE_SIZE);
+            if (_bank_read[bank] && offset >= 0 && offset < static_cast<ptrdiff_t>(MAX_CACHE_PAGES) * pageSize)
+                result.page = static_cast<uint8_t>(offset / pageSize);
+            else
+                result.mode = BANK_INVALID;
+            break;
+        }
         default:
+            result.mode = BANK_INVALID;  // page stays 0xFF: matches no page-bound breakpoint
             break;
     }
 

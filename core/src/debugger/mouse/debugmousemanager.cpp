@@ -45,7 +45,8 @@ bool DebugMouseManager::IsReplaying() const
 MouseInjectResult DebugMouseManager::Guard() const
 {
     MouseInjectResult result;
-    if (!Device())
+    Mouse* mouse = Device();
+    if (!mouse)
     {
         result.status = MouseInjectStatus::NoDevice;
         result.message = "Mouse device not available";
@@ -55,6 +56,14 @@ MouseInjectResult DebugMouseManager::Guard() const
         result.status = MouseInjectStatus::ReplayActive;
         result.message = "TTD replay in progress (recorded input drives the machine); live mouse input refused";
     }
+    // No device the machine's ports read is fitted: the input could reach nothing (design 2026-10-03 §5).
+    // A bare context (unit tests without a manager) asks the Kempston interface
+    else if (_context && _context->pMouseManager ? !_context->pMouseManager->HasMouseDevice() : !mouse->IsPresent())
+    {
+        result.status = MouseInjectStatus::NoMouseFitted;
+        result.message = "no mouse fitted on this machine: a program cannot read mouse input "
+                         "([INPUT] Mouse=NONE or feature kempstonmouse off; the machine has no mouse of its own)";
+    }
     return result;
 }
 
@@ -62,11 +71,28 @@ MouseInjectResult DebugMouseManager::Success(const std::string& message) const
 {
     MouseInjectResult result;
     result.message = message;
-    // No warning while another mouse device of the machine reads the input (the Sprinter's board
-    // mouse with [INPUT] Mouse=NONE): only a machine with no fitted mouse device at all ignores it
-    const bool anyDevice = _context && _context->pMouseManager && _context->pMouseManager->HasMouseDevice();
-    if (Mouse* mouse = Device(); mouse && !mouse->IsPresent() && !anyDevice)
-        result.warning = "mouse not present: guest reads floating bus on the mouse ports";
+    return result;
+}
+
+MouseInjectResult DebugMouseManager::CheckDevice(const std::string& deviceId) const
+{
+    MouseInjectResult result;
+    if (deviceId.empty())
+        return result;
+    std::vector<MouseDeviceStatus> devices;
+    if (_context && _context->pMouseManager)
+        devices = _context->pMouseManager->DescribeDevices();
+    else if (Mouse* mouse = Device())
+        devices.push_back(mouse->DescribeMouse());
+    std::string known;
+    for (const MouseDeviceStatus& device : devices)
+    {
+        if (device.id == deviceId)
+            return result;
+        known += (known.empty() ? "" : ", ") + device.id;
+    }
+    result.status = MouseInjectStatus::InvalidArgument;
+    result.message = "Unknown mouse device '" + deviceId + "'. This machine has: " + (known.empty() ? "none" : known);
     return result;
 }
 
@@ -165,9 +191,64 @@ MouseInjectResult DebugMouseManager::Move(int dx, int dy)
         return error;
     }
 
-    ApplyMove(*Device(), dx, dy);
-    return Success("Mouse moved: dx=" + std::string(dx >= 0 ? "+" : "") + std::to_string(dx) +
-                   " dy=" + std::string(dy >= 0 ? "+" : "") + std::to_string(dy));
+    MouseInjectResult result = Success("Mouse moved: dx=" + std::string(dx >= 0 ? "+" : "") + std::to_string(dx) +
+                                       " dy=" + std::string(dy >= 0 ? "+" : "") + std::to_string(dy));
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!EnqueueIfBusyLocked({QueuedOp::Kind::Motion, dx, dy, 0, 0}, result))
+        ApplyMove(*Device(), dx, dy);
+    return result;
+}
+
+MouseInjectResult DebugMouseManager::Glide(int dx, int dy)
+{
+    if (MouseInjectResult guard = Guard(); !guard.ok())
+        return guard;
+
+    MouseInjectResult error;
+    error.status = MouseInjectStatus::InvalidArgument;
+    if (dx < -MAX_GLIDE_PER_CALL || dx > MAX_GLIDE_PER_CALL)
+    {
+        error.message = RangeError("dx", dx, -MAX_GLIDE_PER_CALL, MAX_GLIDE_PER_CALL);
+        return error;
+    }
+    if (dy < -MAX_GLIDE_PER_CALL || dy > MAX_GLIDE_PER_CALL)
+    {
+        error.message = RangeError("dy", dy, -MAX_GLIDE_PER_CALL, MAX_GLIDE_PER_CALL);
+        return error;
+    }
+    if (dx == 0 && dy == 0)
+    {
+        error.message = "glide requires a non-zero dx or dy";
+        return error;
+    }
+
+    MouseInjectResult result = Success("Mouse glide: dx=" + std::string(dx >= 0 ? "+" : "") + std::to_string(dx) +
+                                       " dy=" + std::string(dy >= 0 ? "+" : "") + std::to_string(dy));
+    std::lock_guard<std::mutex> lock(_mutex);
+    QueuedOp op{QueuedOp::Kind::Motion, dx, dy, 0, 0};
+    if (EnqueueIfBusyLocked(op, result))
+        return result;
+    // Idle: the first step now, the rest at frame ends
+    if (!ApplyMotionStepLocked(*Device(), op))
+    {
+        _queue.push_back(op);
+        _waitFrames = 0;
+        result.queued = true;
+    }
+    return result;
+}
+
+bool DebugMouseManager::IsBusy() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return !_queue.empty();
+}
+
+void DebugMouseManager::CancelQueue()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _queue.clear();
+    _waitFrames = 0;
 }
 
 MouseInjectResult DebugMouseManager::Wheel(int steps)
@@ -184,10 +265,21 @@ MouseInjectResult DebugMouseManager::Wheel(int steps)
         return error;
     }
 
-    ApplyWheel(*Device(), steps);
     MouseInjectResult result = Success("Mouse wheel: " + std::string(steps > 0 ? "+" : "") + std::to_string(steps));
-    if (Mouse* mouse = Device(); result.warning.empty() && mouse && !mouse->IsWheelEnabled())
-        result.warning = "no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter";
+    bool wheel = false;
+    if (_context && _context->pMouseManager)
+    {
+        for (const MouseDeviceStatus& device : _context->pMouseManager->DescribeDevices())
+            wheel |= device.fitted && device.wheel;
+    }
+    else if (Mouse* mouse = Device())
+        wheel = mouse->IsWheelEnabled();
+    if (!wheel)
+        result.warning = "no wheel fitted ([INPUT] Wheel=NONE, or a mouse without one): the guest does not see the wheel";
+
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!EnqueueIfBusyLocked({QueuedOp::Kind::Wheel, steps, 0, 0, 0}, result))
+        ApplyWheel(*Device(), steps);
     return result;
 }
 
@@ -196,14 +288,17 @@ MouseInjectResult DebugMouseManager::PressButton(MouseButton button)
     if (MouseInjectResult guard = Guard(); !guard.ok())
         return guard;
 
+    MouseInjectResult result = Success("Mouse button pressed: " + GetButtonName(button));
     Mouse& mouse = *Device();
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (EnqueueIfBusyLocked({QueuedOp::Kind::Press, 0, 0, static_cast<uint8_t>(button), 0}, result))
+            return result;
         if (_pendingButton == button)
             CancelPendingLocked();  // the explicit call wins over a pending click release
         SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() | static_cast<uint8_t>(button)));
     }
-    return Success("Mouse button pressed: " + GetButtonName(button));
+    return result;
 }
 
 MouseInjectResult DebugMouseManager::ReleaseButton(MouseButton button)
@@ -211,14 +306,17 @@ MouseInjectResult DebugMouseManager::ReleaseButton(MouseButton button)
     if (MouseInjectResult guard = Guard(); !guard.ok())
         return guard;
 
+    MouseInjectResult result = Success("Mouse button released: " + GetButtonName(button));
     Mouse& mouse = *Device();
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (EnqueueIfBusyLocked({QueuedOp::Kind::Release, 0, 0, static_cast<uint8_t>(button), 0}, result))
+            return result;
         if (_pendingButton == button)
             CancelPendingLocked();
         SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(button)));
     }
-    return Success("Mouse button released: " + GetButtonName(button));
+    return result;
 }
 
 MouseInjectResult DebugMouseManager::SetPressedButtons(uint8_t pressedBits)
@@ -234,24 +332,29 @@ MouseInjectResult DebugMouseManager::SetPressedButtons(uint8_t pressedBits)
         return error;
     }
 
-    Mouse& mouse = *Device();
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        CancelPendingLocked();
-        SubmitAutomationButtons(mouse, pressedBits);
-    }
-
     std::string names;
     for (MouseButton button : {MouseButton::Left, MouseButton::Right, MouseButton::Middle})
     {
         if (pressedBits & static_cast<uint8_t>(button))
             names += (names.empty() ? "" : ",") + GetButtonName(button);
     }
-    return Success("Mouse buttons set: " + (names.empty() ? std::string("none") : names));
+    MouseInjectResult result = Success("Mouse buttons set: " + (names.empty() ? std::string("none") : names));
+
+    Mouse& mouse = *Device();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (EnqueueIfBusyLocked({QueuedOp::Kind::SetButtons, 0, 0, pressedBits, 0}, result))
+            return result;
+        CancelPendingLocked();
+        SubmitAutomationButtons(mouse, pressedBits);
+    }
+    return result;
 }
 
 MouseInjectResult DebugMouseManager::ReleaseAllButtons()
 {
+    // Everything stops: the queued input is dropped, then the buttons are released now
+    CancelQueue();
     return SetPressedButtons(0);
 }
 
@@ -300,9 +403,12 @@ MouseInjectResult DebugMouseManager::Click(MouseButton button, uint32_t holdFram
         return error;
     }
 
+    MouseInjectResult result = Success("Mouse click: " + GetButtonName(button) + " for " + std::to_string(holdFrames) + " frames");
     Mouse& mouse = *Device();
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (EnqueueIfBusyLocked({QueuedOp::Kind::Click, 0, 0, static_cast<uint8_t>(button), holdFrames}, result))
+            return result;
 
         // A new click replaces a pending one: release the old button first
         if (_pendingButton.has_value())
@@ -315,7 +421,7 @@ MouseInjectResult DebugMouseManager::Click(MouseButton button, uint32_t holdFram
         _pendingButton = button;
         _pendingFrames = static_cast<uint16_t>(holdFrames);
     }
-    return Success("Mouse click: " + GetButtonName(button) + " for " + std::to_string(holdFrames) + " frames");
+    return result;
 }
 
 bool DebugMouseManager::IsClickPending() const
@@ -339,20 +445,121 @@ void DebugMouseManager::OnFrame()
 {
     Mouse* mouse = Device();
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_pendingButton.has_value())
-        return;
-
-    if (_pendingFrames > 0)
-        _pendingFrames--;
-
-    if (_pendingFrames == 0)
+    if (_pendingButton.has_value())
     {
-        // Release through the journalled path (keyboard timed ops skipped the journal)
-        if (mouse && !IsReplaying())
-            SubmitAutomationButtons(*mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(*_pendingButton)));
-        CancelPendingLocked();
+        if (_pendingFrames > 0)
+            _pendingFrames--;
+
+        if (_pendingFrames == 0)
+        {
+            // Release through the journalled path (keyboard timed ops skipped the journal)
+            if (mouse && !IsReplaying())
+                SubmitAutomationButtons(*mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(*_pendingButton)));
+            CancelPendingLocked();
+        }
+        return;  // the queue waits for the click to end (the release is this frame's input)
+    }
+    ProcessQueueLocked(mouse);
+}
+
+/// region <Queue behind a glide>
+
+bool DebugMouseManager::EnqueueIfBusyLocked(const QueuedOp& op, MouseInjectResult& result)
+{
+    if (_queue.empty())
+        return false;
+    _queue.push_back(op);
+    result.queued = true;
+    result.message += " (queued behind a glide)";
+    return true;
+}
+
+int DebugMouseManager::StepLimit() const
+{
+    return _context && _context->pMouseManager ? _context->pMouseManager->MotionStepLimit() : MAX_MOVE_PER_CALL;
+}
+
+bool DebugMouseManager::HasUnreadMotion() const
+{
+    if (_context && _context->pMouseManager)
+        return _context->pMouseManager->HasUnreadMotion();
+    const Mouse* mouse = Device();
+    return mouse && mouse->IsMouseInUse() && mouse->HasUnreadMotion();
+}
+
+bool DebugMouseManager::ApplyMotionStepLocked(Mouse& mouse, QueuedOp& op)
+{
+    const int limit = StepLimit();
+    const int stepX = std::clamp(op.dx, -limit, limit);
+    const int stepY = std::clamp(op.dy, -limit, limit);
+    ApplyMove(mouse, stepX, stepY);
+    op.dx -= stepX;
+    op.dy -= stepY;
+    return op.dx == 0 && op.dy == 0;
+}
+
+void DebugMouseManager::ApplyQueuedLocked(Mouse& mouse, QueuedOp& op)
+{
+    const MouseButton button = static_cast<MouseButton>(op.bits);
+    switch (op.kind)
+    {
+        case QueuedOp::Kind::Motion:
+            break;  // stepped by the caller
+        case QueuedOp::Kind::Press:
+            SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() | op.bits));
+            break;
+        case QueuedOp::Kind::Release:
+            SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() & ~op.bits));
+            break;
+        case QueuedOp::Kind::SetButtons:
+            SubmitAutomationButtons(mouse, op.bits);
+            break;
+        case QueuedOp::Kind::Wheel:
+            ApplyWheel(mouse, op.dx);
+            break;
+        case QueuedOp::Kind::Click:
+            SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() | op.bits));
+            _pendingButton = button;
+            _pendingFrames = static_cast<uint16_t>(op.frames);
+            break;
     }
 }
+
+void DebugMouseManager::ProcessQueueLocked(Mouse* mouse)
+{
+    if (_queue.empty())
+        return;
+    // Recorded input drives the machine (or the device went away): queued live input is void
+    if (!mouse || IsReplaying())
+    {
+        _queue.clear();
+        _waitFrames = 0;
+        return;
+    }
+
+    // Whatever comes next waits until the program has taken the last motion, so neither a counter
+    // jumps by more than one step between reads nor a click lands before the pointer arrived
+    if (HasUnreadMotion() && _waitFrames < GLIDE_WAIT_FRAMES)
+    {
+        _waitFrames++;
+        return;
+    }
+    _waitFrames = 0;
+
+    // One item per frame: a press and its release never meet in the same frame
+    QueuedOp& op = _queue.front();
+    if (op.kind == QueuedOp::Kind::Motion)
+    {
+        if (ApplyMotionStepLocked(*mouse, op))
+            _queue.pop_front();
+        return;
+    }
+    QueuedOp item = op;
+    _queue.pop_front();
+    ApplyQueuedLocked(*mouse, item);
+}
+
+/// endregion </Queue behind a glide>
 
 /// endregion </Automation - timed>
 
@@ -388,12 +595,28 @@ void DebugMouseManager::ApplyHostWheel(int steps)
 
 /// endregion </Host input>
 
-MouseStateSnapshot DebugMouseManager::GetState() const
+MouseStateSnapshot DebugMouseManager::GetState(const std::string& deviceId) const
 {
     MouseStateSnapshot state;
     Mouse* mouse = Device();
     if (!mouse)
         return state;
+
+    // The machine's mouse devices (the manager); a bare context has the Kempston interface alone
+    if (_context && _context->pMouseManager)
+    {
+        MouseManager& manager = *_context->pMouseManager;
+        state.devices = manager.DescribeDevices();
+        state.mouseFitted = manager.HasMouseDevice();
+        state.device = deviceId.empty() ? manager.DescribeDefaultDevice() : manager.DescribeDevice(deviceId);
+    }
+    else
+    {
+        state.devices.push_back(mouse->DescribeMouse());
+        state.mouseFitted = mouse->IsPresent();
+        if (deviceId.empty() ? state.mouseFitted : deviceId == state.devices.front().id)
+            state.device = state.devices.front();
+    }
 
     state.available = true;
     state.present = mouse->IsPresent();
@@ -413,6 +636,14 @@ MouseStateSnapshot DebugMouseManager::GetState() const
     std::lock_guard<std::mutex> lock(_mutex);
     state.pendingClickButton = _pendingButton;
     state.pendingClickFramesLeft = _pendingButton.has_value() ? _pendingFrames : 0;
+    state.queuedOps = _queue.size();
+    for (const QueuedOp& op : _queue)
+    {
+        if (op.kind != QueuedOp::Kind::Motion)
+            continue;
+        state.glideRemainingDx += op.dx;
+        state.glideRemainingDy += op.dy;
+    }
     return state;
 }
 

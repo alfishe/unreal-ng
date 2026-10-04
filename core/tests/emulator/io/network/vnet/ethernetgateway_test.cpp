@@ -735,6 +735,112 @@ TEST_F(EthernetGateway_Test, Capture_PcapHasEveryFrameBothWays)
     EXPECT_EQ(pcap[20], 1) << "LINKTYPE_ETHERNET";
 }
 
+// --- Bridge mode (network SN6) -------------------------------------------------------------------------------------
+
+/// BRIDGE: the router is gone - a card's broadcast (a DHCP DISCOVER) leaves for the host LAN unanswered, a LAN frame
+/// for the card reaches it, one for another address does not, a LAN broadcast does; the capture marks both ways
+TEST_F(EthernetGateway_Test, Bridge_FramesGoToTheLanAndComeBackForTheCard)
+{
+    std::vector<std::vector<uint8_t>> lan;
+    _gateway->SetMode(EthernetGateway::Mode::Bridge);
+    _gateway->SetLanOutput([&lan](const uint8_t* f, size_t n) { lan.emplace_back(f, f + n); });
+    EXPECT_EQ(_gateway->GetMode(), EthernetGateway::Mode::Bridge);
+
+    const std::vector<uint8_t> discover = IpFrame(_card.mac, kBroadcast, 0, NetIp(255, 255, 255, 255), 17,
+                                                  Udp(0, 68, NetIp(255, 255, 255, 255), 67, std::vector<uint8_t>(240, 0)));
+    Send(discover);
+    Boundary();
+    ASSERT_EQ(lan.size(), 1u);
+    EXPECT_EQ(lan[0], discover) << "the frame leaves as it is";
+    EXPECT_TRUE(_card.frames.empty()) << "no router: nobody in the emulator answers DHCP";
+    EXPECT_EQ(_gateway->GetCounters().dhcp, 0u);
+
+    // A unicast to the router's old address goes out too (the LAN may have a station with that MAC)
+    Send(IpFrame(_card.mac, EthernetGateway::kRouterMac, _ip, kRouter, 1, {8, 0, 0, 0, 0, 1, 0, 1}));
+    EXPECT_EQ(lan.size(), 2u);
+
+    std::vector<uint8_t> offer(60, 0x22);
+    std::memcpy(offer.data(), _card.mac, 6);
+    const uint8_t router[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    std::memcpy(offer.data() + 6, router, 6);
+    P16(offer, 12, 0x0800);
+    _gateway->FromLan(offer.data(), offer.size());
+    ASSERT_EQ(_card.frames.size(), 1u) << "delivered at once";
+    EXPECT_EQ(_card.frames[0], offer);
+
+    std::vector<uint8_t> foreign = offer;
+    foreign[5] = 0x77;   // another station on the LAN
+    _gateway->FromLan(foreign.data(), foreign.size());
+    EXPECT_EQ(_card.frames.size(), 1u) << "not for this card";
+
+    std::vector<uint8_t> arp = offer;
+    std::memcpy(arp.data(), kBroadcast, 6);
+    _gateway->FromLan(arp.data(), arp.size());
+    EXPECT_EQ(_card.frames.size(), 2u) << "a broadcast reaches every card";
+    EXPECT_EQ(_gateway->GetLanCounters().out, 2u);
+    EXPECT_EQ(_gateway->GetLanCounters().in, 3u);
+
+    int lanOut = 0, lanIn = 0;
+    for (const auto& f : _gateway->Capture())
+    {
+        lanOut += (f.lan && !f.toCard) ? 1 : 0;
+        lanIn += (f.lan && f.toCard) ? 1 : 0;
+        if (f.lan && f.toCard)
+            EXPECT_EQ(f.port, "lan");
+    }
+    EXPECT_EQ(lanOut, 2);
+    EXPECT_EQ(lanIn, 3);
+    EXPECT_EQ(_gateway->Describe().find("mode")->s, "bridge");
+}
+
+/// BRIDGE keeps the switch: a unicast between two cards of the machine stays inside, a broadcast reaches both the
+/// other card and the LAN
+TEST_F(EthernetGateway_Test, Bridge_LocalStationsAreSwitchedInside)
+{
+    Station other("isa1.eth", 0x01);
+    _gateway->Attach(&other);
+    std::vector<std::vector<uint8_t>> lan;
+    _gateway->SetMode(EthernetGateway::Mode::Bridge);
+    _gateway->SetLanOutput([&lan](const uint8_t* f, size_t n) { lan.emplace_back(f, f + n); });
+
+    std::vector<uint8_t> f(60, 0x11);
+    std::memcpy(f.data(), other.mac, 6);
+    std::memcpy(f.data() + 6, _card.mac, 6);
+    P16(f, 12, 0x88B5);
+    Send(f);
+    Boundary();
+    EXPECT_EQ(other.frames.size(), 1u);
+    EXPECT_TRUE(lan.empty()) << "a local unicast does not leave the machine";
+
+    std::memcpy(f.data(), kBroadcast, 6);
+    Send(f);
+    Boundary();
+    EXPECT_EQ(other.frames.size(), 2u);
+    EXPECT_EQ(lan.size(), 1u);
+    const auto macs = _gateway->StationMacs();
+    ASSERT_EQ(macs.size(), 2u);
+    EXPECT_EQ(macs[0][5], 0x02);
+    EXPECT_EQ(macs[1][5], 0x01);
+}
+
+/// Switching the mode ends the router's NAT connections (the guest's next segment is unknown); back in NAT the router
+/// answers again
+TEST_F(EthernetGateway_Test, Bridge_SwitchingModesEndsNatConnections)
+{
+    _host->AddHttp({kServer, 80}, {{"/", {1, 2, 3}}});
+    Connect();
+    ASSERT_FALSE(_gateway->Describe().find("tcp")->items.empty());
+    _gateway->SetMode(EthernetGateway::Mode::Bridge);
+    EXPECT_TRUE(_gateway->Describe().find("tcp")->items.empty());
+    _gateway->SetMode(EthernetGateway::Mode::Nat);
+    std::vector<uint8_t> echo = {8, 0, 0, 0, 0, 1, 0, 1};
+    P16(echo, 2, Sum(echo.data(), echo.size()));
+    _card.frames.clear();
+    SendIp(kRouter, 1, echo);
+    Boundary();
+    EXPECT_EQ(_card.frames.size(), 1u) << "the router answers its ping again";
+}
+
 // --- Determinism and TTD -------------------------------------------------------------------------------------------
 
 TEST_F(EthernetGateway_Test, SameInputsGiveIdenticalFrames)

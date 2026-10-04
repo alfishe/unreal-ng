@@ -28,8 +28,10 @@
 #   Windows  x86_64 (MSVC), x86_64-MinGW, arm64   portable .zip
 #
 # Dependencies: everything except Qt is vendored and linked statically. Qt comes
-# from the cached Qt SDK (install-qt-action) and is shipped inside each package
-# (private copy), so no package relies on libraries of the user's system beyond
+# from the Qt SDK - on Linux baked into the project's build image
+# (docker/Dockerfile.universal), on macOS/Windows from the cached install-qt-action -
+# and is shipped inside each package (private copy), so no package relies on
+# libraries of the user's system beyond
 # the OS itself (glibc/X11/GL on Linux, system frameworks on macOS, Win32).
 # TLS is off in release builds: the WebAPI serves plain HTTP on localhost, so
 # neither OpenSSL nor c-ares is needed.
@@ -69,6 +71,7 @@ concurrency:
 # Only the final publishing job can modify releases or tags.
 permissions:
   contents: read
+  packages: read  # pull the Linux build image from ghcr
 
 env:
   BUILD_TYPE: Release
@@ -93,11 +96,17 @@ jobs:
   # ========================================
   # Linux: AppImage + DEB, both with a private Qt runtime
   # ========================================
-  # Built on the oldest supported baseline (Ubuntu 24.04, glibc 2.39): the
-  # packages run on that and every newer distribution.
+  # Built in the project's Linux image (docker/Dockerfile.universal: Ubuntu 24.04,
+  # glibc 2.39, Qt SDK, pinned linuxdeploy) - the same environment CMake CI tests
+  # in. The packages run on Ubuntu 24.04 and every newer distribution.
   build-linux:
     needs: metadata
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       UNREAL_PACKAGE_VERSION: ${{ needs.metadata.outputs.package-version }}
 
@@ -107,21 +116,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install build and deployment dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y uuid-dev libgl1-mesa-dev \
-            libfuse2t64 patchelf desktop-file-utils dpkg-dev
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          modules: 'qtmultimedia qt5compat'
-          cache: true
-
       - name: Configure CMake
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_QT_APPS=ON \
@@ -130,7 +127,7 @@ jobs:
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
-            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DQT_INSTALL_PATH=/opt/qt/current \
             -DUNREAL_PACKAGE_VERSION="$UNREAL_PACKAGE_VERSION" \
             -DUNREAL_BUNDLE_QT=ON \
             -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Linux-x86_64
@@ -150,28 +147,18 @@ jobs:
       - name: Stage suite for AppImage
         run: cmake --build build --parallel 1 --target package_suite_linux
 
-      - name: Download AppImage deployment tools
-        run: |
-          mkdir -p build/deploy-tools
-          for tool in linuxdeploy linuxdeploy-plugin-qt; do
-            curl --fail --location --retry 3 \
-              "https://github.com/linuxdeploy/$tool/releases/download/continuous/$tool-x86_64.AppImage" \
-              -o "build/deploy-tools/$tool-x86_64.AppImage"
-            chmod +x "build/deploy-tools/$tool-x86_64.AppImage"
-          done
-          echo "$PWD/build/deploy-tools" >> "$GITHUB_PATH"
-
+      # linuxdeploy (pinned) comes with the image
       - name: Package AppImage
-        run: QMAKE="$QT_ROOT_DIR/bin/qmake" bash tools/package-appimage.sh build
+        run: bash tools/package-appimage.sh build
 
       - name: Verify AppImage without the Qt SDK environment
         run: |
-          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR \
-            APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen \
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
+            PATH=/usr/bin:/bin APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen \
             build/packages/UnrealNG-Suite-Linux-x86_64.AppImage --help
 
       - name: Upload DEB
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Suite-Linux-x86_64.deb
           path: build/packages/UnrealNG-Suite-Linux-x86_64.deb
@@ -180,7 +167,7 @@ jobs:
           compression-level: 0
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Suite-Linux-x86_64.AppImage
           path: build/packages/UnrealNG-Suite-Linux-x86_64.AppImage
@@ -190,7 +177,7 @@ jobs:
 
       - name: Upload Linux symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Symbols-Linux-x86_64.tar.gz
           path: build/packages/UnrealNG-Symbols-Linux-x86_64.tar.gz
@@ -208,7 +195,7 @@ jobs:
         image: ['ubuntu:24.04', 'ubuntu:26.04']
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           name: UnrealNG-Suite-Linux-x86_64.deb
           path: packages
@@ -256,7 +243,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           architecture: ${{ matrix.arch }}
@@ -328,7 +315,7 @@ jobs:
           fi
 
       - name: Upload package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Suite-${{ matrix.package }}.zip
           path: build/packages/UnrealNG-Suite-${{ matrix.package }}.zip
@@ -338,7 +325,7 @@ jobs:
 
       - name: Upload symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Symbols-${{ matrix.package }}.zip
           path: build/packages/UnrealNG-Symbols-${{ matrix.package }}.zip
@@ -435,7 +422,7 @@ jobs:
           fi
 
       - name: Upload package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Suite-Windows-x86_64-MinGW.zip
           path: build/packages/UnrealNG-Suite-Windows-x86_64-MinGW.zip
@@ -445,7 +432,7 @@ jobs:
 
       - name: Upload symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Symbols-Windows-x86_64-MinGW.zip
           path: build/packages/UnrealNG-Symbols-Windows-x86_64-MinGW.zip
@@ -539,7 +526,7 @@ jobs:
           exit $fail
 
       - name: Upload package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Suite-macOS-${{ matrix.arch }}.dmg
           path: build/packages/UnrealNG-Suite-macOS-${{ matrix.arch }}.dmg
@@ -549,7 +536,7 @@ jobs:
 
       - name: Upload symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: UnrealNG-Symbols-macOS-${{ matrix.arch }}.tar.gz
           path: build/packages/UnrealNG-Symbols-macOS-${{ matrix.arch }}.tar.gz
@@ -578,7 +565,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 

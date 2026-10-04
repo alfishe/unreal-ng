@@ -1,5 +1,6 @@
 #include "emulator/io/serial/uart16550.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "emulator/io/serial/serialpeer.h"
@@ -71,6 +72,7 @@ Uart16550::Params Uart16550::EvoAvrParams(AvrFirmware firmware)
         case AvrFirmware::Ts2016Feb:
             break;
         case AvrFirmware::Ts2016Apr:
+            p.waitChecksPerLoop = 8;
             p.rxDepth = 511;
             p.txDepth = 255;
             p.threNotFull = true;
@@ -164,7 +166,8 @@ uint32_t Uart16550::AccessCycles(uint8_t reg, bool read, uint64_t now)
     // The AVR's clock, absolute, from the base-clock T-states
     const uint64_t avrNow = now * _params.avrClockHz / _baseClockHz;
     const uint64_t elapsed = avrNow > _avrRelease ? avrNow - _avrRelease : 0;
-    const uint32_t loop = _params.loopCycles ? _params.loopCycles : 1;
+    const uint32_t checks = _params.waitChecksPerLoop ? _params.waitChecksPerLoop : 1;
+    const uint32_t loop = std::max<uint32_t>(1, (_params.loopCycles ? _params.loopCycles : 1) / checks);
     // The main loop looks at the flag once per pass, and a pass starts when
     // the previous access is released: right behind it a whole pass is left,
     // long after it anywhere in one. The interrupt steals its cycles from the
@@ -238,6 +241,7 @@ void Uart16550::Reset()
     _fcr = Evo() ? 0x01 : 0x00;
     _txc = false;
     _stubIir = 0x00;
+    _afr = 0;
     _lcr = 0;
     _mcr = 0;
     _lsr = kLsrThre | kLsrTemt;
@@ -357,6 +361,8 @@ bool Uart16550::CtsForTx() const
     // 16550 without AFE just send
     if (Evo() || !(_mcr & kMcrAfe) || (_mcr & kMcrLoop))
         return true;
+    if (_peer && _peer->MirrorsModemLines())
+        return RtsAsserted();   // a loopback plug: CTS is our own RTS
     return _peer ? _peer->Cts() : false;
 }
 
@@ -396,11 +402,17 @@ uint8_t Uart16550::PopRx()
 void Uart16550::UpdateModemStatus()
 {
     uint8_t lines = 0;
+    // A loopback test plug's wires: its CTS is our RTS, its DSR and DCD our DTR (RI stays open)
+    const bool plug = _peer && _peer->MirrorsModemLines();
+    const bool peerCts = plug ? RtsAsserted() : (_peer && _peer->Cts());
+    const bool peerDsr = plug ? (_mcr & kMcrDtr) != 0 : (_peer && _peer->Dsr());
+    const bool peerDcd = plug ? (_mcr & kMcrDtr) != 0 : (_peer && _peer->Dcd());
+    const bool peerRi = !plug && _peer && _peer->Ri();
     if (Evo())
     {
         // Only CTS is a pin; DSR and DCD read 1, RI 0
         lines = kMsrDsr | kMsrDcd;
-        if (_peer && _peer->Cts())
+        if (peerCts)
             lines |= kMsrCts;
     }
     else if (_mcr & kMcrLoop)
@@ -414,15 +426,17 @@ void Uart16550::UpdateModemStatus()
     else if (_params.ctsOnly)
     {
         lines = kMsrDsr | kMsrDcd;
-        if (_peer && _peer->Cts())
+        if (peerCts)
             lines |= kMsrCts;
     }
-    else if (_peer)
+    else
     {
-        if (_peer->Cts()) lines |= kMsrCts;
-        if (_peer->Dsr()) lines |= kMsrDsr;
-        if (_peer->Ri()) lines |= kMsrRi;
-        if (_peer->Dcd()) lines |= kMsrDcd;
+        if (peerCts) lines |= kMsrCts;
+        if (peerDsr) lines |= kMsrDsr;
+        if (peerRi) lines |= kMsrRi;
+        if (peerDcd) lines |= kMsrDcd;
+        // Pins the card does not wire to the line read their own level
+        lines = static_cast<uint8_t>((lines & _params.msrWired) | (_params.msrUnwired & ~_params.msrWired & 0xF0));
     }
     const uint8_t changed = static_cast<uint8_t>(lines ^ _msrLines);
     uint8_t deltas = 0;
@@ -518,6 +532,18 @@ void Uart16550::Advance(uint64_t now)
         }
     }
     UpdateModemStatus();
+    if (onAdvance)
+        onAdvance();
+}
+
+uint64_t Uart16550::NextEventAt() const
+{
+    uint64_t at = UINT64_MAX;
+    if (_txBusy)
+        at = _txDoneAt;
+    if (_rxInFlight && _rxArriveAt < at)
+        at = _rxArriveAt;
+    return at;
 }
 
 uint8_t Uart16550::LsrValue() const
@@ -617,6 +643,8 @@ uint8_t Uart16550::Read(uint8_t reg, uint64_t now)
         case kIer:
             return dlab ? _dlm : _ier;
         case kIirFcr:
+            if (dlab && _params.afr)
+                return _afr;   // PC16552D: AFR in the baud rate register set
             value = Iir();
             if ((value & 0x0F) == 0x02)
                 _thrInterrupt = false;   // reading IIR with THRE as the source clears it
@@ -680,6 +708,11 @@ void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
             break;
         case kIirFcr:
         {
+            if (dlab && _params.afr)
+            {
+                _afr = static_cast<uint8_t>(value & 0x07);   // PC16552D: AFR, not FCR
+                break;
+            }
             if (Evo())
             {
                 // The AVR acts only with bit 0 set: bit 1 empties RX and clears
@@ -752,6 +785,7 @@ Uart16550::View Uart16550::GetView() const
     v.msr = _msr;
     v.scr = _scr;
     v.divisor = static_cast<uint16_t>((_dlm << 8) | _dll);
+    v.afr = _afr;
     v.rxCount = _rxCount;
     v.txCount = _txCount;
     v.txBusy = _txBusy;
@@ -786,6 +820,7 @@ void Uart16550::SaveState(State& out) const
     out.lcrWritten = _lcrWritten ? 1 : 0;
     out.txc = _txc ? 1 : 0;
     out.stubIir = _stubIir;
+    out.afr = _afr;
     out.avrRelease = _avrRelease;
     std::memcpy(out.rx, _rx.data(), kMaxRx);
     std::memcpy(out.tx, _tx.data(), kMaxTx);
@@ -814,6 +849,7 @@ void Uart16550::LoadState(const State& in)
     _txHead = static_cast<uint16_t>(in.txHead % kMaxTx);
     _txc = in.txc != 0;
     _stubIir = in.stubIir;
+    _afr = static_cast<uint8_t>(in.afr & 0x07);
     _avrRelease = in.avrRelease;
     _txShift = in.txShift;
     _txBusy = in.txBusy != 0;

@@ -128,6 +128,14 @@ public:
         uint64_t beforeT,
         const std::function<bool(const TTDWriteRecord&)>& pred) const;
 
+    /// @brief The newest record with @p afterT < globalT <= @p upToT matching
+    /// @p pred (one journal segment's part of a query). The records are in
+    /// time order, so the scan starts at @p upToT (binary search) and stops
+    /// at @p afterT instead of walking the whole ring.
+    std::optional<TTDWriteRecord> FindLastInRange(
+        uint64_t afterT, uint64_t upToT,
+        const std::function<bool(const TTDWriteRecord&)>& pred) const;
+
     /// @brief Oldest globalT currently held in the ring.
     ///
     /// Returns 0 when the ring is empty. Used by FindLastAccess to decide
@@ -267,5 +275,13 @@ private:
     uint64_t _seqHead = 0;               // absolute count of appends
     uint64_t _seqTail = 0;               // absolute seq of oldest live record
 };
+
+/// The journal's block codec, shared by its file section and the engine's
+/// write index: up to 2,048 records transposed into columns (time deltas as
+/// varints, addresses, PCs, values, pages, port flags); the caller compresses.
+/// DecodeWriteBlock refuses anything inconsistent (false)
+std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count);
+bool DecodeWriteBlock(const std::vector<uint8_t>& raw, uint32_t count, std::vector<TTDWriteRecord>& out);
+constexpr uint32_t kWriteBlockRecords = 2048;
 
 } // namespace ttd

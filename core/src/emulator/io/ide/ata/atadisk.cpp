@@ -276,6 +276,12 @@ void AtaDisk::ExecuteCommand(uint8_t command)
             Complete();
             break;
         case Command::SetFeatures:
+            // CompactFlash (CFA): #01 enables the 8-bit data transfer, #81 disables it. A hard disk accepts every
+            // feature code as before
+            if (_config.compactFlash && (_s.features == 0x01 || _s.features == 0x81))
+                _s.eightBit = _s.features == 0x01 ? 1 : 0;
+            Complete();
+            break;
         case Command::FlushCache:
         case Command::FlushCacheExt:
         case Command::StandbyImmediate:
@@ -521,9 +527,11 @@ void AtaDisk::BuildIdentify(uint8_t* out) const
                       static_cast<unsigned long long>((_medium ? _medium->ContentId() : 0) & 0xFFFFFFFFFFFull));
         serial = text;
     }
-    const std::string model = _config.model.empty() ? std::string("UNREAL-NG HDD") : _config.model;
+    const std::string model =
+        !_config.model.empty() ? _config.model : _config.compactFlash ? std::string("UNREAL-NG CF") : std::string("UNREAL-NG HDD");
 
-    PutWord(out, 0, 0x045A);
+    // Word 0: a CompactFlash card answers #848A (the CFA signature: removable, not magnetic, 15 Mb/s), a disk #045A
+    PutWord(out, 0, _config.compactFlash ? 0x848A : 0x045A);
     PutWord(out, 1, static_cast<uint16_t>(g.cylinders));
     PutWord(out, 3, static_cast<uint16_t>(g.heads));
     PutWord(out, 6, static_cast<uint16_t>(g.sectors));
@@ -547,10 +555,12 @@ void AtaDisk::BuildIdentify(uint8_t* out) const
     PutWord(out, 61, static_cast<uint16_t>(lba28 >> 16));
     PutWord(out, 80, 0x007E);  // ATA-1 .. ATA-6
     PutWord(out, 82, 0x4000);
-    PutWord(out, 83, static_cast<uint16_t>(0x4000 | 0x1000 | (lba48 ? 0x0400 : 0)));  // FLUSH CACHE, LBA48
+    // Words 83 / 86 bit 2: the CFA feature set (CompactFlash)
+    const uint16_t cfa = _config.compactFlash ? 0x0004 : 0;
+    PutWord(out, 83, static_cast<uint16_t>(0x4000 | 0x1000 | (lba48 ? 0x0400 : 0) | cfa));  // FLUSH CACHE, LBA48
     PutWord(out, 84, 0x4000);
     PutWord(out, 85, 0x4000);
-    PutWord(out, 86, static_cast<uint16_t>(0x1000 | (lba48 ? 0x0400 : 0)));
+    PutWord(out, 86, static_cast<uint16_t>(0x1000 | (lba48 ? 0x0400 : 0) | cfa));
     PutWord(out, 87, 0x4000);
     if (lba48)
     {

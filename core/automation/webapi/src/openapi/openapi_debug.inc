@@ -7,9 +7,10 @@
     paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/registers"]["get"]["description"] =
         "The main Z80: main (af, bc, de, hl), alternate (af_, bc_, de_, hl_), index (ix, iy), special (pc, sp, i, "
-        "r with bit 7 as last written, memptr = the internal WZ latch), interrupt (iff1, iff2, im, halted), timing "
-        "(t = CPU T-states since the frame's start - above the base T at turbo; frame = the frame number) and the "
-        "decoded flags.";
+        "r with bit 7 as last written, memptr = the internal WZ latch, q = the flag capture register, t = CPU "
+        "T-states since the frame's start - above the base T at turbo), interrupt (iff1, iff2, im, halted, boundary = "
+        "what the next INT / NMI sampling sees: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack) and the "
+        "decoded flags. Field names follow the debugger protocol's Registers.";
     paths["/api/v1/emulator/{id}/registers"]["get"]["responses"]["200"]["description"] = "CPU register values";
 
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["summary"] = "Set CPU register value";
@@ -283,14 +284,22 @@
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["summary"] = "Search memory for a byte pattern";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["description"] =
-        "Scans Z80 memory for a byte pattern. Body: {pattern_hex: \"AF 32 0E\" or "
-        "pattern: [175, 50, 14], start: 0, end: 65535, max: 64, alignment: 1}.";
+        "Scans memory for a byte pattern (MemorySearch, the same as CLI find, Lua / Python mem_find, MCP find_bytes). "
+        "Body: {pattern_hex: \"CD ?? 00\" (?? = any byte, A? = any low nibble) or pattern: [205, 22, 0], mask_hex: "
+        "\"FF 00 FF\" (optional, 1 bits must match; replaces the wildcards), space: \"cpu\" (default: what the CPU "
+        "sees now) | \"ram\" (every RAM page) | a page \"ram5\" / \"rom2\" / \"cache0\", start, end (in the space; "
+        "default the whole space), max: 64, alignment: 1 | 2}. Each match: address (cpu) or page {kind, page} + offset, "
+        "context_start and context (4 bytes before, the match, 4 after).";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["pattern_hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["mask_hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["space"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["start"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
@@ -300,4 +309,4 @@
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["alignment"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["responses"]["200"]["description"] =
-        "Match addresses (count, matches[]), truncated flag";
+        "space, count, matches[] (address or page + offset, context_start, context), truncated, range";

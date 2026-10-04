@@ -11,6 +11,8 @@
 
 #include <cstdint>
 
+#include "emulator/io/mouse/mousedevicestatus.h"
+
 class IMouseSink
 {
 public:
@@ -39,4 +41,30 @@ public:
     /// Debug write of the Kempston X / Y counters (automation `counters`);
     /// devices without such counters ignore it
     virtual void OnMouseCounters([[maybe_unused]] uint8_t x, [[maybe_unused]] uint8_t y) {}
+
+    /// The machine's ports read this device. False for a Kempston interface object on a machine whose
+    /// mouse ports read its own board mouse: the manager skips it (not offered, not counted as fitted)
+    virtual bool IsMouseWired() const { return true; }
+
+    /// region <What the automation sees (docs/inprogress/2026-10-03-mouse-api-routing/design.md)>
+    /// The device as automation status reports it: id, fitted, the registers and the
+    /// device's own line or queue. Debug read: does not count as polling
+    virtual MouseDeviceStatus DescribeMouse() const
+    {
+        MouseDeviceStatus status;
+        status.id = "mouse";
+        status.name = "mouse";
+        status.fitted = IsMouseFitted();
+        status.inUse = IsMouseInUse();
+        return status;
+    }
+    /// Motion applied that the program has not taken yet (Kempston: X or Y not read since the move;
+    /// serial: a packet on the wire or motion not yet in one). Automation glides wait for it
+    /// before the next step, so an 8-bit counter never jumps by more than one step between reads
+    virtual bool HasUnreadMotion() const { return false; }
+    /// The largest move (emulated pixels, per axis) a program can tell from a move the other way
+    /// between two reads: 127 for an 8-bit counter; less when the device scales motion (a PS/2
+    /// mouse at a finer resolution). Automation glides step by at most this much
+    virtual int MotionStepLimit() const { return 127; }
+    /// endregion
 };

@@ -152,6 +152,39 @@
     schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("supported");
     schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("unsupported");
 
+    schemas["MouseState"]["properties"]["mouse_fitted"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["mouse_fitted"]["description"] =
+        "Some mouse device the machine's ports read is fitted; false: input is refused with 409";
+    schemas["MouseState"]["properties"]["device"]["$ref"] = "#/components/schemas/MouseDevice";
+    schemas["MouseState"]["properties"]["device"]["nullable"] = true;
+    schemas["MouseState"]["properties"]["devices"]["type"] = "array";
+    schemas["MouseState"]["properties"]["devices"]["items"]["$ref"] = "#/components/schemas/MouseDevice";
+    schemas["MouseState"]["properties"]["queue"]["type"] = "object";
+    schemas["MouseState"]["properties"]["queue"]["description"] = "Automation input waiting behind a glide";
+    schemas["MouseState"]["properties"]["queue"]["properties"]["ops"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["queue"]["properties"]["glide_remaining"]["type"] = "object";
+
+    schemas["MouseDevice"]["type"] = "object";
+    schemas["MouseDevice"]["description"] = "One mouse device of the machine and what it gives the guest";
+    schemas["MouseDevice"]["properties"]["id"]["type"] = "string";
+    schemas["MouseDevice"]["properties"]["id"]["description"] = "kempston, sprinter, evo-ps2";
+    schemas["MouseDevice"]["properties"]["name"]["type"] = "string";
+    schemas["MouseDevice"]["properties"]["kind"]["type"] = "string";
+    for (const char* kind : {"kempston", "serial-microsoft", "ps2-avr"})
+        schemas["MouseDevice"]["properties"]["kind"]["enum"].append(kind);
+    for (const char* flag : {"fitted", "in_use", "wheel"})
+        schemas["MouseDevice"]["properties"][flag]["type"] = "boolean";
+    for (const char* number : {"buttons", "x", "y", "button_mask"})
+        schemas["MouseDevice"]["properties"][number]["type"] = "integer";
+    schemas["MouseDevice"]["properties"]["ports"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["ports"]["description"] = "What IN #FADF / #FBDF / #FFDF returns from it";
+    schemas["MouseDevice"]["properties"]["serial"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["serial"]["description"] =
+        "Serial mouse: line baud, the UART receiver's baud / in tune / enabled, the packet in flight, motion "
+        "pending, packets sent, bytes received, framing errors, the receive FIFO and overrun";
+    schemas["MouseDevice"]["properties"]["ps2"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["ps2"]["description"] = "PS/2 mouse on the AVR: connected, resolution";
+
     schemas["MouseStatus"]["description"] = "Response from GET /mouse/status";
     schemas["MouseStatus"]["allOf"][0]["$ref"] = "#/components/schemas/MouseState";
     schemas["MouseStatus"]["allOf"][1]["type"] = "object";
@@ -170,7 +203,10 @@
     schemas["MouseInjectResponse"]["properties"]["message"]["type"] = "string";
     schemas["MouseInjectResponse"]["properties"]["warning"]["type"] = "string";
     schemas["MouseInjectResponse"]["properties"]["warning"]["description"] =
-        "Set when the input cannot reach the guest (mouse or wheel not fitted)";
+        "Set when part of the input cannot reach the guest (no wheel fitted)";
+    schemas["MouseInjectResponse"]["properties"]["queued"]["type"] = "boolean";
+    schemas["MouseInjectResponse"]["properties"]["queued"]["description"] =
+        "Accepted behind a glide still in progress; applied in order at frame ends";
     schemas["MouseInjectResponse"]["properties"]["state"]["$ref"] = "#/components/schemas/MouseState";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 
@@ -260,13 +296,45 @@
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("write");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_in");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("rw");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port");
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
-        "Z80 address (0-65535) or port number (0-255)";
-    schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "string";
+        "Z80 address (0-65535) or port number (0-65535); with a page, its offset in the page is address & #3FFF";
+    schemas["AddBreakpointRequest"]["properties"]["address_end"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["address_end"]["description"] =
+        "Optional range end, inclusive (execution / read / write / rw). With a page the range stays inside one 16K "
+        "page. The hot path checks a range as fast as one address, however many there are";
+    schemas["AddBreakpointRequest"]["properties"]["slot_only"]["type"] = "boolean";
+    schemas["AddBreakpointRequest"]["properties"]["slot_only"]["description"] =
+        "With a page: fire only through the slot of 'address' (#0000/#4000/#8000/#C000), not wherever the page is "
+        "mapped";
+    schemas["AddBreakpointRequest"]["properties"]["port_mask"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["port_mask"]["description"] =
+        "Ports only: match when (port & port_mask) == (address & port_mask); default #FFFF (exact). #00FF catches #FE "
+        "on any high byte";
+    schemas["AddBreakpointRequest"]["properties"]["hits"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["hits"]["description"] =
+        "Hit policy as text: '5' (stop on the 5th hit only), '>=5' (from the 5th on), '%5' (every 5th); every "
+        "matching access counts (hit_count). Same as hit_mode + hit_target";
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("always");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("equal");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("at_least");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("multiple");
+    schemas["AddBreakpointRequest"]["properties"]["hit_target"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["hit_target"]["description"] =
+        "The N of the hit policy (1 or more); alone it means hit_mode 'equal'";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "object";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("ram");
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("rom");
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("cache");
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["page"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
-        "Optional for execution / read / write: 'ram:32', 'rom:3' or 'cache:0' (page decimal or 0x / # / $ hex). The "
-        "breakpoint fires only while that page is mapped at the address; 400 for a page the machine does not have";
+        "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
+        "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
+        "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
@@ -281,8 +349,14 @@
     schemas["AddBreakpointResponse"]["properties"]["id"]["description"] = "Assigned breakpoint ID";
     schemas["AddBreakpointResponse"]["properties"]["type"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
-    schemas["AddBreakpointResponse"]["properties"]["page"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["page"]["type"] = "object";
     schemas["AddBreakpointResponse"]["properties"]["page"]["description"] = "The page condition, when one was given";
+    schemas["AddBreakpointResponse"]["properties"]["address_end"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["slot_only"]["type"] = "boolean";
+    schemas["AddBreakpointResponse"]["properties"]["port_mask"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
@@ -624,25 +698,56 @@
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["description"] =
-        "True when the write journal is active (for FindLast / reverse debugging). "
-        "Set via enable_write_journal on /ttd/start; false in 'gaming' mode.";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["type"] = "boolean";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["description"] =
-        "True while the journal holds every write/port write of the session, so write/io find-last answers from it; "
-        "false when it was off at the start or switched (journal, debug mode, time travel) during the session - "
-        "those searches then replay history";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["type"] = "boolean";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["description"] =
-        "True when the journal ring dropped its oldest records: a 'no match' from it falls back to replay";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["type"] = "object";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["description"] =
-        "Present when the journal does not cover the session: reason, and frame/tinframe where it stopped "
-        "(absent for a loaded file)";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["reason"]["type"] = "string";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["frame"]["type"] = "integer";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["tinframe"]["type"] = "integer";
+    // The write journal (D40): the same fields in /ttd/status, /ttd/journal and the build response
+    {
+        Json::Value journal;
+        journal["write_journal_enabled"]["type"] = "boolean";
+        journal["write_journal_enabled"]["description"] =
+            "The write journal is recorded now (while recording) or will be at the next start. Off by default; "
+            "switched with POST /ttd/journal or `journal` on /ttd/start";
+        journal["write_journal_complete"]["type"] = "boolean";
+        journal["write_journal_complete"]["description"] =
+            "One span covers the whole session: every write search answers from the journal";
+        journal["write_journal_segments"]["type"] = "array";
+        journal["write_journal_segments"]["description"] =
+            "The spans the journal covers, oldest first: from (excluded) to (included), as frame and T-state. "
+            "Write searches inside them answer at once; outside they replay one frame (same answer)";
+        Json::Value& span = journal["write_journal_segments"]["items"];
+        span["type"] = "object";
+        for (const char* field : {"from_frame", "from_tinframe", "to_frame", "to_tinframe"})
+            span["properties"][field]["type"] = "integer";
+        journal["write_journal_build"]["type"] = "object";
+        journal["write_journal_build"]["description"] =
+            "A build by replay (POST /ttd/journal/build): active, frames done, frames to build";
+        journal["write_journal_build"]["properties"]["active"]["type"] = "boolean";
+        journal["write_journal_build"]["properties"]["done"]["type"] = "integer";
+        journal["write_journal_build"]["properties"]["total"]["type"] = "integer";
+        for (const std::string& name : journal.getMemberNames())
+            schemas["TTDStatusResponse"]["properties"][name] = journal[name];
+
+        schemas["TTDJournalResponse"]["type"] = "object";
+        schemas["TTDJournalResponse"]["description"] = "GET / POST /ttd/journal: the write journal's state";
+        for (const std::string& name : journal.getMemberNames())
+            schemas["TTDJournalResponse"]["properties"][name] = journal[name];
+        schemas["TTDJournalResponse"]["properties"]["write_journal_records"]["type"] = "integer";
+
+        schemas["TTDJournalBuildResponse"]["type"] = "object";
+        schemas["TTDJournalBuildResponse"]["description"] = "POST /ttd/journal/build: what was built, and the journal now";
+        for (const std::string& name : journal.getMemberNames())
+            schemas["TTDJournalBuildResponse"]["properties"][name] = journal[name];
+        Json::Value& b = schemas["TTDJournalBuildResponse"]["properties"];
+        b["ok"]["type"] = "boolean";
+        b["error"]["type"] = "string";
+        b["error"]["description"] = "Why the build was refused (ok false)";
+        b["cancelled"]["type"] = "boolean";
+        b["frames_built"]["type"] = "integer";
+        b["frames_covered"]["type"] = "integer";
+        b["frames_covered"]["description"] = "Already inside a span, left as they were";
+        b["frames_refused"]["type"] = "integer";
+        b["frames_refused"]["description"] = "Hold a v1 marker without its data: cannot be replayed";
+        b["records"]["type"] = "integer";
+        b["records"]["description"] = "Writes added";
+    }
 
     // ---------------------------------------------------------------------
     // POST /ttd/start response
@@ -664,8 +769,7 @@
     schemas["TTDStartResponse"]["properties"]["history_limit_bytes"]["description"] = "History limit in force (bytes, 0 = none)";
     schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["description"] =
-        "Whether write journal capture is enabled. false = gaming mode (smaller files), "
-        "true = development mode (fast reverse-watchpoint queries).";
+        "Whether the write journal is recorded (the `journal` option; off by default)";
 
     // ---------------------------------------------------------------------
     // POST /ttd/stop response

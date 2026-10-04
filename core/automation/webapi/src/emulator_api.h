@@ -317,6 +317,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postSprinterBios, "/api/v1/emulator/{id}/sprinter/bios", drogon::Post);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
+    // ZX Profi board chips: 8255, 8253, 8251 and the port map (implementation: api/state_device_api.cpp, core DeviceState::ProfiPeripherals)
+    ADD_METHOD_TO(EmulatorAPI::getStateProfi, "/api/v1/emulator/{id}/state/profi", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateProfiActive, "/api/v1/emulator/state/profi", drogon::Get);
     // Network adapters (implementation: api/state_device_api.cpp, core DeviceState::Network)
     ADD_METHOD_TO(EmulatorAPI::getStateNetwork, "/api/v1/emulator/{id}/state/network", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNetworkActive, "/api/v1/emulator/state/network", drogon::Get);
@@ -332,6 +335,7 @@ public:
     // Ethernet frames of the frame-level cards (core EthernetAccess)
     ADD_METHOD_TO(EmulatorAPI::getNetworkFrames, "/api/v1/emulator/{id}/network/frames", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNetworkFrame, "/api/v1/emulator/{id}/network/frame", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getNetworkAdapters, "/api/v1/emulator/{id}/network/adapters", drogon::Get);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -364,6 +368,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::enableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/enable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
 
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
@@ -474,6 +479,7 @@ public:
 
     // region Mouse Injection (implementation: api/mouse_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::mouseMove, "/api/v1/emulator/{id}/mouse/move", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseGlide, "/api/v1/emulator/{id}/mouse/glide", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mousePress, "/api/v1/emulator/{id}/mouse/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseRelease, "/api/v1/emulator/{id}/mouse/release", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseClick, "/api/v1/emulator/{id}/mouse/click", drogon::Post);
@@ -512,6 +518,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    // D40 - the write journal on demand: switch it, build it by replay
+    ADD_METHOD_TO(EmulatorAPI::journalTTD, "/api/v1/emulator/{id}/ttd/journal", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::buildJournalTTD, "/api/v1/emulator/{id}/ttd/journal/build", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::cancelJournalBuildTTD, "/api/v1/emulator/{id}/ttd/journal/build/cancel", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::portEventsTTD, "/api/v1/emulator/{id}/ttd/port-events", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
@@ -1114,6 +1124,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateRtc(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateProfi(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateProfiActive(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateRtcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getRtcCells(const drogon::HttpRequestPtr& req,
@@ -1127,6 +1141,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void postControlIsa(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIsaJournal(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/network/adapters - the host adapters the bridge can use (network SN6)
+    void getNetworkAdapters(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getNetworkFrames(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -1202,6 +1219,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void addBreakpoint(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/breakpoints/hits/reset - hit counters back to 0 ({"id": N}: one, else all)
+    void resetBreakpointHits(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void clearBreakpoints(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void removeBreakpoint(const drogon::HttpRequestPtr& req,
@@ -1463,6 +1483,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     // region Mouse Injection Methods (implementation: api/mouse_api.cpp)
     void mouseMove(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    void mouseGlide(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
     void mousePress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void mouseRelease(const drogon::HttpRequestPtr& req,
@@ -1530,6 +1552,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void findLastTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void journalTTD(const drogon::HttpRequestPtr& req,
+                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void buildJournalTTD(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void cancelJournalBuildTTD(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
     void portEventsTTD(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepInstructionTTD(const drogon::HttpRequestPtr& req,

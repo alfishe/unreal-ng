@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/ttd/ttdserializable.h"
 #include "emulator/platform.h"
 
 class EmulatorContext;
@@ -195,7 +196,7 @@ enum class HostKeyboardRoute : uint8_t
 /// @See: http://www.breakintoprogram.co.uk/computers/zx-spectrum/keyboard
 /// @See: https://www.salkin.co.uk/~wiki/index.php/Spectrum_Keyboard
 /// @See: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
-class Keyboard : public Observer
+class Keyboard : public Observer, public ttd::TTDSerializable
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
@@ -354,8 +355,9 @@ public:
 
     /// region <Keyboard control>
 public:
-    /// Matrix + pressed-key counters. Not a TTD peripheral (the journal
-    /// replays input forward); captured only so a throwaway TTD display
+    /// Matrix + pressed-key counters: the keyboard's state (TTD: KeyboardMatrix,
+    /// engine decision 37 - key changes are journal events, the state they
+    /// built is in every checkpoint). Also captured so a throwaway TTD display
     /// render can hand the live keyboard back untouched.
     struct InputState
     {
@@ -366,6 +368,19 @@ public:
     void Reset();
     InputState CaptureInputState() const;
     void RestoreInputState(const InputState& state);
+
+    /// region <TTD (PeripheralId::KeyboardMatrix)>
+    /// Blob: version, the 8 matrix rows, the number of pressed keys, then
+    /// (key, count) pairs in key order. Variable size: a few bytes with no key held
+    size_t TTDStateSize() const override;
+    void TTDSaveState(uint8_t* dst) const override;
+    bool TTDVariableSize() const override { return true; }
+    void TTDSaveStateTo(std::vector<uint8_t>& out) const override;
+    void TTDLoadState(const uint8_t* src) override;
+    std::string TTDDeviceName() const override { return "KeyboardMatrix"; }
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::KeyboardMatrix; }
+    uint64_t TTDHashState() const override;
+    /// endregion </TTD>
     void PressKey(ZXKeysEnum key);
     void ReleaseKey(ZXKeysEnum key);
     void TypeSymbol(char symbol);

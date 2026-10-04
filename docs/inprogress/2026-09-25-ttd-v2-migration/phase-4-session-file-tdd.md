@@ -8,7 +8,8 @@ Code references are to master at `8ddaf708e`. `TTM` = `core/src/debugger/ttd/tim
 
 | Term | Meaning |
 |---|---|
-| Session file | The `.ttd` file the engine writes while it records. Memory holds only a part of it (D28). The decisions glossary calls it the *spill file* |
+| Session file | What the engine writes while it records: one file per closed segment in the recording's folder; "save" joins them into one `.ttd` file (D28). The decisions glossary calls it the *spill file* |
+| Segment | About one minute of history that starts with a baseline (the full machine state), so it needs nothing from earlier segments. Memory holds a ring of segments (default) or a list that grows (§5.3.1) |
 | Append-only | The file only grows at its end; bytes already written are never changed. A crash can therefore damage only the unfinished tail |
 | Stream | One kind of data in the file, with a numeric id: memory pieces, checkpoints, events, write journal, screenshots… |
 | Record | One block of one stream in the file: a 32-byte header (stream id, sizes, checksum) and a payload |
@@ -18,27 +19,24 @@ Code references are to master at `8ddaf708e`. `TTM` = `core/src/debugger/ttd/tim
 | Index / footer | At the end of a finished file: a table of parts and frames so a reader finds data without scanning; a fixed trailer points to it |
 | Finalize | Write the index and footer when recording stops. A file without them is still readable, by scanning (crash recovery) |
 | Writer thread | A background thread that appends the already-compressed items to the file, so the emulator never waits for the disk |
-| Memory-mapped view | The operating system shows the file as memory; reading a byte reads it from disk on first use and caches it. Used to read evicted data back |
-| Eviction | Removing data from memory because it is safely in the file. Nothing is lost; a seek reads it back |
-| Release | Removing history for good (from memory and, for rolling files, from disk), because a retention policy says so. The session start moves forward (D12) |
-| Rebasing | Before history is released, every still-needed item whose chain reaches into the released range is rewritten as a full item (D5) |
-| Retention policy | What history is kept: a memory budget (default), or the last N minutes (black box) (D11) |
+| Release | Dropping the oldest segment from memory when the ring is full; it stays on disk. The earliest seekable position moves forward (D12) |
+| History mode | What memory keeps, chosen at start: a ring of the last N minutes (default 5) or a list that grows; disk always keeps the whole session (D11, §5.3.1) |
 | Frame-boundary stream | An optional stream that stores something per frame, for example a screenshot; off by default, switched at run time (D19) |
 | Arena block | A large memory block (64 MB, the user's direction in [target-architecture §6.1](target-architecture.md#61-memory-as-linked-blocks-direction-2026-09-29)) the engine allocates items in, in capture order |
 
 ## 2. What changes, in one example
 
-A one-hour recording of a demo as busy as *Eye Ache*, on Pentagon 128 with its default cards. Rates are the engine's model in [E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e6-v1-v2-model/README.md): 36.9 MB per minute in the file, 41.4 MB per minute in memory, write journal kept whole. The memory budget is 512 MB (proposed default, §5.3).
+A one-hour recording of a demo as busy as *Eye Ache*, on Pentagon 128 with its default cards. Rates are the engine's model in [E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e6-v1-v2-model/README.md): 36.9 MB per minute in the file, 41.4 MB per minute in memory, write journal kept whole. Default history mode: a ring of 5 minutes (§5.3.1).
 
 | | v1 today | Engine after Phase 4 |
 |---|---|---|
-| Where the hour lives | all of it in process memory; v1 has no budget and drops nothing but its journal ring | about 2.2 GB in `scratch/ttd/2026-10-02-153012-pentagon.ttd`, written as it records (36.9 × 60, arithmetic) |
-| Memory | grows for the whole session | at most 512 MB: about the last 12 minutes stay in memory (512 / 41.4, arithmetic); older parts are evicted and read back from the file on a seek |
+| Where the hour lives | all of it in process memory; v1 has no budget and drops nothing but its journal ring | about 2.2 GB in `~/.unreal-ng/ttd/2026-10-02-153012-pentagon/`, one file per minute, written as it records (36.9 × 60, arithmetic) |
+| Memory | grows for the whole session | the last 5 minutes, about 210 MB (5 × 41.4, arithmetic); a growable session keeps the whole hour, about 2.5 GB, when asked for at start |
 | Emulator thread | — | hands over pointers to items it already compressed; one atomic store per frame. The writer thread appends about 0.6 MB per second |
 | Emulator crashes at minute 37 | everything is lost | the file opens up to the last complete part, about one second before the crash |
 | "Save" | serializes the whole session in one call | renames the finished file to the chosen name; nothing is copied when the target is on the same disk |
-| Unwanted recording | dropped from memory | the file is deleted |
-| Seek to minute 3 | decode from memory | read the needed parts through the memory-mapped view; target p99 ≤ 20 ms on an SSD (PR-8) |
+| Unwanted recording | dropped from memory | its folder is deleted |
+| Seek to minute 3 | decode from memory | outside the default ring: refused with the earliest position; a growable session decodes from memory. The files still hold minute 3: loading the session with that range brings it back |
 | Screenshot of frame 90,000 | seek, restore, render | read from the screenshot stream if it was on (§5.4), no restore |
 
 An idle machine writes far less: ZX-Evo at the BASIC prompt 5.9 MB per minute, Pentagon 128 3.2 MB per minute (E6), so an hour is 200–350 MB.
@@ -71,7 +69,7 @@ An idle machine writes far less: ZX-Evo at the BASIC prompt 5.9 MB per minute, P
 
 - **Phase 1:** pieces with explicit dependencies (D5), a piece store not owned by a session (D22), exact-size allocation in an arena, copy-on-write reference blocks, regions, the frame table (D21) and positions with a branch.
 - **Phase 2:** device state versions with a stable type id, instance name and layout version (D23).
-- **Phase 3:** one event stream with payloads (D24), the configuration fingerprint and media versions (D25), the write journal as a derived index whose retention comes from E7 (D17).
+- **Phase 3:** one event stream with payloads (D24), the configuration fingerprint and media versions (D25), the write journal on demand, as segments, built by replay elsewhere (D40).
 
 Phase 4 does not change what is recorded. It decides where it is stored, how it gets there and how long it stays.
 
@@ -79,7 +77,7 @@ Phase 4 does not change what is recorded. It decides where it is stored, how it 
 
 ### 5.1 Step 1 — Integrity and versioning decided
 
-**Needs the user's decision.** The options are those of [integrity-and-versioning.md](integrity-and-versioning.md); the recommendation follows from the container below. Until the user accepts or changes it, Steps 2–6 are built against the recommendation, which keeps the cost of a different choice local to the record header and the reader's checks.
+**Decided (owner, 2026-10-04): the recommendation below, "open with holes".** A CRC32C on every record, the header and the index; header, index and part ends checked at open, records on first access; a damaged record makes only the frames that depend on it unreachable (a seek there fails with the reason), damage in an ancillary stream disables that stream. The options were those of [integrity-and-versioning.md](integrity-and-versioning.md).
 
 **Integrity**
 
@@ -149,6 +147,33 @@ v1 files keep `schemaVersion = 1` and stay readable only by the schema-1 reader 
 - **Index** (finalized files): the part table (offset, size, first frame, frame count, branch, dependency list offset), the frame table (each frame's start in machine time, D21, and its part), per-stream totals. 12 bytes per frame in the frame table: 2.2 MB per hour at 50 frames per second (arithmetic).
 - **Trailer** (24 bytes, last in the file): index offset u64, index size u32, index CRC32C u32, magic `TTDX`, a u32 trailer CRC. A reader looks at the last 24 bytes first.
 
+**As built (2026-10-04), the container.** `core/src/debugger/ttd/engine/ttdcontainer.{h,cpp}` implements the layout above as written, with two simplifications: the part-end record is stored uncompressed (it is read at open), and the per-stream totals in the index are counts only (records, stored and raw bytes). File I/O goes through `core/src/platform/fileio.h` (append with `fsync` / `FlushFileBuffers`, read at an offset); no memory mapping (§5.3.1). 
+
+**As built (2026-10-04), the engine session in the file.** `core/src/debugger/ttd/engine/ttdsessionfile.{h,cpp}`, `TTDSessionFile::Save` / `Load`. What changed from the table below while building it:
+
+- No reference-block (2) or device-state (4) stream: device states are pieces of their own regions (Phase 2), and the reference tables are rebuilt on load by the same code that builds them on capture (`TimeTravelEngine::ImportCheckpoint`).
+- The bus and sector journals have streams of their own, 13–16 (IN, OUT, interrupt vectors, sector reads), written as columns like v1's journal blocks; the write journal (7) uses v1's column blocks.
+- Versions keep their stored encoding and payload (`TTDPieceStore::Import`); the file numbers them as they appear, since the store reuses its ids.
+- A stream with nothing in a part writes no record.
+
+The 9 corpus sessions, saved with 50 checkpoints per part (`TTDSessionFile_Test`):
+
+| Session | Checkpoints | v1 file | Engine file | Of which pieces | Write journal |
+|---|---|---|---|---|---|
+| boot | 301 | 4,776,969 | 638,271 | 391,791 | 234,220 |
+| sprites | 301 | 6,790,665 | 1,947,545 | 1,243,044 | 694,707 |
+| active_demo | 301 | 1,168,824 | 152,293 | 125,626 | 13,137 |
+| demo_7threality | 301 | 1,314,338 | 245,392 | 201,189 | 34,350 |
+| demo_across-the-edge-second | 301 | 3,897,791 | 411,981 | 270,268 | 106,948 |
+| idle_session | 301 | 1,290,600 | 189,530 | 109,803 | 68,438 |
+| dizzyx | 496 | 2,280,383 | 612,204 | 333,961 | 251,913 |
+| greenberet-load | 1,011 | 1,321,736 | 301,566 | 100,083 | 55,913 |
+| tsfm_tech_support | 301 | 1,801,973 | 369,205 | 261,741 | 82,279 |
+
+Every session loads back checkpoint for checkpoint (every region, every device, the events, journals and configuration), and saving the loaded session gives the same bytes. Damage stops the load before the first unreachable part; a file cut short loads its complete parts. Writing as it records (the writer thread) and segments (§5.3) build on this.
+
+**As built (2026-10-04), writing as it records.** `TTDSessionWriter` (same files). The thread that owns the engine calls `Collect()` after its captures: each part whose next part has started is laid out there (the bytes copied, nothing compressed), and queued. The writer thread compresses each record, checks it, appends it and syncs the part. `Save` is the same writer run on the caller's thread, so a file written while recording is byte for byte the file `Save` writes at the end (`TTDSessionWriter_Test`). Lag: reported above 64 MB, the writer stops taking parts above 512 MB ("the disk cannot keep up"); a write error stops it with its reason; in both cases the file is valid to its last complete part. The write journal goes whole with the last part for now; spreading it over the parts comes with the segments. `TTDRecordingFolder` (`ttdrecordingfolders.h`) creates the recording's folder, its owner file and segment paths, saves (one segment: a copy) and discards. Crash safety is tested with a forked child that aborts mid-recording.
+
 #### 5.2.2 Streams
 
 | Id | Stream | Kind | Phase that defines the content |
@@ -159,8 +184,8 @@ v1 files keep `schemaVersion = 1` and stay readable only by the schema-1 reader 
 | 3 | Checkpoints: per frame, CPU, chipset, region block-table changes, device-state references | required | 1, 2 |
 | 4 | Device state versions | required | 2 |
 | 5 | Events with payloads (input, external events, markers, bus data, network), and `IN` values in RZX mode | required | 3 |
-| 6 | Configuration, device-set and media-version changes | required | 3 |
-| 7 | Write journal | ancillary (derived, D17) | 3 |
+| 6 | Configuration and media-version changes (the device set is fixed for a session, D38) | required | 3 |
+| 7 | Write journal: segments and their records | ancillary (derived, D40) | 3 |
 | 8–10 | Coverage: executed, written, read | ancillary (derived) | v1 format, carried over |
 | 11 | Port journal index | ancillary (derived) | 3 |
 | 12 | Bookmarks | ancillary | v1 format, carried over |
@@ -177,9 +202,10 @@ Every stream has its own layout version in the stream table. A reader without br
 A part closes at the first frame boundary at which it holds **50 frames or 4 MB**, whichever comes first. Both limits are parameters (`TTDFileParams::partFrames`, `partBytes`). They bound what a crash loses (about one second) and what one record costs: about 10 record headers and one part-end record per part, roughly 8 bytes per frame on an idle session (arithmetic), inside the PR-10 limit of 64 bytes per unchanged frame together with the 12-byte frame table entry and the checkpoint record.
 
 A part is not required to be independent of earlier parts: a piece that last changed an hour ago keeps its base in a part from an hour ago. Instead, **every part lists the earlier parts it depends on** (D6). This replaces target-architecture §7's "cut at chain-cap boundaries", which per-piece limits do not have. The list is computed from the dependencies Phase 1 records for every item (D5): when the writer serializes an item whose base lives in part p, p joins the current part's list. The list is used:
-- to know which parts a seek needs (read-ahead, §5.3.4);
 - to compute the frames a damaged record makes unreachable (I-4);
-- to decide what a rolling file must copy forward (§5.3.5).
+- to load a range of a session: the parts its frames depend on, back to the segment's baseline.
+
+A dependency never crosses a segment's baseline (§5.3.2).
 
 Part boundaries depend only on frame counts and content bytes, never on time or on how far the writer thread has got, so the same recording gives the same file (QR-3).
 
@@ -213,8 +239,8 @@ private:
 | Writer lag | Behavior |
 |---|---|
 | below `lagSoftBytes` (default 64 MB) | normal |
-| above the soft limit | recording continues; the lag counts against the memory budget; the status reports "file is behind by N MB" |
-| above `lagHardBytes` (default: the memory budget) | recording **stops** at the next frame boundary with the reason "the disk cannot keep up"; history is kept, the writer keeps draining |
+| above the soft limit | recording continues; the status reports "file is behind by N MB" |
+| above `lagHardBytes` (default 512 MB) | recording **stops** at the next frame boundary with the reason "the disk cannot keep up"; history is kept, the writer keeps draining |
 | write error or disk full | the writer stops; the file stays valid up to its last complete part; the session continues in memory only (§5.3.1) and reports why |
 
 Capture never blocks, never waits on a lock the writer holds, and never drops data silently.
@@ -239,10 +265,20 @@ A recovered file opens **read-only**. "Repair" is an explicit action that trunca
 
 #### 5.2.7 Location, save and delete (D28, D30)
 
-- **Default location**: `scratch/ttd/<date-time>-<name>.ttd` under `FileHelper::GetWritablePath()` (`core/src/common/filehelper.h:36`), for example `scratch/ttd/2026-10-02-153012-pentagon.ttd`; `<name>` is the model's short name, `-2`, `-3` added on a collision. The UI passes another path at run time (the UI part is Phase 5, Step 3).
-- **Save** = finalize, then rename to the chosen path. The writer closes its handle and every mapped view first, so the rename works on every platform; the read-only view is reopened at the new path. A rename across disks (`std::errc::cross_device_link`) falls back to a copy in the background with progress, then deletes the source. "Save" during a recording records the target name; the rename happens when the recording stops.
+- **Location (owner decision 2026-10-04).** A per-user folder on every system: `~/.unreal-ng/` (Windows: `%USERPROFILE%\.unreal-ng\`), with `ttd/` inside it:
+  - each recording writes into its own folder, `ttd/<date-time>-<name>/` (for example `ttd/2026-10-04-153012-pentagon/`); `<name>` is the model's short name, `-2`, `-3` added on a collision. every closed segment of the recording is a file there (§5.3.1);
+  - finalized (saved) recordings are files in `ttd/` itself, `ttd/<date-time>-<name>.ttd`, unless the user picks another path (the UI part is Phase 5, Step 3).
+
+  Recording folders keep the disk tidy: everything one session wrote is in one place and goes with it.
+  The folders come from new cross-platform `FileHelper` methods (owner decision 2026-10-04): the user's home (`HOME`; Windows `USERPROFILE`, through the wide API), the per-user `.unreal-ng` folder and its subfolders, created on demand; UTF-8 paths in and out, as every `FileHelper` path.
+- **Cleanup (owner decision 2026-10-04).** A `CleanupManager` in `core/src/common/` runs registered cleanup steps asynchronously at startup, on a background thread, so start-up never waits for it. TTD's step is the first one; other subsystems add theirs.
+  - Every step catches its own errors and exceptions. A file that cannot be deleted (in use, permissions) is logged and skipped; the next run tries again.
+  - The manager records its last run per step, and runs each step at least once a week.
+  - Automation cleans up after itself: invalidating a session deletes its folder, and the recipes say so (`.recipe/analysis/ttd-recording.md`, Pitfalls). The startup step is only the safety net.
+  - TTD's step deletes the folders of crashed recordings (no footer, no live owner: a lock file with the writing process's id) once they are older than 7 days. Until then they are listed and can be opened or repaired.
+- **Save** = finalize, then join the recording's segment files into one `.ttd` file at the chosen path (records are copied, not re-encoded). The writer closes its handles first, so this works on every platform. A move across disks (`std::errc::cross_device_link`) falls back to a copy in the background with progress, then deletes the source. "Save" during a recording records the target name; the rename happens when the recording stops.
 - **Delete**: discarding a session closes and deletes its file.
-- **Leftovers**: a file without a footer found in `scratch/ttd/` at startup is a crashed recording; it is listed (status, and the UI in Phase 5) and can be opened, repaired or deleted.
+- **Leftovers**: a recording folder without a footer and without a live owner, found in `~/.unreal-ng/ttd/` at startup, is a crashed recording. It is listed (status, and the UI in Phase 5) and can be opened, repaired or deleted; the cleanup step removes it after 7 days.
 
 #### 5.2.8 Platform layer
 
@@ -251,53 +287,54 @@ A recovered file opens **read-only**. "Repair" is an explicit action that trunca
 | UTF-8 path | native | `FileHelper::ToFsPath(path)` → `wstring` → `CreateFileW` |
 | Append handle | `open(O_WRONLY \| O_CREAT \| O_EXCL)`, `write` | `CreateFileW(GENERIC_WRITE, FILE_SHARE_READ \| FILE_SHARE_DELETE)`, `WriteFile` |
 | Durable | `fsync` (`F_FULLFSYNC` is not used: cost) | `FlushFileBuffers` |
-| Read-only view | `mmap(PROT_READ)` per window | `CreateFileMappingW` + `MapViewOfFile` per window |
-| Read-ahead | `madvise(MADV_WILLNEED)` | `PrefetchVirtualMemory` |
+| Read | `pread` | `ReadFile` with an offset |
 | Rename | `std::filesystem::rename` on `ToFsPath` paths, after all handles are closed | same; with retries, since another process (indexer, antivirus) may briefly hold the file |
 
-- Files: `core/src/common/mappedfile.h` (interface), `core/src/platform/posix/mappedfile_posix.cpp`, `core/src/platform/windows/mappedfile_windows.cpp`, following the existing platform layout (`core/src/platform/`).
-- **Mapping a growing file**: the view maps fixed 64 MB windows, each only once the writer has made it durable. The window holding the tail is remapped when it grows. On Windows a mapping cannot extend past the file's size, so this rule is what makes it work there.
+- Files: `core/src/common/appendfile.h` (interface), `core/src/platform/posix/appendfile_posix.cpp`, `core/src/platform/windows/appendfile_windows.cpp`, following the existing platform layout (`core/src/platform/`).
+- No memory mapping: memory holds every seekable frame (§5.3.1), so the file is only read when a session is loaded, with ordinary reads.
 - Paths are UTF-8 `std::string` everywhere and become `std::filesystem::path` only through `FileHelper::ToFsPath` (the rule of `filehelper.h:10-14`).
 
 ### 5.3 Step 3 — Memory as a cache of the file
 
-#### 5.3.1 Storage modes and retention
+#### 5.3.1 History in memory: a ring, or a list that grows (owner decision 2026-10-04)
+
+Nothing is written anywhere until a TTD recording is asked for. A recording keeps its history in memory as **segments** and writes every closed segment to a file in its folder (§5.2.7). Each segment starts with a baseline (the full machine state, its own reference tables and device states), so a segment never depends on an earlier one: dropping one from memory is freeing it, and any run of segment files on disk can be joined into one long recording.
+
+| Mode (chosen at start) | Memory | Seek | Disk |
+|---|---|---|---|
+| **Ring** (default) | the last N minutes (default window: 5 minutes); the oldest segment is dropped when a new one closes | within the window | every segment, the whole session |
+| **Ring, long window** | the same, with the window the caller asks for at start (memory reserved for it) | within the window | the whole session |
+| **Growable** | segments are linked in a list that only grows; the window is only where it starts | the whole session | the whole session |
 
 ```cpp
-enum class TTDStorageMode : uint8_t { FileBacked, MemoryOnly };
-enum class TTDRetentionKind : uint8_t { MemoryBudget, TimeWindow };
+enum class TTDHistoryMode : uint8_t { Ring, Growable };
 
-struct TTDRetentionPolicy
+struct TTDHistoryPolicy
 {
-    TTDRetentionKind kind = TTDRetentionKind::MemoryBudget;   // D11: the default
-    uint64_t memoryBudgetBytes = 512ull << 20;                // proposed, see 5.3.6
-    uint32_t windowFrames = 0;                                // TimeWindow: last N minutes, in frames
+    TTDHistoryMode mode = TTDHistoryMode::Ring;
+    uint32_t windowFrames = 5 * 60 * 50;     // Ring: 5 minutes at 50 frames per second
+    uint32_t segmentFrames = 60 * 50;        // one segment per minute
+    bool fileBacked = true;                  // false: no files (tests); the default writes them
 };
 ```
 
-D28 makes the file the normal case and D11 makes the memory budget the default policy. They meet as follows:
+- **Loading a session file** reads, by default, as much as the default window holds: the last 5 minutes. The caller can ask for a range, or for the whole session (Growable). A long recording is always complete on disk.
+- **Numbers.** A minute takes 3–5 MB of memory for a game and 35–41 MB for the heaviest demo measured (E6), so the default window costs 15–25 MB, at most about 200 MB. A baseline per segment costs one full machine state per minute (tens to a few hundred KB, against 3–41 MB per minute of recording); measured by the benchmark as `bm4_heap_baseline_bpf`.
+- The window is counted in frames from the frame table, not in host seconds, so a paused emulator keeps its history. The earliest kept position is reported on every surface (FR-15, D12).
+- No memory budget in bytes and no eviction to the file with reading back: memory holds exactly what can be sought. This replaces the earlier proposal (a 512 MB budget, memory as a cache of the file, rebasing, rolling files deleted two windows back).
 
-| | FileBacked (default) | MemoryOnly |
-|---|---|---|
-| Used by | every recording users start | tests, a v1 file read into memory buffers (D31), and the fallback after a write error |
-| MemoryBudget | the budget bounds the **cache**: old data is evicted and read back from the file; no history is lost | the budget bounds the **history**: the oldest history is released, with rebasing |
-| TimeWindow (black box, D11, D29) | rolling files (§5.3.5): history older than N minutes is released from memory and disk | history older than N minutes is released, with rebasing |
+**As built (2026-10-04), segments in the engine.** `TTDHistoryPolicy` / `SetHistoryPolicy` on `TimeTravelEngine`; `Segments()`, `FirstCheckpoint()`. Checkpoint indices count from the session's start, so a dropped segment leaves the later indices as they were (`Checkpoint(i)` is null for a dropped one). The capture keeps the delta base, so a baseline stores the pieces not offered at that frame from it, whole. Tests: `TimeTravelEngineSegments_Test` (the ring against a growable twin, whole pieces at every baseline, a file written while the ring drops holding the whole session); a mutant storing differences at a baseline fails all three. Not dropped by the ring yet: the sector-read journal (rare) and the write journal (off by default, D40).
 
-The window is counted in frames from the frame table, not in host seconds, so a paused emulator keeps its history.
+**As built (2026-10-04), a file per segment.** `TTDRecordingWriter` writes each segment of the engine's history into the recording folder's next segment file; a segment's file ends at the next baseline. Journal positions in a file count from its first record, and its first part carries a flag (`kPartFileStart`): the loader restarts there its numbering of versions and adds the journals' current sizes, so the files of a recording load one after another into one session and join into one file. `LoadRecording(files, window)` reads whole files from the end until they cover the window (0: all). `JoinSessionFiles` copies every record as stored (no decoding), renumbers the parts and shifts their dependencies (`TTDRecordingFolder::SaveAs`). Tests: `TTDRecordingWriter_Test` (a ring recording 100 frames in segments of 10: ten files, each loads alone from its baseline, all of them and the last window load with the bus positions right, the joined file loads as the whole recording).
 
-#### 5.3.2 What can leave memory
+#### 5.3.2 Closing and dropping a segment
 
-| State of an arena block | In memory | Can be evicted |
-|---|---|---|
-| unwritten (writer lag) | items | no |
-| written, resident | items, and their slot entries | yes |
-| evicted | slot entries only; payloads through the mapped view | slot table pages, too |
-| cold (opened file, or slot pages evicted) | nothing but the part table and the frame table | — |
+1. At a frame boundary where the segment is full, the next frame's checkpoint is captured as a **baseline**: every memory piece and device state stored Full, new reference tables. The pieces are encoded as at the session start (Phase 1), on the emulator thread; its cost per segment is measured (`bm2_work_baseline_opf`).
+2. The closed segment goes to the writer thread (§5.2.4) and becomes a file.
+3. Ring: when the segments in memory span more than the window, the oldest is freed whole. Items shared across segments (a piece stored once and referenced since) are never shared across a baseline, so nothing else needs to move.
+4. Growable: nothing is freed.
 
-- Eviction works by **whole arena blocks**, oldest first, as the user's direction asks (target-architecture §6.1): the cost does not depend on how many items a block holds.
-- An evicted item keeps its slot id; its payload pointer becomes a file location. The decoder decompresses straight from the mapped bytes; nothing is copied back into the arena.
-- The slot table is cut into pages of 65,536 slot ids. A page whose items are all evicted can itself be dropped and rebuilt from the parts' item directories on demand: at the heaviest rates the slot table alone could otherwise reach about 100 MB per hour (16 bytes per slot, E6's slot header, at an assumed 100,000 new items per minute; to be measured, `bm4_heap_slot_table_bpf`).
-- Never evicted: the newest block, unwritten blocks, the delta base (Phase 1, Step 4), the frame table, the part table.
+- Branches later: a pinned branch and the active branch's newest segment are never dropped; nothing here assumes one line of history (FR-22).
 
 #### 5.3.3 Real accounting (FR-16)
 
@@ -306,46 +343,15 @@ struct TTDMemoryReport                       // engine counterpart of TTDHeapBre
 {
     size_t pieceContent = 0, slotTable = 0, referenceBlocks = 0, deviceStates = 0;
     size_t checkpoints = 0, events = 0, writeJournal = 0, coverage = 0, frameStreams = 0;
-    size_t deltaBase = 0, frameTable = 0, partDirectories = 0, scratch = 0;
-    size_t arenaUnused = 0;                  // tail of the newest block, holes before compaction
-    size_t writerLag = 0;                    // subset of the above: not yet durable
-    size_t mappedResident = 0;               // OS page cache through the view: reported, NOT in Total()
-    size_t Total() const;                    // what the budget counts
+    size_t baselines = 0, frameTable = 0, segmentDirectories = 0, scratch = 0;
+    size_t writerLag = 0;                    // closed segments not yet durable
+    size_t Total() const;
 };
-std::vector<TTDPartMemory> GetPartMemory() const;   // per part: residency, bytes per stream
+std::vector<TTDSegmentMemory> GetSegmentMemory() const;   // per segment: frames, bytes per stream
 ```
 
-- Every byte comes from the arena or from a fixed table, so the total is counted, not estimated; FR-16's ±5% is checked against the allocator in a test (§7).
-- The benchmark reports each field as `bm4_heap_<field>_bpf`, with the E5 names where the part exists in both engines (`ram_payload` ↔ `pieceContent`, `page_refs` ↔ `referenceBlocks`, …), so `ttd_bench_compare.py` compares v1 and the engine part by part (D33).
-- `mappedResident` is memory the operating system can drop at any time; it is shown, but the budget does not count it.
-
-#### 5.3.4 Seeking into evicted history
-
-1. The frame table gives the target's part.
-2. The part's dependency list gives every earlier part the restore can touch. The view issues read-ahead for all of them at once (§5.2.8), so the disk reads them in a few large requests instead of thousands of 4 KB faults.
-3. Restore runs as in memory (Phase 1, Step 5: only the pieces that differ), decoding from the view.
-
-Target: PR-8, p99 ≤ 20 ms on an SSD. Measured by a new BM-5 variant, `bm5_cold_us_{p50,p99}`, after evicting everything but the newest block. PR-7 in file mode: seeks to positions still in memory stay flat with session length.
-
-#### 5.3.5 Releasing history: rebasing and rolling files (D5)
-
-When the session start moves from S to S′, an item still needed at or after S′ may depend on an item from before S′: the base of a chain, a reference block or device state shared since then, an event payload. Before anything is freed:
-
-1. **Find survivors.** Walking the oldest arena block: items referenced by any checkpoint at or after S′ (reference counts, Phase 1).
-2. **Rebase.** A surviving XorPrev piece whose chain reaches before S′ is decoded and re-encoded Full. A surviving Full item is copied as is. Either way it moves into the current arena block **under the same slot id**, so no reference changes.
-3. **Free** the block.
-
-- Steps 1 and 2 run on a background *history worker*; they only read immutable items. The emulator thread swaps the payload pointers at a frame boundary, one pointer per survivor; that count is reported (`bm2_work_rebased_opf`).
-- In MemoryOnly mode this is how the memory budget and the time window release history. Releasing block by block also compacts the arena: survivors move to the newest block.
-- **Rolling files** (FileBacked + TimeWindow, the black box): a session writes segment files `<name>.ttd`, `<name>.ttd.1`, …; a new segment starts every N minutes with a baseline part made of the survivors, rebased as above, and the segment two windows back is deleted. Disk use stays below about 2N minutes of recording. "Save" of a black box writes one file from the segments still in the window (items are copied, not re-encoded). This is a proposal, see the open question in §9.
-- The earliest kept position is reported on every surface (FR-15, D12).
-- Branches later: a pinned branch and the active branch's newest block are never released; nothing here assumes one line of history (FR-22).
-
-#### 5.3.6 The budget
-
-- Counted in arena blocks of 64 MB plus the fixed tables; status reports "blocks in use / limit" (target-architecture §6.1).
-- Default proposed: **512 MB**, the figure the what-if design uses as its example ([model-what-if §4.6](../2026-09-29-model-what-if/design.md)); E6 puts a minute of heavy recording at 35–41 MB of memory, so 512 MB keeps the last 12–14 minutes in memory (arithmetic). The value is the user's decision (§9).
-- Done-when check: a one-hour ZX-Evo recording stays within the budget (benchmark run, BM-4 sampled every minute).
+- Every byte is counted, not estimated; FR-16's ±5% is checked against the allocator in a test (§7).
+- The benchmark reports each field as `bm4_heap_<field>_bpf`, so `ttd_bench_compare.py` compares v1 and the engine part by part (D33).
 
 ### 5.4 Step 4 — Optional frame-boundary streams (D19)
 
@@ -372,7 +378,7 @@ public:
 
 - **Zero cost when off.** At the frame boundary the engine reads one mask: `if (_frameStreamMask != 0) CaptureFrameStreams();`. Nothing is done per event and nothing on restore: these streams are ancillary and never needed to restore a position.
 - **Switched at run time.** A change takes effect at the next frame boundary. The part-end record lists which frame-boundary streams each part holds, so "frame 90,000 has no screenshot, the stream was off" is answered without scanning.
-- **Not cached in memory.** A frame-boundary stream is write-through: its copies are held only until the writer has written them, and they count in the report as `frameStreams`. In MemoryOnly mode they stay in memory and count against the budget.
+- **Not cached in memory.** A frame-boundary stream is write-through: its copies are held only until the writer has written them, and they count in the report as `frameStreams`. Without files (`fileBacked = false`, tests) they stay in memory and are counted there.
 - **Controls on every surface.** The engine provides `ListFrameStreams`, `SetFrameStreamEnabled`, `ReadFrameStream(streamId, frame)`. The surfaces (WebAPI `GET/PUT /api/v1/emulator/{id}/ttd/streams` and `GET .../ttd/streams/screenshot?frame=N` returning a PNG, MCP `time_travel` action `streams`, CLI `ttd stream`, Lua, Python, a Qt toggle in the TTD widget) are wired when the surfaces move to the engine in Phase 5, Step 1, with their docs, OpenAPI and a `.recipe/` entry. Until then the engine API is exercised by tests and the benchmark.
 
 **The first stream: a screenshot per frame.**
@@ -382,6 +388,8 @@ public:
 - Encode, on the writer thread: XOR with the previous frame's copy, zstd level 1; a full picture every 50 frames, so reading one screenshot decodes at most 49 differences. Width, height and video mode go into each record, so mode changes (TS-Conf, Sprinter) need no special case.
 - Size: **to be measured** per matrix case, as `bm3_stream_screenshot_bpf`. Reference points: an unchanged frame's XOR is all zero and compresses to a few dozen bytes; the clip export stored *Across the Edge* at about 5.6 KB per frame (RGBA and plane B, zstd level 3 over 500-frame chunks, §3.4). At 5.6 KB per frame the stream would add about 17 MB per minute (arithmetic), the size of the busiest other streams, which is why it is off by default.
 - Cost when on: the 405 KB copy per frame, measured as BM-1 with the stream on (`bm1_overhead_screenshot_pct`).
+
+**As built (2026-10-04).** The registry of Phase 1 (`TTDStreamRegistry`, ids 0..63, one mask check when all are off) stays; a stream's capture hands its copy to the engine (`TimeTravelEngine::AddFrameStreamCopy`), and the encoding (XOR with the previous copy, zstd, a full copy at least every 50 frames, on a size change and at a file's start) is the writer's, the same for every stream. The file stream is 0x0100 + the registry id, ancillary, listed in the header by its name. `TTDSessionFile::ReadFrameStream(file, stream, frame)` decodes from the file's start (naive first; an index of the full copies when it is measured to matter). The shadow session registers the screenshot as stream 0: u16 width, u16 height, u8 video mode, then the framebuffer. Tests: `TTDFrameStream_Test` (a stream on for frames 10-39: written through, every copy read back exactly, "not recorded" outside, under a quarter of the raw bytes), `TimeTravelManager_Screenshot_Test` (Pentagon: off costs no call; on, every copy is the framebuffer at its boundary). Not yet measured: the screenshot's bytes per frame on the matrix (`bm3_stream_screenshot_bpf`) and its frame-time cost (`bm1_overhead_screenshot_pct`).
 
 ### 5.5 Step 5 — v1 files into the engine (D31)
 
@@ -400,6 +408,13 @@ public:
 - **Conformance (QR-5):** a test writes files with the C++ writer (finished, unfinished, with an unknown ancillary stream) and runs `validate` on them; a Kaitai-generated parser parses the fixtures.
 - **Fuzz (QR-4):** random bit flips, truncation and oversized sizes in every stream, against the C++ reader and the analyzer: no crash, no allocation above the record's `rawSize` cap, and every flip in a CRC-covered byte reported by both, with the same location.
 
+**As built (2026-10-04).** Two changes from the text above:
+
+- **The schema-1 description keeps its name until the switch-over.** v1 files are the users' format until Phase 5, and dozens of documents cite `ttd.ksy` for them. The new description is `core/src/debugger/ttd/engine/ttdsession.ksy`; the renames (`ttd.ksy` → `ttdschema1.ksy`, `ttdsession.ksy` → `ttd.ksy`) come with Phase 5.
+- **Screenshots wait for Step 4.** `screenshot` is not an analyzer command yet; the fixture with an unknown ancillary stream (0x0100) checks that readers skip it.
+
+The analyzer's reader (`src/ttdcontainer.py`) is the machine-checked description: the C++ writer produces `testdata/ttd/v2/` (`TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures`) and records what its reader finds in `expected.json`; `tests/test_ttdcontainer.py` must find the same and validate every file, and `TTDSessionFile_Test.CommittedFixturesStillLoad` fails when a format change leaves the fixtures behind. Fuzz (QR-4): `TTDSessionFileFuzz_Test` damages the fixtures 4,120 ways (a flipped bit, a cut, a size field set to 0xFFFFFFFF, 16 bytes of garbage) and loads them: no crash, and every load that succeeds restores exactly as the undamaged file does (positions, CPUs, the memory of every 25th checkpoint). Without the payload CRC a damaged file loads another session and the test fails. The analyzer gets 400 of them: no exception, every damage reported. Open: a Kaitai-generated parser run (no compiler on the build host).
+
 ### 5.7 File-format consequences and fixtures
 
 - The fixture corpus (`testdata/ttd/`, [README](../../../testdata/ttd/README.md)) is re-recorded in schema 2 at the end of the phase. The schema-1 fixtures stay for the schema-1 reader and the oracle.
@@ -412,16 +427,16 @@ public:
 | Per frame, recording | emulator thread | one atomic store (`PublishFrame`); one mask check for frame-boundary streams; a frame-table entry |
 | Per item | emulator thread | nothing beyond Phase 1–3 capture; items are not copied for the file |
 | Per part (about 1 s) | writer thread | record headers, compression of small records, one `fsync` |
-| Release of history | history worker; emulator thread swaps pointers | decode + encode of survivors; one pointer per survivor at a frame boundary |
-| Seek into evicted history | emulator thread | read-ahead of the dependency parts, decode from the view |
+| Per segment (about 1 minute) | emulator thread | one baseline capture: every piece and device state stored Full (`bm2_work_baseline_opf`) |
+| Ring release | emulator thread | freeing the oldest segment's memory |
 
 **Zero cost when off:** a frame-boundary stream that is off costs one mask check per frame and nothing per event; MemoryOnly mode starts no writer thread.
 
 **How it is measured** (benchmark matrix, [ttd-bench](../../../tools/verification/ttd-bench/README.md)):
 - `bm1_overhead_*_pct` in FileBacked and in MemoryOnly mode: the done-when "recording to the file costs no more frame time than recording to memory";
-- `bm2_work_*` unchanged by the file (deterministic, CI gate); new `bm2_work_rebased_opf`;
-- `bm4_heap_*_bpf` with the engine's parts, and `bm4_resident_bytes` sampled against the budget;
-- `bm5_cold_us_*` for PR-8; `bm7_file_bpf` per stream against v1 (D33), `bm7_first_seek_ms` with and without a footer (PR-12);
+- `bm2_work_*` unchanged by the file (deterministic, CI gate); new `bm2_work_baseline_opf`;
+- `bm4_heap_*_bpf` with the engine's parts, `bm4_heap_baseline_bpf`, and memory sampled against the ring;
+- `bm7_load_range_ms` (loading 5 minutes of a long session); `bm7_file_bpf` per stream against v1 (D33), `bm7_first_seek_ms` with and without a footer (PR-12);
 - new: `bm7_writer_lag_bytes_max`, `bm7_writer_stall_events`, `bm3_stream_screenshot_bpf`, `bm1_overhead_screenshot_pct`.
 
 Timings are taken on an idle host (load below 12) and run twice, per the benchmark rules.
@@ -443,12 +458,13 @@ Every test is checked by mutation: it must fail when the mechanism it guards is 
 | 2 | A file with a synthetic 0x0200 stream | opens as its trunk (FR-23) |
 | 2 | Save to a path with non-ASCII characters; save across volumes; discard | renamed / copied / deleted; FileHelper paths |
 | 2 | Part boundaries | depend on frames and bytes only: the same recording with a slowed writer gives the same file |
-| 3 | Small budget in FileBacked mode | blocks evicted, every frame still restores exactly through the view |
-| 3 | MemoryOnly release | survivors rebased, every kept frame restores; mutation: skip rebasing → the first kept frame fails |
-| 3 | Reference counts after release | no leak, no early free |
-| 3 | Time window, MemoryOnly and rolling files | only the window is kept; disk use stays below 2 windows |
+| 3 | A segment restores alone | its frames restore exactly with every earlier segment freed; mutation: a piece referenced across the baseline → fails |
+| 3 | Ring | memory holds the window; a seek before it is refused with the earliest position; the files hold every frame |
+| 3 | Growable | every frame of the session seekable; nothing freed |
+| 3 | Reference counts after a release | no leak, no early free |
+| 3 | Load a range of a long session | the frames of the range restore exactly; the default load is the last 5 minutes |
 | 3 | Memory report | its parts sum to the arena blocks and tables; within ±5% of the allocator's own count (FR-16) |
-| 3 | One-hour ZX-Evo recording (benchmark) | stays within the budget (done-when) |
+| 3 | One-hour ZX-Evo recording (benchmark) | memory stays at the ring's size; the hour is on disk (done-when) |
 | 4 | Stream off | the capture function is never called, no record is written; mutation: drop the mask check → the call count fails |
 | 4 | Stream switched on and off mid-session | frames in the on-range have screenshots, the others report "not recorded" |
 | 4 | Screenshot of frame N | equals the picture a seek to frame N shows, byte for byte (D13) |
@@ -468,25 +484,24 @@ Each item is a working state that passes the full gate (build with zero warnings
 3. **`ttd.ksy` and the analyzer reader for it** (Step 6, first part), so the format has one source of truth from its first byte.
 4. **v1 files in** (Step 5): the corpus converts to engine files; every later test has inputs without re-recording.
 5. **Writer thread and crash safety** (Step 2): lag limits, kill test, deterministic part boundaries, location / save / delete, the platform layer on all three systems.
-6. **Eviction and the mapped view** (Step 3, first part): FileBacked with a budget, cold seeks, the memory report.
-7. **Release and rebasing** (Step 3, second part): MemoryOnly budget, time window, rolling files.
-8. **Frame-boundary streams** (Step 4), screenshot first.
-9. **Fuzz and conformance** complete (Step 6), fixtures re-recorded, full matrix run and stored as the Phase 4 baseline, results document.
+6. **Segments** (Step 3): baselines, the ring and the growable list, loading a range, the memory report.
+7. **Frame-boundary streams** (Step 4), screenshot first.
+8. **Fuzz and conformance** complete (Step 6), fixtures re-recorded, full matrix run and stored as the Phase 4 baseline, results document.
 
 ## 9. Risks and open questions
 
 | # | Risk / question | Plan | User's decision? |
 |---|---|---|---|
-| 1 | Integrity and versioning (§5.1): what is checked, open-with-holes, when the compatibility promise starts | recommendation in §5.1 | **yes** |
-| 2 | Default memory budget (512 MB proposed) and the black box's default window | measure the one-hour ZX-Evo run; propose numbers with it | **yes** |
-| 3 | Black box on disk: rolling segment files (proposed) or MemoryOnly with a time window and a file only on save | §5.3.5; rolling files bound disk use and survive a crash, MemoryOnly writes nothing until asked | **yes** |
-| 4 | `scratch/ttd/` grows: one file per recording, crashed leftovers, about 2 GB per hour of heavy content | proposal: keep saved files, delete unsaved ones at exit, cap leftovers by count and size | **yes** |
-| 5 | Whether automation-started recordings are FileBacked like UI ones (they write files under `scratch/ttd/`) or MemoryOnly by default | proposal: FileBacked everywhere (D28), MemoryOnly as an explicit option for tests | **yes** |
+| 1 | Integrity and versioning (§5.1): what is checked, open-with-holes | **decided 2026-10-04: the recommendation in §5.1** (CRC32C per record, open with holes). No compatibility promise before the release (owner decision 2026-10-03): the format changes freely until then, the v1 → v2 converter is temporary | decided |
+| 2 | How much history a recording keeps in memory | **decided 2026-10-04**: a ring of the last 5 minutes by default, a longer window or a growable list on request at start; every segment on disk (§5.3.1) | decided |
+| 3 | The black box | **decided 2026-10-04**: it is the default ring (§5.3.1); its segments stay on disk as the whole session, in the recording's folder | decided |
+| 4 | The TTD folder grows: one folder per recording, crashed leftovers, about 2 GB per hour of heavy content | **decided 2026-10-04**: per-recording folders under `~/.unreal-ng/ttd/`, saved recordings as files there; an asynchronous `CleanupManager` at startup (steps from any subsystem, errors caught per step, each step at least weekly) removes crashed recordings older than 7 days (§5.2.7) | decided |
+| 5 | Whether automation-started recordings are FileBacked like UI ones or MemoryOnly by default | **decided 2026-10-04: FileBacked everywhere** (D28), MemoryOnly as an explicit start option; tests use it or write under `scratch/` | decided |
 | 6 | Cold seeks touch many parts: a piece's chain can reach parts from long ago | read-ahead of the dependency list; `bm5_cold_us_*` against PR-8; if it fails, the writer re-anchors pieces whose base is many parts back (stores them Full), at a byte cost D33 must allow | no |
-| 7 | Windows: mapping a growing file, rename with open handles, other processes holding the file | 64 MB windows mapped only when durable; all handles closed before rename; retries; tested on Windows in CI, not only under Wine | no |
+| 7 | Windows: rename and delete with open handles, other processes (indexer, antivirus) holding a file | all handles closed before a join, rename or delete; retries; tested on Windows in CI, not only under Wine | no |
 | 8 | `fsync` per part costs frame time on slow disks | it runs on the writer thread; BM-1 in FileBacked mode shows it; a setting can lower it to "on finalize only" for power-loss tolerance traded away | no |
 | 9 | zstd version changes break byte identity | the version is in the header; QR-2/QR-3 compare files from the same build; a zstd update re-records fixtures | no |
-| 10 | The write journal's retention (D17, E7) decides most of the file rate on active content | Phase 3, Step 7 settles it before this phase is measured; E6's rates assume the whole journal | no |
+| 10 | The write journal decides most of the file rate on active content | Settled by D40: off by default, kept only in the segments asked for | no |
 | 11 | Frame-boundary stream controls on every surface (D19) while the surfaces still drive v1 | engine API and tests in Phase 4; surfaces wired in Phase 5, Step 1 | no |
 
 ## 10. Sources

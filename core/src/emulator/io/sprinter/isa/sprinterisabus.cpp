@@ -55,6 +55,7 @@ void SprinterIsaBus::WriteLatch(uint8_t value)
         if (s.card)
             s.card->SetReset(reset);
     }
+    LinesMayHaveChanged();   // a card in reset releases its request (the 16550's MR, the DP8390's RST masks it)
 }
 
 void SprinterIsaBus::PowerOn()
@@ -138,6 +139,7 @@ void SprinterIsaBus::AfterCycle(int slot)
         if (_stall)
             _stall(slot);
     }
+    LinesMayHaveChanged();
 }
 
 uint8_t SprinterIsaBus::PeekAt(Space space, int slot, uint32_t address) const
@@ -165,18 +167,85 @@ void SprinterIsaBus::Configure(const sprinterisa::IsaConfig& config)
     }
 }
 
-void SprinterIsaBus::SetConfiguredPeer(int slot, const std::string& peer)
+void SprinterIsaBus::SetConfiguredPeer(int slot, int channel, const std::string& peer)
 {
     sprinterisa::SlotConfig& c = _slots[slot & 1].config;
-    std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+    if (channel == 0)
+        std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+    else
+        std::snprintf(c.peerB, sizeof(c.peerB), "%s", peer.c_str());
 }
 
 void SprinterIsaBus::Fit(int slot, std::unique_ptr<IIsaCard> card)
 {
     Slot& s = _slots[slot & 1];
+    if (s.card)
+        s.card->SetLinesListener(nullptr);
     s.card = std::move(card);
     if (s.card)
+    {
         s.refusal.clear();
+        s.card->SetLinesListener([this]() { LinesMayHaveChanged(); });
+    }
+    LinesMayHaveChanged();
+}
+
+bool SprinterIsaBus::IrqDriven(int slot) const
+{
+    const IIsaCard* card = _slots[slot & 1].card.get();
+    return card && card->IrqDriven();
+}
+
+bool SprinterIsaBus::IrqLine(int slot) const
+{
+    const IIsaCard* card = _slots[slot & 1].card.get();
+    return card && card->IrqDriven() ? card->Irq() : true;   // nobody drives it: the 3.9 kOhm pull-up
+}
+
+uint8_t SprinterIsaBus::PioLines() const
+{
+    uint8_t lines = 0xFF;   // DRQ: no card asks for DMA (no DMA controller on the board); DACK, printer: pull-ups
+    for (int n = 0; n < kSlots; ++n)
+    {
+        if (!IrqLine(n))
+            lines = static_cast<uint8_t>(lines & ~kPioIrqBit[n]);
+    }
+    return lines;
+}
+
+uint64_t SprinterIsaBus::NextLineEventAt() const
+{
+    uint64_t at = UINT64_MAX;
+    for (const Slot& s : _slots)
+    {
+        if (s.card)
+        {
+            const uint64_t next = s.card->NextIrqEventAt();
+            if (next < at)
+                at = next;
+        }
+    }
+    return at;
+}
+
+void SprinterIsaBus::CatchUpCards()
+{
+    for (Slot& s : _slots)
+    {
+        if (s.card)
+            s.card->CatchUp();
+    }
+}
+
+void SprinterIsaBus::NoteIrq(int slot, uint8_t value, std::string what)
+{
+    if (!_journalOn)
+        return;
+    Note(slot, true, false, 0, value, std::move(what));
+    _journal.back().irq = true;
+    _irqJournal.push_back(_journal.back());
+    while (_irqJournal.size() > kIrqJournalLength)
+        _irqJournal.pop_front();
 }
 
 void SprinterIsaBus::FrameEnd()
@@ -203,6 +272,29 @@ StateNode SprinterIsaBus::Describe() const
     latch["aen"] = (_latch & kLatchAen) != 0;
     latch["reset"] = (_latch & kLatchReset) != 0;
     ret["latch"] = latch;
+
+    const PioView pio = _pioView ? _pioView() : PioView{};
+    if (pio.valid)
+    {
+        static const char* const kModes[4] = {"output (mode 0)", "input (mode 1)", "bidirectional (mode 2)",
+                                              "bit control (mode 3)"};
+        StateNode b = StateNode::Object();
+        b["mode"] = kModes[pio.mode & 3];
+        b["lines"] = Hex(PioLines(), 2);
+        b["inputs_latched"] = Hex(pio.inputs, 2);
+        b["read"] = Hex(pio.read, 2);
+        b["output"] = Hex(pio.output, 2);
+        b["direction"] = Hex(pio.direction, 2);
+        b["mask"] = Hex(pio.mask, 2);
+        b["interrupt_control"] = Hex(pio.intControl, 2);
+        b["interrupt_enabled"] = (pio.intControl & 0x80) != 0;
+        b["vector"] = Hex(pio.vector, 2);
+        b["pending"] = pio.pending;
+        b["under_service"] = pio.underService;
+        b["bits"] = "PB0 IRQ slot 1, PB1 IRQ slot 2, PB2 DRQ slot 2, PB3 DACK slot 2, PB4 DRQ slot 1, PB5 DACK slot 1, "
+                    "PB6-PB7 printer";
+        ret["pio_port_b"] = b;
+    }
 
     StateNode slots = StateNode::Array();
     for (int n = 0; n < kSlots; ++n)
@@ -240,6 +332,19 @@ StateNode SprinterIsaBus::Describe() const
         }
         else
             resources["io"] = "none";
+        // Addresses beside the range (the 3C509B's ID port): each with its decode step and what the card does there
+        if (s.card)
+        {
+            for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
+            {
+                StateNode one = StateNode::Object();
+                one["io"] = Hex(aux.first, 3) + "-" + Hex(aux.last, 3) + (aux.step > 1 ? " step " + Hex(aux.step, 2) : std::string());
+                one["z80"] = "window 3 page " + Hex(SlotPage(Space::Io, n), 2) + ", #9FBD A15-A14 = 0: CPU " +
+                             Hex(0xC000 | (aux.first & 0x3FFF), 4) + "-" + Hex(0xC000 | (aux.last & 0x3FFF), 4);
+                one["note"] = aux.note;
+                resources[aux.name] = one;
+            }
+        }
         if (s.card && s.card->MemRange(first, last))
         {
             resources["memory"] = Hex(first, 5) + "-" + Hex(last, 5);
@@ -250,9 +355,15 @@ StateNode SprinterIsaBus::Describe() const
             resources["memory"] = "none";
         const int irq = s.card ? s.card->IrqLine() : -1;
         resources["irq"] = irq >= 0 ? StateNode(irq) : StateNode("none");
-        resources["irq_route"] = "Z84C15 PIO port B bit " + std::to_string(n) + " (not wired yet: ISA phase I4)";
-        resources["dma"] = "none (the Sprinter has no ISA DMA controller)";
+        resources["irq_route"] = std::string(n == 0 ? "J6" : "J7") + " IRQ2-IRQ7 pins tied (net IRQ" +
+                                 std::to_string(n + 1) + ", 3.9 kOhm pull-up) -> Z84C15 PIO port B bit " +
+                                 std::to_string(n) + " (PB" + std::to_string(n) + ", data #1E, control #1F)";
+        resources["dma"] = "none (the Sprinter has no ISA DMA controller); DRQ -> PB" + std::to_string(n == 0 ? 4 : 2) +
+                           ", DACK <- PB" + std::to_string(n == 0 ? 5 : 3);
         slot["resources"] = resources;
+        StateNode irqNode = StateNode::Object();
+        DescribeIrq(n, pio, irqNode);
+        slot["irq_line"] = irqNode;
         if (s.card)
             slot["z80_access"] = access;
         if (s.card)
@@ -263,33 +374,60 @@ StateNode SprinterIsaBus::Describe() const
         counters["mem_reads"] = s.counters.memReads;
         counters["mem_writes"] = s.counters.memWrites;
         counters["reset_pulses"] = s.counters.resetPulses;
+        counters["irq_rises"] = s.counters.irqRises;
+        counters["irq_falls"] = s.counters.irqFalls;
+        counters["irq_pio_requests"] = s.counters.pioRequests;
+        counters["irq_acknowledged"] = s.counters.acknowledged;
+        counters["irq_service_ends"] = s.counters.serviceEnds;
         slot["counters"] = counters;
         slots.push(slot);
     }
-    ret["slots"] = slots;
-    // One line per slot for a status bar / the Sprinter report
+    // One line per slot for a status bar / the Sprinter report (each slot also carries its own piece)
     std::string summary;
     for (int n = 0; n < kSlots; ++n)
     {
         const Slot& s = _slots[n];
-        if (n)
-            summary += "; ";
-        summary += "slot " + std::to_string(n + 1) + ": ";
+        std::string piece;
         uint32_t first = 0, last = 0;
         if (!s.card)
-            summary += s.config.kind && !s.refusal.empty() ? sprinterisa::KindKey(static_cast<CardKind>(s.config.kind)) +
-                                                                 " not fitted (" + s.refusal + ")"
-                                                           : std::string("empty");
+            piece = s.config.kind && !s.refusal.empty() ? sprinterisa::KindKey(static_cast<CardKind>(s.config.kind)) +
+                                                              " not fitted (" + s.refusal + ")"
+                                                        : std::string("empty");
         else
         {
-            summary += s.card->Kind();
+            piece = s.card->Kind();
             if (s.card->IoRange(first, last))
-                summary += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
+                piece += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
+            for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
+                piece += " " + aux.name + " " + Hex(aux.first, 3) + "-" + Hex(aux.last, 3);
             if (s.card->IrqLine() >= 0)
-                summary += " IRQ " + std::to_string(s.card->IrqLine());
+                piece += " IRQ " + std::to_string(s.card->IrqLine());
+            piece += s.card->SummaryNote();
         }
+        slots.items[static_cast<size_t>(n)]["summary_line"] = piece;
+        if (n)
+            summary += "; ";
+        summary += "slot " + std::to_string(n + 1) + ": " + piece;
     }
+    ret["slots"] = slots;
     ret["summary"] = summary;
+    // The interrupt lines at a glance: level, who drives it, whether the PIO turns it into an interrupt, counters
+    std::string irqSummary;
+    for (int n = 0; n < kSlots; ++n)
+    {
+        const Slot& s = _slots[n];
+        const StateNode* irqNode = slots.items[static_cast<size_t>(n)].find("irq_line");
+        const StateNode* reach = irqNode ? irqNode->find("reaches_cpu") : nullptr;
+        if (n)
+            irqSummary += "; ";
+        irqSummary += "slot " + std::to_string(n + 1) + " IRQ " + (IrqLine(n) ? "high" : "low") + " (" +
+                      (IrqDriven(n) ? std::string("driven by ") + s.card->Kind() : std::string("pull-up")) + ") -> PB" +
+                      std::to_string(n) + ": " +
+                      (reach ? (reach->s.rfind("yes", 0) == 0 ? std::string("interrupts the CPU") : reach->s.substr(4)) : std::string("-")) +
+                      "; " + std::to_string(s.counters.pioRequests) + " requests, " + std::to_string(s.counters.acknowledged) +
+                      " acknowledged";
+    }
+    ret["irq_summary"] = irqSummary;
     // The two slots are separate selects (page bit 1): equal I/O ranges in both do not collide. No on-board device
     // answers ISA cycles. What remains is a card whose range leaves the 10-bit ISA I/O space
     StateNode conflicts = StateNode::Array();
@@ -300,11 +438,81 @@ StateNode SprinterIsaBus::Describe() const
             conflicts.push("slot " + std::to_string(n + 1) + ": I/O range " + Hex(first, 3) + "-" + Hex(last, 3) +
                            " passes #3FF: it wraps onto " + Hex(first & 0x3FF, 3));
     }
+    for (int n = 0; n < kSlots; ++n)
+    {
+        const std::string warning = sprinterisa::SlotWarning(_slots[n].config, n);
+        if (!warning.empty())
+            conflicts.push(warning);
+    }
     ret["conflicts"] = conflicts;
     ret["conflict_rule"] = "each slot has its own select (page bit 1): cards in different slots may use the same "
                            "addresses; no on-board device decodes ISA cycles";
     ret["journal_entries"] = static_cast<uint64_t>(_journal.size());
     return ret;
+}
+
+void SprinterIsaBus::DescribeIrq(int n, const PioView& pio, StateNode& out) const
+{
+    const Slot& s = _slots[n];
+    const uint8_t bit = kPioIrqBit[n];
+    const int irq = s.card ? s.card->IrqLine() : -1;
+    out["card_irq"] = irq >= 0 ? StateNode(irq) : StateNode("none");
+    out["pio_bit"] = "PB" + std::to_string(n);
+    const bool driven = IrqDriven(n);
+    const bool level = IrqLine(n);
+    out["driven"] = driven ? std::string("by the card (") + s.card->Kind() + ")"
+                           : std::string(s.card ? "nobody: the card's pin is high impedance" : "nobody: the slot is empty") +
+                                 ", the 3.9 kOhm pull-up holds it high";
+    out["line"] = level ? "high" : "low";
+    out["card_request"] = s.card ? s.card->Irq() : false;
+    if (s.card)
+    {
+        const std::string cause = s.card->IrqCause();
+        if (!cause.empty())
+            out["cause"] = cause;
+    }
+    if (!pio.valid)
+        return;
+    const bool input = pio.mode == 1 || pio.mode == 2 || (pio.mode == 3 && (pio.direction & bit));
+    const bool monitored = pio.mode == 3 && (pio.direction & bit) && !(pio.mask & bit);
+    const bool enabled = (pio.intControl & 0x80) != 0;
+    const bool activeHigh = (pio.intControl & 0x20) != 0;
+    StateNode p = StateNode::Object();
+    p["input"] = input;
+    p["monitored"] = monitored;
+    p["active_level"] = activeHigh ? "high" : "low";
+    p["logic"] = (pio.intControl & 0x40) ? "AND" : "OR";
+    p["interrupt_enabled"] = enabled;
+    p["vector"] = Hex(pio.vector, 2);
+    p["condition"] = pio.condition;
+    p["pending"] = pio.pending;
+    p["under_service"] = pio.underService;
+    out["pio"] = p;
+
+    std::string reach;
+    if (pio.mode != 3)
+        reach = std::string("no: PIO port B is in ") + (pio.mode == 0 ? "mode 0 (output)" : pio.mode == 1 ? "mode 1 (input)" : "mode 2") +
+                ", no bit interrupts; the line is " + (input ? "readable at #1E" : "not readable");
+    else if (!input)
+        reach = "no: PB" + std::to_string(n) + " is programmed as an output";
+    else if (!monitored)
+        reach = "no: PB" + std::to_string(n) + " is masked (mask " + Hex(pio.mask, 2) + "): readable at #1E only";
+    else if (!enabled)
+        reach = "no: PIO port B interrupts are disabled (control bit 7)";
+    else
+    {
+        static const char* const kOrder[6] = {"CTC > SIO > PIO", "SIO > CTC > PIO", "CTC > PIO > SIO",
+                                              "PIO > SIO > CTC", "PIO > CTC > SIO", "SIO > PIO > CTC"};
+        uint8_t prio = static_cast<uint8_t>(pio.priority & 7);
+        if (prio > 5)
+            prio &= 3;
+        reach = std::string("yes: the line going ") + (activeHigh ? "high" : "low") + " makes the PIO request IM 2 vector " +
+                Hex(pio.vector, 2) + " (table " + Hex(static_cast<unsigned>(pio.i) << 8 | pio.vector, 4) +
+                ") through the Z84C15 daisy chain (#F4 = " + std::to_string(pio.priority) + ": " + kOrder[prio] +
+                ", port A before B), ahead of the PLD's frame INT; the CPU is in IM " + std::to_string(pio.im) +
+                (pio.iff1 ? " with interrupts enabled" : " with interrupts disabled");
+    }
+    out["reaches_cpu"] = reach;
 }
 
 size_t SprinterIsaBus::StateSize() const

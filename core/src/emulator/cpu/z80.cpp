@@ -780,8 +780,10 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     rzx::RzxPlayer* rzxPlayer = (work & EmulatorContext::kStepWorkRzx) ? _context->rzxPlayer : nullptr;
     RzxBoundary rzxBoundary = RzxBoundary::None;
     uint8_t rzxR0 = 0;
+    uint64_t rzxFramesBefore = 0;
     if (rzxPlayer) [[unlikely]]
     {
+        rzxFramesBefore = rzxPlayer->FramesDone();
         rzxBoundary = RzxFrameEnd(*rzxPlayer);
         rzxR0 = r_low;
         rLoadAdjust = 0;
@@ -837,6 +839,12 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
                 fetches = static_cast<uint8_t>(fetches - 1);
             rzxPlayer->AddFetches(fetches);
         }
+        // A frame end (with its interrupt or, IFF1 clear, without) while TTD
+        // records: a fact at the end of this step, where a seek to "RZX
+        // frame N" lands (Phase 3, Step 2)
+        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelManager)
+            _context->pTimeTravelManager->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
+                                                          rzxBoundary == RzxBoundary::Interrupt);
         if (rzxPlayer->EndPending())
             rzxPlayer->NotifyEnded();
     }
@@ -1147,7 +1155,7 @@ void Z80::NotifyInstructionStart()
         {
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
-            _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
+            _context->ttdProbe.RecordHit(tp, m1_pc, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }
     }
@@ -1634,7 +1642,15 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         {
             // Wired-OR: the machine's logic drives its vector when it asserts;
             // a device alone drives none, the bus reads #FF
-            HandleINT(sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF);
+            uint8_t vector = sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF;
+            // TTD (Phase 3): every vector the CPU took, recorded (a check and a
+            // search key); a replay from the engine hands back the recorded one
+            if (ttd::TTDPortJournal* journal = _context->ttdVectors) [[unlikely]]
+            {
+                const EmulatorState& st = _context->emulatorState;
+                vector = journal->OnRead(kTtdVectorPort, vector, st.frame_counter, st.TtdTInFrame(cpu.t), cpu.pc);
+            }
+            HandleINT(vector);
             return true;
         }
         return false;
@@ -2094,6 +2110,20 @@ bool Z80::SetRegisterValue(Z80State* state, const std::string& name, uint16_t va
 
     info->setter(state, value);
     return true;
+}
+
+const char* Z80::BoundaryName(uint8_t boundary)
+{
+    switch (boundary)
+    {
+        case Z80_BOUNDARY_NONE: return "none";
+        case Z80_BOUNDARY_PREFIX_DD: return "prefix_dd";
+        case Z80_BOUNDARY_PREFIX_FD: return "prefix_fd";
+        case Z80_BOUNDARY_INT_SHADOW: return "int_shadow";
+        case Z80_BOUNDARY_LD_A_IR: return "ld_a_ir";
+        case Z80_BOUNDARY_NMI_ACK: return "nmi_ack";
+        default: return "unknown";
+    }
 }
 
 uint8_t Z80::RegisterR(const Z80Registers* state)

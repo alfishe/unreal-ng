@@ -17,6 +17,8 @@
 /// Performance target: <1ms for capture, <2ms for restore (well within
 /// the 5-6ms per-frame restoration budget).
 
+#include "debugger/ttd/engine/ttddevicetable.h"
+#include <array>
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
@@ -61,6 +63,8 @@ struct TTDRestoreReport
 };
 
 /// @brief Registry for managing connected peripherals and their TTD state.
+class ITTDRegionSource;
+
 class TTDPeripheralRegistry
 {
 public:
@@ -73,7 +77,7 @@ public:
     void Register(PeripheralId id, TTDSerializable* device);
 
     /// Unregister a peripheral (called when device disconnected).
-    void Unregister(PeripheralId id);
+    void Unregister(PeripheralId id);   ///< also drops a not-recorded mark
 
     /// Drop every registration. Used when a session ends: most registered
     /// devices are owned by the emulator, so there is no local list to walk.
@@ -101,6 +105,50 @@ public:
 
     /// Count of registered peripherals.
     size_t Count() const { return _devices.size(); }
+    /// Every registered device by its v1 id
+    const std::unordered_map<uint8_t, TTDSerializable*>& Devices() const { return _devices; }
+
+    /// The time-travel engine's device table entries for the registered
+    /// devices with state; a device whose memory the engine keeps as regions
+    /// (TTDStateWithoutRegions) is entered with its state without that memory
+    std::vector<TTDDeviceEntry> DeviceEntries() const;
+
+    /// Every registered device against its own descriptor (the id it is
+    /// registered under, its state size), then the engine's device table built
+    /// from them (dependencies present, no cycle, time fields inside the
+    /// state). False with the reason: recording would otherwise start and the
+    /// engine refuse the session silently
+    bool CheckDeviceTable(std::string& error) const;
+
+    /// Devices whose memory the time-travel engine records as regions
+    /// (Phase 1, Step 6); v1 does not use them
+    void RegisterRegionSource(ITTDRegionSource* source)
+    {
+        if (source)
+            _regionSources.push_back(source);
+    }
+    const std::vector<ITTDRegionSource*>& RegionSources() const { return _regionSources; }
+
+    /// A device fitted on this machine that time travel deliberately does not
+    /// record (the lightweight General Sound): no blob, no restore, no missing
+    /// report; the session file names it (kFlagsHasNotRecordedMask)
+    void MarkNotRecorded(PeripheralId id)
+    {
+        Unregister(id);
+        _notRecorded |= uint64_t(1) << static_cast<uint8_t>(id);
+    }
+    uint64_t NotRecordedMask() const { return _notRecorded; }
+
+    /// Raw device-state bytes the last CaptureAll serialized, in all and for
+    /// one device (before compression: the work of reading the state)
+    uint64_t LastCaptureStateBytes() const { return _lastStateTotal; }
+    uint32_t LastCaptureStateBytes(uint8_t id) const { return id < _lastStateBytes.size() ? _lastStateBytes[id] : 0; }
+    /// The raw state the last CaptureAll serialized for device @p id (empty when none)
+    const std::vector<uint8_t>& LastCaptureState(uint8_t id) const
+    {
+        static const std::vector<uint8_t> none;
+        return id < _lastStates.size() ? _lastStates[id] : none;
+    }
 
     /// Total state size of all registered peripherals (for metrics).
     size_t TotalStateSize() const;
@@ -112,6 +160,11 @@ public:
     /// Public because a blob is the on-disk representation of a device's state:
     /// tests and offline tools need to read one without a live registry.
     static std::vector<uint8_t> DecodeBlob(uint8_t expectedId, const std::vector<uint8_t>& blob);
+
+    /// Wrap a device's raw state in a PeripheralBlobHeader, compressing the
+    /// payload when that actually makes it smaller (also used by the
+    /// time-travel engine for a device state without its region memory)
+    static std::vector<uint8_t> EncodeBlob(uint8_t id, const uint8_t* state, size_t size);
 
     /// Compute combined hash contribution from all registered peripherals.
     /// The framework mixes this with the common chipset hash for divergence
@@ -125,10 +178,12 @@ public:
 
 private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
+    std::vector<ITTDRegionSource*> _regionSources;
+    uint64_t _notRecorded = 0;
+    mutable std::array<uint32_t, 64> _lastStateBytes{};   ///< raw state bytes of the last CaptureAll, by id
+    mutable std::array<std::vector<uint8_t>, 64> _lastStates;   ///< the raw states of the last CaptureAll, by id
+    mutable uint64_t _lastStateTotal = 0;
 
-    /// Wrap a device's raw state in a PeripheralBlobHeader, compressing the
-    /// payload when that actually makes it smaller.
-    static std::vector<uint8_t> EncodeBlob(uint8_t id, const uint8_t* state, size_t size);
 
 
 };

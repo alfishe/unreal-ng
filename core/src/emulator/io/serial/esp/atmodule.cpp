@@ -112,7 +112,7 @@ std::vector<uint8_t> EchoRequest()
 
 /// Where AtModule's 2.x settings start in the firmware state (after the SNTP server name of up to 63 bytes)
 constexpr size_t kExtraAt = 210;
-static_assert(kExtraAt + 16 <= static_cast<size_t>(netstate::kEspFirmware), "the AT state fits its blob part");
+static_assert(kExtraAt + 17 <= static_cast<size_t>(netstate::kEspFirmware), "the AT state fits its blob part");
 
 std::string Upper(std::string s)
 {
@@ -128,7 +128,7 @@ AtModule::AtModule(VirtualNetwork* network, Chip chip)
 }
 
 AtModule::AtModule(VirtualNetwork* network, Firmware firmware, const std::array<uint8_t, 6>* mac)
-    : EspModule(network, ChipOf(firmware), kLinks + 1, mac), _firmware(firmware)
+    : EspModule(network, ChipOf(firmware), kLinks + 1, mac), _firmware(firmware), _traits(&atdialect::TraitsOf(firmware))
 {
     _textLog = true;
     // Power-up: the boot banner (the ROM log runs at 74880 baud and is not
@@ -136,6 +136,13 @@ AtModule::AtModule(VirtualNetwork* network, Firmware firmware, const std::array<
     Send("\r\nready\r\n", 200000);
     if (GetWifi() == Wifi::GotIp)
         Send("WIFI CONNECTED\r\nWIFI GOT IP\r\n", 0);
+}
+
+void AtModule::Error(uint32_t code)
+{
+    if (_traits->errCodes && _sysLog)
+        Send(atdialect::ErrCodeLine(code));
+    Send("\r\nERROR\r\n");
 }
 
 bool AtModule::LinkOpen(int n) const
@@ -220,17 +227,25 @@ void AtModule::OnFrame()
                 Ok();
         }
         else if (_opLink >= 0)
-            Send("+CWJAP:3\r\n\r\nFAIL\r\n", 0);   // the access point was not found
+        {
+            // <error code> 3: cannot find the target AP
+            Send("+CWJAP:3\r\n", 0);
+            if (_traits->joinErrorForm)
+                Error(atdialect::ErrorCode(atdialect::kSubExecFail));
+            else
+                Send("\r\nFAIL\r\n", 0);
+        }
     }
     if (_op == Op::Scan && now >= _opDeadline)
     {
         _op = Op::None;
         // The fields AT+CWLAPOPT selects, in the firmware's order: ecn, ssid, rssi, mac, channel, freq offset,
         // freq calibration (then cipher / bgn / wps on 2.x: not listed here)
+        // ESP-AT 2.x adds pairwise cipher, group cipher (4: CCMP), bgn (7: b/g/n), wps (0)
         const std::string fields[] = {"3", "\"" + std::string(kVirtualSsid) + "\"", std::to_string(kVirtualRssi),
-                                      "\"52:54:00:12:35:02\"", std::to_string(kVirtualChannel), "-11", "0"};
+                                      "\"52:54:00:12:35:02\"", std::to_string(kVirtualChannel), "-11", "0", "4", "4", "7", "0"};
         std::string line;
-        for (int i = 0; i < 7; ++i)
+        for (int i = 0; i < (_traits->lapAllFields ? 11 : 7); ++i)
         {
             if (_lapOptMask & (1u << i))
                 line += (line.empty() ? "" : ",") + fields[i];
@@ -241,7 +256,7 @@ void AtModule::OnFrame()
     if (_op == Op::Ping && now >= _opDeadline)
     {
         _op = Op::None;
-        Send(Esp8266At2() ? "+PING:TIMEOUT\r\n\r\nERROR\r\n" : "+timeout\r\n\r\nERROR\r\n", 0);
+        Send(_traits->ping2x ? "+PING:TIMEOUT\r\n\r\nERROR\r\n" : "+timeout\r\n\r\nERROR\r\n", 0);
     }
     if (_transparent && now >= _lastRxAt + MicrosToT(kTransparentIdleUs))
         FlushTransparent();
@@ -326,10 +341,10 @@ void AtModule::HandleLine(const std::string& raw)
 {
     const std::string line = Trim(raw);
     if (line.empty())
-        return Error();
+        return Error(atdialect::ErrorCode(atdialect::kSubNoAt));
     const std::string upper = Upper(line);
     if (upper.rfind("AT", 0) != 0)
-        return Error();
+        return Error(atdialect::ErrorCode(atdialect::kSubNoAt));
     const size_t eq = upper.find('=');
     const std::string cmd = eq == std::string::npos ? upper : upper.substr(0, eq);
     const std::string args = eq == std::string::npos ? std::string() : line.substr(eq + 1);
@@ -338,12 +353,20 @@ void AtModule::HandleLine(const std::string& raw)
     const bool query = !base.empty() && base.back() == '?';
     if (query)
         base.pop_back();
+    bool suffixed = false;
     for (const char* suffix : {"_CUR", "_DEF"})
     {
         const size_t n = std::strlen(suffix);
         if (base.size() > n && base.compare(base.size() - n, n, suffix) == 0)
+        {
             base.erase(base.size() - n);
+            suffixed = true;
+        }
     }
+    // ESP-AT has no _CUR / _DEF forms but UART_CUR / UART_DEF ("AT Command Set Comparison"); AT+SYSSTORE decides
+    // what goes to flash
+    if (suffixed && !_traits->suffixForms && base != "AT+UART")
+        return Unsupported();
 
     if (base == "AT")
         return Ok();
@@ -365,18 +388,7 @@ void AtModule::HandleLine(const std::string& raw)
     }
     if (base == "AT+GMR")
     {
-        if (_firmware == Firmware::Esp8266At221)
-            Send("AT version:2.2.1.0(f6fe5ac - ESP8266 - Jun 22 2021 06:45:02)\r\nSDK version:v3.4-22-g967752e2\r\n"
-                 "compile time(6800286):Aug  4 2021 17:20:05\r\nBin version:2.2.1(ESP8266_1MB)\r\n");
-        else if (_firmware == Firmware::Esp8266At222)
-            Send("AT version:2.2.2.0(b3d4a5c - ESP8266 - Jul 28 2026 12:00:00)\r\nSDK version:v3.4-22-g967752e2\r\n"
-                 "compile time(6800286):Jul 28 2026 12:00:00\r\nBin version:2.2.2(ESP8266_2MB)\r\n");
-        else if (GetChip() == Chip::Esp8266)
-            Send("AT version:1.7.4.0(May 11 2020 19:13:04)\r\nSDK version:3.0.4(9532ceb)\r\n"
-                 "compile time:May 27 2020 10:12:17\r\nBin version(Wroom 02):1.7.4\r\n");
-        else
-            Send("AT version:2.2.0.0(c6fa6bf - ESP32 - Jul  2 2021 06:44:05)\r\nSDK version:v4.2.2-76-gefa6eca\r\n"
-                 "compile time(3a696ba):Jul  2 2021 11:54:43\r\nBin version:2.2.0(WROOM-32)\r\n");
+        Send(atdialect::Identity(_firmware, _flash));
         return Ok();
     }
     if (base == "AT+CWMODE")
@@ -407,14 +419,24 @@ void AtModule::HandleLine(const std::string& raw)
     {
         if (query)
         {
+            // ESP-AT 2.x adds <pci_en>,<reconn_interval>,<listen_interval>,<scan_mode>,<pmf> (their defaults)
             if (GetWifi() == Wifi::GotIp)
                 Send("+CWJAP:\"" + Ssid() + "\",\"52:54:00:12:35:02\"," + std::to_string(kVirtualChannel) + "," +
-                     std::to_string(kVirtualRssi) + "\r\n");
+                     std::to_string(kVirtualRssi) + (_traits->joinQuery2x ? ",0,1,3,0,0" : "") + "\r\n");
             else
                 Send("No AP\r\n");
             return Ok();
         }
-        return DoCwJap(args);
+        return DoCwJap(args, eq == std::string::npos);
+    }
+    if (base == "AT+CWSTATE" && _traits->cwState)
+    {
+        if (!query)
+            return Error(atdialect::ErrorCode(atdialect::kSubOpError));
+        // 0 never started, 2 got an IPv4 address, 3 connecting, 4 disconnected
+        const int state = GetWifi() == Wifi::GotIp ? 2 : GetWifi() == Wifi::Connecting ? 3 : Ssid().empty() ? 0 : 4;
+        Send("+CWSTATE:" + std::to_string(state) + ",\"" + Ssid() + "\"\r\n");
+        return Ok();
     }
     if (base == "AT+CWQAP")
     {
@@ -430,9 +452,9 @@ void AtModule::HandleLine(const std::string& raw)
     }
     if (base == "AT+SYSSTORE")
     {
-        // ESP-AT 2.x; the ESP8266 2.2.1 build lacks it (the Sprinter kit tells 2.2.1 from 2.2.2 by this ERROR)
-        if (_firmware == Firmware::Esp8266NonOs174 || _firmware == Firmware::Esp8266At221)
-            return Error();
+        // ESP-AT 2.1.0.0+; the kit's 2.2.1 binary lacks it (the kit tells 2.2.1 from 2.2.2 by this ERROR)
+        if (!_traits->sysStore)
+            return Unsupported();
         if (query)
         {
             Send("+SYSSTORE:" + std::string(_sysStore ? "1" : "0") + "\r\n");
@@ -446,8 +468,8 @@ void AtModule::HandleLine(const std::string& raw)
     }
     if (base == "AT+SYSLOG")
     {
-        if (!At2())
-            return Error();
+        if (!_traits->sysLog)
+            return Unsupported();
         if (query)
         {
             Send("+SYSLOG:" + std::string(_sysLog ? "1" : "0") + "\r\n");
@@ -471,7 +493,7 @@ void AtModule::HandleLine(const std::string& raw)
     if (base == "AT+CIPTCPOPT")
     {
         if (!At2())
-            return Error();
+            return Unsupported();
         if (query)
         {
             std::string text;
@@ -556,7 +578,7 @@ void AtModule::HandleLine(const std::string& raw)
         if (busyLinks || (v == 1 && _transparentMode))
         {
             Send("link is builded\r\n");
-            return Error();
+            return ExecFail();
         }
         _mux = v == 1;
         return Ok();
@@ -582,9 +604,8 @@ void AtModule::HandleLine(const std::string& raw)
         _transparentMode = v == 1;
         return Ok();
     }
-    if ((base == "AT+CIPRECVMODE" || base == "AT+CIPRECVDATA" || base == "AT+CIPRECVLEN") &&
-        _firmware == Firmware::Esp8266At221)
-        return Error();   // the ESP8266 2.2.1 build: active +IPD receive only (the Sprinter kit's 2.2.1 profile)
+    if ((base == "AT+CIPRECVMODE" || base == "AT+CIPRECVDATA" || base == "AT+CIPRECVLEN") && !_traits->passiveReceive)
+        return Unsupported();   // the kit's 2.2.1 binary: active +IPD receive only (the kit's 2.2.1 profile)
     if (base == "AT+CIPRECVMODE")
     {
         if (query)
@@ -602,9 +623,12 @@ void AtModule::HandleLine(const std::string& raw)
         return DoCipRecvData(args);
     if (base == "AT+CIPRECVLEN")
     {
+        // ESP-AT 2.x leaves a link that is not open empty ("+CIPRECVLEN:100,,,,")
         std::string text = "+CIPRECVLEN:";
         for (int i = 0; i < kLinks; ++i)
-            text += (i ? "," : "") + std::to_string(Stack().Valid(i) ? Stack().GetSlot(i).rx.size() : 0);
+            text += (i ? "," : "") + (Stack().Valid(i) || !_traits->recvLenBlanks
+                                          ? std::to_string(Stack().Valid(i) ? Stack().GetSlot(i).rx.size() : 0)
+                                          : std::string());
         Send(text + "\r\n");
         return Ok();
     }
@@ -618,18 +642,25 @@ void AtModule::HandleLine(const std::string& raw)
         return DoCipClose(args);
     if (base == "AT+CIPSTATUS")
         return DoCipStatus();
+    if (base == "AT+CIPSTATE" && _traits->cipState)
+    {
+        if (!query)
+            return Error(atdialect::ErrorCode(atdialect::kSubOpError));
+        return DoCipState();
+    }
     if (base == "AT+CIPDOMAIN")
     {
         const std::vector<std::string> f = Fields(args);
         if (f.empty() || f[0].empty() || GetWifi() != Wifi::GotIp)
         {
             Send("DNS Fail\r\n");
-            return Error();
+            return ExecFail();
         }
         uint32_t addr = 0;
         if (Ipv4(f[0], addr))
         {
-            Send("+CIPDOMAIN:" + NetIpToString(addr) + "\r\n");
+            Send(_traits->quotedDomain ? "+CIPDOMAIN:\"" + NetIpToString(addr) + "\"\r\n"
+                                       : "+CIPDOMAIN:" + NetIpToString(addr) + "\r\n");
             return Ok();
         }
         _op = Op::Domain;
@@ -675,24 +706,39 @@ void AtModule::HandleLine(const std::string& raw)
     }
     if (base == "AT+CIUPDATE")
     {
+        // The ESP-AT 1 MB build (ESP-01 / ESP-01S) has no OTA: no such command
+        if (_flash == atdialect::Flash::OneMb && _traits->errCodes)
+            return Unsupported();
         // The cloud update needs Espressif's server: it fails as without Internet
         Send("+CIPUPDATE:1\r\n");
         return Error();
     }
-    Error();
+    Unsupported();
 }
 
-void AtModule::DoCwJap(const std::string& args)
+void AtModule::DoCwJap(const std::string& args, bool execute)
 {
-    const std::vector<std::string> f = Fields(args);
+    // ESP-AT 2.x: AT+CWJAP alone joins the last access point; <jap_timeout> (8th, 3..600 s, default 15) bounds a
+    // failing join
+    if (execute && !_traits->joinErrorForm)
+        return Unsupported();
+    const std::vector<std::string> f = execute ? std::vector<std::string>{Ssid()} : Fields(args);
     if (f.empty() || f[0].empty() || f[0].size() > 32)
-        return Error();
+        return Error(atdialect::ErrorCode(atdialect::kSubParaInvalid, 0));
+    uint64_t failUs = kJoinFailUs;
+    if (_traits->joinErrorForm && f.size() >= 8 && !Trim(f[7]).empty())
+    {
+        uint32_t seconds = 0;
+        if (!Number(f[7], seconds, 600) || seconds < 3)
+            return Error(atdialect::ErrorCode(atdialect::kSubParaInvalid, 7));
+        failUs = static_cast<uint64_t>(seconds) * 1000000;
+    }
     if (GetWifi() == Wifi::GotIp)
         Send("WIFI DISCONNECT\r\n");
     Join(f[0]);
     _op = Op::Join;
-    _opLink = 0;   // answer with OK / FAIL
-    _opDeadline = Now() + MicrosToT(f[0] == kVirtualSsid ? kJoinUs : kJoinFailUs);
+    _opLink = 0;   // answer with OK / FAIL (ERROR on ESP-AT 2.x)
+    _opDeadline = Now() + MicrosToT(f[0] == kVirtualSsid ? kJoinUs : failUs);
 }
 
 void AtModule::StartLink(int link, bool udp, const std::string& host, uint16_t port, uint16_t localPort)
@@ -735,12 +781,12 @@ void AtModule::DoCipStart(const std::string& args)
     if (Stack().Valid(link))
     {
         Send("ALREADY CONNECTED\r\n");
-        return Error();
+        return ExecFail();
     }
     if (GetWifi() != Wifi::GotIp)
     {
         Send("no ip\r\n");
-        return Error();
+        return ExecFail();
     }
     uint32_t localPort = 0;
     if (type == "UDP" && f.size() >= 4)
@@ -774,7 +820,7 @@ void AtModule::OnStackDone(const EspStack::Done& done)
         _op = Op::None;
         const uint64_t t = Now() - _opStart;
         const uint64_t ms = t * 1000 / std::max<uint64_t>(1, MicrosToT(1000000));
-        return Send((Esp8266At2() ? "+PING:" : "+") + std::to_string(ms) + "\r\n\r\nOK\r\n", 0);
+        return Send((_traits->ping2x ? "+PING:" : "+") + std::to_string(ms) + "\r\n\r\nOK\r\n", 0);
     }
     if (done.kind == EspStack::Done::Kind::Resolve)
     {
@@ -795,9 +841,10 @@ void AtModule::OnStackDone(const EspStack::Done& done)
             if (!done.addr)
             {
                 Send("DNS Fail\r\n");
-                return Error();
+                return ExecFail();
             }
-            Send("+CIPDOMAIN:" + NetIpToString(done.addr) + "\r\n");
+            Send(_traits->quotedDomain ? "+CIPDOMAIN:\"" + NetIpToString(done.addr) + "\"\r\n"
+                                       : "+CIPDOMAIN:" + NetIpToString(done.addr) + "\r\n");
             return Ok();
         }
         if (_op == Op::Ping)
@@ -805,7 +852,7 @@ void AtModule::OnStackDone(const EspStack::Done& done)
             if (!done.addr)
             {
                 _op = Op::None;
-                return Send(Esp8266At2() ? "+PING:TIMEOUT\r\n\r\nERROR\r\n" : "+timeout\r\n\r\nERROR\r\n", 0);
+                return Send(_traits->ping2x ? "+PING:TIMEOUT\r\n\r\nERROR\r\n" : "+timeout\r\n\r\nERROR\r\n", 0);
             }
             Stack().Ping(done.addr, EchoRequest());
             return;
@@ -816,13 +863,13 @@ void AtModule::OnStackDone(const EspStack::Done& done)
         {
             _op = Op::None;
             Send("DNS Fail\r\n");
-            return Error();
+            return ExecFail();
         }
         const int link = _opLink;
         if (Stack().OpenAt(link, !_opUdp) < 0)
         {
             _op = Op::None;
-            return Error();
+            return ExecFail();
         }
         _links[link] = Link();
         _links[link].udp = _opUdp;
@@ -852,7 +899,7 @@ void AtModule::OnStackDone(const EspStack::Done& done)
     }
     Stack().Close(done.slot);
     Send(LinkPrefix(done.slot) + "CLOSED\r\n");
-    Error();
+    ExecFail();
 }
 
 void AtModule::DoCipSend(const std::string& args)
@@ -884,7 +931,7 @@ void AtModule::DoCipSend(const std::string& args)
     if (!Stack().Valid(link) || (!_links[link].udp && !Stack().Established(link)))
     {
         Send("link is not valid\r\n");
-        return Error();
+        return ExecFail();
     }
     _sendTo = _links[link].remote;
     if (_links[link].udp && f.size() >= 3)
@@ -966,14 +1013,14 @@ void AtModule::DoCipClose(const std::string& args)
             return Ok();
         }
         if (!Stack().Valid(static_cast<int>(id)))
-            return Error();
+            return ExecFail();
         Stack().Close(static_cast<int>(id));
         _links[id].closedReported = true;
         Send(std::to_string(id) + ",CLOSED\r\n");
         return Ok();
     }
     if (!Stack().Valid(0))
-        return Error();
+        return ExecFail();
     Stack().Close(0);
     _links[0].closedReported = true;
     Send("CLOSED\r\n");
@@ -999,6 +1046,23 @@ void AtModule::DoCipStatus()
     Ok();
 }
 
+void AtModule::DoCipState()
+{
+    // AT+CIPSTATE? (ESP-AT 2.2.2.0+): the connections only, no STATUS line
+    std::string lines;
+    for (int i = 0; i < kLinks; ++i)
+    {
+        if (!Stack().Valid(i))
+            continue;
+        const EspStack::Slot& s = Stack().GetSlot(i);
+        lines += "+CIPSTATE:" + std::to_string(i) + ",\"" + (_links[i].udp ? "UDP" : "TCP") + "\",\"" +
+                 NetIpToString(s.remote.addr) + "\"," + std::to_string(s.remote.port) + "," +
+                 std::to_string(_links[i].localPort ? _links[i].localPort : 0xC100 + i) + ",0\r\n";
+    }
+    Send(lines);
+    Ok();
+}
+
 void AtModule::DoCipServer(const std::string& args)
 {
     const std::vector<std::string> f = Fields(args);
@@ -1013,7 +1077,7 @@ void AtModule::DoCipServer(const std::string& args)
         return Ok();
     }
     if (!_mux)
-        return Error();   // a server needs CIPMUX=1
+        return ExecFail();   // a server needs CIPMUX=1
     uint32_t port = 333;
     if (f.size() >= 2 && !Number(f[1], port, 65535))
         return Error();
@@ -1043,16 +1107,19 @@ void AtModule::DoCipRecvData(const std::string& args)
         f.erase(f.begin());
     }
     uint32_t length = 0;
-    if (!_passive || f.empty() || !Number(f[0], length) || length == 0 || !Stack().Valid(link))
-        return Error();
+    if (f.empty() || !Number(f[0], length) || length == 0)
+        return Error(atdialect::ErrorCode(atdialect::kSubParaInvalid, _mux ? 1 : 0));
+    if (!_passive || !Stack().Valid(link))
+        return ExecFail();
     const std::vector<uint8_t> data = Stack().Read(link, std::min(length, kMaxSend));
     _links[link].notified = static_cast<uint32_t>(Stack().GetSlot(link).rx.size());
+    _links[link].ipdOwed = false;   // the next arrival is announced again
     // NonOS: "+CIPRECVDATA,<len>:<data>"; the ESP8266 ESP-AT 2.2 builds: "+CIPRECVDATA:<len>,<data>"
-    const std::string head = Esp8266At2() ? "+CIPRECVDATA:" + std::to_string(data.size()) + ","
-                                          : "+CIPRECVDATA," + std::to_string(data.size()) + ":";
+    const std::string head = _traits->recvData2x ? "+CIPRECVDATA:" + std::to_string(data.size()) + ","
+                                                 : "+CIPRECVDATA," + std::to_string(data.size()) + ":";
     Send(head);
     Send(data.data(), data.size(), 0);
-    if (Esp8266At2())
+    if (_traits->recvData2x)
         Send("\r\n");
     Ok();
 }
@@ -1198,11 +1265,13 @@ void AtModule::EmitUrcs()
         }
         else if (_passive)
         {
+            // <len> is all the link holds; ESP-AT 2.x says it once until AT+CIPRECVDATA reads
             const uint32_t have = static_cast<uint32_t>(s.rx.size());
-            if (have > l.notified)
+            if (have > l.notified && !(l.ipdOwed && _traits->ipdOneShot))
             {
                 Send("+IPD," + id + std::to_string(have) + "\r\n", 0);
                 l.notified = have;
+                l.ipdOwed = true;
             }
         }
         else
@@ -1282,6 +1351,10 @@ void AtModule::SaveFirmware(netstate::EspModuleState& out) const
     put16(static_cast<uint16_t>(0x7FF - _lapOptMask));
     put32(_dns[0]);
     put32(_dns[1]);
+    uint8_t owed = 0;
+    for (int i = 0; i < kLinks; ++i)
+        owed = static_cast<uint8_t>(owed | (_links[i].ipdOwed ? 1u << i : 0u));
+    put8(owed);
 }
 
 void AtModule::LoadFirmware(const netstate::EspModuleState& in)
@@ -1351,4 +1424,7 @@ void AtModule::LoadFirmware(const netstate::EspModuleState& in)
     _lapOptMask = static_cast<uint16_t>(0x7FF - get16());
     _dns[0] = get32();
     _dns[1] = get32();
+    const uint8_t owed = get8();
+    for (int i = 0; i < kLinks; ++i)
+        _links[i].ipdOwed = (owed >> i) & 1;
 }

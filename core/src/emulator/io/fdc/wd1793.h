@@ -1388,6 +1388,13 @@ public:
     /// checkpoint's blob map.
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::BetaDisk; }
     std::string TTDDeviceName() const override { return "WD1793"; }
+    /// The engine's device table names it after the interface it drives
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.instance = "betadisk";
+        return d;
+    }
     /// endregion </TTDSerializable interface>
 };
 

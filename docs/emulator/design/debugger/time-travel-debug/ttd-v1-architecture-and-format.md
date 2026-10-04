@@ -1288,16 +1288,19 @@ The five corpus files have `L = 0`, so a 65-byte header.
 | Bit | Mask | Constant (`ttddumpformat.h`) | Meaning | Set by the writer when | Reader |
 |---|---|---|---|---|---|
 | 0 | `0x0001` | `kFlagsLittleEndian` (`:52`) | little-endian | always | required |
-| 1 | `0x0002` | `kFlagsHasWriteJournal` (`:56`) | write-journal section follows the checkpoints | journal enabled **now**, exists and not empty (`tm.cpp:2994-2997`) | parses the section; failure is fatal |
+| 1 | `0x0002` | `kFlagsHasWriteJournal` (`:56`) | write-journal section follows the checkpoints (memory writes only; port OUTs are in the port journals) | the journal covers at least one span of the session (D40) | parses the section; failure is fatal |
 | 2 | `0x0004` | `kFlagsHasCoverageIndex` (`:66`) | coverage section follows | coverage enabled and at least one executed frame sealed (`tm.cpp:3004-3008`) | parses; failure drops the index only |
 | 3 | `0x0008` | `kFlagsHasBookmarks` (`:75`) | bookmarks section follows | at least one bookmark (`tm.cpp:3011-3013`) | parses; failure drops bookmarks only |
-| 4 | `0x0010` | `kFlagsWriteJournalComplete` (`:83`) | the journal holds every write of the session | bit 1 set, `_journalGapless`, no evicted records (`tm.cpp:2998-2999`) | decides whether find-last may trust the journal |
+| 4 | `0x0010` | `kFlagsWriteJournalComplete` (`:83`) | the journal covers the whole session | bit 1 set and its one segment spans the first checkpoint to the last | a file without bit 12: the journal's coverage |
 | 5 | `0x0020` | `kFlagsTopClockTime` (`:92`) | all in-frame positions are in top-clock units | always (`tm.cpp:2995`) | required when `ttd_clock_units > 1` (`tm.cpp:3366-3371`) |
 | 6 | `0x0040` | `kFlagsHasInputJournal` | input-journal section follows the bookmarks (section 7.9) | always, empty or not | parses; failure is fatal. Absent: the session loads and reports its input history incomplete |
 | 7 | `0x0080` | `kFlagsHasExternalEvents` | external-event section follows (section 7.10) | always | parses; failure is fatal |
 | 8 | `0x0100` | `kFlagsHasPortJournals` | the port journals follow (section 7.11) | the session holds all of its history's I/O (a configuration they isolate, recorded without a gap) | parses and checks every block; failure is fatal. Absent: replay reads the live devices |
 | 9 | `0x0200` | `kFlagsHasPeripheralMask` | the header's last 8 bytes are the peripheral mask | always | read by `ReadTTDFileInfo`; the loader checks the blobs themselves |
-| 10..15 | | | reserved | 0 | not checked |
+| 10 | `0x0400` | `kFlagsHasNetInputs` | network inputs follow | the session has NetEvent input | parses |
+| 11 | `0x0800` | `kFlagsHasNotRecordedMask` | the header carries the not-recorded mask | always | read by `ReadTTDFileInfo` |
+| 12 | `0x1000` | `kFlagsHasJournalSegments` | the write journal is followed by its segment table: u32 count, then per segment u64 from, u64 to (machine time; after `from` up to and including `to`) | always with bit 1 (D40: the journal is recorded on demand, in segments) | write searches inside a segment answer from the journal, elsewhere from the coverage index and a replay |
+| 13..15 | | | reserved | 0 | not checked |
 
 The corpus files carry `flags = 0x0037`: bits 0, 1, 2, 4 and 5 (recorded before
 bits 6-8; no bookmarks). The port-journal fixtures

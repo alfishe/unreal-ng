@@ -152,7 +152,7 @@ constexpr uint16_t kFlagsHasPortJournals = 0x0100;
 constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
 
 /// Bit 10 of header.flags — a network-input section follows the port journals
-/// (network adapters TDD §6), written only when the session has NetEvents (a
+/// (network adapters TDD §6), written only when the session has NetEvents or NetFrames (a
 /// session without a network adapter keeps the older layout byte for byte).
 /// The input journal section keeps its fixed record size; NetEvents there
 /// carry only the common fields, and this section holds the rest. Layout:
@@ -161,6 +161,23 @@ constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
 /// u32 payload_length; then u32 payload_size and payload_size bytes (the
 /// payload store). Every event's payload range lies inside the store.
 constexpr uint16_t kFlagsHasNetInputs = 0x0400;
+
+/// Bit 11 of header.flags - the header continues, right after the peripheral
+/// mask, with a u64 not-recorded mask: bit i set when peripheral id i was
+/// fitted but is deliberately not recorded (state registry, class "not
+/// recorded": the lightweight General Sound). Its state runs live through
+/// seeks. Written only when the mask is not zero, so every other session keeps
+/// the older layout byte for byte.
+constexpr uint16_t kFlagsHasNotRecordedMask = 0x0800;
+
+/// Bit 12 of header.flags — the write journal section is followed by its
+/// segment table (D40): u32 count, then per segment u64 from, u64 to, machine
+/// times (GlobalT): the spans, after `from` up to and including `to`, in which
+/// every memory write is in the journal. The journal is recorded on demand, so
+/// a session may hold it for some spans only; outside them a write search
+/// replays. Without the bit and with kFlagsWriteJournalComplete the journal
+/// covers the whole session; without either there is no journal.
+constexpr uint16_t kFlagsHasJournalSegments = 0x1000;
 
 /// Bytes per network-input record (the layout above)
 constexpr uint32_t kNetInputRecordSize = 4 + 2 + 1 + 1 + 4 + 2 + 4 + 4;

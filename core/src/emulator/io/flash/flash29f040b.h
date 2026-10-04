@@ -29,6 +29,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "debugger/ttd/engine/ttdregiontracker.h"
+
 class Flash29F040B
 {
 public:
@@ -78,6 +80,16 @@ public:
     bool modified() const { return _modified; }
     void clearModified() { _modified = false; }
 
+    /// Time-travel engine region (Phase 1, Step 6): every change of the array
+    /// is marked in @p tracker while it is set (null = not recording)
+    void setTracker(ttd::TTDRegionTracker* tracker) { _tracker = tracker; }
+    /// The array was changed at @p offset from outside the chip (a debugger edit)
+    void markWritten(uint32_t offset)
+    {
+        if (_tracker)
+            _tracker->Mark(offset);
+    }
+
     void saveState(uint8_t* dst) const;
     void loadState(const uint8_t* src);
 
@@ -102,6 +114,7 @@ private:
     void startProgram(uint32_t offset, uint8_t value, int64_t now);
 
     std::vector<uint8_t> _data;
+    ttd::TTDRegionTracker* _tracker = nullptr;
     double _unitsPerSecond;
     Vendor _vendor;
     bool _writable = true;

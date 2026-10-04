@@ -35,6 +35,37 @@ void CLIProcessor::HandleIsa(const ClientSession& session, const std::vector<std
     }
 
     const std::string& sub = args[0];
+    if (sub == "irq")
+    {
+        // The interrupt lines only: PIO port B and each slot's IRQ object (the same report, cut down)
+        const StateNode report = DeviceState::Isa(context);
+        StateNode view = StateNode::Object();
+        if (const StateNode* available = report.find("available"); available && !available->b)
+        {
+            session.SendResponse(DeviceState::ToText(report));
+            return;
+        }
+        if (const StateNode* summary = report.find("irq_summary"))
+            view["irq_summary"] = *summary;
+        if (const StateNode* pio = report.find("pio_port_b"))
+            view["pio_port_b"] = *pio;
+        StateNode slots = StateNode::Array();
+        if (const StateNode* all = report.find("slots"))
+        {
+            for (const StateNode& slot : all->items)
+            {
+                StateNode one = StateNode::Object();
+                one["slot"] = *slot.find("slot");
+                one["card"] = *slot.find("card");
+                if (const StateNode* irq = slot.find("irq_line"))
+                    one["irq_line"] = *irq;
+                slots.push(one);
+            }
+        }
+        view["slots"] = slots;
+        session.SendResponse(DeviceState::ToText(view));
+        return;
+    }
     if (sub == "help")
     {
         std::stringstream ss;
@@ -45,7 +76,10 @@ void CLIProcessor::HandleIsa(const ClientSession& session, const std::vector<std
         ss << "  isa peek <slot> <address> [mem]  - What the card shows (I/O, or memory with 'mem'), no side effect" << NEWLINE;
         ss << "  isa reset                        - One RESET DRV pulse to both slots" << NEWLINE;
         ss << "  isa latch <value>                - Write the #9FBD latch (A19-A14, AEN bit 6, RESET bit 7)" << NEWLINE;
-        ss << "  isa journal [n | clear | on | off] - Who touched which card register (frame, T, PC, register)" << NEWLINE;
+        ss << "  isa irq                          - The IRQ lines: level, driver, PIO port B route, pending, counters" << NEWLINE;
+        ss << "  isa journal [n | clear | on | off] - Who touched which card register, and the IRQ events" << NEWLINE;
+        ss << "  The ZX-bus adapter (slot 1 by default): 'isa' shows zx_bus - the General Sound / NeoGS behind it, its"
+           << NEWLINE << "  ports (isa io 1 #BB reads its status, #B3 its data), its reset; the card itself: state gs, gs" << NEWLINE;
         ss << "  Addresses: 20-bit ISA address, decimal, 0x.., #.. or ..h (the NE2000 at #300: isa io 2 #30A)" << NEWLINE;
         session.SendResponse(ss.str());
         return;

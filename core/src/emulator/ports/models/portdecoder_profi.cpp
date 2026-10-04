@@ -2,14 +2,19 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_profi.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "debugger/ttd/profi/ttdprofixtkbc.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "debugger/ttd/ttdpit8253.h"
+#include "debugger/ttd/ttdppi8255.h"
+#include "debugger/ttd/ttdusart8251.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/audio.h"
@@ -45,7 +50,16 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
+    // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
+    _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
     FitKeyboard();
+
+    // The COM port (v5): the 8251's TxC / RxC is the 8253's counter 0 output. The 8253 has no RESET pin: its
+    // counters start idle at power-on and keep counting through a reset
+    _pit.PowerOn(NowBase());
+    _usart.Reset(NowBase());
+    _usart.SetClockSource([this]() { return Usart8251::ClockRate{_pit.ClockHz(), _pit.OutputPeriod(Pit8253::kCounter0)}; });
 
     // The VG93 and the tape keep their own clocks while the CPU clock changes (turbo x2, hi-res 6/7 on v3 and
     // ZQ3/14 on v5): without the base-clock time base their time is t_states + CPU T in the frame, which steps
@@ -91,12 +105,60 @@ void PortDecoder_Profi::OnFrameEnd()
 {
     if (_xtKbc)
         _xtKbc->OnFrameEnd();
+    // The COM line: what the ZX sent reaches the peer, what the peer sent arrives, without waiting for an access
+    if (_usart.Peer())
+        _usart.Advance(NowBase());
+}
+
+uint64_t PortDecoder_Profi::NowBase() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return _state->t_states;
+    return _state->t_states + _state->CpuToBaseT(z80->t);
+}
+
+void PortDecoder_Profi::SetSerialPeer(ISerialPeer* peer)
+{
+    _usart.Advance(NowBase());
+    ISerialPeer* old = _usart.Peer();
+    if (old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        peer->SetClock([this]() { return NowBase(); }, kProfiBaseClockHz);
+        // Bytes from outside arrive at their emulated time: the 8251 catches up first
+        peer->onReceive = [this]() { _usart.Advance(NowBase()); };
+    }
+    _usart.SetPeer(peer);
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Profi::DescribeNetwork()
+{
+    // The v5 board's COM port (an 8251, not a 16550 on #xxEF): the machine's own serial port, as on the ATM Turbo 2+.
+    // The v3 board has none
+    NetworkCapabilities caps;
+    if (!_board.extendedPorts)
+        return caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::Profi8251;
+    caps.attachSerialPeer = [this](ISerialPeer* peer) { SetSerialPeer(peer); };
+    caps.serialBaud = [this]() { return _usart.Baud(); };
+    return caps;
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
     if (_xtKbc && _context->pKeyboard && _context->pKeyboard->GetPs2Sink() == _xtKbc.get())
         _context->pKeyboard->SetPs2Sink(nullptr);
+    // The peer outlives the decoder (the network manager owns it): it must not call back into this one
+    if (ISerialPeer* peer = _usart.Peer())
+    {
+        peer->onReceive = nullptr;
+        peer->SetClock(nullptr, 0);
+    }
 
     Core* core = _context->pCore;
     if (core && core->GetZ80() && core->GetZ80()->GetMachineStepHook() == this)
@@ -133,6 +195,10 @@ void PortDecoder_Profi::reset()
     state.border_attr = 0x07;
 
     ResetPalette();
+    _ppi.Reset();   // RESET reaches the 8255: every port an input
+    // RESET reaches the 8251 and clears the COM control register (interrupts off); the 8253 has no RESET input
+    _usart.Reset(NowBase());
+    _usart.SetBoardLatch(0);
 
     // The RTC's battery-backed cells come from [PROFI] NvramFile once, at
     // power-on; a Z80 reset does not touch the chip. Only the v5 board has the clock
@@ -364,17 +430,23 @@ uint8_t PortDecoder_Profi::FloatingBusV3(uint32_t t3) const
     return _context->pMemory->RAMPageAddress(page)[offset];
 }
 
+bool PortDecoder_Profi::IdeShadowedBySysRegister(uint16_t port) const
+{
+    // V0.03, TR-DOS with ROM14 = 1: #EB is the system register's alias there, not the IDE's data / command port
+    return !IsExtMode() && IsLongBesideShort() && (static_cast<uint8_t>(port) & 0xE3) == 0xE3;
+}
+
 IdeAdapter::Gate PortDecoder_Profi::IdeGate()
 {
     IdeAdapter::Gate gate = PortDecoder::IdeGate();
-    gate.profiExt = IsExtMode();
+    gate.profiExt = IsExtMode() || IsLongBesideShort();
     return gate;
 }
 
 uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 {
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
-    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+    if (uint8_t ideValue = 0xFF; !IdeShadowedBySysRegister(port) && TryIdePortIn(port, pc, ideValue))
         return ideValue;
 
     uint8_t result = 0xFF;
@@ -419,12 +491,19 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     }
     // RTC/CMOS: #9F/#BF/#DF/#FF, EXT mode only - takes priority over the FDC/system-port
     // decode below, since #BF/#FF alias to the Beta128 system port outside EXT mode.
-    else if ((port & 0x9F) == 0x9F && IsExtMode())
+    else if ((port & 0x9F) == 0x9F && LongPortOpen(port))
     {
         // Only the data ports (#9F/#DF, bit 5 = 0) return real data; the address
         // strobe (#BF/#FF) is write-only and reads as floating bus.
         if ((port & 0x20) == 0)
             result = _rtc.ReadData();
+        _lastPortDecoded = true;
+        disp.decodedPort = port & 0xFF;
+    }
+    // The COM port (v5): 8253 #8F..#EF, 8251 #D3 / #F3, control register #93 / #B3 - extended map only
+    else if (const ComDevice com = ComPortDevice(port); com != ComDevice::None)
+    {
+        result = ComIn(com, port);
         _lastPortDecoded = true;
         disp.decodedPort = port & 0xFF;
     }
@@ -471,6 +550,15 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x001F;
         disp.wasHandledInline = true;
     }
+    // The 8255: #3F (B), #5F (C), #7F (control) outside the DOS / CP/M port set; #87 / #A7 / #C7 / #E7 in the
+    // extended map. Port A at #1F is the joystick arm above when one is fitted
+    else if (const uint8_t ppiReg = PpiRegister(port, dosPorts); ppiReg != 0xFF)
+    {
+        result = _ppi.Read(ppiReg);
+        _lastPortDecoded = true;
+        disp.decodedPort = port & 0xFF;
+        disp.wasHandledInline = true;
+    }
     else if (uint8_t mouseReg = 0; !dosPorts && Default_IsPort_KempstonMouse(port, mouseReg))
     {
         // Kempston mouse and joystick exist only outside the CP/M / DOS port sets
@@ -515,7 +603,7 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
-    if (TryIdePortOut(port, value, pc))
+    if (!IdeShadowedBySysRegister(port) && TryIdePortOut(port, value, pc))
         return;
 
     // Port trace decode attribution (if-chain decoder: no mask/match table)
@@ -588,13 +676,19 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     }
     // RTC/CMOS: #9F/#BF/#DF/#FF, EXT mode only - takes priority over the FDC/system-port
     // decode below, since #BF/#FF alias to the Beta128 system port outside EXT mode.
-    else if ((port & 0x9F) == 0x9F && IsExtMode())
+    else if ((port & 0x9F) == 0x9F && LongPortOpen(port))
     {
         // Bit 5 set (#BF/#FF) latches the register address; clear (#9F/#DF) writes data.
         if (port & 0x20)
             _rtc.WriteAddress(value);
         else
             _rtc.WriteData(value);
+        disp.decodedPort = port & 0xFF;
+        disp.wasDecoded = true;
+    }
+    else if (const ComDevice com = ComPortDevice(port); com != ComDevice::None)
+    {
+        ComOut(com, port, value);
         disp.decodedPort = port & 0xFF;
         disp.wasDecoded = true;
     }
@@ -610,10 +704,16 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         // Covox/SoundRive DAC, CP/M-extended-mode aliases (#C7 Left, #A7 Right): real
         // Profi hardware moves the DAC here because the FDC has taken #1F..#7F away from
         // it. See the kProfiCovoxExt* constants above for the decode.
-        else if (IsExtMode())
+        else if (LongPortOpen(port))
         {
             const uint8_t lowByte = static_cast<uint8_t>(port);
             const uint8_t lrBits = lowByte & kProfiCovoxExtLRMask;
+            if (const uint8_t ppiReg = PpiRegister(port, dosPorts); ppiReg != 0xFF)
+            {
+                _ppi.Write(ppiReg, value);
+                disp.decodedPort = lowByte;
+                disp.wasDecoded = true;
+            }
             if ((lowByte & kProfiCovoxExtMask) == kProfiCovoxExtMatch &&
                 (lrBits == kProfiCovoxExtLeftBits || lrBits == kProfiCovoxExtRightBits))
             {
@@ -631,10 +731,13 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     // Covox/SoundRive DAC: #5F (Left), #3F (Right). NORMAL mode only - the FDC/CP'M
     // port set (dosPorts above) takes priority when the disk interface is on the bus;
     // the CP/M-extended-mode aliases (#C7/#A7) are handled inside that branch instead.
-    else if (const uint8_t lowByte = port & 0xFF;
-             lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort)
+    else if (const uint8_t lowByte = port & 0xFF; PpiRegister(port, dosPorts) != 0xFF)
     {
-        if (_context->pSoundManager && _context->pSoundManager->hasCovox())
+        _ppi.Write(PpiRegister(port, dosPorts), value);
+        // The Covox DAC follows every write to B / C, whatever the 8255's mode (as Karabas Pro's covox.vhd latches
+        // it): the Profi Covox software never programs the 8255, and no BIOS sets it to output
+        if ((lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort) && _context->pSoundManager &&
+            _context->pSoundManager->hasCovox())
         {
             // Use the A ports, not B: computeStereoAmplitudes()'s mono-compatibility
             // fallback keys on LeftA/LeftB/RightA==0 and then substitutes RightB into
@@ -656,7 +759,7 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     // Covox has no idle timeout: with the bus taken away, its DAC latches would otherwise
     // hold their last written level forever - inaudible on real hardware (AC-coupled
     // output stage) but a permanent stuck tone through a digital audio pipeline.
-    const bool covoxReachableNow = !(_state->flags & CF_DOSPORTS) || IsExtMode();
+    const bool covoxReachableNow = !(_state->flags & CF_DOSPORTS) || IsExtMode() || IsLongBesideShort();
     if (!covoxReachableNow && _covoxWasReachable)
     {
         if (_context->pSoundManager && _context->pSoundManager->hasCovox())
@@ -747,9 +850,13 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
     // The clock is on the v5 board only; the PROFI-XT controller when fitted
-    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging};
+    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ppi8255};
     if (_board.extendedPorts)
+    {
         ids.push_back(ttd::PeripheralId::Ds12887);
+        ids.push_back(ttd::PeripheralId::Pit8253);     // the COM port's baud timer
+        ids.push_back(ttd::PeripheralId::Usart8251);   // the COM port (its peer: MachineSerialPeer)
+    }
     if (_xtKbc)
         ids.push_back(ttd::PeripheralId::ProfiXtKbc);
     return ids;
@@ -759,8 +866,13 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDS
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDPpi8255>(const_cast<Ppi8255&>(_ppi)));
     if (_board.extendedPorts)
+    {
         serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+        serializers.push_back(std::make_unique<ttd::TTDPit8253>(const_cast<Pit8253&>(_pit)));
+        serializers.push_back(std::make_unique<ttd::TTDUsart8251>(const_cast<Usart8251&>(_usart)));
+    }
     if (_xtKbc)
         serializers.push_back(std::make_unique<ttd::TTDProfiXtKbc>(*_xtKbc));
     return serializers;
@@ -788,6 +900,100 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
     return (port & mask) == match;
 }
 
+uint8_t PortDecoder_Profi::PpiRegister(uint16_t port, bool dosPorts) const
+{
+    // The 8255's register (A6 A5 = A1 A0 of the chip) for an address it answers, else #FF. Outside the DOS / CP/M
+    // port set: #1F / #3F / #5F / #7F (the joystick read of #1F stays its own arm). In the extended map: the same
+    // registers at #87 / #A7 / #C7 / #E7 (A7 = 1, A2 = 1: decoder-prom.md, the v5 PROM)
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (!dosPorts && (low & 0x9F) == 0x1F)
+        return static_cast<uint8_t>((low >> 5) & 0x03);
+    if (dosPorts && (low & 0x9F) == 0x87 && LongPortOpen(port))
+        return static_cast<uint8_t>((low >> 5) & 0x03);
+    return 0xFF;
+}
+
+PortDecoder_Profi::ComDevice PortDecoder_Profi::ComPortDevice(uint16_t port) const
+{
+    // The extended map's COM group (Concurrent BIOS port list, PLUSDOC bios2.txt pp. 13-14): A7 = 1, A4 = 0, A3..A0 =
+    // 1111 the 8253 (A6 A5 its register), 0011 the 8251 (A6 = 1, A5 = C/D) or the control register (A6 = 0)
+    const uint8_t low = static_cast<uint8_t>(port);
+    const uint8_t group = static_cast<uint8_t>(low & 0x9F);
+    if (group != 0x8F && group != 0x93)
+        return ComDevice::None;
+    if (!LongPortOpen(port))
+        return ComDevice::None;
+    if (group == 0x8F)
+        return ComDevice::Pit;
+    return (low & 0x40) ? ComDevice::Usart : ComDevice::Control;
+}
+
+uint8_t PortDecoder_Profi::ComIn(ComDevice device, uint16_t port)
+{
+    const uint64_t now = NowBase();
+    switch (device)
+    {
+        case ComDevice::Pit:
+            return _pit.Read(static_cast<uint8_t>((port >> 5) & 0x03), now);
+        case ComDevice::Usart:
+            return _usart.Read((port & 0x20) ? Usart8251::kControl : Usart8251::kData, now);
+        case ComDevice::Control:
+        {
+            // D0 RI, D7 DCD of the connector (1 = asserted; the polarity is not documented), the rest float
+            _usart.Advance(now);
+            uint8_t value = 0x7E;
+            if (_usart.RiIn())
+                value |= 0x01;
+            if (_usart.DcdIn())
+                value |= 0x80;
+            return value;
+        }
+        default:
+            return 0xFF;
+    }
+}
+
+void PortDecoder_Profi::ComOut(ComDevice device, uint16_t port, uint8_t value)
+{
+    const uint64_t now = NowBase();
+    switch (device)
+    {
+        case ComDevice::Pit:
+            // The 8251's clock changes with counter 0: the line moves up to now at the old rate first
+            _usart.Advance(now);
+            _pit.Write(static_cast<uint8_t>((port >> 5) & 0x03), value, now);
+            break;
+        case ComDevice::Usart:
+            _usart.Write((port & 0x20) ? Usart8251::kControl : Usart8251::kData, value, now);
+            break;
+        case ComDevice::Control:
+            // D0: the COM interrupt enable. The interrupt controller behind it (RST #20 receive, RST #28 transmit
+            // on the bus: PLUSDOC comport.txt) is not modeled: the latch is kept, no INT is raised
+            _usart.SetBoardLatch(static_cast<uint8_t>(value & 0x01));
+            break;
+        default:
+            break;
+    }
+}
+
+bool PortDecoder_Profi::IsLongBesideShort() const
+{
+    // Djoni's V0.03 PROM (docs/inprogress/2026-10-04-profi-plus/design.md, tools/machines/profi/profidecoder): in the
+    // TR-DOS state with the 48 ROM page (DOS latch on, CP/M off, ROM14 = 1) the stock VG93 stays at #1F..#7F and
+    // the extended group answers at ADR7 = 1 (VG93 #83 #A3 #C3, 8255 #87 #A7 #C7, IDE #8B #AB #CB, RTC #9F #BF
+    // #DF); #E3.. stay the system register
+    if (_context->config.profi_ext_ports != 2 || !_board.extendedPorts)
+        return false;
+    return (_state->flags & CF_TRDOS) && !(_state->pDFFD & 0x20) && (_state->p7FFD & 0x10);
+}
+
+bool PortDecoder_Profi::LongPortOpen(uint16_t port) const
+{
+    if (IsExtMode())
+        return true;
+    return IsLongBesideShort() && (static_cast<uint8_t>(port) & 0xE3) != 0xE3;
+}
+
 bool PortDecoder_Profi::IsExtMode() const
 {
     // The extended port map: CP/M and ROM14, on the v5 board only. The v5 port decoder PROM confirms it
@@ -798,6 +1004,16 @@ bool PortDecoder_Profi::IsExtMode() const
         return false;
     const bool cpm = (_state->pDFFD & 0x20) != 0;
     const bool rom14 = (_state->p7FFD & 0x10) != 0;
+    // [PROFI] ExtPorts=sys: Karabas Pro's decode (karabas-pro.vhd: "(cpm='1' and rom14='1') or (dos_act='1' and
+    // rom14='0')") also opens the map while the SYS ROM runs (DOS latch on, ROM14 = 0). ROM BIOS Plus and PQ-DOS
+    // (Vadim / Star Software) probe the FDC, RTC and IDE there; BIOS 1.0 / 2.0 instead use the VG93 at #1F..#7F
+    // from the SYS ROM and cannot boot a disk with it (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md)
+    if (_context->config.profi_ext_ports == 1 && (_state->flags & CF_TRDOS) && !rom14)
+        return true;
+    // ExtPorts=v003 (Djoni's PROM): the same SYS ROM rule, but the PROM forces A2 = 1 in CP/M mode, so the DOS latch
+    // only counts with CP/M off (in CP/M mode the table is the stock CP/M map)
+    if (_context->config.profi_ext_ports == 2 && (_state->flags & CF_TRDOS) && !cpm && !rom14)
+        return true;
     return cpm && rom14;
 }
 
@@ -822,6 +1038,8 @@ uint16_t PortDecoder_Profi::DecodeFDCPort(uint16_t port) const
         return static_cast<uint16_t>((p1 & 0x60) | 0x1F);
     if ((p1 & 0xE3) == (cpm ? 0xA3 : 0xE3))
         return 0x00FF;
+    if ((p1 & 0x9F) == 0x83 && LongPortOpen(port))
+        return static_cast<uint16_t>((p1 & 0x60) | 0x1F);
 
     return 0;
 }
@@ -929,6 +1147,18 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
         _context->pScreen->InitRaster();
 }
 
+void PortDecoder_Profi::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
+{
+    const CONFIG& c = _context->config;
+    fp.Add("profi.sync_prom", c.profi_sync_prom);
+    fp.Add("profi.wait_phase", c.profi_wait_phase);
+    fp.Add("profi.wait_pentagon", c.profi_wait_pentagon);
+    fp.Add("profi.rom_wait", c.profi_rom_wait);
+    fp.Add("profi.turbo", c.profi_turbo);
+    fp.Add("profi.cpm", c.profi_cpm);
+    fp.Add("profi.dffd_decode", c.profi_dffd_decode);
+    fp.Add("profi.ext_ports", c.profi_ext_ports);   // cpm / sys / v003: a recording made under another decode is refused
+}
 ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
 {
     const auto* decoder = context ? dynamic_cast<const PortDecoder_Profi*>(context->pPortDecoder) : nullptr;

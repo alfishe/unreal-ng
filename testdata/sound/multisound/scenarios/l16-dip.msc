@@ -1,0 +1,23 @@
+# L16: a disabled function does not decode its ports and does not assert IORQGE
+dip none
+out FFFD F0
+out BFFD 01
+in FFFD
+out 00FF 02
+out 00B3 03
+in 00BB
+out 000F 04
+dip gs
+out 00B3 05
+in 00BB
+out FFFD 06
+dip sd
+out 000F 07
+out 00B3 08
+dip ym
+out FFFD F1
+in FFFD
+out 00FF 09
+dip saa
+out 01FF 0A
+out FFFD F8     # SAA clock off without the YM

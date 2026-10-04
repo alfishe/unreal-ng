@@ -1,0 +1,24 @@
+# L8, L9, L10: the ROM-fetch lock
+out 00FF 01     # unlocked after reset
+out 000F 90
+m1 0000         # fetch from ROM: locked
+out 00FF 02     # SAA ignored
+out 001F 91     # SounDrive ignored
+out FFFD 05     # YM is not locked
+out 00B3 06     # GS is not locked
+mr 8000         # memory reads do not change the lock
+mw C000 12      # neither do writes
+out 01FF 03
+m1 3FFF         # still ROM
+out 004F 92
+m1 4000         # RAM: unlocked
+out 01FF 04
+out 004F 93
+m1 3FFF         # a prefix at #3FFF and the opcode at #4000: the last M1 counts
+m1 4000
+out 005F 94
+m1 C000
+out 00FF 05
+m1 0038         # IM 1 handler in ROM
+out 00FF 06
+in 00FF

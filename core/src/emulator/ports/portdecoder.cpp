@@ -234,24 +234,35 @@ uint16_t PortDecoder::IoPc() const
     return z80 ? z80->m1_pc : 0;
 }
 
+int64_t PortDecoder::SessionWallMicros() const
+{
+    const int64_t wall = _context->ttdSessionWallMicros;
+    if (wall == INT64_MIN)
+        return wall;
+    return wall + static_cast<int64_t>(EmulatedMicroseconds() - _context->ttdSessionEmulatedMicros);
+}
+
 uint64_t PortDecoder::EmulatedMicroseconds() const
 {
     if (!_context)
         return 0;
 
+    // The base T-states run since power-on (t_states: every closed frame,
+    // restored with the chipset) plus the position in this frame, at the
+    // CPU's rate - the frame's duration over its length. A frame's length
+    // may change (the Sprinter's 320 / 312 lines) but not the rate, so the
+    // time never goes back; frame x the current duration did (Phase 3, Step 5)
     const CONFIG& config = _context->config;
     const EmulatorState& state = _context->emulatorState;
-    const uint64_t frameMicros = config.frame_duration_us;
     const uint64_t units = state.ttd_clock_units ? state.ttd_clock_units : 1;
     const uint64_t frameSpan = static_cast<uint64_t>(config.frame) * units;
-
+    if (!frameSpan)
+        return 0;
     const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint64_t inFrame = z80 ? state.TtdTInFrame(z80->t) : 0;
-
-    uint64_t micros = state.frame_counter * frameMicros;
-    if (frameSpan)
-        micros += inFrame * frameMicros / frameSpan;
-    return micros;
+    const uint64_t now = state.t_states * units + (z80 ? state.TtdTInFrame(z80->t) : 0);
+    // now x duration / span, exactly and without overflow: whole spans, then the rest
+    const uint64_t duration = config.frame_duration_us;
+    return (now / frameSpan) * duration + (now % frameSpan) * duration / frameSpan;
 }
 
 /// region <Interface methods>
@@ -422,7 +433,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
             const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             // A port has no RAM page; the journal path reports the same.
-            _context->ttdProbe.RecordHit(tp, pc, value, ttd::kPhysPageNone,
+            _context->ttdProbe.RecordHit(tp, port, pc, value, ttd::kPhysPageNone,
                                           ttd::TTDAccessType::Io);
         }
     }
@@ -601,17 +612,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     // two extra address bits (PortDecoder_Scorpion256::IsPort_FE) - mirrored here.
     if (scorpion)
         entries.push_back({0x00FE, 0x0023, 0x0022, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
-                           Tags(PortTag::Keyboard)});
+                           Tags(PortTag::Keyboard), PagingLatch::PFE});
     else if (evo)
     {
         entries.push_back({0x00FE, 0x00FF, 0x00FE, "Keyboard / Beeper / Border 0-7 / MIC+EAR", nullptr,
-                           Tags(PortTag::Keyboard)});
+                           Tags(PortTag::Keyboard), PagingLatch::PFE});
         entries.push_back({0x00F6, 0x00FF, 0x00F6, "Keyboard / Border 8-15 (no beeper)", nullptr,
                            Tags(PortTag::Keyboard) | PortTag::Screen});
     }
     else
         entries.push_back({0x00FE, 0x0001, 0x0000, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
-                           Tags(PortTag::Keyboard)});
+                           Tags(PortTag::Keyboard), PagingLatch::PFE});
 
     // AY register select / data: A15/A14/A1 qualification, mirrors resolve to the
     // canonical ports (PortDecoder_Spectrum48::DecodePortIn and every other model)
@@ -966,6 +977,7 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::PFFF7Window1: return state.pFFF7[1];
         case PagingLatch::PFFF7Window2: return state.pFFF7[2];
         case PagingLatch::PFFF7Window3: return state.pFFF7[3];
+        case PagingLatch::PFE:    return state.pFE;
         case PagingLatch::None:
         default:
             return 0;
@@ -1056,6 +1068,7 @@ const char* PagingLatchToString(PagingLatch latch)
         case PagingLatch::PFFF7Window1: return "pFFF7_w1";
         case PagingLatch::PFFF7Window2: return "pFFF7_w2";
         case PagingLatch::PFFF7Window3: return "pFFF7_w3";
+        case PagingLatch::PFE:    return "pFE";
         case PagingLatch::None:
         default:
             return nullptr;
@@ -1084,6 +1097,12 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
 
     switch (latch)
     {
+        case PagingLatch::PFE:
+            // The ULA port as the CPU last wrote it (the keyboard is the read side, not latched)
+            intField("border", static_cast<int>(value & 0x07));
+            boolField("mic", (value & 0x08) != 0);
+            boolField("ear", (value & 0x10) != 0);  // the beeper
+            break;
         case PagingLatch::P7FFD:
         {
             // Pentagon 512K is the only master decoder folding bits [6:7] into

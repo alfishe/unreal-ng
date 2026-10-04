@@ -16,7 +16,7 @@
 #   --cpus N          hard CPU cap for the whole container: configure, link and the
 #                     test run included, not only the compile jobs (default: same as
 #                     --jobs, i.e. half the host cores)
-#   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3)
+#   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04)
 #   --type TYPE       CMAKE_BUILD_TYPE (default: Release, like CI)
 #   --clean           remove the build directory first
 #
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGE="ghcr.io/alfishe/unreal-ng:qt6.9.3"
+IMAGE="ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04"
 TARGET="core-tests"
 TYPE="Release"
 PLATFORM=""
@@ -75,8 +75,20 @@ done
 BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
 [ "$CLEAN" = 1 ] && rm -rf "$ROOT/$BUILDDIR"
 
+# Git worktrees: their .git file points at the main repository's .git by absolute path
+# (gitdir: <common>/worktrees/<name>). Mount that directory at the same path, read-only, so
+# git - CMake's build fingerprint - works in the container from any worktree. The main
+# checkout's .git already is inside $ROOT. GIT_OPTIONAL_LOCKS=0: git never writes to it.
+MOUNTS=()
+GIT_COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+case "$GIT_COMMON" in
+  ""|"$ROOT"/*) ;;
+  *) MOUNTS+=(-v "$GIT_COMMON:$GIT_COMMON:ro") ;;
+esac
+
+# ${MOUNTS[@]+...}: an empty array under set -u fails in macOS's bash 3.2
 docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
-  -v "$ROOT":/src -w /src/unreal-qt \
+  -v "$ROOT":/src -w /src/unreal-qt ${MOUNTS[@]+"${MOUNTS[@]}"} -e GIT_OPTIONAL_LOCKS=0 \
   --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
   -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \

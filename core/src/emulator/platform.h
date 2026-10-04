@@ -395,6 +395,7 @@ struct IDE_CONFIG
 {
 	unsigned c = 0, h = 0, s = 0;	// geometry; 0/0/0: from the image header, else from its size
 	uint8_t cd = 0;					// 1: the unit is an ATAPI CD-ROM drive (auto for an .iso image)
+	uint8_t cf = 0;					// 1: a disk unit is a CompactFlash card on an IDE adapter (CFA IDENTIFY, 8-bit mode)
 };
 
 enum RSM_MODE
@@ -628,7 +629,7 @@ struct CONFIG
 
 	struct
 	{
-		unsigned fq, ayfq, saa1099fq;
+		unsigned fq, ayfq;
 
 		/// Core audio rate from [SOUND] CoreRate (multirate plan phase 6):
 		/// one of 44100/48000/88200/96000/176400/192000, or 0 = auto.
@@ -673,7 +674,7 @@ struct CONFIG
 		FilterVoicing::Preset ayVoicing = FilterVoicing::DEFAULT_PRESET;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
-		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
+		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
 		VOID_FUNC do_sound;
@@ -722,7 +723,7 @@ struct CONFIG
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
 		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:
-		/// the AVR's 16550): NONE | LOOPBACK | TCP:<host>:<port> |
+		/// the AVR's 16550): NONE | LOOPBACK | PLUG | TCP:<host>:<port> |
 		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
@@ -744,6 +745,13 @@ struct CONFIG
 		/// (4 sockets, NonOS AT 1.7.4), 2 = ESP8266 ESP-AT 2.2.1, 3 = ESP8266 ESP-AT 2.2.2. The SprinterESP card's
 		/// ESP-12F takes an ESP8266 value from here, else 2.2.2 (the Sprinter ESP Network Kit's firmware)
 		uint8_t espChip;
+		/// The Hayes modem's phone book (ComPortSpec MODEM, any serial port): "<number>=<host>[:<port>],..." (','
+		/// separates: ';' starts an INI comment); a number dialed with ATDT is looked up by its digits
+		char modemPhonebook[512];
+		/// [NETWORK] EthernetMode: how the frame-level cards (NE2000, 3C509B) reach the host - 0 NAT (the gateway's
+		/// router, no admin rights), 1 BRIDGE (frames on the host adapter BridgeAdapter=, network SN6)
+		uint8_t ethernetMode;
+		char bridgeAdapter[128];   ///< [NETWORK] BridgeAdapter: the host adapter for BRIDGE ("en0", "eth0", ...)
 	} network;
 
 	struct
@@ -883,6 +891,10 @@ struct CONFIG
 	uint8_t profi_cpm;                    // [PROFI] CpmSwitch: the v5 front-panel CP/M switch at power-on
 	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
 	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)
+	uint8_t profi_ext_ports;              // [PROFI] ExtPorts: 0 cpm (the extended port map with CP/M and ROM14, the 5.0
+	                                      // decoder PROM), 1 sys (also with the DOS latch on and ROM14 = 0, as Karabas Pro),
+	                                      // 2 v003 (Djoni's V0.03 PROM, the Profi+: the SYS ROM state, and the long ports
+	                                      // beside the VG93 at #1F.. while TR-DOS runs with ROM14 = 1)
 	uint8_t profi_keyboard;               // [PROFI] Keyboard: a ProfiKeyboard (ports/models/profiboard.h), 0 = the board's own
 	char profi_xt_rom_path[FILENAME_MAX]; // [ROM] PROFIXT: the PROFI-XT controller firmware instead of rom/profixt/profi-xt-v1.27.rom
 	char kay_rom_path[FILENAME_MAX];

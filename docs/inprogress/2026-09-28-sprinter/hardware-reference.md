@@ -503,7 +503,14 @@ applied when ISA phase I1 landed (2026-10-03, branch `sprinter-isa-network`):
 - **ISA memory exists** (ISA RAM cards: Shaos's TIMER runs code from one): "ISA memory reads `#FF`" is a MAME gap, not
   the hardware. In unreal-ng window 3 in ISA mode is a real cycle of the slot's card (memory and I/O, opcode fetches
   too; an empty slot reads `#FF`); tool reads peek without side effects (`SprinterIsaBus`, `/state/isa`).
-- **Interrupts and DRQ / DACK** reach PIO port B (bits 0-5); the IRQ pins of each slot are tied together (ISA phase I4).
+- **Interrupts and DRQ / DACK** reach PIO port B (bits 0-5); the IRQ pins of each slot are tied together (ISA phase I4,
+  built 2026-10-03). From the SP2000 schematic (`SPRINT_3.pdf`): J6 B4 and B21-B25 are net `IRQ1` -> Z84C15 pin 53
+  (PB0), J7's are `IRQ2` -> pin 54 (PB1); `DRQ2` PB2, `DACK2` PB3, `DRQ1` PB4, `DACK1` PB5, PB6 / PB7 the printer; every
+  one of the six nets has a 3.9 kOhm pull-up to VCC (R165-R170), no inverter. ISA IRQs are active high, so a pin no card
+  drives reads 1 and a card that drives its pin holds it low until it requests. The chip's IEI (pin 72) is tied to VCC
+  and its IEO (pin 71) goes nowhere: the PLD's `/INT` (frame, keyboard, Covox-Blaster) is wired-OR on `/INT` and is not
+  gated by an on-chip service. The program sets PIO port B to bit mode (`#CF`), the IRQ bit as input, the interrupt
+  control word (enable, OR, active high), the mask and the vector; the CPU takes IM 2 through the daisy chain
 
 **Network and serial cards (research 2026-10-02,
 [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/research.md)).** The main board has no free serial port:

@@ -1,7 +1,8 @@
 # TODO - Sprinter network adapters (Ethernet, Wi-Fi, 3C509B, modem)
 
-**Status:** research and design drafted 2026-10-02 (branch `sprinter-network-design`), waiting for owner review.
-Nothing built. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/TODO.md), PLAN row #59,
+**Status (2026-10-04):** SN0-SN5 built and on master (NE2000 + the Ethernet gateway, SprinterESP, the Hayes modem
+and SprinterSerial, 3Com 3C509B; each card runs its Sprinter kit end to end with a TTD replay without the host).
+Open: SN6b (Wi-Fi bridging; SN6a, the wired bridge, built 2026-10-04) and the follow-ups below. Design drafted 2026-10-02. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/TODO.md), PLAN row #59,
 roadmap row **S6c**); builds on the ISA design ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/TODO.md)); its
 shared pieces (`IIoBusDevice`, slot list in `DescribeNetwork()`, guest registry) are early parts of PLAN row #82.
 
@@ -12,18 +13,22 @@ slot 2); maximum reuse of the shared network stack, no Sprinter-only parallel pa
 Built so far (branch `sprinter-isa-network`, as-built notes in [tdd.md](tdd.md) §18): ISA I1 (the bus the cards sit
 on), SN0, SN1, SN2 - the RTL8019AS kit runs end to end (`IFUP`, `PING`, `NSLOOKUP`, `WGET`); recipe
 [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md). SN3 (branch `sprinter-esp-sn3`):
-the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET`, `UNETESP.DLL`).
+the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET`, `UNETESP.DLL`). SN4 (branch
+`sprinter-sn4-modem`): the Hayes modem peer, the ISA modem card and SprinterSerial - BC-Term dials and talks over
+interrupts. SN5 (branch
+`sprinter-sn5-3c509b`): the 3Com 3C509B - the 3C509B kit runs end to end (`IFUP`, `PING`, `NSLOOKUP`, `WGET`).
 
 ## Documents
 
 - [research.md](research.md): every network adapter for the Sprinter, software, activity, sources, glossary
 - [tdd.md](tdd.md): scoring, reuse map, generic extensions, NE2000 + Ethernet gateway, SprinterESP, 3C509B, modem,
   config, TTD, automation, tests, phases SN0-SN6
-- [open-questions.md](open-questions.md): Q1-Q11 with recommendations
+- [open-questions.md](open-questions.md): Q1-Q13 with recommendations (Q12, Q13 from SN4: SprinterSerial)
 
 ## Remaining
 
-- [ ] Owner review; Q9 (gateway implementation) before SN2, Q7 (order) and Q1 (default card) before SN1
+- [x] Owner review: Q1 = B (NE2000 fitted by default), Q2 = the host-LAN bridge wanted, Q7 settled by the owner's order
+  (the network before ISA RAM), Q9 = A (our own gateway), Q12 / Q13 decided 2026-10-04 ([open-questions.md](open-questions.md))
 - [x] SN0 (2026-10-03): kit releases as fixtures (`testdata/machines/sprinter/network/`: RTL8019AS kit 0.3.8, ESP kit
   0.2.1, byte for byte, `.gitattributes` `-text`), the scripted host server `core/tests/_helpers/scriptedhostnet.h`
   (HTTP, echo, Gopher, banner, UDP echo, NTP, DNS names, ping, host clients for forwards) with its own test
@@ -46,10 +51,32 @@ the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET
   [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
 - [ ] SN3 follow-ups: run the kit's `FTP` (passive, two links), `NTP`, `TELNET`, `TFTP`, `WTERM` and the Gopher browser
   through `UNETESP.DLL`; ESPT / wterm from the MAME-pack disk; both `NET_ESP_FLOW` modes in a test (the kit picks 3 on
-  the emulated ESP); the IRQ3 line to the PIO (I4); the ESP32 preset's `+PING` / `+CIPRECVDATA` forms are NonOS-style
+  the emulated ESP); ~~the IRQ3 line to the PIO (I4)~~ done with ISA I4 2026-10-03 (BC-Term receives the ESP through IRQ3 -> PB0); the ESP32 preset's `+PING` / `+CIPRECVDATA` forms are NonOS-style
   (ESP32 AT 2.x prints the 2.x forms); the ROM's 74 880-baud boot log and flashing in download mode are not modeled
-- [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - after ISA I4
-- [ ] SN5 3Com 3C509B (M)
-- [ ] SN6 optional bridge to the host LAN (M), only on request (Q2)
+- [x] SN4 (2026-10-03, branch `sprinter-sn4-modem`, as built in [tdd.md](tdd.md) §18): `HayesModemPeer` (ComPortSpec
+  `MODEM[,<guest port>]`, shared by every machine's serial port; `[NETWORK] ModemPhonebook`, runtime
+  `modem_phonebook`; the call is a `StreamPeer` Dialer; inbound RING / RI / ATA), presets `MODEM` (ISA modem: 16550A
+  at a COM base, OUT2-gated IRQ) and `DUAL16552` (SprinterSerial rev 1.1.1 from its netlist: PC16552D, A8 = CHSEL, D3 /
+  J1-J2 decode, AFR, J5 / J6), TTD blobs **48 / 49** for the second UART, guests 9 / 10; BC-Term 1.11 dials a scripted
+  BBS through the phone book and talks over the ISA interrupt, TTD replay without the host; reports on all surfaces +
+  Qt; recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md#isa-hayes-modem-and-sprinterserial)
+- [ ] SN4 follow-ups: ~~Q12 (SprinterSerial COM1's floating modem inputs)~~ decided 2026-10-04 (inactive as the hardware,
+  plus the `PLUG` loopback test plug); ~~Q13 (both IRQ jumpers fitted)~~ decided 2026-10-04 (high wins + a warning); BC-Term's file transfers (X / Y / Zmodem) over the modem not run yet; a modem on the ZX-Evo COM port is
+  unit-tested (the peer), not run with a ZX program
+- [x] SN5 (2026-10-03, branch `sprinter-sn5-3c509b`, as built in [tdd.md](tdd.md) §18): `EtherLink3` (ID port
+  isolation, EEPROM from the real boards, windows 0-6, FIFOs, status / IRQ, 10BASE-T link test, loopback, statistics,
+  power) as an `IEthernetCard`, `[ISA] SlotN=EL3C509B` (`SlotNChip=TPO | TP`, base in steps of `#10`), blob 45 v2;
+  the Sprinter 3C509B kit 0.1.2 end to end (`EL3INFO`, `NETCFG`, `IFUP` DHCP, `PING`, `NSLOOKUP`, `WGET` byte-exact,
+  TTD replay without the host); recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
+- [ ] SN5 follow-ups: `UNET509B.DLL` through `UNETTEST` (assemble from the kit's tag with sjasmplus); run `FTP`, `NTP`,
+  `TFTP`, `TELNET`; ISA Plug and Play isolation (not used by the kit; the boards ship "contention only")
+- [x] SN6a (2026-10-04, branch `sprinter-sn6-bridge`, [sn6-bridge-design.md](sn6-bridge-design.md) §10): the frame cards
+  bridged to a wired host adapter through libpcap / Npcap loaded at run time (`EthernetMode=BRIDGE`,
+  `BridgeAdapter=`), LAN frames as journaled `NetFrame` TTD inputs, adapters on every surface + Qt; live: the RTL kit's
+  `IFUP` / `PING` / `NSLOOKUP` on the office LAN
+- [ ] SN6b: Wi-Fi host adapters through MAC translation (owner Q1: after SN6a)
+- [ ] ~~SN6 bridge to the host LAN (M): **wanted** (owner, Q2, 2026-10-02: "the bridge right away", NAT stays the
+  no-admin default and the bridge is the second host path for the same card); priority P2 (owner, 2026-10-04: after the
+  ATAPI CD)~~ split into SN6a / SN6b
 - [ ] When the hardware facts are final: move them to `docs/hardware/` with the Sprinter S7 docs move
   (the "Sprinter RTL8019" line of the NedoOS network catalog is already corrected in this branch)

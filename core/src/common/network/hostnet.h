@@ -22,6 +22,11 @@ public:
     /// Start a TCP connection; Connected or ConnectFailed follows
     virtual void TcpConnect(uint16_t socket, const NetEndpoint& to) = 0;
 
+    /// A TCP connection with TLS done by the host (hosttls.h): the handshake and the server's certificate
+    /// (checked against `serverName`, also the SNI) come before Connected; ConnectFailed with TlsFailed when the
+    /// handshake fails or the build has no TLS. Data / TcpSend then carry the plaintext
+    virtual void TcpConnectTls(uint16_t socket, const NetEndpoint& to, const std::string& serverName) = 0;
+
     /// Queue bytes on a connected TCP socket (the host keeps them until sent)
     virtual void TcpSend(uint16_t socket, const uint8_t* data, uint32_t length) = 0;
 

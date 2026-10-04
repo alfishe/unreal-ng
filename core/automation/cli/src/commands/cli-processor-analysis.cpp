@@ -234,6 +234,28 @@ void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<s
            << std::setw(33) << entry.device << (entry.gate ? entry.gate : "") << NEWLINE << std::right;
     }
 
+    // The latches' values now, decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+    bool latchHeader = false;
+    for (const PortMapEntry& entry : decoder->getPortMapEntries())
+    {
+        const char* latchName = PagingLatchToString(entry.latch);
+        if (!latchName)
+            continue;
+        if (!latchHeader)
+        {
+            ss << NEWLINE << "Latches:" << NEWLINE;
+            latchHeader = true;
+        }
+        const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+        ss << "  " << std::left << std::setw(9) << latchName << std::right << "0x" << std::hex << std::uppercase
+           << std::setfill('0') << std::setw(2) << value << std::setfill(' ') << std::dec;
+        std::string fields;
+        for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+            fields += (fields.empty() ? "" : ", ") + field.key + " " +
+                      (field.isBool ? (field.boolValue ? "1" : "0") : std::to_string(field.intValue));
+        ss << "  " << fields << NEWLINE;
+    }
+
     // Live routing state: the flags that flip rows on/off right now
     bool mouseDecoded = false;
     std::string mouseNote;
@@ -974,7 +996,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             return;
         }
 
-        // videorecord start [format] [filename] [--fps N] [--scale N] [--audio-rate N|auto]
+        // videorecord start [format] [filename] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
         //                   [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
         CliVideoRecord::StartOptions options;
         std::string optionError;
@@ -1004,6 +1026,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         // Configuration setters refuse changes mid-recording — apply while idle
         rm->SetVideoFrameRate(fps);
         rm->SetScaleFactor(scale);
+        rm->SetCaptureRegion(options.screenRegion ? VideoCaptureRegion::MainScreen : VideoCaptureRegion::FullFrame);
 
         // Optional core-rate pin before the first sample is stamped: the
         // recording must start (and stay) at the requested audio rate. The
@@ -1038,7 +1061,8 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         }
 
         std::stringstream ss;
-        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale;
+        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale << ", "
+           << (options.screenRegion ? "screen" : "full") << " region";
         if (rm->HasAudio())
             ss << ", audio " << rm->GetAudioCodec() << " " << rm->GetAudioSampleRate() << " Hz "
                << rm->GetAudioChannels() << " ch";
@@ -1109,6 +1133,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         ss << "  Output: " << output << NEWLINE;
     const RecordingManager::RecordingStats stats = rm->GetStats();
     ss << "  Frames: " << stats.framesRecorded << NEWLINE;
+    ss << "  Region: " << (rm->GetCaptureRegion() == VideoCaptureRegion::MainScreen ? "screen" : "full") << NEWLINE;
     if (!rm->GetVideoCodec().empty())
         ss << "  Video codec: " << rm->GetVideoCodec() << NEWLINE;
     if (rm->HasAudio())

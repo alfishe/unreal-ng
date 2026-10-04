@@ -145,9 +145,19 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::Vdac2Memory: return "vdac2-memory";
         case PeripheralId::Vdac2: return "vdac2";
         case PeripheralId::ProfiXtKbc: return "profi-xt-kbc";
+        case PeripheralId::Ppi8255: return "ppi-8255";
+        case PeripheralId::Pit8253: return "pit-8253";
+        case PeripheralId::Usart8251: return "usart-8251";
         case PeripheralId::EthernetNics: return "ethernet-nics";
         case PeripheralId::SlotSerial1: return "slot-serial-1";
         case PeripheralId::SlotSerial2: return "slot-serial-2";
+        case PeripheralId::SlotSerial1B: return "slot-serial-1b";
+        case PeripheralId::SlotSerial2B: return "slot-serial-2b";
+        case PeripheralId::Saa1099: return "saa1099";
+        case PeripheralId::Smuc: return "smuc";
+        case PeripheralId::EvoAvrVolatile: return "evo-avr-volatile";
+        case PeripheralId::KeyboardMatrix: return "keyboard-matrix";
+        case PeripheralId::RzxPlayback: return "rzx-playback";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);
@@ -188,7 +198,12 @@ void DescribeRecordedMachine(TTDRecordedMachine& machine)
     for (uint8_t id = 0; id < 64; ++id)
         if ((machine.peripheralMask >> id) & 1u)
             machine.peripherals.push_back(PeripheralIdName(id));
-    machine.generalSound = GeneralSoundOf(machine.peripheralMask);
+    machine.notRecorded.clear();
+    for (uint8_t id = 0; id < 64; ++id)
+        if ((machine.notRecordedMask >> id) & 1u)
+            machine.notRecorded.push_back(PeripheralIdName(id));
+    // The General Sound slot counts a card fitted but not recorded too
+    machine.generalSound = GeneralSoundOf(machine.peripheralMask | machine.notRecordedMask);
     auto has = [&](PeripheralId id) { return (machine.peripheralMask >> static_cast<uint8_t>(id)) & 1u; };
     machine.turboSound = has(PeripheralId::TSFM) ? "tsfm" : has(PeripheralId::TurboSound) ? "turbosound" : "none";
 }
@@ -235,6 +250,8 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
     if (!Read(in, info.sessionState, "session state", err) || !Read(in, info.startFrame, "start frame", err) ||
         !Read(in, info.endFrame, "end frame", err) || !Read(in, info.pageStoreCount, "page store count", err) ||
         !Read(in, info.checkpointCount, "checkpoint count", err) || !Read(in, reserved, "peripheral mask", err))
+        return false;
+    if ((info.flags & dump::kFlagsHasNotRecordedMask) && !Read(in, info.machine.notRecordedMask, "not-recorded mask", err))
         return false;
 
     const uint16_t f = info.flags;

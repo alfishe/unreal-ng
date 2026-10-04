@@ -395,3 +395,36 @@ TEST(Keyboard_Ps2_Test, TheRouteIsSetByName)
     EXPECT_NE(error.find("auto | matrix | ps2 | both"), std::string::npos);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// TTD (PeripheralId::KeyboardMatrix): the matrix and the pressed-key counts
+/// round-trip; with no key held the blob is a few bytes
+TEST_F(Keyboard_Test, TtdStateRoundTripsMatrixAndCounts)
+{
+    std::vector<uint8_t> idle;
+    _keyboard->TTDSaveStateTo(idle);
+    EXPECT_EQ(idle.size(), 10u) << "version, 8 rows, no pairs";
+
+    // Two host keys held on A (the counts the event path keeps), SPACE once
+    Keyboard::InputState held{};
+    _keyboard->PressKey(ZXKEY_A);
+    _keyboard->PressKey(ZXKEY_SPACE);
+    std::memcpy(held.matrix, _keyboard->CaptureInputState().matrix, sizeof(held.matrix));
+    held.pressedKeys = {{ZXKEY_A, 2}, {ZXKEY_SPACE, 1}};
+    _keyboard->RestoreInputState(held);
+
+    std::vector<uint8_t> blob;
+    _keyboard->TTDSaveStateTo(blob);
+    EXPECT_EQ(blob.size(), 14u) << "two (key, count) pairs";
+    const uint64_t hash = _keyboard->TTDHashState();
+
+    _keyboard->RestoreInputState(Keyboard::InputState{{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, {}});
+    EXPECT_NE(_keyboard->TTDHashState(), hash);
+
+    _keyboard->TTDLoadState(blob.data());
+    EXPECT_EQ(_keyboard->TTDHashState(), hash);
+    const Keyboard::InputState back = _keyboard->CaptureInputState();
+    EXPECT_EQ(std::memcmp(back.matrix, held.matrix, sizeof(held.matrix)), 0);
+    EXPECT_EQ(back.pressedKeys, held.pressedKeys);
+    EXPECT_EQ(_keyboard->HandlePortIn(0xFDFE) & 0x01, 0x00) << "A down";
+    EXPECT_EQ(_keyboard->HandlePortIn(0x7FFE) & 0x01, 0x00) << "SPACE down";
+}

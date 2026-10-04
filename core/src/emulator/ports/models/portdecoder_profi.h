@@ -7,6 +7,9 @@
 #include "emulator/memory/profi/profiwaitoverlay.h"
 #include "emulator/io/keyboard/profixtkbc.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/ppi/ppi8255.h"
+#include "emulator/io/serial/usart8251.h"
+#include "emulator/io/timer/pit8253.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -46,9 +49,17 @@ public:
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const override;
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
+    Ppi8255& GetPpi() { return _ppi; }
+    const ProfiBoard& GetBoard() const { return _board; }
+    /// The v5 board's COM port: the 8253 baud timer and the 8251 (extended port map only)
+    Pit8253& GetPit() { return _pit; }
+    Usart8251& GetUsart() { return _usart; }
+    /// v5: the 8251 is the machine's own serial port ([NETWORK] ComPort= puts the peer on it)
+    NetworkCapabilities DescribeNetwork() override;
 
     /// The keyboard on the connector ([PROFI] Keyboard=, resolved for the board): Matrix, Xt or XtTable
     ProfiKeyboard GetKeyboardKind() const { return _keyboardKind; }
@@ -81,6 +92,29 @@ public:
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;
+    /// ExtPorts=v003 only: TR-DOS running with ROM14 = 1 (CP/M off). The V0.03 PROM answers the long ports there as
+    /// well, beside the VG93 at #1F..#7F - except the ones whose A6 A5 A1 A0 = 1111 (#E3 #E7 #EB #EF #F3 #F7 #FB
+    /// #FF), which stay the system register. Not IsExtMode(): the short VG93 map stays
+    bool IsLongBesideShort() const;
+    /// Whether a long (extended-map) port answers now: the whole map in IsExtMode(), the V0.03 subset in
+    /// IsLongBesideShort()
+    bool LongPortOpen(uint16_t port) const;
+    /// The IDE ports #8B / #AB / #CB / #EB: #EB loses to the system register in IsLongBesideShort()
+    bool IdeShadowedBySysRegister(uint16_t port) const;
+    /// The 8255 register an address selects in the current port map, or #FF
+    uint8_t PpiRegister(uint16_t port, bool dosPorts) const;
+    /// The COM port device an address selects in the extended map (v5 only), or ComDevice::None
+    enum class ComDevice : uint8_t
+    {
+        None,
+        Pit,       ///< 8253: #8F / #AF / #CF counters 0..2, #EF control (A6 A5 = A1 A0 of the chip)
+        Usart,     ///< 8251: #D3 data, #F3 control / status (A5 = C/D)
+        Control,   ///< COM control register #B3 (and #93): write D0 interrupt enable; read D0 RI, D7 DCD
+    };
+    ComDevice ComPortDevice(uint16_t port) const;
+    /// The emulated time in base (3.5 MHz) T-states: the frames so far plus the CPU position scaled back from the
+    /// CPU clock (turbo, hi-res); the COM port's clock
+    uint64_t NowBase() const;
     /// The Profi IDE answers in EXT mode only (IDE design §3.2)
     IdeAdapter::Gate IdeGate() override;
 
@@ -143,6 +177,18 @@ protected:
     /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
     const ProfiBoard _board;
     Ds12887 _rtc{256};
+    /// The board's 8255 (KR580VV55): Kempston joystick on port A, printer / Covox on B and C. Its addresses are
+    /// #1F/#3F/#5F/#7F outside the DOS / CP/M port set and #87/#A7/#C7/#E7 in the extended map (decoder-prom.md)
+    Ppi8255 _ppi;
+    /// The v5 board's COM port (Profi+ documentation, design.md section 2.1): a KR580VI53 clocked at 1.5 MHz, whose
+    /// counter 0 output is the TxC / RxC of a KR580VV51A. What counters 1 / 2 drive on the board is not known
+    static constexpr uint32_t kProfiPitClockHz = 1500000;
+    static constexpr uint32_t kProfiBaseClockHz = 3500000;
+    Pit8253 _pit{kProfiPitClockHz, kProfiBaseClockHz};
+    Usart8251 _usart{kProfiBaseClockHz};
+    uint8_t ComIn(ComDevice device, uint16_t port);
+    void ComOut(ComDevice device, uint16_t port, uint8_t value);
+    void SetSerialPeer(ISerialPeer* peer);
     /// The keyboard on X9 (v5) / KEYB (v3), fixed at power-on; the PROFI-XT controller when fitted. Every even-port
     /// read that reaches the #FE arm is its /CSKBD (design section "Keyboard")
     ProfiKeyboard _keyboardKind = ProfiKeyboard::Matrix;

@@ -9,11 +9,17 @@
   `step_done` / `breakpoints_changed` with `seq`; no long-poll fallback) are built - see
   [.recipe/analysis/breakpoints-and-events.md](../../../.recipe/analysis/breakpoints-and-events.md).
   D1 (`/state/tsconf`: `regs`, programmed DMA addresses, `dma.ctrl`, `sys_config` / `cache_en`,
-  `memory.fm_maps`, `video.line.t0_gpage` / `t1_gpage`) and D2 (`/registers`: `memptr`, `halted`,
-  `timing.t` / `timing.frame`; `im`, `iff1`, `iff2`, `memptr` / `wz` writable; R bit 7 round-trips -
-  `/registers`, Lua and Python reported R with bit 7 at 0x4000) are built on every surface, and so is D4's page part (`"page":"ram:32"` on
-  `POST /breakpoints`, CLI `bp` / `wp`, Lua / Python `bp*`, MCP `bp_add`; listed and in the status). PC
-  history (E2) is left to the TTD v2 work; address ranges (D4's rest) need a range matcher in the core.
+  `memory.fm_maps`, `video.line.t0_gpage` / `t1_gpage`) and D2 (`/registers`: `memptr`, `q`, `t`,
+  `halted`, `boundary` - the debugger protocol's Registers names; `im`, `iff1`, `iff2`, `memptr` / `wz`
+  writable; R bit 7 round-trips - `/registers`, Lua and Python reported R with bit 7 at 0x4000) are built
+  on every surface, and so is D4's page part (`"page":{"kind":"ram","page":32}` on `POST /breakpoints`,
+  CLI `bp` / `wp --page ram32`, Lua / Python `bp*`, MCP `bp_add`; listed and in the status). PC history
+  (E2) is left to the TTD v2 work. The rest of D4 is built too (2026-10-04): ranges (`address_end`),
+  physical page breakpoints in any slot (`slot_only` for one), port masks, hit counts and policies, on the
+  hot path of
+  [hotpath-matching-design.md](../2026-08-17-conditional-breakpoints/hotpath-matching-design.md); the other
+  additions use the debugger protocol's fields and routes
+  ([protocol.md](../2026-09-28-debugger-model/protocol.md)).
 
 **Short answer:** yes, most of it is possible, and part of it already works today. The POC
 already has a WebAPI client. About 60% of the screen can be fed from existing endpoints. To
@@ -161,7 +167,7 @@ per-step DMA updates (TDD-02 §5.4).
 | D1 (done) | `GET /state/tsconf` | `regs` = all raw TS-Conf registers (hex). That alone fixes the programmed DMA SRC/DST, DMA CTRL bits, SysConfig/CACHE_EN and raw FMAddr. Also `t0gpage_line` / `t1gpage_line` (the delayed copies) | small |
 | D2 (done) | `GET /registers` | `halted`, `t` (T in frame), `frame`, `memptr`; register-table entries for `IM`, `IFF1`, `IFF2` so `PUT` works; R bit 7 round-trip | small |
 | D3 (done for `/step`, `/steps`) | `POST /step`, `/steps`, `/stepover`, `/stepout`, `/skip_until` | `stop_reason` (`step`, `breakpoint`, `target`, `budget`) + `breakpoint_id`; `/steps` should stop at a hit | small, but tied to F1 below |
-| D4 (page done) | `POST /breakpoints` | `page` + `page_type` (the core already supports it), `address_end` (ranges), later `condition` | small (page, range); large (condition, needs the core engine) |
+| D4 (done; condition open) | `POST /breakpoints` | `page` + `page_type` (the core already supports it), `address_end` (ranges), later `condition` | small (page, range); large (condition, needs the core engine) |
 | D5 | `GET /state/audio/ay/{chip}` | `latched_register`, and at board level `active_chip` | small |
 | D6 | Ports | #FE full byte, #EFF7, and on other models the extended port, e.g. in `/state/paging` or a new `GET /debug/ports` | small |
 | D7 | `GET /memory/{addr}` and `/memory/read/{addr}` | `format=binary` (application/octet-stream). Allow `length=65536` | small |

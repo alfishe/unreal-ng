@@ -124,8 +124,10 @@ uint16_t AtaDevice::ReadData()
         static_cast<size_t>(_s.bufferPos) + 1 >= sizeof(_s.buffer))
         return 0xFFFF;
 
-    const uint16_t word = static_cast<uint16_t>(_s.buffer[_s.bufferPos] | (_s.buffer[_s.bufferPos + 1] << 8));
-    _s.bufferPos += 2;
+    // 8-bit mode (CompactFlash): one byte per access on D0-D7, the upper lines float high
+    const uint16_t word = _s.eightBit ? static_cast<uint16_t>(0xFF00 | _s.buffer[_s.bufferPos])
+                                      : static_cast<uint16_t>(_s.buffer[_s.bufferPos] | (_s.buffer[_s.bufferPos + 1] << 8));
+    _s.bufferPos += _s.eightBit ? 1 : 2;
     if (_s.bufferPos >= _s.bufferLen)
     {
         _s.status &= static_cast<uint8_t>(~Status::DRQ);
@@ -144,8 +146,15 @@ void AtaDevice::WriteData(uint16_t word)
         return;
 
     _s.buffer[_s.bufferPos] = static_cast<uint8_t>(word & 0xFF);
-    _s.buffer[_s.bufferPos + 1] = static_cast<uint8_t>(word >> 8);
-    _s.bufferPos += 2;
+    if (_s.eightBit)
+    {
+        _s.bufferPos += 1;  // 8-bit mode (CompactFlash): D0-D7 only
+    }
+    else
+    {
+        _s.buffer[_s.bufferPos + 1] = static_cast<uint8_t>(word >> 8);
+        _s.bufferPos += 2;
+    }
     if (_s.bufferPos >= _s.bufferLen)
     {
         _s.status &= static_cast<uint8_t>(~Status::DRQ);
@@ -187,6 +196,7 @@ void AtaDevice::SoftResetDone()
     _s.bufferLen = 0;
     _s.sectorsLeft = 0;
     _s.multiple = 0;
+    _s.eightBit = 0;  // the CompactFlash 8-bit mode is a feature: a reset restores the 16-bit default
     _s.heads = 0;  // the command set restores its default translation
     _s.sectors = 0;
     _s.cylinders = 0;

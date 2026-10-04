@@ -19,6 +19,12 @@
 #include "emulator/slots/portclaimtable.h"   // guards the Qt `slots` macro itself
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
+namespace ttd
+{
+class ITTDRegionSource;
+struct TTDConfigFingerprint;
+}
+
 // Opaque declaration (defined in emulator/memory/memory.h): the base decoder
 // interface only passes ROMModeEnum by value
 enum ROMModeEnum : uint8_t;
@@ -212,7 +218,8 @@ enum class PagingLatch : uint8_t
     P7FFD, P1FFD, PDFFD, PFDFD, P7EFD, PEFF7, PFF77,
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
-    PFFF7Window2, PFFF7Window3      // (reserved until the decoders land)
+    PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
+    PFE                             // the ULA port #FE as last written: border, MIC, EAR
     // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
     // its decoder reports them itself, they are not EmulatorState fields
 };
@@ -703,6 +710,10 @@ public:
     /// PS/2 mouse, the Sprinter board mouse); no side effects. False: the
     /// Kempston device answers (Mouse::ReadRegister)
     virtual bool PeekMouseRegister([[maybe_unused]] uint8_t reg, [[maybe_unused]] uint8_t& value) const { return false; }
+    /// The machine's mouse ports read a mouse built into the machine (the ZX-Evo AVR's PS/2 mouse, the
+    /// Sprinter board mouse), never the Kempston interface (Mouse): that one is then not wired, and
+    /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
+    virtual bool HasMachineMouse() const { return false; }
 
 
     /// region <TTD model-specific state (parent TDD 6.4)>
@@ -783,18 +794,37 @@ public:
     /// the Sprinter's video RAM), reached by name from every automation interface
     virtual void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) { (void)out; }
 
-    /// Emulated machine time in microseconds: whole frames at the model's
-    /// frame duration plus the position in the current frame (TTD time units,
-    /// so a hardware turbo switch mid-frame does not move it). Restored with
-    /// the frame counter by a TTD seek, which makes it the time base of
-    /// clocks that must replay deterministically (Ds12887 in emulated mode)
+    /// Emulated machine time in microseconds: the base T-states run since
+    /// power-on (every closed frame, whatever its length) plus the position in
+    /// the current frame (TTD time units, so a hardware turbo switch mid-frame
+    /// does not move it), at the CPU's rate. Restored with the chipset by a
+    /// TTD seek, which makes it the time base of clocks that must replay
+    /// deterministically (Ds12887 in emulated mode)
     uint64_t EmulatedMicroseconds() const;
+
+    /// The TTD session's wall time at the current emulated moment (host civil
+    /// microseconds; Ds12887::kNoSessionWall outside a session): the one time
+    /// base of every real-time clock of the machine (Phase 3, Step 5)
+    int64_t SessionWallMicros() const;
 
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
     {
         return {};
+    }
+
+    /// The board options of this model that change timing or decoding (TTD
+    /// configuration fingerprint, Phase 3, Step 4): "<model>.<option>" fields
+    /// added to @p fp. A replay on other options is reported, not refused
+    virtual void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const { (void)fp; }
+
+    /// Model devices whose memory the time-travel engine records as regions
+    /// but that are no serializer of their own (the ZX-Evo AVR EEPROM, the
+    /// SMUC EEPROM). They stay owned by the decoder
+    virtual void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out)
+    {
+        (void)out;
     }
     /// endregion </TTD model-specific state>
 
@@ -893,6 +923,7 @@ public:
             EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
             ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
+            Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -902,14 +933,14 @@ public:
         /// ComPort= names none (ESPNET / AT without ,<baud>)
         uint32_t espBaud = 115200;
 
-        /// A port that is no 16550 on #xxEF (Atm2Kbc) takes its peer here; nullptr detaches
+        /// A port that is no 16550 on #xxEF (Atm2Kbc, Profi8251) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector
         std::function<void(IIoBusDevice* device, bool attach)> internalIo;
 
-        /// Atm2Kbc: the RS-232 line as the firmware set it (baud), and a refit
+        /// Atm2Kbc / Profi8251: the RS-232 line as the firmware / program set it (baud); Atm2Kbc: a refit
         /// of the firmware from the config ([ATM] Kbc=); false + reason
         std::function<uint32_t()> serialBaud;
         std::function<bool(std::string& error)> reloadFirmware;
@@ -944,14 +975,17 @@ public:
             std::string portKey;              ///< "isa2.eth" (a UART card: "isa1.uart0")
             bool macAuto = true;              ///< the MAC is the automatic one (a card picks its own family's form)
             uint8_t instance = 0;             ///< the emulator instance number in automatic MACs
-            std::string peer;                 ///< UART cards: ComPortSpec text of the line's other end ("" = AT)
+            std::string peer;                 ///< UART cards: ComPortSpec text of the (first) UART's line ("" = the card's default)
+            std::string peerB;                ///< two-UART cards (SprinterSerial): the second UART's line ("" = NONE)
+            uint8_t irqB = 0;                 ///< two-UART cards: the second UART's IRQ jumper (0 = open)
+            bool partialDecode = false;       ///< SprinterSerial: D3 not fitted (A15-A10 not decoded)
             /// Plug the device in (nullptr pulls it); false with the reason when the slot refuses it
             std::function<bool(IIoBusDevice* device, std::string& why)> fit;
             /// Why a configured card is not there (shown in the machine's own slot report)
             std::function<void(const std::string& why)> notFitted;
-            /// A runtime change of a UART card's line (automation's isaN_peer): the machine keeps it as the slot's
-            /// configured peer
-            std::function<void(const std::string& peer)> setPeer;
+            /// A runtime change of a UART card's line (automation's isaN_peer / isaN_peer_b): the machine keeps it as
+            /// the slot's configured peer of that UART (0 = the first)
+            std::function<void(int channel, const std::string& peer)> setPeer;
         };
         std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro, and the GUI includes this header
     };
@@ -959,10 +993,14 @@ public:
 
     /// Whether the machine has a ZX-bus that Spectrum peripheral cards (General Sound / NeoGS) plug into
     /// through the exact-match port map (RegisterPortHandler / PeripheralPortIn/Out). Every Spectrum-like
-    /// machine has; the Sprinter has none until its ISA ZX-bus adapter exists (Sprinter ISA design
-    /// 2026-10-02-sprinter-isa/tdd.md §2, phase I2): a card built there would run for nothing, unreachable
+    /// machine has; the Sprinter has one only while an ISA ZX-bus adapter is fitted (Sprinter ISA design
+    /// 2026-10-02-sprinter-isa/tdd.md §2 / §6, phase I2). Without it a card would run for nothing, unreachable
     /// by the software, and SoundManager does not fit it
     virtual bool ZxBusPresent() const { return true; }
+    /// Whether that ZX-bus carries the host's memory cycles (/MREQ, /CSROM), so a card that serves host memory
+    /// reads (the NeoGS ZX-DMA, neogs-zxdma-design.md) can reach the host. True on a machine's own ZX-bus; false
+    /// on the Sprinter, whose ISA ZX-bus adapter passes I/O cycles only (ISA open question Q7)
+    virtual bool ZxBusMemoryCycles() const { return ZxBusPresent(); }
 
     /// The machine's own configuration events (machineeventjournal.h: the Sprinter's PLD changes), null for
     /// machines that keep none. The video change log lists the events of its frames (/video/changes)

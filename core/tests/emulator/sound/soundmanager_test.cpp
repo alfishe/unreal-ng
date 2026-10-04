@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "pch.h"
+#include <optional>
 
 #include <cstring>
 #include <functional>
@@ -556,7 +557,7 @@ TEST_F(SoundManagerCd_Test, HeadRunsOnEmulatedTimeAtAnySpeed)
 
 /// endregion </ATAPI CD drives>
 
-/// Host output hold (SoundManager::holdHostOutput): a run not paced to real time - API run_frames and the other
+/// Host output hold (SoundManager::HostOutputHold): a run not paced to real time - API run_frames and the other
 /// direct runs, TTD seek / replay, turbo - hands nothing to the host audio callback, while every device still
 /// renders exactly what it renders at normal speed (TTD determinism: only the host boundary changes).
 class SoundManagerHostOutput_Test : public ::testing::Test
@@ -668,8 +669,9 @@ TEST_F(SoundManagerHostOutput_Test, HeldFramesReachNoHostAndRenderIdentically)
 
     _sink = Sink{};
     auto sound = MakeSound();
-    sound->holdHostOutput();
-    sound->holdHostOutput();  // nested: an API run inside a TTD replay
+    using Reason = SoundManager::HostHoldReason;
+    std::optional<SoundManager::HostOutputHold> replay(std::in_place, sound.get(), Reason::TtdReplay);
+    std::optional<SoundManager::HostOutputHold> run(std::in_place, sound.get(), Reason::DirectRun);  // nested
     EXPECT_TRUE(sound->isHostOutputHeld());
     for (int i = 0; i < kFrames; i++)
     {
@@ -679,13 +681,72 @@ TEST_F(SoundManagerHostOutput_Test, HeldFramesReachNoHostAndRenderIdentically)
     EXPECT_EQ(sound->hostFramesDelivered(), 0u);
     EXPECT_EQ(sound->hostFramesHeld(), static_cast<uint64_t>(kFrames));
 
-    // One release still leaves the outer hold; the last one restores delivery; extra releases are harmless
-    sound->releaseHostOutput();
+    // One release still leaves the outer hold; the last one restores delivery; a second release is harmless
+    run.reset();
     EXPECT_TRUE(sound->isHostOutputHeld());
-    sound->releaseHostOutput();
-    sound->releaseHostOutput();
+    replay->Release();
+    replay->Release();
     EXPECT_FALSE(sound->isHostOutputHeld());
     RunFrame(*sound);
     EXPECT_EQ(_sink.calls, 1u) << "delivery did not resume after the last release";
     EXPECT_EQ(sound->hostFramesDelivered(), 1u);
+}
+
+/// The guard is the only way to hold: keyed by reason, each guard gives back exactly what it took, once - moved,
+/// released twice, or destroyed - and every reason is reported on its own
+TEST_F(SoundManagerHostOutput_Test, GuardsHoldPerReasonAndReleaseExactlyOnce)
+{
+    using Reason = SoundManager::HostHoldReason;
+    auto sound = MakeSound();
+    {
+        SoundManager::HostOutputHold a(sound.get(), Reason::DirectRun);
+        SoundManager::HostOutputHold b(sound.get(), Reason::DirectRun);
+        SoundManager::HostOutputHold turboHold(sound.get(), Reason::Turbo);
+        EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 2);
+        EXPECT_EQ(sound->hostOutputHolds(Reason::Turbo), 1);
+        EXPECT_EQ(sound->hostOutputHolds(Reason::TtdReplay), 0);
+
+        SoundManager::HostOutputHold moved(std::move(a));  // the hold travels, it is not doubled
+        EXPECT_FALSE(a.IsHeld());
+        EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 2);
+        moved = std::move(b);  // the hold it had goes back first
+        EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 1);
+        moved.Release();
+        moved.Release();
+        EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 0);
+        EXPECT_TRUE(sound->isHostOutputHeld()) << "the turbo hold is its own";
+    }
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "a guard going out of scope must give its hold back";
+    EXPECT_EQ(sound->hostOutputHoldsTaken(Reason::DirectRun), 2u);
+    EXPECT_EQ(sound->hostOutputHoldsTaken(Reason::Turbo), 1u);
+    SoundManager::HostOutputHold none(nullptr, Reason::Turbo);  // no sound manager: holds nothing
+    EXPECT_FALSE(none.IsHeld());
+}
+
+/// A resume drops exactly the holds whose reason is not in effect (a leak) and keeps the live ones; the leaked
+/// guard's late release then takes nothing from a newer hold of the same reason
+TEST_F(SoundManagerHostOutput_Test, ReconcileDropsOnlyStaleHolds)
+{
+    using Reason = SoundManager::HostHoldReason;
+    auto sound = MakeSound();
+    auto leaked = std::make_unique<SoundManager::HostOutputHold>(sound.get(), Reason::DirectRun);
+    SoundManager::HostOutputHold replay(sound.get(), Reason::TtdReplay);
+
+    EXPECT_EQ(sound->reconcileHostOutputHolds(false, true, false), 1);
+    EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 0);
+    EXPECT_EQ(sound->hostOutputHolds(Reason::TtdReplay), 1) << "a replay in progress keeps its hold";
+    EXPECT_EQ(sound->hostOutputStaleHoldsCleared(), 1u);
+
+    SoundManager::HostOutputHold fresh(sound.get(), Reason::DirectRun);
+    leaked.reset();  // the stale guard's release is void: it must not end the fresh run's hold
+    EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 1);
+    fresh.Release();
+    replay.Release();
+    EXPECT_FALSE(sound->isHostOutputHeld());
+    EXPECT_EQ(sound->reconcileHostOutputHolds(false, false, false), 0) << "nothing left to drop";
+
+    _sink = Sink{};
+    RunFrame(*sound);
+    EXPECT_EQ(_sink.calls, 1u);
+    EXPECT_GT(_sink.nonSilentCalls, 0u);
 }

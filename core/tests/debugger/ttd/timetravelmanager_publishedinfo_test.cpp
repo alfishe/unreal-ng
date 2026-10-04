@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <string>
 #include <thread>
 
 #include "_helpers/emulatortesthelper.h"
@@ -154,6 +155,81 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, ReaderThreadPollsWhileOwnerRecordsS
 
     EXPECT_EQ(torn.load(), 0u);
     const ttd::TTDSessionInfo last = _ttd->GetPublishedSessionInfo();
+    EXPECT_EQ(last.state, ttd::TTDSessionState::Idle);
+    EXPECT_EQ(last.checkpointCount, 0u);
+}
+
+// The automation surfaces (WebAPI ttd/status and the other TTD endpoints, CLI,
+// Lua, Python, GDB) read through ReadSessionInfo() and the guarded session
+// queries, on their own threads, while the machine records on its loop thread
+// and another control thread starts, evicts, bookmarks, stops and clears.
+// ReadSessionInfo never pauses the machine; the guarded queries park it for
+// their run. Runtime: real-time frames on the loop thread plus the pause handshakes
+// of every start, stop and parked query (~1 s) - a
+// recording runs at 1x (the recording lock), there is no faster way to have
+// the loop thread capture beside the readers.
+TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
+{
+    _emulator->EnableTurboMode(false);
+    _emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->GetState() == StateRun; }));
+
+    std::atomic<bool> done{false};
+    std::atomic<uint64_t> statusReads{0};
+    std::atomic<uint64_t> queries{0};
+    std::atomic<uint64_t> torn{0};
+    std::thread automation([&] {
+        uint64_t lastQueryFrame = ~uint64_t(0);
+        while (!done.load(std::memory_order_acquire))
+        {
+            // GET ttd/status (and the CLI / Lua / Python / GDB status reads)
+            const ttd::TTDSessionInfo info = _ttd->ReadSessionInfo();
+            if (info.checkpointCount != 0 && info.currentEndFrame < info.sessionStartFrame)
+                torn++;
+            if (info.state == ttd::TTDSessionState::Recording && info.checkpointCount == 0)
+                torn++;
+            statusReads++;
+
+            // The list / query endpoints park the machine for their run: at most
+            // once per emulated frame, or a client spinning on them would starve it
+            const uint64_t frame = _context->emulatorState.frame_counter;
+            if (frame != lastQueryFrame)
+            {
+                lastQueryFrame = frame;
+                (void)_ttd->GetBookmarks();
+                (void)_ttd->GetExternalEvents().SnapshotEvents();
+                (void)_ttd->SessionEndPosition();
+                (void)_ttd->QueryCoverageSummary(0, info.currentEndFrame);
+                queries++;
+            }
+        }
+    });
+
+    const auto waitFrames = [this](uint64_t frames) {
+        const uint64_t target = _context->emulatorState.frame_counter + frames;
+        return TestWait::For([&] { return _context->emulatorState.frame_counter >= target; },
+                             std::chrono::milliseconds(5000));
+    };
+    for (int cycle = 0; cycle < 4; ++cycle)
+    {
+        ASSERT_TRUE(_ttd->StartRecording());
+        ASSERT_TRUE(waitFrames(2));
+        _ttd->SetHistoryLimit(cycle % 2 ? 1 : 0, 0);  // odd cycles evict beside the capture
+        (void)_ttd->AddBookmark(_ttd->CurrentPosition(), "cycle" + std::to_string(cycle));
+        ASSERT_TRUE(waitFrames(1));
+        _ttd->StopRecording();
+        _ttd->InvalidateSession("test cycle");
+    }
+    _ttd->SetHistoryLimit(0, 0);
+
+    EXPECT_TRUE(TestWait::For([&] { return queries.load() > 0; }));
+    done = true;
+    automation.join();
+    _emulator->Stop();
+
+    EXPECT_EQ(torn.load(), 0u);
+    EXPECT_GT(statusReads.load(), 0u);
+    const ttd::TTDSessionInfo last = _ttd->ReadSessionInfo();
     EXPECT_EQ(last.state, ttd::TTDSessionState::Idle);
     EXPECT_EQ(last.checkpointCount, 0u);
 }

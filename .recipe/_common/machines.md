@@ -40,6 +40,7 @@ runtime list too:
 | Name | What it is |
 |:--|:--|
 | `TSL-VDAC2` (alias `TSCONF-VDAC2`) | TS-Conf with the VDAC2 card (FT812 graphics on the IDE connector), see [machines/tsconf-vdac2.md](../machines/tsconf-vdac2.md); list entry has `variant: true`, `base_model` |
+| `PROFI-PLUS` (alias `PROFIPLUS`) | Profi v5 with the V0.03 port decoder (`[PROFI] ExtPorts=v003`) and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, see [machines/profi.md](../machines/profi.md) |
 | `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` | four synchronized instances of the base model, see [machines/zxpoly.md](../machines/zxpoly.md); list entry has `zxpoly: true`, `base_model` |
 
 An instance created from a variant reports `variant` / `variant_title` in its identity.

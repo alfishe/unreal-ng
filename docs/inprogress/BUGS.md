@@ -8,6 +8,63 @@
 
 ---
 
+2026-10-04
+## 🔴 [Open] #1: unreal-qt runs at 2x-4x speed while a TTD recording is active (recording must hold 1x)
+* **Date Opened:** 2026-10-04
+* **Date Fixed:** -
+* **Commit ID:** -
+* **Found by:** the ZiFi Z3b real-program runs (TS-Conf, Wild Commander 1.11i, WCUPDATE.WMF / ZIFIFTP.WMF, TTD recording
+  with a 3000-frame history limit, unreal-qt started from a worktree build with its own WebAPI port); reported in the
+  Z3b hand-back, 2026-10-04. Not yet reproduced by a second run.
+
+### Description
+While a TTD recording was running, the unreal-qt instance appeared to run at 2x-4x speed. A TTD recording is designed
+to hold the machine at 1x: `TimeTravelManager::EngageRecordingLock()`
+(`core/src/debugger/ttd/timetravelmanager.cpp`) sets the host speed multiplier to 1, applies it mid-frame
+(`Z80::ApplyHardwareTurboNow`), switches turbo mode off and makes the FeatureManager refuse turbo / fast tape / fast
+disk until `ReleaseRecordingLock()`; the Qt speed menu reports "refused (TTD recording)" (`unreal-qt/src/mainwindow.cpp`).
+If the machine really runs faster than 1x while recording, recorded timing (frames per wall second, audio pacing) and
+every speed-dependent host input are wrong, and the "recording holds 1x" guarantee in the TTD docs does not hold.
+
+### What "2x-4x" can mean (triage first)
+Two different things show up as "faster" on TS-Conf, and the report does not say which one was seen:
+1. **Host speed** (frames per wall second above 50 / 48.8): the real defect this entry is about. Candidates:
+   - the host speed multiplier set again after the lock engaged by a path that does not go through the FeatureManager
+     gate (instance start applying a persisted speed setting, the WebAPI / CLI speed setters, the Qt speed slider,
+     the instance created with a speed option while recording starts in the same request);
+   - the lock engaging only when recording starts from the Qt UI and not when it starts from the WebAPI / MCP
+     (`time_travel` start) or from an automation create-time option;
+   - audio-less pacing: with the audio device busy or muted the frame pacer may fall back to a timer that does not
+     honor 1x (see the A/V pacing notes: pacing follows the audio ring watermark).
+2. **Hardware turbo** of the TS-Conf CPU (SYS_CONFIG 3.5 / 7 / 14 MHz). Wild Commander switches 3.5 <-> 14 MHz around
+   SD I/O every frame, so the frequency display shows "1x-4x" while wall time is still 1x. This is correct behavior
+   (bug #5 of 2026-09-30, closed `d391d73f`, was the same confusion) and must not be "fixed".
+
+### Steps to reproduce
+1. Build unreal-qt; start it with a free WebAPI port; create TSL with the ZiFi SD folder from
+   `.recipe/peripherals/network.md` ("Demo: update Wild Commander from GitHub").
+2. Start a TTD recording with a history limit (WebAPI / MCP `time_travel` start, then repeat from the Qt toolbar).
+3. Run WC's WCUPDATE (F10 -> ZiFi WC Update -> A) and measure: frames per wall second (`GET .../status` frame counter
+   over a 10 s wall interval), the host speed multiplier (`GET .../settings` or the HUD), the effective CPU clock.
+4. Repeat with the instance started at a persisted non-1x speed, and with speed changes sent during the recording
+   from the WebAPI, the CLI and the Qt menu.
+
+### Root cause
+Unknown (open).
+
+### Requirements / Acceptance Criteria
+- [ ] Triage: decide from measurements which of the two cases was seen (host frames per second vs. hardware turbo);
+      if it is only hardware turbo, close as "not a defect" with the evidence and improve the HUD so host speed and
+      CPU clock cannot be confused.
+- [ ] If host speed: every path that changes the host speed multiplier is refused (or deferred to the release) while
+      the recording lock is engaged - Qt menu / slider, WebAPI, CLI, MCP, Lua, Python, persisted settings at instance
+      start, create-time options - with one test per path (`TimeTravelManager_RecordingLock_Test`).
+- [ ] The lock engages identically whichever surface starts the recording (Qt, WebAPI, MCP, CLI, Lua, Python).
+- [ ] A recording started while the instance runs at Nx shows 1x for the whole session and restores Nx after it.
+- [ ] The frame pacer holds 50 / 48.8 frames per wall second during a recording with and without an audio device.
+
+---
+
 2026-10-02
 ## 🟢 [Fixed] #1: The halted Z80 fetches the HALT itself instead of the byte after it
 * **Date Opened:** 2026-10-02

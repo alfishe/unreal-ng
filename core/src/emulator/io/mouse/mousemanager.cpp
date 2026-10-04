@@ -61,10 +61,60 @@ void MouseManager::RemoveSink(IMouseSink* sink)
     _sinks.erase(std::remove(_sinks.begin(), _sinks.end(), sink), _sinks.end());
 }
 
-bool MouseManager::HasMouseDevice() const
+std::vector<IMouseSink*> MouseManager::Sinks() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return std::any_of(_sinks.begin(), _sinks.end(), [](const IMouseSink* sink) { return sink->IsMouseFitted(); });
+    return _sinks;
+}
+
+bool MouseManager::HasMouseDevice() const
+{
+    // Out of the lock: a sink asks the port decoder (IsMouseWired)
+    const std::vector<IMouseSink*> sinks = Sinks();
+    return std::any_of(sinks.begin(), sinks.end(),
+                       [](const IMouseSink* sink) { return sink->IsMouseWired() && sink->IsMouseFitted(); });
+}
+
+std::vector<MouseDeviceStatus> MouseManager::DescribeDevices() const
+{
+    std::vector<MouseDeviceStatus> devices;
+    for (const IMouseSink* sink : Sinks())
+        if (sink->IsMouseWired())
+            devices.push_back(sink->DescribeMouse());
+    return devices;
+}
+
+std::optional<MouseDeviceStatus> MouseManager::DescribeDefaultDevice() const
+{
+    for (const IMouseSink* sink : Sinks())
+        if (sink->IsMouseWired() && sink->IsMouseFitted())
+            return sink->DescribeMouse();
+    return std::nullopt;
+}
+
+std::optional<MouseDeviceStatus> MouseManager::DescribeDevice(const std::string& id) const
+{
+    for (MouseDeviceStatus& device : DescribeDevices())
+        if (device.id == id)
+            return std::move(device);
+    return std::nullopt;
+}
+
+bool MouseManager::HasUnreadMotion() const
+{
+    const std::vector<IMouseSink*> sinks = Sinks();
+    return std::any_of(sinks.begin(), sinks.end(), [](const IMouseSink* sink) {
+        return sink->IsMouseWired() && sink->IsMouseFitted() && sink->IsMouseInUse() && sink->HasUnreadMotion();
+    });
+}
+
+int MouseManager::MotionStepLimit() const
+{
+    int limit = 127;
+    for (const IMouseSink* sink : Sinks())
+        if (sink->IsMouseWired() && sink->IsMouseFitted())
+            limit = std::min(limit, std::max(1, sink->MotionStepLimit()));
+    return limit;
 }
 
 bool MouseManager::IsMouseInUse() const

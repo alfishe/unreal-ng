@@ -542,3 +542,44 @@ TEST_F(SprinterSoundTurbo_Test, CpuThroughput_MatchesMameAt21MHz)
         EXPECT_NEAR(static_cast<uint16_t>(z80->bc - before), 11947, 1) << "frame " << frame;
     }
 }
+
+/// The statistics in the reports (int_requests, ticks, ring_writes, covox_writes) count since the last reset: every
+/// reset kind goes through the PLD's /RESET (PortDecoder_Sprinter::ResetPld -> CovoxBlaster::Reset). The PLD itself
+/// has no such counters; the ring (lpm_ram_dp) and CBL_CTX have no reset term and keep their values
+TEST_F(CovoxBlasterMachine_Test, Reset_RestartsTheStatisticsKeepsTheRing)
+{
+    // The device driven directly (the port path is Codes88And89_ReachTheDevice): the resets are the machine's
+    auto play = [&] {
+        CovoxBlaster& cbl = Cbl();
+        cbl.WriteControl(0, 0x00);
+        cbl.WriteData(0, 0xC0, 0x00);  // a Covox write (lands in the ring too, entry #FF)
+        cbl.WriteControl(0, 0x9A);     // mono, INT on, a tick per scan line
+        cbl.WriteData(0, 0x5A, 0x00);  // into the ring at entry 0
+        ASSERT_TRUE(cbl.IntRequested(cbl.State().nextTick + 224 * 127));
+        ASSERT_EQ(cbl.State().intRequests, 1u);
+        ASSERT_EQ(cbl.State().ticks, 128u);
+        ASSERT_EQ(cbl.State().ringWrites, 2u);
+        ASSERT_EQ(cbl.State().covoxWrites, 1u);
+    };
+    auto expectRestarted = [&](const char* kind) {
+        const CovoxBlasterState& s = Cbl().State();
+        EXPECT_EQ(s.intRequests, 0u) << kind;
+        EXPECT_EQ(s.ticks, 0u) << kind;
+        EXPECT_EQ(s.ringWrites, 0u) << kind;
+        EXPECT_EQ(s.covoxWrites, 0u) << kind;
+        EXPECT_EQ(s.control, 0x00) << kind;
+        EXPECT_FALSE(s.intPending) << kind;
+        EXPECT_EQ(s.ring[0], 0x5A00) << kind << ": the ring has no reset term";
+    };
+
+    // Ctrl+Alt+Del / a write to page #A0: a CPU reset of the running configuration
+    ASSERT_NO_FATAL_FAILURE(play());
+    _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+    _decoder->OnMachineStep(0);
+    expectRestarted("soft reset");
+
+    // The RESET button: the PLD loads its configuration again
+    ASSERT_NO_FATAL_FAILURE(play());
+    _core->Reset();
+    expectRestarted("RESET button");
+}

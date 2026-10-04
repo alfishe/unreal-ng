@@ -449,9 +449,12 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 **Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
 audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
 The machine computes the same samples as at normal speed (TTD determinism; captures and recordings still get
-them). TTD seek / replay and turbo mode hold the output the same way; `resume` restores sound. The mixer
-(`mixer`, `GET /audio/mixer`) reports it under `host_output`: `held`, `frames_delivered`, `frames_audible`,
-`frames_held`.
+them). TTD seek / replay and turbo mode hold the output the same way; the user's master mute is never touched.
+Each hold ends with the run, seek or turbo span that took it (also when it fails), and `resume` drops any hold
+whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
+`GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
+`ttd_replay`, `turbo`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
+`frames_delivered`, `frames_audible`, `frames_held`.
 
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision
@@ -587,20 +590,22 @@ Filled 768 bytes with 0x38 in RAM page 5 at offset 0x1800
 
 **`find <pattern>`**
 
-Search the Z80 virtual address space for a byte pattern. The pattern is a hex
-string (with optional spaces) or a hex list: `find "AF 3C"`, `find AF3C`.
-Pattern length is limited to 64 bytes.
+Search memory for a byte pattern. The pattern is hex bytes, spaced or not:
+`find AF 3C`, `find AF3C`; `??` matches any byte and `A?` / `?5` any value of the
+wildcard nibble (`find CD ?? 00`). At most 64 bytes. The same search answers the
+WebAPI `POST /memory/find`, Lua / Python `mem_find` and MCP `find_bytes`.
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--from <addr>` | 0x0000 | Search range start |
-| `--to <addr>` | 0xFFFF | Search range end |
+| `--space <s>` | `cpu` | `cpu`: what the CPU sees now (0x0000-0xFFFF); `ram`: every RAM page, matches as page + offset; a page `ram5` / `rom2` / `cache0`: its offsets 0x0000-0x3FFF, mapped or not |
+| `--mask <hex>` | none | As long as the pattern: 1 bits must match (replaces the wildcards) |
+| `--from <addr>` | start of the space | Search range start (`ram`: a linear offset over all pages) |
+| `--to <addr>` | end of the space | Search range end, inclusive |
 | `--align <1\|2>` | 1 | Require matches at 1- or 2-byte alignment |
 | `--max <N>` | 64 | Maximum number of matches |
 
-Each match prints the address and a context dump (bytes around the match).
-Useful for locating strings, code signatures and data structures across the
-whole 64K regardless of the current bank mapping.
+Each match prints its address (`ram5:$1234` for a page) and the bytes around
+it: 4 before, the match in brackets, 4 after.
 
 **`memory info`**
 
@@ -714,7 +719,7 @@ interfaces (CLI, WebAPI, Lua, Python).
 | :--- | :--- | :--- |
 | `beam` | | Show the current raster position: frame, scanline, t-state within the frame, and the beam zone (`vsync`, `vblank`, `top_border`, `screen`, `bottom_border`, plus `hblank`/`left_border`/`paper`/`right_border` within the active area). Computed from the same raster descriptors the renderer uses. |
 | `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. `digest --active` (P1-3) hashes the RAM pages the **current video mode actually displays** (on the Sprinter, default and active both hash its 256 KB video RAM with the mode page, HOLD and frame height: `Mode: ..., surface: vram`) — ATM hardware modes follow the 7FFD-selected bit-plane pair `{videoPage-4, videoPage}`, ZX modes keep pages 5/7 — instead of the model-dependent defaults, and the answer reports the derived `active_surface` (video mode + pages); flipping FF77 between ZX and 16c surfaces flips the digest even with constant underlying pages. Explicit range/banks still override. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
-| `ports` | | Static port map with live routing flags (P1-5 + P1-2 tagged registry): one row per decoded port family — address, mask, match, device, the gating condition that flips the row on/off, the semantic **Tags** (keyboard, memory, rom, screen, storage, mouse, joystick, system, sound members like `sound_ay`/`sound_covox`/`sound_sounddrive`) and the **Latch** live-value binding (`p7FFD`, `p1FFD`, `pDFFD`, …) — derived from the machine's port decoder, plus the live state right now: TR-DOS active, Kempston mouse routing (`decoded` / `shadowed` with the reason), Scorpion Shadow Monitor latch. The entry point for "which device answers this port on this machine?" triage. Same source as the WebAPI `GET /ports` / Lua & Python `ports_map()` / MCP `inspect_state` aspect `ports`. |
+| `ports` | | Static port map with live routing flags (P1-5 + P1-2 tagged registry): one row per decoded port family — address, mask, match, device, the gating condition that flips the row on/off, the semantic **Tags** (keyboard, memory, rom, screen, storage, mouse, joystick, system, sound members like `sound_ay`/`sound_covox`/`sound_sounddrive`) and the **Latch** live-value binding (`p7FFD`, `p1FFD`, `pDFFD`, `pEFF7`, `pFE` = the ULA port, …) — derived from the machine's port decoder, then a **Latches** section with each latch's value now and its fields decoded (`pFE 0x07  border 7, mic 0, ear 0`), plus the live state right now: TR-DOS active, Kempston mouse routing (`decoded` / `shadowed` with the reason), Scorpion Shadow Monitor latch. The entry point for "which device answers this port on this machine?" triage. Same source as the WebAPI `GET /ports` / Lua & Python `ports_map()` / MCP `inspect_state` aspect `ports`. |
 | `paging` | | Tagged paging latches + bank table (P1-2 design): shows all Memory-tagged latch rows (port, value, decoded bits) from the machine's port decoder and the current 4-bank mapping (type RAM/ROM, page, ROM name/role/signature when applicable), plus `paging_locked` and `trdos_active` flags. The entry point for "what is the paging state?" triage. Same source as the WebAPI `GET /state/paging` / Lua & Python `paging_state()` / MCP `inspect_state` aspect `paging`. |
 | `frame_cost` | | Show per-frame cost accounting: t-states spent halted vs running in the last frame and cumulatively, effective CPU frequency (frame budget × frequency multiplier), and the number of frames in the sample. Use it to quantify HALT-heavy main loops. |
 
@@ -729,8 +734,8 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 | Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
-| AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
+| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res, `active_chip`, each chip's `latched_register`) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG chip N (registers decoded, `latched_register`, `selected`) | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
 | General Sound / NeoGS | `state audio gs` | `GET /state/audio/gs` (`?ram=1`: #4000-#7FFF window) | `gs_state()` | `gs_state()` | `audio_gs` |
@@ -744,7 +749,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | CD audio control: `play` (`track=N [to=M]`, `lba=X frames=N`, `msf=MM:SS:FF end=..`), `pause`, `resume`, `stop`, `volume` (`left= right= route= sotc=`), `mixer` (`volume= mute= solo=`); `drive` = `ide0.slave` / unit / first CD drive. One source: `CdAudioControl` | `cdaudio <verb> [drive] k=v ..` | `POST /cdaudio/{verb}` | `cdaudio(verb, drive, {k=v})` | `cdaudio(verb, drive, k=v)` | `invoke_api` POST `/cdaudio/{verb}` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
-| Sprinter Sp2000 machine (PLD, decoder, windows, cells, clock + 21 MHz waits, frame, video summary, accelerator, sound, Z84C15 with wait generator and daisy chain, floppy latch, CMOS / IDE links, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` (summary: PLD, windows, accelerator, sound line) |
+| Sprinter Sp2000 machine (PLD with the configuration module Standard / Game and why it runs, decoder, windows, cells, clock + 21 MHz waits, frame, video summary, accelerator, sound, Z84C15 with wait generator and daisy chain, floppy latch, CMOS / IDE links, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` (summary: PLD, windows, accelerator, sound line) |
 | Sprinter port table (map / DOS / PN5 / direction) | `state sprinter ports map=0 dos=1 rw=w` | `GET /state/sprinter/ports?map=0&dos=1&rw=w` | `sprinter_ports{map=0, dos=1, rw="w"}` | `sprinter_ports(map=0, dos=1, rw="w")` | `sprinter_ports` (current state); `invoke_api` for another map |
 | Sprinter port lookup (index, code, name) | `state sprinter port 21BC rw=w` | `GET /state/sprinter/ports/lookup?port=21BC&rw=w` | `sprinter_port(0x21BC, {rw="w"})` | `sprinter_port(0x21BC, rw="w")` | `invoke_api` |
 | Sprinter screen text (80 x 32 text squares) | `state sprinter text` | `GET /state/sprinter/text` | `sprinter_text()` | `sprinter_text()` | `sprinter_text` |
@@ -774,11 +779,14 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Per-device mixer (mute, solo, volume / gain dB, peak) | `mixer`, `mixer <source> [muted=] [solo=] [volume=] [gain_db=]` | `GET /audio/mixer`, `PUT /audio/mixer/{source}` | `audio_mixer()`, `audio_mixer_set(source, {..})` | `audio_mixer()`, `audio_mixer_set(source, ...)` | `audio_mixer`; `invoke_api` PUT |
 | Audio capture of one device (its own buffer) | `audiocapture start <seconds> [source]` | `POST /audio/capture {action: start, seconds, source}` | `audio_capture_start(s, source)` | `audio_capture_start(s, source)` | `capture_media` audio_capture `source` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
+| ZX Profi board chips (report) | `state profi` | `GET /state/profi` | `profi_state()` | `profi_state()` | `profi` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
 | Network settings (change) | `network set k=v ..` | `POST /network/config` | `network_configure{..}` | `network_configure(**kw)` | `invoke_api` POST `/network/config` |
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
 | ISA slots (report; Sprinter) | `state isa` / `isa` | `GET /state/isa` | `isa_state()` | `isa_state()` | `isa` |
+| ISA ZX-bus adapter + the GS behind it (Sprinter) | `isa` (`zx_bus`), `isa io 1 #BB`, `state audio gs` | `GET /state/isa` (`slots[].zx_bus`, `summary_line`), `POST /control/isa`, `GET /state/audio/gs` | `isa_state().slots[1].zx_bus`, `gs_state()` | `isa_state()['slots'][0]['zx_bus']`, `gs_state()` | `isa` (`[isa]` card line), `audio_gs` |
+| ISA IRQ lines (Sprinter) | `isa irq` | `GET /state/isa` (`irq_summary`, `pio_port_b`, `slots[].irq_line`) | `isa_state()` | `isa_state()` | `isa` (`[isa] irq:` line) |
 | ISA access journal | `isa journal [n\|clear\|on\|off]` | `GET /state/isa/journal` | `isa_journal(n)` | `isa_journal(last)` | `invoke_api` GET `/state/isa/journal` |
 | Ethernet frames (capture / inject) | `network frames [link] [file.pcap]`, `network frame <link> <hex>` | `GET /network/frames`, `POST /network/frame` | `network_frames(link, n)`, `network_inject_frame(link, hex)` | `network_frames(link, last)`, `network_frames_pcap()`, `network_inject_frame()` | `invoke_api` |
 | ISA cycle / RESET pulse / latch | `isa io\|mem <slot> <addr> [v]`, `isa peek`, `isa reset`, `isa latch <v>` | `POST /control/isa` | `isa_io_read(slot, addr)` .. `isa_reset()` | `isa_io_read(slot, addr)` .. `isa_reset()` | `invoke_api` POST `/control/isa` |
@@ -880,10 +888,11 @@ Advanced debugging features for the selected emulator instance. The emulator sup
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bp <addr>` | `break`, `breakpoint` | `<address> [ram:N\|rom:N\|cache:N] [note]` | Set an execution breakpoint at `<address>`. Emulation pauses when PC reaches this address. Address can be hex (0x8000) or decimal (32768). With a page (`bp 0xC000 ram:32`) it fires only while that page is mapped at the address. Returns breakpoint ID for future reference. |
-| `wp <addr> <type>` | `watchpoint` | `<address> <r\|w\|rw> [ram:N\|rom:N\|cache:N] [note]` | Set a memory watchpoint at `<address>`:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>With a page it fires only while that page is mapped at the address. Useful for tracking when memory is accessed. |
-| `bport <port> <type>` | `portbreak` | `<port> <in\|out\|both>` | Set an I/O port breakpoint:<br/>• `in` - break on port IN operation<br/>• `out` - break on port OUT operation<br/>• `both` - break on either IN or OUT<br/>Essential for debugging I/O operations (keyboard, sound, disk, ports). |
-| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port<br/>• Active/Inactive<br/>• Group name<br/>• Optional annotation |
+| `bp <addr>` | `break`, `breakpoint` | `<address>[-<end>] [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set an execution breakpoint on an address or a range (`bp 0x8000-0x80FF`). Address can be hex (0x8000) or decimal (32768). `--page`: a physical breakpoint on that page at offset `address & #3FFF`, through any slot that shows the page (`--slot-only`: only through the slot of the address). `--hits` stops on the Nth hit only, from the Nth on (`>=N`) or every Nth (`%N`); every hit is counted. Returns the breakpoint id and its description. |
+| `wp <addr> <type>` | `watchpoint` | `<address>[-<end>] <r\|w\|rw> [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set a memory watchpoint on an address or a range:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>`wp 0x4000-0x57FF w` watches the screen bitmap; `--page` / `--slot-only` / `--hits` as for `bp`. |
+| `bport <port> <type>` | `portbreak` | `<port> <i\|o\|io> [--mask M] [--hits N\|>=N\|%N] [note]` | Set an I/O port breakpoint:<br/>• `i` - break on port IN operation<br/>• `o` - break on port OUT operation<br/>• `io` - break on either IN or OUT<br/>`--mask M` matches every port where `(port & M) == (<port> & M)`: `bport 0xFE i --mask 0x00FF` catches the keyboard read on any high byte. `--hits` as for `bp`. |
+| `bphits reset [id]` | | `reset [breakpoint-id]` | Set the hit counters back to 0, of one breakpoint or of all (`bplist` shows them as "(hit Nx)"). |
+| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port, a range end ("to 0x80FF"), the page ("in ram32", "(this slot only)"), a port mask<br/>• Active/Inactive<br/>• The hit policy ("hits >=5") and the hits so far ("(hit 12x)")<br/>• Optional annotation |
 | `bpclear [id\|all]` | `bc` | `[breakpoint-id \| all]` | Clear breakpoints:<br/>• No argument: clear ALL breakpoints and watchpoints<br/>• `<id>`: clear specific breakpoint by ID<br/>• `all`: explicitly clear all (same as no argument)<br/>**Warning**: This permanently deletes breakpoints. Use `bpoff` to temporarily disable instead. |
 
 #### 4.2 Breakpoint Group Management
@@ -1375,11 +1384,11 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frames, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+| `videorecord status` | | Show recording state, output file, frames, region, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -2287,8 +2296,10 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state rtc` / `rtc` / `cmos` | | | Show the CMOS clock (MC146818 / DS12887; the ZX-Evo AVR's emulation of one) - the same report as WebAPI `/state/rtc`, Lua/Python `rtc_state()` and MCP `rtc` (`DeviceState::Rtc`):<br/>• Chip, the ports the machine wires it to, cell count, NVRAM file, the guest's address latch<br/>• Time base: `host` (host local time plus the offset the guest set), `emulated` (while TTD records), `fixed` (tests)<br/>• Time as the guest reads it now; registers A-D and the alarms decoded<br/>• Every cell as hex, peeked (register C keeps its flags)<br/>Machines: ATM3 (ZX-Evo), PROFI, SCORPION / PROFSCORP with `[HDD] Scheme=SMUC`; elsewhere the reason why not | ✅ Implemented |
 | `rtc read <start> [count]` | | `<start> [count]` | CMOS cells as the guest reads them, without side effects (`RtcAccess::Read`, same as WebAPI `GET /rtc/cells`). Numbers: decimal, `0x..`, `#..` or `..h` | ✅ Implemented |
 | `rtc write <start> <byte> [byte..]` | | `<start> <bytes>` | Write CMOS cells like the guest (`RtcAccess::Write`, same as WebAPI `POST /rtc/cells`): time registers set the clock, C and D are read-only, the address latch is not touched; marked as a debugger edit while TTD records | ✅ Implemented |
-| `state isa` / `isa` | | | Show the ISA slots (the Sprinter's two ISA-8 slots) - the same report as WebAPI `/state/isa`, Lua/Python `isa_state()` and MCP `isa` (`DeviceState::Isa`): the `#9FBD` latch (A19-A14, AEN, RESET), whether window 3 shows a slot now, and per slot the configured and fitted card, why a configured card is not fitted, the card's own fields and cycle counters. Other machines: "no ISA slots on this machine" | ✅ Implemented |
-| `isa journal [n\|clear\|on\|off]` | | | The ISA access journal (`IsaAccess::Journal`, same as WebAPI `GET /state/isa/journal`): the last n accesses with frame, T, PC, slot, read / write / stall, the ISA and CPU address, the card's register name and the value; `clear`, `on`, `off` | ✅ Implemented |
+| `state profi` | | | Show the ZX Profi board chips - the same report as WebAPI `/state/profi`, Lua/Python `profi_state()` and MCP `profi` (`DeviceState::ProfiPeripherals`):<br/>• The port map in force: `[PROFI] ExtPorts` (`cpm` / `sys` / `v003`), the DOS latch, CP/M, ROM14, hi-res, whether the long extended map answers now<br/>• The 8255: control word, direction and output latch of A, B and the two halves of C<br/>• The 8253 baud timer (v5): per counter mode, count, OUT, GATE<br/>• The 8251 USART (v5): mode and command words, baud, status flags, byte counters, and the `#B3` COM interrupt-enable latch<br/>Peeked, nothing changes. Machines: PROFI, PROFI3 (no COM port), PROFI-PLUS; elsewhere the reason why not | ✅ Implemented |
+| `state isa` / `isa` | | | Show the ISA slots (the Sprinter's two ISA-8 slots) - the same report as WebAPI `/state/isa`, Lua/Python `isa_state()` and MCP `isa` (`DeviceState::Isa`): the `#9FBD` latch (A19-A14, AEN, RESET), whether window 3 shows a slot now, and per slot the configured and fitted card, why a configured card is not fitted, the card's own fields and cycle counters (a 3C509B also its ID port under `resources.id_port`). Other machines: "no ISA slots on this machine". The ZX-bus adapter (slot 1 by default, ISA phase I2) adds `zx_bus`: the General Sound / NeoGS behind it, its ports `#B3` / `#BB` / `#33` (CPU `#C0B3` / `#C0BB` / `#C033` with window 3 = `#D4`), its reset from ISA RESET DRV, its mailbox status | ✅ Implemented |
+| `isa irq` | | | The ISA interrupt lines only (the same report, cut down): `irq_summary`, `pio_port_b` (mode, lines, latched inputs, read value, direction, mask, interrupt control, vector, pending, under service) and per slot `irq_line` (the card's IRQ, PB0 / PB1, who drives the line - a pin nobody drives reads high through the 3.9 kOhm pull-up - level, the card's request and cause, the PIO's bit-mode setup for that bit, and whether it reaches the CPU: IM 2 vector, table, daisy-chain order, or why not) | ✅ Implemented |
+| `isa journal [n\|clear\|on\|off]` | | | The ISA access journal (`IsaAccess::Journal`, same as WebAPI `GET /state/isa/journal`): the last n accesses with frame, T, PC, slot, read / write / stall, the ISA and CPU address, the card's register name and the value, the interrupt events, and `irq_events` (the interrupt events from their own ring, which polling does not flush); `clear`, `on`, `off` | ✅ Implemented |
 | `network frames [link] [file.pcap]` / `network frame <link> <hex>` | | | The Ethernet gateway's capture of the frame-level cards (`EthernetAccess`): one line per frame (index, frame, direction, port, length, summary), or the whole capture as a pcap file; `frame` queues a frame towards the card at the next frame boundary | ✅ Implemented |
 | `isa io <slot> <address> [value]` / `isa mem ...` / `isa peek <slot> <address> [mem]` / `isa reset` / `isa latch <value>` | | | One ISA cycle at a 20-bit ISA address (`IsaAccess::Execute`, same as WebAPI `POST /control/isa`): read, or write the value; `peek` shows what the card answers without side effects; `reset` pulses RESET DRV to both slots; `latch` writes `#9FBD`. An empty slot reads `#FF`. A tool edit while TTD records | ✅ Implemented |
 | `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level, mute state, and the live core sample rate (`sample_rate_hz` in the WebAPI master block — follows the `audio_rate` pin, see section 7) | 🔮 Planned |
@@ -2623,7 +2634,8 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | :--- | :--- | :--- | :--- | :--- |
 | `ttd status` | `ttd info` | — | Print the session: origin, recorded machine, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
 | `ttd info <path>` | `ttd file-info <path>` | `<path>` | Describe a `.ttd` file **without loading it** and without an emulator: size, frame range, checkpoints, sections and the recorded machine (model, ROM signature, General Sound card, TurboSound slot device, fitted devices). See "Reading a file before loading it" below. | ✅ Implemented |
-| `ttd start` | `ttd record` | `[--no-journal \| -n] [--journal \| -j]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--no-journal` is "gaming mode": no write journal, smaller memory footprint, but reverse search has less to work with. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
+| `ttd start` | `ttd record` | `[--journal \| -j]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--journal` also records the write journal (off by default; see "The write journal" below). Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
+| `ttd journal` | — | `[on \| off \| status]` *or* `build [from-frame] [to-frame]` | The write journal: "who wrote this address last" answered at once. `on` / `off` switch it at any moment, also while recording (each on-off span is a segment). `build` builds it by replaying frames `from`..`to` (default: the whole session), about 2-4 ms per frame; not while recording. No argument or `status`: on/off, records, and the spans it covers. | ✅ Implemented |
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
 | `ttd limit` | `ttd history-limit` | `[frames <n>] [bytes <n>[K\|M\|G]]` *or* `off` | Bound the history. While recording, the oldest checkpoints (one per frame) are released once there are more than `frames` of them or their data (RAM pages + device blobs, compressed) exceeds `bytes`; the session start moves forward and the input, port, external-event and bookmark records before it go too, so a file saved afterwards replays its remaining frames exactly. Two checkpoints always stay. `0` = no limit (the default), a value not given is kept, `off` clears both; no arguments prints the limit, the history range, the bytes held and how many checkpoints were released. The limit stays for later recordings of this instance. | ✅ Implemented |
@@ -2700,6 +2712,7 @@ carried its device set: the reader then walks to the first checkpoint for it).
 | `ram_page_bound` | Exclusive RAM page-index bound |
 | `rom_signature` | ROM set fingerprint as a hex string `0x...` (a 64-bit value does not survive a JSON number); null = unknown, not checked |
 | `peripheral_mask`, `peripherals` | Fitted devices: bit per TTD peripheral id, and their names (`betadisk`, `gs`, `neogs`, `tsfm`, `kempston-mouse`, ...) |
+| `not_recorded` | Devices fitted but deliberately not recorded, by name: `gs-lw` (the lightweight General Sound runs live through seeks). Empty for most sessions. CLI: the "Not recorded" line |
 | `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names) |
 | `turbo_sound` | `none` / `turbosound` / `tsfm` |
 
@@ -2747,7 +2760,6 @@ Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0.
 | ROM load | The recorded history relies on the current ROM. |
 | `ttd invalidate` | Stop the recording first, then discard it. |
 | Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
-| Changing the write-journal mode (`ttd_set_journal_enabled`, `SetEnableWriteJournal`) | A recording keeps the mode it started with. |
 | Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
 
@@ -2757,8 +2769,8 @@ How each surface reports it:
 | :--- | :--- |
 | CLI | `Error: <reason>` |
 | WebAPI / MCP | HTTP **409 Conflict** with the reason in `message` (tape import/insert: `inserted: false` plus `insert_error`) |
-| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
-| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality`; `disk_load` returns `{'success': False, 'message': reason}` |
+| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `gs_switch_personality`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
+| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `gs_switch_personality`; `disk_load` returns `{'success': False, 'message': reason}` |
 | GDB `monitor load` | `Error: <reason>` |
 | Qt UI | A "TTD Recording Active" dialog with the reason |
 
@@ -2803,7 +2815,30 @@ A seek (and a seek to a bookmark) that meets a marker stops with halt reason `ex
 
 The previous settings come back when the session returns to `idle` (stop, invalidate, a reset out of `detached`, a file load). Fast tape, turbo tape and fast disk also read as off while a stopped or loaded session is replayed (seek, step) and while the machine sits in `detached`, because they change what the guest code does. The machine's own hardware turbo (ATM, Scorpion) is guest behavior and is not touched. Details: [TDD §4.2](../debugger/time-travel-debug/time-travel-debugging-tdd.md#42-recording-session).
 
-**When the write journal answers.** `find-last` for writes and port writes answers from the write journal only when the journal holds every write of the session: journaling was on from the start of the recording and never paused (not switched off, TTD and debug mode not switched off mid-recording) and the ring never overwrote a record. Otherwise it replays the history, which is slower but always right. A saved `.ttd` records this in its header, so a loaded session keeps the fast answer only when its journal was complete; files written before this rule replay. The session status says whether the journal is complete (`write_journal_complete`) and, when it is not, why and where it stopped (`write_journal_gap`); the emulator log warns when a session loses it, and the Qt TTD panel shows `Journal incomplete` (cause in the tooltip). A running recording refuses the switches that would cost it (see "A recording protects itself" above), so a gap comes from recording without the journal, a journal change on a stopped session, the machine running between a stop and a live resume, a loaded file with an incomplete journal, or a debugger's live history. Switching journaling off while no session exists frees the journal's 64 MB.
+**The write journal.** It records every memory write (time, address, value, PC, page), so `find-last` for a write answers at once. It is off by default, because on busy programs it is 3 to 31 times the size of everything else a recording keeps ([write-journal-e7.md](../../../inprogress/2026-09-25-ttd-v2-migration/write-journal-e7.md)).
+
+- **Switch it at any moment**, also while recording: `ttd journal on|off`, `POST /ttd/journal`, MCP `journal_on` / `journal_off`, Lua / Python `ttd_set_journal_enabled`. Each on-off span is a segment of the session; segments are saved in the `.ttd` file and listed in the status (`write_journal_segments`).
+- **Build it later for any span** by replaying it: `ttd journal build [from] [to]`, `POST /ttd/journal/build`, MCP `journal_build`, Lua / Python `ttd_build_journal`. About 2-4 ms per frame, like RZX playback. The built writes equal those a live journal records.
+- **Without it the search still answers**, the same way: outside the segments `find-last` uses the coverage index to find the newest frame that wrote the address and replays that one frame (a few ms; a "never written" answer walks the whole index).
+- **Port writes** are not in the write journal: the port journals, recorded in every session, have every OUT, so `find-last --access io` answers from them.
+
+Example (Pentagon 128 at the BASIC prompt): record without the journal, stop, then build it only for the part you debug:
+
+```
+> ttd start
+TTD: Recording started
+> ttd stop
+TTD: Recording stopped (history retained)
+> ttd journal
+Write journal: off, 0 records
+  Covers: nothing (write searches replay)
+> ttd journal build 120 180
+TTD: write journal built for 61 frame(s), 2901 writes
+  Journal covers: 1 span(s), searches outside them replay (frame 120:7 .. 181:3)
+```
+
+The span runs from where frame 120's first instruction starts (T-state 7: the instruction that ended frame 119 ran past its end) to where frame 181's does.
+
 
 **Port events: "when did the program ...".** A session on a classic machine records every IN result and every OUT of the main CPU with its time and the address of the instruction (the port journals, [ttd-port-read-journal.md](../debugger/time-travel-debug/ttd-port-read-journal.md)). `port-events` searches them. Nothing is replayed, so it is instant and answers the same on a loaded `.ttd` file. It is refused while a recording is running (pause or stop it) and on sessions without the journals (TSConf, ZX Next, NeoGS in the GS slot, a file without them) - the error says which.
 
@@ -2898,10 +2933,10 @@ usually the first thing to check when a session is handed to you.
 | `state` | `idle` / `recording` / `detached` |
 | `session_start_frame`, `current_end_frame` | Timeline extent |
 | `checkpoint_count` | Frames captured |
-| `write_journal_enabled` | Whether writes are being journaled |
-| `write_journal_complete` | The journal holds every write/port write of the session, so write/io `find-last` answers from it; false when journaling was off at the start or was switched (journal, debug mode, time travel) during the session |
-| `write_journal_wrapped` | The journal ring dropped its oldest records: a "no match" from it is not final and replays (a match is still exact) |
-| `write_journal_gap` | Present when the journal does not cover the session: `reason`, and `frame` / `tinframe` where it stopped (absent for a loaded file). The CLI prints `Journal coverage: complete` or `incomplete - write/port find-last replays (reason, at frame …)` |
+| `write_journal_enabled` | The write journal is recorded now (while recording) or will be at the next start (off by default) |
+| `write_journal_complete` | One span covers the whole session: every write search answers from the journal |
+| `write_journal_segments` | The spans the journal covers, oldest first: `from_frame` / `from_tinframe` (excluded) to `to_frame` / `to_tinframe` (included). Outside them a write search replays one frame. The CLI prints `Journal covers: the whole session (...)`, `N span(s) (...)` or `nothing` |
+| `write_journal_build` | A build in progress: `active`, `done`, `total` frames |
 | `write_journal_records`, `write_journal_bytes` | Journal contents and in-memory cost. Normally the largest part of a session; the on-disk section is block-compressed and much smaller |
 | `coverage_index_frames`, `coverage_index_bytes` | Reverse-search index. **Zero frames means reverse search and reverse breakpoints fall back to replaying frames** — correct, but orders of magnitude slower |
 | `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
@@ -3012,9 +3047,18 @@ tape import recording.wav --target tzx -o imported.tzx
 
 ### 11. Mouse Input Injection
 
-Drive the Kempston Mouse of the selected emulator from a script, a remote tool or an AI agent.
+Drive the mouse of the selected emulator from a script, a remote tool or an AI agent. The input goes
+to the **machine's own mouse**, whatever it is (design:
+[2026-10-03-mouse-api-routing](../../../inprogress/2026-10-03-mouse-api-routing/design.md)):
 
-**How the device works, in one paragraph.** The Kempston Mouse is a *relative* device: it
+| Machine | Mouse (`device` id) | What the program reads |
+| :--- | :--- | :--- |
+| 48K, 128K, +2, +2A, +3, Pentagon, Scorpion, Profi, ZX-Poly | Kempston interface (`kempston`) | `#FADF` buttons, `#FBDF` X, `#FFDF` Y |
+| ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
+| ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
+| Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+
+**How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
 the mouse adds to them, and they wrap around (255 + 1 = 0). The program running on the
 machine reads the counters, compares them with its previous reading and moves its own
@@ -3026,7 +3070,7 @@ emulated screen and do not depend on the host window size or monitor DPI.
 
 | Value | Meaning | Allowed per call |
 | :--- | :--- | :--- |
-| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero) |
+| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero); `mouse glide`: −4096 … 4096 |
 | `dy` | + = **up** (no flip: screen Y grows down, the counter grows up) | −127 … 127 |
 | `steps` (wheel) | + = away from you | −7 … 7, not 0 |
 | `button` | `left`, `right`, `middle` (or `l`, `r`, `m`), any case | — |
@@ -3039,6 +3083,14 @@ gives X = 231; the program computes 231 − 31 = 200, reads that as −56 and mo
 **left**. The error message tells you to split a long move into several moves with
 `run_frames` between them.
 
+**Long moves: `mouse glide`.** `glide <dx> <dy>` moves up to ±4096 per axis in steps the
+program can follow: the first step (at most 127) now, then one step per frame, each once the
+program has read the last one (at most 10 frames' wait; at once when no program reads the mouse).
+Commands sent while a glide is in progress queue behind it and are applied in order, one per
+frame, so a `click` after a glide lands where the glide ended. `mouse clear` drops the queue.
+Worked example (a program reading the mouse every frame): `glide 300 0` -> X + 127 now, + 127 at
+the end of the next frame, + 46 at the end of the frame after.
+
 **Timing.** Each command changes the device before it returns (a direct call on the
 caller's thread, not a queued message). The machine reacts only when its program next reads
 the ports. For reproducible results: `pause`, inject, then `run_frames N`. `click` presses
@@ -3048,23 +3100,29 @@ sees the button held for exactly N frames.
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `mouse move` | | `<dx> <dy>` | Add `dx`/`dy` to the X/Y counters (8-bit wrap). | ✅ Implemented |
+| `mouse glide` | | `<dx> <dy>` | Long move (±4096) in steps of at most 127, one per frame, paced by the program's reads; later commands queue behind it. | ✅ Implemented |
 | `mouse press` | | `<button>` | Press and hold a button. | ✅ Implemented |
 | `mouse release` | | `<button>` | Release a button. | ✅ Implemented |
 | `mouse click` | | `<button> [frames]` | Press, hold `frames` (default 2), release on its own at a frame end. A new click replaces a pending one. | ✅ Implemented |
 | `mouse buttons` | | `<none\|b1,b2…>` | Set the exact set of pressed buttons (`none` = all up). Cancels a pending click. | ✅ Implemented |
 | `mouse wheel` | | `<steps>` | Scroll by whole notches (4-bit counter, wraps at 16). | ✅ Implemented |
-| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click. | ✅ Implemented |
-| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support, and **port routing**: decoded or shadowed with the reason (mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor). | ✅ Implemented |
+| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click and the input queued behind a glide. | ✅ Implemented |
+| `mouse status` | `mouse info` | `[device]` | The Kempston interface's counters, buttons, wheel, fitting, the bytes the three ports return, pending click, TTD journal support and **port routing** (decoded or shadowed with the reason: mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor); then **the machine's mouse**: its id, kind, fitted / in use, counters, registers, and per kind the serial line (line and receiver baud, in tune, the packet in flight, packets sent, bytes received, framing errors, the receive FIFO) or the PS/2 state (connected, resolution); the glide queue. `device` names another device of the machine (an unknown id is an error listing the ids). | ✅ Implemented |
+| `mouse devices` | | — | The machine's mouse devices, each as in `status`. | ✅ Implemented |
 | `mouse set` | | `<x> <y>` | Debug: write the raw X/Y counters (0–255). Allowed while TTD records (journalled). | ✅ Implemented |
 | `mouse help` | | — | Subcommand help. | ✅ Implemented |
 
-**Warnings (the command still succeeds):**
-- *Mouse not fitted* (`[INPUT] Mouse=NONE`, or feature `kempstonmouse` off): the counters
-  change, but nothing answers on the mouse ports, so the program reads the floating bus.
-  Warning: `mouse not present: guest reads floating bus on the mouse ports`.
-- *No wheel fitted* (`[INPUT] Wheel=NONE`, the shipped default): `mouse wheel` changes the
-  wheel counter, but the program cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE):
-  the guest does not see the wheel counter`.
+**No mouse fitted: refused.** On a machine with no mouse a program could read (`[INPUT]
+Mouse=NONE` or feature `kempstonmouse` off on a Kempston or ZX-Evo / TS-Conf machine) every
+input command fails: `no mouse fitted on this machine: a program cannot read mouse input
+(...)` (WebAPI 409 with `"reason":"no_mouse"`). `mouse status` still answers and says so. The
+Sprinter's mouse is part of the board: it is never refused. (Until 2026-10-03 the command
+succeeded with the warning `mouse not present`.)
+
+**Warning (the command still succeeds):** *no wheel fitted* (`[INPUT] Wheel=NONE`, the shipped
+default, or the Sprinter's two-button serial mouse): `mouse wheel` is accepted, but the program
+cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE, or a mouse without one): the guest
+does not see the wheel`.
 
 **Worked example** (Pentagon after reset: X = 31, Y = 85, nothing pressed, shipped config `Wheel=NONE`):
 
@@ -3086,7 +3144,10 @@ script reads `0x0E`, `0x2E`, `0x2F`, `0x2D`.
 **Rejected on purpose: absolute "move the cursor to (x, y)".** The program keeps its own
 cursor position (and may clip or scale it), so the emulator cannot know where the cursor is.
 To reach a screen point, work in a closed loop: find the cursor (screenshot or a known RAM
-variable), `mouse move` by the difference, `run_frames 1`, check again.
+variable), `mouse move` by the difference, `run_frames 1`, check again. Where the program
+clamps its pointer at the screen edge and moves it one pixel per count (Flex Navigator in the
+Sprinter's 640-pixel mode), **home** first: `mouse glide -1000 1000` puts the pointer in the
+top-left corner, then `mouse glide <x> <-y>` reaches the point (x, y) of the picture.
 
 **TTD (time-travel debugging):**
 - While TTD **records**, every mouse change is written to the TTD input journal before it
@@ -3126,6 +3187,8 @@ Play RZX input recordings (game completions from the RZX Archive and the like): 
 - `--ignore-later-snapshots`: skip snapshot blocks after the first. Default: a snapshot block between input blocks (multiload, rollback point) replaces the machine where the block before it ends, and the playback goes on (`rzx status` counts them); a snapshot for another machine stops the playback with the reason.
 
 While a recording plays: fast tape, turbo tape and fast disk read as off, the disk autostart is disarmed, live keyboard / mouse input and the command typer are refused. Turbo mode, pausing, breakpoints, stepping and analyzers work. Machines whose interrupt is not the ULA frame interrupt (TSConf, Sprinter) are refused.
+
+**Time travel during a playback.** Start TTD recording (`ttd start`) after `rzx play`: every TTD checkpoint keeps the playback's position (frame, fetch count, `IN` position, counters), so `ttd seek`, reverse steps and find-last work inside the playback, and running on from a seek plays the recording on from there. A seek back to before an `rzx stop` (or the end) plays the recording again; a seek after it runs live. Seek after `ttd stop`, as always. A playback cannot start while TTD records (it loads a snapshot), and `rzx seek` is refused then; after it, `rzx seek` drops a stopped TTD history (it replaces the machine from its keyframe). The recording itself is not in the TTD session: a saved session restores the playback only on a machine with the same recording loaded.
 
 **Examples**:
 

@@ -92,6 +92,7 @@ protected:
         ASSERT_NE(_context->pTimeTravelManager, nullptr);
 
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         _fm = _emulator->GetFeatureManager();
         ASSERT_NE(_fm, nullptr);
 
@@ -431,6 +432,7 @@ TEST_F(TTD_Automation_Contract_Test, FullRoundTrip_StartRecordSeekStepResume)
 TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Populate the journal with known write records so we can verify
     // they survive serialization.
@@ -477,6 +479,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     q.addrFrom = 0x1000;
     q.addrTo   = 0x1000;
     q.access   = ttd::TTDAccessType::Write;
+    q.beforeGlobalT = ttd2->GlobalT(ttd2->SessionEndPosition());   // the loaded machine sits at the start
     auto result = ttd2->FindLastAccess(q);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->value, 0x42u);
@@ -493,6 +496,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
 TEST_F(TTD_Automation_Contract_Test, FindLast_QueryShape_HasExpectedFields)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Perform a known write to the journal
     _ttd->RecordMemoryWrite(0x4000, 0, 0x99, 0x1234, 5);
@@ -533,6 +537,7 @@ TEST_F(TTD_Automation_Contract_Test, FindLast_QueryShape_HasExpectedFields)
 TEST_F(TTD_Automation_Contract_Test, FindLast_AddressRange_And_PCRange_Query)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Write into 0x4500 from PC 0x1234
     _ttd->RecordMemoryWrite(0x4500, 0, 0xAA, 0x1234, 5);
@@ -567,6 +572,7 @@ TEST_F(TTD_Automation_Contract_Test, FindLast_AddressRange_And_PCRange_Query)
 TEST_F(TTD_Automation_Contract_Test, FindLast_AllOptionalFilters_Contract)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Record two distinct writes at 0x6000 with different values, PCs, and pages
     _ttd->RecordMemoryWrite(0x6000, 0, 0x11, 0x1000, 2); // Write #1

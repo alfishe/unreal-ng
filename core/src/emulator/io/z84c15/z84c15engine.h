@@ -37,6 +37,17 @@ public:
     bool watchData = false;
 };
 
+/// Board logic that watches the on-chip daisy chain's acknowledges and RETIs (observation: the Sprinter's ISA
+/// slot report counts the PIO port B interrupts its cards caused). Called after the chip took the acknowledge
+/// (its winning source is under service) and after the chip saw RETI (the source's service ended)
+class IZ84InterruptObserver
+{
+public:
+    virtual ~IZ84InterruptObserver() = default;
+    virtual void OnChipAcknowledge(uint8_t vector) = 0;
+    virtual void OnChipReti() = 0;
+};
+
 /// @file z84c15engine.h
 /// @brief The Zilog Z84C15 as a machine's CPU engine (ICpuEngine): the
 /// vendored z84c15 library (core/src/3rdparty/z84c15) executing on this
@@ -94,6 +105,8 @@ public:
     /// The board's bus agent (null = none): opcode fetches, data accesses, INT acknowledges
     void SetBusAgent(IZ84BusAgent* agent) { _agent = agent; }
     IZ84BusAgent* GetBusAgent() const { return _agent; }
+    /// The board's interrupt observer (null = none)
+    void SetInterruptObserver(IZ84InterruptObserver* observer) { _observer = observer; }
 
     Z84Lib::Z84C15& Chip() { return _chip; }
     const Z84Lib::Z84C15& Chip() const { return _chip; }
@@ -139,6 +152,7 @@ private:
     ChainSource _source{*this};
     IInterruptSource* _external = nullptr;
     IZ84BusAgent* _agent = nullptr;
+    IZ84InterruptObserver* _observer = nullptr;
     uint8_t _boundarySeen = Z80_BOUNDARY_NONE;  ///< the boundary the host last got from the library
     uint8_t _vector = 0xFF;                     ///< the data bus byte of the acknowledge in progress
 };

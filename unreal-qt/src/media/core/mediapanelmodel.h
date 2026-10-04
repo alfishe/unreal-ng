@@ -28,6 +28,8 @@ struct MediaPanelRow
     bool isDirty = false;
     bool writeProtect = false;
     bool acceptsFolder = false;
+    bool ideUnit = false;       ///< an IDE unit (tag "ide"): its drive can be swapped while empty
+    bool compactFlash = false;  ///< an IDE unit with a CompactFlash card (tag "cf")
 };
 
 /// The rows of a "list" reply: slots first, then detached media

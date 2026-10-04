@@ -99,12 +99,21 @@ if (NOT TARGET opl4)
     add_subdirectory(3rdparty/opl4 EXCLUDE_FROM_ALL)
 endif()
 
+# libsam2695 — Dream SAM2695 General MIDI synthesizer (serial MIDI receiver, the chip's MIDI
+# implementation, SF2 voice model), vendored in-house at 3rdparty/sam2695 like libopl4 (std-lib
+# only, own CMakeLists.txt). EXCLUDE_FROM_ALL keeps its sam2695tests / sam2695render binaries out
+# of default builds; build them by name. Nothing in the emulator uses the library yet.
+if (NOT TARGET sam2695)
+    add_subdirectory(3rdparty/sam2695 EXCLUDE_FROM_ALL)
+endif()
+
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/sam2695/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (root ENABLE_VDAC2)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
@@ -249,6 +258,26 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
 
+# Host-side TLS for emulated devices whose firmware speaks TLS itself (the ZiFi ESP32-S3's HTTPS):
+# common/network/hosttls.cpp with OpenSSL, the library the WebAPI already uses. Without OpenSSL (or with
+# UNREAL_HOST_TLS=OFF, e.g. release packages that drop the dependency) the device's TLS connect fails as on a
+# module whose server is unreachable. PRIVATE: only hosttls.cpp includes OpenSSL
+option(UNREAL_HOST_TLS "Host-side TLS for emulated TLS clients (needs OpenSSL)" ON)
+if (UNREAL_HOST_TLS)
+    find_package(OpenSSL QUIET)
+    if (NOT OpenSSL_FOUND AND APPLE AND EXISTS "/opt/homebrew/opt/openssl")
+        set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
+        find_package(OpenSSL QUIET)
+    endif()
+    if (OpenSSL_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE UNREAL_HOST_TLS=1)
+        message(STATUS "[core] host TLS: OpenSSL ${OPENSSL_VERSION}")
+    else()
+        message(STATUS "[core] host TLS: off (OpenSSL not found)")
+    endif()
+endif()
+
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)
 
@@ -264,6 +293,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 # compiles core sources directly into its own binary and must see the same
 # gate as the core library build (a mismatch would be an ODR hazard).
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
+
+# Link libsam2695 (SAM2695 General MIDI synthesizer). PRIVATE for the same reason as opl4; the
+# gate is PUBLIC so core-tests, which compiles core sources itself, sees the same definition.
+target_link_libraries(${PROJECT_NAME} PRIVATE sam2695)
+target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_SAM2695=1)
 
 
 # TS-Conf VDAC2 card: the FT812 library (root CMakeLists.txt, ENABLE_VDAC2). The
@@ -291,6 +325,9 @@ endif ()
 if (UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++)
 endif ()
+
+# dlopen for optional host libraries loaded at run time (platform/dynamiclibrary.h: libpcap for the network bridge)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
 
 # Note: Recording-specific Windows libs (d3d11, dxgi, mfplat, mfuuid, mf, ole32)
 # are now linked via the recording library (core/recording/CMakeLists.txt)

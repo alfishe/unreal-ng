@@ -27,7 +27,7 @@ All paths in this file are relative to the project root.
 | `demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | 100 |
 | `tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
 | [`../machines/tsconf/ttd/sprites.ttd`](../machines/tsconf/ttd/sprites.ttd) (`--only tsconf_sprites`) | TS-Conf | `testdata/machines/tsconf/spg/sprites.spg` (16C frame drawn by a DMA copy every frame), classic GS card swapped in | 50 |
-| [`../machines/sprinter/ttd/boot.ttd`](../machines/sprinter/ttd/boot.ttd) (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.07 BETA 1 at 21 MHz (re-recorded 2026-10-02 when the default moved from 3.04); classic GS card swapped in | 0 |
+| [`../machines/sprinter/ttd/boot.ttd`](../machines/sprinter/ttd/boot.ttd) (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.06 Hotfix 2 at 21 MHz (re-recorded 2026-10-03 when the default moved back from 3.07 BETA 1); classic GS card swapped in (the GS behind the ISA ZX-bus adapter, since 2026-10-04) | 0 |
 
 Each fixture records 300 frames (301 checkpoints). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
@@ -172,6 +172,22 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-04: the whole corpus (all seven fixtures) re-recorded after `ttd-engine` landed on master: the engine's
+peripheral ids moved to 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback; master kept 44-53), and master's
+newer ROM set, Profi `ExtPorts` fingerprint and Sprinter ISA blobs had changed every file. `v1-ci-gate.txt` and
+`v2/active-demo-converted.ttd` exported again from the same build. The port-journal fixtures too, and both
+recorders now ask for the write journal (`/ttd/start` with `"journal": true`): it is recorded on demand since D40,
+and without it the corpus would stop exercising it.
+
+2026-10-04: the Sprinter fixture (`sprinter_boot`) re-recorded alone after master's SN4 / SN5 merge (default BIOS 3.06
+Hotfix 2): the default ISA population now fits the ZX-bus adapter with a General Sound in slot 1 (ISA phase I2), so
+the fixture carries the classic GS blob (id 5; the recorder swaps the card in, `"gs": "z80"`, as for the Pentagon
+corpus) and still the port journals (the adapter passes no memory cycles: no NeoGS ZX-DMA). The other fixtures are
+unchanged.
+
+2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone on the new default BIOS 3.06 Hotfix 2 (back
+from 3.07 BETA 1, owner decision); the other fixtures are unchanged.
+
 2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone again: the default NE2000 in ISA slot 2 adds the
 Ethernet cards' blob (id 45, `EthernetNics`: DP8390, packet RAM, EEPROM, the Ethernet gateway) to every checkpoint;
 the other fixtures are unchanged.
@@ -225,3 +241,27 @@ recording:
   registers the generators actually use are appended). The TurboSound FM blob
   is v4, 2000 bytes: the render-cursor offset plus both chips' queues of
   pending timed writes.
+
+## Schema 2: the engine's session file (`v2/`)
+
+Files in the time-travel engine's format (TTD v2, Phase 4), written by the C++
+writer for the analyzer's conformance test:
+
+| Fixture | What |
+|---|---|
+| `v2/synthetic.ttd` | a synthetic 60-frame session in three segments, finished |
+| `v2/synthetic-unfinished.ttd` | the same, cut inside its last part (a crash while recording) |
+| `v2/synthetic-ancillary.ttd` | the same with records of an ancillary stream readers do not know (0x0100) |
+| `v2/active-demo-converted.ttd` | `active_demo.ttd` converted from schema 1 (D31) |
+| `v2/expected.json` | what the C++ reader finds in each: checkpoints, versions, parts, events, bus records, finished, converted |
+
+Write them again after a format change (then `git add -f`, `*.ttd` is ignored):
+
+```bash
+./cmake-build-agent-release/bin/core-tests --gtest_also_run_disabled_tests \
+    --gtest_filter='TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures'
+```
+
+`TTDSessionFile_Test.CommittedFixturesStillLoad` fails when they are stale;
+`tools/verification/ttd-analyzer/tests/test_ttdcontainer.py` checks the analyzer
+against them.

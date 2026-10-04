@@ -88,7 +88,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] CP/M on v5: images per board in `testdata/machines/profi/cpm/` (README there); the Kondor, HC and DN disks boot
   from "Загрузка системы CP/M" (`CpmBootsFromTheKondorSystemDisk`). The old `CPM.UDI` stops at its loader's trap:
   its LSTP driver loads `KOI8.FNT`, which the disk lacks (an inconsistent user disk, not an emulation bug)
-- [x] CP/M on v3: Klug CP/M 2.3 boots from the Kramis V0.3 "Profi-DOS" entry (`KlugCpmBootsFromKramisV03`). It
+- [x] CP/M on v3: Klug CP/M 2.3 boots from the Kramis V0.3 "Profi-DOS" entry (checked 2026-10-03; the disk is kept
+  outside the repository, testdata has one disk per check: SP-DOS for the v3, `SpDosBootsToItsShell`). It
   needs TR-DOS 5.04T: V0.2's TR-DOS 5.03 double-steps on its 5 x 1024-byte disk (traced: the FDC follows TR-DOS's
   seeks; the same on a v5 with V0.2, while a v3 with BIOS 2.0 boots it) - software, not the board; `PROFI3` defaults to V0.3 since 2026-10-03
 - [x] A native SP-DOS disk: found in KLUG's BBS archive (2005, area PROFI: UNICOPY, COPYK30, TERMINAL, BIOS by
@@ -98,3 +99,10 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   when the CPU runs faster than 3.5 MHz (v5 hi-res, turbo). Fixed: the Profi decoder sets the base-clock time base
   for the VG93 and the tape, as the Sprinter does ([design-hires.md](design-hires.md) section 4); they now boot on both
 - [x] SP-DOS system disk in testdata (`cpm/sp-dos/unicopy-sp-dos.td0`), `SpDosBootsToItsShell` on both boards
+- [x] PQ-DOS and ROM BIOS Plus (Vadim): both expect the extended port map while the SYS ROM runs, as Karabas Pro
+  decodes it; `[PROFI] ExtPorts=sys` adds that variant (default `cpm`, the 5.0 PROM, which BIOS 1.0 / 2.0 need).
+  With it, BIOS Plus 0.32 finds the FDC, both drives, the RTC and the AY, and PQ-DOS 2.1 boots to `A:\>`
+  ([software-zoo.md](software-zoo.md) sections 5, 6)
+- [ ] The extended-map 8255 (`#87..#E7`) and the COM port (`#8F..#EF`): not emulated, ROM BIOS Plus reports Fail
+- [ ] PQ-DOS on `PROFI3` (its ROM-BIOS emulator): loops after programming the 8255 (`#52B0..#52C1`)
+- [ ] What the 5.06 / Profi+ periphery CPLD decodes in the SYS ROM state (decides the `ExtPorts` default for those boards)

@@ -8,18 +8,19 @@
 ///   - Keyboard matrix mutation (PressKey/ReleaseKey are no-ops)
 ///   - Recording capture (CaptureFrame is a no-op)
 ///   - Video frame refresh notifications (NC_VIDEO_FRAME_REFRESH not posted)
-///   - Audio host-buffer submission (SoundManager mute forced true)
+///   - Audio host-buffer submission (a SoundManager host output hold, reason
+///     TtdReplay; the user's master mute is never touched)
 ///
 /// Critical invariant (TDD §8.2 last paragraph): AY/envelope device state
-/// must still advance during replay. That's covered by SoundManager's
-/// existing mute() contract — handleStep/handleFrameStart are unaffected by
-/// the mute flag; only handleFrameEnd's host callback gets zeros. We assert
-/// the mute flag is set, not the broader invariant (which is exercised by
-/// the divergence corpus in Phase 2 Item 7).
+/// must still advance during replay. That's covered by the hold's contract -
+/// handleStep/handleFrameStart are unaffected; only handleFrameEnd's host
+/// callback gets nothing. We assert the hold, not the broader invariant
+/// (which is exercised by the divergence corpus in Phase 2 Item 7).
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <stdexcept>
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
@@ -176,28 +177,24 @@ TEST_F(TTD_ReplayMode_Test, ExitReplayMode_Idempotent_WhenNotInReplay)
 // SoundManager mute save/restore
 // ===========================================================================
 
-TEST_F(TTD_ReplayMode_Test, EnterReplayMode_ForcesMute)
+TEST_F(TTD_ReplayMode_Test, EnterReplayMode_HoldsHostOutputNotTheUserMute)
 {
+    // Replay runs at host speed: nothing reaches the host audio callback (a hold), and the user's master mute -
+    // which replay used to save, force and restore, and could leave set - is not touched at all
     ASSERT_NE(_context->pSoundManager, nullptr);
-    _context->pSoundManager->unmute();
-    ASSERT_FALSE(_context->pSoundManager->isMuted());
+    SoundManager* sound = _context->pSoundManager;
+    sound->unmute();
 
     _ttd->EnterReplayMode();
-    EXPECT_TRUE(_context->pSoundManager->isMuted())
-        << "Replay must force SoundManager muted so host buffer receives silence";
-}
+    EXPECT_TRUE(sound->isHostOutputHeld());
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::TtdReplay), 1);
+    EXPECT_FALSE(sound->isMuted()) << "replay must not change the user's master mute";
 
-TEST_F(TTD_ReplayMode_Test, ExitReplayMode_RestoresUnmutedState)
-{
-    ASSERT_NE(_context->pSoundManager, nullptr);
-    _context->pSoundManager->unmute();
-
-    _ttd->EnterReplayMode();
-    ASSERT_TRUE(_context->pSoundManager->isMuted());
-
+    // A user mute / unmute during the replay is the user's and survives it
+    sound->mute();
     _ttd->ExitReplayMode();
-    EXPECT_FALSE(_context->pSoundManager->isMuted())
-        << "ExitReplayMode must restore the pre-replay unmuted state";
+    EXPECT_TRUE(sound->isMuted());
+    sound->unmute();
 }
 
 TEST_F(TTD_ReplayMode_Test, ReplayHoldsHostOutputOnceAndReleasesIt)
@@ -208,10 +205,29 @@ TEST_F(TTD_ReplayMode_Test, ReplayHoldsHostOutputOnceAndReleasesIt)
 
     _ttd->EnterReplayMode();
     _ttd->EnterReplayMode();  // nested enter takes no second hold
-    EXPECT_TRUE(_context->pSoundManager->isHostOutputHeld());
+    EXPECT_EQ(_context->pSoundManager->hostOutputHolds(SoundManager::HostHoldReason::TtdReplay), 1);
 
     _ttd->ExitReplayMode();
     EXPECT_FALSE(_context->pSoundManager->isHostOutputHeld()) << "the replay left the host output held";
+    _ttd->ExitReplayMode();  // idempotent: nothing more to give back
+    EXPECT_EQ(_context->pSoundManager->hostOutputHolds(SoundManager::HostHoldReason::TtdReplay), 0);
+}
+
+TEST_F(TTD_ReplayMode_Test, ReplayModeScopeExitsOnException)
+{
+    // A replay that throws half-way can no longer leave replay mode - and with it the host audio hold - on
+    ASSERT_NE(_context->pSoundManager, nullptr);
+    try
+    {
+        ttd::TimeTravelManager::ReplayModeScope replay(*_ttd);
+        EXPECT_TRUE(_context->ttdReplayActive);
+        throw std::runtime_error("replay failed");
+    }
+    catch (const std::runtime_error&)
+    {
+    }
+    EXPECT_FALSE(_context->ttdReplayActive);
+    EXPECT_FALSE(_context->pSoundManager->isHostOutputHeld());
 }
 
 TEST_F(TTD_ReplayMode_Test, ExitReplayMode_PreservesPreExistingMute)

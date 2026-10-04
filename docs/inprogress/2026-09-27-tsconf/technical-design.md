@@ -221,7 +221,7 @@ flowchart TB
         T0["T0 layer (T0_EN)"]
         S1["S1: until 2nd LEAP"]
         T1["T1 layer (T1_EN)"]
-        S2["S2: up to descriptor 84"]
+        S2["S2: up to the 3rd LEAP or descriptor 84"]
     end
     TM --> S0 --> T0 --> S1 --> T1 --> S2 --> BUF["line buffer (512 px)<br/>later layers overwrite"]
     BUF --> SHOW["line L: shown inside TS window, cleared on read"]

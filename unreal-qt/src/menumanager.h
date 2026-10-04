@@ -48,6 +48,8 @@ public:
     /// The route as set ("AUTO" .. "BOTH"), the route in force, and whether a PS/2 controller is fitted
     void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller,
                               const QString& controller = QString());
+    /// Machine > Host Keyboard > Pass Command as Win Key (macOS only; a no-op elsewhere)
+    void setCommandKeyToGuestChecked(bool checked);
     void setNetworkWindowChecked(bool checked);
     void setFt812DebugChecked(bool checked);
 
@@ -126,6 +128,8 @@ signals:
     void frontPanelCpmToggled(bool on);
     /// Machine > Host Keyboard: "auto" | "matrix" | "ps2" | "both"
     void hostKeyboardRouteRequested(const QString& route);
+    /// Machine > Host Keyboard > Pass Command as Win Key (macOS)
+    void commandKeyToGuestToggled(bool on);
     /// The Machine menu opens: the owner refreshes the route check marks
     void machineMenuAboutToShow();
 
@@ -286,6 +290,7 @@ private:
     QAction* _frontPanelCpmAction = nullptr;
     QMenu* _hostKeyboardMenu = nullptr;
     QActionGroup* _hostKeyboardGroup = nullptr;
+    QAction* _commandKeyToGuestAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

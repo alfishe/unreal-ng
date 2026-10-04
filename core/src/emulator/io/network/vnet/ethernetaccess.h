@@ -27,6 +27,11 @@ bool Pcap(EmulatorContext* context, const std::string& link, std::vector<uint8_t
 /// next frame boundary. A tool edit while TTD records (not replayable input). False with `error`
 bool Inject(EmulatorContext* context, const std::string& link, const std::string& hex, const char* source, std::string& error);
 
+/// The host's network adapters for the bridge (network SN6): name, description, IPv4 addresses, loopback, wireless,
+/// up, running, and whether the bridge can take it (wired: yes; Wi-Fi: not yet, Q1); `library` and `error` when the
+/// packet library is missing or refuses
+StateNode Adapters();
+
 /// A one-line summary of a frame ("ARP who-has 10.0.2.2 tell 10.0.2.15", "IPv4 10.0.2.15:1025 > 192.0.2.10:80 TCP S")
 std::string Summary(const std::vector<uint8_t>& frame);
 }  // namespace EthernetAccess

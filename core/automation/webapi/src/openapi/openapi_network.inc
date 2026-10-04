@@ -23,9 +23,11 @@
             "ZX-Evo AVR's UART, zxwifi = a 16550 card), peer (loopback | tcp | serial), target, phase (idle | resolving | connecting | connected), error, modem_lines, connected, baud, "
             "frame_bits, divisor, the registers lcr / mcr / lsr / msr / ier / iir / scr, rts, cts, rx_fifo, tx_fifo, "
             "peer_pending (bytes the peer holds for the ZX), peer_baud (an ESP module's own rate; a mismatch with baud garbles both sides), bytes_in, bytes_out, overruns; an ESP module adds requests and recent_exchanges (request / reply: ESPNET frames by name, AT lines as text). "
-            "machine_serial: the machine's own serial port when it is no 16550 (ATM Turbo 2+: the keyboard controller's RS-232; "
-            "machine.serial_port atm2-kbc): fitted, flavor atm2kbc, kbc_firmware, the peer fields as in com_port, baud (as the "
-            "firmware programmed it), frame_bits, rts, dtr, bytes_in, bytes_out, lost (frames the MCU had no room for). "
+            "machine_serial: the machine's own serial port when it is no 16550 (ATM Turbo 2+: the keyboard controller's RS-232, "
+            "machine.serial_port atm2-kbc; ZX Profi v5: the board's 8251 USART at #D3 / #F3 clocked by its 8253, "
+            "machine.serial_port profi-8251): fitted, flavor (atm2kbc | usart8251), kbc_firmware (atm2kbc), the peer fields "
+            "as in com_port, baud (as the firmware / program programmed it), frame_bits, rts, dtr, bytes_in, bytes_out, lost "
+            "(frames the MCU had no room for; the 8251's overruns). "
             "atm2ioesp: the ATM2IOESP card (machine.internal_io says the machine has the connector): fitted, address (its bus "
             "address), the peer fields and the 16550 registers as in com_port. "
             "slots (machines with expansion slots, the Sprinter's ISA slots): id (isa1 / isa2), bus, label, configured, card, "
@@ -38,7 +40,21 @@
             "tx_fifo, bytes_in, bytes_out, overruns), pins (out1_esp_reset, out2_esp_gpio0_low), peer (kind, target, connected, "
             "pending), esp (module, firmware, state running | reset held | ROM download mode, hardware_resets, wifi, ssid, ip, mac, "
             "baud, factory_baud, flow_control, line_mismatch, requests, at_session (echo, mux, passive_receive, sysstore, dns, "
-            "links: link, proto, remote, rx_pending, peer_closed), exchanges: the last 32 AT requests and replies). "
+            "links: link, proto, remote, rx_pending, peer_closed), native_session (ZIFI-NATIVE: variant, activity, last_step, "
+            "last_error, client_open, time_zone, proxy, zifi_ini_bytes (the saved zifi.ini), weather (S3 WEATHER_GET: location, "
+            "found, unknown, place, latitude, longitude), webdav (ESP01S: running, port, client, request, requests, "
+            "last_request, last_status, bytes_sent, bytes_received)), exchanges: the last 32 AT requests and replies); a 3Com "
+            "EtherLink III (card el3c509b, network phase SN5): chip (3C509B-TPO / 3C509B-TP), product_id, base (the active I/O "
+            "base), eeprom_base, id_port (the ID port the last zero picked, #100-#1F0), ids (AUTOINIT / ID_WAIT with the sequence "
+            "position / ID_CMD, tag), activated, irq, irq_level, irq_driven, mac (the EEPROM's), station_address (window 2), "
+            "port_key, link, link_state (no cable / link beat disabled / link test running / link pass), window, powered_down, "
+            "registers (status, configuration_control, address / resource / internal configuration, interrupt and read zero "
+            "masks, rx_filter, the three thresholds, rx / tx / statistics enabled, media, net and FIFO diagnostic, EEPROM command "
+            "and data), fifo (tx_capacity, tx_free, tx_packets, tx_bytes, tx_on_wire, rx_capacity, rx_free, rx_packets, rx_bytes, "
+            "rx_status, tx_status_stack), eeprom (product and manufacturer IDs, configuration words, checksums, busy, all 64 "
+            "words), statistics (window 6), counters (tx_frames, rx_frames, rx_filtered, rx_fifo_full_waits, tx_no_link, "
+            "tx_underruns, tx_overruns, rx_underruns, id_sequences, id_eeprom_reads, activations, power_on_resets, commands), "
+            "events (the last 64: isolation, activation, resets, underruns) and summary (one line). "
             "ethernet_gateway (with a frame-level "
             "card): mode nat, router_mac, router_ip, dns_ip, ports (port, mac, queued_frames, dhcp_lease), arp (mac, ip), tcp "
             "(guest, remote, state, socket, queued_bytes, unacked, guest_window, guest_mss, guest_fin, host_fin, retries), udp, "
@@ -49,7 +65,15 @@
             "fitted, avr_firmware, api (0 off, 1 on), data_register (zifi | rs232: what #00EF..#BFEF reaches, the last "
             "ZIFR / ZOFR or RIFR / ROFR read decides), er, imr, isr, zibtr, zitor_ms, ribtr, ritor_ms, zifi_rx / zifi_tx "
             "and rs232_rx / rs232_tx (ring fill), the peer fields of its line to the ESP, bytes_in, bytes_out, dropped "
-            "(bytes the full ring lost). card.kind is none when "
+            "(bytes the full ring lost); its esp with a ZIFI-NATIVE module adds native_session (variant, activity, last_step, "
+            "last_error, client_open, time_zone, proxy, bad_checksums, resyncs, https (S3: host TLS or unavailable), file_bridge: ftp (running, port, host_port: "
+            "where a host FTP client connects - 0 with host_port_note for a guest port below 1024 without a Forward= rule, "
+            "passive_ports, sessions: session, client, logged_in, cwd, data_mode; command: the file command in progress, "
+            "last_command, last_reply, bytes_sent, bytes_received, files_sent, files_received), vfs (pending: the VFS "
+            "operation in progress, waiting_for: the frame awaited from the Z80, last_error, requests, bytes_read, "
+            "bytes_written, timeouts, dropped_while_waiting: Z80 frames lost while the client waited), esp_clock_set "
+            "(the S3's SNTP clock), wc_update (S3: the Wild Commander updater - running, activity, state: its last "
+            "state line, commit, files)). card.kind is none when "
             "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";
@@ -75,15 +99,17 @@
             "the ZX-Bus), atm2ioesp (what the ATM2IOESP card's 16550 is wired to, the com_port values, default \"at\"), "
             "atm2ioesp_address (its bus address on #FB: \"0xF0\" Rev 1.5 / 2.0, \"0xF8\" Rev 1.0), "
             "host_access (true / false), dns_mode (\"host\" | \"pass\"), hosts (\"name=a.b.c.d,...\"), forwards "
-            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet[,<baud>]\" | \"at[,<baud>]\" (an ESP module's firmware rate; without it the port's: 38400 on the ATM Turbo 2+ keyboard controller, 115200 elsewhere) | "
+            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet[,<baud>]\" | \"at[,<firmware>][,<baud>]\" (an ESP module's firmware rate; without it the port's: 38400 on the ATM Turbo 2+ keyboard controller, 115200 elsewhere; <firmware> esp32 | esp8266 | esp8266-at221 | esp8266-at222 for this module alone, else esp_chip) | \"zifi-native[,<s3|esp01s>][,<baud>]\" (the 2026 ZiFi firmware: binary frames 5A CMD LEN DATA XOR; s3 = ESP32-S3-Zero s3-native-0.6.94, esp01s = ESP-01S native-0.2.2) | \"modem[,<guest port>]\" (a Hayes modem: ATDT dials host:port or a phone book number; with a guest port it also answers host clients of that port) | "
             "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"; the machine's own serial port: the ZX-Evo "
-            "AVR's, the ATM Turbo 2+ keyboard controller's RS-232), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\" (NonOS AT 1.7.4) | \"esp8266-at221\" | \"esp8266-at222\" (ESP-AT 2.2.1 / 2.2.2; the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222)), isa1_peer / isa2_peer (Sprinter: what the SprinterESP card's 16550 in that ISA slot is wired to, com_port values, default \"at\" = its ESP-12F), avr_firmware (ZX-Evo, the AVR firmware the COM port behaves like: "
+            "AVR's, the ATM Turbo 2+ keyboard controller's RS-232), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\" (NonOS AT 1.7.4) | \"esp8266-at221\" | \"esp8266-at222\" (ESP-AT 2.2.1 / 2.2.2; the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222)), isa1_peer / isa2_peer (Sprinter: what the UART card in that ISA slot is wired to, com_port values; default \"at\" = the SprinterESP's ESP-12F, \"modem\" = the ISA modem card's own Hayes modem, \"none\" = SprinterSerial's COM1), isa1_peer_b / isa2_peer_b (SprinterSerial's COM2 at #2F8), modem_phonebook (\"<number>=<host>[:<port>],...\": the numbers a Hayes modem peer dials with ATDT; a dialed number with letters, '.' or ':' is a host itself), ethernet_mode (\"nat\" = the gateway's router, default | \"bridge\" = the frame cards' frames on the host adapter bridge_adapter, network SN6; needs libpcap / Npcap and the host's permission, see GET .../network/adapters), bridge_adapter (the host adapter name, e.g. \"en0\"), avr_firmware (ZX-Evo, the AVR firmware the COM port behaves like: "
             "\"baseconf\" | \"base2010\" | \"base2011-04\" | \"base2011-05\" | \"base2011-09\" | \"base2013\" | \"base2023\" | \"ts\" | "
             "\"ts2013\" | \"ts2016-02\" | \"ts2016-04\"; a change restarts the AVR's UART), kbc_firmware (ATM Turbo 2+, the keyboard "
             "controller's firmware: \"none\" | \"v22-7\" | \"v22-11\" | \"v22-12\" | \"v31-7\" | \"v31-11\" | \"v32-7\" | "
             "\"v32-11\" | \"v40\" | \"v41\"; RS-232 from v31 on; a change fits a new controller, which boots afresh), zifi (TS-Conf, "
             "a ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to, the com_port values, default \"none\" = "
-            "no ZiFi board; \"at\" = the original board's ESP-01 with Espressif's AT firmware). The settings in force are \"settings\" in "
+            "no ZiFi board; \"at\" = the original board's ESP-01 (ESP8266, 1 MB) with Espressif's AT firmware, NonOS 1.7.4 unless esp_chip names an ESP8266 build or "
+            "\"at,esp8266-at222\" picks ESP-AT 2.2.2; \"zifi-native[,s3|esp01s]\" = the 2026 ZiFi firmwares). The ESP's firmware, state and session are "
+            "\"esp\" in each port of GET /state/network. The settings in force are \"settings\" in "
             "GET /state/network, with the host's serial devices in \"host_serial_devices\". Unset keys keep their value. Applied "
             "at the next frame boundary (at once while paused): the devices are fitted again, so every connection closes. A "
             "device the machine cannot take (a ZX-WiFi card on a ZX-Evo: #xxEF is the AVR's; a com_port with a keyboard controller "
@@ -107,8 +133,10 @@
         paths[kFrames]["get"]["summary"] = "Get the Ethernet frame capture";
         paths[kFrames]["get"]["tags"].append("Network");
         paths[kFrames]["get"]["description"] =
-            "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000), both ways. "
-            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card), port, "
+            "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000 or 3C509B), both ways. "
+            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card; in "
+            "ethernet_mode=bridge also lan_out = a card's frame put on the host LAN and lan_in = a frame from the host LAN, "
+            "port \"lan\"), port, "
             "length, summary (\"ARP who-has 10.0.2.2 tell 10.0.2.15\", \"IPv4 10.0.2.15:1025 > 192.0.2.10:80 TCP S ...\"), "
             "hex; link=isa2.eth picks one card, last=N the newest N (default 64). format=pcap: a pcap file "
             "(LINKTYPE_ETHERNET, timestamps = machine frame x 20 ms) for Wireshark / tcpdump. 404 without a frame-level card.";
@@ -126,6 +154,21 @@
         }
         paths[kFrames]["get"]["responses"]["200"]["description"] = "The capture (JSON, or a pcap file)";
         paths[kFrames]["get"]["responses"]["404"]["description"] = "Emulator not found, or no frame-level card";
+
+        const char* kAdapters = "/api/v1/emulator/{id}/network/adapters";
+        paths[kAdapters]["get"]["summary"] = "List the host network adapters for the bridge";
+        paths[kAdapters]["get"]["tags"].append("Network");
+        paths[kAdapters]["get"]["description"] =
+            "The host adapters the packet library (libpcap / Npcap, loaded at run time) lists, for ethernet_mode=bridge "
+            "(network SN6): adapters[] with name (the bridge_adapter value), description, ipv4[], loopback, wireless, up, "
+            "running, bridgeable (wired adapters; Wi-Fi is not bridgeable yet), plus library and error (the library is "
+            "missing, or the host refuses access - the text says what to install or allow).";
+        paths[kAdapters]["get"]["parameters"][0]["name"] = "id";
+        paths[kAdapters]["get"]["parameters"][0]["in"] = "path";
+        paths[kAdapters]["get"]["parameters"][0]["required"] = true;
+        paths[kAdapters]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kAdapters]["get"]["responses"]["200"]["description"] = "The adapters (empty with error when unavailable)";
+        paths[kAdapters]["get"]["responses"]["404"]["description"] = "Emulator not found";
 
         const char* kFrame = "/api/v1/emulator/{id}/network/frame";
         paths[kFrame]["post"]["summary"] = "Inject an Ethernet frame towards a card";

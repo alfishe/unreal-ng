@@ -794,9 +794,18 @@ void Tape::handleFrameEnd()
     }
     else if (!inTrailingPause)
     {
-        // A pilot gets the longer wait (TAPE_PILOT_HOLD_FRAMES): a loader may sit out a fixed delay inside it
+        // Pause the playback: inside a pilot after TAPE_PILOT_HOLD_FRAMES (a loader may sit out a fixed delay
+        // there). In the tail of the pilot the shorter TAPE_BLOCK_HOLD_FRAMES applies again: playback must be paused
+        // (and the pilot rewound) before the head leaves the pilot, however short the pilot is
         const bool inPilot = _currentTapeBlock != nullptr && _currentOffsetWithinPulse < _currentTapeBlock->pilotEdgeCount;
-        if (_framesNotListened >= (inPilot ? TAPE_PILOT_HOLD_FRAMES : TAPE_BLOCK_HOLD_FRAMES))
+        bool inPilotBody = inPilot;
+        if (inPilot && _currentOffsetWithinPulse < _currentTapeBlock->edgePulseTimings.size())
+        {
+            const uint64_t pulsesLeft = _currentTapeBlock->pilotEdgeCount - _currentOffsetWithinPulse;
+            const uint64_t tstatesLeft = pulsesLeft * _currentTapeBlock->edgePulseTimings[_currentOffsetWithinPulse];
+            inPilotBody = tstatesLeft > TAPE_PILOT_TAIL_TSTATES;
+        }
+        if (_framesNotListened >= (inPilotBody ? TAPE_PILOT_HOLD_FRAMES : TAPE_BLOCK_HOLD_FRAMES))
             pausePlayback();
     }
 }
@@ -937,8 +946,10 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
         {
             _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
             generateBitstreamForStandardBlock(*_currentTapeBlock);
-            _currentOffsetWithinPulse = 0;
-            _currentPulseIdxInBlock = 0;
+            // The position inside the block stays: zero for a block just
+            // reached, the restored one after a TTD restore into a block whose
+            // edges are not generated (freed when the deck moved on, or
+            // freshly installed from the medium)
         }
 
         TapeBlock& block = *_currentTapeBlock;
@@ -1199,6 +1210,15 @@ void Tape::TTDSaveState(uint8_t* dst) const
 
 void Tape::TTDLoadState(const uint8_t* src)
 {
+    // The blocks are installed from the attached medium lazily, when a loader
+    // first reads the tape; a restored state with a block in flight needs them
+    // now (installing resets the cursor, so before the restored one is set
+    // below). A state with none in flight stays as lazy as the recorded deck
+    uint64_t restoredBlock = 0;
+    std::memcpy(&restoredBlock, src + 10, sizeof(restoredBlock));   // _currentTapeBlockIndex (layout above)
+    if (_tapeBlocks.empty() && restoredBlock != UINT64_MAX)
+        EnsureImageLoaded();
+
     const uint8_t* cur = src;
     _tapeStarted              = (get_u8(cur) != 0);
     _playbackFrozen           = (get_u8(cur) != 0);

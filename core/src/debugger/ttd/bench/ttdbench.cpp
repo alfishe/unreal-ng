@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -12,6 +13,9 @@
 
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
+#include "debugger/ttd/bench/ttdv1feeder.h"
+#include "debugger/ttd/engine/ttdsessionfile.h"
+#include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
@@ -24,6 +28,26 @@
 
 namespace ttd
 {
+
+namespace
+{
+/// Memory the engine records and v1 does not at all (D33 exception)
+bool V1Lacks(TTDRegionId id)
+{
+    switch (id)
+    {
+        case TTDRegionId::MoonSoundWaveMemory:
+        case TTDRegionId::NeoGSRam:
+        case TTDRegionId::NeoGSFlash:
+        case TTDRegionId::EvoAvrEeprom:
+        case TTDRegionId::SmucEeprom:
+            return true;
+        default:
+            return false;
+    }
+}
+}  // namespace
+
 namespace bench
 {
 
@@ -156,6 +180,8 @@ private:
 /// Start state, set-up actions and settle frames of a workload
 bool Prepare(Emulator& emulator, const Case& c, const Options& options, std::string& error)
 {
+    if (options.journalBytes && emulator.GetContext()->pTimeTravelManager)
+        emulator.GetContext()->pTimeTravelManager->SetWriteJournalCapacity(options.journalBytes);
     const Workload& w = c.workload;
     const std::string path = w.file.empty() || !options.resolveTestData ? w.file : options.resolveTestData(w.file);
     switch (w.start)
@@ -222,6 +248,15 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
     const uint32_t frames = MeasuredFrames(c, options);
     size_t nextInput = 0;
     frameUs.reserve(frames);
+    struct Slow
+    {
+        double us;
+        uint64_t frame;
+        CaptureWork work;
+    };
+    std::vector<Slow> slow;
+    const char* slowEnv = std::getenv("UNREAL_TTD_BENCH_SLOW_FRAMES");
+    const size_t slowFrames = slowEnv ? static_cast<size_t>(std::strtoul(slowEnv, nullptr, 10)) : 0;
     for (uint32_t f = 0; f < frames; f++)
     {
         // Scripted input through the live-input path: applied at once in the
@@ -243,6 +278,25 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
             captureUs->push_back(static_cast<double>(engine->LastCaptureNs()) / 1000.0);
         if (engine && work)
             *work += engine->LastCaptureWork();
+        if (engine && slowFrames)
+        {
+            const CaptureWork w = engine->LastCaptureWork();
+            slow.push_back({static_cast<double>(engine->LastCaptureNs()) / 1000.0, f, w});
+        }
+    }
+    // UNREAL_TTD_BENCH_SLOW_FRAMES=N: the N slowest captures with their work (diagnostics, stderr)
+    if (slowFrames && !slow.empty())
+    {
+        std::sort(slow.begin(), slow.end(), [](const Slow& a, const Slow& b) { return a.us > b.us; });
+        for (size_t i = 0; i < slow.size() && i < slowFrames; ++i)
+            std::fprintf(stderr, "slow capture %.1f us frame %llu: scanned %llu B (ram %llu), compressed %llu B in %llu calls, delta base %llu B, state %llu B\n",
+                         slow[i].us, static_cast<unsigned long long>(slow[i].frame),
+                         static_cast<unsigned long long>(slow[i].work.bytesScanned),
+                         static_cast<unsigned long long>(slow[i].work.bytesScannedRam),
+                         static_cast<unsigned long long>(slow[i].work.compressInputBytes),
+                         static_cast<unsigned long long>(slow[i].work.compressCalls),
+                         static_cast<unsigned long long>(slow[i].work.deltaBaseBytes),
+                         static_cast<unsigned long long>(slow[i].work.deviceStateBytes));
     }
 }
 
@@ -292,6 +346,7 @@ public:
         w.pagesVisited = t.pagesVisited;
         w.deltaBaseBytes = t.deltaBaseBytes;
         w.deviceBlobBytes = t.deviceBlobBytes;
+        w.deviceStateBytes = t.deviceStateBytes;
         w.bytesScanned = t.bytesScanned;
         w.compressCalls = t.compressCalls;
         w.compressInputBytes = t.compressInputBytes;
@@ -403,12 +458,189 @@ public:
         return _ttd->GetPerfCounters().lastCaptureNs;
     }
 
+    /// The recorded v1 session (the time-travel engine records next to it)
+    TimeTravelManager* Manager() const { return _ttd; }
+
 private:
     EmulatorContext* _context = nullptr;
     TimeTravelManager* _ttd = nullptr;
 };
 
 /// endregion </Engine v1>
+
+/// region <Engine: TimeTravelEngine>
+
+/// The time-travel engine (docs/inprogress/2026-09-25-ttd-v2-migration/).
+/// Phase 1, Step 4: it records the running emulator in shadow mode, next to
+/// v1 (TimeTravelManager::SetShadowEngine), so its capture time, counted
+/// work, bytes and memory are its own on every case; seek and file metrics
+/// come as the engine gains them
+class EngineTimeTravel final : public Engine
+{
+public:
+    std::string Name() const override { return "engine"; }
+
+    Capabilities Supports() const override
+    {
+        Capabilities c;
+        c.liveCapture = true;
+        c.seek = false;
+        c.seekMemory = true;
+        c.saveLoad = false;
+        c.save = true;   // the session file (Phase 4); loading into a machine comes with Phase 5
+        return c;
+    }
+
+    bool Start(Emulator& emulator, Mode mode, std::string& error) override
+    {
+        _engine.EndSession();
+        // UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL: full reference table every N checkpoints, to measure alternatives
+        if (const char* v = std::getenv("UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL"); v && *v)
+            _engine.SetSnapshotInterval(static_cast<uint32_t>(std::strtoul(v, nullptr, 10)));
+        _feedError.clear();
+        if (!_recorder.Start(emulator, mode, error))
+            return false;
+        _recorder.Manager()->SetShadowEngine(&_engine);
+        return true;
+    }
+
+    void Stop() override
+    {
+        if (TimeTravelManager* v1 = _recorder.Manager())
+            v1->SetShadowEngine(nullptr);
+        _recorder.Stop();
+        if (!_engine.IsSessionOpen())
+            _feedError = "the shadow engine holds no session";
+    }
+
+    uint64_t LastCaptureNs() const override { return _engine.LastCaptureNs(); }
+    CaptureWork LastCaptureWork() const override
+    {
+        const TTDEngineCaptureWork& e = _engine.LastCaptureWork();
+        CaptureWork w;
+        w.pagesVisited = e.piecesOffered / 4;   // pieces handed over, in 16 KB pages like v1's count
+        w.deltaBaseBytes = e.deltaBaseBytes;
+        w.bytesScanned = e.piecesOffered * kTTDPieceSize;
+        w.compressCalls = e.compressCalls;
+        w.compressInputBytes = e.compressInputBytes;
+        w.deviceBlobBytes = e.deviceBlobBytes;
+        w.deviceStateBytes = e.deviceStateBytes;
+        w.bytesScannedRam = uint64_t(_engine.LastPiecesOffered(0)) * kTTDPieceSize;
+        for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
+            if (V1Lacks(_engine.Regions()[r].id))
+                w.bytesScannedV1Lacks += uint64_t(_engine.LastPiecesOffered(r)) * kTTDPieceSize;
+        return w;
+    }
+    size_t Checkpoints() const override { return _engine.CheckpointCount(); }
+    uint64_t FirstFrame() const override { return _engine.Frames().FirstFrame(); }
+    uint64_t LastFrame() const override { return _engine.Frames().LastFrame(); }
+    uint32_t FrameSpan() const override { return _recorder.FrameSpan(); }
+
+    StreamBytes Bytes() const override
+    {
+        StreamBytes b;
+        b.ramPayload = _engine.RegionPayloadBytes(0);   // machine RAM, as v1's ramPayload
+        b.versions = _engine.RegionVersionCount(0);
+        for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
+        {
+            if (_engine.IsDeviceStateRegion(r))
+            {
+                // Device states (Phase 2): stored only when they change, as differences
+                b.deviceBlobs += _engine.RegionPayloadBytes(r);
+                b.versions += _engine.RegionVersionCount(r);
+                // UNREAL_TTD_BENCH_DEVICE_BYTES: each device's bytes (diagnostics, stderr)
+                if (std::getenv("UNREAL_TTD_BENCH_DEVICE_BYTES"))
+                    std::fprintf(stderr, "device bytes %s: %llu in %llu versions\n", _engine.Regions()[r].name.c_str(),
+                                 static_cast<unsigned long long>(_engine.RegionPayloadBytes(r)),
+                                 static_cast<unsigned long long>(_engine.RegionVersionCount(r)));
+                continue;
+            }
+            b.deviceRegions += _engine.RegionPayloadBytes(r);
+            if (V1Lacks(_engine.Regions()[r].id))
+            {
+                b.deviceRegionsV1Lacks += _engine.RegionPayloadBytes(r);
+                b.versionsV1Lacks += _engine.RegionVersionCount(r);
+            }
+            b.versions += _engine.RegionVersionCount(r);
+        }
+        b.pageRefs = _engine.ReferenceBytes();
+        for (size_t i = 0; i < _engine.CheckpointCount(); i++)
+        {
+            b.checkpointCore += sizeof(TTDCpuState) + sizeof(TTDChipsetState);
+        }
+        return b;
+    }
+
+    uint64_t ResidentBytes() const override { return _engine.HeapBreakdown().Total(); }
+
+    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
+    {
+        const TTDEngineHeapBreakdown h = _engine.HeapBreakdown();
+        return {
+            {"piece_versions", h.pieceVersions}, {"ram_payload", h.piecePayload},
+            {"arena_slack", h.arenaSlack}, {"reference_tables", h.referenceTables},
+            {"delta_base", h.deltaBase}, {"checkpoints", h.checkpoints},
+            {"device_blobs", h.deviceBlobs}, {"frame_table", h.frameTable},
+            {"event_log", h.eventLog}, {"port_reads", h.portReads},
+            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
+            {"media_reads", h.mediaReads},   // v1 has no such journal: not in D33's sum
+            {"bus_vectors", h.busVectors},   // nor this one
+            {"write_journal", h.writeJournal},
+        };
+    }
+
+    /// Frame-aligned memory restore only (Phase 1, Step 5): CPU, devices and
+    /// the picture come with the switch to the engine
+    bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
+    {
+        const int64_t index = _engine.CheckpointIndexOf({0, frame, 0});
+        if (tInFrame != 0 || index < 0)
+            return false;
+        TTDRestoreStats stats;
+        const auto start = std::chrono::steady_clock::now();
+        const bool ok = _engine.RestoreToMemory(static_cast<size_t>(index), nullptr, &stats).Ok();
+        out = SeekTiming{};
+        out.memoryUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+        out.restoreUs = out.memoryUs;
+        out.totalUs = out.memoryUs;
+        out.piecesDecoded = static_cast<double>(stats.piecesDecoded);
+        return ok;
+    }
+    bool Save(const std::string& path, uint64_t& bytes, std::string& error) override
+    {
+        std::error_code ec;
+        std::filesystem::remove(FileHelper::ToFsPath(path), ec);
+        TTDFileSink sink(path);
+        if (!sink.Valid())
+        {
+            error = sink.Error();
+            return false;
+        }
+        if (!TTDSessionFile::Save(_engine, sink, error))
+            return false;
+        bytes = sink.Size();
+        return true;
+    }
+    bool Load(Emulator&, const std::string&, std::string& error) override
+    {
+        error = "the engine has no file before Phase 4";
+        return false;
+    }
+    uint64_t CaptureNow() override
+    {
+        _recorder.CaptureNow();
+        return _engine.LastCaptureNs();
+    }
+
+    std::string LastError() const override { return _feedError; }
+
+private:
+    EngineV1 _recorder;
+    TimeTravelEngine _engine;
+    std::string _feedError;
+};
+
+/// endregion </Engine: TimeTravelEngine>
 
 /// region <Measurements>
 
@@ -574,19 +806,123 @@ std::string PeripheralSet::Name() const
 
 std::vector<std::string> EngineNames()
 {
-    return {"v1"};
+    return {"v1", "engine"};
 }
 
 std::unique_ptr<Engine> CreateEngine(const std::string& name)
 {
     if (name == "v1")
         return std::make_unique<EngineV1>();
+    if (name == "engine")
+        return std::make_unique<EngineTimeTravel>();
     return nullptr;
 }
 
 /// endregion </Engines>
 
 /// region <Runner>
+
+Result RunE7(const Case& c, const std::string& sessionFile)
+{
+    Result r;
+    Machine machine(c.config, r.error);
+    Emulator* emulator = machine.Get();
+    std::unique_ptr<Engine> v1 = CreateEngine("v1");
+    if (!emulator || !v1 || !v1->Load(*emulator, sessionFile, r.error))
+    {
+        if (r.error.empty())
+            r.error = "cannot load " + sessionFile;
+        return r;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    TimeTravelManager* ttd = context->pTimeTravelManager;
+    const TTDWriteJournal* journal = ttd->GetWriteJournal();
+    const size_t count = ttd->GetCheckpointCount();
+    if (!journal || journal->HasEvictedRecords() || count < 3)
+    {
+        r.error = "the session's write journal does not hold its whole history";
+        return r;
+    }
+    Metrics& m = r.metrics;
+    m["e7_frames"] = static_cast<double>(count);
+    using Clock = std::chrono::steady_clock;
+
+    // The coverage index walked over the whole session for an address no
+    // frame wrote (a page this machine does not have)
+    const uint64_t first = ttd->GetCheckpoint(0)->time.frame;
+    const uint64_t last = ttd->GetCheckpoint(count - 1)->time.frame;
+    double best = 0, firstWalk = 0;
+    uint64_t scanned = 0;
+    for (int repeat = 0; repeat < 3; ++repeat)
+    {
+        const Clock::time_point t0 = Clock::now();
+        const TTDCoverageScanResult scan =
+            ttd->QueryCoverageScan(first, last, TTDCoverageKind::Written, 0xC000, 0xC000, PhysPage(0xFE), 1);
+        const double ns = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
+        scanned = scan.scannedFrames;
+        if (!scan.indexAvailable || scanned == 0)
+        {
+            r.error = "the session has no coverage index";
+            return r;
+        }
+        best = repeat == 0 ? ns : std::min(best, ns);
+        if (repeat == 0)
+            firstWalk = ns;
+    }
+    m["e7_walk_frames"] = static_cast<double>(scanned);
+    m["e7_walk_ns_per_frame"] = best / static_cast<double>(scanned);
+    m["e7_walk_ns_per_frame_first"] = firstWalk / static_cast<double>(scanned);
+
+    // One frame's writes regenerated by replay, against the journal's records
+    // of the frame: (from, to], where its checkpoint's CPU and the next one's stood
+    const uint64_t units = ttd->FrameSpan() / std::max(1u, context->config.frame);
+    auto at = [&](size_t index) {
+        const TTDCheckpoint* cp = ttd->GetCheckpoint(index);
+        return ttd->GlobalT(cp->time) + GetChipsetCpuTInFrame(cp->chipset) * units;
+    };
+    const size_t samples = std::min<size_t>(200, count - 1);
+    std::vector<double> regenUs;
+    std::vector<TTDSearchResult> hits;
+    std::vector<TTDWriteRecord> recorded;
+    uint64_t seq = journal->SeqTail();
+    size_t mismatches = 0, refused = 0, writes = 0;
+    for (size_t s = 0; s < samples; ++s)
+    {
+        const size_t i = s * (count - 1) / samples;
+        const uint64_t from = at(i), to = at(i + 1);
+        recorded.clear();
+        while (seq < journal->SeqHead() && journal->RecordAt(seq).globalT <= from)
+            ++seq;
+        for (uint64_t k = seq; k < journal->SeqHead() && journal->RecordAt(k).globalT <= to; ++k)
+            if (!journal->RecordAt(k).isIo)
+                recorded.push_back(journal->RecordAt(k));
+
+        const Clock::time_point t0 = Clock::now();
+        const bool ok = ttd->RegenerateFrameWrites(ttd->GetCheckpoint(i)->time.frame, hits);
+        const double us =
+            static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count()) / 1000.0;
+        if (!ok)
+        {
+            ++refused;
+            continue;
+        }
+        regenUs.push_back(us);
+        writes += hits.size();
+        bool same = hits.size() == recorded.size();
+        for (size_t k = 0; same && k < hits.size(); ++k)
+            same = ttd->GlobalT(hits[k].time) == recorded[k].globalT && hits[k].addr == recorded[k].addr &&
+                   hits[k].value == recorded[k].value && hits[k].pc == recorded[k].m1pc &&
+                   static_cast<uint8_t>(hits[k].physPage) == recorded[k].physPage;
+        mismatches += same ? 0 : 1;
+    }
+    m["e7_regen_frames"] = static_cast<double>(regenUs.size());
+    m["e7_regen_refused_frames"] = static_cast<double>(refused);
+    m["e7_regen_mismatch_frames"] = static_cast<double>(mismatches);
+    m["e7_regen_writes_per_frame"] = regenUs.empty() ? 0.0 : static_cast<double>(writes) / static_cast<double>(regenUs.size());
+    AddPercentiles(m, "e7_regen_us", regenUs);
+    r.ok = true;
+    return r;
+}
 
 bool IsByteMetric(const std::string& name)
 {
@@ -616,30 +952,42 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         CaptureWork work;
         RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work);
         engine.Stop();
+        if (!engine.LastError().empty() || engine.Checkpoints() == 0)
+        {
+            r.error = engine.Name() + ": " + (engine.LastError().empty() ? "no checkpoint recorded" : engine.LastError());
+            return r;
+        }
 
         const double frames = static_cast<double>(MeasuredFrames(c, options));
         m["frames"] = frames;
         m["checkpoints"] = static_cast<double>(engine.Checkpoints());
+        const Engine::Capabilities caps = engine.Supports();
 
         // BM-2
-        AddPercentiles(m, "bm2_capture_us", captureUs);
-        const double p50 = Percentile(captureUs, 50);
-        m["bm2_capture_p99_over_p50"] = p50 > 0 ? Percentile(captureUs, 99) / p50 : 0.0;
-        // Capture as a share of the recorded frame. Informational: under heavy
-        // host load capture's large copies slow down more than emulation, so
-        // the share drifts up; the CI gate checks the counted work below
-        const double frameP50 = Percentile(frameUs, 50);
-        m["bm2_capture_share_pct"] = frameP50 > 0 ? p50 / frameP50 * 100.0 : 0.0;
-        // BM-2 work: what the captures did, counted (deterministic, the CI
-        // gate's check of capture cost); means per recorded frame
-        const double perFrame = 1.0 / std::max(1.0, frames);
-        m["bm2_work_pages_visited_opf"] = static_cast<double>(work.pagesVisited) * perFrame;
-        m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
-        m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
-        m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
-        m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
-        m["bm2_work_compress_input_bpf"] = static_cast<double>(work.compressInputBytes) * perFrame;
-        m["bm2_work_decoded_opf"] = static_cast<double>(work.slotsDecoded) * perFrame;
+        if (caps.liveCapture)
+        {
+            AddPercentiles(m, "bm2_capture_us", captureUs);
+            const double p50 = Percentile(captureUs, 50);
+            m["bm2_capture_p99_over_p50"] = p50 > 0 ? Percentile(captureUs, 99) / p50 : 0.0;
+            // Capture as a share of the recorded frame. Informational: under heavy
+            // host load capture's large copies slow down more than emulation, so
+            // the share drifts up; the CI gate checks the counted work below
+            const double frameP50 = Percentile(frameUs, 50);
+            m["bm2_capture_share_pct"] = frameP50 > 0 ? p50 / frameP50 * 100.0 : 0.0;
+            // BM-2 work: what the captures did, counted (deterministic, the CI
+            // gate's check of capture cost); means per recorded frame
+            const double perFrame = 1.0 / std::max(1.0, frames);
+            m["bm2_work_pages_visited_opf"] = static_cast<double>(work.pagesVisited) * perFrame;
+            m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
+            m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
+            m["bm2_work_device_state_bpf"] = static_cast<double>(work.deviceStateBytes) * perFrame;
+            m["bm2_work_scanned_v1_lacks_bpf"] = static_cast<double>(work.bytesScannedV1Lacks) * perFrame;
+            m["bm2_work_scanned_ram_bpf"] = static_cast<double>(work.bytesScannedRam) * perFrame;
+            m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
+            m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
+            m["bm2_work_compress_input_bpf"] = static_cast<double>(work.compressInputBytes) * perFrame;
+            m["bm2_work_decoded_opf"] = static_cast<double>(work.slotsDecoded) * perFrame;
+        }
 
         // BM-3 (bytes per recorded frame, split by stream) and BM-4
         const StreamBytes b = engine.Bytes();
@@ -651,6 +999,9 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm3_write_journal_bpf"] = static_cast<double>(b.writeJournal) / n;
         m["bm3_input_journal_bpf"] = static_cast<double>(b.inputJournal) / n;
         m["bm3_coverage_bpf"] = static_cast<double>(b.coverage) / n;
+        m["bm3_device_regions_bpf"] = static_cast<double>(b.deviceRegions) / n;
+        m["bm3_device_regions_v1_lacks_bpf"] = static_cast<double>(b.deviceRegionsV1Lacks) / n;
+        m["bm3_versions_v1_lacks_share"] = b.versions ? static_cast<double>(b.versionsV1Lacks) / b.versions : 0.0;
         m["bm3_total_bpf"] = static_cast<double>(b.Total()) / n;
         // Writes per frame over the whole session: the journal's bytes above
         // stop growing once its ring is full, this count does not
@@ -668,7 +1019,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         const uint64_t first = engine.FirstFrame();
         const uint64_t last = engine.LastFrame();
         const uint32_t span = engine.FrameSpan();
-        if (last > first && span > 1 && options.seekSamples)
+        if (caps.seek && last > first && span > 1 && options.seekSamples)
         {
             std::mt19937 rng(options.seekSeed);
             std::uniform_int_distribution<uint64_t> pickFrame(first, last - 1);
@@ -734,8 +1085,47 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
             m["bm6_restore_screen_us_p50"] = Percentile(screen, 50);
         }
 
+        // BM-6 memory restore alone, for an engine that cannot do full seeks yet
+        if (!caps.seek && caps.seekMemory && last > first && options.seekSamples)
+        {
+            std::mt19937 rng(options.seekSeed);
+            std::uniform_int_distribution<uint64_t> pickFrame(first, last - 1);
+            std::uniform_int_distribution<uint32_t> pickT(1, std::max<uint32_t>(2, span) - 1);
+            std::vector<double> memory;
+            double decoded = 0;
+            for (uint32_t i = 0; i < options.seekSamples; i++)
+            {
+                const uint64_t frame = pickFrame(rng);
+                (void)pickT(rng);   // same random sequence as the full-seek loop
+                SeekTiming t;
+                if (!engine.Seek(frame, 0, t))
+                {
+                    r.error = "memory restore of frame " + std::to_string(frame) + " refused";
+                    return r;
+                }
+                memory.push_back(t.memoryUs);
+                decoded += t.piecesDecoded;
+            }
+            m["bm6_restore_memory_us_p50"] = Percentile(memory, 50);
+            m["bm6_restore_memory_us_p99"] = Percentile(memory, 99);
+            m["bm6_pieces_decoded_mean"] = decoded / options.seekSamples;
+        }
+
         // BM-7: save, then load into a fresh machine and seek once
-        if (options.saveLoad)
+        if (options.saveLoad && caps.save && !caps.saveLoad)
+        {
+            const std::string file = ScratchFile(options, engine.Name() + "-" + c.Name());
+            uint64_t bytes = 0;
+            const Clock::time_point saveStart = Clock::now();
+            if (!engine.Save(file, bytes, r.error))
+                return r;
+            const double saveS = ElapsedUs(saveStart, Clock::now()) / 1e6;
+            m["bm7_file_bytes"] = static_cast<double>(bytes);
+            m["bm7_file_bpf"] = static_cast<double>(bytes) / n;
+            m["bm7_save_s_per_gb"] = bytes ? saveS / (static_cast<double>(bytes) / 1e9) : 0.0;
+            KeepOrRemove(options, file);
+        }
+        if (options.saveLoad && caps.saveLoad && caps.seek)
         {
             const std::string file = ScratchFile(options, engine.Name() + "-" + c.Name());
             uint64_t bytes = 0;
@@ -766,7 +1156,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
     }
 
     // BM-8 on a fresh recording of the same start state
-    if (options.dirtySweep)
+    if (options.dirtySweep && engine.Supports().liveCapture)
     {
         Machine machine(c.config, r.error);
         if (!machine.Get() || !Prepare(*machine.Get(), c, options, r.error) ||
@@ -777,7 +1167,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
     }
 
     // BM-1 last: it builds four more machines
-    if (options.overhead && !Overhead(engine, c, options, m, r.error))
+    if (options.overhead && engine.Supports().liveCapture && !Overhead(engine, c, options, m, r.error))
         return r;
 
     r.ok = true;
@@ -913,9 +1303,9 @@ std::vector<Case> Matrix(const std::string& set)
                                    atm710Turbo,
                                    atm3,
                                    Base("TSCONF", "TSL"),
-                                   Base("PROFI", "PROFI")};
-    // (SPRINTER is not here: it refuses to record until its PLD state has a
-    // serializer, Sprinter phase S7 - see ttd.ksy, peripheral id 25)
+                                   Base("PROFI", "PROFI"),
+                                   Base("SPRINTER", "SPRINTER"),
+                                   Base("TSL-VDAC2", "TSL-VDAC2")};
     for (const Configuration& c : bases)
         add(c, Idle(3000));
 

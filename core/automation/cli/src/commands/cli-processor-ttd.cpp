@@ -3,7 +3,8 @@
 ///
 /// Exposes the full TTD engine surface (Phase 2 complete) to CLI automation:
 ///   ttd status                 — session info (state, frame range, checkpoint count)
-///   ttd start [--no-journal]   — begin recording (--no-journal = gaming mode)
+///   ttd start [--journal]      — begin recording (--journal: record the write journal too)
+///   ttd journal [on|off|build [from] [to]] — the write journal: switch it at any moment, or build it by replay
 ///   ttd stop                   — stop recording (history retained, browsable)
 ///   ttd invalidate [reason]    — drop all history, return to Idle
 ///   ttd seek <frame> [tinframe] — seek to a point in the timeline
@@ -35,6 +36,34 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+
+namespace
+{
+/// "frames 10:0 .. 24:71680, 40:1200 .. 60:0" or "none"
+std::string DescribeJournalSpans(const ttd::TTDSessionInfo& info)
+{
+    if (info.writeJournalSpans.empty())
+        return "nothing (write searches replay)";
+    std::stringstream ss;
+    if (info.writeJournalComplete)
+        ss << "the whole session (";
+    else
+        ss << info.writeJournalSpans.size() << " span(s), searches outside them replay (";
+    for (size_t i = 0; i < info.writeJournalSpans.size(); ++i)
+    {
+        const auto& [from, to] = info.writeJournalSpans[i];
+        if (i == 4)
+        {
+            ss << ", ...";
+            break;
+        }
+        ss << (i ? ", " : "") << "frame " << from.frame << ":" << from.tInFrame << " .. " << to.frame << ":" << to.tInFrame;
+    }
+    ss << ")";
+    return ss.str();
+}
+}  // namespace
+
 
 /// region <TTD Commands>
 
@@ -73,6 +102,13 @@ std::string FormatRecordedMachine(const ttd::TTDRecordedMachine& m)
     for (size_t i = 0; i < m.peripherals.size(); ++i)
         ss << (i ? ", " : "") << m.peripherals[i];
     ss << CLIProcessor::NEWLINE;
+    if (!m.notRecorded.empty())
+    {
+        ss << "  Not recorded:           ";
+        for (size_t i = 0; i < m.notRecorded.size(); ++i)
+            ss << (i ? ", " : "") << m.notRecorded[i];
+        ss << " (fitted, run live through seeks)" << CLIProcessor::NEWLINE;
+    }
     return ss.str();
 }
 
@@ -171,6 +207,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDStart(session, context, args);
     }
+    else if (subcommand == "journal")
+    {
+        HandleTTDJournal(session, context, args);
+    }
     else if (subcommand == "stop")
     {
         HandleTTDStop(session, context);
@@ -267,8 +307,13 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd status                       Show session info (state, frames, checkpoints; alias: info)" << NEWLINE;
     ss << "  ttd info <path>                  Describe a .ttd file without loading it: frames, sections and" << NEWLINE;
     ss << "                                     the recorded machine (model, ROM, General Sound card, devices)" << NEWLINE;
-    ss << "  ttd start [--no-journal]         Begin recording (captures baseline checkpoint)" << NEWLINE;
-    ss << "                                     --no-journal: gaming mode, smaller memory footprint" << NEWLINE;
+    ss << "  ttd start [--journal]            Begin recording (captures baseline checkpoint)" << NEWLINE;
+    ss << "                                     --journal: also record the write journal (off by default)" << NEWLINE;
+    ss << "  ttd journal [on|off]             The write journal: who wrote an address last, at once." << NEWLINE;
+    ss << "                                     Switch it at any moment, also while recording; each on-off" << NEWLINE;
+    ss << "                                     span is a segment. No argument: its state and segments" << NEWLINE;
+    ss << "  ttd journal build [from] [to]    Build it by replaying frames from..to (default: the whole" << NEWLINE;
+    ss << "                                     session); about 2-4 ms per frame. Not while recording" << NEWLINE;
     ss << "  ttd stop                         Stop recording (history retained, browsable)" << NEWLINE;
     ss << "  ttd limit [frames <n>] [bytes <n>[K|M|G]]" << NEWLINE;
     ss << "                                   Bound the history: while recording, the oldest frames are" << NEWLINE;
@@ -323,7 +368,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
 void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext* context)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
 
     std::stringstream ss;
     ss << "TTD Session Status" << NEWLINE;
@@ -359,25 +404,9 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
         ss << info.historyLimitBytes << " bytes";
     ss << " (" << info.historyBytes << " bytes held, " << info.evictedCheckpoints << " oldest released)" << NEWLINE;
     ss << NEWLINE;
-    ss << "  Write journal:          "
-       << (info.writeJournalEnabled ? "enabled" : "disabled") << ", "
-       << info.writeJournalRecords << " records ("
-       << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
-    ss << "  Journal coverage:       ";
-    if (info.writeJournalComplete)
-        ss << "complete" << (info.writeJournalWrapped ? " (ring wrapped: a 'no match' replays)" : "") << NEWLINE;
-    else
-    {
-        ss << "incomplete - write/port find-last replays";
-        if (!info.journalGapReason.empty())
-        {
-            ss << " (" << info.journalGapReason;
-            if (info.journalGapHasPosition)
-                ss << ", at frame " << info.journalGapAt.frame << " t=" << info.journalGapAt.tInFrame;
-            ss << ")";
-        }
-        ss << NEWLINE;
-    }
+    ss << "  Write journal:          " << (info.writeJournalEnabled ? "on" : "off") << ", "
+       << info.writeJournalRecords << " records (" << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
+    ss << "  Journal covers:         " << DescribeJournalSpans(info) << NEWLINE;
     if (info.coverageIndexFrames != 0)
     {
         ss << "  Coverage index:         " << info.coverageIndexFrames << " frames ("
@@ -423,24 +452,26 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
         return;
     }
 
-    // Parse optional --no-journal or --journal flag.
-    bool enableJournal = true;  // Default: development mode with write journal.
+    // The write journal is off unless asked for (D40)
+    bool enableJournal = false;
     for (size_t i = 1; i < args.size(); ++i)
     {
-        if (args[i] == "--no-journal" || args[i] == "-n")
-            enableJournal = false;
-        else if (args[i] == "--journal" || args[i] == "-j")
+        if (args[i] == "--journal" || args[i] == "-j")
             enableJournal = true;
+        else
+        {
+            session.SendResponse("TTD: unknown option '" + args[i] + "' (ttd start [--journal])" + NEWLINE);
+            return;
+        }
     }
 
     mgr->SetEnableWriteJournal(enableJournal);
     bool ok = mgr->StartRecording();
     if (ok)
     {
-        std::string msg = enableJournal
-            ? "TTD: Recording started (with write journal)"
-            : "TTD: Recording started (gaming mode, no journal)";
-        session.SendResponse(msg + NEWLINE);
+        session.SendResponse(std::string(enableJournal ? "TTD: Recording started (with the write journal)"
+                                                       : "TTD: Recording started") +
+                             NEWLINE);
     }
     else
     {
@@ -448,6 +479,66 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
         session.SendResponse(std::string("TTD: Failed to start recording") + (reason.empty() ? "" : ": " + reason) +
                              NEWLINE);
     }
+}
+
+
+void CLIProcessor::HandleTTDJournal(const ClientSession& session, EmulatorContext* context,
+                                     const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const std::string action = args.size() > 1 ? args[1] : "status";
+    if (action == "on" || action == "off")
+    {
+        mgr->SetEnableWriteJournal(action == "on");
+        session.SendResponse(std::string("TTD: write journal ") + action +
+                             (mgr->IsRecording() ? " (a segment " + std::string(action == "on" ? "starts" : "ends") +
+                                                       " here)"
+                                                 : "") +
+                             NEWLINE);
+        return;
+    }
+    if (action == "build")
+    {
+        uint64_t from = 0, to = UINT64_MAX;
+        try
+        {
+            if (args.size() > 2)
+                from = std::stoull(args[2]);
+            if (args.size() > 3)
+                to = std::stoull(args[3]);
+        }
+        catch (const std::exception&)
+        {
+            session.SendResponse(std::string("TTD: usage: ttd journal build [from-frame] [to-frame]") + NEWLINE);
+            return;
+        }
+        const ttd::TTDJournalBuildResult r = mgr->BuildWriteJournalFrames(from, to);
+        if (!r.ok)
+        {
+            session.SendResponse("TTD: cannot build the write journal: " + r.error + NEWLINE);
+            return;
+        }
+        std::stringstream ss;
+        ss << "TTD: write journal built for " << r.framesBuilt << " frame(s), " << r.records << " writes";
+        if (r.framesCovered)
+            ss << "; " << r.framesCovered << " already covered";
+        if (r.framesRefused)
+            ss << "; " << r.framesRefused << " not replayable (a marker without its data)";
+        if (r.cancelled)
+            ss << "; cancelled";
+        ss << NEWLINE << "  Journal covers: " << DescribeJournalSpans(mgr->GetSessionInfo()) << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+    if (action != "status")
+    {
+        session.SendResponse("TTD: unknown journal action '" + action + "' (on, off, build, status)" + NEWLINE);
+        return;
+    }
+    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    session.SendResponse(std::string("Write journal: ") + (info.writeJournalEnabled ? "on" : "off") + ", " +
+                         std::to_string(info.writeJournalRecords) + " records" + NEWLINE +
+                         "  Covers: " + DescribeJournalSpans(info) + NEWLINE);
 }
 
 namespace
@@ -476,7 +567,7 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
                                          const std::vector<std::string>& args)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     uint64_t frames = info.historyLimitFrames;
     uint64_t bytes = info.historyLimitBytes;
     bool change = false;
@@ -505,7 +596,7 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
     if (change)
     {
         mgr->SetHistoryLimit(frames, bytes);
-        info = mgr->GetSessionInfo();
+        info = mgr->ReadSessionInfo();
     }
 
     std::stringstream ss;
@@ -871,7 +962,7 @@ void CLIProcessor::HandleTTDMarkers(const ClientSession& session, EmulatorContex
     }
     else
     {
-        const auto& events = journal.Events();
+        const auto events = journal.SnapshotEvents();
         for (size_t i = 0; i < events.size(); ++i)
         {
             const auto& e = events[i];
@@ -956,7 +1047,7 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
         return;
     }
 
-    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     std::stringstream ss;
     ss << "TTD: Session loaded from '" << path << "' ("
        << info.checkpointCount << " checkpoints, frames "
@@ -1333,7 +1424,7 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
     std::string sub = args[1];
     uint64_t frame = 0;
     uint64_t fromFrame = 0;
-    uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+    uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
     ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
     bool hasKindParam = false;
     bool kindParamValid = true;

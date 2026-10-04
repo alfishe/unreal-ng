@@ -25,8 +25,9 @@ size_t CardsSize(EmulatorContext* context)
     {
         for (const auto& card : *cards)
         {
-            if (card.ne2000)
-                size += 1 + card.ne2000->PortKey().size() + card.ne2000->StateSize();
+            if (card.ethernet)
+                size += 1 + card.ethernet->PortKey().size() + 1 + std::strlen(card.ethernet->Kind()) + 4 +
+                        card.ethernet->CardStateBound();
         }
     }
     return size;
@@ -46,16 +47,22 @@ void TTDEthernetNics::TTDSaveStateTo(std::vector<uint8_t>& out) const
     out.push_back(0);
     if (const auto* cards = Cards(_context))
     {
+        std::vector<uint8_t> state;
         for (const auto& card : *cards)
         {
-            if (!card.ne2000)
+            if (!card.ethernet)
                 continue;
-            const std::string& key = card.ne2000->PortKey();
+            const std::string& key = card.ethernet->PortKey();
             out.push_back(static_cast<uint8_t>(key.size()));
             out.insert(out.end(), key.begin(), key.end());
-            const size_t at = out.size();
-            out.resize(at + card.ne2000->StateSize());
-            card.ne2000->SaveState(out.data() + at);
+            const std::string kind = card.ethernet->Kind();
+            out.push_back(static_cast<uint8_t>(kind.size()));
+            out.insert(out.end(), kind.begin(), kind.end());
+            card.ethernet->SaveCardState(state);
+            const uint32_t length = static_cast<uint32_t>(state.size());
+            for (int i = 0; i < 4; ++i)
+                out.push_back(static_cast<uint8_t>(length >> (8 * i)));
+            out.insert(out.end(), state.begin(), state.end());
             ++out[1];
         }
     }
@@ -80,24 +87,43 @@ void TTDEthernetNics::TTDSaveState(uint8_t* dst) const
 void TTDEthernetNics::TTDLoadState(const uint8_t* src)
 {
     const auto* cards = Cards(_context);
-    if (!src || !cards || src[0] != kVersion)
+    if (!src || !cards || (src[0] != kVersion && src[0] != 1))
         return;
+    const bool v1 = src[0] == 1;
     size_t at = 2;
     const uint8_t count = src[1];
     uint8_t index = 0;
     for (const auto& card : *cards)
     {
-        if (!card.ne2000)
+        if (!card.ethernet)
             continue;
         if (index++ >= count)
             return;
         const size_t keyLength = src[at++];
         const std::string key(reinterpret_cast<const char*>(src + at), keyLength);
         at += keyLength;
-        if (key != card.ne2000->PortKey())
+        if (key != card.ethernet->PortKey())
             return;   // another population: the ISA session guard refuses such a recording
-        card.ne2000->LoadState(src + at, card.ne2000->StateSize());
-        at += card.ne2000->StateSize();
+        if (v1)
+        {
+            // SN1-SN4: an NE2000 only, its fixed-size state
+            auto* ne2000 = dynamic_cast<Ne2000Board*>(card.ethernet.get());
+            if (!ne2000)
+                return;
+            ne2000->LoadState(src + at, ne2000->StateSize());
+            at += ne2000->StateSize();
+            continue;
+        }
+        const size_t kindLength = src[at++];
+        const std::string kind(reinterpret_cast<const char*>(src + at), kindLength);
+        at += kindLength;
+        const uint32_t length = static_cast<uint32_t>(src[at]) | (static_cast<uint32_t>(src[at + 1]) << 8) |
+                                (static_cast<uint32_t>(src[at + 2]) << 16) | (static_cast<uint32_t>(src[at + 3]) << 24);
+        at += 4;
+        if (kind != card.ethernet->Kind())
+            return;   // another card in that slot
+        card.ethernet->LoadCardState(src + at, length);
+        at += length;
     }
     const uint32_t length = static_cast<uint32_t>(src[at]) | (static_cast<uint32_t>(src[at + 1]) << 8) |
                             (static_cast<uint32_t>(src[at + 2]) << 16) | (static_cast<uint32_t>(src[at + 3]) << 24);

@@ -87,11 +87,12 @@ struct TTDCpuState
     uint8_t  im = 0;            ///< Interrupt mode (0/1/2)
     uint8_t  halted = 0;        ///< CPU HALT state (0/1)
 
-    // Padding at offset 31 (before memptr). Must be a NAMED member: implicit
-    // padding is not copied by member-wise copy/move, so checkpoints moved
-    // into the timeline keep heap garbage here and the byte-wise divergence
-    // oracle hashes mismatch. memset at capture alone cannot fix this.
-    uint8_t  reserved0 = 0;
+    // Offset 31 (before memptr), formerly padding: an NMI requested but not
+    // taken yet (Z80::_nmi_pending_count, 0/1). It waits while a prefix is
+    // pending, so a frame can end with one queued. Not part of Z80State: the
+    // capture and restore paths set it from the Z80 (IsNmiPending /
+    // SetNmiPending). Recordings made before it read 0 (none queued).
+    uint8_t  nmi_pending = 0;
 
     // ---- Undocumented but observable ----
     uint16_t memptr = 0;        ///< MEMPTR / WZ — affects BIT n,(HL) undocumented flags
@@ -132,13 +133,13 @@ struct TTDCpuState
 // immediately precedes the member whose alignment gap it fills) and catch
 // trailing padding, which absolute offsets alone cannot see.
 static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout must stay stable (hashed byte-wise)");
-static_assert(offsetof(TTDCpuState, memptr) == 32, "reserved0 must sit at pad offset 31");
+static_assert(offsetof(TTDCpuState, memptr) == 32, "nmi_pending must sit at former pad offset 31");
 static_assert(offsetof(TTDCpuState, eipos) == 36, "boundary must sit at pad offset 35");
 static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "int_acked_in_pulse must sit at pad offset 43");
 static_assert(offsetof(TTDCpuState, halt_cycle) + sizeof(uint32_t) == sizeof(TTDCpuState),
-              "TTDCpuState has implicit trailing padding - check reserved0/1/2 placement");
-static_assert(offsetof(TTDCpuState, memptr) == offsetof(TTDCpuState, reserved0) + 1,
-              "TTDCpuState reserved0 does not fill the alignment gap before memptr");
+              "TTDCpuState has implicit trailing padding - check nmi_pending/reserved1/2 placement");
+static_assert(offsetof(TTDCpuState, memptr) == offsetof(TTDCpuState, nmi_pending) + 1,
+              "TTDCpuState nmi_pending does not fill the alignment gap before memptr");
 static_assert(offsetof(TTDCpuState, eipos) == offsetof(TTDCpuState, boundary) + 1,
               "TTDCpuState boundary does not fill the alignment gap before eipos");
 static_assert(offsetof(TTDCpuState, halt_cycle) == offsetof(TTDCpuState, int_acked_in_pulse) + 1,

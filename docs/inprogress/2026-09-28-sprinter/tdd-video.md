@@ -30,7 +30,9 @@ example Game) can return its own renderer and INT source, and anything it does n
 Standard. **As built (S2):** hook 3 is `SprinterPldConfiguration::VideoRenderer()`, returning a
 `SprinterVideoRenderer` (null = Standard's); `ScreenSprinter` stays the one `Screen` and asks the
 active module for the renderer of every span. The INT-source half of the hook is not built yet:
-no module needs another INT rule, and `SprinterIntSource` stays Standard's. The switch happens when a module is activated, which is always followed by a CPU reset,
+no module needs another INT rule, and `SprinterIntSource` stays Standard's. **Game (2026-10-03):** its
+picture has state in beam order (the grid offset), so it is also a `SprinterBeamVideo` that `ScreenSprinter`
+runs on every catch-up and closes at every frame start ([game-configuration.md](game-configuration.md) §3). The switch happens when a module is activated, which is always followed by a CPU reset,
 so a frame is never drawn half by one renderer and half by another. Both `ScreenSprinter` and
 `SprinterIntSource` read VRAM through `SprinterVideoRam`, so a new module reuses the storage and
 only replaces the drawing and INT rules.
@@ -174,7 +176,7 @@ compares with MAME and with the Pentagon's own `intstart` (`core/src/emulator/co
 |---|---|---|
 | RGMOD bit 0 | code `#C5` | switches the mode page (the whole screen) at the current beam position |
 | PORT_Y | code `#C4` | only affects where CPU writes go, not the display |
-| HOLD | code `#CB` | picture offset: x = `(7 − (v & #0F)) × 2`, y = `7 − (v >> 4)` (MAME `:850-852`) |
+| HOLD | code `#CB` | picture offset: x = `(7 − (v & #0F)) × 2`, y = `(7 − (v >> 4)) × 2` (x as MAME `:850-851`; y is **2 lines per unit**, MAME has 1: the PLD preloads the vertical sync counter with `(HOLD[7..4], 0)`, `SP2_ACEX.TDF:795-815`; found with RRAID.EXE, 2026-10-03) |
 | frame 320/312 | codes `#2C`/`#2D` | next frame |
 | border | code `#C2` | border squares |
 

@@ -84,6 +84,14 @@ public:
         /// Only CTS reaches the chip; DSR' and DCD' are tied asserted, RI' tied inactive (the ATM2IOESP card:
         /// reference-atm2ioesp.md open question 5). The peer's DSR / DCD / RI are not seen
         bool ctsOnly = false;
+        /// Which modem inputs reach the chip from the peer (MSR layout: CTS #10, DSR #20, RI #40, DCD #80), and the
+        /// level the others read (1 = asserted). A pin nobody drives (SprinterSerial's COM1 behind a CH340 that
+        /// wires them input to input) reads its unwired level. Default: all four from the peer
+        uint8_t msrWired = 0xF0;
+        uint8_t msrUnwired = 0x00;
+        /// The PC16552D's Alternate Function Register: with DLAB set, register 2 is AFR (bit 0 concurrent write,
+        /// bits 2-1 the MF pin's function) instead of IIR / FCR
+        bool afr = false;
         /// The receiver's frame length in bits, 0: the programmed line's. A line whose two ends differ (the TS AVR's
         /// ZiFi USART sends 8N2, the ESP 8N1: reference-zifi.md §2.1)
         uint8_t rxFrameBits = 0;
@@ -106,6 +114,10 @@ public:
         uint32_t avrClockHz = 11059200;  ///< the ATmega128's crystal (Q2 11.059 MHz)
         uint16_t isrCycles = 37;         ///< INT6: the wait flag noted
         uint16_t loopCycles = 260;       ///< one main-loop pass: the flag is looked at once per pass
+        /// Wait-flag tests per pass: BaseConf tests it once, after the last task; the TS firmware since
+        /// 2016-03 (9a3b541b "ISRed ZiFi-UART") calls waittask() after each of its 8 tasks (TS-AVR main.c:414-431),
+        /// so a wait is picked up at the next task boundary [inferred: the pass split evenly]
+        uint8_t waitChecksPerLoop = 1;
         uint16_t serviceWrite = 258;     ///< SPI #42 + #40 and the register write
         uint16_t serviceRead = 278;      ///< a register read
         uint16_t serviceRbr = 308;       ///< a receive-buffer read
@@ -135,6 +147,14 @@ public:
     /// snapshot load) moves the UART onto the new time base (Rebase)
     void Advance(uint64_t now);
 
+    /// The earliest time (the caller's clock) at which Advance would change something by itself: a received
+    /// character lands, a transmitted one leaves the shifter (THRE / the next byte). UINT64_MAX: nothing on the
+    /// line. A byte the peer holds but has not started yet starts at the next Advance, whenever that is
+    uint64_t NextEventAt() const;
+    /// Called at the end of every Advance (also the ones inside Read / Write): the interrupt output or
+    /// NextEventAt may have changed. A card that wires INTR to a bus listens (the Sprinter's ISA slot)
+    std::function<void()> onAdvance;
+
     /// Put the UART's times on a new clock: `now` is the same instant as the
     /// last time it saw; a character on the line keeps its remaining time
     void Rebase(uint64_t now);
@@ -150,6 +170,9 @@ public:
     /// holds both pins inactive). A card wires them as it likes (the SprinterESP: OUT1 resets the ESP, OUT2 pulls
     /// its GPIO0 low); a state restore does not call it
     std::function<void(bool out1, bool out2)> onAuxLines;
+    /// The PC16552D's AFR (Params::afr): one register both channels share - the card writes it into both
+    uint8_t Afr() const { return _afr; }
+    void SetAfr(uint8_t value) { _afr = static_cast<uint8_t>(value & 0x07); }
     /// The pins as they are now (same rule)
     bool Out1() const { return !Evo() && (_mcr & (kMcrOut1 | kMcrLoop)) == kMcrOut1; }
     bool Out2() const { return !Evo() && (_mcr & (kMcrOut2 | kMcrLoop)) == kMcrOut2; }
@@ -190,6 +213,7 @@ public:
     {
         uint8_t ier = 0, iir = 0, fcr = 0, lcr = 0, mcr = 0, lsr = 0, msr = 0, scr = 0;
         uint16_t divisor = 0;
+        uint8_t afr = 0;   ///< PC16552D (Params::afr)
         uint16_t rxCount = 0, txCount = 0;
         bool txBusy = false;
         uint64_t bytesIn = 0, bytesOut = 0, overruns = 0;
@@ -201,7 +225,7 @@ public:
     {
         uint8_t ier, fcr, lcr, mcr, lsr, msr, scr, dll, dlm;
         uint8_t txShift, txBusy, rxShift, rxInFlight, msrLines, thrInt, lcrWritten;
-        uint8_t txc, stubIir, reserved[2];
+        uint8_t txc, stubIir, afr, reserved[1];
         uint16_t rxCount, rxHead, txCount, txHead;
         uint8_t rx[kMaxRx];
         uint8_t tx[kMaxTx];
@@ -244,6 +268,7 @@ private:
     bool _txc = false;             ///< the USART's transmit-complete flag (TS 2016-04 TEMT)
     uint64_t _avrRelease = 0;      ///< AVR cycle (absolute) when the last access was released
     uint8_t _stubIir = 0x01;       ///< the 2010 register file: what reg 2 last held
+    uint8_t _afr = 0;              ///< PC16552D Alternate Function Register (Params::afr)
     uint8_t _msrLines = 0;         ///< CTS/DSR/RI/DCD last seen (for the delta bits)
     uint64_t _txDoneAt = 0;
     uint64_t _rxArriveAt = 0;

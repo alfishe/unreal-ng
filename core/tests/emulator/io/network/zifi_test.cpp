@@ -17,7 +17,9 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/zifi.h"
+#include "emulator/io/serial/esp/atmodule.h"
 #include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 
@@ -351,4 +353,65 @@ TEST_F(ZiFi_Test, OtherMachinesSayWhy)
     for (const std::string& note : st.notes)
         noted = noted || note.find("ZiFi") != std::string::npos;
     EXPECT_TRUE(noted);
+}
+
+TEST_F(ZiFi_Test, TheBoardsEsp01RunsAnEsp8266Build)
+{
+    // The ZiFi board carries an ESP-01: NonOS AT 1.7.4 unless EspChip or the spec names another ESP8266 build;
+    // its 1 MB flash has no OTA
+    CreateWithApi("at");
+    auto* at = dynamic_cast<AtModule*>(Block().Line().Peer());
+    ASSERT_NE(at, nullptr);
+    EXPECT_EQ(at->GetFirmware(), EspModule::Firmware::Esp8266NonOs174) << "EspChip is ESP32 by default: not an ESP-01's";
+    EXPECT_EQ(at->GetFlash(), atdialect::Flash::OneMb);
+    Configure({{"zifi", "at,esp8266-at222"}});
+    at = dynamic_cast<AtModule*>(Block().Line().Peer());
+    ASSERT_NE(at, nullptr);
+    EXPECT_EQ(at->GetFirmware(), EspModule::Firmware::Esp8266At222);
+    NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.settings.zifi, "AT,ESP8266-AT222");
+    ASSERT_TRUE(st.zifi.esp.isObject());
+    EXPECT_EQ(st.zifi.esp["firmware"].s, "ESP8266-AT222");
+}
+
+TEST_F(ZiFi_Test, TheNativeModuleAnswersThroughTheRegisters)
+{
+    // ZiFi=ZIFI-NATIVE: the new zifi.spg's ZiFi_PutChar / ZiFi_ReadBurst path (ZOFR, DR, ZIFR, INIR)
+    CreateWithApi("zifi-native");
+    ASSERT_NE(dynamic_cast<ZiFiNativeModule*>(Block().Line().Peer()), nullptr);
+    In(0xC1EF);
+    for (uint8_t b : ZiFiNativeModule::Frame(ZiFiNativeModule::kPing))
+        Out(0xBFEF, b);
+    std::vector<uint8_t> reply;
+    for (int frame = 0; frame < 10 && reply.size() < 5; ++frame)
+    {
+        _emulator->RunNFrames(1);
+        for (uint8_t n = In(0xC0EF); n; --n)
+            reply.push_back(In(0xBFEF));
+    }
+    EXPECT_EQ(reply, ZiFiNativeModule::Frame(ZiFiNativeModule::kReady));
+    NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.zifi.peer, "zifi-native");
+    ASSERT_TRUE(st.zifi.esp.isObject());
+    EXPECT_EQ(st.zifi.esp["firmware"].s, "ZIFI-NATIVE S3 (s3-native-0.6.94)");
+    EXPECT_EQ(st.zifi.esp["native_session"]["last_step"].s, "#04");
+}
+
+TEST_F(ZiFi_Test, TtdKeepsTheNativeModule)
+{
+    CreateWithApi("zifi-native,esp01s");
+    In(0xC1EF);
+    for (uint8_t b : ZiFiNativeModule::Frame(ZiFiNativeModule::kEcho, {'z'}))
+        Out(0xBFEF, b);
+    _emulator->RunNFrames(2);
+    ttd::TTDSerialPort line(_context, [this]() { return &_context->pZiFi->Line(); }, ttd::PeripheralId::ZiFiLine,
+                            "ZiFiLine");
+    std::vector<uint8_t> a(line.TTDStateSize()), b(line.TTDStateSize());
+    line.TTDSaveState(a.data());
+    line.TTDLoadState(a.data());
+    line.TTDSaveState(b.data());
+    EXPECT_EQ(a, b) << "the line and the module (peer kind 7) round-trip";
+    auto* native = dynamic_cast<ZiFiNativeModule*>(Block().Line().Peer());
+    ASSERT_NE(native, nullptr);
+    EXPECT_EQ(native->LastStep(), ZiFiNativeModule::kEcho);
 }

@@ -26,6 +26,15 @@ that the emulator works out of the box, on the following basis:
   from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
   like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and
   `tools/neogs/pack_flash.py` checks the image against them.
+* **General Sound ROM 1.05b** (`gs105b.rom`): the firmware of the ZX-MultiSound card's General Sound
+  (`GSProfile::MultiSound`, `core/src/emulator/sound/chips/gs/gsprofile.h`), "Version 1.05b" (1.04 Beta with
+  bug fixes by psb and Evgeny Muchkin, 2007, 2015; sources: [psbhlw/gs-firmware](https://github.com/psbhlw/gs-firmware)).
+  Copied unchanged from `rom/gs105b.32K.rom` of the card repository
+  [UzixLS/zx-multisound](https://github.com/UzixLS/zx-multisound/tree/85656da/rom) (commit `85656da`, MIT license),
+  32 768 bytes, SHA-256 `9948ec9617365fb1913b0c56e00d5f6b6a36084875cca16debae270a4c6e6adf`. The repository's
+  `gs105b.64K.rom` (for a 27C512, SHA-256 `d03249af73741b775bb3719eaaf8a97f58a0863939e990240139b122fae0c517`) is
+  this image twice and is not included. General Sound firmware by Stinger (1997), distributed freely like the
+  other `gs*.rom` images above.
 * **Peters Plus Sprinter Sp2000 BIOS** (`sprinter/sp2k-3.04.rom`): BIOS 3.04 build 253 of 17.06.2003, the last
   Peters Plus build, 262 144 bytes, CRC32 `1729cb5c` (the value MAME's `sprinter` ROM set uses), SHA-256
   `e166d1557f699cedb65481e784e7f0f17c7b0cdbb6851bf2ed0c4dbf5448de95`. Copied unchanged from
@@ -44,11 +53,12 @@ that the emulator works out of the box, on the following basis:
   * `sp2k-3.06-hf2.rom`: "Firmware v3.06 Hotfix 2", Release 19.01.2026, branch `master` commit `c14a8c5`, build
     date fixed to 2026-01-19; bitstream "Core 1K30 v3.05" taken from `Build/Bin/LOADER_K30.BIN` of commit
     `4c5d44a` (the tree itself has none). CRC32 `9aa7bb29`, SHA-256
-    `fc910ba4c32f42a8b130b804434f3b449f2f01ed710510a9e8340d8d3ae9a90a`.
+    `fc910ba4c32f42a8b130b804434f3b449f2f01ed710510a9e8340d8d3ae9a90a`. The shipped default of
+    `configs/sprinter/unreal.ini` (`[ROM] SPRINTER=`) since 2026-10-03.
   * `sp2k-3.07-beta1.rom`: "Firmware v3.07 BETA 1", branch `beta` commit `f546c4e` (2026-09-24), build date
     2026-09-24 12:00:00, its own bitstream. CRC32 `a06a1a02`, SHA-256
-    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`. The shipped default of
-    `configs/sprinter/unreal.ini` since 2026-10-02 (`[ROM] SPRINTER=`).
+    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`. It is the public head of the
+    upstream `beta` branch as of 2026-10-03. It was the shipped default from 2026-10-02 to 2026-10-03.
 
   No author's build of these versions is public to compare against; how they were made, the boot results and
   how to follow new builds: `docs/inprogress/2026-09-28-sprinter/bios-versions.md`.
@@ -67,6 +77,7 @@ that the emulator works out of the box, on the following basis:
   | `bios10-kondor504.rom` | v5 | as `bios10.rom`, read off a Kondor 5.04 board; the 48K page's NMI test at `#006D` is `JR Z` (`#28`), not `JR NZ` | `10DA289A` | `f4ab0dd91cd7d207879767d4fe5bf30e` | xpeccy-plus `profi-bios10.rom` |
   | `bios20.rom` | v5 | ROM Bios 2.0 of 17.04.94, TR-DOS 5.04T | `36F5F7BD` | `02877e403f22d10d12ef0296ccb96f60` | xpeccy-plus `profi-bios20.rom`, ZXMAK2 `PROF-M.ROM` |
   | `bios20-font.rom` | v5 | as `bios20.rom` with one glyph of the 48K font changed (`#3D99`-`#3D9A`) | `DA81DED7` | `2f7549cd9fff863f68867f7d944de2a1` | - |
+  | `bios-plus-041h1.rom` | v5 + V0.03 decoder (`PROFI-PLUS`) | not factory: ROM-BIOS PLUS 0.41h1 by Vadim (C) 1998-2025, "with patched RTC", for PQ-DOS; needs the extended ports in the SYS ROM (`[PROFI] ExtPorts=v003`; `sys` works too). From [Karabas-Pro](https://github.com/andykarpov/karabas-pro) `firmware/src/fpga/profi/rom/bios_pqdos.rom` (commit `0c1bd2f`, 2026-02-15) | `594E10FA` | `1246daf2605704131b5abb239c6115bb` | pico-spec `src/roms/profi/` |
 
 * **ZX Profi PROFI-XT keyboard controller** (`profixt/profi-xt-v1.27.rom`): firmware "JV KRAMIS (C) 28.10.1992
   vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever

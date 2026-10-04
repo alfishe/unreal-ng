@@ -3,7 +3,7 @@
 /// `videorecord start` argument parsing for the CLI. Header-only, no socket or CLIProcessor dependencies, so
 /// core-tests can unit-test it. The codec rules are RecordingRequest's (shared with the WebAPI, Lua and Python).
 ///
-///   videorecord start [format] [file] [--fps N] [--scale N] [--audio-rate N|auto]
+///   videorecord start [format] [file] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
 ///                     [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
 
 #include <algorithm>
@@ -24,6 +24,7 @@ struct StartOptions
     std::string filename;  ///< "" = default path under the temp directory (the caller fills it)
     float fps = 50.0f;
     uint32_t scale = 1;
+    bool screenRegion = false;  ///< --region screen|main; false = the whole frame with its border (the default)
     bool hasAudioRate = false;
     uint32_t audioRate = 0;  ///< 0 = auto (with hasAudioRate)
     std::string audio;       ///< normalized audio codec, "" = video only
@@ -84,6 +85,18 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
             }
             out.scale = std::clamp<uint32_t>(scale, 1, 4);
         }
+        else if (arg == "--region" && hasValue)
+        {
+            std::string region = args[++i];
+            std::transform(region.begin(), region.end(), region.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (region != "full" && region != "screen" && region != "main")
+            {
+                error = "Unknown region '" + region + "': use full or screen.";
+                return false;
+            }
+            out.screenRegion = region != "full";
+        }
         else if (arg == "--audio-rate" && hasValue)
         {
             std::string rate = args[++i];
@@ -125,7 +138,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
         else if (arg.size() > 2 && arg.compare(0, 2, "--") == 0)
         {
             error = "Unknown or incomplete option '" + arg +
-                    "'. Options: --fps N, --scale N, --audio-rate N|auto, --audio CODEC, --video-bitrate KBPS, "
+                    "'. Options: --fps N, --scale N, --region full|screen, --audio-rate N|auto, --audio CODEC, --video-bitrate KBPS, "
                     "--audio-bitrate KBPS.";
             return false;
         }

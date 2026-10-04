@@ -148,14 +148,16 @@ the internals).
 | session state | `idle` (not recording; history may or may not exist), `recording`, `detached` (the machine sits at a point in the recorded past and is paused). |
 | marker | A replay barrier: something the recording cannot reproduce happened here (tape play/stop, a disk sector write, a memory edit made by a tool while recording). A reset writes no marker: it stops the recording instead (the `hardware_reset` kind is reserved and never written). Seek and backward searches stop at a marker and say so. |
 | bookmark | Your own label on a point in time. Advisory only, never a barrier. |
-| write journal | A log of every memory write made while recording (on by default). It makes `find_last` for writes instant; without it the search replays history. It is used only when it holds every write of the session (never paused mid-recording); a gap sends the search to replay, which is slower but always right. |
+| write journal | A log of every memory write (off by default). Inside the spans it covers, `find_last` for a write answers at once; outside them the search replays one frame (same answer, a few ms). Switch it at any moment (`journal_on` / `journal_off`; each on-off span is a segment) or build it later for any span by replay (`journal_build`). |
 
 ### Actions
 
 | Action | Arguments | What it does |
 |:--|:--|:--|
 | `status` | — | Session state, recorded frame range, checkpoint count, memory use |
-| `start` | `mode`: `development` (default, write journal on) or `gaming` (journal off, less memory); `enable_write_journal` overrides `mode` | Begin recording |
+| `start` | `journal`: `true` also records the write journal (default `false`) | Begin recording |
+| `journal_on` / `journal_off` | — | Switch the write journal at any moment, also while recording; the answer lists the spans it covers |
+| `journal_build` | `from_frame` / `to_frame` (optional; default: the whole session) | Build the write journal by replaying those frames, about 2-4 ms per frame; not while recording |
 | `stop` | — | Stop recording; history is kept and can be browsed |
 | `invalidate` | `reason` (optional) | Drop all history |
 | `position` | — | Current point and session end |
@@ -180,9 +182,9 @@ tells you to call `stop` first. `find_last` reports where the access happened;
 `seek` to the reported `frame`/`tinframe` to inspect the machine there.
 `find_last` and `reverse_continue` also name the part of history they searched
 (`Searched frame A .. frame B.`): a marker (tape, disk write, edit) can cut a
-search short, and the span shows it. `status` says `write journal on
-(incomplete: <cause> at frame N; write searches replay)` when the journal
-misses writes of the session.
+search short, and the span shows it. `status` says what the write journal
+covers: `write journal off (covers 1 span(s): frames 1200..1501; write
+searches outside replay)`, `covers the whole session` or `covers nothing`.
 
 ### Session rules
 

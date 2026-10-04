@@ -53,6 +53,7 @@ enum class NetEventStatus : uint8_t
     AddressInUse = 4,
     Denied = 5,          ///< blocked by the virtual network's allow / deny rules
     Error = 6,
+    TlsFailed = 7,       ///< a TLS connect: the handshake or the peer's certificate failed (hosttls.h)
 };
 
 enum class NetProto : uint8_t
@@ -125,4 +126,6 @@ struct SerialGuests
     INetGuest* ethernet = nullptr;   ///< the Ethernet gateway of the frame-level cards (guest 6; network tdd §7)
     /// The UART cards in expansion slots 1 / 2 (the Sprinter's SprinterESP; guests 7 / 8, network tdd §8.2)
     INetGuest* slotUart[2] = {nullptr, nullptr};
+    /// The second UART of a two-channel card in expansion slot 1 / 2 (SprinterSerial's COM2; guests 9 / 10)
+    INetGuest* slotUartB[2] = {nullptr, nullptr};
 };

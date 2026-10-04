@@ -1,6 +1,8 @@
 // WebAPI State Memory Inspection Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include "debugger/search/memorysearch.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
@@ -723,39 +725,6 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 namespace
 {
 
-/// Parses a hex byte pattern with optional spaces, commas and 0x prefixes ("AF 32 0E", "af320e")
-std::vector<uint8_t> ParseHexPattern(const std::string& text)
-{
-    std::vector<uint8_t> bytes;
-    std::string digits;
-    for (char c : text)
-    {
-        if (std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == ':')
-        {
-            continue;
-        }
-        if ((c == 'x' || c == 'X') && !digits.empty() && digits.back() == '0')
-        {
-            digits.pop_back(); // Strip 0x prefix
-            continue;
-        }
-        if (!std::isxdigit(static_cast<unsigned char>(c)))
-        {
-            return {}; // Malformed character → whole pattern invalid
-        }
-        digits += c;
-        if (digits.size() == 2)
-        {
-            bytes.push_back(static_cast<uint8_t>(std::stoul(digits, nullptr, 16)));
-            digits.clear();
-        }
-    }
-    if (!digits.empty())
-    {
-        return {}; // Trailing nibble
-    }
-    return bytes;
-}
 
 } // namespace
 
@@ -766,31 +735,25 @@ std::vector<uint8_t> ParseHexPattern(const std::string& text)
 void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
+    auto badRequest = [&callback](const std::string& message) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+
     auto manager = EmulatorManager::GetInstance();
     auto emulator = manager->GetEmulator(id);
-
     if (!emulator)
     {
         Json::Value error;
         error["error"] = "Not Found";
         error["message"] = "Emulator with specified ID not found";
-
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    Memory* memory = emulator->GetMemory();
-    if (!memory)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Memory not available";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -799,32 +762,18 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     auto body = req->getJsonObject();
     if (!body || (!body->isMember("pattern_hex") && !body->isMember("pattern")))
     {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "Request must contain 'pattern_hex' (hex string) or 'pattern' (byte array)";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
+        badRequest("Request must contain 'pattern_hex' (hex string, ?? for any byte) or 'pattern' (byte array)");
         return;
     }
 
-    // Build the search pattern (hex string or byte array)
-    std::vector<uint8_t> pattern;
+    // MemorySearch (core): the pattern and its mask, the space, the range
+    MemorySearchRequest request;
+    std::string error;
     if (body->isMember("pattern_hex"))
     {
-        pattern = ParseHexPattern((*body)["pattern_hex"].asString());
-        if (pattern.empty())
+        if (!MemorySearch::ParsePattern((*body)["pattern_hex"].asString(), request.pattern, request.mask, error))
         {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "Invalid 'pattern_hex' — expected hex bytes like \"AF 32 0E\" or \"af320e\"";
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
+            badRequest("Invalid 'pattern_hex': " + error);
             return;
         }
     }
@@ -833,130 +782,90 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
         const Json::Value& array = (*body)["pattern"];
         if (!array.isArray() || array.size() == 0)
         {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "'pattern' must be a non-empty byte array";
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
+            badRequest("'pattern' must be a non-empty byte array");
             return;
         }
         for (Json::ArrayIndex i = 0; i < array.size(); i++)
+            request.pattern.push_back(static_cast<uint8_t>(array[i].asUInt()));
+    }
+    // An explicit mask (1 bits must match) replaces the one the wildcards made
+    if (body->isMember("mask_hex") || body->isMember("mask"))
+    {
+        std::vector<uint8_t> mask, unused;
+        if (body->isMember("mask_hex"))
         {
-            pattern.push_back(static_cast<uint8_t>(array[i].asUInt()));
-        }
-    }
-
-    if (pattern.size() > 64)
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "Pattern longer than 64 bytes";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    // Range and limits (end inclusive)
-    uint32_t start = 0;
-    uint32_t end = 65535;
-    if ((body->isMember("start") && !ParseJsonUInt((*body)["start"], 0xFFFF, start)) ||
-        (body->isMember("end") && !ParseJsonUInt((*body)["end"], 0xFFFF, end)))
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "'start' / 'end' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const unsigned max = body->isMember("max") ? (*body)["max"].asUInt() : 64u;
-    const unsigned alignment = body->isMember("alignment") ? (*body)["alignment"].asUInt() : 1u;
-
-    if (start > 0xFFFF || end > 0xFFFF || start > end)
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "Invalid 'start'/'end' range";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    if (alignment != 1 && alignment != 2)
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "'alignment' must be 1 or 2";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    // Scan the CPU view of memory; the first pattern byte gates the inner loop
-    const size_t searchLimit = end - pattern.size() + 1;
-    Json::Value matches(Json::arrayValue);
-    bool truncated = false;
-    size_t found = 0;
-
-    for (size_t position = start; position <= searchLimit; position += alignment)
-    {
-        if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-        {
-            continue;
-        }
-
-        bool matched = true;
-        for (size_t i = 1; i < pattern.size(); i++)
-        {
-            if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
+            if (!MemorySearch::ParsePattern((*body)["mask_hex"].asString(), mask, unused, error))
             {
-                matched = false;
-                break;
+                badRequest("Invalid 'mask_hex': " + error);
+                return;
             }
         }
-        if (!matched)
+        else
+            for (const Json::Value& v : (*body)["mask"])
+                mask.push_back(static_cast<uint8_t>(v.asUInt()));
+        if (mask.size() != request.pattern.size())
         {
-            continue;
+            badRequest("the mask must be as long as the pattern");
+            return;
         }
+        request.mask = mask;
+    }
+    if (body->isMember("space") && !MemorySearch::ParseSpace((*body)["space"].asString(), request, error))
+    {
+        badRequest(error);
+        return;
+    }
+    uint32_t start = 0, end = 0xFFFFFFFF;
+    if ((body->isMember("start") && !ParseJsonUInt((*body)["start"], 0xFFFFFFFFu, start)) ||
+        (body->isMember("end") && !ParseJsonUInt((*body)["end"], 0xFFFFFFFFu, end)))
+    {
+        badRequest("'start' / 'end' must be numbers (decimal, \"0x..\", \"#..\" or \"$..\")");
+        return;
+    }
+    if (start > end)
+    {
+        badRequest("Invalid 'start'/'end' range");
+        return;
+    }
+    request.start = start;
+    request.end = end;
+    request.max = body->isMember("max") ? (*body)["max"].asUInt() : 64u;
+    request.alignment = body->isMember("alignment") ? (*body)["alignment"].asUInt() : 1u;
 
-        if (found >= max)
-        {
-            truncated = true;
-            break;
-        }
+    const MemorySearchResult result = MemorySearch::Search(emulator->GetContext(), request);
+    if (!result.error.empty())
+    {
+        badRequest(result.error);
+        return;
+    }
 
+    Json::Value matches(Json::arrayValue);
+    for (const MemorySearchMatch& m : result.matches)
+    {
         Json::Value match;
-        match["address"] = StringHelper::Format("0x%04X", position);
-        Json::Value context(Json::arrayValue);
-        for (size_t i = 0; i < pattern.size() + 4; i++)
+        if (m.page < 0)
+            match["address"] = StringHelper::Format("0x%04X", m.address);
+        else
         {
-            context.append(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)));
+            match["page"]["kind"] = BreakpointManager::PageKindName(static_cast<MemoryBankModeEnum>(m.pageType));
+            match["page"]["page"] = m.page;
+            match["offset"] = StringHelper::Format("0x%04X", m.address);
         }
+        match["context_start"] = StringHelper::Format("0x%04X", m.contextStart);   // 4 bytes before, the match, 4 after
+        Json::Value context(Json::arrayValue);
+        for (uint8_t byte : m.bytes)
+            context.append(byte);
         match["context"] = context;
         matches.append(match);
-        found++;
     }
 
     Json::Value ret;
     ret["success"] = true;
-    ret["count"] = static_cast<Json::UInt>(found);
+    ret["space"] = MemorySearch::SpaceName(request);
+    ret["count"] = static_cast<Json::UInt>(result.matches.size());
     ret["matches"] = matches;
-    ret["truncated"] = truncated;
-    ret["range"] = StringHelper::Format("0x%04X-0x%04X", start, end);
+    ret["truncated"] = result.truncated;
+    ret["range"] = StringHelper::Format("0x%04X-0x%04X", start, end == 0xFFFFFFFF ? (request.space == MemorySearchRequest::Space::Cpu ? 0xFFFFu : 0xFFFFFFFFu) : end);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

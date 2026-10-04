@@ -208,12 +208,12 @@ class MainWindow(QMainWindow):
 
         # Recording options row.
         opts = QHBoxLayout()
-        self._chk_write_journal = QCheckBox("Enable write journal")
-        self._chk_write_journal.setChecked(True)
+        self._chk_write_journal = QCheckBox("Record the write journal")
+        self._chk_write_journal.setChecked(False)
         self._chk_write_journal.setToolTip(
-            "When enabled, captures every memory write for reverse-search "
-            "(FindLast). Disable for lighter memory footprint during gaming/"
-            "demo playback where reverse debugging isn't needed."
+            "Also record every memory write, so 'who wrote this address last' "
+            "answers at once. Without it the search replays one frame (same "
+            "answer, slower). It can be built later for any span by replay."
         )
         opts.addWidget(self._chk_write_journal)
         opts.addStretch(1)

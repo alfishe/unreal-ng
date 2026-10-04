@@ -106,6 +106,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state sprinter zx                     - Which Spectrum mode runs (SP.ZX / P128.ZX ...) and its options" << NEWLINE;
         ss << "  state sprinter journal kinds=cnf,port_1ffd - Who turned turbo on / wrote #1FFD (source=ttd: the recording)" << NEWLINE;
         ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
+        ss << "  state profi          - Show the ZX Profi board chips: port map, 8255, 8253, 8251 (also: profi)" << NEWLINE;
         ss << "  state isa            - Show the ISA slots (Sprinter; also: isa)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
@@ -245,6 +246,14 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else if (subsystem == "rtc" || subsystem == "cmos")
     {
         session.SendResponse(RtcReportText(context));
+        return;
+    }
+    else if (subsystem == "profi")
+    {
+        std::stringstream profi;
+        profi << "ZX Profi board" << NEWLINE << "==============" << NEWLINE
+              << DeviceState::ToText(DeviceState::ProfiPeripherals(context));
+        session.SendResponse(profi.str());
         return;
     }
     else if (subsystem == "isa")

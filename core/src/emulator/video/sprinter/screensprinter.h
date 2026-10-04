@@ -59,6 +59,8 @@ public:
     /// region <Screen>
     void CreateTables() override {}
     void InitRaster() override;
+    /// The frame start: also closes the beam-ordered picture's previous frame (SprinterBeamVideo::CloseFrame)
+    void InitFrame() override;
     void SetVideoMode(VideoModeEnum mode) override;
     void UpdateScreen() override;
     void DrawRange(uint32_t fromTstate, uint32_t toTstate) override;
@@ -123,6 +125,10 @@ private:
     /// font byte the video logic latched at the square's start (SprinterVideoInputs::FontLatch)
     void LatchFont(uint32_t t);
     PortDecoder_Sprinter* Decoder() const;
+    /// The framebuffer is the 736 x 288 Sprinter raster
+    bool FramebufferReady() const;
+    /// ZX DLSS plane B while it is on (the framebuffer's size), else null
+    uint16_t* PlaneB();
     /// Apply the PLD's frame height (codes #2C / #2D) at a frame start
     void ApplyFrameLines();
     /// The raster zones of the visible-first Sprinter raster (RasterState)

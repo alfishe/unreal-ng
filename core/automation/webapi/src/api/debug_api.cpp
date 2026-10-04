@@ -70,6 +70,51 @@ namespace
 {
 /// The end of a step as the protocol's PauseEvent describes it (docs/inprogress/2026-09-28-debugger-model/
 /// protocol.md §3.16): reason "step", or "breakpoint" with which one, where and on what access
+/// A breakpoint's page as the debugger protocol carries it: {kind: ram | rom | cache, page}; null when it
+/// matches the address in any page
+Json::Value BreakpointPageJson(const BreakpointDescriptor& bp)
+{
+    if (bp.matchType != BRK_MATCH_BANK_ADDR)
+        return Json::Value(Json::nullValue);
+    Json::Value page;
+    page["kind"] = BreakpointManager::PageKindName(bp.pageType);
+    page["page"] = bp.page;
+    return page;
+}
+
+/// One breakpoint as every breakpoint reply shows it (the protocol's Breakpoint fields)
+Json::Value BreakpointJson(const BreakpointDescriptor& bp)
+{
+    Json::Value j;
+    j["id"] = bp.breakpointID;
+    j["address"] = bp.z80address;
+    if (bp.isRange)
+        j["address_end"] = bp.z80addressEnd;
+    if (bp.matchType == BRK_MATCH_BANK_ADDR)
+    {
+        j["page"] = BreakpointPageJson(bp);
+        j["slot_only"] = bp.slotOnly;
+    }
+    if (bp.type == BRK_IO && bp.portMask != 0xFFFF)
+        j["port_mask"] = bp.portMask;
+    j["hit_mode"] = BreakpointManager::HitModeName(bp.hitMode);
+    if (bp.hitMode != BRK_HIT_ALWAYS)
+        j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
+    j["hit_count"] = static_cast<Json::UInt>(bp.hitCount);
+    j["active"] = bp.active;
+    j["note"] = bp.note;
+    j["group"] = bp.group;
+    return j;
+}
+
+/// The page a request names, as {kind, page} or as the text form "ram32"; the text form for messages
+std::string BreakpointPageText(const Json::Value& value)
+{
+    if (value.isObject())
+        return value.get("kind", "").asString() + (value.isMember("page") ? value["page"].asString() : std::string());
+    return value.asString();
+}
+
 Json::Value StepStopJson(const Emulator& emulator)
 {
     const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
@@ -885,9 +930,10 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                     bpObj["type"] = "unknown";
             }
             
-            bpObj["address"] = bp->z80address;
-            if (bp->matchType == BRK_MATCH_BANK_ADDR)
-                bpObj["page"] = BreakpointManager::PageSpecName(*bp);
+            // address, address_end, page + slot_only, port_mask, hit_mode / hit_target / hit_count
+            for (const auto& field : BreakpointJson(*bp).getMemberNames())
+                if (field != "id" && field != "active" && field != "note" && field != "group")
+                    bpObj[field] = BreakpointJson(*bp)[field];
             
             // Type-specific access flags
             switch (bp->type)
@@ -926,174 +972,191 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
 }
 
 /// @brief POST /api/v1/emulator/{id}/breakpoints
-/// @brief Add a breakpoint
-/// @brief Request body: {"type": "execution"|"read"|"write"|"port_in"|"port_out", "address": 0x8000}
+/// @brief Add a breakpoint: {type, address, address_end?, page?, slot_only?, port_mask?, hits? | hit_mode? +
+/// hit_target?, note?, group?} (the debugger protocol's Breakpoint fields; BreakpointManager::AddBreakpoint(spec))
 void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
-    auto* ctx = emulator->GetContext();
-    if (!ctx || !ctx->pDebugManager)
-    {
+
+    auto badRequest = [&callback](const std::string& message) {
         Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Debug manager not available";
-        
+        error["error"] = "Bad Request";
+        error["message"] = message;
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
-        return;
-    }
-    
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    };
+
+    auto* ctx = emulator->GetContext();
+    BreakpointManager* bpm = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager() : nullptr;
     if (!bpm)
     {
         Json::Value error;
         error["error"] = "Internal Error";
         error["message"] = "Breakpoint manager not available";
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-    
+
     auto json = req->getJsonObject();
     if (!json)
     {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "Request body required";
-        
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
+        badRequest("Request body required");
         return;
     }
-    
-    std::string type = (*json)["type"].asString();
-    uint32_t address = 0;
-    if (!ParseJsonUInt((*json)["address"], 0xFFFF, address))
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    
-    // Optional "page": "ram:32" | "rom:3" | "cache:0" - the memory breakpoint fires only while that page is
-    // mapped at the address
     const Json::Value& body = *json;
-    bool inPage = false;
-    uint8_t page = 0;
-    MemoryBankModeEnum pageType = BANK_RAM;
+
+    // The debugger protocol's Breakpoint fields (protocol.md §3.6, §6.3)
+    BreakpointSpec spec;
+    const std::string type = body.get("type", "").asString();
+    if (type == "execution" || type == "exec" || type == "bp")
+        spec.access = BRK_MEM_EXECUTE;
+    else if (type == "read" || type == "r")
+        spec.access = BRK_MEM_READ;
+    else if (type == "write" || type == "w")
+        spec.access = BRK_MEM_WRITE;
+    else if (type == "rw" || type == "access")
+        spec.access = BRK_MEM_READ | BRK_MEM_WRITE;
+    else if (type == "port_in" || type == "in")
+        spec.type = BRK_IO, spec.access = BRK_IO_IN;
+    else if (type == "port_out" || type == "out")
+        spec.type = BRK_IO, spec.access = BRK_IO_OUT;
+    else if (type == "port" || type == "io")
+        spec.type = BRK_IO, spec.access = BRK_IO_IN | BRK_IO_OUT;
+    else
+    {
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port");
+        return;
+    }
+
+    uint32_t value = 0;
+    if (!ParseJsonUInt(body["address"], 0xFFFF, value))
+    {
+        badRequest("'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
+        return;
+    }
+    spec.address = static_cast<uint16_t>(value);
+    if (body.isMember("address_end") && !body["address_end"].isNull())
+    {
+        if (!ParseJsonUInt(body["address_end"], 0xFFFF, value))
+        {
+            badRequest("'address_end' must be 0..65535");
+            return;
+        }
+        spec.hasEnd = true;
+        spec.addressEnd = static_cast<uint16_t>(value);
+    }
+    // "page": {"kind":"ram","page":32} (protocol) or "ram32": a physical breakpoint, through any slot that
+    // shows the page; "slot_only": true keeps it to the slot of the address
     if (body.isMember("page") && !body["page"].isNull())
     {
         std::string pageError;
-        const bool memory = type == "execution" || type == "exec" || type == "bp" || type == "read" || type == "r" ||
-                            type == "write" || type == "w";
-        if (!memory)
-            pageError = "'page' applies to execution, read and write breakpoints";
-        else if (!BreakpointManager::ParsePageSpec(body["page"].asString(), page, pageType, pageError))
-            ;
-        else if (!bpm->HasPage(page, pageType))
-            pageError = "this machine has no page " + body["page"].asString();
-        if (!pageError.empty())
+        if (!BreakpointManager::ParsePageSpec(BreakpointPageText(body["page"]), spec.page, spec.pageType, pageError))
+        {
+            badRequest(pageError);
+            return;
+        }
+        spec.hasPage = true;
+    }
+    spec.slotOnly = body.get("slot_only", false).asBool();
+    if (body.isMember("port_mask") && !body["port_mask"].isNull())
+    {
+        if (!ParseJsonUInt(body["port_mask"], 0xFFFF, value))
+        {
+            badRequest("'port_mask' must be 0..65535");
+            return;
+        }
+        spec.portMask = static_cast<uint16_t>(value);
+    }
+    // Hits: hit_mode + hit_target (protocol), or the text form "hits": "5" | ">=5" | "%5"
+    if (body.isMember("hits"))
+    {
+        std::string hitError;
+        if (!BreakpointManager::ParseHitSpec(body["hits"].asString(), spec.hitMode, spec.hitTarget, hitError))
+        {
+            badRequest(hitError);
+            return;
+        }
+    }
+    if (body.isMember("hit_target"))
+    {
+        if (!ParseJsonUInt(body["hit_target"], 0xFFFFFFFFu, value))
+        {
+            badRequest("'hit_target' must be a positive number");
+            return;
+        }
+        spec.hitTarget = value;
+        spec.hitMode = BRK_HIT_EQUAL;
+    }
+    if (body.isMember("hit_mode") && !BreakpointManager::ParseHitModeName(body["hit_mode"].asString(), spec.hitMode))
+    {
+        badRequest("'hit_mode' must be always, equal, at_least or multiple");
+        return;
+    }
+    if (body.isMember("note") && body["note"].isString())
+        spec.note = body["note"].asString();
+    if (body.isMember("group") && body["group"].isString())
+        spec.group = body["group"].asString();
+
+    std::string error;
+    const uint16_t bpId = bpm->AddBreakpoint(spec, error);
+    if (bpId == BRK_INVALID)
+    {
+        badRequest(error);
+        return;
+    }
+
+    const BreakpointDescriptor* added = bpm->GetAllBreakpoints().at(bpId);
+    Json::Value ret = BreakpointJson(*added);
+    ret["status"] = "success";
+    ret["type"] = type;
+    ret["message"] = "Breakpoint added";
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(HttpStatusCode::k201Created);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/breakpoints/hits/reset - hit counters back to 0 (body {"id": N}: one;
+/// no body or no id: all)
+void EmulatorAPI::resetBreakpointHits(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    BreakpointManager* bpm = emulator->GetBreakpointManager();
+    auto json = req->getJsonObject();
+    Json::Value ret;
+    if (bpm && json && json->isMember("id"))
+    {
+        uint32_t bpId = 0;
+        if (!ParseJsonUInt((*json)["id"], 0xFFFF, bpId) || !bpm->ResetHitCount(static_cast<uint16_t>(bpId)))
         {
             Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = pageError;
+            error["error"] = "Not Found";
+            error["message"] = "No breakpoint " + (*json)["id"].asString();
             auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
             addCorsHeaders(resp);
             callback(resp);
             return;
         }
-        inPage = true;
+        ret["reset"] = bpId;
     }
-
-    uint16_t bpId = 0;
-    bool success = false;
-    
-    if (type == "execution" || type == "exec" || type == "bp")
+    else if (bpm)
     {
-        bpId = inPage ? bpm->AddExecutionBreakpointInPage(address, page, pageType) : bpm->AddExecutionBreakpoint(address);
-        success = true;
+        bpm->ResetAllHitCounts();
+        ret["reset"] = "all";
     }
-    else if (type == "read" || type == "r")
-    {
-        bpId = inPage ? bpm->AddMemReadBreakpointInPage(address, page, pageType) : bpm->AddMemReadBreakpoint(address);
-        success = true;
-    }
-    else if (type == "write" || type == "w")
-    {
-        bpId = inPage ? bpm->AddMemWriteBreakpointInPage(address, page, pageType) : bpm->AddMemWriteBreakpoint(address);
-        success = true;
-    }
-    else if (type == "port_in" || type == "in")
-    {
-        bpId = bpm->AddPortInBreakpoint(address);
-        success = true;
-    }
-    else if (type == "port_out" || type == "out")
-    {
-        bpId = bpm->AddPortOutBreakpoint(address);
-        success = true;
-    }
-    else
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "Invalid type. Use: execution, read, write, port_in, port_out";
-        
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    
-    if (bpId == BRK_INVALID || !bpm->GetAllBreakpoints().count(bpId))
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Breakpoint not added";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    // Optional annotation and group (a group the request names is created with the breakpoint)
-    if (body.isMember("note") && body["note"].isString())
-        bpm->SetBreakpointNote(bpId, body["note"].asString());
-    if (body.isMember("group") && body["group"].isString() && !body["group"].asString().empty())
-        bpm->SetBreakpointGroup(bpId, body["group"].asString());
-
-    Json::Value ret;
     ret["status"] = "success";
-    ret["id"] = bpId;
-    ret["type"] = type;
-    ret["address"] = address;
-    const BreakpointDescriptor* added = bpm->GetAllBreakpoints().at(bpId);
-    if (inPage)
-        ret["page"] = BreakpointManager::PageSpecName(*added);
-    ret["note"] = added->note;
-    ret["group"] = added->group;
-    ret["message"] = "Breakpoint added";
-    
     auto resp = HttpResponse::newHttpJsonResponse(ret);
-    resp->setStatusCode(HttpStatusCode::k201Created);
     addCorsHeaders(resp);
     callback(resp);
 }
@@ -1301,8 +1364,12 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
         ret["last_triggered_access"] = bpInfo.access;
         ret["last_triggered_active"] = bpInfo.active;
         ret["last_triggered_note"] = bpInfo.note;
-        if (!bpInfo.page.empty())
-            ret["last_triggered_page"] = bpInfo.page;
+        if (!bpInfo.pageKind.empty())
+        {
+            ret["last_triggered_page"]["kind"] = bpInfo.pageKind;
+            ret["last_triggered_page"]["page"] = bpInfo.pageNumber;
+        }
+        ret["last_triggered_hit_count"] = static_cast<Json::UInt>(bpInfo.hitCount);
         ret["last_triggered_info"] = bpm->FormatBreakpointInfo(bpInfo.id);
         ret["paused_by_breakpoint"] = emulator->IsPaused();
     }
@@ -1378,6 +1445,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     special["i"] = z80->i;
     special["r"] = Z80::RegisterR(z80);
     special["memptr"] = z80->memptr;
+    special["q"] = z80->q;
+    special["t"] = static_cast<Json::UInt>(z80->t);  // CPU T-states since the frame's start
     ret["special"] = special;
     
     // Interrupt state
@@ -1386,13 +1455,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     interrupt["iff2"] = z80->iff2;
     interrupt["im"] = z80->im;
     interrupt["halted"] = z80->halted != 0;
+    interrupt["boundary"] = Z80::BoundaryName(z80->boundary);  // what the next INT / NMI sampling sees
     ret["interrupt"] = interrupt;
-
-    // Where in time: CPU T-states since the frame's start, and the frame number
-    Json::Value timing;
-    timing["t"] = static_cast<Json::UInt>(z80->t);
-    timing["frame"] = static_cast<Json::UInt64>(emulator->GetContext()->emulatorState.frame_counter);
-    ret["timing"] = timing;
     
     // Flags decoded
     uint8_t f = z80->af & 0xFF;

@@ -39,4 +39,13 @@ uint64_t TTDWd1793Context::TTDHashState() const
     return h;
 }
 
+TTDDeviceDescriptor TTDWd1793Context::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    const TTDDeviceKey controller = _fdc.TTDDescribe().Key();
+    d.instance = controller.instance + ".context";
+    d.restoreAfter.push_back(controller);
+    return d;
+}
+
 }  // namespace ttd

@@ -9,10 +9,12 @@
 // now + 0.5 s and ticks on every whole second after that.
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
 #include <new>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -97,32 +99,67 @@ TEST(Ds12887_Test, PowerOnRegisters)
 }
 
 /// Fixed time reads the host-local wall time of the instant, frozen
-TEST(Ds12887_Test, FixedTimeServesTheLocalInstant)
+namespace
 {
-    constexpr time_t kFrozen = 1767268830;  // 2026-01-01 12:00:30 UTC
-    std::tm local{};
-#ifdef _WIN32
-    localtime_s(&local, &kFrozen);
-#else
-    localtime_r(&kFrozen, &local);
-#endif
-    auto bcd = [](int v) { return static_cast<uint8_t>((v % 10) | ((v / 10) << 4)); };
+    /// Switch the process time zone for one scope (POSIX TZ string)
+    class ScopedTimeZone
+    {
+    public:
+        explicit ScopedTimeZone(const char* tz)
+        {
+            const char* old = std::getenv("TZ");
+            _hadOld = old != nullptr;
+            if (_hadOld)
+                _old = old;
+            Set(tz);
+        }
+        ~ScopedTimeZone() { Set(_hadOld ? _old.c_str() : nullptr); }
 
-    Ds12887 chip;
-    chip.SetFixedTime(kFrozen);
-    auto read = [&](uint8_t index) {
-        chip.WriteAddress(index);
-        return chip.ReadData();
+    private:
+        static void Set(const char* tz)
+        {
+#ifdef _WIN32
+            _putenv_s("TZ", tz ? tz : "");
+            _tzset();
+#else
+            if (tz)
+                setenv("TZ", tz, 1);
+            else
+                unsetenv("TZ");
+            tzset();
+#endif
+        }
+        bool _hadOld = false;
+        std::string _old;
     };
-    EXPECT_EQ(read(Ds12887::kSeconds), bcd(local.tm_sec));
-    EXPECT_EQ(read(Ds12887::kMinutes), bcd(local.tm_min));
-    EXPECT_EQ(read(Ds12887::kHours), bcd(local.tm_hour));
-    EXPECT_EQ(read(Ds12887::kDay), bcd(local.tm_mday));
-    EXPECT_EQ(read(Ds12887::kMonth), bcd(local.tm_mon + 1)) << "months count from 1 (the old SMUC read 0)";
-    EXPECT_EQ(read(Ds12887::kYear), bcd(local.tm_year % 100));
-    EXPECT_EQ(read(Ds12887::kDayOfWeek), local.tm_wday + 1) << "1 = Sunday (the old SMUC read wday + 2)";
-    EXPECT_EQ(read(Ds12887::kRegC), 0x00) << "a frozen clock never raises UF";
-    EXPECT_EQ(read(Ds12887::kRegA) & 0x80, 0x00) << "no UIP while frozen";
+}  // namespace
+
+/// A frozen clock shows the instant's UTC wall time on every host: boot tests
+/// that print the clock (Sprinter DSS, ZX-Evo BaseConf) must not depend on the
+/// machine's time zone
+TEST(Ds12887_Test, FixedTimeServesTheUtcInstantInEveryTimeZone)
+{
+    constexpr time_t kFrozen = 1767268830;  // Thursday 2026-01-01 12:00:30 UTC
+    for (const char* tz : {"UTC0", "EST5EDT", "JST-9", "NZST-12NZDT"})
+    {
+        SCOPED_TRACE(tz);
+        ScopedTimeZone zone(tz);
+        Ds12887 chip;
+        chip.SetFixedTime(kFrozen);
+        auto read = [&](uint8_t index) {
+            chip.WriteAddress(index);
+            return chip.ReadData();
+        };
+        EXPECT_EQ(read(Ds12887::kSeconds), 0x30);
+        EXPECT_EQ(read(Ds12887::kMinutes), 0x00);
+        EXPECT_EQ(read(Ds12887::kHours), 0x12);
+        EXPECT_EQ(read(Ds12887::kDay), 0x01);
+        EXPECT_EQ(read(Ds12887::kMonth), 0x01) << "months count from 1 (the old SMUC read 0)";
+        EXPECT_EQ(read(Ds12887::kYear), 0x26);
+        EXPECT_EQ(read(Ds12887::kDayOfWeek), 5) << "1 = Sunday: Thursday is 5 (the old SMUC read wday + 2)";
+        EXPECT_EQ(read(Ds12887::kRegC), 0x00) << "a frozen clock never raises UF";
+        EXPECT_EQ(read(Ds12887::kRegA) & 0x80, 0x00) << "no UIP while frozen";
+    }
 }
 
 /// Data mode (B bit 2) and hour format (B bit 1) only change how the same
@@ -437,4 +474,41 @@ TEST(Ds12887_Test, LiveFieldWritesHoldUntilTheNextUpdate)
     rtc.now += kSecond;
     EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x01);
     EXPECT_EQ(rtc.Read(Ds12887::kMonth), 0x10);
+}
+
+/// Phase 3, Step 5: one time base per TTD session. With the session's wall
+/// time set, every chip of the machine anchors its emulated time at that one
+/// instant (two chips entering emulated time at different host moments still
+/// read the same time); without it a chip anchors at the host clock
+TEST(Ds12887_Test, ChipsAnchorAtTheSessionWallTime)
+{
+    const int64_t wall = (3600 + 60 + 1) * int64_t(kSecond);   // 01:01:01 civil
+    uint64_t now = 500 * kSecond;
+    Ds12887 a, b;
+    for (Ds12887* chip : {&a, &b})
+    {
+        chip->SetEmulatedClock([&now]() { return now; });
+        chip->SetSessionWall([wall]() { return wall; });
+    }
+    auto read = [](Ds12887& chip, uint8_t index) {
+        chip.WriteAddress(index);
+        return chip.ReadData();
+    };
+    a.EnterEmulatedTime();
+    b.EnterEmulatedTime();   // later on the host: the same anchor
+    for (Ds12887* chip : {&a, &b})
+    {
+        EXPECT_EQ(read(*chip, Ds12887::kHours), 0x01);
+        EXPECT_EQ(read(*chip, Ds12887::kMinutes), 0x01);
+        EXPECT_EQ(read(*chip, Ds12887::kSeconds), 0x01);
+    }
+    now += kSecond;
+    EXPECT_EQ(read(a, Ds12887::kSeconds), 0x02);
+    EXPECT_EQ(read(b, Ds12887::kSeconds), 0x02);
+
+    Ds12887 host;   // no session wall: the host clock, as before
+    host.SetEmulatedClock([&now]() { return now; });
+    host.SetSessionWall([]() { return Ds12887::kNoSessionWall; });
+    host.EnterEmulatedTime();
+    EXPECT_EQ(host.GetTimeMode(), Ds12887::TimeMode::Emulated);
 }

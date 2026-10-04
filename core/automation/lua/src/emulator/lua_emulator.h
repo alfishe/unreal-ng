@@ -9,6 +9,7 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -151,6 +152,10 @@ inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRe
     for (size_t i = 0; i < m.peripherals.size(); ++i)
         list[i + 1] = m.peripherals[i];
     t["peripherals"] = list;
+    sol::table notRecorded = lua.create_table();
+    for (size_t i = 0; i < m.notRecorded.size(); ++i)
+        notRecorded[i + 1] = m.notRecorded[i];
+    t["not_recorded"] = notRecorded;
     t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
     t["turbo_sound"] = m.turboSound;
     return t;
@@ -211,6 +216,42 @@ protected:
     };
     /// endregion </Fields>
 
+    /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
+    /// a table {page=, to=, slot_only=, mask=, hits=}. The breakpoint id, or -1 when refused
+    int AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access, uint16_t address, const sol::optional<sol::object>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = access;
+        spec.address = address;
+        std::string page, hits;
+        int32_t to = -1, mask = -1;
+        bool slotOnly = false;
+        if (options && options->is<std::string>())
+            page = options->as<std::string>();
+        else if (options && options->is<sol::table>())
+        {
+            sol::table t = options->as<sol::table>();
+            page = t.get<sol::optional<std::string>>("page").value_or("");
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
+            mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);  // hits=5: the 5th hit
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
     /// region <Kempston Mouse helpers (automation-interfaces §4.7)>
 protected:
     DebugMouseManager* mouseManager() const
@@ -250,6 +291,72 @@ protected:
         return results;
     }
 
+    /// One mouse device of the machine: same keys as the WebAPI `device` object
+    static sol::table mouseDeviceTable(sol::this_state s, const MouseDeviceStatus& device)
+    {
+        sol::state_view lua(s);
+        auto hexRow = [&lua](const uint8_t* bytes, size_t count) {
+            sol::table row = lua.create_table();
+            for (size_t i = 0; i < count; i++)
+            {
+                char text[4];
+                std::snprintf(text, sizeof(text), "%02X", bytes[i]);
+                row[i + 1] = std::string(text);
+            }
+            return row;
+        };
+        sol::table t = lua.create_table();
+        t["id"] = device.id;
+        t["name"] = device.name;
+        t["kind"] = MouseDeviceStatus::KindName(device.kind);
+        t["fitted"] = device.fitted;
+        t["in_use"] = device.inUse;
+        t["wheel"] = device.wheel;
+        t["buttons"] = static_cast<int>(device.buttons);
+        t["x"] = static_cast<int>(device.x);
+        t["y"] = static_cast<int>(device.y);
+        t["button_mask"] = static_cast<int>(device.buttonMask);
+        if (device.hasPorts)
+        {
+            sol::table ports = lua.create_table();
+            ports["FADF"] = static_cast<int>(device.portButtons);
+            ports["FBDF"] = static_cast<int>(device.portX);
+            ports["FFDF"] = static_cast<int>(device.portY);
+            t["ports"] = ports;
+        }
+        if (device.hasSerial)
+        {
+            const MouseDeviceStatus::Serial& serial = device.serial;
+            sol::table line = lua.create_table();
+            line["baud"] = serial.baud;
+            line["receiver_baud"] = serial.receiverBaud;
+            line["receiver_in_tune"] = serial.receiverInTune;
+            line["receiver_enabled"] = serial.receiverEnabled;
+            line["packet_in_flight"] = serial.packetInFlight;
+            line["packet"] = hexRow(serial.packet, 3);
+            line["packet_bytes_sent"] = static_cast<int>(serial.packetBytesSent);
+            sol::table pending = lua.create_table();
+            pending["dx"] = serial.pendingDx;
+            pending["dy"] = serial.pendingDy;
+            line["pending"] = pending;
+            line["packets_sent"] = static_cast<double>(serial.packetsSent);
+            line["bytes_received"] = static_cast<double>(serial.bytesReceived);
+            line["framing_errors"] = static_cast<double>(serial.framingErrors);
+            line["receiver_fifo"] = hexRow(serial.fifo, serial.fifoCount);
+            line["receiver_overrun"] = serial.overrun;
+            t["serial"] = line;
+        }
+        if (device.hasPs2)
+        {
+            sol::table ps2 = lua.create_table();
+            ps2["connected"] = device.ps2.connected;
+            ps2["resolution"] = static_cast<int>(device.ps2.resolution);
+            ps2["counts_per_mm"] = 1 << device.ps2.resolution;
+            t["ps2"] = ps2;
+        }
+        return t;
+    }
+
     /// State table: same keys as the WebAPI state object
     static sol::table mouseStateTable(sol::this_state s, const MouseStateSnapshot& state,
                                       const std::string& warning = "")
@@ -287,6 +394,21 @@ protected:
             t["pending_click"] = pending;
         }
         t["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+        // The machine's mouse (design 2026-10-03); `device` is absent (nil) when none is fitted
+        t["mouse_fitted"] = state.mouseFitted;
+        if (state.device)
+            t["device"] = mouseDeviceTable(s, *state.device);
+        sol::table devices = lua.create_table();
+        for (size_t i = 0; i < state.devices.size(); i++)
+            devices[i + 1] = mouseDeviceTable(s, state.devices[i]);
+        t["devices"] = devices;
+        sol::table queue = lua.create_table();
+        queue["ops"] = static_cast<int>(state.queuedOps);
+        sol::table remaining = lua.create_table();
+        remaining["dx"] = state.glideRemainingDx;
+        remaining["dy"] = state.glideRemainingDy;
+        queue["glide_remaining"] = remaining;
+        t["queue"] = queue;
         if (!warning.empty())
             t["warning"] = warning;
         return t;
@@ -643,8 +765,9 @@ public:
                     regs["iff1"] = z80->iff1 != 0;
                     regs["iff2"] = z80->iff2 != 0;
                     regs["halted"] = z80->halted != 0;
+                    regs["q"] = z80->q;
+                    regs["boundary"] = Z80::BoundaryName(z80->boundary);
                     regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
-                    regs["frame"] = emulator->GetContext()->emulatorState.frame_counter;
                 }
             }
             return regs;
@@ -1823,6 +1946,40 @@ public:
             return mouseResult(s, *mgr, mgr->Move(static_cast<int>(dx), static_cast<int>(dy)));
         });
 
+        // A long move (-4096..4096) in steps the program follows, one per frame; input sent meanwhile queues
+        lua.set_function("mouse_glide", [this](sol::this_state s, sol::object dxArg, sol::object dyArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            long long dx = 0;
+            long long dy = 0;
+            if (!mouseIntArg(dxArg, "dx", INT_MIN, INT_MAX, dx, error) ||
+                !mouseIntArg(dyArg, "dy", INT_MIN, INT_MAX, dy, error))
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->Glide(static_cast<int>(dx), static_cast<int>(dy)));
+        });
+
+        // The machine's mouse devices (table of device tables; empty when the machine has none)
+        lua.set_function("mouse_devices", [this](sol::this_state s) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            sol::state_view lua(s);
+            sol::table devices = lua.create_table();
+            const MouseStateSnapshot state = mgr->GetState();
+            for (size_t i = 0; i < state.devices.size(); i++)
+                devices[i + 1] = mouseDeviceTable(s, state.devices[i]);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, devices));
+            return results;
+        });
+
+        lua.set_function("mouse_busy", [this]() -> bool {
+            DebugMouseManager* mgr = mouseManager();
+            return mgr && mgr->IsBusy();
+        });
+
         lua.set_function("mouse_press", [this](sol::this_state s, sol::object buttonArg) {
             DebugMouseManager* mgr = mouseManager();
             if (!mgr)
@@ -1917,11 +2074,21 @@ public:
             return mouseResult(s, *mgr, mgr->SetCounters(static_cast<int>(x), static_cast<int>(y)));
         });
 
-        lua.set_function("mouse_status", [this](sol::this_state s) {
+        lua.set_function("mouse_status", [this](sol::this_state s, sol::object deviceArg) {
             DebugMouseManager* mgr = mouseManager();
             if (!mgr)
                 return mouseError(s, "mouse manager not available");
-            const MouseStateSnapshot state = mgr->GetState();
+            // mouse_status([device]): the machine's mouse, or the device named ("kempston", "sprinter", "evo-ps2")
+            std::string deviceId;
+            if (deviceArg.valid() && deviceArg.get_type() != sol::type::lua_nil)
+            {
+                if (deviceArg.get_type() != sol::type::string)
+                    return mouseError(s, "device must be a string (kempston, sprinter, evo-ps2)");
+                deviceId = deviceArg.as<std::string>();
+            }
+            if (const MouseInjectResult check = mgr->CheckDevice(deviceId); !check.ok())
+                return mouseError(s, check.message);
+            const MouseStateSnapshot state = mgr->GetState(deviceId);
             if (!state.available)
                 return mouseError(s, "Mouse device not available");
             sol::variadic_results results;
@@ -2169,56 +2336,32 @@ public:
         });
 
         // Breakpoint management
-        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
-        lua.set_function("bp", [this](uint16_t addr, sol::optional<std::string> page) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (!bpm) return -1;
-            std::string error;
-            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_EXECUTE, page.value_or(""), error);
-            return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_EXECUTE, addr, options);
         });
 
-        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
-        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<std::string> page) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (!bpm) return -1;
-            std::string error;
-            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_READ, page.value_or(""), error);
-            return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_READ, addr, options);
         });
 
-        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
-        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<std::string> page) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (!bpm) return -1;
-            std::string error;
-            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_WRITE, page.value_or(""), error);
-            return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_WRITE, addr, options);
         });
 
-        lua.set_function("bp_port_in", [this](uint16_t port) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddPortInBreakpoint(port)) : -1;
+        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_in", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_IO, BRK_IO_IN, port, options);
         });
 
-        lua.set_function("bp_port_out", [this](uint16_t port) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddPortOutBreakpoint(port)) : -1;
+        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
         });
 
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
@@ -2269,6 +2412,16 @@ public:
             return bpm ? bpm->SetBreakpointGroup(id, group) : false;
         });
 
+        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
+            if (!effectiveEmulator()) return false;
+            BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
+            if (!bpm) return false;
+            if (id)
+                return bpm->ResetHitCount(*id);
+            bpm->ResetAllHitCounts();
+            return true;
+        });
+
         lua.set_function("bp_count", [this]() -> size_t {
             if (!effectiveEmulator()) return 0;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2312,8 +2465,9 @@ public:
                 result["active"] = info.active;
                 result["note"] = info.note;
                 result["group"] = info.group;
-                if (!info.page.empty())
-                    result["page"] = info.page;
+                if (!info.pageKind.empty())
+                    result["page"] = lua_view.create_table_with("kind", info.pageKind, "page", info.pageNumber);
+                result["hit_count"] = info.hitCount;
             }
             return result;
         });
@@ -2985,6 +3139,12 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Rtc(emulator->GetContext()));
         });
+        // ZX Profi board chips: port map, 8255, 8253, 8251 (DeviceState::ProfiPeripherals); available = false elsewhere
+        lua.set_function("profi_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::ProfiPeripherals(emulator->GetContext()));
+        });
         lua.set_function("rtc_read", [this](sol::this_state s, int start, sol::optional<int> count) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");
@@ -3034,6 +3194,10 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        // The host adapters the bridge can use (ethernet_mode=bridge, network SN6)
+        lua.set_function("network_adapters", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, EthernetAccess::Adapters());
         });
         lua.set_function("network_inject_frame", [this](sol::this_state s, const std::string& link, const std::string& hex) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
@@ -3461,7 +3625,7 @@ public:
                 return info;
             }
             ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-            ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+            ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
             info["state"]                    = ttd::TTDSessionStateToString(si.state);
             info["session_start_frame"]      = si.sessionStartFrame;
             info["current_end_frame"]        = si.currentEndFrame;
@@ -3485,18 +3649,17 @@ public:
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
             info["write_journal_complete"]   = si.writeJournalComplete;
-            info["write_journal_wrapped"]    = si.writeJournalWrapped;
-            if (!si.journalGapReason.empty())
+            sol::table segments = lua_view.create_table();
+            for (size_t i = 0; i < si.writeJournalSpans.size(); ++i)
             {
-                sol::table gap = lua_view.create_table();
-                gap["reason"] = si.journalGapReason;
-                if (si.journalGapHasPosition)
-                {
-                    gap["frame"]    = si.journalGapAt.frame;
-                    gap["tinframe"] = si.journalGapAt.tInFrame;
-                }
-                info["write_journal_gap"] = gap;
+                sol::table span = lua_view.create_table();
+                span["from_frame"]    = si.writeJournalSpans[i].first.frame;
+                span["from_tinframe"] = si.writeJournalSpans[i].first.tInFrame;
+                span["to_frame"]      = si.writeJournalSpans[i].second.frame;
+                span["to_tinframe"]   = si.writeJournalSpans[i].second.tInFrame;
+                segments[i + 1] = span;
             }
+            info["write_journal_segments"] = segments;
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
             info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
@@ -3563,17 +3726,15 @@ public:
             return r;
         });
 
-        // ttd_start([mode]) - start recording
-        // mode: "gaming" (smaller files, no journal) or "development" (default, full journal)
-        lua.set_function("ttd_start", [this](sol::optional<std::string> modeOpt) -> bool {
+        // ttd_start([journal]) - start recording; journal = true also records the
+        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
+        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
-            // A mode overrides the journal choice; without one the choice made
-            // by ttd_set_journal_enabled stands (journal on by default)
-            if (modeOpt.has_value())
-                ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
+            if (journalOpt.has_value())
+                ctx->pTimeTravelManager->SetEnableWriteJournal(journalOpt.value());
             return ctx->pTimeTravelManager->StartRecording();
         });
 
@@ -3586,29 +3747,57 @@ public:
             if (!emulator) return {0, 0};
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
-            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
             ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
                                                      bytes.value_or(si.historyLimitBytes));
-            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
             return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
-        // ttd_set_journal_enabled(bool) - configure write journal capture
-        // ok, reason: refused while recording (a recording keeps its journal mode)
+        // ttd_set_journal_enabled(bool) - switch the write journal at any moment,
+        // also while recording: a journal segment starts or ends there (D40). ok, reason
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (ctx->pTimeTravelManager->SetEnableWriteJournal(enabled)) return {true, ""};
-            return {false, ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal)};
+            if (ctx->pTimeTravelManager->SwitchWriteJournal(enabled)) return {true, ""};
+            return {false, "write journal not available"};
+        });
+
+        // ttd_build_journal([from_frame], [to_frame]) - build the write journal for
+        // frames from..to (default: the whole session) by replaying them, about
+        // 2-4 ms per frame; not while recording. Returns a table: ok, error,
+        // cancelled, frames_built, frames_covered, frames_refused, records
+        lua.set_function("ttd_build_journal", [this](sol::optional<uint64_t> fromOpt, sol::optional<uint64_t> toOpt) {
+            Emulator* emulator = effectiveEmulator();
+            sol::state_view lua_view(*_lua);
+            sol::table r = lua_view.create_table();
+            auto* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                r["ok"] = false;
+                r["error"] = "TTD not available";
+                return r;
+            }
+            const ttd::TTDJournalBuildResult b =
+                ctx->pTimeTravelManager->BuildWriteJournalFrames(fromOpt.value_or(0), toOpt.value_or(UINT64_MAX));
+            r["ok"] = b.ok;
+            if (!b.ok)
+                r["error"] = b.error;
+            r["cancelled"] = b.cancelled;
+            r["frames_built"] = b.framesBuilt;
+            r["frames_covered"] = b.framesCovered;
+            r["frames_refused"] = b.framesRefused;
+            r["records"] = b.records;
+            return r;
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return true;
+            if (!emulator) return false;
             auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return true;
+            if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->GetEnableWriteJournal();
         });
 
@@ -3741,7 +3930,7 @@ public:
             if (!ctx || !ctx->pTimeTravelManager) return result;
             const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
             int idx = 1;  // Lua tables are 1-based
-            for (const auto& e : journal.Events())
+            for (const auto& e : journal.SnapshotEvents())
             {
                 sol::table marker = lua_view.create_table();
                 marker["frame"]    = e.time.frame;
@@ -3902,7 +4091,7 @@ public:
                 result["error"] = err;
                 return result;
             }
-            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
             result["ok"] = true;
             result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
             result["session_start_frame"] = info.sessionStartFrame;
@@ -4265,7 +4454,7 @@ public:
             auto* mgr = emulator->GetContext()->pTimeTravelManager;
             uint64_t fromFrame = 0;
             if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
             if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
             std::string kindStr = "executed";
             if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
@@ -4325,7 +4514,7 @@ public:
             auto* mgr = emulator->GetContext()->pTimeTravelManager;
             uint64_t fromFrame = 0;
             if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
             if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
             std::optional<ttd::TTDCoverageKind> optKind;
             if (argsTable["kind"].valid())
@@ -4445,111 +4634,41 @@ public:
         });
 
         // Search the CPU view of memory for a byte pattern (hex string or byte table)
+        // mem_find(pattern [, start, end, alignment, max, space, mask]) - MemorySearch: hex text with ?? / A?
+        // wildcards or a byte table; space "cpu" (default), "ram" (every RAM page) or a page ("ram5", "rom2")
         lua.set_function("mem_find",
-                         [this](sol::object patternValue, sol::optional<unsigned> startOpt,
-                                sol::optional<unsigned> endOpt, sol::optional<unsigned> alignOpt,
-                                sol::optional<unsigned> maxOpt) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
+                         [this](sol::this_state s, sol::object patternValue, sol::optional<uint32_t> startOpt,
+                                sol::optional<uint32_t> endOpt, sol::optional<unsigned> alignOpt,
+                                sol::optional<unsigned> maxOpt, sol::optional<std::string> spaceOpt,
+                                sol::optional<std::string> maskOpt) -> sol::object {
+            StateNode error = StateNode::Object();
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            Memory* memory = emulator->GetMemory();
-            if (!memory) { result["error"] = "memory not available"; return result; }
-
-            std::vector<uint8_t> pattern;
-            if (patternValue.is<std::string>())
+            if (!emulator)
             {
-                std::string digits;
-                for (char c : patternValue.as<std::string>())
-                {
-                    if (c == ' ' || c == ':')
-                        continue;
-                    if (!std::isxdigit(static_cast<unsigned char>(c)))
-                    {
-                        result["error"] = "invalid hex pattern";
-                        return result;
-                    }
-                    digits += static_cast<char>(std::toupper(c));
-                }
-                if (digits.empty() || digits.size() % 2 != 0)
-                {
-                    result["error"] = "invalid hex pattern";
-                    return result;
-                }
-                for (size_t i = 0; i < digits.size(); i += 2)
-                    pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
+                error["error"] = "no emulator";
+                return StateNodeToLua(s, error);
             }
-            else if (patternValue.is<sol::table>())
-            {
+            std::vector<uint8_t> bytes;
+            const bool table = patternValue.is<sol::table>();
+            if (table)
                 for (auto& pair : patternValue.as<sol::table>())
-                    pattern.push_back(static_cast<uint8_t>(pair.second.as<int>() & 0xFF));
-            }
-
-            if (pattern.empty() || pattern.size() > 64)
+                    bytes.push_back(static_cast<uint8_t>(pair.second.as<int>() & 0xFF));
+            MemorySearchRequest request;
+            std::string message;
+            std::string text;
+            if (patternValue.get_type() == sol::type::number)
+                text = MemorySearch::NumberPattern(static_cast<uint64_t>(patternValue.as<int64_t>()));
+            else if (patternValue.is<std::string>())
+                text = patternValue.as<std::string>();
+            if (!MemorySearch::BuildRequest(text, table ? &bytes : nullptr,
+                                            maskOpt.value_or(""), spaceOpt.value_or(""), startOpt.value_or(0),
+                                            endOpt.value_or(0xFFFFFFFFu), maxOpt.value_or(64), alignOpt.value_or(1),
+                                            request, message))
             {
-                result["error"] = "pattern must be 1..64 bytes";
-                return result;
+                error["error"] = message;
+                return StateNodeToLua(s, error);
             }
-
-            const size_t start = startOpt.value_or(0);
-            const size_t end = std::min<size_t>(endOpt.value_or(0xFFFF), 0xFFFF);
-            const unsigned alignment = alignOpt.value_or(1);
-            const unsigned max = maxOpt.value_or(64);
-            if (start > end || (alignment != 1 && alignment != 2))
-            {
-                result["error"] = "invalid range or alignment";
-                return result;
-            }
-
-            sol::table matches = lua_view.create_table();
-            size_t found = 0;
-            bool truncated = false;
-            const size_t searchLimit = end - pattern.size() + 1;
-
-            for (size_t position = start; position <= searchLimit; position += alignment)
-            {
-                if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-                    continue;
-
-                bool matched = true;
-                for (size_t i = 1; i < pattern.size(); i++)
-                {
-                    if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
-                    {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (!matched)
-                    continue;
-
-                if (found >= max)
-                {
-                    truncated = true;
-                    break;
-                }
-
-                sol::table match = lua_view.create_table();
-                match["address"] = static_cast<unsigned>(position);
-                sol::table context = lua_view.create_table();
-                const size_t contextStart = position > 4 ? position - 4 : 0;
-                for (size_t i = 0; i < pattern.size() + 4; i++)
-                {
-                    const size_t address = contextStart + i;
-                    if (address > 0xFFFF)
-                        break;
-                    context[i + 1] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address));
-                }
-                match["context"] = context;
-                matches[found + 1] = match;
-                found++;
-            }
-
-            result["matches"] = matches;
-            result["count"] = found;
-            result["truncated"] = truncated;
-            return result;
+            return StateNodeToLua(s, MemorySearch::ToState(request, MemorySearch::Search(emulator->GetContext(), request)));
         });
 
         // Screen-area FNV-1a-64 digest — change detection without pixel transfer.
@@ -4691,7 +4810,22 @@ public:
                 item["tags"] = tagNames;  // empty table = untagged row
                 const char* latchName = PagingLatchToString(entry.latch);
                 if (latchName)  // absent key = no live-value binding
+                {
                     item["latch"] = latchName;
+                    // The latch's value now, and decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+                    const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, context->emulatorState);
+                    item["latch_value"] = value;
+                    sol::table fields = lua.create_table();
+                    for (const DecodedLatchField& field :
+                         DecodePagingLatch(entry.latch, value, context->config.mem_model, context->config.ramsize))
+                    {
+                        if (field.isBool)
+                            fields[field.key] = field.boolValue;
+                        else
+                            fields[field.key] = field.intValue;
+                    }
+                    item["latch_fields"] = fields;
+                }
 
                 entries.add(item);
             }

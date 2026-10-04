@@ -277,3 +277,145 @@ TEST(SprinterIsaBus_Test, PowerOn_LatchZero)
     EXPECT_EQ(bus.Latch(), 0x00);
     EXPECT_EQ(fake->resets, std::vector<bool>({true, false})) << "power-on releases RESET";
 }
+
+/// region <Interrupt lines (phase I4)>
+
+namespace
+{
+/// A card with an interrupt output the test sets: level, driven or high impedance, a timed event
+class IrqCard : public FakeCard
+{
+public:
+    bool Irq() const override { return request; }
+    bool IrqDriven() const override { return driven; }
+    uint64_t NextIrqEventAt() const override { return eventAt; }
+    void CatchUp() override
+    {
+        ++catchUps;
+        if (eventAt <= now)
+        {
+            request = true;
+            eventAt = UINT64_MAX;
+            if (listener)
+                listener();
+        }
+    }
+    void SetLinesListener(std::function<void()> changed) override { listener = std::move(changed); }
+
+    bool request = false;
+    bool driven = true;
+    uint64_t eventAt = UINT64_MAX;
+    uint64_t now = 6000;   ///< the machine time CatchUp brings the card to
+    int catchUps = 0;
+    std::function<void()> listener;
+};
+}  // namespace
+
+// The board: each slot's IRQ pins are one net with a pull-up, PB0 = slot 1, PB1 = slot 2; DRQ (PB4 / PB2), DACK and
+// the printer bits read high. A pin nobody drives is high - an empty slot, a card whose output floats
+TEST(SprinterIsaBus_Test, PioLines_IrqPerSlotPullUpsWhereNobodyDrives)
+{
+    SprinterIsaBus bus;
+    EXPECT_EQ(bus.PioLines(), 0xFF) << "empty slots: every line pulled up";
+
+    auto owned = std::make_unique<IrqCard>();
+    IrqCard* card = owned.get();
+    bus.Fit(1, std::move(owned));
+    EXPECT_EQ(bus.PioLines(), 0xFD) << "slot 2's card drives IRQ low: PB1 = 0";
+    EXPECT_TRUE(bus.IrqDriven(1));
+    EXPECT_FALSE(bus.IrqLine(1));
+    card->request = true;
+    EXPECT_EQ(bus.PioLines(), 0xFF) << "ISA IRQs are active high";
+    card->request = false;
+    card->driven = false;
+    EXPECT_EQ(bus.PioLines(), 0xFF) << "a high-impedance pin: the pull-up";
+
+    bus.Fit(0, std::make_unique<IrqCard>());
+    EXPECT_EQ(bus.PioLines(), 0xFE) << "slot 1 on PB0";
+}
+
+// The owner hears every possible change: a cycle, a RESET DRV edge, a refit, the card's own notice; NextLineEventAt is
+// the earliest card deadline and CatchUpCards moves every card to now
+TEST(SprinterIsaBus_Test, LinesHandler_CyclesResetRefitAndCardNotices)
+{
+    SprinterIsaBus bus;
+    int calls = 0;
+    bus.SetLinesHandler([&]() { ++calls; });
+    auto owned = std::make_unique<IrqCard>();
+    IrqCard* card = owned.get();
+    bus.Fit(0, std::move(owned));
+    EXPECT_EQ(calls, 1) << "refit";
+    bus.ReadAt(SprinterIsaBus::Space::Io, 0, 0x300);
+    EXPECT_EQ(calls, 2) << "after a cycle";
+    bus.WriteLatch(SprinterIsaBus::kLatchReset);
+    EXPECT_EQ(calls, 3) << "RESET DRV edge";
+    bus.WriteLatch(SprinterIsaBus::kLatchReset | 0x01);
+    EXPECT_EQ(calls, 3) << "no edge, no line change";
+    ASSERT_TRUE(card->listener);
+    card->listener();
+    EXPECT_EQ(calls, 4) << "the card's own notice";
+
+    EXPECT_EQ(bus.NextLineEventAt(), UINT64_MAX);
+    card->eventAt = 5000;
+    auto other = std::make_unique<IrqCard>();
+    other->eventAt = 7000;
+    bus.Fit(1, std::move(other));
+    EXPECT_EQ(bus.NextLineEventAt(), 5000u);
+    bus.CatchUpCards();
+    EXPECT_EQ(card->catchUps, 1);
+    EXPECT_TRUE(card->request);
+    EXPECT_EQ(bus.NextLineEventAt(), 7000u);
+
+    bus.Fit(0, nullptr);
+    EXPECT_FALSE(bus.Card(0));
+}
+
+// Interrupt events go into the access journal flagged irq; the report has an irq object per slot and a summary line
+TEST(SprinterIsaBus_Test, IrqEvents_JournalAndReport)
+{
+    SprinterIsaBus bus;
+    bus.Fit(0, std::make_unique<IrqCard>());
+    bus.ClearJournal();
+    bus.NoteIrq(0, 0xFF, "IRQ line high -> PB0");
+    ASSERT_EQ(bus.Journal().size(), 1u);
+    EXPECT_TRUE(bus.Journal().back().irq);
+    EXPECT_EQ(bus.Journal().back().slot, 0);
+    // Polling floods the access journal; the interrupt ring keeps the event
+    for (size_t i = 0; i < SprinterIsaBus::kJournalLength; ++i)
+        bus.ReadAt(SprinterIsaBus::Space::Io, 0, 0x3EE);
+    EXPECT_FALSE(bus.Journal().front().irq);
+    ASSERT_EQ(bus.IrqJournal().size(), 1u);
+    EXPECT_EQ(bus.IrqJournal().back().what, "IRQ line high -> PB0");
+
+    bus.SetPioView([]() {
+        SprinterIsaBus::PioView v;
+        v.valid = true;
+        v.mode = 3;
+        v.direction = 0x01;
+        v.mask = 0xFE;
+        v.intControl = 0xB7;
+        v.vector = 0x00;
+        v.im = 2;
+        v.iff1 = true;
+        v.i = 0xB5;
+        return v;
+    });
+    const StateNode report = bus.Describe();
+    const StateNode* irq = report.find("slots")->items[0].find("irq_line");
+    ASSERT_NE(irq, nullptr);
+    EXPECT_EQ(irq->find("pio_bit")->s, "PB0");
+    EXPECT_EQ(irq->find("line")->s, "low");
+    EXPECT_TRUE(irq->find("pio")->find("monitored")->b);
+    EXPECT_EQ(irq->find("reaches_cpu")->s.rfind("yes", 0), 0u) << irq->find("reaches_cpu")->s;
+    EXPECT_NE(irq->find("reaches_cpu")->s.find("table #B500"), std::string::npos) << irq->find("reaches_cpu")->s;
+    const StateNode* slot2 = report.find("slots")->items[1].find("irq_line");
+    EXPECT_EQ(slot2->find("line")->s, "high");
+    EXPECT_NE(slot2->find("reaches_cpu")->s.find("PB1 is programmed as an output"), std::string::npos)
+        << slot2->find("reaches_cpu")->s;
+    EXPECT_NE(report.find("irq_summary")->s.find("slot 1 IRQ low (driven by ne2000) -> PB0: interrupts the CPU"),
+              std::string::npos)
+        << report.find("irq_summary")->s;
+    EXPECT_EQ(report.find("pio_port_b")->find("mode")->s, "bit control (mode 3)");
+}
+
+/// endregion

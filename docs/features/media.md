@@ -166,9 +166,13 @@ the machine's config, `[HDD] Scheme`:
 | `NONE` | no IDE | the other machines |
 
 Each unit is a **hard disk** unless the config says it is a **CD-ROM drive**: `CD0=1` / `CD1=1`,
-or an `.iso` or `.cue` configured as the unit's image. An empty unit changes its drive with the insert
-option `device=cdrom` / `device=disk` (the Qt media panel asks when you insert a CD image or a folder of
-music files into a disk unit, or a disk image into a CD drive);
+or an `.iso` or `.cue` configured as the unit's image. `CF0=1` / `CF1=1` (`CF2` / `CF3` for the Sprinter's
+second channel) make a disk unit a **CompactFlash card** on an IDE adapter: the same disk, but it answers
+IDENTIFY as a CF card does (word 0 = `#848A`, the CFA feature set, model `UNREAL-NG CF`) and takes the
+CF 8-bit transfer mode (SET FEATURES `#01` / `#81`). An empty unit changes its drive with the insert
+option `device=cdrom` / `device=disk` / `device=cf` (the Qt media panel asks when you insert a CD image or a
+folder of music files into a disk unit, or a disk image into a CD drive; its **CF Card** button makes the
+next disk image of an empty IDE unit a CompactFlash card);
 the change lasts for this machine's session (a reset keeps it; a new machine or a model switch starts
 from the config file). ZX-Evo ships with a CD drive in the slave position
 (`CD1=1`), where the ERS "D. CD boot" looks for it; the other machines ship without one, because
@@ -210,6 +214,18 @@ session's lead-out. A data track inside the range: PLAY AUDIO (10) / (12) fail (
 ENCOUNTERED ON THIS TRACK, 05h / 63h), PLAY AUDIO MSF plays the audio before it. The IDE activity LED lights
 only while the drive moves data from the disc to the host (READ (10) / (12), READ CD); status polls
 and audio play leave it dark - playing audio shows on the HUD's "CD" indicator (the drive's mixer row).
+
+**The guest's eject empties the slot.** When the guest ejects the disc (START STOP UNIT with LoEj,
+Start 0, accepted - not when PREVENT ALLOW MEDIUM REMOVAL holds it), the media manager takes the disc
+out of the slot at the next frame boundary through its normal eject: the slot is `empty` on every
+surface (media panel, HUD, `media info`, WebAPI / MCP / CLI / Lua / Python), with the usual
+`MEDIA_EJECTED` event. The tray stays open (NOT READY, MEDIUM NOT PRESENT - TRAY OPEN, 02h / 3Ah / 02h)
+until the guest loads (closes) it - with no disc then: 02h / 3Ah / 01h, tray closed - or a disc is
+inserted, which closes it (UNIT ATTENTION). A user's eject also leaves the tray open, and is reported
+to the guest as a change as before. Under time travel the guest's eject is guest I/O, not an outside
+input: it does not end or invalidate a recording, and a replay across it reproduces the drive's state
+without touching the slot again (the slot stays as the live run left it; continuing live from before
+the eject leaves the drive empty - insert the disc again).
 
 **Enhanced CD (CD-Extra, multisession).** A disc with its audio tracks in session 1 and a data track in
 session 2 plays in an audio player and reads in a computer drive. Between the two sessions lie the

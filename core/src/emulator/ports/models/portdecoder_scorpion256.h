@@ -96,10 +96,13 @@ public:
     /// Turbo+ runs the CPU at 3.5 or 7 MHz
     uint8_t TtdClockUnits() const override { return 2; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_smucNvram); }
     /// endregion </TTD model-specific state>
 
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
+    /// The SMUC IDE window register file (8 registers; TTD: TTDSmuc)
+    uint8_t* GetSmucIdeRegs() { return _smucIdeRegs; }
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _smucNvram.GetRtc(); }
     RtcBinding GetRtcBinding() override;

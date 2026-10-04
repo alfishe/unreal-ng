@@ -6,8 +6,9 @@
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["description"] =
-        "Every breakpoint: id, type, address, the access flags, active, note, group, and page ('ram:32') for one bound "
-        "to a page.";
+        "Every breakpoint: id, type, address, the access flags, active, note, group; address_end for a range; page "
+        "({kind, page}) and slot_only for a physical one; port_mask for a masked port; hit_mode, hit_target and the "
+        "live hit_count.";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["responses"]["200"]["description"] = "List of breakpoints";
 
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["summary"] = "Add breakpoint";
@@ -19,12 +20,14 @@
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/AddBreakpointRequest";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["description"] =
-        "An execution, read, write, port_in or port_out breakpoint. With 'page' (execution / read / write) it fires only "
-        "while that page is mapped at the address - e.g. code in TS-Conf RAM page 32 at #C000 and not whatever else is "
-        "paged in there.";
+        "An execution, read, write, rw, port_in, port_out or port breakpoint: one address or a range (address_end), "
+        "physical with 'page' (fires on that page through any slot that shows it; slot_only: through one slot), a port "
+        "with a mask, a hit policy (hits / hit_mode + hit_target). Errors name the field: a range ending before it "
+        "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target.";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["400"]["description"] =
-        "Bad address or type, a page on a port breakpoint, a malformed page or one the machine does not have";
+        "Bad address or type, a page on a port breakpoint, a malformed page or one the machine does not have, a range "
+        "that ends before it starts or leaves its page, a mask on a memory breakpoint, a hit policy without a target";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/AddBreakpointResponse";
 
@@ -78,7 +81,7 @@
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["summary"] = "Get breakpoint status";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["description"] =
         "Returns information about the last triggered breakpoint, including type (memory/port), address, and access "
-        "mode; last_triggered_page ('ram:32') when it is bound to a page";
+        "mode; last_triggered_page ({kind, page}) when it is bound to a page; last_triggered_hit_count";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["in"] = "path";
@@ -87,3 +90,16 @@
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["description"] = "Breakpoint status";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["content"]["application/json"]
          ["schema"]["$ref"] = "#/components/schemas/BreakpointStatusResponse";
+
+    // Hit counters (conditional-breakpoints design F5)
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["summary"] = "Reset breakpoint hit counters";
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["description"] =
+        "hit_count back to 0: body {\"id\": N} for one breakpoint, no body (or no id) for all. A hit policy counts "
+        "again from there.";
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["responses"]["200"]["description"] = "Counters reset";
+    paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["responses"]["404"]["description"] = "No such breakpoint";

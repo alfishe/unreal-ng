@@ -594,6 +594,7 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
         static const char* kPending[] = {"none", "read", "write"};
         out.zxMode = kModes[static_cast<int>(_zx.mode())];
         out.zxOverlayInstalled = _zx.installed();
+        out.zxHostMemoryBus = zxHostMemoryBus();
         out.zxReadLatch = _zx.readLatch();
         out.zxPending = kPending[static_cast<int>(_zx.pending())];
         out.zxPendingAddress = _zx.pendingAddress();
@@ -775,6 +776,14 @@ void SoundChip_NeoGS::zxAddHostWait(uint32_t tStates)
 {
     if (_context && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->AddWaitStates(tStates);
+}
+
+bool SoundChip_NeoGS::zxHostMemoryBus() const
+{
+    // The Sprinter's ISA ZX-bus adapter passes I/O cycles only: the module never sees a host memory access (it stays
+    // selected or running, as on such a board). Before the machine's decoder exists: assume the machine's own ZX-bus;
+    // SoundManager re-checks once the card is attached (onHostBusChanged)
+    return !(_context && _context->pPortDecoder) || _context->pPortDecoder->ZxBusMemoryCycles();
 }
 
 bool SoundChip_NeoGS::zxInstall(bool installed)
@@ -1502,6 +1511,38 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     _audio.clear();
     _frameHadActivity = false;
     reschedule();
+}
+
+void SoundChip_NeoGS::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+    _ramTracker.Bind(_mem.ram(), _mem.ramSize());
+    _flashTracker.Bind(_flash.data(), Flash29F040B::SIZE);
+
+    ttd::TTDDeviceRegion ram;
+    ram.desc.id = ttd::TTDRegionId::NeoGSRam;
+    ram.desc.name = "neogs.ram";
+    ram.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::NeoGS);
+    ram.desc.memory = _mem.ram();
+    ram.desc.bytes = static_cast<uint32_t>(_mem.ramSize());
+    ram.desc.pieces = _ramTracker.Pieces();
+    ram.tracker = &_ramTracker;
+    out.push_back(ram);
+
+    ttd::TTDDeviceRegion flash;
+    flash.desc.id = ttd::TTDRegionId::NeoGSFlash;
+    flash.desc.name = "neogs.flash";
+    flash.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::NeoGS);
+    flash.desc.memory = _flash.data();
+    flash.desc.bytes = static_cast<uint32_t>(Flash29F040B::SIZE);
+    flash.desc.pieces = _flashTracker.Pieces();
+    flash.tracker = &_flashTracker;
+    out.push_back(flash);
+}
+
+void SoundChip_NeoGS::TTDArmRegions(bool on)
+{
+    _mem.setRamTracker(on ? &_ramTracker : nullptr);
+    _flash.setTracker(on ? &_flashTracker : nullptr);
 }
 
 uint64_t SoundChip_NeoGS::TTDHashState() const

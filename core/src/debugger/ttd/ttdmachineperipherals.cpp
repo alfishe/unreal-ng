@@ -1,5 +1,7 @@
 #include "ttdmachineperipherals.h"
 
+#include "debugger/ttd/engine/ttdregiontracker.h"
+
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
 #include "ide/ttdcddrive.h"
@@ -13,11 +15,14 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/emulatorcontext.h"
+#include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/emulator.h"
 #include "emulator/io/tape/tape.h"
+#include "emulator/rzx/rzxttdstate.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -69,22 +74,55 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         // different slots, so state saved on one personality cannot silently
         // restore into another.
         if (GeneralSoundCard* gs = context->pSoundManager->getGeneralSound())
-            registry.Register(gs->TTDPeripheralId(), gs);
+        {
+            // The lightweight card (a mod player, no coprocessor) is not recorded:
+            // it runs live through seeks, and the session file names it as fitted
+            if (gs->TTDPeripheralId() == PeripheralId::GeneralSoundLightweight)
+            {
+                registry.MarkNotRecorded(PeripheralId::GeneralSoundLightweight);
+            }
+            else
+            {
+                registry.Register(gs->TTDPeripheralId(), gs);
+                // Card memory recorded as engine regions (NeoGS RAM and flash)
+                registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(gs));
+            }
+        }
 #ifdef UNREALNG_HAVE_OPL4
         // MoonSound registers only when the config flag built it; a null
         // pointer leaves no entry, so state from a MoonSound machine meets a
         // MoonSound-less one as a visible missing blob (R7).
         registry.Register(PeripheralId::MoonSound, context->pSoundManager->getMoonSound());
+        registry.RegisterRegionSource(context->pSoundManager->getMoonSound());   // wave RAM as an engine region
 #endif
     }
     registry.Register(PeripheralId::Tape, context->pTape);
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
     registry.Register(PeripheralId::KempstonMouse, context->pMouse);
+    registry.Register(PeripheralId::KeyboardMatrix, context->pKeyboard);
+    // An RZX recording played on this machine: the playback position (a new
+    // playback cannot start while TTD records, so the set stays fixed)
+    if (context->pEmulator)
+        if (rzx::RzxSession* rzxSession = context->pEmulator->LoadedRzxSession())
+        {
+            auto rzxState = std::make_unique<rzx::RzxTtdState>(*rzxSession);
+            registry.Register(PeripheralId::RzxPlayback, rzxState.get());
+            ownedSerializers.push_back(std::move(rzxState));
+        }
     // Kempston joystick: the state byte, only on machines whose decoder answers #1F (a machine without the arm
     // cannot observe it, and its checkpoints stay as they were)
     if (context->pPortDecoder && context->pPortDecoder->HasKempstonJoystick())
         registry.Register(PeripheralId::KempstonJoystick, context->pJoystick);
     registry.Register(PeripheralId::BetaDisk, context->pBetaDisk);
+    // The WD1793's command in flight (queued steps, transfer pointers): a
+    // restore inside a multi-frame command (an ID search, a sector half read)
+    // continues it instead of ending it Not Ready. Every Beta machine
+    if (context->pBetaDisk)
+    {
+        auto wdContext = std::make_unique<TTDWd1793Context>(*context->pBetaDisk);
+        registry.Register(PeripheralId::Wd1793Context, wdContext.get());
+        ownedSerializers.push_back(std::move(wdContext));
+    }
 
     // IDE board (any machine with [HDD] Scheme): controller state, not the media
     if (context->pIdeController && context->pIdeController->Enabled())
@@ -151,16 +189,22 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             const std::string slot = "isa" + std::to_string(n + 1);
             if (!manager->SerialCard(slot))
                 continue;
-            const PeripheralId id = n == 0 ? PeripheralId::SlotSerial1 : PeripheralId::SlotSerial2;
-            auto serial = std::make_unique<TTDSerialPort>(
-                context,
-                [manager, slot]() {
-                    PcSerialCard* card = manager->SerialCard(slot);
-                    return card ? &card->Com() : nullptr;
-                },
-                id, n == 0 ? "SlotSerial1" : "SlotSerial2");
-            registry.Register(id, serial.get());
-            ownedSerializers.push_back(std::move(serial));
+            // One blob per UART: channel A under SlotSerial1 / 2, a second channel (SprinterSerial's COM2) under
+            // SlotSerial1B / 2B
+            for (int ch = 0; ch < manager->SerialCard(slot)->Channels(); ++ch)
+            {
+                const PeripheralId id = ch == 0 ? (n == 0 ? PeripheralId::SlotSerial1 : PeripheralId::SlotSerial2)
+                                                : (n == 0 ? PeripheralId::SlotSerial1B : PeripheralId::SlotSerial2B);
+                auto serial = std::make_unique<TTDSerialPort>(
+                    context,
+                    [manager, slot, ch]() {
+                        PcSerialCard* card = manager->SerialCard(slot);
+                        return card && ch < card->Channels() ? &card->Com(ch) : nullptr;
+                    },
+                    id, std::string(n == 0 ? "SlotSerial1" : "SlotSerial2") + (ch ? "B" : ""));
+                registry.Register(id, serial.get());
+                ownedSerializers.push_back(std::move(serial));
+            }
         }
     }
     if (context->pMachineSerialPeer)
@@ -184,8 +228,16 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             continue;
 
         registry.Register(serializer->TTDPeripheralId(), serializer.get());
+        // A model serializer whose memory the engine records as regions (Sprinter video and fast RAM)
+        registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(serializer.get()));
         ownedSerializers.push_back(std::move(serializer));
     }
+
+    // Model memories the engine records as regions without a serializer of their own
+    std::vector<ITTDRegionSource*> modelRegionSources;
+    decoder->CollectTTDRegionSources(modelRegionSources);
+    for (ITTDRegionSource* source : modelRegionSources)
+        registry.RegisterRegionSource(source);
 
     // A declared id with no serializer behind it means this model's state
     // would be dropped silently - a recording that looks correct and restores
@@ -205,6 +257,22 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         if (error)
             *error = message;
 
+        registry.Clear();
+        ownedSerializers.clear();
+        return false;
+    }
+
+    // The engine's device table from the same devices: a device that does not
+    // match its own descriptor, a dependency on a device this machine lacks
+    // or a time field outside the state refuses recording here, named,
+    // instead of the engine refusing its session later without a word
+    std::string tableError;
+    if (!registry.CheckDeviceTable(tableError))
+    {
+        const std::string message = "device table: " + tableError;
+        MLOGERROR("RegisterMachinePeripherals - %s", message.c_str());
+        if (error)
+            *error = message;
         registry.Clear();
         ownedSerializers.clear();
         return false;

@@ -25,6 +25,10 @@ public:
     std::deque<HostNetEvent> events;
 
     void TcpConnect(uint16_t socket, const NetEndpoint& to) override { commands.push_back({"connect", socket, to, {}}); }
+    void TcpConnectTls(uint16_t socket, const NetEndpoint& to, const std::string& serverName) override
+    {
+        commands.push_back({"connect-tls", socket, to, std::vector<uint8_t>(serverName.begin(), serverName.end())});
+    }
     void TcpSend(uint16_t socket, const uint8_t* data, uint32_t length) override
     {
         commands.push_back({"send", socket, {}, std::vector<uint8_t>(data, data + length)});
@@ -91,5 +95,13 @@ public:
                 return &*it;
         }
         return nullptr;
+    }
+
+    size_t Count(const std::string& op) const
+    {
+        size_t n = 0;
+        for (const Command& c : commands)
+            n += c.op == op ? 1 : 0;
+        return n;
     }
 };

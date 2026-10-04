@@ -115,7 +115,8 @@ class Emulator:
     # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
     # return (command-interface.md section 3.3); dicts/lists/scalars
     def audio_ay_state(self, chip: int = -1) -> dict:
-        """AY/SSG report: overview (chip=-1) or one chip fully decoded"""
+        """AY/SSG report: overview (chip=-1; active_chip = the one the ports talk to) or one chip fully
+        decoded (latched_register = the register #FFFD last selected, selected = the ports talk to it)"""
 
     def audio_fm_state(self, chip: int = -1) -> dict:
         """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
@@ -156,7 +157,8 @@ class Emulator:
         written). available=False on other machines"""
 
     def sprinter_state(self) -> dict:
-        """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
+        """Sprinter Sp2000 report: pld (state, module Standard / Game, selected_by +
+        why, cell_EE, game grid offset, bitstream hashes), decoder (CNF
         map, DOS, PN5, #7FFD / #1FFD), windows (kind + physical page), registers,
         cells #C0-#FF, clock, frame, video (mode table summary), z84c15, fdc, cmos,
         ide, bios (images, how to select). available=False on other machines"""
@@ -244,10 +246,10 @@ class Emulator:
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
-        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: the SprinterESP card's 16550 line), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
-        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()),
+        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' for this module alone) (the machine's own serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem 'modem', SprinterSerial COM1 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' on any machine), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
+        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state(); ZX Profi v5: the board's 8251, also machine_serial),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
-        atm2ioesp in network_state()), zifi=<com_port values> (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP,
+        atm2ioesp in network_state()), zifi=<com_port values> | 'zifi-native[,s3|esp01s]' (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP; 'at' = the original ESP-01 with NonOS AT 1.7.4 unless an ESP8266 build is named, 'at,esp8266-at222' = ESP-AT 2.2.2, 'zifi-native' = the 2026 firmware;
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
@@ -255,6 +257,12 @@ class Emulator:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
         alarm, dump (hex lines). Peeked: never clears register C. available=False without a clock"""
+
+    def profi_state(self) -> dict:
+        """ZX Profi board chips: board (v3 / v5), port_map (ext_ports cpm / sys / v003, dos_latch, cpm,
+        rom14, hires, extended_map, long_ports_beside_vg93), ppi8255 (control, port directions and
+        latches), pit8253 (counters[]: mode, count, out, gate; v5), usart8251 (mode, command, baud,
+        status flags, byte counters, com_interrupt_enable = #B3 D0; v5). available=False elsewhere"""
 
     def rtc_read(self, start: int, count: int = 1) -> bytes:
         """CMOS cells as the guest reads them, without side effects. ValueError without a
@@ -268,7 +276,15 @@ class Emulator:
     def isa_state(self) -> dict:
         """ISA slots (Sprinter Sp2000): latch (the #9FBD byte: value, a19_a14, aen, reset), window
         (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
-        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters).
+        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters with the IRQ
+        counters, irq_line: the slot's IRQ line - level, driver, route to PIO port B bit 0 / 1, the
+        PIO's bit-mode setup, pending / under service, reaches_cpu; summary_line; the ZX-bus
+        adapter's zx_bus: the General Sound / NeoGS behind it - cards[0] personality, ports,
+        cpu_addresses, status, machine_reset - its reset_held / reset_pulses), pio_port_b,
+        irq_summary. A 3C509B
+        (card 'el3c509b') adds resources['id_port'] (its ID port range, how the Z80 reaches it, the
+        isolation state); network_state()['slots'][n] then shows its ID port, window, FIFOs, EEPROM,
+        statistics, link state, events and a one-line summary.
         available=False on other machines"""
 
     def isa_io_read(self, slot: int, address) -> int:
@@ -280,7 +296,9 @@ class Emulator:
 
     def isa_journal(self, last: int = 64) -> dict:
         """The ISA access journal: entries[] (frame, t, pc, slot, access, space, isa_address,
-        cpu_address, what = the card's register name, value)"""
+        cpu_address, what = the card's register name, value); interrupt events have event='irq'
+        (IRQ line edges with the card's cause, PIO port B requests, INT acknowledged, RETI), also
+        in irq_events (their own 128-entry ring, which a polled card does not flush)"""
 
     def network_frames(self, link: str = "", last: int = 32) -> dict:
         """The Ethernet gateway's frame capture (frame-level cards such as the Sprinter's NE2000):
@@ -334,9 +352,10 @@ class Emulator:
         """Execute up to N instructions; a breakpoint ends the run early. Returns the same dict"""
 
     def get_registers(self) -> dict:
-        """pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr im iff1 iff2 halted t frame
-        (r with bit 7 as last written; memptr = the internal WZ latch; t = CPU T-states since
-        the frame's start; frame = the frame number)"""
+        """pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
+        (r with bit 7 as last written; memptr = the internal WZ latch; q = the flag capture
+        register; boundary = none / prefix_dd / prefix_fd / int_shadow / ld_a_ir / nmi_ack;
+        t = CPU T-states since the frame's start)"""
 
     def get_register(self, name: str) -> int | None:
         """Any name of the register table (a, hl, af', ir, memptr / wz, im, iff1, iff2, ...)"""
@@ -488,7 +507,8 @@ emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
 
 ### Mouse Input
 
-`Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands
+`Emulator` methods that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands
 and the WebAPI `/mouse/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
 Units, limits and the reasoning behind them: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
@@ -497,6 +517,9 @@ the program on the machine moves its own cursor by that much. `dy` positive = **
 
 ```python
 emu.mouse_move(dx, dy)                  # -127..127 each, not both 0
+emu.mouse_glide(dx, dy)                 # -4096..4096; one step per frame, later input queues behind it
+emu.mouse_busy()                        # True while a glide (and its queue) is in progress
+emu.mouse_devices()                     # the machine's mouse devices (list of device dicts)
 emu.mouse_press(button)                 # "left" | "right" | "middle" (or "l" | "r" | "m")
 emu.mouse_release(button)
 emu.mouse_click(button, frames=2)       # hold 1..65535 frames, then release on its own
@@ -504,7 +527,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status()                      # state dict (below)
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```
@@ -519,8 +542,9 @@ Every changing method returns the resulting **state dict**:
  'ports': {'FADF': 255, 'FBDF': 41, 'FFDF': 80},   # what IN returns now (integers, as in the WebAPI)
  'pending_click': None,       # or {'button': 'left', 'frames_left': 1}
  'ttd_journal': 'supported'}
-# plus 'warning': '...' when the change cannot reach the program
-# (mouse not fitted, or a wheel step with no wheel fitted)
+# plus the machine's mouse: 'mouse_fitted', 'device' (None when none is fitted; the WebAPI
+# device object: id, kind, fitted, in_use, ports, and 'serial' or 'ps2'), 'devices', 'queue'
+# plus 'warning': '...' when a wheel step was sent with no wheel fitted
 ```
 
 `mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
@@ -541,6 +565,8 @@ so a mistake is not silently ignored):
 |-------|-----------|
 | Out-of-range value, zero move/wheel, unknown button name | `ValueError` (message says which value and the allowed range) |
 | TTD replay in progress | `RuntimeError("TTD replay in progress; live mouse input refused")` |
+| No mouse fitted on the machine | `RuntimeError("no mouse fitted on this machine: ...")` |
+| `mouse_status(device=...)` names a device the machine does not have | `ValueError` (lists the ids it has) |
 | No mouse manager / device | `RuntimeError` |
 
 **Worked example** (paused, reproducible):
@@ -724,19 +750,23 @@ Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where
 [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```python
-id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 on failure)
-id = emu.bp(0xC000, page="ram:32")  # only while RAM page 32 is mapped at #C000 ("rom:3", "cache:0"; -1: no such page)
-id = emu.bp_read(0x4000)            # memory read; page= as for bp
-id = emu.bp_write(0x5C00)           # memory write; page= as for bp
-id = emu.bp_port_in(0xFE)
-id = emu.bp_port_out(0xFE)
+id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 when refused)
+id = emu.bp(0x8000, to=0x80FF)      # a range #8000-#80FF (one check per access, however many ranges)
+id = emu.bp(0x0038, hits="50")      # stop on the 50th hit only; ">=50" from the 50th on, "%50" every 50th
+id = emu.bp(0xC000, page="ram32")   # physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = emu.bp(0xC000, page="ram32", slot_only=True)  # only through slot 3 (#C000)
+id = emu.bp_read(0x4000)            # memory read; the same keyword arguments
+id = emu.bp_write(0x4000, to=0x57FF)  # memory write: the screen bitmap
+id = emu.bp_port_in(0xFE, mask=0x00FF)  # port IN on #FE with any high byte; mask= and hits=
+id = emu.bp_port_out(0x7FFD)
+emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 emu.bp_count()
-print(emu.bp_list())                # the text table; a page breakpoint ends "in ram:32"
-emu.bp_status()                     # the last hit, see below; 'page' when it is bound to one
+print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
 ```
 
 ### DebugManager Class
@@ -975,16 +1005,17 @@ except RuntimeError as refusal:
     print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
 ```
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
 
 **Session lifecycle:**
 
 ```python
-emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (journal on by default)
-emu.ttd_start(mode='development')        # write journal on
-emu.ttd_start(mode='gaming')             # no write journal (smaller)
-emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
-emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
+emu.ttd_start(journal=True)              # also record the write journal
+emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
+emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all)
+# -> {'ok': True, 'error': None, 'cancelled': False, 'frames_built': 301, 'frames_covered': 0,
+#     'frames_refused': 0, 'records': ...}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
 emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
 emu.ttd_get_journal_enabled()            # -> bool
@@ -993,7 +1024,7 @@ emu.ttd_invalidate()             # drop all history (reason defaults to 'python 
 emu.ttd_invalidate(reason='manual')
 ```
 
-`mode` is `'development'` (write journal on) or `'gaming'` (journal off, less memory); any other value raises `ValueError`. `enable_write_journal` wins over `mode`. With neither, `ttd_start()` keeps the choice made by `ttd_set_journal_enabled` (on by default). This matches the CLI (`ttd start --no-journal`), the WebAPI (`{"mode": "gaming"}`) and Lua (`ttd_start("gaming")`).
+The write journal answers "who wrote this address last" at once; without it the search replays one frame (same answer, slower). It is off by default, can be switched at any moment and built later for any span by replay (about 2-4 ms per frame) - see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules). This matches the CLI (`ttd start --journal`, `ttd journal on|off|build`), the WebAPI (`{"journal": true}`, `/ttd/journal`, `/ttd/journal/build`) and Lua (`ttd_start(true)`, `ttd_build_journal`).
 
 **Status:**
 
@@ -1012,7 +1043,7 @@ status = emu.ttd_status()
 #   'model_id': 0,
 #   'model_ram_pages': 8,             # BOUND, not a count (48K reports 6)
 #   'machine': {'model': 'PENTAGON', 'model_id': 1, 'ram_page_bound': 8, 'rom_signature': '0x...',
-#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...],
+#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...], 'not_recorded': [] or ['gs-lw'],
 #               'general_sound': 'none'|'z80'|'lw'|'ngs', 'turbo_sound': 'none'|'turbosound'|'tsfm'},
 #                                     # the recorded machine; None while there is no session
 #   'recorded_by': None,              # the instance that recorded a loaded file
@@ -1024,9 +1055,9 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
-#   'write_journal_complete': True,   # False: write/io find-last replays history
-#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
-#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
+#   'write_journal_complete': True,   # one span over the whole session
+#   'write_journal_segments': [{'from_frame': 98, 'from_tinframe': 4, 'to_frame': 397, 'to_tinframe': 11}],
+#                                     # the spans it covers; outside them a write search replays one frame
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
@@ -1245,6 +1276,12 @@ emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budg
 emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 # or as a number
 emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
+emu.mem_find("CD ?? 00")             # ?? = any byte, "A?" = any low nibble
+emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
+emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
+emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match
+# Result: {space, count, truncated, matches: [{address | page, offset, context_start, context}]};
+# context = 4 bytes before, the match, 4 after; {"error": "..."} when refused
 
 # Screen state
 emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
@@ -1254,7 +1291,8 @@ emu.screen_digest(mode="active")     # hash the surface the video mode displays 
                                      # 'active_surface': {'video_mode': str, 'pages': [..]}
 emu.ports_map()                      # static port map + live routing flags (P1-5 + P1-2 tags):
                                      # {'model': str, 'entries': [{'port','mask','match','device','gate',
-                                     #                             'tags': ['memory','rom',...], 'latch'}],
+                                     #                             'tags': ['memory','rom',...], 'latch',
+                                     #                             'latch_value', 'latch_fields'}],  # e.g. pFE: border, mic, ear
                                      #  'live': {'trdos_active','mouse_ports_decoded',
                                      #           'mouse_routing_note','shadow_monitor_paged'}}
                                      # tags: semantic categories (keyboard/memory/rom/screen/storage/

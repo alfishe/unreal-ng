@@ -105,6 +105,7 @@ public:
     EspStack& operator=(const EspStack&) = delete;
 
     int SlotCount() const { return static_cast<int>(_slots.size()); }
+    VirtualNetwork* Network() const { return _network; }
     const Slot& GetSlot(int i) const { return _slots[static_cast<size_t>(i)]; }
     bool Valid(int i) const { return i >= 0 && i < SlotCount() && _slots[static_cast<size_t>(i)].state != State::Free; }
     uint8_t SlotMask() const;
@@ -115,19 +116,27 @@ public:
     /// The same in a given slot (AT link ids); -1 when the slot is taken
     int OpenAt(int slot, bool tcp);
 
-    /// Start a TCP connection; onDone(Connect) follows
-    void Connect(int slot, const NetEndpoint& to);
+    /// Start a TCP connection; onDone(Connect) follows. With `tlsServerName` the host does TLS to that name
+    /// (status TlsFailed when the handshake fails) and the slot carries plaintext
+    void Connect(int slot, const NetEndpoint& to, const std::string& tlsServerName = {});
     void Bind(int slot, uint16_t port) { _slots[static_cast<size_t>(slot)].localPort = port; }
     /// Make a TCP slot a server on its bound port (backlog = the slot count)
     void Listen(int slot);
     /// The first queued client into a free slot; -1 when none is queued or no slot is free
     int Accept(int listenSlot);
+    /// The same into the given slot (a firmware that keeps its sockets in fixed places: the ZIFI-NATIVE file
+    /// servers); -1 when none is queued or the slot is taken
+    int AcceptInto(int listenSlot, int target);
+    /// Clients a listening slot holds
+    size_t PendingClients(int listenSlot) const { return _slots[static_cast<size_t>(listenSlot)].pending.size(); }
     /// TCP: send everything (the virtual network queues it)
     void Send(int slot, const uint8_t* data, uint32_t length);
     /// UDP: one datagram
     void SendTo(int slot, const NetEndpoint& to, const uint8_t* data, uint32_t length);
     /// Up to `max` received TCP bytes
     std::vector<uint8_t> Read(int slot, uint32_t max);
+    /// The same with where each byte came from (a firmware that keeps a long body by journal reference)
+    std::vector<RxByte> ReadRx(int slot, uint32_t max);
     /// The oldest received UDP datagram (false when none)
     bool PopDatagram(int slot, Datagram& out);
     /// Free the slot (closing its sockets); -1 = every slot
@@ -137,6 +146,19 @@ public:
 
     /// Resolve a host name through the virtual network's DNS; onDone(Resolve) follows
     void Resolve(const std::string& name);
+    /// A second, independent lookup (a firmware task that resolves while the main one may too: the ZiFi S3's
+    /// WC updater); onDone(Resolve) with slot kAuxResolver
+    static constexpr int kAuxResolver = -2;
+    void ResolveAux(const std::string& name);
+    /// Its state (saved by the firmware that uses it, not in EspStackState)
+    struct AuxResolverState
+    {
+        uint16_t socket = 0, id = 0, seq = 0;
+        bool resolving = false;
+        std::string name;
+    };
+    const AuxResolverState& AuxResolver() const { return _aux; }
+    void RestoreAuxResolver(const AuxResolverState& state) { _aux = state; }
 
     /// ICMP echo to `to` (`request` = the whole echo message); onDone(Ping) follows if it answers
     void Ping(uint32_t to, const std::vector<uint8_t>& request);
@@ -154,6 +176,13 @@ public:
     bool LoadState(const netstate::EspStackState& in, const ByteSource& bytes);
     /// The virtual-network sockets of this stack belong to it (TTD restore)
     void RebindAll();
+
+    /// Slots beyond netstate::kEspSlots are not in EspStackState: a firmware with more sockets saves them itself
+    /// (the ZIFI-NATIVE file bridge, in the ZiFi blob) and puts them back after LoadState
+    void RestoreSlot(int slot, Slot state) { _slots[static_cast<size_t>(slot)] = std::move(state); }
+    /// The listening slot gets a new waiting socket at the next frame boundary (TTD state of such a slot)
+    bool RearmQueued(int slot) const;
+    void QueueRearm(int slot) { _rearm.push_back(slot); }
 
     // INetGuest
     void OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
@@ -175,6 +204,8 @@ private:
 
     uint16_t _pingSocket = 0;
     uint16_t _querySocket = 0;
+
+    AuxResolverState _aux;
 
     // DNS
     uint16_t _dnsSocket = 0;

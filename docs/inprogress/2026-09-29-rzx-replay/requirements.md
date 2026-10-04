@@ -1,7 +1,7 @@
 # RZX replay integration: requirements
 
 - **Date:** 2026-09-29
-- **Status:** v1 (playback, RZ-F1 … RZ-F15, RZ-U1 … RZ-U4, RZ-T1 … RZ-T3) implemented 2026-09-29, RZ-F9 (mid-recording snapshots) included; recording (RZ-F16 … F18) free for implementation; TTD interop (RZ-F19 … F21) possibly later, low priority. Design and as-built notes: [design.md](design.md).
+- **Status:** v1 (playback, RZ-F1 … RZ-F15, RZ-U1 … RZ-U4, RZ-T1 … RZ-T3) implemented 2026-09-29, RZ-F9 (mid-recording snapshots) included; recording (RZ-F16 … F18) free for implementation; TTD interop: RZ-F19 implemented 2026-10-04 (TTD v2 Phase 3 Step 2: the playback position in every checkpoint, RZX frame ends as engine facts; [phase-3 TDD §4.3](../2026-09-25-ttd-v2-migration/phase-3-replay-inputs-tdd.md)), RZ-F20 … F21 later, low priority. Design and as-built notes: [design.md](design.md).
 - **PLAN:** row #27 (RZX record / playback and TTD interop, T2); depends on
   #64 (SZX, [2026-09-29-szx-snapshots](../2026-09-29-szx-snapshots/)) for
   machines beyond 48K / 128K.

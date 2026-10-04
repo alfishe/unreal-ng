@@ -61,7 +61,11 @@ private:
     QWidget* _tcpRow = nullptr;
     QWidget* _serialRow = nullptr;
     QComboBox* _espBaud = nullptr;
+    QComboBox* _espFirmware = nullptr;   ///< AT: the build (default: EspChip / the board's); ZIFI-NATIVE: S3 / ESP-01S
+    int _firmwareKind = -1;              ///< the peer kind _espFirmware's items are for
     QWidget* _espRow = nullptr;
+    QWidget* _modemRow = nullptr;      ///< MODEM: the guest port it answers calls on
+    QSpinBox* _modemPort = nullptr;
     QStringList _devices;
 };
 
@@ -117,8 +121,12 @@ private:
     QCheckBox* _atm2IoEsp = nullptr;
     QLabel* _atm2IoEspWhy = nullptr;
     SerialPeerEditor* _atm2IoEspPeer = nullptr;
-    SerialPeerEditor* _slotPeer[2] = {nullptr, nullptr};   ///< the SprinterESP's 16550 line, per ISA slot
+    SerialPeerEditor* _slotPeer[2] = {nullptr, nullptr};   ///< a UART card's (first) line, per ISA slot
     QWidget* _slotPeerRow[2] = {nullptr, nullptr};
+    QLabel* _slotPeerLabel[2] = {nullptr, nullptr};
+    SerialPeerEditor* _slotPeerB[2] = {nullptr, nullptr};  ///< SprinterSerial's COM2 line
+    QWidget* _slotPeerRowB[2] = {nullptr, nullptr};
+    QLineEdit* _modemPhonebook = nullptr;
     QComboBox* _atm2IoEspAddress = nullptr;
     QLabel* _zifiWhy = nullptr;
     SerialPeerEditor* _zifiPeer = nullptr;
@@ -130,6 +138,10 @@ private:
     QLineEdit* _hosts = nullptr;
     QLineEdit* _forwards = nullptr;
     QSpinBox* _timeout = nullptr;
+    QComboBox* _ethernetMode = nullptr;   ///< NAT | BRIDGE (the frame cards, network SN6)
+    QComboBox* _bridgeAdapter = nullptr;  ///< the host adapters (EthernetAccess::Adapters), editable
+    QLabel* _bridgeNote = nullptr;        ///< the packet library / permission state
+    void fillBridgeAdapters();
     QPushButton* _apply = nullptr;
     QPushButton* _revert = nullptr;
     QLabel* _message = nullptr;

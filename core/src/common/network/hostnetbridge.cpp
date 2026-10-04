@@ -51,6 +51,12 @@ void HostNetBridge::TcpConnect(uint16_t socket, const NetEndpoint& to)
     _commands.push_back({CommandType::Connect, socket, to, {}});
 }
 
+void HostNetBridge::TcpConnectTls(uint16_t socket, const NetEndpoint& to, const std::string& serverName)
+{
+    std::lock_guard<std::mutex> lock(_commandMutex);
+    _commands.push_back({CommandType::ConnectTls, socket, to, std::vector<uint8_t>(serverName.begin(), serverName.end())});
+}
+
 void HostNetBridge::TcpSend(uint16_t socket, const uint8_t* data, uint32_t length)
 {
     if (!data || length == 0)
@@ -364,7 +370,8 @@ void HostNetBridge::Run()
         const uint64_t now = NowMs();
         for (auto& [id, s] : _sockets)
         {
-            if (s.state == State::Connecting && now >= s.connectDeadlineMs)
+            if ((s.state == State::Connecting || (s.tls && !s.tlsUp)) && now >= s.connectDeadlineMs &&
+                s.handle != netsock::kInvalid)
             {
                 Emit({NetEventType::ConnectFailed, NetEventStatus::Timeout, id, {}, {}});
                 netsock::Close(s.handle);
@@ -411,10 +418,20 @@ void HostNetBridge::Execute(Command& cmd)
 {
     switch (cmd.type)
     {
+        case CommandType::ConnectTls:
         case CommandType::Connect:
         {
             Drop(cmd.socket);
             HostSocket s;
+            if (cmd.type == CommandType::ConnectTls)
+            {
+                if (!HostTls::Available())
+                {
+                    Emit({NetEventType::ConnectFailed, NetEventStatus::TlsFailed, cmd.socket, cmd.endpoint, {}});
+                    return;
+                }
+                s.tls = std::make_unique<HostTls>(std::string(cmd.data.begin(), cmd.data.end()));
+            }
             s.handle = netsock::OpenTcp();
             if (s.handle == netsock::kInvalid)
             {
@@ -425,6 +442,13 @@ void HostNetBridge::Execute(Command& cmd)
             if (r == netsock::Result::Ok)
             {
                 s.state = State::Connected;
+                if (s.tls)
+                {
+                    s.connectDeadlineMs = NowMs() + _options.connectTimeoutMs;
+                    _sockets[cmd.socket] = std::move(s);
+                    PumpTls(cmd.socket, _sockets[cmd.socket]);
+                    return;
+                }
                 Emit({NetEventType::Connected, NetEventStatus::Ok, cmd.socket, cmd.endpoint, {}});
             }
             else if (r == netsock::Result::WouldBlock)
@@ -452,6 +476,14 @@ void HostNetBridge::Execute(Command& cmd)
             if (it == _sockets.end() || it->second.state != State::Connected)
                 return;
             HostSocket& s = it->second;
+            if (s.tls)
+            {
+                // Plaintext from the guest: encrypted into the socket's queue
+                s.tls->WritePlain(cmd.data.data(), cmd.data.size());
+                std::vector<uint8_t> cipher;
+                s.tls->TakeCipher(cipher);
+                cmd.data.swap(cipher);
+            }
             if (s.sendQueue.size() + cmd.data.size() > _options.maxQueuedSendBytes)
             {
                 Emit({NetEventType::Reset, NetEventStatus::Error, cmd.socket, {}, {}});
@@ -468,6 +500,13 @@ void HostNetBridge::Execute(Command& cmd)
             auto it = _sockets.find(cmd.socket);
             if (it == _sockets.end())
                 return;
+            if (it->second.tls)
+            {
+                it->second.tls->Shutdown();   // close_notify before the FIN
+                std::vector<uint8_t> cipher;
+                it->second.tls->TakeCipher(cipher);
+                it->second.sendQueue.insert(it->second.sendQueue.end(), cipher.begin(), cipher.end());
+            }
             it->second.shutdownPending = true;
             FlushSend(cmd.socket, it->second);
             break;
@@ -579,6 +618,45 @@ void HostNetBridge::FlushSend(uint16_t id, HostSocket& s)
     }
 }
 
+void HostNetBridge::PumpTls(uint16_t id, HostSocket& s)
+{
+    if (!s.tls || s.handle == netsock::kInvalid)
+        return;
+    const HostTls::State state = s.tls->Step();
+    std::vector<uint8_t> cipher;
+    s.tls->TakeCipher(cipher);
+    s.sendQueue.insert(s.sendQueue.end(), cipher.begin(), cipher.end());
+    if (state == HostTls::State::Failed)
+    {
+        Emit({NetEventType::ConnectFailed, NetEventStatus::TlsFailed, id, {}, {}});
+        netsock::Close(s.handle);
+        s.handle = netsock::kInvalid;
+        return;
+    }
+    if (state == HostTls::State::Ready && !s.tlsUp)
+    {
+        s.tlsUp = true;
+        Emit({NetEventType::Connected, NetEventStatus::Ok, id, {}, {}});
+    }
+    if (s.tlsUp)
+    {
+        std::vector<uint8_t> plain;
+        s.tls->ReadPlain(plain);
+        if (!plain.empty())
+            Emit({NetEventType::Data, NetEventStatus::Ok, id, {}, std::move(plain)});
+        if (s.tls->PeerClosed() && !s.readClosed)
+        {
+            s.readClosed = true;
+            Emit({NetEventType::PeerClosed, NetEventStatus::Ok, id, {}, {}});
+        }
+        cipher.clear();
+        s.tls->TakeCipher(cipher);   // what reading produced to send (a key update answer, an alert)
+        if (!cipher.empty())
+            s.sendQueue.insert(s.sendQueue.end(), cipher.begin(), cipher.end());
+    }
+    FlushSend(id, s);
+}
+
 void HostNetBridge::Service(uint16_t id, HostSocket& s, const netsock::PollItem& item)
 {
     uint8_t buffer[16 * 1024];
@@ -591,6 +669,12 @@ void HostNetBridge::Service(uint16_t id, HostSocket& s, const netsock::PollItem&
             if (const netsock::Result r = netsock::ConnectResult(s.handle); r == netsock::Result::Ok)
             {
                 s.state = State::Connected;
+                if (s.tls)
+                {
+                    // The handshake within what is left of the connect time
+                    PumpTls(id, s);
+                    return;
+                }
                 Emit({NetEventType::Connected, NetEventStatus::Ok, id, {}, {}});
                 FlushSend(id, s);
             }
@@ -615,9 +699,20 @@ void HostNetBridge::Service(uint16_t id, HostSocket& s, const netsock::PollItem&
             {
                 size_t done = 0;
                 const netsock::Result r = netsock::Recv(s.handle, buffer, sizeof(buffer), done);
-                if (r == netsock::Result::Ok && done)
+                if (r == netsock::Result::Ok && done && s.tls)
+                {
+                    s.tls->Feed(buffer, done);
+                    PumpTls(id, s);
+                }
+                else if (r == netsock::Result::Ok && done)
                 {
                     Emit({NetEventType::Data, NetEventStatus::Ok, id, {}, std::vector<uint8_t>(buffer, buffer + done)});
+                }
+                else if (r == netsock::Result::Closed && s.tls && !s.tlsUp)
+                {
+                    Emit({NetEventType::ConnectFailed, NetEventStatus::TlsFailed, id, {}, {}});
+                    netsock::Close(s.handle);
+                    s.handle = netsock::kInvalid;
                 }
                 else if (r == netsock::Result::Closed)
                 {

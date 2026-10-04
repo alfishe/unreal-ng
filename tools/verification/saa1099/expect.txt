@@ -1,0 +1,49 @@
+; Expected differences of the co-simulation matrix (run-cosim.py).
+; <stream glob> <reference> <check> <reason: consensus table row in README.md>
+; A difference not listed here fails the run. Keep the globs narrow.
+
+; --- tone polarity (row 2): we start high after power-on and RST, as SAASound
+*                       mister    polarity  row 2: the RTL starts every tone generator low
+*                       mame      polarity  row 2: MAME starts every tone generator low
+
+; --- noise register (row 6): the RTL has a 17-bit register with other taps
+*                       mister    noise     row 6: 17-bit LFSR, not the measured x^18 + x^11 + 1
+mixer                   mister    out       row 6: noise-mixed voices follow the other LFSR
+noise-from-tone         mister    out       row 6: noise-mixed voices follow the other LFSR
+random-[0-9]            mister    out       row 6: noise-mixed voices follow the other LFSR
+random-raw-*            mister    out       row 6: noise-mixed voices follow the other LFSR
+
+; --- RST (row 9): Philips: numbers written during RST act only after the first half period
+sync-reset              saasound  tone      row 9: SAASound applies numbers written during RST at once
+sync-reset              mister    tone      row 9: the RTL reloads its counters from the live registers during RST
+sync-reset              mister    out       row 9: follows the tone difference
+sync-reset              mame      tone      row 9: MAME restarts the counters only at the #1C write
+sync-reset              mame      noisetime row 9: MAME does not hold the generators during RST
+
+; --- tone number alone (row 3)
+octave-latch            saasound  tone      row 3: SAASound acts on a lone tone number one transition later
+
+; --- noise rate switch (rows 7, 8)
+mixer                   saasound  noisetime row 7: SAASound switches the noise rate at once (accumulator)
+noise-from-tone         mister    noisetime row 8: leaving source 3 the RTL resumes its reload value (2048)
+noise-from-tone         mame      noisetime row 8: MAME's divider keeps running in source 3
+
+; --- envelope controls (rows 11, 13)
+env-shapes-*            mister    env       row 11: the RTL keeps the enabling write pending, so a single shape plays twice
+env-external            mister    env       row 11: the RTL keeps the enabling write pending, so a single shape plays twice
+env-resolution-switch   mister    env       row 13: the RTL keeps the position LSB on a 3-to-4-bit switch
+
+; --- MAME envelope model (rows 10-14): controls act at once and restart, 3-bit steps
+; at half speed, both generators clock on either address, the first step is skipped
+env-*                   mame      env       rows 10-14: MAME envelope model (immediate controls, 3-bit half speed)
+all-voices              mame      env       rows 10-14: MAME envelope model (immediate controls, 3-bit half speed)
+random-*                mame      env       rows 10-14: MAME envelope model (immediate controls, 3-bit half speed)
+
+; --- MAME generators stop while #1C bit 0 is clear (row 16)
+random-*                mame      tone      row 16: MAME stops every generator while the sound is disabled
+random-*                mame      noisetime row 16: MAME stops every generator while the sound is disabled
+
+; --- raw streams mix every behavior above; after the first such write the models
+; legitimately run apart (they exist for the golden digests and smoke runs)
+random-raw-*            saasound  *         raw stream: rows 3, 7, 9 occur
+random-raw-*            mister    *         raw stream: rows 6, 8, 9, 11, 13 occur
