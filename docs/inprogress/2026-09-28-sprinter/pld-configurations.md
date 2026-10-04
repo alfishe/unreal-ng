@@ -44,7 +44,7 @@ the CPU reset follows.
 | Loader timing | 113 T per bitstream byte (no Z84C15 wait generator) |
 | Soft reset | keeps the configuration (`:1588-1600`) |
 | Unknown bitstream | no module concept: Standard logic stays |
-| DooM, Video configurations | none |
+| DooM, Video configurations | none; they exist only as Sprinter 97 bitstreams and are not needed on the Sp2000 (§5) |
 
 ## 3. In unreal-ng
 
@@ -90,7 +90,17 @@ return to `DCP.MIF`'s, and the machine is Standard.
   restore `DCP.MIF`'s cell `#EE` on the hardware, and how does `/ret-fn` survive it there?
 - Mode0 bits 5-4 of the Game configuration ("graphics / text, must be 0", "640 / 320 points") are not modeled; MAME
   draws every square 320 and GAME_00 uses only `#61`, `#62`, `#65`, `#66`, `#F8`, `#FC-#FE`.
-- DooM and Video configurations: missing in both emulators; no program on the MAME-pack disk loads them.
+- ~~DooM and Video configurations~~ - **closed 2026-10-03, not planned.** They exist only as **Sprinter 97**
+  bitstreams (FLEX EPF10K10, 14 751 bytes each) in `sp97-bios-master.zip` from zxgit.org/Sprinter/97; no Sp2000
+  (ACEX 1K30) build exists anywhere, and the Sp2000 loader cannot load a FLEX stream. The Sp2000 manual says those
+  functions were merged into the standard firmware: DooM's line stretching is the standard accelerator's `#C7`
+  scale register (`ACCELER.TDF`; MAME and unreal-ng model it), and Video's disk-to-memory logic matches the
+  standard `HDD_FLIP` / `HDDR` (not verified identical). The Sp2000 DOOM demo loads no bitstream and runs on
+  Standard; the 2026 video player uses Standard too. Verdict: deep legacy, no DooM / Video modules. Head hashes
+  (first 4 096 writes), recorded in case a Sp2000 build ever turns up: DooM `sp97-sprint08-dm.bin` `#8C0B2C6D`;
+  Video `sp97-sprint04-vid.bin` `#3664CFCD`, `sp97-sprint08-vid.bin` `#C670F611`, `sp97-sprint11-vid.bin`
+  `#4F7C1F52`. A full hash does not apply. The files and the research note are in the materials,
+  `firmware/pld/special/` (README there).
 - LDConf `STREAM.300/303/305`: unknown bitstreams, run as Standard.
 - Hardware timing of the load end (CONF_DONE, extra DCLKs, the CPU reset), §1.
 

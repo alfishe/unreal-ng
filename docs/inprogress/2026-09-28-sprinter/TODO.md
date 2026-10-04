@@ -366,8 +366,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   it; Game does not: its INT is Standard's, the program waits with EI / HALT on the mode table's INT).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
-- After v1: DooM and Video PLD configuration modules, after analyzing their bitstreams
-  against MAME (Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
+- ~~After v1: DooM and Video PLD configuration modules~~ - not planned (2026-10-03): Sprinter 97
+  (FLEX) bitstreams only, their functions are in the Sp2000's Standard
+  ([pld-configurations.md](pld-configurations.md) §5). Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
   Mode0 bits 5-4, whether `/RESET` clears the grid offset).
 - LDConf's `STREAM.300` / `.303` / `.305` (other Standard core builds?) run as Standard with "unknown bitstream";
   name them once their source is known.

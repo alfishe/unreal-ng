@@ -184,4 +184,4 @@ same palettes (TEST_005's is dark on MAME too), the scroll at another position. 
   while the emulator models that button as a PLD reload (tdd-ports-memory §7). Either the board's button does not
   reload the PLD, or the intercept works another way; a board would settle it. Until then cells are set only when the
   configuration changes.
-- The DooM and Video configurations (gap analysis V12) are still missing.
+- ~~The DooM and Video configurations (gap analysis V12) are still missing.~~ Not planned (2026-10-03): they exist only as Sprinter 97 (FLEX EPF10K10) bitstreams, no Sp2000 build exists, and the Sp2000 merged their functions into Standard (DooM's line stretching = the accelerator's `#C7` scale register; Video's disk-to-memory logic = `HDD_FLIP` / `HDDR`); the Sp2000 DOOM demo and the 2026 video player run on Standard. Details and head hashes: [pld-configurations.md](pld-configurations.md) §5.
