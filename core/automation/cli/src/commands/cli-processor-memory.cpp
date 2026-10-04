@@ -1208,6 +1208,7 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
             const Z80::RegisterInfo* regInfo = Z80::FindRegister(regName);
             if (regInfo && Z80::SetRegisterValue(z80State, regName, value))
             {
+                emulator->NoteDebugChange();   // the debugger snapshot's seq
                 std::stringstream ss;
                 ss << "Set " << regName << " = 0x" << std::hex << std::uppercase << std::setfill('0');
                 ss << std::setw(regInfo->is16bit ? 4 : 2) << value << NEWLINE;
@@ -1239,8 +1240,9 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
                     return;
                 }
 
-                if (Z80::SetRegisterValue(z80State,firstArg, value))
+                if (Z80::SetRegisterValue(z80State, firstArg, value))
                 {
+                    emulator->NoteDebugChange();   // the debugger snapshot's seq
                     std::stringstream ss;
                     ss << "Set " << firstArg << " = 0x" << std::hex << std::uppercase << std::setfill('0');
                     ss << std::setw(is16bit ? 4 : 2) << value << NEWLINE;

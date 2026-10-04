@@ -17,10 +17,14 @@ namespace DebugSnapshot
 {
 StateNode Registers(EmulatorContext* context)
 {
-    StateNode ret = StateNode::Object();
     Z80* z80 = context && context->pCore ? context->pCore->GetZ80() : nullptr;
-    if (!z80)
-        return ret;
+    return z80 ? RegistersOf(*z80) : StateNode::Object();
+}
+
+StateNode RegistersOf(const Z80State& state)
+{
+    StateNode ret = StateNode::Object();
+    const Z80State* z80 = &state;
 
     StateNode main = StateNode::Object();
     main["af"] = static_cast<int>(z80->af);

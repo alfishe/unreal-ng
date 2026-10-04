@@ -921,7 +921,10 @@ namespace PythonBindings
                 Z80State* z80 = self.GetZ80State();
                 if (!z80)
                     return false;
-                return Z80::SetRegisterValue(z80, name, value);
+                const bool set = Z80::SetRegisterValue(z80, name, value);
+                if (set)
+                    self.NoteDebugChange();   // the debugger snapshot's seq
+                return set;
             }, "Set register value by name", py::arg("name"), py::arg("value"))
 
             // Memory access: direct (non-mutating) reads so inspecting

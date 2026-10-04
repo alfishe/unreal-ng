@@ -10,11 +10,14 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+struct Z80State;
 
 namespace DebugSnapshot
 {
 /// The main Z80's registers: the GET /registers object (main, alternate, index, special, interrupt, flags)
 StateNode Registers(EmulatorContext* context);
+/// The same object for a saved register set (the snapshot's prev_regs)
+StateNode RegistersOf(const Z80State& state);
 
 /// `count` (1..100) instructions from `address` in the CPU view: the GET /disasm object (address, count,
 /// instructions[] with address, bytes, mnemonic, size, label, target, targetLabel, displacement, effectiveAddress,

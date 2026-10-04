@@ -796,7 +796,10 @@ public:
             Z80State* z80 = emulator->GetZ80State();
             if (!z80)
                 return false;
-            return Z80::SetRegisterValue(z80, name, value);
+            const bool set = Z80::SetRegisterValue(z80, name, value);
+            if (set)
+                emulator->NoteDebugChange();   // the debugger snapshot's seq
+            return set;
         });
 
         // Memory access: direct (non-mutating) reads so inspecting memory

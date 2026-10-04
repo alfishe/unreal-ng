@@ -149,6 +149,8 @@ void MainLoop::Run(volatile bool& stopRequested)
             if (_context->pTimeTravelManager)
                 _context->pTimeTravelManager->OnMachineParking();
 
+            emulator->NoteDebugChange();   // a stop the debugger snapshot's seq counts
+
             // Signal that we've entered paused state
             {
                 std::lock_guard<std::mutex> lock(_pauseMutex);

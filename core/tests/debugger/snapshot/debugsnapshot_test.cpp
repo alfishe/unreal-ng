@@ -103,3 +103,28 @@ TEST_F(DebugSnapshot_Test, DisasmLimitsAndTheWrap)
     const StateNode d = DebugSnapshot::Disasm(_context, 0xFFFE, 10);
     EXPECT_EQ(d.find("instructions")->items.size(), 2u) << "stops at the 64K wrap";
 }
+
+TEST_F(DebugSnapshot_Test, StepsMoveSeqAndThePreviousStop)
+{
+    Poke(0x8000, {0x00, 0x00, 0x00});   // NOPs
+    _z80->pc = 0x8000;
+    Z80State previous;
+    EXPECT_FALSE(_emulator->PreviousStopRegisters(previous)) << "nothing ran yet";
+    const uint64_t seq = _emulator->DebugSeq();
+    _emulator->RunSingleCPUCycle(true);
+    EXPECT_GE(_emulator->DebugSeq(), seq + 2) << "a run start and a stop";
+    ASSERT_TRUE(_emulator->PreviousStopRegisters(previous));
+    EXPECT_EQ(previous.pc, 0x8000) << "the registers before the step";
+    EXPECT_EQ(_z80->pc, 0x8001);
+    _emulator->RunSingleCPUCycle(true);
+    ASSERT_TRUE(_emulator->PreviousStopRegisters(previous));
+    EXPECT_EQ(previous.pc, 0x8001) << "the previous stop, not the first";
+    EXPECT_EQ(DebugSnapshot::RegistersOf(previous).find("special")->find("pc")->i, 0x8001);
+    EXPECT_EQ(_emulator->LastStop().reason, Emulator::DebugStop::Reason::Step);
+
+    const uint64_t quiet = _emulator->DebugSeq();
+    DebugSnapshot::Registers(_context);
+    EXPECT_EQ(_emulator->DebugSeq(), quiet) << "reading changes nothing";
+    _emulator->EditMemoryFromTool("test", [this]() { Poke(0x9000, {0x55}); });
+    EXPECT_GT(_emulator->DebugSeq(), quiet) << "a tool edit counts";
+}
