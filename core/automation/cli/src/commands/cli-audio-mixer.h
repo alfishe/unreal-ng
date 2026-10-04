@@ -31,6 +31,25 @@ inline std::string Table(const StateNode& mixer, const char* newline)
     const StateNode* master = mixer.find("master");
     const StateNode* muted = master ? master->find("muted") : nullptr;
     out += std::string("master: ") + (muted && muted->b ? "muted" : "on") + newline;
+    // What the speakers get: held while a run not paced to real time runs, with the holders by reason
+    if (const StateNode* host = mixer.find("host_output"))
+    {
+        auto count = [](const StateNode* node, const char* key) {
+            const StateNode* v = node ? node->find(key) : nullptr;
+            return v ? static_cast<long long>(v->i) : 0LL;
+        };
+        const StateNode* held = host->find("held");
+        const StateNode* holders = host->find("holders");
+        char line[256];
+        std::snprintf(line, sizeof line,
+                      "host output: %s (holders: direct_run %lld, ttd_replay %lld, turbo %lld; stale cleared %lld) "
+                      "frames delivered %lld, audible %lld, held %lld",
+                      held && held->b ? "held" : "playing", count(holders, "direct_run"), count(holders, "ttd_replay"),
+                      count(holders, "turbo"), count(host, "stale_holds_cleared"), count(host, "frames_delivered"),
+                      count(host, "frames_audible"), count(host, "frames_held"));
+        out += line;
+        out += newline;
+    }
     out += std::string("source         muted solo  volume  gain_dB  peak   active  name") + newline;
     for (const StateNode& d : devices->items)
     {

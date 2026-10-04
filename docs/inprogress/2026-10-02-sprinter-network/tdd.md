@@ -393,7 +393,7 @@ AVR waits, no AFE). A card that does not wire every modem line sets `Params::cts
 |---|---|---|---|---|---|
 | `SPRINTERESP` | TL16C550C | `#3E8` (fixed on the card) | 14.7456 MHz | OUT1 -> ESP reset, OUT2 -> ESP GPIO0 (flash mode), RTS / CTS to the ESP, AFE | `AT` with `EspChip=ESP8266-AT222` (§8.3) |
 | `MODEM` | 16550A | `#3F8` (`#2F8`, `#3E8`, `#2E8` selectable) | 1.8432 MHz | OUT2 gates the IRQ (PC convention) | `MODEM` (Hayes, §10) |
-| `DUAL16552` (SprinterSerial) | PC16552D (two) | `#3F8` + `#2F8` | 1.8432 MHz | OUT2 gates each IRQ; both share the slot's IRQ line | `TCP:` / `SERIAL:` / `LOOPBACK` per channel |
+| `DUAL16552` (SprinterSerial) | PC16552D (two) | `#3F8` + `#2F8` | 1.8432 MHz | OUT2 gates each IRQ; both share the slot's IRQ line | `TCP:` / `SERIAL:` / `LOOPBACK` / `PLUG` / `MODEM` per channel |
 
 **Worked example: ESPT starts the card.** Slot 1. ESPT writes FCR `#81` at `#C3EA`, IER 0 at `#C3E9`, sets DLAB
 and divisor 8 (`14 745 600 / 16 / 8 = 115 200`), LCR 3, then MCR 6 at `#C3EC`: OUT1 = 1 drives the ESP's reset pin
@@ -503,7 +503,7 @@ Slot2Chip=RTL8019AS      ; NE2000: RTL8019AS | UM9003 | NE1000.   EL3C509B: TPO 
 Slot2Base=#300           ; NE2000: #200..#3E0 step #20.  MODEM: #3F8 | #2F8 | #3E8 | #2E8.  SPRINTERESP: fixed #3E8
 Slot2Irq=3               ; written into the card's EEPROM / config (informational: one IRQ line per slot)
 Slot2Mac=auto            ; auto = 02:53:50:00:<instance>:<slot>
-; UART cards: one peer per channel, ComPortSpec syntax (NONE | LOOPBACK | TCP:host:port | SERIAL:dev[,baud] | AT | ESPNET | MODEM)
+; UART cards: one peer per channel, ComPortSpec syntax (NONE | LOOPBACK | PLUG | TCP:host:port | SERIAL:dev[,baud] | AT | ESPNET | MODEM)
 ; Slot2Peer=AT           ; SPRINTERESP / MODEM
 ; Slot2Peer0=TCP:localhost:2323  Slot2Peer1=SERIAL:/dev/ttyUSB0   ; DUAL16552
 

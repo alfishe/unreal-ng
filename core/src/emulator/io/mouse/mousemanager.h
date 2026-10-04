@@ -26,9 +26,12 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/io/mouse/mousedevicestatus.h"
 
 class EmulatorContext;
 class IMouseSink;
@@ -56,6 +59,18 @@ public:
     bool HasMouseDevice() const;
     /// Some device of the machine can be read right now (a Kempston mouse is not while TR-DOS is active)
     bool IsMouseInUse() const;
+
+    /// The machine's mouse devices, as automation sees them: the wired ones (the machine's ports read
+    /// them), fitted or not, in registration order (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
+    std::vector<MouseDeviceStatus> DescribeDevices() const;
+    /// The device automation reports by default: the first wired, fitted one; nullopt = no mouse fitted
+    std::optional<MouseDeviceStatus> DescribeDefaultDevice() const;
+    /// A wired device by id ("kempston", "sprinter", "evo-ps2"); nullopt when the machine has none
+    std::optional<MouseDeviceStatus> DescribeDevice(const std::string& id) const;
+    /// A fitted device a program is reading has not taken the last motion yet (glide pacing)
+    bool HasUnreadMotion() const;
+    /// The smallest IMouseSink::MotionStepLimit of the fitted devices (127 with none)
+    int MotionStepLimit() const;
     /// endregion </Devices>
 
     /// region <Apply: emulator thread (ttd::ApplyInputEvent), one input to every device>
@@ -86,6 +101,7 @@ public:
 
 private:
     bool AcceptsHostEvents() const;
+    std::vector<IMouseSink*> Sinks() const;
 
     EmulatorContext* _context = nullptr;
 

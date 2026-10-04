@@ -43,6 +43,12 @@ the values depend on the model.)
   handler; whether it waits is unconfirmed): pause first and check `state` is `paused`
   before the first step.
 - `resume` after those calls continues from exactly where the run stopped.
+- **Host audio**: a direct run is not paced to real time, so the speakers get nothing while it runs
+  (`GET /audio/mixer` -> `host_output.holders.direct_run` is `1`, `frames_held` grows); every device
+  still computes its samples, captures and recordings get them. The hold ends with the run, also
+  when it fails. After `resume` the machine is heard again: `host_output.held` is `false`, every
+  `holders` entry is `0`, `frames_audible` grows. `resume` also drops a hold left without its reason
+  and counts it in `stale_holds_cleared` (should stay `0`).
 - `run_frames` counts `frames * frame length` T-states from the current position: the raster
   phase is kept, so `run_frames 1` from the middle of a frame stops in the middle of the next
   one. Use `run_frame` (persistent target position) when repeated calls must hit the same phase.

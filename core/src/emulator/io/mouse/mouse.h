@@ -135,6 +135,14 @@ public:
     void OnMouseButtons(uint8_t activeLowMask) override { SetButtons(activeLowMask); }
     void OnMouseWheel(int steps) override { SetWheel(steps); }
     void OnMouseCounters(uint8_t x, uint8_t y) override { SetCounters(x, y); }
+    /// The interface's counters and ports. Not wired on a machine whose mouse ports read its own
+    /// board mouse (PortDecoder::HasMachineMouse: Sprinter, ZX-Evo, TS-Conf)
+    MouseDeviceStatus DescribeMouse() const override;
+    /// Moved (or set) since a program last read X or Y
+    bool HasUnreadMotion() const override { return _unreadMotion.load(std::memory_order_relaxed) != 0; }
+    /// The machine's mouse ports read this interface (not a board mouse of the machine)
+    bool IsWired() const;
+    bool IsMouseWired() const override { return IsWired(); }
     /// endregion </IMouseSink>
 
     /// region <TTD (Kempston Mouse design §6.1)>
@@ -159,4 +167,7 @@ private:
     /// Frame (EmulatorState::frame_counter) of the last program read; kNeverPolled = none yet
     static constexpr uint64_t kNeverPolled = ~uint64_t{0};
     mutable std::atomic<uint64_t> _lastPollFrame{kNeverPolled};
+    /// Bit 1: X moved since a program read it, bit 2: Y (the register numbers). Pacing for automation
+    /// glides, not machine state (TTD does not save it)
+    mutable std::atomic<uint8_t> _unreadMotion{0};
 };

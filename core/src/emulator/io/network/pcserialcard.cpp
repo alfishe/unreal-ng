@@ -377,15 +377,32 @@ std::string PcSerialCard::IrqCause() const
         text += "IIR " + Hex(v.iir, 2) + " (" + what + "), IER " + Hex(v.ier, 2);
         switch (_settings.preset)
         {
+            // Appended piece by piece: chains of std::string temporaries trip a gcc 14
+            // false positive (-Warray-bounds in char_traits memcpy) at -O2
             case Preset::Modem:
-                text += "; IRQ " + std::to_string(_settings.irq) +
-                        (Com(0).Uart().Out2() ? " driven (MCR OUT2 set)" : " not driven (MCR OUT2 clear: tri-state)");
+                text += "; IRQ ";
+                text += std::to_string(_settings.irq);
+                text += Com(0).Uart().Out2() ? " driven (MCR OUT2 set)" : " not driven (MCR OUT2 clear: tri-state)";
                 break;
             case Preset::Dual16552:
-                text += ChannelIrq(ch) >= 0 ? "; INTR through J" + std::to_string(ch == 0 ? 5 : 6) + " to IRQ " +
-                                                  std::to_string(ChannelIrq(ch))
-                                            : std::string("; jumper J") + (ch == 0 ? "5" : "6") + " open";
+            {
+                const char* jumper = ch == 0 ? "5" : "6";
+                const int irq = ChannelIrq(ch);
+                if (irq >= 0)
+                {
+                    text += "; INTR through J";
+                    text += jumper;
+                    text += " to IRQ ";
+                    text += std::to_string(irq);
+                }
+                else
+                {
+                    text += "; jumper J";
+                    text += jumper;
+                    text += " open";
+                }
                 break;
+            }
             default:
                 text += "; INTR wired to IRQ3, OUT2 does not gate it";
                 break;

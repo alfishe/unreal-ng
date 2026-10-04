@@ -1,5 +1,6 @@
-// WebAPI Kempston Mouse Injection Implementation
-// Design: docs/inprogress/2026-09-12-kempston-mouse/automation-interfaces.md §4.4
+// WebAPI mouse injection: the machine's own mouse (Kempston interface, Sprinter serial mouse, ZX-Evo PS/2)
+// Design: docs/inprogress/2026-09-12-kempston-mouse/automation-interfaces.md §4.4,
+//         docs/inprogress/2026-10-03-mouse-api-routing/design.md (devices, glide, no-mouse 409)
 //
 // All range validation lives in DebugMouseManager. Handlers only check JSON presence and
 // types, resolve button names and map MouseInjectResult to an HTTP response.
@@ -79,6 +80,69 @@ DebugMouseManager* findMouseManager(const std::string& id, const Callback& callb
     return mouse;
 }
 
+std::string hex8(uint8_t value)
+{
+    static const char* const digits = "0123456789ABCDEF";
+    return std::string{digits[value >> 4], digits[value & 0x0F]};
+}
+
+Json::Value hexRow(const uint8_t* bytes, size_t count)
+{
+    Json::Value row(Json::arrayValue);
+    for (size_t i = 0; i < count; i++)
+        row.append(hex8(bytes[i]));
+    return row;
+}
+
+/// One mouse device of the machine (MouseDeviceStatus); sections that do not apply are left out
+Json::Value deviceToJson(const MouseDeviceStatus& device)
+{
+    Json::Value json;
+    json["id"] = device.id;
+    json["name"] = device.name;
+    json["kind"] = MouseDeviceStatus::KindName(device.kind);
+    json["fitted"] = device.fitted;
+    json["in_use"] = device.inUse;
+    json["wheel"] = device.wheel;
+    json["buttons"] = static_cast<Json::UInt>(device.buttons);
+    json["x"] = device.x;
+    json["y"] = device.y;
+    json["button_mask"] = device.buttonMask;
+    if (device.hasPorts)
+    {
+        json["ports"]["FADF"] = device.portButtons;
+        json["ports"]["FBDF"] = device.portX;
+        json["ports"]["FFDF"] = device.portY;
+    }
+    if (device.hasSerial)
+    {
+        const MouseDeviceStatus::Serial& serial = device.serial;
+        Json::Value line;
+        line["baud"] = serial.baud;
+        line["receiver_baud"] = serial.receiverBaud;
+        line["receiver_in_tune"] = serial.receiverInTune;
+        line["receiver_enabled"] = serial.receiverEnabled;
+        line["packet_in_flight"] = serial.packetInFlight;
+        line["packet"] = hexRow(serial.packet, 3);
+        line["packet_bytes_sent"] = serial.packetBytesSent;
+        line["pending"]["dx"] = serial.pendingDx;
+        line["pending"]["dy"] = serial.pendingDy;
+        line["packets_sent"] = static_cast<Json::UInt64>(serial.packetsSent);
+        line["bytes_received"] = static_cast<Json::UInt64>(serial.bytesReceived);
+        line["framing_errors"] = static_cast<Json::UInt64>(serial.framingErrors);
+        line["receiver_fifo"] = hexRow(serial.fifo, serial.fifoCount);
+        line["receiver_overrun"] = serial.overrun;
+        json["serial"] = line;
+    }
+    if (device.hasPs2)
+    {
+        json["ps2"]["connected"] = device.ps2.connected;
+        json["ps2"]["resolution"] = device.ps2.resolution;
+        json["ps2"]["counts_per_mm"] = 1 << device.ps2.resolution;
+    }
+    return json;
+}
+
 Json::Value stateToJson(const MouseStateSnapshot& state)
 {
     Json::Value json;
@@ -114,6 +178,16 @@ Json::Value stateToJson(const MouseStateSnapshot& state)
     }
 
     json["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+
+    // The machine's mouse (additive: the fields above stay the Kempston interface's own)
+    json["mouse_fitted"] = state.mouseFitted;
+    json["device"] = state.device ? deviceToJson(*state.device) : Json::Value(Json::nullValue);
+    json["devices"] = Json::Value(Json::arrayValue);
+    for (const MouseDeviceStatus& device : state.devices)
+        json["devices"].append(deviceToJson(device));
+    json["queue"]["ops"] = static_cast<Json::UInt>(state.queuedOps);
+    json["queue"]["glide_remaining"]["dx"] = state.glideRemainingDx;
+    json["queue"]["glide_remaining"]["dy"] = state.glideRemainingDy;
     return json;
 }
 
@@ -130,6 +204,14 @@ void sendResult(const Callback& callback, DebugMouseManager* mouse, const MouseI
         case MouseInjectStatus::ReplayActive:
             sendError(callback, HttpStatusCode::k409Conflict, "Conflict", result.message);
             return;
+        case MouseInjectStatus::NoMouseFitted: {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["reason"] = "no_mouse";
+            error["message"] = result.message;
+            sendJson(callback, error, HttpStatusCode::k409Conflict);
+            return;
+        }
         case MouseInjectStatus::NoDevice:
         default:
             sendError(callback, HttpStatusCode::k500InternalServerError, "Internal Error",
@@ -139,6 +221,8 @@ void sendResult(const Callback& callback, DebugMouseManager* mouse, const MouseI
 
     body["success"] = true;
     body["message"] = result.message;
+    if (result.queued)
+        body["queued"] = true;
     if (!result.warning.empty())
         body["warning"] = result.warning;
     body["state"] = stateToJson(mouse->GetState());
@@ -231,6 +315,34 @@ void EmulatorAPI::mouseMove(const HttpRequestPtr& req, std::function<void(const 
     body["dx"] = dx;
     body["dy"] = dy;
     sendResult(callback, mouse, mouse->Move(dx, dy), body);
+}
+
+/// @brief POST /api/v1/emulator/{id}/mouse/glide  {"dx":int, "dy":int}  (up to ±4096, stepped per frame)
+void EmulatorAPI::mouseGlide(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    DebugMouseManager* mouse = findMouseManager(id, callback);
+    if (!mouse)
+        return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isObject() || (!json->isMember("dx") && !json->isMember("dy")))
+    {
+        sendBadRequest(callback, "Missing 'dx' or 'dy' field in request body");
+        return;
+    }
+
+    int dx = 0;
+    int dy = 0;
+    if (json->isMember("dx") && !readIntField(*json, "dx", dx, callback))
+        return;
+    if (json->isMember("dy") && !readIntField(*json, "dy", dy, callback))
+        return;
+
+    Json::Value body;
+    body["dx"] = dx;
+    body["dy"] = dy;
+    sendResult(callback, mouse, mouse->Glide(dx, dy), body);
 }
 
 /// @brief POST /api/v1/emulator/{id}/mouse/press  {"button":"left"}
@@ -410,8 +522,6 @@ void EmulatorAPI::mouseSetCounters(const HttpRequestPtr& req,
 void EmulatorAPI::mouseStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
-    (void)req;
-
     auto emulator = findEmulator(id, callback);
     if (!emulator)
         return;
@@ -425,7 +535,15 @@ void EmulatorAPI::mouseStatus(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    const MouseStateSnapshot state = mouse->GetState();
+    // ?device=<id>: report that device of the machine (default: the first fitted one)
+    const std::string deviceId = req->getParameter("device");
+    if (MouseInjectResult check = mouse->CheckDevice(deviceId); !check.ok())
+    {
+        sendBadRequest(callback, check.message);
+        return;
+    }
+
+    const MouseStateSnapshot state = mouse->GetState(deviceId);
     Json::Value body = stateToJson(state);
     body["emulator_id"] = id;
 
@@ -447,8 +565,8 @@ void EmulatorAPI::mouseStatus(const HttpRequestPtr& req, std::function<void(cons
     if (!state.available)
         body["warning"] = "Mouse device not available";
     // `present` is the Kempston interface; a machine-built mouse (the Sprinter's board mouse) reads the input without it
-    else if (!state.present && !(context && context->pMouseManager && context->pMouseManager->HasMouseDevice()))
-        body["warning"] = "mouse not present: guest reads floating bus on the mouse ports";
+    else if (!state.mouseFitted)
+        body["warning"] = "no mouse fitted on this machine: mouse input is refused (409)";
     sendJson(callback, body);
 }
 

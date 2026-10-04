@@ -135,6 +135,12 @@ cannot send on COM1 (on COM2 an external modem's CTS reaches it).
 **Recommendation: A** until a real card is measured (a terminal program on COM1 that waits for CTS would tell);
 switching is one `Uart16550::Params::msrUnwired` value in the preset.
 
+**Owner decision (2026-10-04): A, as the hardware, plus a loopback test plug.** Unwired and unconnected inputs read
+inactive. A new peer `PLUG` (any `ComPort=` / `SlotNPeer=` / `SlotNPeerB=`) is an RS-232 loopback connector: the bytes
+come back and the UART's own RTS drives CTS, DTR drives DSR and DCD (`LOOPBACK` keeps holding them active). It acts on
+the inputs a card wires to its connector: on SprinterSerial COM2 (CTS only) BC-Term can then send; COM1 stays a
+plain RX / TX line, because its CH340 drives none of the UART's modem inputs.
+
 ## Q13. SprinterSerial with both IRQ jumpers fitted on the Sprinter
 
 The Sprinter joins every IRQ pin of a slot into one line (ISA I4). SprinterSerial's INTA / INTB are push-pull

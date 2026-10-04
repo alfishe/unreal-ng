@@ -11,6 +11,7 @@
 #include "sprinterfixture.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
@@ -469,6 +470,160 @@ TEST_F(SprinterInput_Test, MouseButtonsMapping)
     EXPECT_TRUE(packet().empty()) << "middle: no packet, the serial mouse has two buttons";
     manager.ApplyButtons(0xFF);
 }
+
+/// region <The automation mouse on the serial line (design 2026-10-03)>
+
+namespace
+{
+/// A Microsoft packet's motion: dx (+ right), dy (+ down), and its buttons (bit 5 left, bit 4 right)
+struct SerialPacket
+{
+    int dx;
+    int dy;
+    uint8_t buttons;
+};
+std::vector<SerialPacket> DecodePackets(const std::vector<uint8_t>& bytes)
+{
+    std::vector<SerialPacket> packets;
+    for (size_t i = 0; i + 2 < bytes.size(); i += 3)
+    {
+        EXPECT_EQ(bytes[i] & 0x40, 0x40) << "byte " << i << " starts a packet";
+        const uint8_t x = static_cast<uint8_t>(((bytes[i] & 0x03) << 6) | (bytes[i + 1] & 0x3F));
+        const uint8_t y = static_cast<uint8_t>(((bytes[i] & 0x0C) << 4) | (bytes[i + 2] & 0x3F));
+        packets.push_back({static_cast<int8_t>(x), static_cast<int8_t>(y), static_cast<uint8_t>(bytes[i] & 0x30)});
+    }
+    return packets;
+}
+}  // namespace
+
+// Packets from the automation API (DebugMouseManager: WebAPI / MCP / CLI / Lua / Python): a move and a press
+// become one Microsoft packet on SIO B, as the worked example in msserialmouse.h; the device status shows the
+// line (the packet, packets sent, the receiver in tune, bytes received)
+TEST_F(SprinterInput_Test, ApiMoveAndPressBecomeOnePacket)
+{
+    // The automation funnel on this bare machine (no DebugManager, no TTD): the input goes through the manager
+    DebugMouseManager funnel(_context);
+    DebugMouseManager* api = &funnel;
+    ProgramMouseClock();
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    In(0x001B);  // the reference sample
+
+    ASSERT_TRUE(api->Move(5, 3).ok());
+    ASSERT_TRUE(api->PressButton(MouseButton::Left).ok());
+    In(0x001B);  // the poll that starts the packet
+    Wait(3 * 26250);
+    std::vector<uint8_t> got;
+    while (In(0x001B) & 0x01)
+        got.push_back(In(0x001A));
+    EXPECT_EQ(got, (std::vector<uint8_t>{0x6C, 0x05, 0x3D})) << "5 right, 3 up, left: #6C #05 #3D";
+
+    const MouseStateSnapshot state = api->GetState();
+    ASSERT_TRUE(state.device.has_value());
+    EXPECT_EQ(state.device->id, "sprinter");
+    ASSERT_TRUE(state.device->hasSerial);
+    const MouseDeviceStatus::Serial& serial = state.device->serial;
+    EXPECT_EQ(serial.baud, 1200u);
+    EXPECT_TRUE(serial.receiverInTune);
+    EXPECT_FALSE(serial.packetInFlight);
+    EXPECT_EQ(serial.packet[0], 0x6C);
+    EXPECT_EQ(serial.packetsSent, 1u);
+    EXPECT_EQ(serial.bytesReceived, 3u);
+    EXPECT_EQ(serial.pendingDx, 0);
+    EXPECT_EQ(state.device->portX, 36) << "the PLD's Kempston view of the same counters";
+    ASSERT_TRUE(api->ReleaseAllButtons().ok());
+}
+
+// A glide of 900 right and 450 down reaches the program as packets of at most 127 each that add up exactly: the
+// 8-bit board counters never run more than a step ahead of the serial mouse, so nothing wraps. Two plain moves
+// of 127 + 127 without the program reading in between would have reached it as -2 (the counters wrap); a
+// click sent after the glide waits for it and arrives after the last motion packet
+TEST_F(SprinterInput_Test, GlideReachesTheProgramAsExactPacketsThenTheClick)
+{
+    // The automation funnel on this bare machine (no DebugManager, no TTD): the input goes through the manager
+    DebugMouseManager funnel(_context);
+    DebugMouseManager* api = &funnel;
+    ProgramMouseClock();
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    In(0x001B);  // the reference sample
+
+    // A frame is shorter than a packet (20 ms vs 22.5 ms): a step per frame without waiting for the line would
+    // run the 8-bit board counters ahead of the serial mouse until they wrap
+    std::vector<uint8_t> bytes;
+    const auto programReads = [&]() {
+        In(0x001B);  // DSS's poll: the serial mouse looks at the counters
+        Wait(20000);
+        while (In(0x001B) & 0x01)
+            bytes.push_back(In(0x001A));
+    };
+
+    ASSERT_TRUE(api->Glide(900, -450).ok());
+    const MouseInjectResult click = api->Click(MouseButton::Left, 2);
+    ASSERT_TRUE(click.ok());
+    EXPECT_TRUE(click.queued) << "the click waits behind the glide";
+    for (int frame = 0; frame < 200 && (api->IsBusy() || api->IsClickPending()); frame++)
+    {
+        programReads();
+        api->OnFrame();
+    }
+    for (int i = 0; i < 16; i++)
+        programReads();
+    EXPECT_FALSE(api->IsBusy());
+
+    const std::vector<SerialPacket> packets = DecodePackets(bytes);
+    int dx = 0, dy = 0;
+    size_t firstWithButton = packets.size();
+    for (size_t i = 0; i < packets.size(); i++)
+    {
+        EXPECT_LE(std::abs(packets[i].dx), 127);
+        EXPECT_LE(std::abs(packets[i].dy), 127);
+        if (packets[i].buttons && firstWithButton == packets.size())
+            firstWithButton = i;
+        if (firstWithButton == packets.size())
+        {
+            dx += packets[i].dx;
+            dy += packets[i].dy;
+        }
+        else
+            EXPECT_EQ(packets[i].dx, 0) << "packet " << i << ": no motion after the click started";
+    }
+    EXPECT_EQ(dx, 900) << "the glide arrives whole before the click";
+    EXPECT_EQ(dy, 450) << "450 down (the serial mouse counts down)";
+    ASSERT_LT(firstWithButton, packets.size()) << "no packet with the left button";
+    EXPECT_EQ(packets[firstWithButton].buttons, 0x20);
+    EXPECT_EQ(packets.back().buttons, 0x00) << "the click released";
+}
+
+// Capture only while polled: the board mouse is "in use" while a program reads it - SIO B (DSS 1.71's serial
+// driver) or the PLD's Kempston view (DSS 1.62.9x) - within the last kPolledWithinFrames frames; BIOS SETUP,
+// which reads neither, gets no capture
+TEST_F(SprinterInput_Test, BoardMouseInUseOnlyWhilePolled)
+{
+    MouseManager& manager = *_context->pMouseManager;
+    EXPECT_TRUE(manager.HasMouseDevice()) << "always fitted";
+    EXPECT_FALSE(Input().IsMouseInUse()) << "nobody read it yet";
+    EXPECT_FALSE(manager.IsMouseInUse());
+
+    In(0x001B);  // SIO B RR0: the serial driver's poll
+    EXPECT_TRUE(Input().IsMouseInUse());
+    EXPECT_TRUE(manager.IsMouseInUse());
+    _context->emulatorState.frame_counter += IMouseSink::kPolledWithinFrames + 1;
+    EXPECT_FALSE(Input().IsMouseInUse()) << "not read for a second";
+
+    SetCodeAll(0xFADF, true, 0x58);
+    OpenDcp();
+    In(0xFBDF);  // the PLD's Kempston view
+    EXPECT_TRUE(Input().IsMouseInUse());
+    _context->emulatorState.frame_counter += IMouseSink::kPolledWithinFrames + 1;
+    EXPECT_FALSE(Input().IsMouseInUse());
+    const MouseStateSnapshot state = DebugMouseManager(_context).GetState();
+    ASSERT_TRUE(state.device.has_value());
+    EXPECT_FALSE(state.device->inUse) << "a debug read (status) does not count as polling";
+    EXPECT_FALSE(Input().IsMouseInUse());
+}
+
+/// endregion
 
 // Every source reaches the board mouse through the emulator's MouseManager with [INPUT] Mouse=NONE: automation
 // (DebugMouseManager: WebAPI, MCP, CLI, Lua, Python), the host window's MC_MOUSE_* events (the GUI) and the host
