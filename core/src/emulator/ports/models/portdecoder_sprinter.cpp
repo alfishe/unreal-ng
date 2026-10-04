@@ -1686,8 +1686,6 @@ std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
                                           ttd::PeripheralId::SprinterVideoRam, ttd::PeripheralId::Z84C15,
                                           ttd::PeripheralId::SprinterInput, ttd::PeripheralId::SprinterCovoxBlaster,
                                           ttd::PeripheralId::SprinterIsa};
-    if (_context->pBetaDisk)
-        ids.push_back(ttd::PeripheralId::Wd1793Context);  // a restore inside a floppy command continues it
     if (_sprinterMemory)
         ids.push_back(ttd::PeripheralId::SprinterFastRam);
     return ids;
