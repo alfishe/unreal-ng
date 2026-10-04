@@ -54,6 +54,7 @@
 #include "emulator/io/serial/esp/zifivfsbridge.h"
 
 class ZiFiFtpServer;
+class ZiFiWebDavServer;
 
 class ZiFiNativeModule final : public EspModule, private ZiFiBridgeHost
 {
@@ -104,6 +105,8 @@ public:
 
     const ZiFiVfsBridge& Vfs() const { return _vfs; }
     const ZiFiFtpServer& Ftp() const { return *_ftp; }
+    /// ESP01S: the WebDAV server on port 80 (started and stopped with FTP)
+    const ZiFiWebDavServer& WebDav() const { return *_webdav; }
     /// The host port a guest port of this module is reachable on (0: none; ports below 1024 need a Forward= rule)
     uint16_t HostPortFor(uint16_t guestPort) const;
     /// The ESP's own time of day (S3: SNTP after the join; status)
@@ -228,8 +231,9 @@ private:
     void WeatherBodyDone();
     void WeatherFail(const std::string& reason);
     void ResetWeather();
-    void SaveWeather(ZiFiStateWriter& w) const;
-    bool LoadWeather(ZiFiStateReader& r);
+    /// The TTD section of the zifi-plugins work: WebDAV, the saved zifi.ini, the weather
+    void SavePlugins(ZiFiStateWriter& w) const;
+    bool LoadPlugins(ZiFiStateReader& r);
     /// zifi.ini key (lower case) as the module saved it; empty when absent
     std::string IniValue(const char* key) const;
     void NetRecv(const std::vector<uint8_t>& payload);
@@ -325,6 +329,7 @@ private:
     // The file bridge
     ZiFiVfsBridge _vfs;
     std::unique_ptr<ZiFiFtpServer> _ftp;
+    std::unique_ptr<ZiFiWebDavServer> _webdav;
     std::deque<std::vector<uint8_t>> _events;   ///< S3: the 8-deep inter-core event queue
     std::deque<std::vector<uint8_t>> _txBacklog;   ///< frames waiting for room in the UART output
     bool _bridgePoll = false;

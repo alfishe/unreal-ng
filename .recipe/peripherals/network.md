@@ -183,6 +183,35 @@ plaintext, which TTD records. A build without OpenSSL (`-DUNREAL_HOST_TLS=OFF`)
 answers `get:tls connect failed` (`native_session.https` says which). `native_session.activity` shows the command waiting for the
 network, `native_session.file_bridge` the FTP sessions and the VFS traffic.
 
+The module comes up already on that access point (as a module that booted from its saved `zifi.ini`):
+the first password it is given is taken as its own, so the plugins that send `WIFI_INI` and wait only briefly (the
+ESP-01S `NTPTIME.WMF`) get `83` at once.
+
+**Weather** (`WEATHER_GET` `24`, S3 only; the Wild Commander screen savers
+`WEATHER.WMF` / `WEATHER2.WMF`): the place comes from the `zifi.ini` the plugin
+sent with `WIFI_INI` - `city:` (any spelling the Open-Meteo geocoder knows,
+Cyrillic in UTF-8 / CP866 / CP1251) and optional `country:` (ISO code), or
+`country:` + `zip:` (api.zippopotam.us). The module fetches the place, then the
+forecast from api.open-meteo.com over plain HTTP (through the `zifi.ini` proxy
+when set), each request up to three times (1 s, 2 s apart, none after 30 s);
+the answer `A4` is the 90-byte record (place in CP866, current weather, sunrise
+/ sunset, six days), or `[0][1]` after `EE "weather:city: not found"`,
+`"weather:no city in ini"`, `"weather:meteo: http 503"`, ... The place is kept
+until `city:` / `country:` / `zip:` change: `native_session.weather`
+(`location`, `place`, `latitude`, `longitude`; `unknown` = not asked again).
+
+**WebDAV** (ESP-01S only; `ZIFIWDAV.WMF`): `FTP_START` (`06`) also starts a
+WebDAV server on guest port 80 (`FTP_STOP` stops both): one client at a time,
+one request per connection, `OPTIONS PROPFIND GET HEAD PUT DELETE MKCOL`
+(PROPFIND lists one level; PUT needs `Content-Length`), no authentication. The
+files are the Z80's: every request becomes VFS requests the plugin answers
+through the Wild Commander file API. From the host it needs a forward
+(`[NETWORK] Forward=tcp:8080:80`), then e.g.
+`curl -X PROPFIND -H "Depth: 1" http://127.0.0.1:8080/` or
+`curl -T file.txt http://127.0.0.1:8080/file.txt`. State:
+`native_session.webdav` (`running`, `client`, `request`, `last_request`,
+`last_status`, byte counts).
+
 Check by hand (the API on, PING, SYS_INFO):
 
 ```text
