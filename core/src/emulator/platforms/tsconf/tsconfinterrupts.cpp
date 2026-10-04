@@ -143,6 +143,40 @@ uint8_t TsConfInterrupts::AcknowledgeInterrupt([[maybe_unused]] uint32_t t)
     return 0xFF;  // nothing latched any more: the bus floats
 }
 
+void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
+{
+    if (!(_ts.regs[TsConfReg::IntMask] & TsConfInt::Frame)) [[unlikely]]
+        return;  // no frame INT to freeze
+
+    const uint32_t multiplier = Multiplier();
+    const uint32_t t0 = ttBefore >> 8;                                  // CPU clocks, the stall's start
+    const uint32_t t1 = static_cast<uint32_t>((static_cast<uint64_t>(ttBefore) + ticks + 255) >> 8);  // its end
+
+    // Events up to the stall's start are latched; is the pulse running at it?
+    CatchUp(RasterAt(t0));
+    // A pulse that is over is dropped here as IsIntAsserted drops it (lazily): a stale latch is not "running"
+    if ((_ts.intPending & TsConfInt::Frame) && !FramePulseActive(t0))
+        _ts.intPending &= static_cast<uint8_t>(~TsConfInt::Frame);
+    const bool pending = (_ts.intPending & TsConfInt::Frame) != 0;
+    const bool running = pending;
+    const int32_t startedAt = _ts.intFrameRaster;
+
+    // Then the events inside the stall (a pulse that started in it)
+    CatchUp(RasterAt(t1));
+
+    const uint32_t stall = t1 - t0;
+    if (running)
+    {
+        // The counter stood still for the whole stall: the pulse starts that much later
+        _ts.intFrameRaster = startedAt + static_cast<int32_t>((stall + multiplier - 1) / multiplier);
+    }
+    else if (!pending && (_ts.intPending & TsConfInt::Frame))
+    {
+        // The event fell inside the stall: its 32 clocks begin when the stall ends
+        _ts.intFrameRaster = static_cast<int32_t>((t1 + multiplier - 1) / multiplier);
+    }
+}
+
 void TsConfInterrupts::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLength)
 {
     // Finish the old frame (its last line event sits on the last tact), then
