@@ -38,6 +38,14 @@ public:
     void Clear();
     size_t LiveCount() const { return _live; }
     size_t LiveBytes() const { return _liveBytes; }
+    /// The heap it holds: the entry table, every payload's buffer, the free list
+    size_t HeapBytes() const
+    {
+        size_t bytes = _entries.capacity() * sizeof(Entry) + _free.capacity() * sizeof(uint32_t);
+        for (const Entry& e : _entries)
+            bytes += e.bytes.capacity();
+        return bytes;
+    }
 
 private:
     struct Entry

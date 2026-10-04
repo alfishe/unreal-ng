@@ -1014,14 +1014,23 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     for (size_t r = 0; r < _live.size(); ++r)
         h.referenceTables += _live[r].capacity() * sizeof(TTDPieceId) + _sinceSnapshot[r].capacity() * sizeof(uint32_t) +
                              _sinceSnapshotFlag[r].capacity();
+    // A heap block is at least 16 bytes and a multiple of 16 on the common
+    // allocators: the small per-checkpoint vectors are counted as allocated
+    auto block = [](size_t bytes) { return bytes ? (bytes + 15) & ~size_t(15) : 0; };
+#ifdef _LIBCPP_VERSION
+    // libc++ keeps a deque of elements over 256 bytes in blocks of 16, one
+    // block ahead of the last element
+    h.checkpoints = (_checkpoints.size() / 16 + 1) * 16 * sizeof(TTDEngineCheckpoint);
+#else
     h.checkpoints = _checkpoints.size() * sizeof(TTDEngineCheckpoint);
+#endif
     for (const TTDEngineCheckpoint& cp : _checkpoints)
     {
-        h.checkpoints += cp.regions.capacity() * sizeof(cp.regions[0]);
-        h.deviceBlobs += cp.unclaimedDevices.capacity();
+        h.checkpoints += block(cp.regions.capacity() * sizeof(cp.regions[0]));
+        h.deviceBlobs += block(cp.unclaimedDevices.capacity());
     }
     h.frameTable = _frames.HeapBytes();
-    h.eventLog = _events.Events().capacity() * sizeof(TTDEvent) + _payloads.LiveBytes() +
+    h.eventLog = _events.Events().capacity() * sizeof(TTDEvent) + _payloads.HeapBytes() +
                  _rzxFrames.capacity() * sizeof(_rzxFrames[0]);
     h.portReads = _busReads.HeapBytes() - _busReads.CompressedSlackBytes();
     h.portWrites = _busWrites.HeapBytes() - _busWrites.CompressedSlackBytes();
@@ -1032,6 +1041,33 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     for (const auto& [stream, copies] : _streamCopies)
         for (const FrameStreamCopy_& c : copies)
             h.frameStreams += c.bytes.capacity() + sizeof(c);
+
+    size_t& b = h.bookkeeping;
+    b += _regions.capacity() * sizeof(TTDRegionDesc);
+    for (const TTDRegionDesc& r : _regions)
+        b += r.name.capacity() + r.ownerInstance.capacity();
+    b += _inMemory.capacity() * sizeof(_inMemory[0]) + _live.capacity() * sizeof(_live[0]) +
+         _sinceSnapshot.capacity() * sizeof(_sinceSnapshot[0]) + _sinceSnapshotFlag.capacity() * sizeof(_sinceSnapshotFlag[0]) +
+         _deltaBase.capacity() * sizeof(_deltaBase[0]);
+    for (const auto& v : _inMemory)
+        b += v.capacity() * sizeof(TTDPieceId);
+    for (const auto& v : _deviceScratch)
+        b += v.capacity();
+    b += _deviceScratch.capacity() * sizeof(_deviceScratch[0]);
+    for (const auto& v : _timeLines)
+        b += v.capacity() * sizeof(TimeLine);
+    for (const auto& v : _timeFields)
+        b += v.capacity() * sizeof(TTDTimeField);
+    b += _timeLines.capacity() * sizeof(_timeLines[0]) + _timeFields.capacity() * sizeof(_timeFields[0]);
+    b += (_regionPayload.capacity() + _regionVersions.capacity()) * sizeof(uint64_t) +
+         _lastSnapshot.capacity() * sizeof(void*) + _offeredByRegion.capacity() * sizeof(uint32_t);
+    for (const TTDConfigEntry& e : _configs)
+        for (const TTDConfigField& f : e.fingerprint.fields)
+            b += sizeof(f) + f.name.capacity();
+    b += _configs.capacity() * sizeof(TTDConfigEntry);
+    for (const TTDMediaSlot& m : _mediaSlots)
+        b += sizeof(m) + m.slot.capacity() + m.format.capacity() + m.changes.capacity() * sizeof(m.changes[0]);
+    b += _segments.size() * sizeof(TTDSegmentInfo) + _syncMisses.capacity() * sizeof(TTDSyncMiss);
     return h;
 }
 

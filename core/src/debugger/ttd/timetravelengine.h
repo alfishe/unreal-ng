@@ -167,12 +167,16 @@ struct TTDEngineHeapBreakdown
     size_t busVectors = 0;          ///< interrupt vectors taken (v1 has no such journal)
     size_t writeJournal = 0;        ///< the write journal (D40): compressed blocks and segments
     size_t frameStreams = 0;        ///< frame-boundary stream copies not written out yet (D19)
+    /// The session's own tables: regions, what memory holds now, per-region
+    /// counters and scratch, time lines, configuration entries, media slots,
+    /// segments (FR-16: the report covers everything the engine allocates)
+    size_t bookkeeping = 0;
 
     size_t Total() const
     {
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
                frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads + busVectors +
-               writeJournal + frameStreams;
+               writeJournal + frameStreams + bookkeeping;
     }
 };
 
