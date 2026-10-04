@@ -25,6 +25,11 @@ full decode sweep. Depends on the
 - GM banks, Dream banks and the SAM2695 / Dream datasheets: `testdata/midi/` (git-ignored except its index
   [README](../../../testdata/midi/README.md), which lists every source with its link and license)
 
+## Order while the slots core is paused (owner decision 2026-10-04)
+
+The slots core (SL-3 and later) waits for `ttd-engine` to land. Meanwhile: libsam2695 SAM-3 / SAM-4 and the MIDI line
+ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also wait: `ttd-engine` changes the same modules.
+
 ## Remaining
 
 - [ ] Owner review of the design
