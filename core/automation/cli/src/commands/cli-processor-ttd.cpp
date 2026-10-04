@@ -934,75 +934,46 @@ void CLIProcessor::HandleTTDMarkers(const ClientSession& session, EmulatorContex
 void CLIProcessor::HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                                   const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
     if (args.size() < 2)
     {
-        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE +
-                             "Usage: ttd dump <path>" + NEWLINE);
+        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE + "Usage: ttd dump <path>" + NEWLINE);
         return;
     }
-
     const std::string& path = args[1];
-    std::ofstream out(path, std::ios::binary);
-    if (!out.is_open())
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"dump", {{"path", path}}});
+    if (!reply.Ok())
     {
-        session.SendResponse(std::string("Error: Cannot open file: ") + path + NEWLINE);
+        session.SendResponse(std::string(reply.message.rfind("Cannot open", 0) == 0 ? "Error: " : "TTD: Dump failed: ") +
+                             reply.message + NEWLINE);
         return;
     }
-
-    std::string err;
-    bool ok = mgr->SerializeSession(out, err);
-    if (ok)
-    {
-        auto bytes = out.tellp();
-        std::stringstream ss;
-        ss << "TTD: Session dumped to '" << path << "' ("
-           << static_cast<long long>(bytes) << " bytes)" << NEWLINE;
-        session.SendResponse(ss.str());
-    }
-    else
-    {
-        session.SendResponse(std::string("TTD: Dump failed: ") + err + NEWLINE);
-    }
+    std::stringstream ss;
+    ss << "TTD: Session dumped to '" << path << "' (" << reply.body.find("bytes")->i << " bytes)" << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
                                  const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
     if (args.size() < 2)
     {
-        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE +
-                             "Usage: ttd load <path>" + NEWLINE);
+        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE + "Usage: ttd load <path>" + NEWLINE);
         return;
     }
-
     const std::string& path = args[1];
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open())
+    // The most common failure is a model mismatch: a session only restores into an
+    // instance of the model it was recorded on
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"load", {{"path", path}}});
+    if (!reply.Ok())
     {
-        session.SendResponse(std::string("Error: Cannot open file: ") + path + NEWLINE);
+        session.SendResponse(std::string(reply.message.rfind("Cannot open", 0) == 0 ? "Error: " : "TTD: Load failed: ") +
+                             reply.message + NEWLINE);
         return;
     }
-
-    std::string err;
-    mgr->SetSessionSourcePath(path);
-    if (!mgr->DeserializeSession(in, err))
-    {
-        // The most common failure is a model mismatch: a session is raw RAM
-        // pages plus a chipset snapshot from one machine, so it only restores
-        // into an instance of the model it was recorded on.
-        session.SendResponse(std::string("TTD: Load failed: ") + err + NEWLINE);
-        return;
-    }
-
-    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
+    const StateNode& b = reply.body;
     std::stringstream ss;
-    ss << "TTD: Session loaded from '" << path << "' ("
-       << info.checkpointCount << " checkpoints, frames "
-       << info.sessionStartFrame << ".." << info.currentEndFrame << ")" << NEWLINE
+    ss << "TTD: Session loaded from '" << path << "' (" << b.find("checkpoint_count")->i << " checkpoints, frames "
+       << b.find("session_start_frame")->i << ".." << b.find("current_end_frame")->i << ")" << NEWLINE
        << "     Session is idle - use 'ttd seek' to position the emulator." << NEWLINE;
     session.SendResponse(ss.str());
 }

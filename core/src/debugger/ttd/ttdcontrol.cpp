@@ -4,9 +4,11 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <optional>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/filehelper.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdbookmarks.h"
@@ -139,7 +141,7 @@ const std::string* Option(const TTDRequest& request, const char* name)
     return it == request.options.end() ? nullptr : &it->second;
 }
 
-StateNode RecordedMachineNode(const TTDRecordedMachine& m)
+StateNode RecordedMachineNodeImpl(const TTDRecordedMachine& m)
 {
     StateNode v = StateNode::Object();
     v["model_id"] = static_cast<unsigned>(m.modelId);
@@ -207,7 +209,8 @@ const std::vector<std::string>& TTDControl::Verbs()
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
-        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-summary"};
+        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-summary",
+        "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -232,6 +235,10 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
+        {"file-info", {"path"}},
+        {"dump", {"path"}},
+        {"load", {"path"}},
+        {"export-clip", {"from", "to", "path", "chunk"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -278,6 +285,9 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
         return CoverageScan(request);
     if (verb == "coverage-summary")
         return CoverageSummary(request);
+    // A file on disk is described without any instance
+    if (verb == "file-info")
+        return FileInfo(request);
     if (!_manager)
         return Fail(TTDControlError::NotAvailable, "TTD engine not available in this build");
     return Run(verb, request);
@@ -325,6 +335,12 @@ TTDReply TTDControl::Run(const std::string& verb, const TTDRequest& request)
         return FindLast(request);
     if (verb == "reverse-continue")
         return ReverseContinue(request);
+    if (verb == "dump")
+        return Dump(request);
+    if (verb == "load")
+        return Load(request);
+    if (verb == "export-clip")
+        return ExportClip(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -385,7 +401,7 @@ StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
     ret["model_ram_pages"] = static_cast<unsigned>(info.modelRamPages);
     // The recorded machine (null while there is no session) and, for a loaded
     // file, the instance that recorded it
-    ret["machine"] = info.checkpointCount != 0 ? RecordedMachineNode(info.machine) : StateNode();
+    ret["machine"] = info.checkpointCount != 0 ? RecordedMachineBody(info.machine) : StateNode();
     ret["recorded_by"] = StringOrNull(info.recordedBy);
     ret["write_journal_records"] = static_cast<uint64_t>(info.writeJournalRecords);
     ret["write_journal_bytes"] = static_cast<uint64_t>(info.writeJournalBytes);
@@ -1254,6 +1270,172 @@ TTDReply TTDControl::CoverageSummary(const TTDRequest& request)
         buckets.push(node);
     }
     reply.body["buckets"] = buckets;
+    return reply;
+}
+
+StateNode TTDControl::RecordedMachineBody(const TTDRecordedMachine& machine)
+{
+    return RecordedMachineNodeImpl(machine);
+}
+
+StateNode TTDControl::FileInfoBody(const TTDFileInfo& info)
+{
+    StateNode v = StateNode::Object();
+    v["ok"] = true;
+    v["path"] = info.path;
+    v["file_bytes"] = static_cast<uint64_t>(info.fileBytes);
+    v["schema_version"] = static_cast<unsigned>(info.schemaVersion);
+    v["flags"] = static_cast<unsigned>(info.flags);
+    v["captured_at_unix_ms"] = static_cast<uint64_t>(info.capturedAtUnixMs);
+    v["recorded_by"] = StringOrNull(info.emulatorId);
+    v["session_state"] = TTDSessionStateToString(static_cast<TTDSessionState>(info.sessionState));
+    v["session_start_frame"] = static_cast<uint64_t>(info.startFrame);
+    v["session_end_frame"] = static_cast<uint64_t>(info.endFrame);
+    v["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
+    v["page_slot_count"] = static_cast<uint64_t>(info.pageStoreCount);
+    StateNode sections = StateNode::Object();
+    sections["write_journal"] = info.hasWriteJournal;
+    sections["write_journal_complete"] = info.writeJournalComplete;
+    sections["coverage_index"] = info.hasCoverageIndex;
+    sections["bookmarks"] = info.hasBookmarks;
+    sections["input_journal"] = info.hasInputJournal;
+    sections["external_events"] = info.hasExternalEvents;
+    sections["port_journals"] = info.hasPortJournals;
+    sections["top_clock_time"] = info.topClockTime;
+    v["sections"] = sections;
+    v["machine"] = RecordedMachineBody(info.machine);
+    v["peripherals_from_header"] = info.peripheralsFromHeader;
+    return v;
+}
+
+TTDReply TTDControl::FileInfo(const TTDRequest& request)
+{
+    const std::string* path = Option(request, "path");
+    if (!path || path->empty())
+    {
+        StateNode body = StateNode::Object();
+        body["ok"] = false;
+        return Fail(TTDControlError::BadRequest, "'path' is required", body);
+    }
+    TTDFileInfo info;
+    std::string err;
+    if (!ReadTTDFileInfo(*path, info, err))
+    {
+        StateNode body = StateNode::Object();
+        body["ok"] = false;
+        body["path"] = *path;
+        body["error"] = err;
+        return Fail(err.rfind("cannot open", 0) == 0 ? TTDControlError::NotFound : TTDControlError::BadRequest, err,
+                    body);
+    }
+    TTDReply reply;
+    reply.body = FileInfoBody(info);
+    return reply;
+}
+
+TTDReply TTDControl::Dump(const TTDRequest& request)
+{
+    const std::string* path = Option(request, "path");
+    if (!path || path->empty())
+        return Fail(TTDControlError::BadRequest, "Missing 'path'");
+    // UTF-8 path: FileHelper turns it into the host's form (non-ASCII names on Windows)
+    std::ofstream out(FileHelper::ToFsPath(*path), std::ios::binary);
+    if (!out.is_open())
+    {
+        StateNode body = StateNode::Object();
+        body["ok"] = false;
+        return Fail(TTDControlError::Conflict, "Cannot open file: " + *path, body);
+    }
+    std::string err;
+    const bool ok = _manager->SerializeSession(out, err);
+    const auto bytes = out.tellp();
+    StateNode body = StateNode::Object();
+    body["ok"] = ok;
+    if (!ok)
+    {
+        body["error"] = err;
+        return Fail(TTDControlError::Conflict, err, body);
+    }
+    body["path"] = *path;
+    body["bytes"] = static_cast<int64_t>(bytes);
+    TTDReply reply;
+    reply.body = body;
+    return reply;
+}
+
+TTDReply TTDControl::Load(const TTDRequest& request)
+{
+    const std::string* path = Option(request, "path");
+    if (!path || path->empty())
+        return Fail(TTDControlError::BadRequest, "Missing 'path'");
+    std::ifstream in(FileHelper::ToFsPath(*path), std::ios::binary);
+    if (!in.is_open())
+    {
+        StateNode body = StateNode::Object();
+        body["ok"] = false;
+        return Fail(TTDControlError::NotFound, "Cannot open file: " + *path, body);
+    }
+    // A session loads only into an instance of the model it was recorded on: the reason says so
+    std::string err;
+    _manager->SetSessionSourcePath(*path);
+    if (!_manager->DeserializeSession(in, err))
+    {
+        StateNode body = StateNode::Object();
+        body["ok"] = false;
+        body["error"] = err;
+        return Fail(TTDControlError::BadRequest, err, body);
+    }
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    TTDReply reply;
+    reply.body["ok"] = true;
+    reply.body["path"] = *path;
+    reply.body["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
+    reply.body["session_start_frame"] = info.sessionStartFrame;
+    reply.body["current_end_frame"] = info.currentEndFrame;
+    reply.body["state"] = TTDSessionStateToString(info.state);
+    return reply;
+}
+
+// A frame range as a lossless clip (final picture, plane B when zxdlss is on, frame
+// meta), written inside the core: one call instead of a seek and a capture per frame
+TTDReply TTDControl::ExportClip(const TTDRequest& request)
+{
+    const std::string* fromText = Option(request, "from");
+    const std::string* toText = Option(request, "to");
+    const std::string* path = Option(request, "path");
+    if (!fromText || !toText || !path || path->empty())
+        return Fail(TTDControlError::BadRequest, "Required fields: from, to, path (absolute directory)");
+    TimeTravelManager::TTDClipExportOptions options;
+    uint64_t chunk = options.chunkFrames;
+    const std::string* chunkText = Option(request, "chunk");
+    if (!ParseU64(*fromText, options.fromFrame) || !ParseU64(*toText, options.toFrame) ||
+        (chunkText && (!ParseU64(*chunkText, chunk) || chunk == 0 || chunk > UINT32_MAX)))
+        return Fail(TTDControlError::BadRequest, "from, to and chunk must be non-negative integers (chunk >= 1)");
+    options.directory = *path;
+    options.chunkFrames = static_cast<uint32_t>(chunk);
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+
+    PauseAndConfirm();
+    const auto result = _manager->ExportClip(options);
+    NotifyFrameRefresh();
+
+    StateNode body = StateNode::Object();
+    body["ok"] = result.ok;
+    body["frames"] = result.frames;
+    body["bytes"] = result.bytesWritten;
+    body["planeb"] = result.planeB;
+    body["width"] = static_cast<unsigned>(result.width);
+    body["height"] = static_cast<unsigned>(result.height);
+    body["seconds"] = result.seconds;
+    body["path"] = options.directory;
+    if (!result.ok)
+    {
+        body["error"] = result.error;
+        return Fail(TTDControlError::BadRequest, result.error, body);
+    }
+    TTDReply reply;
+    reply.body = body;
     return reply;
 }
 

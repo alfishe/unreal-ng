@@ -154,13 +154,14 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
 
 - [ ] Step 1 — The emulator and every surface on the engine; clean stop on TTD / debug mode off
   - [x] 1a (2026-10-04) The core calls `ITimeTravelHooks` (`EmulatorContext::pTimeTravelHooks`), implemented by v1; loads / configuration changes / model transfers are typed hooks with the old reasons
-  - [ ] 1b `TTDControl` over v1; WebAPI, CLI, Lua, Python on it; surface contract check
+  - [x] 1b (2026-10-04) `TTDControl` over v1; WebAPI, CLI, Lua, Python on it; surface contract check (83 checks)
     - [x] Group 1 (2026-10-04): status, start, stop, invalidate, history-limit, journal, journal-build, journal-build-cancel
     - [x] Group 2 (2026-10-04): position, seek, step-back, step-forward, resume, step-instruction, reverse-step
     - [x] Group 3 (2026-10-04): markers, bookmarks, bookmark-add, bookmark-delete
     - [x] Group 4a (2026-10-04): find-last, reverse-continue, port-events
     - [x] Group 4b (2026-10-04): coverage probe / scan / summary
-    - [ ] Group 5: dump, load, file-info, export-clip
+    - [x] Group 5 (2026-10-04): dump, load, file-info, export-clip
+    - [ ] Export clip on Lua, Python, CLI (automation parity; WebAPI / MCP only today)
   - [ ] 1c GDB, DeZog, Qt, ZX-Poly group control and the Sprinter port search on `TTDControl`
 - [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events
 - [ ] Step 3 — Black-box setting in unreal-qt (off for automation); session file location in the UI, default `scratch/ttd/`

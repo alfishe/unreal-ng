@@ -147,31 +147,6 @@ inline void ValidatePageIndex(const char* api, const std::string& type, int page
                                     " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
 }
 
-/// The recorded machine of a TTD session / file as a dict (the same keys as the
-/// WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
-/// peripherals, general_sound, turbo_sound)
-inline py::dict TtdRecordedMachineDict(const ttd::TTDRecordedMachine& m)
-{
-    py::dict d;
-    d["model_id"] = py::cast(static_cast<unsigned>(m.modelId));
-    d["model"] = m.model.empty() ? py::object(py::none()) : py::object(py::cast(m.model));
-    d["ram_page_bound"] = py::cast(static_cast<unsigned>(m.ramPageBound));
-    d["rom_signature"] = m.romSignature == 0 ? py::object(py::none())
-                                             : py::object(py::cast("0x" + ttd::HashToString(m.romSignature)));
-    d["peripheral_mask"] = py::cast(m.peripheralMask);
-    py::list list;
-    for (const std::string& name : m.peripherals)
-        list.append(name);
-    d["peripherals"] = list;
-    py::list notRecorded;
-    for (const std::string& name : m.notRecorded)
-        notRecorded.append(name);
-    d["not_recorded"] = notRecorded;
-    d["general_sound"] = py::cast(std::string(ttd::GeneralSoundName(m.generalSound)));
-    d["turbo_sound"] = py::cast(m.turboSound);
-    return d;
-}
-
 /// @brief Python bindings for Emulator class and related functionality
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
 /// StateNode -> Python object (dict / list / scalars). The one converter
@@ -3540,43 +3515,12 @@ namespace PythonBindings
                 return StateNodeToPy(TtdRunPy(self, "status").body);
             }, "Session status: the same fields as GET /ttd/status")
 
-            .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::dict {
-                py::dict r;
-                ttd::TTDFileInfo fi;
-                std::string err;
-                if (!ttd::ReadTTDFileInfo(path, fi, err))
-                {
-                    r["ok"] = false;
-                    r["path"] = path;
-                    r["error"] = err;
-                    return r;
-                }
-                r["ok"] = true;
-                r["path"] = fi.path;
-                r["file_bytes"] = py::cast(fi.fileBytes);
-                r["schema_version"] = py::cast(static_cast<unsigned>(fi.schemaVersion));
-                r["flags"] = py::cast(static_cast<unsigned>(fi.flags));
-                r["captured_at_unix_ms"] = py::cast(fi.capturedAtUnixMs);
-                r["recorded_by"] = fi.emulatorId.empty() ? py::object(py::none()) : py::object(py::cast(fi.emulatorId));
-                r["session_state"] = py::cast(std::string(
-                    ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState))));
-                r["session_start_frame"] = py::cast(fi.startFrame);
-                r["session_end_frame"] = py::cast(fi.endFrame);
-                r["checkpoint_count"] = py::cast(static_cast<uint64_t>(fi.checkpointCount));
-                r["page_slot_count"] = py::cast(static_cast<uint64_t>(fi.pageStoreCount));
-                py::dict sections;
-                sections["write_journal"] = py::cast(fi.hasWriteJournal);
-                sections["write_journal_complete"] = py::cast(fi.writeJournalComplete);
-                sections["coverage_index"] = py::cast(fi.hasCoverageIndex);
-                sections["bookmarks"] = py::cast(fi.hasBookmarks);
-                sections["input_journal"] = py::cast(fi.hasInputJournal);
-                sections["external_events"] = py::cast(fi.hasExternalEvents);
-                sections["port_journals"] = py::cast(fi.hasPortJournals);
-                sections["top_clock_time"] = py::cast(fi.topClockTime);
-                r["sections"] = sections;
-                r["machine"] = TtdRecordedMachineDict(fi.machine);
-                r["peripherals_from_header"] = py::cast(fi.peripheralsFromHeader);
-                return r;
+            .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::object {
+                const ttd::TTDReply reply = ttd::TTDControl(nullptr).Execute({"file-info", {{"path", path}}});
+                StateNode value = reply.body;
+                if (!reply.Ok() && !value.find("error"))
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
             }, "Describe a .ttd file without loading it: header, sections and the recorded machine "
                "(model, ROM signature, General Sound card, devices)", py::arg("path"))
 
@@ -3723,46 +3667,23 @@ namespace PythonBindings
             // Phase 4 — Reverse search + dump + instruction step
             // -------------------------------------------------------------
             .def("ttd_dump", [](Emulator& self, const std::string& path) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                std::ofstream out(path, std::ios::binary);
-                if (!out.is_open()) return false;
-                std::string err;
-                return ctx->pTimeTravelManager->SerializeSession(out, err);
+                return TtdRunPy(self, "dump", {{"path", path}}).Ok();
             }, "Dump TTD session to .ttd file", py::arg("path"))
 
             // Loading refuses a session recorded on a different machine model:
             // a checkpoint is raw RAM pages plus a chipset snapshot, so it only
             // restores into an instance of the model it came from. Returns a
             // dict rather than a bool so the caller can show the reason.
-            .def("ttd_load", [](Emulator& self, const std::string& path) -> py::dict {
-                py::dict result;
-                result["ok"] = false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
+            .def("ttd_load", [](Emulator& self, const std::string& path) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "load", {{"path", path}});
+                StateNode value = reply.body;
+                if (!reply.Ok())
                 {
-                    result["error"] = "TTD not available";
-                    return result;
+                    value["ok"] = false;
+                    if (!value.find("error"))
+                        value["error"] = reply.message;
                 }
-                std::ifstream in(path, std::ios::binary);
-                if (!in.is_open())
-                {
-                    result["error"] = "Cannot open file: " + path;
-                    return result;
-                }
-                std::string err;
-                ctx->pTimeTravelManager->SetSessionSourcePath(path);
-                if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
-                {
-                    result["error"] = err;
-                    return result;
-                }
-                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
-                result["ok"] = true;
-                result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
-                result["session_start_frame"] = info.sessionStartFrame;
-                result["current_end_frame"] = info.currentEndFrame;
-                return result;
+                return StateNodeToPy(value);
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
             .def("ttd_port_events", [](Emulator& self, const std::string& event, py::object argObj,

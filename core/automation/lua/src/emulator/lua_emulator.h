@@ -136,32 +136,6 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
 }
 
 
-/// The recorded machine of a TTD session / file as a Lua table (the same keys
-/// as the WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
-/// peripherals, general_sound, turbo_sound)
-inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRecordedMachine& m)
-{
-    sol::table t = lua.create_table();
-    t["model_id"] = static_cast<unsigned>(m.modelId);
-    if (!m.model.empty())
-        t["model"] = m.model;
-    t["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
-    if (m.romSignature != 0)
-        t["rom_signature"] = "0x" + ttd::HashToString(m.romSignature);
-    t["peripheral_mask"] = m.peripheralMask;
-    sol::table list = lua.create_table();
-    for (size_t i = 0; i < m.peripherals.size(); ++i)
-        list[i + 1] = m.peripherals[i];
-    t["peripherals"] = list;
-    sol::table notRecorded = lua.create_table();
-    for (size_t i = 0; i < m.notRecorded.size(); ++i)
-        notRecorded[i + 1] = m.notRecorded[i];
-    t["not_recorded"] = notRecorded;
-    t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
-    t["turbo_sound"] = m.turboSound;
-    return t;
-}
-
 class LuaEmulator
 {
     /// region <Fields>
@@ -3664,44 +3638,8 @@ public:
 
         // ttd_file_info(path) - a .ttd file's header, sections and recorded machine,
         // read without loading it: {ok, error | path, file_bytes, ..., machine, sections}
-        lua.set_function("ttd_file_info", [this](const std::string& path) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table r = lua_view.create_table();
-            ttd::TTDFileInfo fi;
-            std::string err;
-            if (!ttd::ReadTTDFileInfo(path, fi, err))
-            {
-                r["ok"] = false;
-                r["path"] = path;
-                r["error"] = err;
-                return r;
-            }
-            r["ok"] = true;
-            r["path"] = fi.path;
-            r["file_bytes"] = fi.fileBytes;
-            r["schema_version"] = static_cast<unsigned>(fi.schemaVersion);
-            r["flags"] = static_cast<unsigned>(fi.flags);
-            r["captured_at_unix_ms"] = fi.capturedAtUnixMs;
-            if (!fi.emulatorId.empty())
-                r["recorded_by"] = fi.emulatorId;
-            r["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState));
-            r["session_start_frame"] = fi.startFrame;
-            r["session_end_frame"] = fi.endFrame;
-            r["checkpoint_count"] = static_cast<uint64_t>(fi.checkpointCount);
-            r["page_slot_count"] = static_cast<uint64_t>(fi.pageStoreCount);
-            sol::table sections = lua_view.create_table();
-            sections["write_journal"] = fi.hasWriteJournal;
-            sections["write_journal_complete"] = fi.writeJournalComplete;
-            sections["coverage_index"] = fi.hasCoverageIndex;
-            sections["bookmarks"] = fi.hasBookmarks;
-            sections["input_journal"] = fi.hasInputJournal;
-            sections["external_events"] = fi.hasExternalEvents;
-            sections["port_journals"] = fi.hasPortJournals;
-            sections["top_clock_time"] = fi.topClockTime;
-            r["sections"] = sections;
-            r["machine"] = TtdRecordedMachineTable(lua_view, fi.machine);
-            r["peripherals_from_header"] = fi.peripheralsFromHeader;
-            return r;
+        lua.set_function("ttd_file_info", [this](sol::this_state ts, const std::string& path) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(ttd::TTDControl(nullptr).Execute({"file-info", {{"path", path}}})));
         });
 
         // ttd_start([journal]) - start recording; journal = true also records the
@@ -3848,43 +3786,15 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            std::ofstream out(path, std::ios::binary);
-            if (!out.is_open()) return false;
-            std::string err;
-            return ctx->pTimeTravelManager->SerializeSession(out, err);
+            return TtdRun("dump", {{"path", path}}).Ok();
         });
 
         // Loading refuses a session recorded on a different machine model: a
         // checkpoint is raw RAM pages plus a chipset snapshot, so it only
         // restores into an instance of the model it came from. Returns a table
         // with ok/error so scripts can report the reason.
-        lua.set_function("ttd_load", [this](const std::string& path) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["ok"] = false;
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
-            std::ifstream in(path, std::ios::binary);
-            if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
-            std::string err;
-            ctx->pTimeTravelManager->SetSessionSourcePath(path);
-            if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
-            {
-                result["error"] = err;
-                return result;
-            }
-            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
-            result["ok"] = true;
-            result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
-            result["session_start_frame"] = info.sessionStartFrame;
-            result["current_end_frame"] = info.currentEndFrame;
-            return result;
+        lua.set_function("ttd_load", [this](sol::this_state ts, const std::string& path) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("load", {{"path", path}})));
         });
 
         // "When did the program ...": ttd_port_events(event, [arg], [options])

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 import time
@@ -106,6 +107,20 @@ class Contract:
             lines = lines[1:]
         return "\n".join(l for l in lines if l.strip() not in (">", "") and
                          not l.startswith("Lua code executed") and not l.startswith("Python code executed")).strip()
+
+    def api_get_plain(self, route: str) -> Tuple[int, Dict[str, Any]]:
+        """A route outside the instance (GET /api/v1<route>)"""
+        try:
+            return 200, self.api._request("GET", route) or {}
+        except ApiError as e:
+            text = str(e)
+            marker = text.find("-> HTTP ")
+            status = int(text[marker + 8:].split(":", 1)[0]) if marker >= 0 else 0
+            try:
+                payload = json.loads(text[text.index("{"):])
+            except ValueError:
+                payload = {"raw": text}
+            return status, payload
 
     def lua(self, code: str) -> str:
         return self.script_output(self.cli.run("lua exec " + code))
@@ -328,6 +343,27 @@ def run_contract(c: Contract) -> None:
     status, web = c.web("GET", "/ttd/coverage/scan?addr_from=0x8000&addr_to=0x4000")
     cli = c.cli.run("ttd coverage scan --from 0x8000 --to 0x4000")
     c.check(status == 400 and ("Error: " + web.get("message", "")) in cli, f"reversed range: 400, the same message on the CLI ({cli.strip()!r})")
+
+    print("[files: dump, file-info, load]")
+    scratch = Path(__file__).resolve().parents[3] / "scratch"
+    scratch.mkdir(exist_ok=True)
+    dump = scratch / f"ttd-surface-contract-{os.getpid()}.ttd"
+    missing = scratch / f"ttd-surface-contract-{os.getpid()}-missing.ttd"
+    lua = c.lua(f"print(tostring(ttd_dump('{dump}')))")
+    c.check(lua == "true" and dump.exists(), f"Lua dumps the session ({lua!r}, exists {dump.exists()})")
+    status, web = c.api_get_plain(f"/ttd/file-info?path={dump}")
+    lua = c.lua(f"local r = ttd_file_info('{dump}'); print(tostring(r.ok) .. '|' .. r.checkpoint_count)")
+    c.check(status == 200 and lua == f"true|{web.get('checkpoint_count')}", f"Lua and WebAPI describe the file alike ({lua!r}, {web.get('checkpoint_count')})")
+    status, web = c.api_get_plain(f"/ttd/file-info?path={missing}")
+    lua = c.lua(f"local r = ttd_file_info('{missing}'); print(tostring(r.ok) .. '|' .. r.error)")
+    c.check(status == 404 and lua == "false|" + web.get("error", ""), f"a missing file: 404 and the same error in Lua ({status}, {lua!r})")
+    status, web = c.web("POST", "/ttd/load", {"path": str(dump)})
+    lua = c.lua(f"local r = ttd_load('{dump}'); print(tostring(r.ok) .. '|' .. tostring(r.checkpoint_count))")
+    c.check(status == 200 and lua == f"true|{web.get('checkpoint_count')}", f"Lua and WebAPI load it alike ({lua!r}, {web.get('checkpoint_count')})")
+    cli = c.cli.run(f"ttd load {missing}")
+    status, web = c.web("POST", "/ttd/load", {"path": str(missing)})
+    c.check(status == 404 and ("Error: " + web.get("message", "")) in cli, f"loading a missing file: 404, the same message on the CLI ({cli.strip()!r})")
+    dump.unlink(missing_ok=True)
 
     print("[write journal: Lua start() keeps the choice, WebAPI start defaults it off]")
     c.lua("ttd_set_journal_enabled(true)")

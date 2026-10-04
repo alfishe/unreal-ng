@@ -29,6 +29,8 @@ class EmulatorContext;
 namespace ttd
 {
 class TimeTravelManager;
+struct TTDFileInfo;
+struct TTDRecordedMachine;
 
 enum class TTDControlError : uint8_t
 {
@@ -78,6 +80,10 @@ public:
 
     /// Status fields, also the idle answer when time travel is not constructed
     static StateNode StatusBody(const TimeTravelManager* manager);
+    /// A .ttd file's header, sections and recorded machine (ttdfileinfo.h), read without loading it
+    static StateNode FileInfoBody(const TTDFileInfo& info);
+    /// The recorded machine (ttdfileinfo.h): the same keys on every surface
+    static StateNode RecordedMachineBody(const TTDRecordedMachine& machine);
     /// The write journal's state (D40): on/off, the spans it covers, a build in progress
     static void AddWriteJournal(StateNode& body, const TimeTravelManager& manager);
 
@@ -107,6 +113,10 @@ private:
     TTDReply CoverageProbe(const TTDRequest& request);
     TTDReply CoverageScan(const TTDRequest& request);
     TTDReply CoverageSummary(const TTDRequest& request);
+    TTDReply FileInfo(const TTDRequest& request);
+    TTDReply Dump(const TTDRequest& request);
+    TTDReply Load(const TTDRequest& request);
+    TTDReply ExportClip(const TTDRequest& request);
 
     /// Moving in the timeline is refused while recording: the restored state would
     /// overwrite the live machine and the next capture would break the timeline

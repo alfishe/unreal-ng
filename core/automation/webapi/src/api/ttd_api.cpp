@@ -24,34 +24,22 @@
 ///   POST /ttd/reverse-step       — step back N instructions or T t-states
 ///   POST /ttd/reverse-continue   — run backward until any PC matches
 ///
-/// The status endpoint surfaces every field of TTDSessionInfo so automation
-/// clients and the divergence-test harness can poll the recorder without
-/// linking against the TTD headers directly.
+/// Every route turns its request into a TTDControl verb (Phase 5, Step 1): the
+/// verbs, their checks and their answers are shared with the CLI, Lua and Python
+/// (core/src/debugger/ttd/ttdcontrol.h). The status endpoint surfaces every field
+/// of TTDSessionInfo so automation clients and the divergence-test harness can
+/// poll the recorder without linking against the TTD headers directly.
 
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
-#include <emulator/emulatorcontext.h>
-#include <emulator/emulatormanager.h>
-#include <emulator/notifications.h>  // EmulatorFramePayload
-#include <emulator/platform.h>       // NC_VIDEO_FRAME_REFRESH
 #include <json/json.h>
 
-#include <sstream>
+#include <map>
+#include <string>
 
-#include "3rdparty/message-center/messagecenter.h"
-#include "../common/jsonnumber.h"
-#include "../emulator_api.h"
-#include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttdcontrol.h"
 #include "../common/statenode_json.h"
-#include "debugger/ttd/ttdexternalevents.h"
-#include "debugger/ttd/ttdprobe.h"
-
-#include <fstream>
-#include "debugger/ttd/ttdprobe.h"
-
-#include <fstream>
+#include "../emulator_api.h"
+#include "debugger/ttd/ttdcontrol.h"
 
 using namespace drogon;
 using namespace api::v1;
@@ -65,65 +53,6 @@ namespace v1
 extern void addCorsHeaders(HttpResponsePtr& resp);
 // getEmulatorByIdOrIndex is a free function in api::v1 (emulator_api.h) —
 // visible here without an EmulatorAPI instance.
-
-/// @brief Synchronous pause discipline for TTD state mutations.
-///
-/// Emulator::Pause() is asynchronous: it sets the _isPaused flag and returns
-/// immediately, and the Z80 thread only notices at the top of the next frame
-/// iteration. If a TTD seek/step ran immediately after Pause(), the in-flight
-/// frame could overwrite the freshly restored framebuffer / emulator state
-/// — the user would see a stale screen and border that didn't match the
-/// target snapshot.
-///
-/// This helper closes that race by waiting for the Z80 thread to actually
-/// park before the caller mutates state. After the mutation, callers MUST
-/// also invoke NotifyFrameRefresh() so any attached UI surface (unreal-qt
-/// widget, unreal-screen-viewer, debug visualization window) repaints with
-/// the freshly rebuilt framebuffer — when the emulator is paused, MainLoop
-/// doesn't run and therefore doesn't post NC_VIDEO_FRAME_REFRESH itself.
-///
-/// Returns true if pause was confirmed, false on timeout. Callers proceed
-/// regardless — the mutation is still correct, just slightly racy on timeout.
-static bool PauseAndConfirm(const std::shared_ptr<Emulator>& emulator,
-                            uint32_t timeout_ms = 1000)
-{
-    if (!emulator)
-        return false;
-    emulator->Pause();
-    return emulator->WaitForPauseConfirmation(timeout_ms);
-}
-
-/// @brief Notify UI surfaces that the framebuffer has changed.
-///
-/// Posts NC_VIDEO_FRAME_REFRESH exactly as MainLoop::OnFrameEnd() does, so
-/// every observer (unreal-qt MainWindow, EmulatorBinding, debug visualization
-/// window) repaints with the current framebuffer. Required after TTD
-/// seek/step-back/step-forward because those paths rebuild the framebuffer
-/// in-place via RestoreCheckpoint -> Screen::RenderOnlyMainScreen() but do
-/// NOT run a MainLoop iteration, so the observers never see a frame event
-/// and keep displaying the pre-seek frame.
-
-static void NotifyFrameRefresh(Emulator& emulator)
-{
-    EmulatorContext* context = emulator.GetContext();
-    if (!context)
-        return;
-
-    // IMPORTANT: use GetId() (UUID-as-string), NOT GetSymbolicId().
-    // MainWindow::handleMessageScreenRefresh filters incoming
-    // EmulatorFramePayload by comparing _emulatorId against
-    // _emulator->GetUUID(). GetSymbolicId() is a human-readable label
-    // (often empty for WebAPI-created instances), which would parse to
-    // a nil UUID in EmulatorFramePayload's constructor and never match —
-    // the refresh would be silently dropped and the emulator screen would
-    // never repaint after seek/step. mainloop.cpp:402 uses GetId() too.
-    const std::string emulatorId = emulator.GetId();
-    const uint32_t frameCounter = context->emulatorState.frame_counter;
-
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
-                       new EmulatorFramePayload(emulatorId, frameCounter));
-}
 
 // ---------------------------------------------------------------------------
 // The verbs TTDControl implements for every surface (Phase 5, Step 1): a route
@@ -206,98 +135,16 @@ static bool OptionsFromJson(const HttpRequestPtr& req, std::map<std::string, std
 }
 
 
-// ---------------------------------------------------------------------------
-// The recorded machine and a .ttd file's info as JSON (ttdfileinfo.h). The same
-// keys on every surface: Lua / Python tables, CLI labels, MCP summaries.
-// ---------------------------------------------------------------------------
-namespace
-{
-
-Json::Value RecordedMachineJson(const ttd::TTDRecordedMachine& m)
-{
-    Json::Value v;
-    v["model_id"] = Json::UInt(m.modelId);
-    v["model"] = m.model.empty() ? Json::Value(Json::nullValue) : Json::Value(m.model);
-    v["ram_page_bound"] = Json::UInt(m.ramPageBound);
-    // A string: a 64-bit hash does not survive a JSON number (doubles)
-    v["rom_signature"] = m.romSignature == 0 ? Json::Value(Json::nullValue)
-                                             : Json::Value("0x" + ttd::HashToString(m.romSignature));
-    v["peripheral_mask"] = Json::UInt64(m.peripheralMask);
-    Json::Value list(Json::arrayValue);
-    for (const std::string& name : m.peripherals)
-        list.append(name);
-    v["peripherals"] = list;
-    Json::Value notRecorded(Json::arrayValue);
-    for (const std::string& name : m.notRecorded)
-        notRecorded.append(name);
-    v["not_recorded"] = notRecorded;
-    v["general_sound"] = ttd::GeneralSoundName(m.generalSound);
-    v["turbo_sound"] = m.turboSound;
-    return v;
-}
-
-Json::Value FileInfoJson(const ttd::TTDFileInfo& info)
-{
-    Json::Value v;
-    v["ok"] = true;
-    v["path"] = info.path;
-    v["file_bytes"] = Json::UInt64(info.fileBytes);
-    v["schema_version"] = Json::UInt(info.schemaVersion);
-    v["flags"] = Json::UInt(info.flags);
-    v["captured_at_unix_ms"] = Json::UInt64(info.capturedAtUnixMs);
-    v["recorded_by"] = info.emulatorId.empty() ? Json::Value(Json::nullValue) : Json::Value(info.emulatorId);
-    v["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(info.sessionState));
-    v["session_start_frame"] = Json::UInt64(info.startFrame);
-    v["session_end_frame"] = Json::UInt64(info.endFrame);
-    v["checkpoint_count"] = Json::UInt(info.checkpointCount);
-    v["page_slot_count"] = Json::UInt(info.pageStoreCount);
-    Json::Value sections;
-    sections["write_journal"] = info.hasWriteJournal;
-    sections["write_journal_complete"] = info.writeJournalComplete;
-    sections["coverage_index"] = info.hasCoverageIndex;
-    sections["bookmarks"] = info.hasBookmarks;
-    sections["input_journal"] = info.hasInputJournal;
-    sections["external_events"] = info.hasExternalEvents;
-    sections["port_journals"] = info.hasPortJournals;
-    sections["top_clock_time"] = info.topClockTime;
-    v["sections"] = sections;
-    v["machine"] = RecordedMachineJson(info.machine);
-    v["peripherals_from_header"] = info.peripheralsFromHeader;
-    return v;
-}
-
-}  // namespace
 
 /// @brief GET /api/v1/ttd/file-info?path=<file.ttd>
 /// A .ttd file's header, sections and recorded machine, read without loading
 /// it (no emulator instance involved): provision a matching machine first.
 void EmulatorAPI::getTTDFileInfo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    const std::string path = req->getParameter("path");
-    Json::Value ret;
-    HttpStatusCode code = HttpStatusCode::k200OK;
-    if (path.empty())
-    {
-        ret["ok"] = false;
-        ret["error"] = "query parameter 'path' is required";
-        code = HttpStatusCode::k400BadRequest;
-    }
-    else
-    {
-        ttd::TTDFileInfo info;
-        std::string err;
-        if (ttd::ReadTTDFileInfo(path, info, err))
-            ret = FileInfoJson(info);
-        else
-        {
-            ret["ok"] = false;
-            ret["path"] = path;
-            ret["error"] = err;
-            code = err.rfind("cannot open", 0) == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest;
-        }
-    }
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    resp->setStatusCode(code);
+    // A file on disk: no emulator instance involved
+    const ttd::TTDReply reply = ttd::TTDControl(nullptr).Execute({"file-info", {{"path", req->getParameter("path")}}});
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
     addCorsHeaders(resp);
     callback(resp);
 }
@@ -336,106 +183,6 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
 {    (void)req;
     RespondTTD(id, "status", {}, callback);
 }
-
-// ---------------------------------------------------------------------------
-// Internal helper: reject scrub-style operations during active recording.
-// Returns true if the request was rejected (callback already invoked).
-//
-// Scrubbing (seek / step-back / step-forward) during Recording trashes
-// emulator state — RestoreCheckpoint overwrites the live emulator with old
-// captured data, and the next OnFrameBoundary would append a checkpoint at
-// the restored (older) frame, breaking the timeline's sorted invariant.
-// Callers MUST StopRecording first.
-// ---------------------------------------------------------------------------
-static bool rejectIfRecording(ttd::TimeTravelManager* mgr,
-                               std::function<void(const HttpResponsePtr&)>& callback)
-{
-    if (!mgr || !mgr->IsRecording())
-        return false;  // Not recording — caller may proceed.
-
-    Json::Value error;
-    error["error"]   = "Conflict";
-    error["message"] = "Cannot scrub while recording is active — call "
-                       "POST /ttd/stop first. Scrubbing during recording "
-                       "would overwrite live emulator state with restored "
-                       "checkpoint data and corrupt the timeline.";
-    error["state"]   = ttd::TTDSessionStateToString(mgr->GetState());
-    auto resp = HttpResponse::newHttpJsonResponse(error);
-    resp->setStatusCode(HttpStatusCode::k409Conflict);
-    addCorsHeaders(resp);
-    callback(resp);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Internal helper: resolve emulator + context + TTD manager, or send error.
-// Returns nullptr on failure (error response already sent).
-// On success, `outEmulator` (if non-null) receives the emulator pointer so
-// callers can Pause/Resume it around state-mutating TTD operations.
-// ---------------------------------------------------------------------------
-static ttd::TimeTravelManager* resolveTTD(
-    const std::string& id,
-    std::function<void(const HttpResponsePtr&)>& callback,
-    bool requireManager = true,
-    std::shared_ptr<Emulator>* outEmulator = nullptr)
-{
-    auto emulator = getEmulatorByIdOrIndex(id);
-    if (!emulator)
-    {
-        Json::Value error;
-        error["error"]   = "Not Found";
-        error["message"] = "Emulator not found with ID: " + id;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
-        return nullptr;
-    }
-
-    if (emulator->IsDestroying())
-    {
-        Json::Value error;
-        error["error"]   = "Service Unavailable";
-        error["message"] = "Emulator is shutting down";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k503ServiceUnavailable);
-        addCorsHeaders(resp);
-        callback(resp);
-        return nullptr;
-    }
-
-    EmulatorContext* context = emulator->GetContext();
-    if (!context)
-    {
-        Json::Value error;
-        error["error"]   = "Internal Error";
-        error["message"] = "Unable to access emulator context";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return nullptr;
-    }
-
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-    if (requireManager && !mgr)
-    {
-        Json::Value error;
-        error["error"]   = "Not Available";
-        error["message"] = "TTD engine not available in this build";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k501NotImplemented);
-        addCorsHeaders(resp);
-        callback(resp);
-        return nullptr;
-    }
-
-    if (outEmulator)
-        *outEmulator = emulator;
-
-    return mgr;
-}
-
 
 /// @brief POST /api/v1/emulator/{id}/ttd/start
 ///
@@ -508,52 +255,9 @@ void EmulatorAPI::exportClipTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-    if (rejectIfRecording(mgr, callback)) return;
-
-    auto jsonBody = req->getJsonObject();
-    if (!jsonBody || !jsonBody->isMember("from") || !jsonBody->isMember("to") || !jsonBody->isMember("path"))
-    {
-        Json::Value error;
-        error["error"]   = "Bad Request";
-        error["message"] = "Required fields: from, to, path (absolute directory)";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    ttd::TimeTravelManager::TTDClipExportOptions options;
-    options.fromFrame = (*jsonBody)["from"].asUInt64();
-    options.toFrame = (*jsonBody)["to"].asUInt64();
-    options.directory = (*jsonBody)["path"].asString();
-    if (jsonBody->isMember("chunk"))
-        options.chunkFrames = (*jsonBody)["chunk"].asUInt();
-
-    PauseAndConfirm(emulator);
-    const auto result = mgr->ExportClip(options);
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["ok"] = result.ok;
-    ret["frames"] = Json::UInt64(result.frames);
-    ret["bytes"] = Json::UInt64(result.bytesWritten);
-    ret["planeb"] = result.planeB;
-    ret["width"] = result.width;
-    ret["height"] = result.height;
-    ret["seconds"] = result.seconds;
-    ret["path"] = options.directory;
-    if (!result.ok)
-        ret["error"] = result.error;
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    if (!result.ok)
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "export-clip", std::move(options), callback);
 }
 
 void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
@@ -671,53 +375,9 @@ void EmulatorAPI::dumpTTD(const HttpRequestPtr& req,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    auto json = req->getJsonObject();
-    if (!json || !json->isMember("path"))
-    {
-        Json::Value err;
-        err["error"] = "Missing 'path' in request body";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const std::string path = (*json)["path"].asString();
-    std::ofstream out(path, std::ios::binary);
-    if (!out.is_open())
-    {
-        Json::Value err;
-        err["error"] = "Cannot open file: " + path;
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    std::string errMsg;
-    bool ok = mgr->SerializeSession(out, errMsg);
-    auto bytes = out.tellp();
-
-    Json::Value ret;
-    ret["ok"] = ok;
-    if (ok)
-    {
-        ret["path"]  = path;
-        ret["bytes"] = Json::Int64(static_cast<long long>(bytes));
-    }
-    else
-    {
-        ret["error"] = errMsg;
-    }
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "dump", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/load
@@ -739,59 +399,9 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
                           std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    auto json = req->getJsonObject();
-    if (!json || !json->isMember("path"))
-    {
-        Json::Value err;
-        err["error"] = "Missing 'path' in request body";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const std::string path = (*json)["path"].asString();
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open())
-    {
-        Json::Value err;
-        err["error"] = "Cannot open file: " + path;
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    std::string errMsg;
-    Json::Value ret;
-    mgr->SetSessionSourcePath(path);
-    if (!mgr->DeserializeSession(in, errMsg))
-    {
-        ret["ok"] = false;
-        ret["error"] = errMsg;
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
-    ret["ok"] = true;
-    ret["path"] = path;
-    ret["checkpoint_count"] = Json::UInt64(info.checkpointCount);
-    ret["session_start_frame"] = Json::UInt64(info.sessionStartFrame);
-    ret["current_end_frame"] = Json::UInt64(info.currentEndFrame);
-    ret["state"] = ttd::TTDSessionStateToString(info.state);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "load", std::move(options), callback);
 }
 
 /// TD-8: the part of history a backward search examined. It walked back from

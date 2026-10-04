@@ -6,11 +6,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "_helpers/testpathhelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdexternalevents.h"
@@ -445,4 +447,49 @@ TEST_F(TTDControl_Test, CoverageScanFindsTheFramesThatRanTheRom)
         GTEST_SKIP() << "coverage index off in this configuration";
     EXPECT_GT(Int(r, "matching_frames"), 0);
     EXPECT_EQ(static_cast<int64_t>(r.body.find("frames")->items.size()), Int(r, "matching_frames"));
+}
+
+// ---------------------------------------------------------------------------
+// Group 5: files
+// ---------------------------------------------------------------------------
+
+TEST_F(TTDControl_Test, ASessionDumpedIsDescribedAndLoadedThroughTheVerbs)
+{
+    Record(3);
+    ASSERT_TRUE(Run("stop").Ok());
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("ttdcontrol-dump.ttd");
+
+    TTDReply r = Run("dump", {{"path", path}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_GT(Int(r, "bytes"), 0);
+
+    // file-info needs no instance at all
+    r = TTDControl(nullptr).Execute({"file-info", {{"path", path}}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "ok"));
+    EXPECT_GT(Int(r, "checkpoint_count"), 0);
+    EXPECT_TRUE(r.body.find("machine")->isObject());
+
+    ASSERT_TRUE(Run("invalidate").Ok());
+    r = Run("load", {{"path", path}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_GT(Int(r, "checkpoint_count"), 0);
+    EXPECT_EQ(Str(r, "state"), "idle");
+    std::remove(path.c_str());
+}
+
+TEST_F(TTDControl_Test, FileVerbsReportMissingAndUnreadableFiles)
+{
+    const std::string missing = TestPathHelper::GetUniqueTestScratchPath("no-such-session.ttd");
+    TTDReply r = TTDControl(nullptr).Execute({"file-info", {{"path", missing}}});
+    EXPECT_EQ(r.error, TTDControlError::NotFound);
+    EXPECT_FALSE(Bool(r, "ok"));
+    EXPECT_EQ(Str(r, "path"), missing);
+    EXPECT_EQ(TTDControl(nullptr).Execute({"file-info", {}}).error, TTDControlError::BadRequest);
+
+    EXPECT_EQ(Run("load", {{"path", missing}}).error, TTDControlError::NotFound);
+    EXPECT_EQ(Run("dump", {{"path", missing + "/inside/a/file"}}).error, TTDControlError::Conflict);
+    EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "2"}}).error, TTDControlError::BadRequest);  // no path
+    Record(2);
+    EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "1"}, {"path", missing}}).error, TTDControlError::Conflict);
 }
