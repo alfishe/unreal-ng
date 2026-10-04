@@ -51,7 +51,7 @@ bank number combines `#7FFD` bits into 6 bits → 64 pages of 16K.
 Exercise it from a snapshot of running code or poke the port through a small
 loader; then verify the effect with
 [capture_media screenshot](../media/agent-screenshot-view.md) (GigaScreen
-flicker needs two frames) or `inspect_state {"aspects":["video"]}`.
+flicker needs two frames; a screenshot is the whole frame, 352x288, by default) or `inspect_state {"aspects":["video"]}`.
 
 ## WebAPI
 
@@ -70,8 +70,8 @@ curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq .
 
 `pentagon128k`/`pentagon512k` `unreal.ini` ships `TurboSound=FM` (TSFM in
 the TurboSound slot), `CovoxFB=1` (Pentagon-style Covox at `#FB`),
-`SD=1` (SoundDrive), `GSType=BASS` on master (`Z80` LLE on the
-`generalsound` branch). Changing any of these requires **editing the config
+`SD=1` (SoundDrive), `GSType=NGS` (NeoGS; `Z80` = classic General Sound, `BASS` is a
+deprecated alias of `LW`). Changing any of these requires **editing the config
 and creating a new instance** — no runtime switching. Details:
 [turbosound.md](../peripherals/turbosound.md),
 [covox-sounddrive.md](../peripherals/covox-sounddrive.md),

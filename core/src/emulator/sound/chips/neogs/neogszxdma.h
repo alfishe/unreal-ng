@@ -54,6 +54,9 @@ public:
         virtual void zxReschedule() = 0;                     // our next event changed
         virtual void zxLateStart(int64_t units) = 0;         // a start was seen late (log once)
         virtual void zxTrace(bool write, uint32_t address, uint8_t value) = 0; // port trace (when capturing)
+        /// The card's ZX-bus carries the host's memory cycles (false through the Sprinter's ISA ZX-bus adapter, which
+        /// passes I/O only): without them the module never sees a host access and the overlay is not installed
+        virtual bool zxHostMemoryBus() const { return true; }
     };
 
     // Timing, card clocks (neogs-zxdma-design.md §2.4; estimates from the Verilog)
@@ -81,6 +84,8 @@ public:
 
     /// Power-on / FPGA reset: back to Off, nothing pending
     void reset();
+    /// The host side changed (the machine's ZX-bus became known, Host::zxHostMemoryBus): install or remove the overlay
+    void hostBusChanged() { updateMode(); }
 
     // Card-side register writes (after NeoGSDma has stored them)
     void onModuleSelectWritten();

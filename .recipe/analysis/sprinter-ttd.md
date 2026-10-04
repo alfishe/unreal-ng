@@ -39,9 +39,9 @@ real cost, ~10 ms of host time per frame with the full renderer.
 
 ```text
 emulator_manage {"action":"create","model":"SPRINTER"}
-control_execution {"action":"run_frames","count":40}         # inside the PLD load (full start)
+control_execution {"action":"run_frames","frames":40}         # inside the PLD load (full start)
 time_travel {"action":"start"}
-control_execution {"action":"run_frames","count":120}
+control_execution {"action":"run_frames","frames":120}
 time_travel {"action":"stop"}
 time_travel {"action":"seek","frame":80}
 #   → structuredContent: {"arrived_at":{"frame":80,"tinframe":0},"halt_reason":"target","reached":true,"state":"detached"}
@@ -89,7 +89,7 @@ tools/verification/ttd-analyzer/run.sh validate scratch/sprinter.ttd
 ```
 
 The corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` (the cold full start: PLD load, BIOS
-POST) is re-recorded with `record_fixtures.py --only sprinter_boot` ([testdata/ttd/README.md](../../testdata/ttd/README.md)).
+POST of the shipped default, 3.06 Hotfix 2 since 2026-10-03) is re-recorded with `record_fixtures.py --only sprinter_boot` ([testdata/ttd/README.md](../../testdata/ttd/README.md)).
 
 Ground truth: [debugger/ttd/sprinter/ttdsprinter.h](../../core/src/debugger/ttd/sprinter/ttdsprinter.h),
 [s7-ttd-outcome.md](../../docs/inprogress/2026-09-28-sprinter/s7-ttd-outcome.md).

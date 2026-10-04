@@ -93,7 +93,8 @@ bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed, bool derivePcK
     // when the host keyboard's route includes it
     if (derivePcKeys && _keyboard->RoutesToPs2())
     {
-        const std::vector<PcKey> pcKeys = pckey::FromZxKey(key);
+        // The controller's own reverse map (Profi PROFI-XT: Caps Shift is Ctrl, Symbol Shift is Shift)
+        const std::vector<PcKey> pcKeys = _keyboard->GetPs2Sink()->PcKeysForZxKey(key);
         if (pressed)
         {
             for (PcKey pc : pcKeys)
@@ -578,13 +579,15 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
 
     // A PS/2 keyboard (ZX-Evo, ATM Turbo 2+) gets the PC keys that type each character, not
     // the ones behind its ZX key combination ('&' is Symbol Shift + 6 on the ZX,
-    // Shift + 7 on a PC)
+    // Shift + 7 on a PC). A controller that only translates PC keys into matrix
+    // positions (Profi PROFI-XT) gets the ZX combination in PC keys instead: the
+    // controller decides (IPs2KeySink::PcKeysForCharacter)
     const bool ps2 = _keyboard && _keyboard->RoutesToPs2();
     
     for (char c : text)
     {
         std::vector<ZXKeysEnum> keys = CharToKeys(c);
-        std::vector<PcKey> pcKeys = ps2 ? pckey::FromCharacter(c) : std::vector<PcKey>{};
+        std::vector<PcKey> pcKeys = ps2 ? _keyboard->GetPs2Sink()->PcKeysForCharacter(c, keys) : std::vector<PcKey>{};
         if (!keys.empty() || !pcKeys.empty())
         {
             const auto action = keys.size() > 1 || pcKeys.size() > 1 ? KeyboardSequenceEvent::Action::COMBO_TAP

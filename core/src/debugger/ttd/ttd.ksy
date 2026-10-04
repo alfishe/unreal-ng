@@ -507,12 +507,21 @@ types:
           overshoot). Restored with the checkpoint so a replayed frame runs
           with the original instruction timing. Taken from the former
           reserved tail; sessions recorded before it read 0.
+      - id: hw_clock_den
+        type: u1
+        doc: |
+          Denominator of the hardware clock ratio, queued (CPU T per base T =
+          hw_turbo_ratio / hw_clock_den). 0 means 1: only the Profi in hi-res
+          (3 / 5 MHz = 6/7, 10/7) writes a 7. Taken from the reserved tail.
+      - id: hw_clock_den_applied
+        type: u1
+        doc: The denominator as composed into the running clock; 0 means 1.
       - id: reserved
-        size: 3
+        size: 1
         doc: |
           Explicit tail filler keeping the struct free of implicit padding
           (sizeof == 120; four bytes were taken from it for the CPU clock
-          fields above, three for cpu_t_in_frame). The C++ side copies these objects by member-wise
+          fields above, three for cpu_t_in_frame, two for the clock denominator). The C++ side copies these objects by member-wise
           assignment and hashes them byte-wise, so unnamed padding would
           leak uninitialized bytes into the hash. Always zero.
 
@@ -550,14 +559,16 @@ types:
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232: netstate::Com, the peer part only),
+          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
-          memory regions), 29 Z84C15 (u1 version 1, then the Z84C15's on-chip block, 171 bytes: z84c15_blob below),
+          memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
-          32 SprinterCovoxBlaster, 33 SprinterIsa, 34 SprinterPads (reserved for Sprinter devices still to come -
-          S6 sound, S6b ISA, the extended pads: no blob is written under them yet; the device that lands adds
-          its blob and the other Sprinter blobs keep their layout),
+          32 SprinterCovoxBlaster, 33 SprinterIsa (the ISA slots: u1 version 1, u1 the whole #9FBD latch, u1 x 2
+          the card kind fitted in slot 1 / 2 - 0 none, 1 zxbus, 2 ram, 3 ne2000, 4 el3c509b, 5 sprinteresp,
+          6 modem, 7 dual16552 - then each card's own bus state, none so far; a session whose kinds differ from
+          the fitted cards is refused at load), 34 SprinterPads (reserved for a Sprinter device still to come -
+          the extended pads: no blob is written under it yet),
           35 Wd1793Context (u1 version 1, then 112 bytes: the WD1793 command in flight beyond the BetaDisk
           blob - rate-retry search, byte cell, rotational delay, the sector and tracks in use and the transfer
           pointers as (drive, track, offset), the read-track noise seed, up to 4 queued command steps as tags;
@@ -578,7 +589,39 @@ types:
           REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
           43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
           u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
-          restored after 42).
+          restored after 42),
+          44 ProfiXtKbc (the Profi PROFI-XT keyboard controller: ProfiXtKbc::State - u4 version 1, u1 engine (0 firmware,
+          1 table), the output latch, WAIT flip-flop, read in progress, reset line, the time base, the MCS-48 (clock, PC,
+          A, PSW, 256 bytes RAM of which the 8035 uses 64, port latches and pins, F1, memory bank, interrupt and timer
+          state, T0 / T1 / INT), the XT keyboard's wire (queued set-1 bytes, the frame in flight, typematic key, held
+          keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted),
+          45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000 / 3C509B: u1
+          version 2, u1 card count, per card u1 key length, the key ("isa2.eth"), u1 kind length, the kind ("ne2000" |
+          "el3c509b"), u4 state length, the state; then u4 length + the Ethernet gateway's tables. NE2000 state: u1
+          version 1, u1 variant (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB
+          packet RAM, 8 bytes RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address.
+          3C509B state (EtherLink3::SaveCardState): u1 version 1, u1 variant (0 TPO, 1 TP), the ASIC fields little-endian
+          in EL3_STATE_FIELDS order (ID sequence state, tag, ID port, EEPROM access, window 0 / 3 configuration, window,
+          byte latches, masks, interrupt flags, thresholds, enables, station address, media / net diagnostic bits,
+          link times, the transmitter, 31-entry TX status stack, statistics), the 64-word EEPROM, u2 TX packet count and
+          per packet u2 length, u1 flags, u2 bytes + bytes, u2 RX packet count and per packet u2 read position, u1
+          error, u2 bytes + bytes. Version 1 of the blob (NE2000 only: per card the key, then the NE2000 state) still
+          loads; only with such a card),
+          46 SlotSerial1 (the UART card in expansion slot 1, the Sprinter's SprinterESP: netstate::SerialPort as id
+          24 - the TL16C550C and its peer, an ESP module with its AT state, sockets and received bytes by journal
+          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2),
+          48 SlotSerial1B (the second UART of the card in expansion slot 1: SprinterSerial's COM2; the same
+          netstate::SerialPort; a Hayes modem peer keeps its command state in the record's ESP bytes, peer kind 6),
+          49 SlotSerial2B (the same for expansion slot 2),
+          50 Ppi8255 (an 8255 PPI, the ZX Profi's: Ppi8255::State - u1 mode word, u1 port A, B, C output latches),
+          51 Pit8253 (an 8253 PIT, the ZX Profi v5's COM baud timer: Pit8253::State - per counter u1 control, out,
+          gate, has count, counting, load pending, new count, fired, write MSB, read MSB, latched, LSB written, u2
+          count register, output latch, u4 reload, counting element, mode 3 pulses left; then u4 reserved, u8 last
+          clock, u8 fraction; 104 bytes; only on the v5 board),
+          52 Usart8251 (an 8251 USART, the ZX Profi v5's COM port: Usart8251::State - u1 mode, command, expect, sync
+          1, sync 2, errors, RX data, RX ready, TX buffer, TX full, TX shifter, TX busy, RX shifter, RX busy, the
+          board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
+          on the v5 board; its peer is MachineSerialPeer).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
@@ -720,13 +763,25 @@ types:
         type: u1
       - id: watchdog_start
         type: u8
+        doc: The clock (the board's units; the Sprinter's 42 MHz crystal ticks) the current watchdog count started at.
+      - id: watchdog_clocks_before
+        type: u8
+        doc: System clocks the watchdog counted before watchdog_start (a clock speed change folds them).
+      - id: ctc_clock_num
+        type: u4
+        doc: One system clock lasts ctc_clock_num / ctc_clock_den clock units (the Sprinter - 12 / multiplier).
+      - id: ctc_clock_den
+        type: u4
       - id: ctc_vector
         type: u1
       - id: ctc_channels
-        size: 22
+        size: 32
         repeat: expr
         repeat-expr: 4
-        doc: control, time constant, awaiting constant, running, load clock u8, zero counts u8, IP, IUS.
+        doc: |
+          control, time constant, awaiting constant, running, waiting for the trigger edge, count at the
+          anchor (0 = 256), anchor u8 (timer - the clock; counter or waiting - the input edges counted),
+          zero counts before the anchor u8, zero counts turned into requests u8, IP, IUS.
       - id: sio_channels
         size: 18
         repeat: expr
@@ -740,9 +795,9 @@ types:
 
   sprinter_input_blob:
     doc: |
-      Payload of peripheral 31 SprinterInput (88 bytes, version 2; version 1 was 85 bytes, without
-      the board mouse counters). Times are base (3.5 MHz) T-states of the
-      machine's cumulative clock.
+      Payload of peripheral 31 SprinterInput (89 bytes, version 3; version 2 was 88 bytes, without
+      the PLD keyboard flags; version 1 was 85 bytes, without the board mouse counters). Times are
+      base (3.5 MHz) T-states of the machine's cumulative clock.
     seq:
       - id: version
         type: u1
@@ -788,6 +843,11 @@ types:
       - id: board_mouse_buttons
         type: u1
         doc: Active low, D0 left, D1 right, D2 middle.
+      - id: pld_keyboard_flags
+        type: u1
+        doc: |
+          The PLD's keyboard block (KBD.TDF) decoding the wire: bit 0 KB_EXT (last byte #E0), bit 1
+          KB_OFF (last byte other than #E0 was #F0), bit 2 KB_CTRL, bit 3 KB_ALT, bit 4 KB_SH.
 
   peripheral_blob:
     doc: |

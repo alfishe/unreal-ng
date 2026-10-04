@@ -45,18 +45,18 @@ uint32_t SprinterVideoMapper::Collect(const SprinterVideoInputs& in, uint32_t x,
     const uint8_t* mode = in.vram + line1;
 
     uint32_t pen;
-    if (mode[0] & 0x10)
+    if (SprinterSquare::IsSymbol(mode[0]))
     {
         const uint8_t* used = SprinterVideoRenderer::SymbolMode(mode, sub);
         const uint32_t usedAddress = line1 + static_cast<uint32_t>(used - mode);
         for (uint32_t k = 0; k < 3; k++)
             sources.push_back(Vram(usedAddress + k, SourceRole::ModeDescriptor));
         const uint8_t m0 = used[0];
-        if ((m0 & 0xFC) != 0xFC && (m0 >> 5) == 7)
+        if (SprinterSquare::IsBorder(m0))
         {
             sources.push_back({Space::Register, 0, 0xFE, 0, 1, 0x07, SourceRole::Border});
         }
-        else if ((m0 & 0xFC) != 0xFC)
+        else if (!SprinterSquare::IsBlank(m0))
         {
             const uint32_t bit = 1u << (7 - ((sub >> ((m0 >> 5) & 1)) & 7));
             sources.push_back(Vram(SprinterVideoRenderer::FontAddress(in, used, row), SourceRole::FontRow, static_cast<uint16_t>(bit)));

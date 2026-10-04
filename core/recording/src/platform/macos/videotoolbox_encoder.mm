@@ -289,6 +289,29 @@ bool VideoToolboxEncoder::initAssetWriter(const std::string& filename, const Enc
             }
         }
 
+        // The frames come from the encoder's own pool, not the adaptor's `pixelBufferPool`. That property is
+        // AVFoundation's object: it is not retained for the caller, can be nil, and was seen invalid while in
+        // use - CVPixelBufferPoolCreatePixelBuffer failed with kCVReturnError (-6660) on it once in 50 test
+        // runs under load, and once crashed inside it (SIGSEGV in CVPixelBuffer::setDefaultAttachments, a
+        // released pool's attachments). A pool created here with the same attributes, IOSurface-backed as the
+        // adaptor's, lives until Stop
+        NSDictionary* poolBufferAttributes = @{
+            (NSString*)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA),
+            (NSString*)kCVPixelBufferWidthKey: @(_width),
+            (NSString*)kCVPixelBufferHeightKey: @(_height),
+            (NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{}
+        };
+        CVPixelBufferPoolRef pool = nullptr;
+        const CVReturn poolStatus = CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr,
+                                                            (__bridge CFDictionaryRef)poolBufferAttributes, &pool);
+        if (poolStatus != kCVReturnSuccess || pool == nullptr)
+        {
+            _lastError = "CVPixelBufferPoolCreate failed: " + std::to_string(poolStatus);
+            [writer release];
+            return false;
+        }
+        _pixelBufferPool = pool;
+
         _videoInput = (__bridge void*)[videoInput retain];
         _pixelBufferAdaptor = (__bridge void*)[adaptor retain];
         _assetWriter = (__bridge void*)writer;  // alloc/init already owns +1
@@ -353,7 +376,7 @@ bool VideoToolboxEncoder::initAudioConverter(const EncoderConfig& config)
 
 void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestampSec)
 {
-    if (!_isRecording || !_videoInput || !_pixelBufferAdaptor)
+    if (!_isRecording || !_videoInput || !_pixelBufferAdaptor || !_pixelBufferPool)
         return;
 
     @autoreleasepool
@@ -407,17 +430,8 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
         // The copy below writes the OUTPUT geometry (_width x _height: the
         // source times the integer scale), so any buffer must have that size
         CVPixelBufferRef pixelBuffer = nullptr;
-        CVPixelBufferPoolRef pool = adaptor.pixelBufferPool;
-        OSStatus status;
-        if (pool)
-        {
-            status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer);
-        }
-        else
-        {
-            status = CVPixelBufferCreate(kCFAllocatorDefault, _width, _height, kCVPixelFormatType_32BGRA, nullptr,
-                                         &pixelBuffer);
-        }
+        const OSStatus status = CVPixelBufferPoolCreatePixelBuffer(
+            kCFAllocatorDefault, static_cast<CVPixelBufferPoolRef>(_pixelBufferPool), &pixelBuffer);
 
         if (status != kCVReturnSuccess || pixelBuffer == nullptr)
         {
@@ -636,7 +650,7 @@ void VideoToolboxEncoder::Stop()
 {
     // Run cleanup both after a recording session and after a partially-failed
     // Start() (resources allocated but _isRecording never set)
-    if (!_isRecording && !_assetWriter && !_audioFormatDesc)
+    if (!_isRecording && !_assetWriter && !_audioFormatDesc && !_pixelBufferPool)
         return;
 
     _isRecording = false;
@@ -698,7 +712,13 @@ void VideoToolboxEncoder::Stop()
             _assetWriter = nullptr;
         }
 
-        // 3. Clean up remaining resources
+        // 3. Clean up remaining resources. The pool goes after the writer finished: buffers it handed out may
+        //    still be in the compression pipeline (each holds its own reference to the pool)
+        if (_pixelBufferPool)
+        {
+            CVPixelBufferPoolRelease(static_cast<CVPixelBufferPoolRef>(_pixelBufferPool));
+            _pixelBufferPool = nullptr;
+        }
         if (_audioFormatDesc)
         {
             CFRelease((CMAudioFormatDescriptionRef)_audioFormatDesc);

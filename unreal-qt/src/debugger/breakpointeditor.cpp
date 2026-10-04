@@ -80,7 +80,25 @@ void BreakpointEditor::setupUI()
     
     addressLayout->addWidget(addressLabel);
     addressLayout->addWidget(_addressEdit);
+    QLabel* endLabel = new QLabel("to:");
+    _endEdit = new QLineEdit();
+    _endEdit->setPlaceholderText("optional range end");
+    _endEdit->setValidator(new QRegularExpressionValidator(addressRegex, this));
+    addressLayout->addWidget(endLabel);
+    addressLayout->addWidget(_endEdit);
     mainLayout->addLayout(addressLayout);
+
+    // Page: a physical breakpoint (that page, whatever slot shows it)
+    QHBoxLayout* pageLayout = new QHBoxLayout();
+    QLabel* pageLabel = new QLabel("Page:");
+    _pageEdit = new QLineEdit();
+    _pageEdit->setPlaceholderText("optional: ram5, rom1, cache0 - fires on that page in any slot");
+    _slotOnlyCheck = new QCheckBox("This slot only");
+    _slotOnlyCheck->setToolTip("Only through the slot of the address (#0000 / #4000 / #8000 / #C000)");
+    pageLayout->addWidget(pageLabel);
+    pageLayout->addWidget(_pageEdit);
+    pageLayout->addWidget(_slotOnlyCheck);
+    mainLayout->addLayout(pageLayout);
     
     // Access type group boxes
     _memoryAccessBox = new QGroupBox("Memory Access Type");
@@ -100,6 +118,12 @@ void BreakpointEditor::setupUI()
     _outCheck = new QCheckBox("Out");
     portAccessLayout->addWidget(_inCheck);
     portAccessLayout->addWidget(_outCheck);
+    _maskEdit = new QLineEdit();
+    _maskEdit->setPlaceholderText("mask, e.g. 0x00FF");
+    _maskEdit->setToolTip("Matches every port where (port & mask) == (address & mask)");
+    _maskEdit->setValidator(new QRegularExpressionValidator(addressRegex, this));
+    portAccessLayout->addWidget(new QLabel("Mask:"));
+    portAccessLayout->addWidget(_maskEdit);
     _portAccessBox->setLayout(portAccessLayout);
     mainLayout->addWidget(_portAccessBox);
     
@@ -113,6 +137,15 @@ void BreakpointEditor::setupUI()
     groupLayout->addWidget(groupLabel);
     groupLayout->addWidget(_groupCombo);
     mainLayout->addLayout(groupLayout);
+
+    // Hit policy
+    QHBoxLayout* hitsLayout = new QHBoxLayout();
+    QLabel* hitsLabel = new QLabel("Hits:");
+    _hitsEdit = new QLineEdit();
+    _hitsEdit->setPlaceholderText("every hit; or 5 (the 5th only), >=5 (from the 5th on), %5 (every 5th)");
+    hitsLayout->addWidget(hitsLabel);
+    hitsLayout->addWidget(_hitsEdit);
+    mainLayout->addLayout(hitsLayout);
     
     // Note input
     QHBoxLayout* noteLayout = new QHBoxLayout();
@@ -197,6 +230,11 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     
     // Set address
     _addressEdit->setText(QString("0x%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper());
+    _endEdit->setText(bp->isRange ? QString("0x%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper() : QString());
+    _pageEdit->setText(QString::fromStdString(BreakpointManager::PageSpecName(*bp)));
+    _slotOnlyCheck->setChecked(bp->slotOnly);
+    _maskEdit->setText(bp->portMask != 0xFFFF ? QString("0x%1").arg(bp->portMask, 4, 16, QChar('0')).toUpper() : QString());
+    _hitsEdit->setText(QString::fromStdString(BreakpointManager::HitSpecName(*bp)));
     
     // Set access type
     if (bp->type == BRK_MEMORY)
@@ -374,98 +412,68 @@ void BreakpointEditor::onAccept()
         if (_outCheck->isChecked()) _descriptor.ioType |= BRK_IO_OUT;
     }
     
-    // Add or update breakpoint
-    if (_mode == Add)
+    if (_descriptor.type == BRK_KEYBOARD)
     {
-        uint16_t newId = BRK_INVALID;
-        
-        if (_descriptor.type == BRK_MEMORY)
+        QMessageBox::warning(this, "Not Implemented", "Keyboard breakpoints are not yet implemented.");
+        return;
+    }
+
+    // Everything the manager validates (range, page, mask, hit policy) goes through one spec
+    BreakpointSpec spec;
+    spec.type = _descriptor.type;
+    spec.access = _descriptor.type == BRK_MEMORY ? _descriptor.memoryType : _descriptor.ioType;
+    spec.address = address;
+    spec.note = _descriptor.note;
+    spec.group = _descriptor.group;
+    std::string error;
+    uint16_t value = 0;
+    if (!_endEdit->text().trimmed().isEmpty())
+    {
+        if (!validateAddress(_endEdit->text(), value))
         {
-            newId = bpManager->AddCombinedMemoryBreakpoint(address, _descriptor.memoryType);
-        }
-        else if (_descriptor.type == BRK_IO)
-        {
-            newId = bpManager->AddCombinedPortBreakpoint(address, _descriptor.ioType);
-        }
-        else
-        {
-            // Keyboard breakpoints not implemented yet
-            QMessageBox::warning(this, "Not Implemented", "Keyboard breakpoints are not yet implemented.");
+            QMessageBox::warning(this, "Error", "The range end is not an address.");
             return;
         }
-        
-        if (newId != BRK_INVALID)
-        {
-            // Set group and note
-            bpManager->SetBreakpointGroup(newId, _descriptor.group);
-            
-            // Set active state
-            if (!_descriptor.active)
-                bpManager->DeactivateBreakpoint(newId);
-                
-            // Set note
-            if (!_descriptor.note.empty())
-            {
-                auto& breakpoints = bpManager->GetAllBreakpoints();
-                if (breakpoints.find(newId) != breakpoints.end())
-                {
-                    breakpoints.at(newId)->note = _descriptor.note;
-                }
-            }
-            
-            accept();
-        }
-        else
-        {
-            QMessageBox::warning(this, "Error", "Failed to add breakpoint.");
-        }
+        spec.hasEnd = true;
+        spec.addressEnd = value;
     }
-    else // Edit mode
+    if (!_pageEdit->text().trimmed().isEmpty() && _descriptor.type == BRK_MEMORY)
     {
-        // Remove the old breakpoint and add a new one with the same ID
-        // This is a workaround since we don't have direct edit capabilities
-        
-        // First, remove the old breakpoint
-        bpManager->RemoveBreakpointByID(_breakpointId);
-        
-        // Then add a new one
-        uint16_t newId = BRK_INVALID;
-        
-        if (_descriptor.type == BRK_MEMORY)
+        if (!BreakpointManager::ParsePageSpec(_pageEdit->text().trimmed().toStdString(), spec.page, spec.pageType, error))
         {
-            newId = bpManager->AddCombinedMemoryBreakpoint(address, _descriptor.memoryType);
+            QMessageBox::warning(this, "Error", QString::fromStdString(error));
+            return;
         }
-        else if (_descriptor.type == BRK_IO)
-        {
-            newId = bpManager->AddCombinedPortBreakpoint(address, _descriptor.ioType);
-        }
-        
-        if (newId != BRK_INVALID)
-        {
-            // Set group and note
-            bpManager->SetBreakpointGroup(newId, _descriptor.group);
-            
-            // Set active state
-            if (!_descriptor.active)
-                bpManager->DeactivateBreakpoint(newId);
-                
-            // Set note
-            if (!_descriptor.note.empty())
-            {
-                auto& breakpoints = bpManager->GetAllBreakpoints();
-                if (breakpoints.find(newId) != breakpoints.end())
-                {
-                    breakpoints.at(newId)->note = _descriptor.note;
-                }
-            }
-            
-            accept();
-        }
-        else
-        {
-            QMessageBox::warning(this, "Error", "Failed to update breakpoint.");
-        }
+        spec.hasPage = true;
+        spec.slotOnly = _slotOnlyCheck->isChecked();
     }
+    if (!_maskEdit->text().trimmed().isEmpty() && _descriptor.type == BRK_IO)
+    {
+        if (!validateAddress(_maskEdit->text(), value))
+        {
+            QMessageBox::warning(this, "Error", "The mask is not a 16-bit value.");
+            return;
+        }
+        spec.portMask = value;
+    }
+    if (!BreakpointManager::ParseHitSpec(_hitsEdit->text().trimmed().toStdString(), spec.hitMode, spec.hitTarget, error))
+    {
+        QMessageBox::warning(this, "Error", QString::fromStdString(error));
+        return;
+    }
+
+    // An edit replaces the breakpoint (a new id); the manager refuses what does not fit this machine
+    if (_mode != Add)
+        bpManager->RemoveBreakpointByID(_breakpointId);
+    const uint16_t newId = bpManager->AddBreakpoint(spec, error);
+    if (newId == BRK_INVALID)
+    {
+        QMessageBox::warning(this, "Error", QString::fromStdString(error));
+        return;
+    }
+    if (!_descriptor.active)
+        bpManager->DeactivateBreakpoint(newId);
+    accept();
 }
 
 BreakpointDescriptor BreakpointEditor::getBreakpointDescriptor() const

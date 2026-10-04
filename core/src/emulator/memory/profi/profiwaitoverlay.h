@@ -42,6 +42,7 @@ public:
         bool pentagonJumper = false;///< v5 SB8 in its PENTAGON position: no waits at 3.5 MHz
         bool romWait = false;       ///< v5: the ROM one-shot gives 1 wait at 3.5 MHz too
         uint32_t paperStartT = 0;   ///< frame T (3.5 MHz) of the first paper fetch of line 0
+        uint8_t zq3MHz = 20;        ///< v5: the third crystal (the hi-res clock is ZQ3 / 4, turbo ZQ3 / 2)
     };
 
     ProfiWaitOverlay(Core* core, Z80* cpu, Memory* memory, const EmulatorState* state, const Setup& setup);
@@ -54,8 +55,14 @@ public:
     /// Whether frame T `t` is inside the paper fetch window (192 lines x 128 T)
     bool InFetchWindow(uint32_t t) const;
     /// Extra CPU clocks for an access starting at CPU clock `start` of the frame (Z80::AccessStartClock: 7 MHz
-    /// clocks in turbo, 3.5 MHz T otherwise)
+    /// clocks in turbo, 3.5 MHz T otherwise; the hi-res clock in hi-res)
     uint32_t ExtraClocks(bool rom, uint32_t start) const;
+    /// Hi-res (#DFFD bit 7): `start` in CPU clocks at the hi-res clock (EmulatorState::hw_turbo_ratio_applied
+    /// sevenths of 3.5 MHz)
+    uint32_t HiresExtraClocks(bool rom, uint32_t start) const;
+    /// Signed ns from frame instant `tNs` to the nearest v5 video request edge, false when no request runs there
+    /// (outside the fetch windows, unless #7FFD bit 5 runs them all line long)
+    bool DistanceToRequestNs(double tNs, double& d) const;
 
     const Setup& GetSetup() const { return _setup; }
 

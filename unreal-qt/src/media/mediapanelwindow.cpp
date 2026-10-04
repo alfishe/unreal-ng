@@ -221,7 +221,8 @@ void MediaPanelWindow::hideEvent(QHideEvent* event)
 void MediaPanelWindow::refresh()
 {
     Emulator* emulator = _binding && _binding->isBound() ? _binding->emulator() : nullptr;
-    MediaManager* manager = emulator ? emulator->GetContext()->pMediaManager : nullptr;
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    MediaManager* manager = context ? context->pMediaManager : nullptr;
     if (!manager)
     {
         if (!_rows.empty() || _revision != 0)

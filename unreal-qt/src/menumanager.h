@@ -46,8 +46,12 @@ public:
     void setTapeManagerChecked(bool checked);
     void setMediaPanelChecked(bool checked);
     /// The route as set ("AUTO" .. "BOTH"), the route in force, and whether a PS/2 controller is fitted
-    void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller);
+    void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller,
+                              const QString& controller = QString());
+    /// Machine > Host Keyboard > Pass Command as Win Key (macOS only; a no-op elsewhere)
+    void setCommandKeyToGuestChecked(bool checked);
     void setNetworkWindowChecked(bool checked);
+    void setFt812DebugChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
     // (setChecked does not re-emit triggered)
@@ -124,6 +128,8 @@ signals:
     void frontPanelCpmToggled(bool on);
     /// Machine > Host Keyboard: "auto" | "matrix" | "ps2" | "both"
     void hostKeyboardRouteRequested(const QString& route);
+    /// Machine > Host Keyboard > Pass Command as Win Key (macOS)
+    void commandKeyToGuestToggled(bool on);
     /// The Machine menu opens: the owner refreshes the route check marks
     void machineMenuAboutToShow();
 
@@ -148,6 +154,7 @@ signals:
     void tapeManagerToggled(bool visible);
     void mediaPanelToggled(bool visible);
     void networkWindowToggled(bool visible);
+    void ft812DebugToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
@@ -166,6 +173,7 @@ signals:
     void temporalEffectsRequested();
     void hudSettingsRequested();
     void screenshotRequested();
+    void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
     void quickRecordRequested(const QString& presetName);
@@ -237,6 +245,7 @@ private:
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;
     QAction* _networkWindowAction = nullptr;
+    QAction* _ft812DebugAction = nullptr;  // Debug -> FT812 Debug: only while the machine has the VDAC2 card
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;
     std::vector<QAction*> _scaleActions;
@@ -281,6 +290,7 @@ private:
     QAction* _frontPanelCpmAction = nullptr;
     QMenu* _hostKeyboardMenu = nullptr;
     QActionGroup* _hostKeyboardGroup = nullptr;
+    QAction* _commandKeyToGuestAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;
@@ -300,6 +310,7 @@ private:
     QAction* _temporalEffectsAction = nullptr;
     QAction* _hudSettingsAction;
     QAction* _screenshotAction;
+    QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;
 

@@ -27,6 +27,8 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 | [unreal-ng-mapping.md](unreal-ng-mapping.md) | reused as-is / extended / new; how it plugs into the media manager, IDE core, TSConf hooks, ZX-Evo E2b |
 | [roadmap-and-plan.md](roadmap-and-plan.md) | phases S0-S7, dependencies on PLAN rows, sizes, what can start now, review round 1 decisions |
 | [test-plan.md](test-plan.md) | tests by layer with IDs, firmware tests, test data, coverage matrix |
+| [pld-configurations.md](pld-configurations.md) | PLD configurations overview: how bitstreams load on the hardware, how MAME and unreal-ng model them as modules, the differences and why (read first); §6 is the full account of the DooM and Video configurations (Sprinter 97 legacy, not planned) |
+| [game-configuration.md](game-configuration.md) | the "Game" PLD configuration (V10): the bitstream, what it changes, the grid-offset picture, the module, tests |
 
 ## Key findings
 
@@ -53,8 +55,9 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 - The exact BIOS 3.04 image (CRC `1729cb5c`) is in the board repository; the ZXMAK2 copy is the same
   build with a different board-id byte. No 3.04 source is public, so S0 disassembles it
   ([materials.md](materials.md) §5).
-- PLD configurations are **modules** (`SprinterPldConfiguration`): v1 ships the Standard one; the
-  Game, DooM and Video configurations can be added later without touching the decoder core.
+- PLD configurations are **modules** (`SprinterPldConfiguration`): Standard and, since 2026-10-03, Game
+  ([game-configuration.md](game-configuration.md): GAME_00, LDConf's GC.BIN); DooM and Video can be added the same
+  way without touching the decoder core.
 
 ## Glossary
 
@@ -62,7 +65,8 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 |---|---|
 | **PLD** | the Altera ACEX chip that implements almost all of the Sprinter's logic; loaded from ROM at power-on |
 | **Configuration / bitstream** | the file loaded into the PLD (~59 KB); "the standard configuration" = the Sp2000 build in the BIOS ROM |
-| **Configuration module** | the emulator's code for one PLD configuration (`SprinterPldConfiguration`); Standard is the only one in v1, others (Game, DooM, Video) plug in later |
+| **Configuration module** | the emulator's code for one PLD configuration (`SprinterPldConfiguration`); Standard and Game today, others (DooM, Video) plug in later |
+| **Grid offset** | the Game configuration's per-square scroll: Mode3 of a square with Mode0 bit 2 shifts the squares that follow ([game-configuration.md](game-configuration.md) §3) |
 | **DCP / port table** | the 16 KB table in RAM page `#40` that maps a port access to an internal device code |
 | **Internal code** | the byte from the table, e.g. `#27` = IDE command register |
 | **Cells** | PLD registers `#C0-#FF` (page numbers, `#1FFD`, `#7FFD`, video registers) |

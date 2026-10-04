@@ -10,7 +10,7 @@
 #include <drogon/utils/Utilities.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/video/screen.h>
-#include <emulator/video/screencapture.h>
+#include <emulator/video/screenshotter.h>
 #include <json/json.h>
 
 #include <algorithm>
@@ -199,10 +199,42 @@ void EmulatorAPI::capturePlaneB(const HttpRequestPtr& req, std::function<void(co
     callback(resp);
 }
 
+namespace
+{
+Json::Value RectJson(const PictureRect& r)
+{
+    Json::Value v;
+    v["x"] = r.x;
+    v["y"] = r.y;
+    v["width"] = r.width;
+    v["height"] = r.height;
+    return v;
+}
+
+HttpResponsePtr ScreenshotErrorResponse(HttpStatusCode status, const char* reason, const std::string& message,
+                                        const char* kind)
+{
+    Json::Value error;
+    error["error"] = reason;
+    error["message"] = message;
+    error["kind"] = kind;
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(status);
+    addCorsHeaders(resp);
+    return resp;
+}
+}  // namespace
+
 /// @brief GET /api/v1/emulator/:id/capture/screen
-/// @brief Capture screen as image (GIF or PNG)
-/// @param format Query param: "gif" (default) or "png"
-/// @param mode Query param: "screen" (256x192, default) or "full" (with border)
+/// @brief Screenshot of the emulator's presented frame, as PNG (default) or GIF
+/// @param area Query param: "full" (default: the whole frame, border included) or "screen" (the working
+///        picture the frame's own geometry names: the paper of a Spectrum, the graphics window of a TS-Conf,
+///        the whole FT812 picture). On a hires mode both can be the whole frame
+/// @param mode Deprecated alias of area ("full" / "screen"); a conflicting pair is an error
+/// @param format Query param: "png" (default) or "gif" (256 colors)
+/// @param path, filename Save the image to this server-side path instead of returning it
+/// The answer always carries the frame's geometry and the rectangle that was cut, so a caller never has to
+/// guess what it got. Design: docs/inprogress/2026-10-03-screenshotter/design.md
 void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
@@ -211,70 +243,97 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
 
     if (!emulator)
     {
-        Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "Emulator not found";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
+        callback(ScreenshotErrorResponse(HttpStatusCode::k404NotFound, "Not Found", "Emulator not found",
+                                         Screenshotter::ErrorName(ScreenshotError::NotFound)));
         return;
     }
 
     if (emulator->IsDestroying())
     {
-        Json::Value error;
-        error["error"] = "Service Unavailable";
-        error["message"] = "Emulator is shutting down";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k503ServiceUnavailable);
-        addCorsHeaders(resp);
-        callback(resp);
+        callback(ScreenshotErrorResponse(HttpStatusCode::k503ServiceUnavailable, "Service Unavailable",
+                                         "Emulator is shutting down", "shutting-down"));
         return;
     }
 
-    // Parse query parameters
-    std::string format = req->getParameter("format");
-    std::string modeStr = req->getParameter("mode");
+    // Parameters: a word that is not one of the documented values is an error, never a silent default
+    const std::string areaText = req->getParameter("area");
+    const std::string modeText = req->getParameter("mode");
+    const std::string formatText = req->getParameter("format");
+    const std::string sourceText = req->getParameter("source");
     std::string path = req->getParameter("path");
-    if (path.empty()) path = req->getParameter("filename");
-    
-    if (format.empty()) format = "gif";
-    CaptureMode mode = (modeStr == "full") ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
+    if (path.empty())
+        path = req->getParameter("filename");
 
-    // Capture screen
-    auto result = ScreenCapture::captureScreen(id, format, mode, path);
-
-    if (!result.success)
+    ScreenshotOptions options;  // whole frame, PNG
+    std::string badWord;
+    if (!Screenshotter::ParseRequestWords(areaText, modeText, formatText, sourceText, options, badWord))
     {
-        Json::Value error;
-        error["error"] = "Internal Server Error";
-        error["message"] = result.errorMessage;
+        callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request", badWord,
+                                         Screenshotter::ErrorName(ScreenshotError::BadParameter)));
+        return;
+    }
+    options.saveTo = path;
 
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
+    const ScreenshotResult shot = Screenshotter::Take(id, options);
+    if (!shot.ok)
+    {
+        HttpStatusCode status = HttpStatusCode::k500InternalServerError;
+        const char* reason = "Internal Server Error";
+        switch (shot.error)
+        {
+            case ScreenshotError::NotFound:
+                status = HttpStatusCode::k404NotFound;
+                reason = "Not Found";
+                break;
+            case ScreenshotError::NoFrame:
+                status = HttpStatusCode::k409Conflict;  // the emulator has not presented a frame yet: try again
+                reason = "Conflict";
+                break;
+            case ScreenshotError::BadParameter:
+                status = HttpStatusCode::k400BadRequest;
+                reason = "Bad Request";
+                break;
+            default:
+                break;
+        }
+        callback(ScreenshotErrorResponse(status, reason, shot.errorMessage, Screenshotter::ErrorName(shot.error)));
         return;
     }
 
-    // Build response
     Json::Value ret;
     ret["status"] = "success";
-    ret["format"] = result.format;
-    ret["width"] = result.width;
-    ret["height"] = result.height;
-    ret["size"] = static_cast<Json::UInt64>(result.originalSize);
-    if (!result.savedFile.empty())
+    ret["format"] = Screenshotter::FormatName(shot.format);
+    ret["area"] = Screenshotter::AreaName(options.area);
+    ret["source"] = Screenshotter::RequestSourceName(options.source);  // which frame was asked for
+    ret["width"] = shot.width;
+    ret["height"] = shot.height;
+    ret["size"] = static_cast<Json::UInt64>(shot.encodedSize);
+    ret["crop"] = RectJson(shot.crop);  // the returned image's rectangle inside the frame
+    ret["screen_window"] = RectJson(shot.frame.screenWindow);
+    Json::Value frame;
+    frame["width"] = shot.frame.width;
+    frame["height"] = shot.frame.height;
+    frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
+                                                               : Screen::GetVideoModeName(shot.frame.videoMode);
+    frame["source"] = Screenshotter::SourceName(shot.frame.source);
+    frame["frame_number"] = static_cast<Json::UInt64>(shot.frame.frameNumber);
+    if (shot.frame.beamLine >= 0)
+    {
+        // A live frame of a stopped machine: where the beam stood. The pixels it has not reached are the
+        // previous frame's, so `partial` says whether this frame is part old, part new
+        frame["partial"] = shot.frame.partial;
+        frame["beam"]["line"] = shot.frame.beamLine;
+        frame["beam"]["tstate"] = shot.frame.beamTstate;
+    }
+    ret["frame"] = frame;
+    if (!shot.savedFile.empty())
     {
         ret["saved"] = true;
-        ret["file"] = result.savedFile;
+        ret["file"] = shot.savedFile;
     }
-    if (!result.base64Data.empty())
+    else
     {
-        ret["data"] = result.base64Data;
+        ret["data"] = Screenshotter::Base64Encode(shot.bytes);
     }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);

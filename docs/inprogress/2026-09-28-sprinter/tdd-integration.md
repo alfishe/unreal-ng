@@ -17,7 +17,7 @@
 | Config folder | `Config::GetConfigFolderForModel` (`core/src/emulator/config.cpp:749`) | default rule (lowercased short name) → `data/configs/sprinter/unreal.ini` |
 | Memory subclass | `Core` factory (`core/src/emulator/cpu/core.cpp:105-108`, the `ScorpionMemory` precedent) | `new SprinterMemory(context)` for `MM_SPRINTER` |
 | Screen | `VideoController::CreateScreen(model)` (PLAN #60(e), built) | `case MM_SPRINTER: return new ScreenSprinter(context);` |
-| ROM | `ROM::GetROMFilename` / `LoadROM` (`core/src/emulator/memory/rom.cpp:66`, `:137`); `[ROM]` keys (`config.cpp:236`, `:257` pattern) | `[ROM] SPRINTER=rom/sprinter/sp2k-3.04.rom`, loaded raw as 16 pages (the ATM3 "whole image, no ROMSET" pattern) |
+| ROM | `ROM::GetROMFilename` / `LoadROM` (`core/src/emulator/memory/rom.cpp:66`, `:137`); `[ROM]` keys (`config.cpp:236`, `:257` pattern) | `[ROM] SPRINTER=rom/sprinter/sp2k-3.07-beta1.rom` (3.04 until 2026-10-02, [bios-versions.md](bios-versions.md) §6.1), loaded raw as 16 pages (the ATM3 "whole image, no ROMSET" pattern) |
 | Frame timing | `ApplyModelTimingDefaults` (`config.cpp:905-1057`) | `frame = 71680`, `t_line = 224`; `intstart/intlen` unused (the interrupt source owns INT) |
 | Cache pages | `MAX_CACHE_PAGES` (`platform.h:251`) | 2 → 4 (64 KB fast RAM) |
 | Qt model list | `unreal-qt/src/menumanager.cpp:627-641` | add `SPRINTER` |
@@ -48,7 +48,7 @@ Line=224
 ;ide0.slave.device = cdrom  ; optional empty CD unit, once ATAPI exists (S7); the default is no device
 
 [ROM]
-SPRINTER=rom/sprinter/sp2k-3.04.rom
+SPRINTER=rom/sprinter/sp2k-3.07-beta1.rom   ; 3.04 until 2026-10-02 (bios-versions.md §6.1)
 ```
 
 Files follow the repo's CRLF/LF convention of the neighboring configs (new file: LF).
@@ -70,9 +70,9 @@ As built in phase S7 (2026-10-02, branch `sprinter-ttd`; outcome and tests:
 | 25 | `SprinterPld` | `SprinterPldState` (112 bytes, padding-free), the decoder's own fields (Covox-Blaster control, powered-on flag, DCP-opened frame and PC), the INT source (mode page, frame lines, the acknowledged pulse, the keyboard INT flip-flop), the frame height the raster runs with, the active configuration module **by name** with its state (room for the largest registered module), the block accelerator's state (u16 size + bytes) | 177 + module + accelerator |
 | 18 | `Ds12887` | shared serializer (cells, address latch, time base) | |
 | 28 | `SprinterVideoRam` | the 256 KB video RAM; on load the pen cache and the INT list are rebuilt | 1 + 262 144 |
-| 29 | `Z84C15` | `Z84C15::SaveState`: system registers, the wait generator with its power-on M1 counter and the RETI rule's after-ED flag, the watchdog, CTC, SIO (receive FIFOs), PIO, IP / IUS of every daisy-chain source | 1 + 171 |
+| 29 | `Z84C15` | `Z84C15::SaveState`: system registers, the wait generator with its power-on M1 counter and the RETI rule's after-ED flag, the watchdog, CTC, SIO (receive FIFOs), PIO, IP / IUS of every daisy-chain source | 1 + 227 (v2, 2026-10-02; v1: 1 + 171) |
 | 30 | `SprinterFastRam` | the 64 KB fast RAM (Memory's cache pages are not RAM pages) | 1 + 65 536 |
-| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter, the board mouse counters (v2) | 88 |
+| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter, the board mouse counters (v2), the PLD keyboard block's flags (v3) | 89 |
 | 35 | `Wd1793Context` | the WD1793 command in flight beyond the 254-byte BetaDisk blob: queued steps as tags, transfer pointers as (drive, track, offset), byte cell, rotational delay, rate-retry search | 1 + 112 |
 | 32 | `SprinterCovoxBlaster` | the Covox / Covox-Blaster (S6, 2026-10-02): `CovoxBlasterState`, v1, 545 bytes | |
 | 33-34 | `SprinterIsa`, `SprinterPads` | **reserved** for S6b (ISA I/O window) and the extended pads: no serializer yet; the device that lands declares its id and adds a blob, the other blobs keep their layout | |

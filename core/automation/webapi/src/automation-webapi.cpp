@@ -13,6 +13,7 @@
 #include "common/threadhelper.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
+#include "debug-event-hub.h"
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
 #include "common/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant
@@ -141,6 +142,9 @@ void AutomationWebAPI::start()
 
     _stopThread = false;
 
+    // Debugger events for /api/v1/websocket subscribers
+    DebugEventHub::Instance().Start();
+
     // Create a new thread and run HTTP server in it
     _thread = new std::thread(&AutomationWebAPI::threadFunc, this);
 }
@@ -180,6 +184,8 @@ void AutomationWebAPI::stop()
         delete _thread;
         _thread = nullptr;
     }
+
+    DebugEventHub::Instance().Stop();
 
     std::cout << "AutomationWebAPI stopped" << std::endl;
 }

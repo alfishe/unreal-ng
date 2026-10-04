@@ -24,6 +24,9 @@ inline bool FitGeneralSoundCard(SoundManager* sound, GSTypeKind kind)
 {
     if (!sound)
         return false;
+    // No card: a machine without a ZX-bus (the Sprinter) fits none, and a slot cannot be emptied by a switch
+    if (kind == GSTypeKind::NONE)
+        return sound->fittedGeneralSoundKind() == GSTypeKind::NONE;
     if (sound->fittedGeneralSoundKind() == kind &&
         !sound->switchGeneralSoundCard(kind == GSTypeKind::Z80 ? GSTypeKind::LW : GSTypeKind::Z80))
         return false;

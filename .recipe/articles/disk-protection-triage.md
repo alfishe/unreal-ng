@@ -86,7 +86,7 @@ curl -s "$BASE/emulator/$EMU_ID/disk/A/sector/0/0/1/raw" \
   | jq '{raw_offset, raw_size, has_data, raw_base64}' 
 
 # Whole-track raw dump
-curl -s "$BASE/emulator/$EMU_ID/disk/A/track/0/0/raw" | jq '{track_size, base64}' 
+curl -s "$BASE/emulator/$EMU_ID/disk/A/track/0/0/raw" | jq '{raw_size, encoding, raw_base64}' 
 ```
 
 Compare against the catalog: does the file at `first_track/first_sector`
@@ -142,7 +142,7 @@ Then interrogate the trace:
 ```bash
 # last 40 FDC interactions with the PC that made them
 curl -s "$BASE/emulator/$EMU_ID/profiler/porttrace/events?limit=40" \
-  | jq -r '.events[] | "frame=\(.frame) ts=\(.ts) pc=\(.pc) port=\(.dec) val=\(.val)"'
+  | jq -r '.events[] | "frame=\(.frame) ts=\(.timestamp) pc=\(.pc) port=\(.decoded_port) val=\(.value)"'
 ```
 
 What the pattern tells you:

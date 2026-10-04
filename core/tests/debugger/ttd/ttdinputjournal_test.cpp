@@ -498,30 +498,38 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_RefusedWhileReplayOwnsInput)
 }
 
 /// The race this path exists for: automation runs on its own thread while the
-/// emulator loop steps the card. The stimulus is only queued there; the loop
-/// thread applies it at an instruction boundary. Paused, it waits for execution
-/// to continue - nothing touches the card while the machine is parked.
+/// emulator loop steps the card. While the loop runs, the stimulus is only queued
+/// there and the loop thread applies it at an instruction boundary. Paused and
+/// parked, nothing else drives the machine until Resume (which waits for it), so
+/// the stimulus is applied on the caller's thread at once - the API's "applied
+/// before the response" (Emulator::RunWhileParked, 2026-10-04).
 /// Runs the async loop (~2-3 frames): the cross-thread hand-off is the subject
 TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_FromAnotherThreadIsAppliedByTheLoop)
 {
     _emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; }));
 
-    _emulator->Pause();
-    ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
+    // Running: queued for the loop thread, applied at its next instruction boundary
     const uint64_t writesBefore = Card()->getActivityCounters().hostDataWritten;
-
     ASSERT_TRUE(_ttd->SubmitLiveInput(GS(ttd::TTDInputKind::GSData, 0x6B)));
-    EXPECT_TRUE(_context->HasStepWork(EmulatorContext::kStepWorkTtdInput)) << "queued for the loop thread";
-    EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore) << "applied while the machine was parked";
+    ASSERT_TRUE(TestWait::For([this, writesBefore] {
+        return Card()->getActivityCounters().hostDataWritten == writesBefore + 1;
+    })) << "the loop thread applied the queued stimulus";
+    EXPECT_EQ(Card()->getDataFromHost(), 0x6B);
 
-    _emulator->Resume();
-    ASSERT_TRUE(TestWait::For([this] { return !_context->HasStepWork(EmulatorContext::kStepWorkTtdInput); }));
+    // Paused and parked: applied before SubmitLiveInput returns, nothing left for the loop
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
+    ASSERT_TRUE(_ttd->SubmitLiveInput(GS(ttd::TTDInputKind::GSData, 0x5A)));
+    EXPECT_FALSE(_context->HasStepWork(EmulatorContext::kStepWorkTtdInput)) << "nothing queued";
+    EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore + 2) << "applied while parked";
+    EXPECT_EQ(Card()->getDataFromHost(), 0x5A);
 
-    EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore + 1);
-    EXPECT_EQ(Card()->getDataFromHost(), 0x6B);
+    // Resume applies nothing twice
+    _emulator->Resume();
+    _emulator->Pause();
+    ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
+    EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore + 2);
     _emulator->Stop();
 }
 

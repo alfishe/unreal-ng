@@ -9,11 +9,14 @@
 
 #include <cstdio>
 
+#include "common/stringhelper.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/machineeventjournal.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
@@ -612,6 +615,36 @@ StateNode VideoChanges(EmulatorContext* context, unsigned frames)
             list.push(FrameNode(screen, log.Previous(), false, sprinter));
         if (frames > 1 && log.Current().valid)
             list.push(FrameNode(screen, log.Current(), true, sprinter));
+    }
+    // The machine's own configuration events of the same frames (PortDecoder::GetMachineEventJournal: the
+    // Sprinter's PLD journal, /state/sprinter/pld-journal for the whole session)
+    if (MachineEventJournal* journal = context->pPortDecoder ? context->pPortDecoder->GetMachineEventJournal() : nullptr)
+    {
+        for (StateNode& frameNode : list.items)
+        {
+            const StateNode* frame = frameNode.find("frame");
+            if (!frame)
+                continue;
+            MachineEventJournal::Filter filter;
+            filter.frameFrom = filter.frameTo = frame->i;
+            filter.limit = 64;
+            StateNode events = StateNode::Array();
+            for (const MachineEvent& e : journal->Read(filter).events)
+            {
+                if (e.epoch != journal->Epoch())
+                    continue;
+                StateNode n = StateNode::Object();
+                const BeamPosition beam = screen.DescribeBeam(e.t);
+                n["t"] = static_cast<uint64_t>(e.t);
+                n["line"] = beam.line;
+                n["t_in_line"] = beam.tInLine;
+                n["pc"] = StringHelper::Format("0x%04X", e.pc);
+                n["kind"] = e.kind;
+                n["text"] = e.text;
+                events.push(n);
+            }
+            frameNode["machine_events"] = events;
+        }
     }
     ret["frames"] = list;
     ret["see"] = "port writes themselves: the port trace (Sprinter codes RgMod, Hold, PortY, AllMode, Frame320, Frame312, "

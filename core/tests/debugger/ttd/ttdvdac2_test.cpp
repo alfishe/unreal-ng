@@ -309,4 +309,77 @@ TEST_F(TTDVdac2_Test, HistoryLimitKeepsTheChipRight)
     }
 }
 
+/// The FT812 Debug window's source (Vdac2Card::PresentedFrameMetrics) follows the
+/// picture on the main screen: a latched frame while running, after a seek by frame
+/// number the FT812 frame that finished last by the end of that machine frame, after
+/// a seek inside a frame plus the lines of the frame in flight drawn so far - each
+/// equal to the live run at the same moment (line-budget-metrics.md §3.3)
+TEST_F(TTDVdac2_Test, PresentedMetricsFollowTheScreen)
+{
+    Vdac2Control::FrameMetrics m;
+    _card->SetMeasureAlways(true);
+    _emulator->RunNFrames(2, true);
+    ASSERT_TRUE(_card->PresentedFrameMetrics(m)) << "a latched frame keeps its metrics while measuring";
+    EXPECT_TRUE(m.valid);
+    EXPECT_FALSE(m.inFlightKnown);
+
+    struct Probe
+    {
+        ttd::TTDTimePoint at;
+        Vdac2Control::FrameMetrics live;
+    };
+    std::vector<Probe> inside;
+    std::map<uint64_t, uint64_t> blockAtFrameEnd;  // machine frame -> FT812 frame of the block at its end
+    ASSERT_TRUE(_ttd->StartRecording());
+    // Frame boundaries first (the run is still frame aligned here)
+    for (int i = 0; i < 4; ++i)
+    {
+        _emulator->RunNFrames(1, true);
+        ASSERT_LT(_context->pCore->GetZ80()->t, 2000u) << "at a frame boundary (the last instruction overshoots a little)";
+        _card->ReadFrameMetrics(m, false, false);
+        blockAtFrameEnd[_context->emulatorState.frame_counter - 1] = m.frame;
+    }
+    // Then moments inside frames
+    for (uint32_t t : {30000u, 150000u, 250000u})
+    {
+        _emulator->RunTStates(t, true);
+        Probe probe;
+        _card->ReadFrameMetrics(probe.live, true, true);
+        probe.at = {_context->emulatorState.frame_counter, _context->pCore->GetZ80()->t};
+        inside.push_back(probe);
+    }
+    _emulator->RunNFrames(1, true);
+    _ttd->StopRecording();
+
+    int composite = 0;
+    for (const Probe& p : inside)
+    {
+        SCOPED_TRACE(p.at.tInFrame);
+        ASSERT_TRUE(_ttd->SeekTo(p.at));
+        if (_context->pCore->GetZ80()->t != p.at.tInFrame)
+            continue;  // landed on a later instruction boundary
+        ASSERT_TRUE(_card->PresentedFrameMetrics(m));
+        EXPECT_EQ(m.frame, p.live.frame) << "the last finished FT812 frame at that moment";
+        ASSERT_TRUE(m.inFlightKnown) << "a moment inside a frame shows the frame in flight";
+        EXPECT_EQ(m.inFlightLinesPassed, p.live.inFlightLinesPassed);
+        EXPECT_EQ(m.inFlightLineClocks, p.live.inFlightLineClocks);
+        EXPECT_EQ(m.lineClocks, p.live.lineClocks);
+        composite += m.inFlightLinesPassed > 0 && m.inFlightLinesPassed < m.lines;
+    }
+    EXPECT_GT(composite, 0) << "at least one probe sits part way through an FT812 frame";
+
+    // The session's first frame has no checkpoint a frame earlier for the FT812's
+    // lead-in (TTDLeadInFrames), so its frame-target picture is not composed; from
+    // the second frame on it is
+    blockAtFrameEnd.erase(blockAtFrameEnd.begin());
+    for (const auto& [frame, ft812Frame] : blockAtFrameEnd)
+    {
+        SCOPED_TRACE(frame);
+        ASSERT_TRUE(_ttd->SeekTo({frame, 0}));
+        ASSERT_TRUE(_card->PresentedFrameMetrics(m));
+        EXPECT_FALSE(m.inFlightKnown) << "a frame target shows a finished FT812 frame";
+        EXPECT_EQ(m.frame, ft812Frame) << "the one that finished last by the end of the machine frame";
+    }
+}
+
 #endif  // ENABLE_VDAC2

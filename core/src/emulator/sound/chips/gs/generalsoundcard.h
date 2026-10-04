@@ -167,6 +167,7 @@ struct NeoGSStateInfo
     // ZX-DMA: the host's view (neogs-zxdma-design.md §7)
     const char* zxMode = "off";       // off | watch | divert
     bool zxOverlayInstalled = false;
+    bool zxHostMemoryBus = true;      // the card's ZX-bus carries the host's memory cycles (false: the Sprinter's ISA adapter)
     uint8_t zxReadLatch = 0;          // the byte the next host read gets
     const char* zxPending = "none";   // none | read | write
     uint32_t zxPendingAddress = 0;
@@ -347,6 +348,9 @@ public:
         return false;
     }
     virtual bool saveFlash() { return false; }
+    /// The card is attached to the machine's ZX-bus (SoundManager::attachToPorts): a card that depends on what the
+    /// bus carries re-checks it (the NeoGS ZX-DMA needs the host's memory cycles: none through the Sprinter's adapter)
+    virtual void onHostBusChanged() {}
     /// Firmware/flash description for automation ("32 KB ROM", "NeoGS flash v1.11")
     virtual std::string firmwareDescription() const { return isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)"; }
     virtual uint16_t getCPUReg(GSCpuRegister) const { return 0; }

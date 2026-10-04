@@ -1,0 +1,48 @@
+NTP.EXE
+
+NTP retrieves network time with a polling-only SNTP client and sets the DSS
+clock. Run NETCFG -i and IFUP first.
+
+Usage
+
+NTP [server]
+NTP /?
+
+Without an argument, NTP uses NET_NTP. A server may be dotted IPv4 or a
+hostname resolved by the common DNS resolver.
+
+Behaviour
+
+The client sends a 48-byte NTPv4 request to UDP/123 and makes at most three
+5000 ms attempts. Replies must match the IP/UDP endpoint and originate cookie,
+have a valid checksum, version 3 or 4, server mode, a synchronised leap
+indicator, stratum 1..15, and a nonzero transmit timestamp. The supported era
+is 1970-01-01 through 2036-02-07 06:28:15 UTC.
+
+NET_TZ is revalidated on every run. It accepts the same quarter-hour grammar
+as NETCFG: empty, [+|-]H, [+|-]HH, [+|-]H:MM, or [+|-]HH:MM, in
+-12:00..+14:00. The printed form is always normalised, for example
+UTC+05:45, UTC-03:30, or UTC+00:00. Date, month, year and leap-day
+rollover are applied before DSS_SETTIME. The ISA window is closed before the
+clock service is called.
+
+Examples
+
+NTP
+NTP pool.ntp.org
+NTP 192.168.7.1
+
+Exit codes
+
+| Code | Meaning                                                    |
+|------|------------------------------------------------------------|
+| 0    | The DSS clock was set                                      |
+| 1    | Usage error                                                |
+| 2    | 3C509B not detected                                        |
+| 3    | Timeout, unreachable server, or an unusable reply          |
+| 4    | NET_NTP/NET_TZ missing or invalid; run NETCFG -i     |
+| 5    | The DSS clock service refused the new time                 |
+| 6    | NXDOMAIN for the server name                               |
+| 7    | Cancelled with Esc or Ctrl+C                               |
+
+Every run ends with RESULT OK or RESULT FAIL code=N.

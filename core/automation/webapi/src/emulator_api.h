@@ -311,6 +311,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPalette, "/api/v1/emulator/{id}/state/sprinter/palette", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterSoundRing, "/api/v1/emulator/{id}/state/sprinter/sound/ring", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterBios, "/api/v1/emulator/{id}/state/sprinter/bios", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterZxMode, "/api/v1/emulator/{id}/state/sprinter/zx-mode", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterPldJournal, "/api/v1/emulator/{id}/state/sprinter/pld-journal", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postSprinterPldJournal, "/api/v1/emulator/{id}/sprinter/pld-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::postSprinterBios, "/api/v1/emulator/{id}/sprinter/bios", drogon::Post);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
@@ -321,6 +324,14 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Post);
+    // ISA slots (Sprinter; implementation: api/state_device_api.cpp, core DeviceState::Isa + IsaAccess)
+    ADD_METHOD_TO(EmulatorAPI::getStateIsa, "/api/v1/emulator/{id}/state/isa", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateIsaActive, "/api/v1/emulator/state/isa", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postControlIsa, "/api/v1/emulator/{id}/control/isa", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateIsaJournal, "/api/v1/emulator/{id}/state/isa/journal", drogon::Get);
+    // Ethernet frames of the frame-level cards (core EthernetAccess)
+    ADD_METHOD_TO(EmulatorAPI::getNetworkFrames, "/api/v1/emulator/{id}/network/frames", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNetworkFrame, "/api/v1/emulator/{id}/network/frame", drogon::Post);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -353,6 +364,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::enableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/enable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
 
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
@@ -427,6 +439,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStart, "/api/v1/emulator/{id}/vdac2/capture/start", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStop, "/api/v1/emulator/{id}/vdac2/capture/stop", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStatus, "/api/v1/emulator/{id}/vdac2/capture/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::vdac2Metrics, "/api/v1/emulator/{id}/vdac2/metrics", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::vdac2MetricsSet, "/api/v1/emulator/{id}/vdac2/metrics", drogon::Put);
 
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
@@ -461,6 +475,7 @@ public:
 
     // region Mouse Injection (implementation: api/mouse_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::mouseMove, "/api/v1/emulator/{id}/mouse/move", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseGlide, "/api/v1/emulator/{id}/mouse/glide", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mousePress, "/api/v1/emulator/{id}/mouse/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseRelease, "/api/v1/emulator/{id}/mouse/release", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseClick, "/api/v1/emulator/{id}/mouse/click", drogon::Post);
@@ -1085,6 +1100,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                    const std::string& id) const;
     void getStateSprinterBios(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterZxMode(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterPldJournal(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postSprinterPldJournal(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postSprinterBios(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateNetwork(const drogon::HttpRequestPtr& req,
@@ -1101,6 +1122,18 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postRtcCells(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIsa(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIsaActive(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void postControlIsa(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIsaJournal(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getNetworkFrames(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postNetworkFrame(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateContention(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateContentionActive(const drogon::HttpRequestPtr& req,
@@ -1171,6 +1204,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void addBreakpoint(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/breakpoints/hits/reset - hit counters back to 0 ({"id": N}: one, else all)
+    void resetBreakpointHits(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void clearBreakpoints(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void removeBreakpoint(const drogon::HttpRequestPtr& req,
@@ -1397,6 +1433,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void vdac2CaptureStatus(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    void vdac2Metrics(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void vdac2MetricsSet(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // endregion Profiler Commands Methods
 
@@ -1428,6 +1468,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     // region Mouse Injection Methods (implementation: api/mouse_api.cpp)
     void mouseMove(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    void mouseGlide(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
     void mousePress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void mouseRelease(const drogon::HttpRequestPtr& req,

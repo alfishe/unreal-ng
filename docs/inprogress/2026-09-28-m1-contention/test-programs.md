@@ -138,7 +138,7 @@ differing must still differ, so the phase that fixes it fails the test and moves
 
 fusetest: built from source with pasmo 0.5.5 and run by `FuseTest_Test` on the 48K, 128K, +3 and Pentagon since
 2026-09-30 ([tools/verification/contention/fusetest](../../../tools/verification/contention/fusetest/README.md)); it
-found three core defects, fixed ([2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/TODO.md)).
+found three core defects, fixed ([2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/DONE.md)).
 **Butler, Timing Tests 128K v1.0** (since 2026-10-02, `testdata/contention/butler/`): tests 1-34 from
 uncontended and contended RAM, with the values of the late-timing +2 the suite was written on. unreal-ng's 128K
 (early timings) fails exactly tests 4, 17, 18, 26 and 33 from contended RAM, with the R, loop and SP values

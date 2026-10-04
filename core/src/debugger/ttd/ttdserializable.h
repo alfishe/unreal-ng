@@ -71,16 +71,16 @@ enum class PeripheralId : uint8_t
     SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
     SprinterPld = 25,     // Sprinter Sp2000 PLD state, decoder latches, configuration module, INT source, accelerator slot (tdd-integration §2.1)
     Atm2Kbc = 26,         // ATM Turbo 2+ keyboard controller: the MCS-51 (RAM, SFRs, timers, UART), board latches, PS/2 keyboard
-    MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232)
+    MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232, ZX Profi v5 8251)
     SprinterVideoRam = 28,  // Sprinter video RAM, 256 KB whole (a TTD v2 memory region once those exist)
     Z84C15 = 29,          // Zilog Z84C15 on-chip block: system registers, wait generator, watchdog, CTC, SIO (FIFOs), PIO, daisy chain
     SprinterFastRam = 30, // Sprinter fast RAM (the four 16 KB cache pages), 64 KB whole (a TTD v2 memory region once those exist)
     SprinterInput = 31,   // Sprinter AT keyboard byte stream (SIO A) and Microsoft serial mouse packet generator (SIO B)
     SprinterCovoxBlaster = 32, // Sprinter Covox / Covox-Blaster: ring, indices, rate phase, INT request, DAC words (S6)
-    // Reserved for Sprinter devices that do not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
+    SprinterIsa = 33,     // Sprinter ISA slots: the #9FBD latch, the card kind in each slot, the cards' bus state (ISA phase I1)
+    // Reserved for a Sprinter device that does not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
     // never declared. The device that lands takes its id, declares it and adds its blob - the existing Sprinter
     // blobs keep their layout, so a checkpoint only gains a blob
-    SprinterIsa = 33,     // reserved (S6b): ISA I/O window latches, ZX-bus adapter
     SprinterPads = 34,    // reserved (input extras): the two extended joystick pads and their select counters
     Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
@@ -92,6 +92,16 @@ enum class PeripheralId : uint8_t
                           // page 0Eh volume / routing, the READ CD sector waiting for the data buffer; boards with a CD unit only
     Vdac2Memory = 42,     // TS-Conf VDAC2 card: the FT812's memory regions (RAM_G, display lists, REG, CMD, ...), zero runs dropped, until TTD v2 regions
     Vdac2 = 43,           // TS-Conf VDAC2 card: card time, INT edges, monitor source, FT812 control state (EveSaveState, metrics)
+    ProfiXtKbc = 44,      // Profi PROFI-XT keyboard controller: the MCS-48 (RAM, registers, ports, timer), output latch, WAIT
+                          // flip-flop, the XT keyboard's wire, time base; the table engine's matrix (ProfiXtKbc::State)
+    EthernetNics = 45,    // frame-level network cards in expansion slots (the Sprinter's NE2000): DP8390, packet RAM, EEPROM (network tdd §13)
+    SlotSerial1 = 46,     // the UART card in expansion slot 1 (the Sprinter's SprinterESP): its 16550 and peer (netstate::SerialPort)
+    SlotSerial2 = 47,     // the same for slot 2
+    SlotSerial1B = 48,    // the second UART of the card in expansion slot 1 (SprinterSerial's COM2; network phase SN4)
+    SlotSerial2B = 49,    // the same for slot 2
+    Ppi8255 = 50,         // an 8255 PPI (the ZX Profi's: joystick, printer / Covox): mode word and output latches (Ppi8255::State)
+    Pit8253 = 51,         // an 8253 PIT (the ZX Profi v5's COM baud timer): three counters and the clock position (Pit8253::State)
+    Usart8251 = 52,       // an 8251 USART (the ZX Profi v5's COM port): registers, buffers, the line, the #B3 latch (Usart8251::State)
     // Future: SAA1099, GS512, etc.
     Count
 };

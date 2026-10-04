@@ -67,6 +67,8 @@ void WriteRegisterByte(EveChip& chip, const RegInfo& info, uint32_t address, uin
     }
     const uint32_t byteIndex = address & 3;
     const uint8_t mask = kRegistersKeepAllBits ? kAllBits : static_cast<uint8_t>(info.mask >> (8 * byteIndex));
+    if ((info.flags & RegDrawing) && bytes[byteIndex] != static_cast<uint8_t>(value & mask))
+        ++chip.drawRegChanges; // a register drawing reads changed: no line is kept
     bytes[byteIndex] = static_cast<uint8_t>(value & mask);
     region.MarkDirty(info.address - base);
     if (byteIndex == 3)
@@ -116,6 +118,14 @@ bool InitRegions(EveChip& chip)
 
 void ClearRegions(EveChip& chip)
 {
+    ++chip.ramGWrites;
+    if (chip.ramGPageChanges)
+    {
+        for (uint32_t page = 0; page < (kRamGSize >> kPageShift); ++page)
+            chip.ramGPageChanges[page] = chip.ramGWrites;
+        for (uint32_t block = 0; block < (kRamGSize >> kChangeBlockShift); ++block)
+            chip.ramGBlockChanges[block] = chip.ramGWrites;
+    }
     for (Region& region : chip.regions)
     {
         std::memset(region.base, 0, region.size);
@@ -170,6 +180,12 @@ void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
         if (chip.drawing)
             CatchUp(chip);
         Region& region = chip.regions[RegionRamG];
+        if (region.base[address] != value)
+        {
+            ++chip.ramGWrites; // counts changes: kept lines and decoded palettes hold over equal writes
+            chip.ramGPageChanges[address >> kPageShift] = chip.ramGWrites;
+            chip.ramGBlockChanges[address >> kChangeBlockShift] = chip.ramGWrites;
+        }
         region.base[address] = value;
         region.MarkDirty(address);
         return;

@@ -4,10 +4,16 @@
 
 #include "sprinterfixture.h"
 
+#include <memory>
+
+#include "emulator/io/fdc/diskimage.h"
+#include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/memory/sprinter/sprinteraccelerator.h"
+#include "loaders/disk/loader_rawpc.h"
 
 class PortDecoderSprinter_Test : public SprinterFixture
 {
@@ -269,6 +275,100 @@ TEST_F(PortDecoderSprinter_Test, Turbo_SysBit1SelectsRatio6)
     EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 1);
 }
 
+// The board's /RESET (Ctrl+Alt+Del, a write to page #A0, the RESET button) presets ALL_MODE to #FF and clears RGMOD
+// and PORT_Y (PLD SP2_ACEX.TDF:1041, :958, ACCELER.TDF:204); the border and HOLD keep their values, HOLD returns to
+// #77 only with a new configuration (its /RES, SP2_ACEX.TDF:827-830). The ZX mode's ALL_MODE #FE must not survive
+// a reset: BIOS 3.07 BETA 1 reads the register back at its reset intercept and writes what it read (the owner's
+// report of 2026-10-02: Flex Navigator without its video mode after the ZX mode and a reset)
+TEST_F(PortDecoderSprinter_Test, CpuReset_PresetsAllModeClearsRgModAndPortY)
+{
+    auto program = [&] {
+        OpenDcp();
+        SetCode(0x0001, false, 0xC3);
+        SetCode(0x0001, true, 0xC3);  // the 3.07 BETA 1 table reads ALL_MODE back
+        SetCode(0x0002, false, 0xC4);
+        SetCode(0x0003, false, 0xC5);
+        SetCode(0x0004, false, 0xCB);
+        Out(0x0001, 0xFE);  // the launcher's ZX mode
+        Out(0x0002, 0x55);
+        Out(0x0003, 0x01);
+        Out(0x0004, 0x12);
+        ASSERT_EQ(Pld().allMode, 0xFE);
+        ASSERT_EQ(Pld().rgMod, 0x01);
+        ASSERT_EQ(_decoder->GetIntSource().ModePage(), 1);
+        ASSERT_FALSE(_decoder->GetAccelerator()->IsEnabled());
+    };
+
+    // Ctrl+Alt+Del / page #A0: a CPU reset of the running configuration
+    ASSERT_NO_FATAL_FAILURE(program());
+    _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+    _decoder->OnMachineStep(0);
+    ASSERT_EQ(_z80->pc, 0x0000);
+    EXPECT_EQ(Pld().allMode, 0xFF);
+    EXPECT_EQ(Pld().rgMod, 0x00);
+    EXPECT_EQ(_decoder->GetIntSource().ModePage(), 0);
+    EXPECT_EQ(Pld().portY, 0x00);
+    EXPECT_EQ(Pld().hold, 0x12) << "HOLD follows the configuration's /RES only";
+    EXPECT_TRUE(_decoder->GetAccelerator()->IsEnabled());
+    OpenDcp();
+    EXPECT_EQ(In(0x0001), 0xFF) << "ALL_MODE reads back #FF";
+
+    // The RESET button: the PLD loads again (fast start here), HOLD too starts over
+    ASSERT_NO_FATAL_FAILURE(program());
+    _core->Reset();
+    EXPECT_EQ(Pld().allMode, 0xFF);
+    EXPECT_EQ(Pld().rgMod, 0x00);
+    EXPECT_EQ(_decoder->GetIntSource().ModePage(), 0);
+    EXPECT_EQ(Pld().portY, 0x00);
+    EXPECT_EQ(Pld().hold, 0x77);
+    EXPECT_TRUE(_decoder->GetAccelerator()->IsEnabled());
+}
+
+// The Z84C15's CTC on the board (MAME sprinter.cpp:1993-2008): TRG0-TRG2 are X_SP / 48 = 875 kHz in real time and
+// ZC/TO2 drives TRG3, so the 48.83 Hz tick of channels 2 + 3 (Bad Apple, dontBlink) is the same at 3.5 and 21 MHz;
+// a timer counts the CPU clock (MAME derives the CTC clock from the scaled CPU clock) and runs six times faster
+TEST_F(PortDecoderSprinter_Test, Ctc_TriggersAreRealTimeTimersFollowTheCpuClock)
+{
+    Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+    const auto wait = [&](uint64_t baseT) { _context->emulatorState.t_states += baseT; };
+    _z80->t = 0;  // the load on an edge of the 875 kHz grid (an edge every 4 base T-states from the power-on)
+    Out(0x0010, 0x00);  // vector base
+    Out(0x0012, 0x57);
+    Out(0x0012, 112);
+    Out(0x0013, 0xD7);
+    Out(0x0013, 160);
+    Out(0x0011, 0x05);  // timer, prescaler 16, 256
+    Out(0x0011, 0x00);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(3), 875000.0 / 112 / 160);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(1), 3500000.0 / 16 / 256);
+
+    constexpr uint64_t kTickT = 112 * 160 * 4;  // 71 680 base T-states = 20.48 ms
+    const uint64_t zeros = ctc.ZeroCounts(3);
+    wait(kTickT - 1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros);
+    wait(1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 1);
+    EXPECT_TRUE(_decoder->GetZ84().IntPending());
+    EXPECT_EQ(_decoder->GetZ84().AcknowledgeInterrupt(), 0x06);
+    _decoder->GetZ84().OnReti();
+
+    // 21 MHz: the same tick in real time; the timer six times faster, its count kept through the switch
+    const uint8_t before = ctc.Read(1);
+    OpenDcp();
+    SetCode(0x007C, false, 0xC6);
+    Out(0x007C, 0x03);
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, 6);
+    EXPECT_EQ(ctc.Read(1), before);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(3), 875000.0 / 112 / 160);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(1), 21000000.0 / 16 / 256);
+    wait(kTickT - 1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 1);
+    wait(1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 2);
+    EXPECT_TRUE(_decoder->GetZ84().IntPending());
+    EXPECT_EQ(_decoder->GetZ84().AcknowledgeInterrupt(), 0x06);
+}
+
 /// endregion </T-MEM-1 / T-MEM-2>
 
 /// region <T-FDD: the floppy controller behind the port table (phase S3a)>
@@ -408,6 +508,121 @@ TEST_F(PortDecoderSprinter_Test, Dos_M1HookOpensAndClosesTheFloppyPorts)
     EXPECT_EQ(Pld().dos, 1);
 }
 
+// T-FDD-8: BIOS 3.07 BETA 1's sector read, instruction for instruction (FDD_DRIVER.asm FDD_RW_SECTOR, BIOS-TT
+// f546c4e, page 8 #1D61): the #BD latch at HD (A = #21 puts A13 on the bus), drive B side 1 through the Beta
+// system port (#2D: bit 4 = 0 is the second head), SEEK, READ SECTOR, the first DRQ awaited with mask #40 and a
+// DE / B time-out, the byte count in DE', INI, then DRQ or INTRQ with mask #C0 and JP P. The sector is the one
+// Flex Navigator's "b:\netcfg.exe" starts with on the RTL8019AS kit floppy (cylinder 3, head 1, sector 12;
+// LBA 137). On 3.07 BETA 1 that program fails with "Invalid EXE file", but not here: the controller delivers this
+// read whole (status 0). The failure is DSS 1.71.57 against the beta's FDD driver, which no longer preserves IY
+// (bios-versions.md §5, tdd-storage.md). Runs one disk revolution at 21 MHz at most (~1 M instructions, ~0.1 s)
+TEST_F(PortDecoderSprinter_Test, Fdc_Bios307SectorReadLoop_HdSide1)
+{
+    WD1793* fdc = _context->pBetaDisk;
+    ASSERT_NE(fdc, nullptr);
+    OpenDcp();
+
+    // The PLD's floppy codes for every value of A on A15-A8 (OUT (n),A / IN A,(n) put A there); #1F from RAM is
+    // rewritten to #xx0F (T-FDD-6), so the command / status port is entered under both
+    for (uint16_t hi = 0; hi < 0x100; hi += 0x20)
+    {
+        const uint16_t h = static_cast<uint16_t>(hi << 8);
+        for (const uint16_t low : {0x000F, 0x001F})
+        {
+            SetCodeAll(h | low, false, 0x10);
+            SetCodeAll(h | low, true, 0x10);
+        }
+        SetCodeAll(h | 0x3F, false, 0x11);
+        SetCodeAll(h | 0x3F, true, 0x11);
+        SetCodeAll(h | 0x5F, false, 0x12);
+        SetCodeAll(h | 0x5F, true, 0x12);
+        SetCodeAll(h | 0x7F, false, 0x13);
+        SetCodeAll(h | 0x7F, true, 0x13);
+        SetCodeAll(h | 0xFF, false, 0x14);
+        SetCodeAll(h | 0xFF, true, 0x15);
+        SetCodeAll(h | 0xBD, false, (hi & 0x20) ? 0x17 : 0x16);
+    }
+    SetCode(0x007C, false, 0xC6);
+    Out(0x007C, 0x03);  // 21 MHz, as the BIOS runs
+    ASSERT_EQ(_context->emulatorState.hw_turbo_ratio, 6);
+
+    // A 1.44 MB disk whose every sector carries its LBA and offset
+    constexpr uint32_t kLba = 3 * 36 + 18 + 11;
+    std::vector<uint8_t> dump(LoaderRawPcFloppy::IMAGE_SIZE_HD);
+    for (size_t i = 0; i < dump.size(); i++)
+        dump[i] = static_cast<uint8_t>((i / 512) * 7 + (i % 512) * 3 + (i >> 17));
+    LoaderRawPcFloppy loader(_context, "");
+    std::vector<std::string> warnings;
+    std::unique_ptr<DiskImage> image(loader.parse(dump.data(), dump.size(), warnings));
+    ASSERT_NE(image, nullptr);
+    FDD* driveB = _context->coreState.diskDrives[1];
+    ASSERT_NE(driveB, nullptr);
+    driveB->insertDisk(image.get());
+
+    constexpr uint16_t kBuffer = 0x9000;
+    constexpr uint16_t kResult = 0x8F00;
+    // clang-format off
+    const std::vector<uint8_t> code = {
+        0x3E, 0x21, 0xD3, 0xBD,        // #00 LD A,#21 : OUT (#BD),A   SET_SPEED: HD
+        0x3E, 0x2D, 0xD3, 0xFF,        // #04 LD A,#2D : OUT (#FF),A   SEEK: drive B, head 1
+        0x3E, 0x03, 0xD3, 0x7F,        // #08 LD A,3 : OUT (#7F),A
+        0x3E, 0x18, 0xD3, 0x1F,        // #0C LD A,#18 : OUT (#1F),A   EXECOM: SEEK
+        0xDB, 0xFF, 0xE6, 0x80,        // #10 IN A,(#FF) : AND #80
+        0x28, 0xFA,                    // #14 JR Z,#10                 INTRQ
+        0x3E, 0x0C, 0xD3, 0x5F,        // #16 LD A,12 : OUT (#5F),A    FDD_RW_SECTOR: the sector
+        0x21, 0x00, 0x90,              // #1A LD HL,kBuffer
+        0xD9, 0x06, 0x80,              // #1D EXX : LD B,#80            (FDD_5x_LONG_READ: the command in B')
+        0x11, 0x01, 0x02,              // #20 LD DE,#0201               BytesPerSector + 1
+        0xCB, 0x68, 0x08, 0x78, 0xD9,  // #23 BIT 5,B : EX AF,AF' : LD A,B : EXX
+        0x4F, 0x79,                    // #28 LD C,A : LD A,C
+        0xD3, 0x1F,                    // #2A OUT (#1F),A              READ SECTOR
+        0x01, 0x7F, 0x04,              // #2C LD BC,#047F               INTRQorDRQ * 256 + Data
+        0x11, 0x00, 0x00,              // #2F LD DE,0
+        0xDB, 0xFF, 0xE6, 0x40,        // #32 .wait_loop: IN A,(#FF) : AND #40
+        0x28, 0x1C,                    // #36 JR Z,.wait_loop_next (#54)
+        0x08, 0x20, 0x20,              // #38 EX AF,AF' : JR NZ,.fail (#5B; the write path)
+        0xD9, 0x1B, 0x7A, 0xB3, 0xD9,  // #3B .read_loop: EXX : DEC DE : LD A,D : OR E : EXX
+        0x28, 0x19,                    // #40 JR Z,.fail (#5B; SectorSizeError)
+        0xED, 0xA2,                    // #42 INI
+        0xDB, 0xFF, 0xE6, 0xC0,        // #44 .wait_data_r: IN A,(#FF) : AND #C0
+        0x28, 0xFA,                    // #48 JR Z,.wait_data_r
+        0xF2, 0x3B, 0x80,              // #4A JP P,.read_loop
+        0xDB, 0x1F,                    // #4D IN A,(#1F)                the status
+        0x32, 0x00, 0x8F,              // #4F LD (kResult),A
+        0x18, 0x0C,                    // #52 JR .end (#60)
+        0x13, 0x7B, 0xB2,              // #54 .wait_loop_next: INC DE : LD A,E : OR D
+        0x20, 0xD9,                    // #57 JR NZ,.wait_loop
+        0x10, 0xD7,                    // #59 DJNZ .wait_loop
+        0x3E, 0xFD,                    // #5B .fail: LD A,#FD
+        0x32, 0x00, 0x8F,              // #5D LD (kResult),A
+    };
+    // clang-format on
+    for (size_t i = 0; i < code.size(); i++)
+        _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+    _memory->DirectWriteToZ80Memory(kResult, 0xEE);
+    _z80->pc = 0x8000;
+    const uint16_t end = static_cast<uint16_t>(0x8000 + code.size());
+    for (int guard = 0; guard < 4000000 && _z80->pc != end; guard++)
+        Step();
+    driveB->ejectDisk();
+    ASSERT_EQ(_z80->pc, end) << "the loop did not finish";
+
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(kResult), 0x00) << "READ SECTOR status: no Lost Data, CRC or RNF";
+    EXPECT_TRUE(_decoder->IsFdcHighDensity());
+    int mismatches = 0;
+    for (uint16_t i = 0; i < 512 && mismatches < 4; i++)
+    {
+        const uint8_t expected = dump[kLba * 512 + i];
+        const uint8_t got = _memory->DirectReadFromZ80Memory(static_cast<uint16_t>(kBuffer + i));
+        if (got != expected)
+        {
+            ADD_FAILURE() << "byte " << i << ": " << int(got) << " != " << int(expected);
+            mismatches++;
+        }
+    }
+    EXPECT_EQ(_z80->hl, kBuffer + 512) << "INI stored exactly one sector";
+}
+
 /// endregion </T-FDD>
 
 /// region <T-RTC: the DS12887A behind codes #1C / #1D / #1E>
@@ -433,7 +648,7 @@ TEST_F(PortDecoderSprinter_Test, Cmos_FixedTimeBcdAndCentury)
     if (!LoadTable304())
         GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
     OpenDcp();
-    _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC (host local time on read)
+    _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC (read as UTC on every host)
 
     Out(0xDFBD, Ds12887::kRegB);
     EXPECT_EQ(In(0xFFBD) & Ds12887::kBBinary, 0) << "BCD after power-on";

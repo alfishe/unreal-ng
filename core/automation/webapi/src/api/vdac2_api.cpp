@@ -1,6 +1,7 @@
 // WebAPI: TS-Conf VDAC2 card (FT812) control.
 // Implements /vdac2/capture endpoints: the FT812's bus traffic written to an
-// .evr replay stream (docs/inprogress/2026-10-01-tsconf-vdac2/vdac2-test-corpus.md §4).
+// .evr replay stream (docs/inprogress/2026-10-01-tsconf-vdac2/vdac2-test-corpus.md §4),
+// and /vdac2/metrics: the FT812 line budget metrics (line-budget-metrics.md).
 // Every surface goes through Vdac2Control, so all of them answer the same.
 
 #include <drogon/HttpResponse.h>
@@ -83,7 +84,111 @@ void sendCaptureStatus(EmulatorContext* context, std::function<void(const HttpRe
     callback(resp);
 }
 
+/// The line budget metrics JSON both metrics endpoints answer with
+void sendMetrics(EmulatorContext* context, bool withLines, bool inFlight,
+                 std::function<void(const HttpResponsePtr&)>& callback)
+{
+    Vdac2Control::FrameMetrics m;
+    std::string error;
+    if (!Vdac2Control::GetFrameMetrics(context, m, withLines, inFlight, &error))
+    {
+        sendVdac2Error(callback, HttpStatusCode::k409Conflict, "No VDAC2 Card", error);
+        return;
+    }
+    Json::Value body;
+    body["valid"] = m.valid;
+    body["frame"] = static_cast<Json::UInt64>(m.frame);
+    body["lines"] = m.lines;
+    body["hard_budget"] = m.hardBudget;
+    body["soft_budget"] = m.softBudget;
+    body["worst_line"] = m.worstLine;
+    body["worst_clocks"] = m.worstClocks;
+    body["total_clocks"] = static_cast<Json::UInt64>(m.totalClocks);
+    body["lines_over_soft"] = m.linesOverSoft;
+    body["lines_over_hard"] = m.linesOverHard;
+    body["margin"] = m.margin;
+    body["measure_always"] = m.measureAlways;
+    if (withLines)
+    {
+        body["line_clocks"] = Json::Value(Json::arrayValue);
+        for (uint16_t clocks : m.lineClocks)
+            body["line_clocks"].append(clocks);
+    }
+    if (inFlight)
+    {
+        Json::Value& flight = body["in_flight"];
+        flight["known"] = m.inFlightKnown;
+        if (!m.inFlightKnown)
+            flight["reason"] = "the machine is running: pause it to read the frame in flight";
+        flight["lines_passed"] = m.inFlightLinesPassed;
+        if (withLines && m.inFlightKnown)
+        {
+            flight["line_clocks"] = Json::Value(Json::arrayValue);
+            for (int32_t clocks : m.inFlightLineClocks)
+                flight["line_clocks"].append(clocks);
+        }
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(HttpStatusCode::k200OK);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+bool QueryFlag(const HttpRequestPtr& req, const char* name)
+{
+    const std::string value = req->getParameter(name);
+    return value == "1" || value == "true" || value == "yes";
+}
+
 } // namespace
+
+/// @brief GET /api/v1/emulator/{id}/vdac2/metrics[?lines=1][&in_flight=1]
+void EmulatorAPI::vdac2Metrics(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    EmulatorContext* context = vdac2Context(id, callback);
+    if (!context)
+        return;
+    sendMetrics(context, QueryFlag(req, "lines"), QueryFlag(req, "in_flight"), callback);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/vdac2/metrics
+/// Body: {"margin": 0..50, "measure_always": bool}, each optional
+void EmulatorAPI::vdac2MetricsSet(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    EmulatorContext* context = vdac2Context(id, callback);
+    if (!context)
+        return;
+    auto json = req->getJsonObject();
+    if (!json || !json->isObject())
+    {
+        sendVdac2Error(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                       "JSON body expected: {\"margin\": 0..50, \"measure_always\": bool}");
+        return;
+    }
+    std::string error;
+    if (json->isMember("margin"))
+    {
+        const Json::Value& margin = (*json)["margin"];
+        if (!margin.isUInt() || !Vdac2Control::SetLineBudgetMargin(context, margin.asUInt(), &error))
+        {
+            sendVdac2Error(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                           error.empty() ? "margin is a percent from 0 to 50" : error);
+            return;
+        }
+    }
+    if (json->isMember("measure_always"))
+    {
+        if (!(*json)["measure_always"].isBool())
+        {
+            sendVdac2Error(callback, HttpStatusCode::k400BadRequest, "Bad Request", "measure_always is a boolean");
+            return;
+        }
+        Vdac2Control::SetMeasureAlways(context, (*json)["measure_always"].asBool(), &error);
+    }
+    sendMetrics(context, false, false, callback);
+}
 
 /// @brief POST /api/v1/emulator/{id}/vdac2/capture/start
 /// Body: {"path": "/tmp/game.evr"}; replaces a capture in progress

@@ -105,6 +105,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
+                        {"isa", &CLIProcessor::HandleIsa},   // ISA slots (Sprinter): report, cycles
                         {"network", &CLIProcessor::HandleNetwork},  // Network adapters: card, sockets, virtual network
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
@@ -118,6 +119,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
                         {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
                         {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
+                        {"bphits", &CLIProcessor::HandleBPHits},          // Breakpoint hit counters (reset)
                         {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
                         {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
                         {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
@@ -585,6 +587,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  create [model] [--ram-power-on random|zero] - Create an emulator instance without starting it" << NEWLINE;
     oss << "                (--ram-power-on zero: every RAM page reads 0; random: noise in the screen pages like real DRAM;" << NEWLINE;
     oss << "                default: [MISC] RAMPowerOn of the model's unreal.ini)" << NEWLINE;
+    oss << "                Profi: --profi-keyboard matrix|xt|xttable|default, --profi-zq3 16..24 (v5 hi-res crystal, MHz)," << NEWLINE;
+    oss << "                --profi-ay-clock old|new (v5 SB7: the AY at 1.5 MHz in hi-res, or 1.75 always)" << NEWLINE;
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;
@@ -634,13 +638,20 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
+    oss << "  isa | state isa              - ISA slots (Sprinter): #9FBD latch, window 3, cards, counters" << NEWLINE;
+    oss << "  isa io|mem <slot> <addr> [v] - An ISA cycle (read, or write v); isa peek, isa reset, isa latch" << NEWLINE;
     oss << NEWLINE;
     oss << "Network adapters ([NETWORK] Card= ZX-Bus cards, ComPort= the machine's serial port):" << NEWLINE;
     oss << "  network | net | state network - Cards, serial port, W5300 sockets, virtual network, devices not fitted" << NEWLINE;
     oss << "  network set key=value ..     - card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass" << NEWLINE;
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
-    oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud] (the machine's own port)" << NEWLINE;
-    oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" << NEWLINE;
+    oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|modem[,port]" << NEWLINE;
+    oss << "                                 (the machine's own port; modem = a Hayes modem that dials host:port)" << NEWLINE;
+    oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off" << NEWLINE;
+    oss << "                                 esp_chip=esp32|esp8266|esp8266-at221|esp8266-at222 (the SprinterESP takes an ESP8266 one, else at222)" << NEWLINE;
+    oss << "                                 isa1_peer=at|modem[,port]|loopback|tcp:..|serial:.. isa2_peer=.. (Sprinter: a UART card's line;" << NEWLINE;
+    oss << "                                 the ISA modem's default modem, SprinterSerial's COM1) isa1_peer_b= isa2_peer_b= (SprinterSerial COM2)" << NEWLINE;
+    oss << "                                 modem_phonebook=5551234=host:port,.. (numbers a Hayes modem peer dials; any machine)" << NEWLINE;
     oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
     oss << "                                 kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller, RS-232 from v31)" << NEWLINE;
     oss << "                                 atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (ATM2IOESP on the ATM Turbo 2+ INTERNAL I/O)" << NEWLINE;
@@ -756,12 +767,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "Mouse Injection:" << NEWLINE;
     oss << "  mouse move <dx> <dy>           - Move by dx,dy pixels (+x right, +y up; -127..127)" << NEWLINE;
+    oss << "  mouse glide <dx> <dy>          - Long move (-4096..4096), one step per frame" << NEWLINE;
     oss << "  mouse press|release <button>   - Press or release left|right|middle (l|r|m)" << NEWLINE;
     oss << "  mouse click <button> [frames]  - Press, hold for frames (default 2), release" << NEWLINE;
     oss << "  mouse buttons <none|b1,b2..>   - Set exactly which buttons are pressed" << NEWLINE;
     oss << "  mouse wheel <steps>            - Scroll wheel -7..7 (+ = away from you)" << NEWLINE;
     oss << "  mouse clear                    - Release all buttons, cancel pending click" << NEWLINE;
-    oss << "  mouse status                   - Show counters, buttons, wheel, port values" << NEWLINE;
+    oss << "  mouse status [device]          - Show counters, port values, the machine's mouse" << NEWLINE;
+    oss << "  mouse devices                  - The machine's mouse devices" << NEWLINE;
     oss << "  mouse set <x> <y>              - Debug: write raw X/Y counters (0..255)" << NEWLINE;
     oss << NEWLINE;
     oss << "Joystick Injection (Kempston, IN #1F):" << NEWLINE;

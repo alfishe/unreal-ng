@@ -205,7 +205,9 @@ Storage gains three structures next to the existing hash maps:
 
 Conditions are compiled once at set-time (off the emulation thread): tokenize → shunting-yard → RPN over `int64_t` with all symbols resolved to direct-accessor opcodes; expressions matching dominant shapes (`reg==const`, masked compares, `MWV==k`, …) are stored as tagged **fast predicates** evaluated by a single switch+compare (~2–5 ns), with the RPN VM (~5–30 ns, fixed stack, no allocation, no exceptions) as the general fallback and reference implementation. A false condition returns to the emulation loop with **zero** side effects (no allocation, no notification, no counter increment); evaluation errors flip the breakpoint into ERROR state and clear its filter bits so a broken condition cannot tax the loop.
 
-Prerequisite fix: initialize `MemoryPageDescriptor.page` for `BANK_CACHE` (and assert on `BANK_INVALID`) in `MapZ80AddressToPhysicalPage`.
+Prerequisite fix: initialize `MemoryPageDescriptor.page` for `BANK_CACHE` (and assert on `BANK_INVALID`) in `MapZ80AddressToPhysicalPage`. **Done 2026-10-03** (master 7eca03436).
+
+> **Concrete algorithm (2026-10-03):** [hotpath-matching-design.md](hotpath-matching-design.md) turns this section into the data structures, the per-access, set-change and remap flows (with diagrams), measured in [PoC 022](../../../tools/poc/022-breakpoint-matching/README.md).
 
 ```mermaid
 flowchart TD

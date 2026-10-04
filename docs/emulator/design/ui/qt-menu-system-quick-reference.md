@@ -70,7 +70,8 @@ Debug
 
 Tools
 ├─ Settings... [TODO]
-└─ Screenshot... [TODO]
+├─ Take Screenshot (clipboard)
+└─ Save Screenshot As... (PNG or GIF file)
 
 Help
 ├─ Documentation (F1)

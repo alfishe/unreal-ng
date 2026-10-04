@@ -14,14 +14,24 @@ class CovoxBlaster;
 /// Rule (MAME update_int, sprinter.cpp:1278-1313; MAN §4.6): walk the squares
 /// row by row in beam order; a square whose Mode0 byte matches %1111 11x1
 /// (blank + INT) arms, and the first following square in the same row without
-/// the pattern fires an INT on the last (8th) line of that square row, at that
-/// square's x. The beam origin is 2 square rows above b = 0 (the top border)
-/// and 6 squares left of a = 0. The pulse lasts 32 T at 3.5 MHz.
+/// the pattern fires an INT on the last (8th) line of that square row. MAME puts
+/// it at that square's beam column scr_a = a + 6 (2 square rows above b = 0 for
+/// the top border).
+///
+/// The edge itself is the PLD's (VIDEO2.TDF, SP2_ACEX.TDF:744): INTT is clocked
+/// by CT5, which rises 2 T into each 4-T square period, and INT_X is set on its
+/// rising edge - the first square without the pattern, 2 T after the video logic
+/// starts reading that square. The renderer reads square a at T 12 + 4a of the
+/// line (HOLD #77), so the INT is at T 14 + 4a: kIntBeforeMameT = 10 T before
+/// MAME's 4 x scr_a = 24 + 4a. MAME's place makes the INT-to-picture distance of
+/// the Spectrum mode 17 980 T where the PLD gives 17 990 (Pentagon: 17 988), so
+/// multicolor timed for a Pentagon raced 10 T late (Sprinter TODO, research-zx-mode
+/// §7.1). The pulse lasts 32 T at 3.5 MHz.
 ///
 /// Worked example: in a 320-line frame, row b = 30 has squares a = 40..45 with
-/// Mode0 = #FD and a = 46 without. Beam row scr_b = 32, column scr_a = 52, so
-/// the INT starts on line 32 x 8 + 7 = 263 at pixel 52 x 16 = 832: base T-state
-/// 263 x 224 + 832 / 4 = 59 120.
+/// Mode0 = #FD and a = 46 without. Beam row scr_b = 32, column scr_a = 52: MAME's
+/// INT is on line 32 x 8 + 7 = 263 at pixel 52 x 16 = 832, base T-state
+/// 263 x 224 + 832 / 4 = 59 120; the PLD's edge is 10 T earlier, at 59 110.
 ///
 /// One INT per pulse: the acknowledge ends it (unverified - MAME keeps the line
 /// for the full 32 T; see the Sprinter TODO). Positions are base T-states (3.5
@@ -32,6 +42,18 @@ public:
     static constexpr uint32_t kPulseTStates = 32;
     static constexpr uint32_t kLineTStates = 224;
     static constexpr uint8_t kSquareColumns = 56;
+    /// The renderer reads square a at T kSquareReadT + 4a of the line (HOLD #77)
+    static constexpr uint32_t kSquareReadT = 12;
+    /// CT5 rises this many T into each 4-T square period (VIDEO2.TDF:297-298: CT[5..3] steps on CT[2..0] 6 -> 0)
+    static constexpr uint32_t kCt5RiseInSquareT = 2;
+    /// The PLD's INT edge before MAME's beam position of the square (see above): 24 + 4a - (14 + 4a)
+    static constexpr uint32_t kIntBeforeMameT = 24 - (kSquareReadT + kCt5RiseInSquareT);
+    /// Base T-state of the frame, mod 4, at which CT5 rises: every INT edge sits here (INTT is clocked by CT5), and so
+    /// does the PLD's 4-T CT5 square wave that the original waits follow (SprinterOrigWaits). Lines (224 T) and both
+    /// frames (71 680 / 69 888 T) are multiples of 4, so one value holds for every line and frame
+    static constexpr uint32_t kCt5RiseT = (kSquareReadT + kCt5RiseInSquareT) % 4;
+    static_assert(kIntBeforeMameT == 10, "MAME's place is 10 T after the PLD's edge (research-zx-mode §7.1)");
+    static_assert(kLineTStates % 4 == 0, "the CT5 period divides a line");
 
     SprinterIntSource(EmulatorContext* context, const SprinterVideoRam& vram);
 

@@ -80,8 +80,10 @@ anything. Problem 1 did.
   ports are Beta Disk's) and a program read a register within the last
   `kPolledWithinFrames` (50) frames. `ReadRegister` (a program's port read) notes the
   frame; `PeekRegister` (debug / automation) does not. Reset forgets the last read.
-  ZX-Evo / TS-Conf (AVR PS/2 mouse) and the Sprinter board mouse are "in use" when
-  fitted: no frame counter at those devices yet.
+  The ZX-Evo / TS-Conf AVR PS/2 mouse (`EvoAvrMouse`) does the same: its decoder gives it
+  the frame counter (`SetFrameSource`), `ReadRegister` notes the frame, `PeekRegister` is
+  the debug read, a newly plugged mouse starts unread. TS-BIOS never reads the mouse, so a
+  click there captures nothing. The Sprinter board mouse is still "in use" when fitted.
 - **Buttons are changed in one place.** Press / release / click from automation and the
   host's mask are all applied on the emulator thread against the manager's mask.
   The read-modify-write happens there, so nothing is lost (problem 5).

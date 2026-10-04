@@ -172,6 +172,8 @@ So BIOS 3.04 cold-starts with the Scorpion position (the "Pentagon at cold start
 `changes.txt` is a later change). Pentagon is 16 lines (3 584 T) after Scorpion, Spectrum 8 lines
 (1 792 T) after Pentagon; all three at the same horizontal position. Only the 320-line frame was
 measured (BIOS 3.04's `FN_SYNC` has no frame-height option; the 312-line frame is code `#2D`).
+unreal-ng fires the INT on the same squares at the PLD's edge, 10 T before MAME's position (60 886 / 64 470 /
+66 262 T; `SprinterIntSource::kIntBeforeMameT`, research-zx-mode §7.1 in docs/inprogress/2026-09-28-sprinter).
 
 ### `palette.csv`: the logo palette, frame by frame
 

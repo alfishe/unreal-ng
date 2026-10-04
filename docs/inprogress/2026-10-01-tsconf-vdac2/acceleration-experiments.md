@@ -201,3 +201,39 @@ sample <pid> 10 -file profile.txt                                   # where the 
   measure, then add the NEON / SSE2 kernels in `eve-simd.h`.
 - Formats in Zuma's frames: `L4`, `RGB565` (plus `ARGB4` on the loading screen); all formats
   of the fast path must keep working.
+
+### 3.6 Status (2026-10-03): done in eve-emu `61a3f19`, vendored
+
+Measured on a new Zuma capture from power-on (Wild Commander, loading screen, menu, play;
+recorded without the FT81x ROM image, as the users' builds run), CPU time, two runs each:
+
+| Track | Before (`125876d` / `d7d28e2`) | After (`61a3f19`) |
+|:--|:--|:--|
+| Zuma, whole capture (8603 FT812 frames) | 305 s, 0.48x real time | **53 s, 2.74x** |
+| Zuma loading screen, drawing per frame | 133 ms | **7.5 ms** |
+| rtype-boot | 3.32 s | 2.87 - 2.97 s |
+| rtype-play, first 4000 frames | 17.5 s | 16.0 s |
+
+What made the difference (eve-replay-profile, the profiling build with counters per bitmap
+format, filter, path, matrix and pipeline: `--profile FROM TO`):
+
+1. **77 % of the loading screen was text in a ROM font without the ROM image** (`FT_Text`
+   with font 28 / 29, `ts-dos.asm`): an empty layout samples transparent black, and the
+   general path blended every transparent pixel. Now such a span only writes the tag under
+   the default pipeline. With the ROM image the text is drawn (L1 / L4 fonts).
+2. **BILINEAR on the fast path** (the background mask, L4 scaled x1.6): the two texel rows
+   decoded once per span, the four taps blended by `Simd::BilinearBlend` (NEON / SSE2 /
+   C++), 30 -> 3.4 ns per pixel.
+3. **The masking blends in SIMD** (`DST_ALPHA / ZERO`, `ONE_MINUS_DST_ALPHA / ONE`, RGB
+   mask) and `ONE / ZERO` under any colour mask as a channel copy: 2.9 -> 1.2 ns per pixel
+   for the colour planes.
+
+Bit-exact everywhere (all eve-emu tests with the six `bilinear-*` goldens; rtype-boot and
+3000 Zuma frames with every picture and answer compared) on NEON, SSE2 (x86_64) and
+`EVE_SIMD=OFF`; MinGW `-Werror` clean. The target of 4x is not reached yet: Zuma's play is
+now led by **rotated bitmaps** (the frog, the balls: PALETTED4444 / ARGB4 NEAREST with a
+rotation matrix, no fast path, ~50 % of play) and the display list walk (768 commands per
+line, ~20 %) - the next task.
+
+Round by round with all numbers (incl. the rotated sprites, done in `5f47ded`: 3.8x):
+[optimization-walkthrough.md](optimization-walkthrough.md).

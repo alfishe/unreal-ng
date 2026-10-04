@@ -36,6 +36,7 @@
 #include "common/filehelper.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "pch.h"
+#include "sprinterzxsession.h"
 #include "stdafx.h"
 
 namespace
@@ -347,3 +348,64 @@ TEST_F(SprinterBiosProbe_Test, ProbeDirectory)
 }
 
 /// endregion </Manual probe>
+
+/// region <A floppy program under DSS 1.71.57 (env-gated)>
+
+/// DSS 1.71.57 from the MAME pack's system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img) runs a program from
+/// the floppy in drive B: `b:\bin\type.exe b:\install.bat` (the DSS 1.62.92 test floppy) prints the batch file.
+/// BIOS 3.06 Hotfix 2 runs it. BIOS 3.07 BETA 1 does not: EXEC fails without reading the file (the shell prints
+/// "Bad command or file name", Flex Navigator "Invalid EXE file"). Its FDD driver (rewritten on IY, BIOS-TT f546c4e) leaves IY pointing at its drive table after RESET,
+/// GET_PAR, SET_PAR, DETECT, READ and WRITE, while 3.06's driver never changed IY. DSS 1.71.57's floppy driver
+/// keeps its own data in IY across these calls and loses it; DSS master (Estex-DSS fdd-drv.asm) and the DSS of the
+/// beta's recovery disk wrap every call in PUSH IY / POP IY. MAME with the same ROM, disk and floppy shows the
+/// same dialog, and a 3.07 build with IY saved runs the program, so this pins firmware behavior, not an emulation
+/// gap (bios-versions.md §5.2, tdd-storage.md §2.7). UNREAL_SPRINTER_ZX_BIOS=<such a build> makes the 3.07 case
+/// print the file (and fail here, by design). Boots DSS from the hard disk: about 1.5 s each
+class SprinterFloppyExe_Test : public SprinterZxSession_Test, public ::testing::WithParamInterface<const char*>
+{
+protected:
+    const char* BiosFile() const override { return GetParam(); }
+
+    /// The DSS 1.62.92 floppy in drive B (guest writes stay in memory)
+    void InsertTestFloppy()
+    {
+        const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+        if (!FileHelper::FileExists(image))
+            GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+        MediaSource source;
+        source.path = image;
+        InsertOptions options;
+        options.immediate = true;
+        options.access = AccessMode::Session;
+        const auto result = _context->pMediaManager->Insert("fdd.b", source, options);
+        ASSERT_TRUE(result.Ok()) << result.message;
+    }
+};
+
+TEST_P(SprinterFloppyExe_Test, Dss171_RunsAProgramFromFloppyB)
+{
+    BootToPrompt();
+    InsertTestFloppy();
+    if (IsSkipped())
+        return;
+    Dss("b:\\bin\\type.exe b:\\install.bat");
+    // The command runs (or fails) and the shell prints its prompt again
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenCount("C:\\>") >= 2; }, 1500, 5);
+    const bool is307 = std::string(GetParam()) == "sp2k-3.07-beta1.rom";
+    if (is307)
+    {
+        EXPECT_FALSE(ScreenHas("Install SPRINTER DOS")) << ScreenText();
+        EXPECT_TRUE(ScreenHas("Bad command or file name")) << ScreenText();  // the shell's word for a failed EXEC
+    }
+    else
+    {
+        EXPECT_TRUE(ScreenHas("Install SPRINTER DOS")) << ScreenText();
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Bios, SprinterFloppyExe_Test, ::testing::Values("sp2k-3.06-hf2.rom", "sp2k-3.07-beta1.rom"),
+                         [](const ::testing::TestParamInfo<const char*>& info) {
+                             return std::string(info.param).find("3.07") != std::string::npos ? "Bios307Beta1" : "Bios306Hf2";
+                         });
+
+/// endregion </A floppy program under DSS 1.71.57>

@@ -94,6 +94,7 @@ std::string TimeTravelManager::VisitComposedFrames(uint64_t fromFrame, uint64_t 
 
 TimeTravelManager::TTDClipExportResult TimeTravelManager::ExportClip(const TTDClipExportOptions& options)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDClipExportResult result;
     const auto started = std::chrono::steady_clock::now();
 

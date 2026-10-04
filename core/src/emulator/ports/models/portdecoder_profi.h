@@ -5,7 +5,11 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/profi/profiwaitoverlay.h"
+#include "emulator/io/keyboard/profixtkbc.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/ppi/ppi8255.h"
+#include "emulator/io/serial/usart8251.h"
+#include "emulator/io/timer/pit8253.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -48,6 +52,19 @@ public:
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
+    Ppi8255& GetPpi() { return _ppi; }
+    /// The v5 board's COM port: the 8253 baud timer and the 8251 (extended port map only)
+    Pit8253& GetPit() { return _pit; }
+    Usart8251& GetUsart() { return _usart; }
+    /// v5: the 8251 is the machine's own serial port ([NETWORK] ComPort= puts the peer on it)
+    NetworkCapabilities DescribeNetwork() override;
+
+    /// The keyboard on the connector ([PROFI] Keyboard=, resolved for the board): Matrix, Xt or XtTable
+    ProfiKeyboard GetKeyboardKind() const { return _keyboardKind; }
+    /// The PROFI-XT controller when it is fitted (Xt / XtTable), else nullptr
+    ProfiXtKbc* GetKeyboardController() const { return _xtKbc ? _xtKbc.get() : nullptr; }
+    /// Frame end: the PROFI-XT controller runs between reads
+    void OnFrameEnd() override;
     RtcBinding GetRtcBinding() override;
     /// endregion </Interface methods>
 
@@ -73,12 +90,29 @@ public:
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;
+    /// The 8255 register an address selects in the current port map, or #FF
+    uint8_t PpiRegister(uint16_t port, bool dosPorts) const;
+    /// The COM port device an address selects in the extended map (v5 only), or ComDevice::None
+    enum class ComDevice : uint8_t
+    {
+        None,
+        Pit,       ///< 8253: #8F / #AF / #CF counters 0..2, #EF control (A6 A5 = A1 A0 of the chip)
+        Usart,     ///< 8251: #D3 data, #F3 control / status (A5 = C/D)
+        Control,   ///< COM control register #B3 (and #93): write D0 interrupt enable; read D0 RI, D7 DCD
+    };
+    ComDevice ComPortDevice(uint16_t port) const;
+    /// The emulated time in base (3.5 MHz) T-states: the frames so far plus the CPU position scaled back from the
+    /// CPU clock (turbo, hi-res); the COM port's clock
+    uint64_t NowBase() const;
     /// The Profi IDE answers in EXT mode only (IDE design §3.2)
     IdeAdapter::Gate IdeGate() override;
 
     /// The front-panel TURBO switch (both boards): 7 MHz while it is pressed and, on v3, while the VG93's HLD is low
     /// (the HLD pin drives the board's /TURBO; research-profi-v3-turbo-floatbus.md A2)
     /// TURBO on both boards; the CP/M switch on v5 (the v3 drawings have none)
+    /// TTD units per base T: the numerators the board can select (ProfiTtdClockUnits)
+    uint8_t TtdClockUnits() const override;
+
     bool HasFrontPanelSwitch(FrontPanelSwitch sw) const override
     {
         return sw == FrontPanelSwitch::Turbo || (sw == FrontPanelSwitch::Cpm && _board.palette);
@@ -90,6 +124,8 @@ public:
 
     /// The clock the board runs at now, from the switch and (v3) the HLD pin; applies a change at once
     void SyncTurbo();
+    /// The frame and INT of the sync PROM half in use (hi-res: the upper half) into CONFIG
+    void SyncFrame(bool hires);
     /// Installs or removes the wait-state overlay (ProfiWaitOverlay) for the board's mode and clock
     void SyncWaits();
     bool AreWaitsInstalled() const { return _waitsInstalled; }
@@ -98,6 +134,8 @@ public:
     /// The v3 floating bus (research-profi-v3-turbo-floatbus.md B): what an IN that no device answers reads when
     /// its T3 starts at frame T `t3` - the pixel byte the video latched, #FF outside the read window
     uint8_t FloatingBusV3(uint32_t t3) const;
+    /// The v3 floating bus in hi-res, at T3 given in ns from the frame start (design-hires.md H3)
+    uint8_t FloatingBusV3Hires(double t3Ns) const;
 
     /// IMachineStepHook: on v3 with the switch pressed, follows the HLD pin
     void OnMachineStep(uint32_t t) override;
@@ -128,6 +166,24 @@ protected:
     /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
     const ProfiBoard _board;
     Ds12887 _rtc{256};
+    /// The board's 8255 (KR580VV55): Kempston joystick on port A, printer / Covox on B and C. Its addresses are
+    /// #1F/#3F/#5F/#7F outside the DOS / CP/M port set and #87/#A7/#C7/#E7 in the extended map (decoder-prom.md)
+    Ppi8255 _ppi;
+    /// The v5 board's COM port (Profi+ documentation, design.md section 2.1): a KR580VI53 clocked at 1.5 MHz, whose
+    /// counter 0 output is the TxC / RxC of a KR580VV51A. What counters 1 / 2 drive on the board is not known
+    static constexpr uint32_t kProfiPitClockHz = 1500000;
+    static constexpr uint32_t kProfiBaseClockHz = 3500000;
+    Pit8253 _pit{kProfiPitClockHz, kProfiBaseClockHz};
+    Usart8251 _usart{kProfiBaseClockHz};
+    uint8_t ComIn(ComDevice device, uint16_t port);
+    void ComOut(ComDevice device, uint16_t port, uint8_t value);
+    void SetSerialPeer(ISerialPeer* peer);
+    /// The keyboard on X9 (v5) / KEYB (v3), fixed at power-on; the PROFI-XT controller when fitted. Every even-port
+    /// read that reaches the #FE arm is its /CSKBD (design section "Keyboard")
+    ProfiKeyboard _keyboardKind = ProfiKeyboard::Matrix;
+    std::unique_ptr<ProfiXtKbc> _xtKbc;
+    /// Fit the keyboard the config asks for (constructor)
+    void FitKeyboard();
     std::unique_ptr<ProfiWaitOverlay> _waitOverlay;
     bool _waitsInstalled = false;
     bool _switchFromConfig = false;  // [PROFI] Turbo read once, at power-on (the switch is not touched by a reset)

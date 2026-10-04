@@ -11,12 +11,12 @@ public:
         (void)cpuInfo;  // Mark as intentionally unused
         (void)_eax;     // Mark as intentionally unused
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
         __cpuid((int *)cpuInfo, _eax);
-#endif
-
-#if defined(__GNUC__) && defined(__x86_64__)
+#elif defined(__GNUC__) && defined(__x86_64__)
         __cpuid(_eax, cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
+#else
+        cpuInfo[0] = cpuInfo[1] = cpuInfo[2] = cpuInfo[3] = 0;
 #endif
     }
 
@@ -68,7 +68,7 @@ public:
 	{
 		uint64_t result = 0;
 
-		#if defined _WIN32 && defined MSVC
+		#if defined(_WIN32) && defined(MSVC) && (defined(_M_IX86) || defined(_M_X64))
 
 		LARGE_INTEGER Frequency;
 		LARGE_INTEGER Start;

@@ -45,6 +45,7 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
 
     // The AVR's PS/2 mouse is the board's mouse: the host mouse reaches it through the
     // emulator's mouse manager, and the Kempston-address ports read its registers
+    _evoAvr.Ps2Mouse().SetFrameSource([context = _context] { return context->emulatorState.frame_counter; });
     _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
     if (_context->pMouseManager)
         _context->pMouseManager->AddSink(&_evoAvr.Ps2Mouse());

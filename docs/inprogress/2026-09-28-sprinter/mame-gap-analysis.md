@@ -86,7 +86,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | C8 | Chip selects CS0 / CS1 (the loader's fast RAM window) | `z84c015.cpp:55-62`, `sprinter.cpp:1139-1166` | `core/src/3rdparty/z84c15/z84c15.h:220-229`, `core/src/emulator/memory/sprinter/sprintermemory.cpp:187` | **equal** | done |
 | C9 | Watchdog | `tmpz84c015.cpp:171-200`; /WDTOUT not wired in the driver | `z84c15.h:261-263`; not wired (`portdecoder_sprinter.cpp:50-52`) | **equal** | done |
 | C10 | On-chip daisy chain, `#F4` priority | `tmpz84c015.cpp:143-164` | `z84c15.h:265-272` | **equal** | done |
-| C11 | CTC inputs and outputs | TRG0-2 = 875 kHz (42 MHz / 48, `:1993-1995`), ZC0 clocks SIO B (`:2006-2007`), ZC2 feeds TRG3 (`:2008`) | timer mode with readback; counter mode has no input, ZC outputs go nowhere (`core/src/3rdparty/z84c15/z84ctc.cpp`) | **partial** | new (input extras) |
+| C11 | CTC inputs and outputs | TRG0-2 = 875 kHz (42 MHz / 48, `:1993-1995`), ZC0 clocks SIO B (`:2006-2007`), ZC2 feeds TRG3 (`:2008`); the CTC clock is derived from the scaled CPU clock (`tmpz84c015.cpp:249`, `device.cpp:398-410`) | counter mode on the selected TRG edge, timer trigger start, cascade; TRG0-2 875 kHz in real time, ZC/TO2 -> TRG3, ZC/TO0 -> SIO B (`core/src/3rdparty/z84c15/z84ctc.cpp`, `portdecoder_sprinter.cpp` constructor); timers count the CPU clock (3.5 / 21 MHz) as MAME. Bad Apple and dontBlink play (`SprinterCtcDemo_Test`, 2026-10-02) | **equal** | done (branch `sprinter-ctc-trg`) |
 | C12 | SIO A (keyboard) | clocked by the keyboard's clock edges (`:1988-1991`); RR0 reads `#7C` | a byte at the end of its 11-bit frame; RR0 `#04` (roadmap §6.1). The BIOS reads bit 0 only | **partial** | Audit |
 | C13 | PIO | port A input = joystick 2, port B bit 7 = joystick 2 select (`:1997-1998`, `:1338-1344`) | register file only | **partial** | new (input extras, with I10) |
 | C14 | INT vector `#FF` | `:1961` | `core/src/emulator/video/sprinter/sprinterintsource.cpp:117` | **equal** | done |
@@ -97,13 +97,13 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 |---|---|---|---|---|---|
 | T1 | Frame: 896 x 320 at 14 MHz = 20.48 ms (48.83 Hz), 224 T per line | `:180-190`, `:1981` | `core/src/emulator/config.cpp:1385-1386`, `core/src/emulator/video/sprinter/screensprinter.cpp:75-99` | **equal** | done |
 | T2 | 312-line frame (codes `#2C` / `#2D`) | `:775-777`, `:390-395` | `portdecoder_sprinter.cpp:768-774` | **equal** | done |
-| T3 | Frame INT positions from the mode table (`#FD` mode bytes) | `update_int`, `:1278-1313` | `sprinterintsource.cpp:41-66`; `int.csv` positions equal for the FN_SYNC modes | **equal** | done |
+| T3 | Frame INT positions from the mode table (`#FD` mode bytes) | `update_int`, `:1278-1313`: at the beam column `scr_a = a + 6` of the first square after the INT run | the same squares (`sprinterintsource.cpp:41-66`), the edge where the PLD has it: `CT5` rising, 2 T into that square's period (`VIDEO2.TDF` `INTT`, `SP2_ACEX.TDF:744`), **10 T before MAME's place** (`int.csv` positions less 10 T); INT to the first Spectrum cell 17 990 T (Pentagon 17 988; MAME 17 980) | **MAME wrong** (10 T late; corrected 2026-10-03, research-zx-mode §7.1) | done |
 | T4 | INT ends at the acknowledge | `irqack_cb` clears requests 0-2 (`:1962-1964`) | `sprinterintsource.cpp:117` | **equal** (corrects roadmap §6.1) | done |
 | T5 | Length of an INT nobody acknowledges | 32 T; frame and keyboard share one timer (`:1715`, `:1736`, `:1742-1746`) | 32 T frame pulse; PLD: 32-64 T | **open** | Audit |
 | T6 | An acknowledged on-chip interrupt (CTC / SIO / PIO) | also clears the PLD's frame, keyboard and Covox-Blaster requests (§3 item 3) | the PLD INT sits behind the chip's daisy chain (`portdecoder_sprinter.cpp:368-373`) | **MAME wrong** | done |
 | T7 | Keyboard INT (ALL_MODE `& #09 == #09`) | per 11 keyboard clock edges, 32 T pulse (`:1706-1718`) | per received byte, latched until the acknowledge (`sprinterintsource.h:42-46`; PLD `KBD.TDF`) | **ours better** | done (S4) |
 | T9 | ZX-mode timing per launcher mode (frame, clock, INT position, INT count, 21 MHz loop speed) | zxtime, `-bios v3.06`, 2026-10-02 ([tdd-zx-mode.md](tdd-zx-mode.md) §4.1) | the same run: every number equal, the mode tables byte-identical, the 128 menu picture pixel-identical | **equal** | done (S8 Z1) |
-| T10 | "Original waits" (ALL_MODE bit 2 = 0, PLD `WAIT_ORIG`, ORIGIN.ZX) | none (zxtime: 0 extra T per screen read) | `SprinterOrigWaits`: 4-T CT5 period, windows 1 and 3 with `#7FFD` bit 2, phase placeholder (zxtime: 1.000 T per read every 13 T) | **MAME missing** | done (S8 Z3); phase: Q1 |
+| T10 | "Original waits" (ALL_MODE bit 2 = 0, PLD `WAIT_ORIG`, ORIGIN.ZX) | none (zxtime: 0 extra T per screen read) | `SprinterOrigWaits`: 4-T CT5 period, windows 1 and 3 with `#7FFD` bit 2, phase derived from the PLD: 0, 2, 1, 0 T by T1 from INT (zxtime: 1.000 T per read every 13 T) | **MAME missing** | done (S8 Z3; phase Q1 closed 2026-10-03) |
 | T8 | Covox-Blaster INT every 128 samples | `:1760-1764`, request 2 | `CovoxBlaster` (CNT bit 6 falling, PLD `CBL_INT`) through `SprinterIntSource`, vector `#FF` | **equal** | done (S6) |
 
 ### 2.3 PLD port table and codes
@@ -143,14 +143,16 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | V2 | Graphics 320 x 256 colors, 640 x 16 colors (high nibble = left pixel), low-res 2 x 2 | `draw_tile`, `:430-451` | `core/src/emulator/video/sprinter/sprintervideorenderer.cpp:40-63` | **equal** | done |
 | V3 | Text 40 / 80 columns, font, attributes | `draw_symbol`, `:453-497` | `sprintervideorenderer.cpp:65-90` | **equal** | done |
 | V4 | Border and blank squares (pen `#400`) | `:475-479` | `sprintervideorenderer.cpp:86` | **equal** | done |
+| V4a | Border write timing | `:844` `update_now()` at the port write, the new color from the CPU's I/O access on | `ScreenSprinter::CatchUpToBorderLatch`: the old color up to the I/O cycle's end, where the PLD latches `BORDER` on `/IOWR` rising (`SP2_ACEX.TDF:310-315`), IORQ + 3 T; drawn at IORQ + 4 T to match the PENTAGON picture (owner decision) | **ours better** (MAME draws it from the access; research-zx-mode §7.1) | done |
 | V5 | Flash = frame counter bit 4 | `:409` | `screensprinter.cpp:37` | **equal** | done |
 | V6 | 8 palettes x 256 pens, R, G, B in video RAM columns `#3E0-#3FF` | `:1238-1243`, `:1984` | `core/src/emulator/video/sprinter/sprintervideoram.h:42-65` | **equal** | done |
-| V7 | HOLD (picture shift, code `#CB`) | `:850-851` | `portdecoder_sprinter.cpp:822-825` (power-on `#77` = MAME's {0, 0}) | **equal** | done |
+| V7 | HOLD (picture shift, code `#CB`) | `:850-851` | `portdecoder_sprinter.cpp:822-825` (power-on `#77` = MAME's {0, 0}) | x **equal**; y **differs**: 2 lines per high-nibble unit (PLD `SP2_ACEX.TDF:795-815`), MAME 1 | done 2026-10-03 (RRAID.EXE scrolls with it) |
 | V8 | Mode page (RGMOD bit 0) | `:858-861`, `:549` | `portdecoder_sprinter.cpp:830-835` | **equal** | done |
 | V9 | Changes during a frame | `update_now` catch-up, but pens become colors at frame end: the BIOS fade in frame 60's INT colors MAME's whole frame | each pixel gets the palette of its moment (roadmap §7, ACC-1) | **ours better** | done |
-| V10 | "Game" configuration renderer (per-square scroll in mode byte 3; "Thunder in the Deep") | `screen_update_game`, `:499-545`; recognized by the head hash `#3861CFA4` (`:1156-1163`), cell `#EE = #41` | the hash is known, no module: Standard runs with a warning (`core/src/emulator/ports/models/sprinter/sprinterpldconfiguration.h:32-36`) | **missing** | Deferred (after v1) |
-| V11 | Game renderer's scroll look-back | `lookback_scroll` (`:555-568`) never changes the square it reads (§3 item 8) | - | **MAME wrong** | Deferred |
-| V12 | DooM and Video configurations | none | none | **both missing** | Deferred |
+| V12 | When a written byte reaches the picture | `update_now` before the store: the byte shows from the write's moment, pixel bytes and attributes alike | the byte lands 1 T before the write cycle's end (the PLD's write slot); inside a text / Spectrum square the attribute changes at once, the font byte only from the next square (it is latched at the square's start, `VIDEO2.TDF` `LD_PIC`; [tdd-video.md](tdd-video.md) §3) | **ours better** | done (2026-10-03) |
+| V10 | "Game" configuration (per-square grid offset in mode byte 3; "Thunder in the Deep", GAME_00, LDConf's GC.BIN) | `screen_update_game`, `:499-545`; recognized by the head hash `#3861CFA4` (`:1156-1163`), cell `#EE = #41` | the Game module (`sprinterpldgame.h`): selected by the full hash `#C0FA3055` (or MAME's head hash), cell `#EE = #41` from the bitstream, the picture with the grid-offset register in beam order (`sprintergamevideo.h`); everything else Standard ([game-configuration.md](game-configuration.md)) | **equal** (picture: 1.0 % of MAME's frame differs, the rule differences of V11) | done (2026-10-03, branch `sprinter-pld-game`) |
+| V11 | Game renderer's grid offset across squares and lines | `lookback_scroll` (`:555-568`) never changes the square it reads (§3 item 8): every line starts with offset 0; an offset square switches the offset in its middle at the physical square boundary | one register in beam order: square 55 sets the next line's square 0, a square's offset acts from the next square on (the author's `RELOAD.ASZ`) | **ours better** | done (2026-10-03) |
+| V12 | DooM and Video configurations | none | none: they exist only as Sprinter 97 (FLEX EPF10K10) bitstreams, no Sp2000 build exists, and the Sp2000 merged their functions into Standard (DooM's line stretching = the accelerator's `#C7` scale register; Video's disk-to-memory logic = `HDD_FLIP` / `HDDR`); the Sp2000 DOOM demo and the 2026 video player run on Standard ([pld-configurations.md](pld-configurations.md) §6) | **not needed** | not planned (2026-10-03) |
 
 ### 2.6 Accelerator (unreal-ng: S5 worktree)
 
@@ -170,13 +172,13 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 
 | # | Feature | MAME | unreal-ng | Status | Phase |
 |---|---|---|---|---|---|
-| I1 | AT keyboard on SIO A | the Microsoft Natural keyboard's own MCU (low level, ROM `kb_ms_natural`, `:1987-1991`) | `Ps2KeyboardStream` (set 2, typematic, 16-byte buffer), `core/src/emulator/io/keyboard/ps2keyboardstream.h:45` | **equal** | done (S4) |
+| I1 | AT keyboard on SIO A | the Microsoft Natural keyboard's own MCU (low level, ROM `kb_ms_natural`, `:1987-1991`); nothing drives the host side of the lines; the Z80 SIO overwrites the newest FIFO entry on overrun | `Ps2KeyboardStream` (set 2, typematic, 16-byte buffer), `core/src/emulator/io/keyboard/ps2keyboardstream.h:45`; never held off (PLD KBD_CX = KBD_DX = GND); the Z84C15 SIO overruns as the data sheets and MAME do (newest overwritten, RR1 bit 5 when it reaches the top, latched until Error Reset; 2026-10-03, before: the new byte was dropped and RR1 set at once) | **equal** | done (S4; overrun 2026-10-03, branch `sprinter-ps2-overrun`) |
 | I2 | Commands to the keyboard (LEDs, reset, typematic rate) | not wired (only keyboard to CPU) | not modeled | **both missing** | - |
 | I3 | ZX matrix on code `#40` with PC key combinations (arrows = CS+5..8, Backspace = CS+0) | `kbd_fe_r`, `:1669-1704`; map `:1773-1891` | shared key event, `portdecoder_sprinter.cpp:701-702` | **equal** | done |
-| I4 | Ctrl+Alt+Del | left to the software | PLD reset from the stream, `sprinterinput.cpp:62` | **ours better** | done (S4) |
+| I4 | Ctrl+Alt+Del; F12 turbo switch | Ctrl+Alt+Del left to the software; F12 a host key toggling the turbo once per press (`:1941-1942`, `turbo_changed`) | the PLD keyboard block (KBD.TDF) decoding the bytes on the wire: `#71` with Ctrl + Alt resets the CPU, every `#07` not after `#F0` without Shift / Ctrl / Alt toggles the switch, the typematic repeats of a held F12 too; an SIO overrun cannot reach it (`SprinterInput::OnWireByte`, 2026-10-03; before: the host key press) | **ours better** | done (S4; wire decode 2026-10-03) |
 | I5 | Tape input, `#FE` bit 6 | `:1689-1694`: `data |= 0xe0; data ^= 0x40` leaves bit 6 at 0 and the cassette test can only clear it, so the bit never follows the tape; a TAP in the 128 Tape Loader never loads (2026-10-02, [research-zx-mode.md](research-zx-mode.md) §9.6) | the shared `#FE` path: a TAP loads through 48 BASIC at 3.5 MHz; the tape counts real time (`Tape::SetBaseClockTimeBase`, 2026-10-02), so at 21 MHz the ROM loader fails as on the board | **MAME wrong** | done (S8 Z2) |
 | I6 | `#FE` bits 5 (beam below the picture) and 7 (Covox-Blaster half) in CBL mode | `:1696-1701` | `CovoxBlaster::ApplyFeBits` | **equal** | done (S6) |
-| I7 | Serial mouse on SIO B | HLE Microsoft (default), Logitech 3-button, wheel, Mouse Systems (`:2000-2005`); baud from CTC ZC0 | Microsoft 2-button at a fixed 1 200 baud (`core/src/emulator/io/mouse/msserialmouse.h`) | **partial** | new (input extras) |
+| I7 | Serial mouse on SIO B | HLE Microsoft (default), Logitech 3-button, wheel, Mouse Systems (`:2000-2005`); baud from CTC ZC0 | Microsoft 2-button at 1 200 baud; SIO B receives only while CTC ZC/TO0 / the WR4 clock mode give 1 200 baud +-5 % (DSS 1.71: 875 kHz / 45 / 16 = 1 215), else the characters are lost (`core/src/emulator/ports/models/sprinter/sprinterinput.cpp`) | **partial** (variants) | baud done 2026-10-02; variants: new (input extras) |
 | I8 | Kempston mouse view, code `#58` (`#FADF` / `#FBDF` / `#FFDF`) | its own inputs (`:644-659`, `:1894-1904`) | the same journaled counters as the serial mouse (`portdecoder_sprinter.cpp:707-708`) | **equal** | done |
 | I9 | Kempston joystick bits on code `#15` | `joy_ctrl_r(1)` default state (`:605-607`) | `portdecoder_sprinter.cpp:690-696` | **equal** | done |
 | I10 | Two extended pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles, pad 2 read on PIO A with PIO B bit 7; the select counters reset at each frame INT | `:1330-1374`, `:1906-1938`, `:1996-1998`, `:1738` | none | **missing** | new (input extras) |
@@ -240,8 +242,9 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | B2 | PLD configuration load | 4 096 writes, then a reset (`:1157-1163`) | the whole stream, 473 720 writes, or the fast start (`portdecoder_sprinter.cpp:223-313`) | **ours better** | done |
 | B3 | RESET button | MAME's soft reset keeps the configuration (`:1588-1600`) | reloads the PLD as on the board ([tdd-ports-memory.md](tdd-ports-memory.md) §7; `portdecoder_sprinter.cpp:155-165`) | **ours better** | done |
 | B6 | Turbo after a CPU reset (Ctrl+Alt+Del, page `#A0`) | `m_turbo` kept across every reset | preset to 21 MHz (PLD `DCP.TDF:663`, `TB_SW.prn = /RESET`; 2026-10-02): a 3.5 MHz ZX mode returns to DSS in turbo | **MAME wrong** | done (S8) |
+| B8 | ALL_MODE, RGMOD, PORT_Y after a reset | kept across every reset (`machine_reset`, `:1549-1601`) | ALL_MODE `#FF`, RGMOD and PORT_Y 0 on every `/RESET` (PLD `SP2_ACEX.TDF:1041`, `:958`, `ACCELER.TDF:204`; 2026-10-02): with BIOS 3.07 BETA 1 Flex Navigator came back from the ZX mode without its video mode | **MAME wrong** | done (S8) |
 | B7 | BIOS 3.06 Hotfix 2: DSS text at the bottom line | does not scroll (HF2 in MAME's v3.06 slot) | does not scroll either; MAME's own 3.06 (2025) scrolls in both | **equal** (open BIOS question) | TODO |
-| B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.04 (default), 3.06 Hotfix 2, 3.07 BETA 1 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
+| B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.07 BETA 1 (default since 2026-10-02), 3.06 Hotfix 2, 3.04 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
 | B5 | BIOS choice at run time | `-bios v3.06` | at create (`"sprinter": {"bios": "3.06"}`) and on a running machine (`POST /sprinter/bios`, loaded at the reset) on every surface; `[ROM] SPRINTER=` the default ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) G11) | **equal** | done |
 | B6 | BIOS flash writes (updater `UP306.EXE`) | ROM region, not writable | not modeled | **both missing** | Deferred |
 
@@ -293,7 +296,8 @@ Each item names what unreal-ng does instead and the evidence.
    by choice).
 8. **Game configuration scroll look-back.** `lookback_scroll` (`:555-568`) loops over `b` and `a` but reads
    `as_mode(h, v)` with `h` and `v` fixed at the start values, so it never looks at another square. The driver
-   itself says the Game rendering is "not fully discovered" (`:45`). A future Game module must not copy it.
+   itself says the Game rendering is "not fully discovered" (`:45`). The Game module does not copy it: its offset
+   is one register in beam order ([game-configuration.md](game-configuration.md) §3).
 9. **Accelerator logic function.** Only the exact opcodes `#A6`, `#AE`, `#B6`, `#BE` set it, and any other
    opcode leaves it (`:938-951`); in the PLD `#86` / `#8E` / `#96` alias AND / XOR / OR and every other fetch
    resets it to plain (`sprinteraccelerator.h:47-50`, S5 worktree). MAME also has no INT-suspend (`ACC_BLK`).
@@ -306,6 +310,9 @@ Each item names what unreal-ng does instead and the evidence.
     loader (research-zx-mode §9.6). The "original waits" (ALL_MODE bit 2) are not modeled either (T10).
 13. **Turbo kept across a reset** (B6): the PLD presets its turbo bit on `/RESET`; MAME keeps `m_turbo`, so after a
     soft reset from a 3.5 MHz Spectrum mode the BIOS and DSS run at 3.5 MHz.
+14. **ALL_MODE, RGMOD, PORT_Y kept across a reset** (B8): the PLD presets ALL_MODE to `#FF` and clears RGMOD and
+    PORT_Y on `/RESET`; MAME keeps them, so a BIOS that reads ALL_MODE back (3.07 BETA 1) returns from a Spectrum
+    mode with the accelerator off and the Spectrum screen addressing on.
 
 ## 4. Missing in unreal-ng, by priority
 
@@ -321,8 +328,8 @@ Effort on the repository's scale: S < 1 week, M 1-2 weeks, L 2-4 weeks.
 | 6 | CD audio, CUE / CHD CD images, a CD boot check with BIOS 3.06 | H6, H7 | M | **S7** (ATAPI CD) | MAME routes CD audio from the primary slave only |
 | 7 | CHD hard-disk images | H5 | M | **new** (shared media work) | today the pack's `sp_hdd_sys.chd` must go through `chdman extractraw` first |
 | 8 | Extended joystick pads (two), PIO and SIO B DTR wiring | I10, C13 | S-M | **new "input extras"** | the select counters reset at each frame INT (`:1738`) |
-| 9 | Serial mouse variants (Logitech 3-button, wheel), mouse baud from CTC ZC0, CTC trigger inputs | I7, C11 | S | **new "input extras"** | |
-| 10 | Game configuration module (renderer with per-square scroll) | V10 | L | **Deferred** (after v1) | needs `GAME_00.ACX` analysis; do not copy `lookback_scroll` (§3 item 8) |
+| 9 | Serial mouse variants (Logitech 3-button, wheel); ~~mouse baud from CTC ZC0, CTC trigger inputs~~ (done 2026-10-02, branch `sprinter-ctc-trg`) | I7, C11 | S | **new "input extras"** | |
+| 10 | Game configuration module (renderer with per-square grid offset) | V10 | L | **done** (2026-10-03) | [game-configuration.md](game-configuration.md); `lookback_scroll` not copied (§3 item 8) |
 | 11 | GUI: video RAM viewer, front-panel LEDs | D5, D6 | S | **S7** (Qt docks) | |
 | 12 | Spectrum snapshots on the Sprinter | D2 | S-M | **new** (low) | first check whether MAME's snapshots work (capture 5.10) |
 | 13 | PC ISA cards (AdLib and the like) | Z4 | L | **new** (low) | I/O only, as in MAME |
@@ -357,7 +364,7 @@ when `ata2:0` holds a CD.
 | 5.6 | H6, H7 | `SprinterCD.iso` on the primary slave with BIOS 3.06: the ATAPI packet commands, whether the BIOS boots or mounts it, CD audio start | port trace of codes `#20-#29`; `-wavwrite` for the audio |
 | 5.7 | F8 | a floppy inserted into A after DSS 1.62 reached `B:\>`, then `DIR A:` | Lua `image:load()` at a frame after the prompt; screen and FDC trace |
 | 5.8 | A2, A6 | accelerator with the aliased opcodes (`#86` after `LD C,C`) and the time of a 256-byte fill at 21 MHz | extends the `acctest.exe` capture of the S5 worktree (`mame-acctest-306.png`) |
-| 5.9 | V10 | the Game bitstream (`GAME_00.ACX`) loaded through `#2E`: the head hash, cell `#EE`, a few frames of its renderer | needs a program that loads it; frames are a reference, not a truth (§3 item 8) |
+| 5.9 | V10 | the Game bitstream (`GAME_00.ACX`) loaded through `#2E`: the head hash, cell `#EE`, a few frames of its renderer | **done 2026-10-03**: a copy of the disk whose `SYSTEM.BAT` starts GAME_00 (MAME's natural keyboard cannot type `_` in Flex Navigator), frames and the video RAM in `testdata/machines/sprinter/reference/game/` |
 | 5.10 | D2 | `-snapshot` of a 128K `.sna` in MAME's Sprinter: does it run | one run; decides whether item 12 of §4 is worth it |
 | 5.11 | P10 | reads of code `#29` (and the device register `#26`) with four units under BIOS 3.06 | port trace with `SPC_CODES` |
 

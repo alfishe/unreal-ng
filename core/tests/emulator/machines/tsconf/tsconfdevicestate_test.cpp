@@ -32,6 +32,51 @@ TEST_F(TsConfDeviceState_Test, DBG1_ReportFollowsTheRegisters)
     EXPECT_NE(json.find("51"), std::string::npos) << "page 3 = 0x33";
 }
 
+/// The write-only registers a debugger board shows raw: the register file, the DMA addresses as
+/// programmed (next to the live counters) and DMA_CTRL decoded, SYS_CONFIG with CACHE_EN, FM_MAPS raw, and
+/// the tile graphics pages the current line is drawn with (copies taken at the line start)
+TEST_F(TsConfDeviceState_Test, DBG1_RawRegistersAndProgrammedDma)
+{
+    Reg(TsConfReg::DmaSAl, 0x34);
+    Reg(TsConfReg::DmaSAh, 0x12);
+    Reg(TsConfReg::DmaSAx, 0x05);  // word (5 << 13) | (0x12 << 7) | 0x1A = 43290
+    Reg(TsConfReg::DmaDAl, 0xFE);
+    Reg(TsConfReg::DmaDAh, 0x3F);
+    Reg(TsConfReg::DmaDAx, 0x01);  // word 8192 | 8064 | 127 = 16383
+    Reg(TsConfReg::SysConfig, 0x06);
+    Reg(TsConfReg::FMaps, 0x1A);
+    TsConfState& ts = _decoder->GetState();
+    ts.regs[TsConfReg::DmaCtrl] = 0xF9;  // not through the port: a DMA_CTRL write launches a transfer
+    ts.latT0GPage = 0x21;
+    ts.latT1GPage = 0x22;
+
+    const StateNode node = DeviceState::TsConf(_context);
+    const StateNode* dma = node.find("dma");
+    ASSERT_NE(dma, nullptr);
+    EXPECT_EQ(dma->find("programmed_source")->i, 43290 * 2);
+    EXPECT_EQ(dma->find("programmed_destination")->i, 16383 * 2);
+    EXPECT_EQ(dma->find("source")->i, 43290 * 2) << "nothing ran: the live counter is the programmed address";
+    const StateNode* ctrl = dma->find("ctrl");
+    ASSERT_NE(ctrl, nullptr);
+    EXPECT_EQ(ctrl->find("raw")->i, 0xF9);
+    EXPECT_EQ(ctrl->find("device")->i, 9) << "DDEV = {bit 7, bits 2:0}";
+    EXPECT_TRUE(ctrl->find("opt")->b);
+    EXPECT_TRUE(ctrl->find("s_align")->b);
+    EXPECT_TRUE(ctrl->find("d_align")->b);
+    EXPECT_TRUE(ctrl->find("a_sz")->b);
+    EXPECT_EQ(node.find("sys_config")->i, 0x06);
+    EXPECT_TRUE(node.find("cache_en")->b);
+    EXPECT_EQ(node.find("memory")->find("fm_maps")->i, 0x1A);
+    const StateNode* line = node.find("video")->find("line");
+    EXPECT_EQ(line->find("t0_gpage")->i, 0x21);
+    EXPECT_EQ(line->find("t1_gpage")->i, 0x22);
+    const StateNode* regs = node.find("regs");
+    ASSERT_NE(regs, nullptr);
+    ASSERT_EQ(regs->items.size(), TsConfReg::kCount);
+    EXPECT_EQ(regs->items[TsConfReg::DmaSAx].i, 0x05);
+    EXPECT_EQ(regs->items[TsConfReg::DmaCtrl].i, 0xF9);
+}
+
 TEST(TsConfDeviceStateOther_Test, DBG1_UnavailableOnOtherMachines)
 {
     EmulatorContext context(LoggerLevel::LogError);

@@ -232,7 +232,8 @@ local hex    = disk_read_sector_hex(0, 0, 1)      -- drive 0, track 0, sector 1
 > **Status**: ✅ Implemented (2026-09). Source: `core/automation/lua/src/emulator/lua_emulator.h`
 > (`mouse_*` functions; helpers `mouseIntArg`, `mouseStateTable`, `mouseResult`).
 
-Global functions that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands.
+Global functions that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands.
 Units, limits and reasoning: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 They act on the bound emulator, or on the selected one when the script is not bound to an
 instance (for example, a script started through the WebAPI interpreter).
@@ -242,6 +243,9 @@ The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right
 
 ```lua
 mouse_move(dx, dy)                 --> state | nil, err    (-127..127 each, not both 0)
+mouse_glide(dx, dy)                --> state | nil, err    (-4096..4096; one step per frame, later input queues)
+mouse_busy()                       --> true while a glide (and the input queued behind it) is in progress
+mouse_devices()                    --> { device, ... }      (the machine's mouse devices)
 mouse_press(button)                --> state | nil, err    ("left"/"right"/"middle" or "l"/"r"/"m")
 mouse_release(button)              --> state | nil, err
 mouse_click(button [, frames=2])   --> state | nil, err    (hold 1..65535 frames)
@@ -249,7 +253,7 @@ mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
 mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
 mouse_release_all()                --> state | nil, err
 mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
-mouse_status()                     --> state | nil, err
+mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2")
 mouse_click_pending()              --> true while a click is still holding its button
 mouse_button_names()               --> {"left","right","middle"}
 ```
@@ -257,9 +261,12 @@ mouse_button_names()               --> {"left","right","middle"}
 `state` is a table with the same key names as the WebAPI state object: `x`, `y`,
 `buttons = {left, right, middle}`, `button_mask` (active-low: 254 = left down), `wheel`,
 `wheel_enabled`, `present`, `ports = {FADF, FBDF, FFDF}`, `pending_click`
-(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`, plus
-`warning` when the change cannot reach the program (mouse not fitted, or a wheel step with no
-wheel fitted).
+(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`,
+`mouse_fitted`, `device` (the machine's mouse, absent when none is fitted: `id`, `name`, `kind`,
+`fitted`, `in_use`, `wheel`, `buttons`, `x`, `y`, `button_mask`, `ports`, and `serial` or `ps2` -
+the WebAPI `device` object), `devices`, `queue = {ops, glide_remaining = {dx, dy}}`, plus `warning`
+when a wheel step was sent with no wheel fitted. On a machine with no mouse fitted every changing
+function returns `nil, "no mouse fitted on this machine: ..."`.
 
 `mouse_status()` additionally carries `routing = {ports_decoded, note}` — the same live
 answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port read is decoded
@@ -370,7 +377,7 @@ The same reports the WebAPI, Python, CLI and MCP return
 as Lua tables (arrays are 1-based sequences):
 
 ```lua
-ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, psg_clock_hz, chips[]
 ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
@@ -384,22 +391,32 @@ ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (tas
 cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
 r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer
 r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
-ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
+ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line with its tile graphics pages), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs (the register file #00-#47)
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
-sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
+sp = sprinter_state()       -- Sprinter Sp2000: pld (module Standard / Game, selected_by, why, game), decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
 txt = sprinter_text()       -- the screen text of the mode table's text squares (80 x 32: BIOS SETUP, DSS)
-vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
+vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
 pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
 ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
-bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected), loaded, reload_pending, options
+zx = sprinter_zx_mode()           -- the ZX mode: active, config.best_match.file ("SP.ZX"), options, clock, frame.int, rom, ports; sprinter_zx_mode(false) skips the RAM search
+j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who changed the PLD setup: events {frame, t, pc, kind, port, value, text}; source="ttd": the recording
+sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
+bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected, known_issues), loaded, known_issues, reload_pending, options
 r, err = sprinter_bios_select{bios="3.06", fast_start=false, reset=true}  -- the image loads at the reset (now unless reset=false)
 regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter
 bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write("vram", 0x17F0, "0000A8") / {0,0,0xA8}
 ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
 ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}
 fb, err = framebuffer("index")    -- {width, height, format, encoding, data = string}: "rgba" (R,G,B,A) or "index" (Sprinter pens)
+shot, err = screenshot{area="screen", format="png", source="live", path="scratch/shot.png"}
+          -- screenshot; every field optional: area "full" (default, the whole frame with border) or "screen" (the
+          -- working picture), format "png" (default) or "gif", source "presented" (default, the finished frame the
+          -- window shows) or "live" (as drawn now; a paused machine adds frame.partial and frame.beam = {line, tstate}). Returns {format, area, width,
+          -- height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width, height, mode, source,
+          -- frame_number}, data = the encoded image as a string of bytes} (`file` instead of `data` with a path);
+          -- nil, err for a bad word or no frame. screenshot() = the whole frame as PNG
 mx = audio_mixer()                -- per-device mixer: master, devices[] (source, muted, solo, volume, gain_db, peak, active)
 mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
@@ -407,10 +424,16 @@ rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, registe
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
-ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"
+ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"modem[,guest port]"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: a UART card's line; network_state().slots[n].esp shows the SprinterESP's module, .modem the ISA modem's mode / call / lines / journal); isa1_peer_b / isa2_peer_b (SprinterSerial COM2, slots[n].channel_b); modem_phonebook="5551234=host:port,..." (the numbers a Hayes modem peer dials; com_port="modem" puts one on any machine's serial port)
 ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31); zifi="at" (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP, default "none"; network_state().zifi has the API registers and rings)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
+isa = isa_state()           -- ISA slots (Sprinter): latch, window, slots[] (configured, card, summary_line, not_fitted, counters, irq_line = the IRQ line: level, driver, PIO port B bit, PIO setup, pending, reaches_cpu; the ZX-bus adapter's zx_bus = the General Sound / NeoGS behind it: cards[1].personality, .status, .cpu_addresses, .machine_reset, reset_held), pio_port_b, irq_summary; a 3C509B adds resources.id_port (#100-#1F0, its isolation state) and network_state().slots[n] its ID port, window, FIFOs, EEPROM, link state, events, summary; available=false elsewhere
+v, err = isa_io_read(2, "#30A")      -- one ISA I/O cycle in slot 2 at ISA #30A (the RTL8019AS ID byte #50); isa_io_write(slot, addr, v), isa_io_peek(slot, addr)
+ok, err = isa_reset()                -- one RESET DRV pulse to both slots; isa_mem_read / isa_mem_write, isa_latch(v) as well
+j = isa_journal(16)                  -- the last 16 ISA accesses: entries[] (frame, t, pc, access, cpu_address, what = register name, value); event="irq" entries: line edges, PIO requests, INT acknowledged, RETI (also j.irq_events, a ring polling does not flush)
+f = network_frames("isa2.eth", 8)    -- the Ethernet gateway's capture: frames[] (index, frame, direction, port, summary, hex); "" = every card
+ok, err = network_inject_frame("isa2.eth", "FFFFFFFFFFFF...")   -- a frame towards the card, offered at the next frame boundary
 con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], even_m1, scorpion_turbo_logic (Scorpion), atm710_turbo_waits (ATM Turbo 2+ v7.10: active / off / contention_off), statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD
@@ -443,10 +466,20 @@ success = emu:init()
 emu:reset()
 emu:pause()
 emu:resume()
-pc = emu:step()          -- Returns PC after step
-pc = emu:steps(count)    -- Returns PC after N steps
+r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
+r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run early
+-- r = {executed, stopped, breakpoint_id, address, access}: an execution breakpoint stops
+-- before its instruction, a memory / port one after it (.recipe/analysis/breakpoints-and-events.md)
 emu:run_frame()          -- Run exactly one video frame
 emu:run_frames(count)    -- Run exactly N video frames
+
+-- Registers (global functions, the bound or selected emulator)
+regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
+-- r with bit 7 as last written; memptr = the internal WZ latch; q = the flag capture register;
+-- boundary = what the next INT / NMI sampling sees (none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack);
+-- t = CPU T-states since the frame's start
+v = get_register("memptr")        -- any name of the register table, nil when unknown
+ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1, iff2 > 1
 
 -- Properties
 id = emu:get_id()
@@ -552,31 +585,29 @@ info = memory_info()
 
 **Writes during a time-travel recording.** While a TTD recording runs, every memory write (`mem_write`, `mem_write_word`, `mem_write_block`), physical page write (`page_write`, `page_write_block`) and assembler write (`assemble` with write on) records a `debugger_edit` marker, a replay barrier, and briefly pauses a running emulator for the edit, so the recording sees the change. A write by Z80 address into a ROM bank leaves the ROM unchanged, as a CPU write would. No marker is written when no recording runs.
 
-### Breakpoint Manager
+### Breakpoints
+
+Global functions on the bound or selected emulator (breakpoints fire while debug mode is on; what
+stops where: [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```lua
-bp_mgr = emu:get_breakpoint_manager()
-
--- Add breakpoints
-bp_id = bp_mgr:add_execution_bp(0x8000)
-bp_id = bp_mgr:add_memory_read_bp(0x4000)
-bp_id = bp_mgr:add_memory_write_bp(0x5C00)
-bp_id = bp_mgr:add_port_in_bp(0xFE)
-bp_id = bp_mgr:add_port_out_bp(0xFE)
-
--- Remove breakpoints
-bp_mgr:remove_bp(bp_id)
-bp_mgr:clear_all_bps()
-
--- Activate/deactivate
-bp_mgr:activate_bp(bp_id)
-bp_mgr:deactivate_bp(bp_id)
-bp_mgr:activate_all()
-bp_mgr:deactivate_all()
-
--- Query
-count = bp_mgr:get_bp_count()
-bp_list = bp_mgr:get_all_bps()  -- Returns table of breakpoints
+id = bp(0x8000)                -- execution breakpoint, returns its id (-1 when refused)
+id = bp(0x8000, {to=0x80FF})   -- a range #8000-#80FF (one check per access, however many ranges)
+id = bp(0x0038, {hits=50})     -- stop on the 50th hit only; '>=50' from the 50th on, '%50' every 50th
+id = bp(0xC000, "ram32")       -- physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = bp(0xC000, {page="ram32", slot_only=true})  -- only through slot 3 (#C000)
+id = bp_read(0x4000)           -- memory read; the same options
+id = bp_write(0x4000, {to=0x57FF})  -- memory write: the screen bitmap
+id = bp_port_in(0xFE, {mask=0x00FF})  -- port IN on #FE with any high byte; options {mask=, hits=}
+id = bp_port_out(0x7FFD)
+bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
+bp_remove(id); bp_clear()
+bp_enable(id); bp_disable(id)
+bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
+bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
+n = bp_count()
+print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}
 ```
 
 ### Analyzer Management
@@ -1064,7 +1095,7 @@ emu.video_pixel_at(t)                -- the same for the point under the beam at
 emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_address_in(space, offset [, page]) -- "ram", "sprite_ram" (attribute word, byte offset) or "palette" (cell, byte offset)
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
-emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
+emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason, applicable,
                                      --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
                                      --   correcting, showing_processed, corrected_frames, written, shown_raw, late, restarts,
                                      --   last_ms, average_ms, shown_frame / last_frame = {pattern, period2..period5,

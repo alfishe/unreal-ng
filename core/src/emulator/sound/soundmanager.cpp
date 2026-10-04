@@ -1,6 +1,7 @@
 #include "soundmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "base/featuremanager.h"
@@ -320,6 +321,118 @@ void SoundManager::unmute()
 {
     _mute = false;
 }
+
+/// region <Host output holds>
+
+const char* SoundManager::HostHoldReasonName(HostHoldReason reason)
+{
+    switch (reason)
+    {
+        case HostHoldReason::DirectRun:
+            return "direct_run";
+        case HostHoldReason::TtdReplay:
+            return "ttd_replay";
+        case HostHoldReason::Turbo:
+            return "turbo";
+    }
+    return "unknown";
+}
+
+SoundManager::HostOutputHold::HostOutputHold(SoundManager* sound, HostHoldReason reason) : _reason(reason)
+{
+    if (sound)
+    {
+        _epoch = sound->acquireHostHold(reason);
+        _sound = sound;
+    }
+}
+
+SoundManager::HostOutputHold::HostOutputHold(HostOutputHold&& other) noexcept
+    : _sound(other._sound), _reason(other._reason), _epoch(other._epoch)
+{
+    other._sound = nullptr;
+}
+
+SoundManager::HostOutputHold& SoundManager::HostOutputHold::operator=(HostOutputHold&& other) noexcept
+{
+    if (this != &other)
+    {
+        Release();
+        _sound = other._sound;
+        _reason = other._reason;
+        _epoch = other._epoch;
+        other._sound = nullptr;
+    }
+    return *this;
+}
+
+void SoundManager::HostOutputHold::Release()
+{
+    if (_sound)
+    {
+        SoundManager* sound = _sound;
+        _sound = nullptr;
+        sound->releaseHostHold(_reason, _epoch);
+    }
+}
+
+uint32_t SoundManager::acquireHostHold(HostHoldReason reason)
+{
+    const size_t i = static_cast<size_t>(reason);
+    _hostHoldsTaken[i].fetch_add(1, std::memory_order_relaxed);
+    // The epoch first: a reconcile that bumps it between the two reads dropped nothing of ours, and the count
+    // below is then this hold's own
+    const uint32_t epoch = _hostHoldEpoch[i].load(std::memory_order_acquire);
+    _hostHolds[i].fetch_add(1, std::memory_order_acq_rel);
+    return epoch;
+}
+
+void SoundManager::releaseHostHold(HostHoldReason reason, uint32_t epoch)
+{
+    const size_t i = static_cast<size_t>(reason);
+    // A reconcile already dropped this hold (it was taken before the epoch moved): nothing left to give back
+    if (_hostHoldEpoch[i].load(std::memory_order_acquire) != epoch)
+        return;
+    int holds = _hostHolds[i].load(std::memory_order_acquire);
+    while (holds > 0 && !_hostHolds[i].compare_exchange_weak(holds, holds - 1, std::memory_order_acq_rel))
+    {
+    }
+}
+
+bool SoundManager::isHostOutputHeld() const
+{
+    for (const std::atomic<int>& holds : _hostHolds)
+    {
+        if (holds.load(std::memory_order_acquire) > 0)
+            return true;
+    }
+    return false;
+}
+
+int SoundManager::reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive)
+{
+    const bool active[kHostHoldReasons] = {directRunActive, ttdReplayActive, turboActive};
+    int dropped = 0;
+    for (size_t i = 0; i < kHostHoldReasons; i++)
+    {
+        if (active[i])
+            continue;
+        // Epoch first, then the count: a guard taken from here on belongs to the new epoch and keeps its hold
+        _hostHoldEpoch[i].fetch_add(1, std::memory_order_acq_rel);
+        const int stale = _hostHolds[i].exchange(0, std::memory_order_acq_rel);
+        if (stale > 0)
+        {
+            dropped += stale;
+            LOGWARNING("SoundManager: dropped %d stale host output hold(s) [%s] - a holder never released it",
+                        stale, HostHoldReasonName(static_cast<HostHoldReason>(i)));
+        }
+    }
+    if (dropped > 0)
+        _hostStaleHoldsCleared.fetch_add(static_cast<uint64_t>(dropped), std::memory_order_relaxed);
+    return dropped;
+}
+
+/// endregion </Host output holds>
 
 void SoundManager::onEmulatorPaused()
 {
@@ -1284,7 +1397,12 @@ void SoundManager::handleFrameEnd()
     AudioCallback callback = _context->pAudioCallback.load(std::memory_order_acquire);
     void* obj = _context->pAudioManagerObj.load(std::memory_order_acquire);
 
-    if (callback && obj)
+    // A run not paced to real time (a HostOutputHold): the host gets nothing, as while paused
+    if (callback && obj && isHostOutputHeld())
+    {
+        _hostFramesHeld.fetch_add(1, std::memory_order_relaxed);
+    }
+    else if (callback && obj)
     {
         // If muted, send silence instead of actual audio.
         // No need to send silence if sound generation is disabled -
@@ -1326,6 +1444,12 @@ void SoundManager::handleFrameEnd()
         }
         size_t deviceFrames =
             _drcResampler.process(deviceIn, deviceInFrames, _deviceBuffer, DEVICE_BUFFER_FRAMES);
+
+        _hostFramesDelivered.fetch_add(1, std::memory_order_relaxed);
+        const int16_t* const deviceBegin = _deviceBuffer;
+        const int16_t* const deviceEnd = deviceBegin + deviceFrames * AUDIO_CHANNELS;
+        if (std::any_of(deviceBegin, deviceEnd, [](int16_t v) { return v != 0; }))
+            _hostFramesAudible.fetch_add(1, std::memory_order_relaxed);
 
         try
         {
@@ -1807,6 +1931,27 @@ bool SoundManager::attachToPorts()
         result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
     }
 
+    // A machine without a ZX-bus (PortDecoder::ZxBusPresent: the Sprinter with no ISA
+    // ZX-bus adapter in its slots) cannot reach the card: the software never sees it, its
+    // Z80 would run every frame for nothing. The card the constructor built from
+    // [SOUND] GSType is removed before anything registers it (the decoder exists only
+    // from here on). With an adapter the card stays and is reached through the port map
+    // below, the adapter calling PeripheralPortIn/Out (Sprinter ISA tdd §6)
+    if (_gs && _context->pPortDecoder && !_context->pPortDecoder->ZxBusPresent())
+    {
+        LOGINFO("SoundManager: no ZX-bus on this machine - the %s card ([SOUND] GSType) is not fitted",
+                generalSoundDeviceName().c_str());
+        delete _gs;
+        _gs = nullptr;
+        _devices.erase(std::remove_if(_devices.begin(), _devices.end(),
+                                      [](const AudioDeviceInfo& d) {
+                                          return d.type == AudioSourceType::GeneralSound ||
+                                                 d.type == AudioSourceType::GeneralSoundMp3;
+                                      }),
+                       _devices.end());
+        publishGeneralSoundSlot();
+    }
+
     // Attach the General Sound card to its host ports #B3/#BB/#33 (GS design
     // §6). Registered only when the card exists; the decode rows themselves
     // are static per machine model (Pentagon family table, Scorpion chain).
@@ -1818,6 +1963,7 @@ bool SoundManager::attachToPorts()
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
         result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs,
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
+        _gs->onHostBusChanged();
     }
 
 #ifdef UNREALNG_HAVE_OPL4

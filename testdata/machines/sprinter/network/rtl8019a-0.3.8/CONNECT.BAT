@@ -1,0 +1,3 @@
+NETCFG -i
+IFUP
+PING 8.8.8.8

@@ -5,6 +5,7 @@
 #include <QMessageBox>
 #include <set>
 
+#include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
 
 #include "base/featuremanager.h"
@@ -545,6 +546,12 @@ void MenuManager::setNetworkWindowChecked(bool checked)
         _networkWindowAction->setChecked(checked);
 }
 
+void MenuManager::setFt812DebugChecked(bool checked)
+{
+    if (_ft812DebugAction)
+        _ft812DebugAction->setChecked(checked);
+}
+
 void MenuManager::setTapeManagerChecked(bool checked)
 {
     // Sync from the TapeManagerWindow's own close box; setChecked never
@@ -919,10 +926,21 @@ void MenuManager::createMachineMenu()
         _hostKeyboardGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, action] { emit hostKeyboardRouteRequested(action->data().toString()); });
     }
+#ifdef Q_OS_MACOS
+    // The Command key stays with the host unless asked for (QSettings Keyboard/MacCommandKey)
+    _hostKeyboardMenu->addSeparator();
+    _commandKeyToGuestAction = _hostKeyboardMenu->addAction(tr("Pass &Command as Win Key"));
+    _commandKeyToGuestAction->setStatusTip(
+        tr("Send the Command key to the machine as the PC Win (GUI) key; off, Command is a host key and "
+           "Command shortcuts send nothing to the machine"));
+    _commandKeyToGuestAction->setCheckable(true);
+    connect(_commandKeyToGuestAction, &QAction::triggered, this, &MenuManager::commandKeyToGuestToggled);
+#endif
     connect(_machineMenu, &QMenu::aboutToShow, this, &MenuManager::machineMenuAboutToShow);
 }
 
-void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller)
+void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller,
+                                       const QString& controller)
 {
     if (!_hostKeyboardGroup)
         return;
@@ -933,7 +951,17 @@ void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effe
         // Without a PS/2 controller only the matrix is there to choose
         action->setEnabled(ps2Controller || name == "auto" || name == "matrix");
     }
-    _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
+    // The controller by name when it has one (Profi: "PROFI-XT firmware 1.27" / "PROFI-XT table")
+    if (controller.isEmpty())
+        _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
+    else
+        _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1: %2)").arg(effective.toLower(), controller));
+}
+
+void MenuManager::setCommandKeyToGuestChecked(bool checked)
+{
+    if (_commandKeyToGuestAction)
+        _commandKeyToGuestAction->setChecked(checked);
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)
@@ -1031,6 +1059,15 @@ void MenuManager::createDebugMenu()
     _debuggerAction->setCheckable(true);
     _debuggerAction->setChecked(false);
     connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
+
+    // FT812 line budget (line-budget-metrics.md §3.3): exists only while the active
+    // machine has the VDAC2 card (TSL-VDAC2); hidden, not grayed out, otherwise
+    _ft812DebugAction = _debugMenu->addAction(tr("&FT812 Debug"));
+    _ft812DebugAction->setStatusTip(tr("Show/hide the VDAC2 card's FT812 line budget: each screen line's cost against the clocks it has"));
+    _ft812DebugAction->setCheckable(true);
+    _ft812DebugAction->setChecked(false);
+    _ft812DebugAction->setVisible(false);
+    connect(_ft812DebugAction, &QAction::triggered, this, &MenuManager::ft812DebugToggled);
 
     _debugMenu->addSeparator();
 
@@ -1156,8 +1193,14 @@ void MenuManager::createToolsMenu()
     // F12 must reach the machine (the ZX-Evo AVR turns its short press into a
     // Z80 reset, e.g. the TS-BIOS setup screen's "F12 - exit")
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
-    _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
+    _screenshotAction->setStatusTip(tr("Copy what the emulator window shows to the clipboard"));
     connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
+
+    // The whole frame (border included) to a PNG or GIF file: the same screenshot the WebAPI, MCP, CLI, Lua and
+    // Python take (core Screenshotter), whatever the window's viewport crop
+    _saveScreenshotAction = _toolsMenu->addAction(tr("Save Screenshot &As..."));
+    _saveScreenshotAction->setStatusTip(tr("Save the whole emulator frame, border included, to a PNG or GIF file"));
+    connect(_saveScreenshotAction, &QAction::triggered, this, &MenuManager::saveScreenshotRequested);
 
 #ifdef ENABLE_RECORDING
     // Recording (widget toggle)
@@ -1272,6 +1315,10 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     bool emulatorExists = (activeEmulator != nullptr);
     bool isRunning = emulatorExists && activeEmulator->IsRunning();
     bool isPaused = emulatorExists && activeEmulator->IsPaused();
+
+    // Debug -> FT812 Debug: only for a machine with the VDAC2 card
+    if (_ft812DebugAction)
+        _ft812DebugAction->setVisible(emulatorExists && Ft812DebugWindow::Offered(activeEmulator->GetContext()));
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);

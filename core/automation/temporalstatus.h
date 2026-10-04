@@ -45,7 +45,9 @@ inline std::string OfferedList()
     return list;
 }
 
-/// Status report: algorithm ("" = off), active, inactive_reason, correcting (a
+/// Status report: algorithm ("" = off), active, inactive_reason, applicable (false:
+/// the machine shows no ZX screen now - a Sprinter native mode, a non-ZX frame; the
+/// reason starts with "not applicable:"), correcting (a
 /// detector fired in the frame on screen: an averaging mask formed),
 /// showing_processed (the frame on screen went through the algorithm, changed or
 /// not), video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
@@ -88,6 +90,7 @@ inline StateNode Report(EmulatorContext* context)
     node["algorithm"] = stats.algorithm;
     node["active"] = stats.active;
     node["inactive_reason"] = stats.inactiveReason;
+    node["applicable"] = stats.applicable;
     node["correcting"] = stats.correcting;
     node["showing_processed"] = stats.showingProcessed;
     node["video_delay_frames"] = screen ? int(screen->GetEffectivePresentDelayFrames()) : 0;
@@ -138,6 +141,8 @@ inline std::string Summary(EmulatorContext* context)
     out << "ZX DLSS " << algorithm;
     if (stats.active)
         out << " active";
+    else if (!stats.applicable)
+        out << " " << stats.inactiveReason;  // "not applicable: ..."
     else
         out << " inactive" << (stats.inactiveReason.empty() ? "" : " (" + stats.inactiveReason + ")");
     const int audioExtra = context->pSoundManager ? context->pSoundManager->getOutputDelayFrames() : 0;

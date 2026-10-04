@@ -41,6 +41,7 @@ constexpr uint32_t kSpecialSize = 4 * 1024;
 
 constexpr uint32_t kPageSize = 4096;
 constexpr uint32_t kPageShift = 12;
+constexpr uint32_t kChangeBlockShift = 8;  // RAM_G change tracking for kept lines
 constexpr uint32_t kPagesPerWord = 64;   // dirty bits per uint64_t
 
 // Font metric block [PG §5.5.1]: 128 width bytes, then five 32-bit words.
@@ -407,6 +408,34 @@ static_assert(std::is_trivially_copyable<ControlState>::value, "ControlState mus
 constexpr uint32_t kStateMagic = 0x31455645; // "EVE1"
 constexpr uint32_t kStateVersion = 8; // 8: FrameMetricsState
 
+struct PaletteCache
+{
+    bool valid;
+    uint8_t format;
+    uint32_t source;
+    uint64_t ramGWrites;  // EveChip::ramGWrites when it was decoded
+    uint32_t entry[kPaletteEntries];
+};
+
+// Decoded palettes kept across lines: a frame's sprites each bring their own PALETTE_SOURCE
+// and every line draws them all. An entry holds while RAM_G was not written since
+// (EveChip::ramGWrites); no write happens while a line is drawn (CatchUp runs first)
+constexpr uint32_t kPaletteCacheEntries = 16;
+
+// A screen line kept from its last drawing (eve-dl.cpp DrawVisibleLine): the inputs it was
+// drawn with. While none changed, drawing it again would give the same pixels and cost
+struct LineKept
+{
+    bool valid;
+    uint64_t ramGChanges, drawRegChanges, dlVersion, outputVersion, planRecord;
+};
+
+struct LinePlan; // eve-render.h
+struct LinePlanDelete
+{
+    void operator()(LinePlan* plan) const;
+};
+
 } // namespace EveLib
 
 // --- The chip context (one allocation in EveCreate) -------------------------------------
@@ -457,6 +486,31 @@ struct EveChip
     std::unique_ptr<uint8_t[]> lineStencil;
     std::unique_ptr<uint8_t[]> lineTag;
     std::unique_ptr<uint32_t[]> lineTexels;  // a span's decoded texels (kMaxLineWidth)
+    std::unique_ptr<uint32_t[]> lineBilinear; // a BILINEAR span's scratch (kBilinearScratch)
+    // Palettes decoded for the fast path, valid while ramGWrites is unchanged: every RAM_G
+    // write (BusWrite), a memory restore and a reset count
+    std::unique_ptr<EveLib::PaletteCache[]> palettes; // kPaletteCacheEntries
+    uint32_t paletteNext = 0;
+    uint64_t ramGWrites = 1;
+    // The walk recorded for the next lines (eve-render.h LinePlan). dlVersion counts
+    // changes of the active list's contents: swaps, restores, resets
+    std::unique_ptr<EveLib::LinePlan, EveLib::LinePlanDelete> linePlan;
+    bool linePlanEnabled = true;  // false: every line walks the list (tests compare both)
+    uint64_t dlVersion = 1;
+    // Unchanged lines are not drawn again (LineKept). The inputs of a line: RAM_G
+    // (ramGWrites counts changes of its contents), the registers drawing reads
+    // (drawRegChanges: RegDrawing registers whose value changed), the display list
+    // (dlVersion: a swap to different contents), the output (outputVersion: EveSetOutput
+    // with another buffer, size or drawing switch) and the recorded walk with its handles
+    std::unique_ptr<EveLib::LineKept[]> lineKept;  // kMaxLines
+    // ramGWrites at the last change of each 4 KB page of RAM_G and of each 256-byte block
+    // (a line's reads are checked page first, then block: palettes are 512 bytes)
+    std::unique_ptr<uint64_t[]> ramGPageChanges;
+    std::unique_ptr<uint64_t[]> ramGBlockChanges;
+    bool lineKeepEnabled = true;           // false: every line is drawn (tests compare both)
+    uint64_t drawRegChanges = 0;
+    uint64_t outputVersion = 1;
+    bool lineFromPlan = false;             // the line just drawn came from the recorded walk
     std::unique_ptr<uint8_t[]> probeColor;   // the same for EveProbePixel
     std::unique_ptr<uint8_t[]> probeStencil;
     std::unique_ptr<uint8_t[]> probeTag;
@@ -465,6 +519,7 @@ struct EveChip
     uint32_t lineBudgetMargin;               // soft budget = hard budget minus this percent (host setting)
     uint32_t drawnLines;                     // lines of the current frame already drawn (catch-up)
     bool bitmapFastPath;                     // false: every bitmap pixel through the general path
+    bool rasterSpanFill = true;              // false: rectangle and edge strip fills pixel by pixel
 
     // Output.
     uint32_t* framebuffer;
@@ -576,9 +631,10 @@ void GetCoproView(const EveChip& chip, EveCoproView& out);
 // --- Drawing (eve-dl.cpp) ----------------------------------------------------------------------
 
 void DrawingReset(EveChip& chip);             // handles and derived drawing state
+uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
-void DisplayListSwapped(EveChip& chip);       // a new active list
+void DisplayListSwapped(EveChip& chip, bool changed); // a new active list (changed: other words)
 void DrawingInvalidate(EveChip& chip);        // derived drawing state is stale (restore)
 void GetLineCost(const EveChip& chip, uint32_t line, EveLineCost& out);
 void FoldFrameMetrics(EveChip& chip);          // the frame's line costs into state.metrics (frame end)

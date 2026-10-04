@@ -4,11 +4,13 @@
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "widgets/rzxpopover.h"
+#include "widgets/statusbarvideomode.h"
 
 #include "emulator/config.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/video/screen.h"
+#include "emulator/state/devicestate.h"
 
 #include <QCursor>
 #include <QEvent>
@@ -115,12 +117,24 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _videoMode->setStyleSheet("padding-top: 1px;");
     _videoMode->hide();
 
+    _zxMode = new QLabel(_statusBar);
+    _zxMode->setFont(fpsFont);
+    _zxMode->setStyleSheet("padding-top: 1px;");
+    _zxMode->hide();
+
+    _biosIssues = new QLabel(_statusBar);
+    _biosIssues->setFont(fpsFont);
+    _biosIssues->setStyleSheet("padding-top: 1px; color: #c07000;");
+    _biosIssues->hide();
+
     auto* separator2 = new QFrame(_statusBar);
     separator2->setFrameShape(QFrame::VLine);
     separator2->setFrameShadow(QFrame::Plain);
     separator2->setFixedHeight(13);
 
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
+    _statusBar->addPermanentWidget(_biosIssues);
+    _statusBar->addPermanentWidget(_zxMode);
     _statusBar->addPermanentWidget(_videoMode);
     _statusBar->addPermanentWidget(_rzx);
     _statusBar->addPermanentWidget(_ttd);
@@ -388,7 +402,9 @@ void StatusBarManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
 void StatusBarManager::refresh()
 {
     std::shared_ptr<Emulator> emulator = _emulator.lock();
-    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    // Leased for this handler: an automation thread may remove the instance
+    const Emulator::ContextLease lease = emulator ? emulator->LeaseContext() : Emulator::ContextLease{};
+    EmulatorContext* context = lease.get();
 
     bool tapePlaying = false;
     bool soundOn = false;
@@ -406,6 +422,8 @@ void StatusBarManager::refresh()
     updateRzx(emulator);
     updateTtd(context);
     updateVideoMode(context);
+    updateZxMode(context);
+    updateBiosIssues(context);
     // Disk LED is driven by NC_FDD_STATE_CHANGED (see applyFddState); the tooltip is
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
@@ -675,18 +693,64 @@ void StatusBarManager::updateIde(EmulatorContext* context)
 void StatusBarManager::updateVideoMode(EmulatorContext* context)
 {
     // Machines whose picture mixes modes per area say so in a few words (Sprinter: "text 80",
-    // "320x256 256c (mixed)"); the full description is the tooltip. Read on the GUI tick like the
+    // "Spectrum 256x192, screen 5", "320x256 256c (mixed)"); the full description is the tooltip. Read on the GUI tick like the
     // other indicators: a torn read of the mode table only shows for one tick
     Screen* screen = context ? context->pScreen : nullptr;
     const ScreenState state = screen ? screen->DescribeScreenState() : ScreenState{};
-    if (state.videoModeBrief.empty())
+    const StatusBarVideoMode mode = StatusBarVideoMode::From(state);
+    if (!mode.visible)
     {
         _videoMode->hide();
         return;
     }
-    _videoMode->setText(QString::fromStdString(state.videoModeBrief));
-    _videoMode->setToolTip(QString::fromStdString(state.videoMode));
+    _videoMode->setText(mode.text);
+    _videoMode->setToolTip(mode.toolTip);
     _videoMode->show();
+}
+
+void StatusBarManager::updateBiosIssues(EmulatorContext* context)
+{
+    // Checked when the machine changes and then every 25 ticks (5 s): a BIOS selected at runtime loads at the next
+    // reset, so the label follows within seconds
+    if (context == _biosIssuesContext && _biosIssuesTicks++ % 25 != 0)
+        return;
+    if (context != _biosIssuesContext)
+        _biosIssuesTicks = 1;
+    _biosIssuesContext = context;
+    const std::vector<std::string> issues = DeviceState::SprinterBiosKnownIssues(context);
+    if (issues.empty())
+    {
+        _biosIssues->hide();
+        return;
+    }
+    QStringList lines;
+    for (const std::string& issue : issues)
+        lines << QStringLiteral("- ") + QString::fromStdString(issue).toHtmlEscaped();
+    _biosIssues->setText(tr("BIOS: known issue"));
+    _biosIssues->setToolTip(tr("<b>Known issue of the loaded Sprinter BIOS image</b><br>%1").arg(lines.join(QStringLiteral("<br>"))));
+    _biosIssues->show();
+}
+
+void StatusBarManager::updateZxMode(EmulatorContext* context)
+{
+    // The Sprinter's Spectrum mode in a few words; the tooltip is the report (DeviceState::SprinterZxMode without the
+    // whole-RAM search). A torn read while the machine runs shows for one tick only, as with the video mode label
+    const DeviceState::SprinterZxBrief brief =
+        context ? DeviceState::SprinterZxModeBrief(context, false) : DeviceState::SprinterZxBrief{};
+    if (!brief.sprinter || !brief.active)
+    {
+        _zxMode->hide();
+        _zxModeTicks = 0;
+        return;
+    }
+    const QString text = QString::fromStdString(brief.text);
+    if (text != _zxMode->text() || _zxModeTicks++ % 5 == 0)
+    {
+        const DeviceState::SprinterZxBrief full = DeviceState::SprinterZxModeBrief(context, true);
+        _zxMode->setToolTip(QStringLiteral("<pre style=\"margin:0\">%1</pre>").arg(QString::fromStdString(full.details).toHtmlEscaped()));
+    }
+    _zxMode->setText(text);
+    _zxMode->show();
 }
 
 void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)
@@ -731,7 +795,8 @@ void StatusBarManager::updateTtd(EmulatorContext* context)
         return;
     }
 
-    const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+    // The published snapshot: this poll runs beside the machine's thread
+    const ttd::TTDSessionInfo info = ttd->GetPublishedSessionInfo();
     const uint64_t frame = ttd->CurrentPosition().frame;
     const uint64_t span = info.currentEndFrame > info.sessionStartFrame ? info.currentEndFrame - info.sessionStartFrame : 0;
     const uint64_t done = frame > info.sessionStartFrame ? std::min(frame - info.sessionStartFrame, span) : 0;

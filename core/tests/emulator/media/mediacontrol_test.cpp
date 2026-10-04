@@ -311,12 +311,16 @@ TEST_F(MediaControl_Test, SyncWaitsForTheSlotAsyncDoesNot)
     const std::string scl = Fixture("testdata/loaders/scl/insult.scl");
     ASSERT_TRUE(Run(Request("insert", "A", trd)).result.Ok());
 
+    // The frame thread idles until the async request is checked: free-running, it could apply the two
+    // delay frames before `pending` is read, whatever the load
     std::atomic<bool> running{true};
+    std::atomic<bool> framesRun{false};
     manager.SetApplyNowProbe([] { return false; });  // "the machine runs"
     std::thread frames([&] {
         while (running)
         {
-            manager.ApplyPending();
+            if (framesRun)
+                manager.ApplyPending();
             std::this_thread::yield();
         }
     });
@@ -324,6 +328,7 @@ TEST_F(MediaControl_Test, SyncWaitsForTheSlotAsyncDoesNot)
     MediaReply reply = Run(Request("insert", "A", scl, {{"async", ""}}));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
     EXPECT_TRUE(reply.pending) << "async: queued, not applied";
+    framesRun = true;
 
     reply = Run(Request("insert", "A", trd));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;

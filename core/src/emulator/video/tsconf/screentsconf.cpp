@@ -109,6 +109,18 @@ void ScreenTSConf::InitRaster()
         SetVideoMode(mode);
 }
 
+PictureRect ScreenTSConf::WorkingWindow() const
+{
+    auto* decoder = _context ? dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder) : nullptr;
+    if (!decoder)
+        return Screen::WorkingWindow();
+
+    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(decoder->GetState().regs[TsConfReg::VConfig]);
+    return PictureRect{static_cast<uint16_t>((win.x0 - TsConfGeometry::kFirstVisibleDot) * 2),
+                     static_cast<uint16_t>(win.y0 - TsConfGeometry::kFirstVisibleLine),
+                     static_cast<uint16_t>(win.w * 2), win.h};
+}
+
 ScreenState ScreenTSConf::DescribeScreenState() const
 {
     ScreenState s = Screen::DescribeScreenState();

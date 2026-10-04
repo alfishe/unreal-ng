@@ -24,6 +24,7 @@ const std::vector<std::string> kSprinterPaths = {
     "emulator/video/sprinter/",
     "emulator/sound/sprinter/",  // the Covox / Covox-Blaster (phase S6)
     "emulator/io/z84c15/",  // the Z84C15 engine adapter (machine neutral): names no Sprinter type
+    "emulator/io/sprinter/",  // the ISA slots (ISA phase I1) and the slot wrappers of shared cards
     "debugger/ttd/sprinter/",  // the TTD serializers (phase S7)
 };
 

@@ -1,10 +1,12 @@
 #include "sprinterpldconfiguration.h"
 
+#include "emulator/ports/models/sprinter/sprinterpldgame.h"
 #include "emulator/ports/models/sprinter/sprinterpldstandard.h"
 
 SprinterPldConfigurationRegistry::SprinterPldConfigurationRegistry()
 {
     _modules.push_back(std::make_unique<SprinterPldStandard>());
+    _modules.push_back(std::make_unique<SprinterPldGame>());
 }
 
 size_t SprinterPldConfigurationRegistry::Register(std::unique_ptr<SprinterPldConfiguration> module)
@@ -17,7 +19,7 @@ int SprinterPldConfigurationRegistry::Find(uint32_t fullHash, uint32_t headHash)
 {
     for (size_t i = 0; i < _modules.size(); i++)
     {
-        if (_modules[i]->Descriptor().fullHash == fullHash)
+        if (_modules[i]->Descriptor().KnowsFullHash(fullHash))
             return static_cast<int>(i);
     }
     // MAME-compatible fallback: MAME identifies a configuration by its first 4 096 writes only

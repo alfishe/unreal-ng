@@ -22,6 +22,7 @@
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/sprinter/sprinteraccelerator.h>
+#include <emulator/sound/sprinter/covoxblaster.h>
 #include <emulator/ports/models/portdecoder_sprinter.h>
 #include <emulator/video/screen.h>
 #include <gtest/gtest.h>
@@ -77,6 +78,8 @@ protected:
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        // These tests pin BIOS 3.04 (its screens, SETUP 1.58, IDE waits); the shipped default is 3.06 Hotfix 2
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));
 
         // The test default: skip the loader (FastStart=1); the full start is covered by
         // SprinterPldConfig_Test.FastStartEqualsFullStart_Bios304
@@ -318,13 +321,7 @@ protected:
     /// Another BIOS image from data/rom/sprinter, then the reset (false when the image is not there)
     bool UseBios(const std::string& file)
     {
-        const std::string path = (TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / file).string();
-        if (!FileHelper::FileExists(path))
-            return false;
-        CONFIG& config = _context->config;
-        std::memset(config.sprinter_rom_path, 0, sizeof(config.sprinter_rom_path));
-        std::strncpy(config.sprinter_rom_path, path.c_str(), sizeof(config.sprinter_rom_path) - 1);
-        if (!_context->pCore->GetROM()->LoadROM())
+        if (!SprinterFixture::SelectBios(_context, file))
             return false;
         _emulator->Reset();
         return true;
@@ -1251,6 +1248,41 @@ protected:
         return box;
     }
 
+    static constexpr uint32_t kFn115Bar = 0x00FFFF;  // FN 1.15: a cyan bar on blue panels
+    struct Point
+    {
+        int x;
+        int y;
+    };
+    /// FN 1.15's drive icons in the 640x256 picture (the drive bar above the left panel)
+    static constexpr Point kDriveIconC = {74, 35};
+    static constexpr Point kDriveIconD = {98, 35};
+
+    /// The picture as a PNG in $UNREAL_MOUSE_DUMP_DIR (diagnostics; nothing without the variable)
+    void DumpPicture(const std::string& name)
+    {
+        const char* dir = std::getenv("UNREAL_MOUSE_DUMP_DIR");
+        if (!dir)
+            return;
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const std::string file = std::string(dir) + "/" + name + ".png";
+        lodepng::encode(file, fb.memoryBuffer, fb.width, fb.height);
+    }
+
+    /// Home the pointer (a glide far up and left: FN clamps it at the corner), glide to (x, y) of the picture
+    /// (FN 1.15 in the 640-pixel mode: one count per pixel) and click there with the left button
+    void ClickAt(int x, int y, bool click = true)
+    {
+        ASSERT_TRUE(Mouse()->Glide(-1000, 1000).ok());
+        ASSERT_TRUE(Mouse()->Glide(x, -y).ok());
+        if (click)
+            ASSERT_TRUE(Mouse()->Click(MouseButton::Left, 5).ok());
+        for (int i = 0; i < 100 && (Mouse()->IsBusy() || Mouse()->IsClickPending()); i++)
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 1);
+        ASSERT_FALSE(Mouse()->IsBusy()) << "the glide did not end";
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 60);
+    }
+
     /// The panel list's row `row` (8 pixels each from y = 79), its middle line
     static constexpr int RowY(int row) { return 79 + 8 * row + 3; }
 
@@ -1392,4 +1424,383 @@ TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
     ExerciseMouse(kBar, 14, 30);
 }
 
+// FN 1.15 on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD; not in the repo): the drive icon "D" clicked
+// through the automation mouse (DebugMouseManager: what the WebAPI / MCP / CLI / Lua / Python mouse surfaces call)
+// switches the left panel to drive D; the "C" icon brings drive C back, the same picture as before. The pointer is
+// homed first: a glide far up and left, which FN clamps at the screen's corner, then a glide to the icon - the
+// pattern of the mouse recipe (.recipe/input/mouse.md). Boot-bound (BIOS 3.06, DSS 1.71, FN from the hard disk):
+// ~8 s host time with the turbo mode
+TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115ClickTheDriveIcon)
+{
+    const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+    if (!path || !FileHelper::FileExists(path))
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
+    // Drive D: the pack's data disk on the slave ($UNREAL_SPRINTER_HDD_MEDIA, or sp_hdd_media.img next to the system disk)
+    const char* mediaEnv = std::getenv("UNREAL_SPRINTER_HDD_MEDIA");
+    const std::string media =
+        mediaEnv ? std::string(mediaEnv) : (std::filesystem::path(path).parent_path() / "sp_hdd_media.img").string();
+    if (!FileHelper::FileExists(media))
+        GTEST_SKIP() << "the data disk for drive D (UNREAL_SPRINTER_HDD_MEDIA or sp_hdd_media.img) not found";
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    InsertHdd(path);
+    InsertHdd(media, "ide0.slave");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+    ASSERT_TRUE(ScreenHas("Shell version")) << ScreenText();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);
+    ASSERT_EQ(ActivePanel(kFn115Bar), 'L') << "FN starts on the left panel";
+
+    const MouseStateSnapshot status = Mouse()->GetState();
+    ASSERT_TRUE(status.device.has_value());
+    EXPECT_EQ(status.device->id, "sprinter");
+    EXPECT_TRUE(status.device->inUse) << "DSS 1.71 polls SIO B";
+    EXPECT_TRUE(status.device->serial.receiverInTune) << "DSS 1.71 clocks SIO B at ~1 200 baud";
+
+    // The pointer onto the drive bar first (no click), so the reference picture has it off the list
+    ClickAt(kDriveIconC.x, kDriveIconC.y, false);
+    const std::vector<uint32_t> driveC = Picture();
+    DumpPicture("fn115-drive-c");
+    ClickAt(kDriveIconD.x, kDriveIconD.y);
+    const std::vector<uint32_t> driveD = Picture();
+    DumpPicture("fn115-drive-d");
+    const Box changed = Changed(driveC, driveD, 0, 360);
+    EXPECT_FALSE(changed.Empty()) << "the left panel did not change";
+    EXPECT_GT(changed.bottom - changed.top, 100) << "the whole list changed, not just the pointer";
+    EXPECT_EQ(ActivePanel(kFn115Bar), 'L') << "still the left panel";
+
+    ClickAt(kDriveIconC.x, kDriveIconC.y);
+    const std::vector<uint32_t> driveCAgain = Picture();
+    DumpPicture("fn115-drive-c-again");
+    // The left panel's path line and list (picture rows 64-230; the pointer stays on the drive bar above)
+    const uint32_t width = _context->pScreen->GetFramebufferDescriptor().width;
+    const auto listRows = [width](const std::vector<uint32_t>& picture) {
+        return std::vector<uint32_t>(picture.begin() + 64 * width, picture.begin() + 230 * width);
+    };
+    EXPECT_TRUE(Changed(listRows(driveC), listRows(driveCAgain), 0, 360).Empty()) << "drive C back: the list as before";
+    EXPECT_FALSE(Changed(listRows(driveD), listRows(driveCAgain), 0, 360).Empty());
+}
+
 /// endregion </Flex Navigator input>
+
+/// region <CTC playback tick (Bad Apple, dontBlink)>
+
+// Demos on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img of the MAME pack; not in the
+// repo) that pace themselves with the Z84C15's CTC: channel 2 counts the 875 kHz TRG2 by 112, its ZC/TO2 drives TRG3,
+// channel 3 counts by 160 and interrupts at 48.83 Hz with vector #06 (IM2, a table with only that entry). The main
+// loop waits at EI / HALT / LD A,#00 / AND A / JR Z for the handler to patch the LD's operand: before the counter
+// mode had its inputs the tick never came and the demos hung on a black screen after their logo.
+class SprinterCtcDemo_Test : public SprinterFlexNavigator_Test
+{
+protected:
+    /// A command typed into Flex Navigator's command line, then Enter
+    void Command(const std::string& text)
+    {
+        for (char c : text)
+        {
+            std::string key;
+            if (c == ' ')
+                key = "space";
+            else if (c == '\\')
+                key = "backslash";
+            else if (c == '.')
+                key = "period";
+            else
+                key = std::string(1, c);
+            Tap(key, 3);
+        }
+        Tap("enter", 20);
+    }
+
+    /// The left panel: the directory on row `first` of the root (BIN, C, DEMOS ...), then the one on row `second`
+    /// of it (".." is row 0); Flex Navigator's current directory is the program's
+    void OpenDirectory(int first, int second)
+    {
+        for (int i = 0; i < first; i++)
+            Tap("down", 3);
+        Tap("enter", 60);
+        for (int i = 0; i < second; i++)
+            Tap("down", 3);
+        Tap("enter", 60);
+    }
+
+    struct Playback
+    {
+        uint64_t ticks = 0;       ///< CTC channel 3 zero counts turned into interrupt requests
+        uint64_t frames = 0;
+        int pictures = 0;         ///< distinct pictures among the samples
+        uint32_t ringWrites = 0;  ///< Covox-Blaster ring words written
+        uint32_t cblTicks = 0;    ///< Covox-Blaster play ticks
+    };
+
+    /// `seconds` of the demo, a picture every half second
+    Playback Watch(int seconds)
+    {
+        Playback p;
+        const Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+        const CovoxBlasterState& cbl = _decoder->GetCovoxBlaster().State();
+        const uint64_t seen = ctc.GetChannel(3).zeroSeen;
+        const uint64_t frame = Frame();
+        const uint32_t writes = cbl.ringWrites;
+        const uint32_t ticks = cbl.ticks;
+        std::vector<std::vector<uint32_t>> pictures;
+        for (int i = 0; i < seconds * 2; i++)
+        {
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 24);
+            std::vector<uint32_t> picture = Picture();
+            if (std::find(pictures.begin(), pictures.end(), picture) == pictures.end())
+                pictures.push_back(std::move(picture));
+        }
+        p.ticks = ctc.GetChannel(3).zeroSeen - seen;
+        p.frames = Frame() - frame;
+        p.pictures = static_cast<int>(pictures.size());
+        p.ringWrites = cbl.ringWrites - writes;
+        p.cblTicks = cbl.ticks - ticks;
+        return p;
+    }
+
+    bool BootDss171()
+    {
+        const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+        if (!path || !FileHelper::FileExists(path))
+            return false;
+        if (!UseBios("sp2k-3.06-hf2.rom"))
+            return false;
+        InsertHdd(path);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+        EXPECT_TRUE(ScreenHas("Shell version")) << ScreenText();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);  // Flex Navigator up
+        return true;
+    }
+
+    void Report(const char* name, const Playback& p)
+    {
+        std::printf("[ CTC demo ] %-10s %4llu ticks in %4llu frames, %3d pictures, CBL %u ring writes, %u play ticks\n",
+                    name, static_cast<unsigned long long>(p.ticks), static_cast<unsigned long long>(p.frames), p.pictures,
+                    p.ringWrites, p.cblTicks);
+        RecordProperty(std::string(name) + "_ticks", std::to_string(p.ticks));
+        RecordProperty(std::string(name) + "_pictures", std::to_string(p.pictures));
+    }
+};
+
+// Bad Apple (C:\DEMOS\BADAPPLE): its logo, then the video in 1-bit frames with the Covox-Blaster. One CTC tick per
+// 20.48 ms frame. Boot-bound (BIOS 3.06, DSS 1.71, Flex Navigator, the demo from the hard disk): ~6 s host time
+TEST_F(SprinterCtcDemo_Test, RealHdd_BadApplePlays)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    OpenDirectory(2, 1);  // C:\DEMOS, then BADAPPLE
+    Command("badapple.exe");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 500);  // the logo, then the playback
+    SaveScreen(TestPathHelper::GetUniqueTestScratchPath("badapple.png"));
+    const Playback p = Watch(10);
+    Report("badapple", p);
+    const Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+    EXPECT_EQ(ctc.GetChannel(3).control & 0xC0, 0xC0) << "channel 3: interrupt, counter";
+    EXPECT_NEAR(ctc.OutputHz(3), 48.828125, 1e-6);
+    EXPECT_NEAR(static_cast<double>(p.ticks), static_cast<double>(p.frames), 2.0) << "48.83 Hz: one tick per 20.48 ms frame";
+    EXPECT_GE(p.pictures, 10) << "video frames";
+    EXPECT_GT(p.ringWrites, 0u) << "the Covox-Blaster is fed";
+    EXPECT_GT(p.cblTicks, 0u) << "and plays";
+    EXPECT_GE(p.ringWrites, p.cblTicks) << "fed as fast as it plays (stereo: two words a tick): no gap";
+}
+
+// deMarche's dontBlink (C:\DEMOS\DNTBLINK, DSS 1.70.998+): a progress bar, then the demo; it streams its music from
+// the disk into the Covox-Blaster in the CTC handler (I = #3E, table #3E00, vector #06), so the sound plays only
+// while the tick comes. Boot-bound like Bad Apple: ~9 s host time
+TEST_F(SprinterCtcDemo_Test, RealHdd_DontBlinkPlays)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    OpenDirectory(2, 4);  // C:\DEMOS, then DNTBLINK
+    Command("dntblink.exe");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1000);  // the progress bar, then the demo
+    SaveScreen(TestPathHelper::GetUniqueTestScratchPath("dntblink.png"));
+    const Playback p = Watch(10);
+    Report("dntblink", p);
+    EXPECT_NEAR(static_cast<double>(p.ticks), static_cast<double>(p.frames), 2.0);
+    EXPECT_GE(p.pictures, 10);
+    EXPECT_GT(p.ringWrites, 0u) << "the music streams from the disk in the CTC handler";
+    EXPECT_GT(p.cblTicks, 0u);
+    EXPECT_GE(p.ringWrites, p.cblTicks) << "fed as fast as it plays: continuous";
+}
+
+/// endregion </CTC playback tick>
+
+/// region <The Game PLD configuration (GAME_00, LDConf)>
+
+// Programs on the MAME pack's system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img; not in the repo) that load
+// the "Game" PLD bitstream (GAME_00.ACX = LDConf's GC.BIN, full hash #C0FA3055): they copy it into fast RAM with
+// "ACEX_30K_LOADING", reload the PLD (code #2E), the ROM loader streams the 473 720 writes from fast RAM, and the
+// Game module runs (sprinterpldgame.h). Its cell #EE = #41 makes the BIOS return to the program instead of
+// cold-booting (the old symptom: back in Flex Navigator). Boot-bound (BIOS 3.06, DSS 1.71, Flex Navigator, a full
+// PLD load): ~10 s host time each
+class SprinterGameConfig_Test : public SprinterCtcDemo_Test
+{
+protected:
+    SprinterPldState& Pld() { return _decoder->GetPldState(); }
+    std::string Module() const { return _decoder->ActiveModule().Descriptor().name; }
+    std::string Selection() const
+    {
+        std::string key, why;
+        _decoder->ModuleSelection(key, why);
+        return key;
+    }
+
+    /// Frames until the module `name` runs on a configured PLD (false after `maxFrames`)
+    bool WaitForModule(const std::string& name, int maxFrames)
+    {
+        for (int i = 0; i < maxFrames; i += 10)
+        {
+            if (Pld().configState == SprinterConfigState::Configured && Module() == name)
+                return true;
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+        }
+        return Pld().configState == SprinterConfigState::Configured && Module() == name;
+    }
+
+    /// The panel's file on row `row` of the current folder (".." is row 0), then Enter
+    void RunFile(int row)
+    {
+        for (int i = 0; i < row; i++)
+            Tap("down", 3);
+        Tap("enter", 20);
+    }
+
+    /// The share of pixels (0..1) in which two 736 x 288 pictures differ (colors as 0x00BBGGRR, alpha ignored)
+    static double Difference(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b)
+    {
+        if (a.size() != b.size() || a.empty())
+            return 1.0;
+        size_t differ = 0;
+        for (size_t i = 0; i < a.size(); i++)
+            differ += ((a[i] ^ b[i]) & 0x00FFFFFFu) ? 1 : 0;
+        return static_cast<double>(differ) / static_cast<double>(a.size());
+    }
+
+    /// A MAME capture of testdata/machines/sprinter/reference/game/ as framebuffer colors; empty when missing
+    static std::vector<uint32_t> MameCapture(const std::string& name)
+    {
+        const std::string path =
+            (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "sprinter" / "reference" / "game" / name).string();
+        std::vector<unsigned char> rgba;
+        unsigned width = 0, height = 0;
+        if (lodepng::decode(rgba, width, height, path) != 0 || width != 736 || height != 288)
+            return {};
+        std::vector<uint32_t> colors(static_cast<size_t>(width) * height);
+        for (size_t i = 0; i < colors.size(); i++)
+            colors[i] = rgba[i * 4] | (rgba[i * 4 + 1] << 8) | (static_cast<uint32_t>(rgba[i * 4 + 2]) << 16);
+        return colors;
+    }
+
+    /// Of `frames` consecutive frames (each rendered in full), the smallest difference to `reference`
+    double ClosestFrame(const std::vector<uint32_t>& reference, int frames)
+    {
+        double best = 1.0;
+        _emulator->DisableTurboMode();
+        for (int i = 0; i < frames; i++)
+        {
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 1);
+            const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+            const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+            best = std::min(best, Difference(reference, std::vector<uint32_t>(pixels, pixels + static_cast<size_t>(fb.width) * fb.height)));
+        }
+        _emulator->EnableTurboMode();
+        return best;
+    }
+};
+
+// GAME_00.EXE (C:\DEMOS\GAME_00): the Game module by the full hash, the BIOS's return into RELOAD_RET (cell #EE read
+// and cleared, the program runs on), the scrolling grid it draws - compared with MAME's picture of the same program
+TEST_F(SprinterGameConfig_Test, RealHdd_Game00ReloadsThePld)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    OpenDirectory(2, 9);  // C:\DEMOS, then GAME_00
+    RunFile(2);           // .., GAME_00.ACX, GAME_00.EXE
+    ASSERT_TRUE(WaitForModule("Game", 600)) << "module " << Module() << ", " << ScreenText();
+    EXPECT_EQ(Selection(), "full_hash");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 150);  // the BIOS returns, the program draws its grid
+    EXPECT_EQ(Module(), "Game") << "the program runs on: no cold boot";
+    EXPECT_EQ(Pld().Cell(0xEE), 0x00) << "the BIOS read RET_PORT (#41) and cleared it";
+    const uint16_t pc = _context->pCore->GetZ80()->pc;
+    EXPECT_TRUE(pc >= 0x8100 && pc < 0x8700) << "PC #" << std::hex << pc << ": the program (RELOAD_RET.. #8700)";
+    SaveScreen(TestPathHelper::GetUniqueTestScratchPath("game00.png"));
+    const std::vector<uint32_t> a = Picture();
+    const std::vector<uint32_t> b = Picture();
+    EXPECT_GT(Difference(a, b), 0.01) << "the grid scrolls every frame";
+
+    const std::vector<uint32_t> mame = MameCapture("mame-game00-306.png");
+    if (mame.empty())
+        GTEST_SKIP() << "the MAME capture is missing";
+    const double closest = ClosestFrame(mame, 120);
+    RecordProperty("game00_closest_to_mame", std::to_string(closest));
+    std::printf("[ Game ] GAME_00: closest frame differs from MAME's capture in %.2f%% of the pixels\n", closest * 100);
+    EXPECT_LT(closest, 0.05) << "a frame of the scroll equals MAME's capture but for the grid-offset rule differences";
+}
+
+// TEST_005.EXE and TEST_010.EXE (the same folder): the same reload, then a landscape scrolled with the per-square
+// grid offset. Both reach the Game module by the full hash and run on it (the picture moves, the PC stays in the
+// program)
+TEST_F(SprinterGameConfig_Test, RealHdd_Test005AndTest010RunOnGame)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    for (int row : {6, 7})  // .., GAME_00.ACX, GAME_00.EXE, PAGE_0.BIN, RELOAD.ASZ, SPRINT00.ASZ, TEST_005, TEST_010
+    {
+        if (row == 7)
+        {
+            // Back to Flex Navigator through the RESET button: the PLD loads the ROM's bitstream, Standard again
+            _emulator->Reset();
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+            EXPECT_EQ(Module(), "Standard");
+            EXPECT_EQ(Selection(), "full_hash") << "BIOS 3.06's own Standard build";
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);
+            OpenDirectory(2, 9);
+        }
+        else
+            OpenDirectory(2, 9);
+        RunFile(row);
+        ASSERT_TRUE(WaitForModule("Game", 600)) << "row " << row << ": module " << Module();
+        EXPECT_EQ(Selection(), "full_hash");
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 150);
+        EXPECT_EQ(Pld().Cell(0xEE), 0x00) << "the BIOS returned into the program";
+        const uint16_t pc = _context->pCore->GetZ80()->pc;
+        EXPECT_TRUE(pc >= 0x8100 && pc < 0xC000) << "row " << row << ": PC #" << std::hex << pc;
+        SaveScreen(TestPathHelper::GetUniqueTestScratchPath(row == 6 ? "test005.png" : "test010.png"));
+        const std::vector<uint32_t> a = Picture();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 20);
+        EXPECT_GT(Difference(a, Picture()), 0.001) << "row " << row << ": the picture scrolls";
+    }
+}
+
+// LDConf's START.BAT (C:\DEMOS\LDCONF, `ldconf c gc.bin e scroll.exe`): LDConf loads GC.BIN (the Game bitstream)
+// through the BIOS, runs SCROLL.EXE on it, and after a key loads the ROM's bitstream again - the way back to Standard
+// and to DSS
+TEST_F(SprinterGameConfig_Test, RealHdd_LdconfStartBatGoesToGameAndBack)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    OpenDirectory(2, 11);  // C:\DEMOS, then LDCONF
+    RunFile(8);            // .., 300.BAT, 303.BAT, 304.BAT, 305.BAT, GC.BIN, LDCONF.EXE, SCROLL.EXE, START.BAT
+    ASSERT_TRUE(WaitForModule("Game", 800)) << "module " << Module() << ", " << ScreenText();
+    EXPECT_EQ(Selection(), "full_hash");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 150);
+    const uint16_t pc = _context->pCore->GetZ80()->pc;
+    EXPECT_TRUE(pc >= 0x8100 && pc < 0x8300) << "SCROLL.EXE's frame loop, PC #" << std::hex << pc;
+    const std::vector<uint32_t> a = Picture();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
+    EXPECT_GT(Difference(a, Picture()), 0.01) << "SCROLL.EXE scrolls the grid";
+
+    Tap("space", 10);  // SCROLL.EXE checks a key every frame and exits to LDConf, which reloads the ROM's bitstream
+    ASSERT_TRUE(WaitForModule("Standard", 800)) << "module " << Module();
+    EXPECT_EQ(Selection(), "full_hash") << "BIOS 3.06's own Standard build";
+    EXPECT_EQ(_decoder->BeamVideo(), nullptr);
+    // Flex Navigator 1.15 idles in a HALT at #A441 (the demo runner's FN_IDLE_PC)
+    constexpr uint16_t kFlexNavigatorIdle = 0xA441;
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return _context->pCore->GetZ80()->pc == kFlexNavigatorIdle; }, 1500, 10);
+    SaveScreen(TestPathHelper::GetUniqueTestScratchPath("ldconf-back.png"));
+    EXPECT_EQ(_context->pCore->GetZ80()->pc, kFlexNavigatorIdle) << "back in Flex Navigator after START.BAT";
+    EXPECT_EQ(Module(), "Standard");
+}
+
+/// endregion </The Game PLD configuration>

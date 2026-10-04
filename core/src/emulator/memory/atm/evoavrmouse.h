@@ -62,8 +62,14 @@ public:
     void SetConnected(bool connected);
     bool IsConnected() const { return _connected.load(std::memory_order_relaxed) != 0; }
 
-    /// Registers as the Z80 reads them: 0 = buttons + wheel, 1 = X, 2 = Y
+    /// Registers as the Z80 reads them: 0 = buttons + wheel, 1 = X, 2 = Y. A program's port
+    /// read: it counts as polling (IsMouseInUse)
     uint8_t ReadRegister(uint8_t selectRegister) const;
+    /// The same value without counting as polling (debug and automation reads)
+    uint8_t PeekRegister(uint8_t selectRegister) const;
+    /// The current frame, for the polling window (the owner's EmulatorState::frame_counter).
+    /// Without a source the mouse is in use whenever connected
+    void SetFrameSource(std::function<uint64_t()> frame) { _frame = std::move(frame); }
 
     /// A keypad key the AVR's keyboard parser saw pressed (set 2 make code, no E0):
     /// '+' #79, '-' #7B, '*' #7C change the resolution while both buttons are held
@@ -72,10 +78,19 @@ public:
 
     /// region <IMouseSink>
     bool IsMouseFitted() const override { return IsConnected(); }
+    /// Connected and a program read a register within kPolledWithinFrames frames: TS-BIOS never
+    /// reads the mouse, WC and mouse drivers do
+    bool IsMouseInUse() const override;
     void OnMouseMotion(int dx, int dy) override;
     void OnMouseButtons(uint8_t activeLowMask) override;
     void OnMouseWheel(int steps) override;
     void OnMouseCounters(uint8_t x, uint8_t y) override;
+    /// The AVR's registers, connection and resolution
+    MouseDeviceStatus DescribeMouse() const override;
+    /// Moved (or set) since a program last read X or Y
+    bool HasUnreadMotion() const override { return _unreadMotion.load(std::memory_order_relaxed) != 0; }
+    /// 127 counts per read, divided by the counts per pixel of the resolution
+    int MotionStepLimit() const override { return 127 >> Resolution(); }
     /// endregion
 
     /// region <TTD>
@@ -93,4 +108,9 @@ private:
     std::atomic<uint8_t> _y{0xFF};
     std::atomic<uint8_t> _buttons{0xFF};
     std::atomic<uint8_t> _connected{0};
+    static constexpr uint64_t kNeverPolled = ~uint64_t{0};
+    std::function<uint64_t()> _frame;
+    mutable std::atomic<uint64_t> _lastPollFrame{kNeverPolled};  // frame of the last program read
+    /// Bit 1: X moved since a program read it, bit 2: Y. Pacing for automation glides, not machine state
+    mutable std::atomic<uint8_t> _unreadMotion{0};
 };

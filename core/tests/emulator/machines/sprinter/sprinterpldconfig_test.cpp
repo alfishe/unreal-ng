@@ -4,6 +4,8 @@
 
 #include "sprinterfixture.h"
 
+#include <string>
+
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterpldstandard.h"
 
@@ -65,8 +67,9 @@ TEST_F(SprinterPldConfig_Test, Load_EndsAtTheFullBitstreamCount)
     EXPECT_EQ(_z80->GetMachineStepHook(), nullptr) << "the step hook goes when nothing waits";
 }
 
-// T-CFG-2 (one full 473 720-write load, ~15 ms): a stream whose head matches MAME's Game constant, no Game module: Standard
-TEST_F(SprinterPldConfig_Test, Load_UnknownGameStreamRunsStandard)
+// T-CFG-2 (two full 473 720-write loads, ~30 ms): a stream whose head matches MAME's Game constant but whose full hash
+// is not the Game bitstream's runs Game by the MAME-compatible head hash; a stream nobody knows runs Standard
+TEST_F(SprinterPldConfig_Test, Load_GameHeadStreamRunsGameUnknownRunsStandard)
 {
     _decoder->BeginLoading();
     for (uint8_t b : {0xA4, 0xCF, 0x61, 0x38})
@@ -75,8 +78,18 @@ TEST_F(SprinterPldConfig_Test, Load_UnknownGameStreamRunsStandard)
     EXPECT_EQ(Pld().bitstreamHashHead, 0x3861CFA4u);
     _decoder->OnMachineStep(0);
     EXPECT_EQ(Pld().configState, SprinterConfigState::Configured);
+    EXPECT_EQ(Pld().configModule, SprinterPldConfigurationRegistry::kGameIndex);
+    EXPECT_EQ(_decoder->ActiveModule().Descriptor().name, "Game");
+    std::string key, why;
+    _decoder->ModuleSelection(key, why);
+    EXPECT_EQ(key, "head_hash") << why;
+
+    _decoder->BeginLoading();
+    Feed(SprinterPldConfig::kPldConfigurationWrites, 0x5A);
+    _decoder->OnMachineStep(0);
     EXPECT_EQ(Pld().configModule, SprinterPldConfigurationRegistry::kStandardIndex);
-    EXPECT_EQ(_decoder->ActiveModule().Descriptor().name, "Standard");
+    _decoder->ModuleSelection(key, why);
+    EXPECT_EQ(key, "unknown_bitstream") << why;
 }
 
 // T-CFG-4: code #2E reloads: back to loading, fast RAM and RAM kept, the module chosen again

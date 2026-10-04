@@ -14,9 +14,11 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
+#include "_helpers/testwaithelper.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -256,6 +258,61 @@ TEST_F(EmulatorManager_Test, RemoveEmulator)
     // Verify it no longer exists
     ASSERT_FALSE(_manager->HasEmulator(emulatorId));
     ASSERT_EQ(_manager->GetEmulator(emulatorId), nullptr);
+}
+
+// A UI thread holding a context lease (Emulator::LeaseContext) keeps the
+// context alive: a removal on another thread refuses new leases at once, but
+// stops and frees the instance only after the lease ends (2026-10-02 crash:
+// the Qt Machine menu read pKeyboard from a context a WebAPI DELETE had freed)
+TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
+{
+    auto emulator = _manager->CreateEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const std::string emulatorId = emulator->GetId();
+
+    std::optional<Emulator::ContextLease> lease(emulator->LeaseContext());
+    ASSERT_TRUE(*lease);
+    EmulatorContext* context = lease->get();
+    ASSERT_EQ(context, emulator->GetContext());
+
+    std::atomic<bool> removed{false};
+    std::thread remover([&] {
+        _manager->RemoveEmulator(emulatorId);
+        removed = true;
+    });
+
+    ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
+    EXPECT_FALSE(emulator->LeaseContext()) << "a lease taken after the removal began must be refused";
+
+    // The lease is still held: the removal cannot have freed anything
+    EXPECT_FALSE(removed.load());
+    EXPECT_FALSE(emulator->IsReleased());
+    EXPECT_EQ(emulator->GetContext(), context);
+    EXPECT_NE(context->pKeyboard, nullptr);
+
+    lease.reset();
+    remover.join();
+    EXPECT_TRUE(removed.load());
+    EXPECT_TRUE(emulator->IsReleased());
+    EXPECT_EQ(emulator->GetContext(), nullptr);
+    EXPECT_FALSE(emulator->LeaseContext());
+    EXPECT_FALSE(_manager->HasEmulator(emulatorId));
+}
+
+TEST_F(EmulatorManager_Test, ContextLeaseRefusedOnceReleased)
+{
+    auto emulator = _manager->CreateEmulator();
+    ASSERT_NE(emulator, nullptr);
+    {
+        const Emulator::ContextLease lease = emulator->LeaseContext();
+        ASSERT_TRUE(lease);
+        EXPECT_EQ(lease.get(), emulator->GetContext());
+        // Leases are shared: a second reader does not wait
+        EXPECT_TRUE(emulator->LeaseContext());
+    }
+    ASSERT_TRUE(_manager->RemoveEmulator(emulator->GetId()));
+    EXPECT_TRUE(emulator->IsRetiring());
+    EXPECT_FALSE(emulator->LeaseContext());
 }
 
 TEST_F(EmulatorManager_Test, GetEmulatorIds)

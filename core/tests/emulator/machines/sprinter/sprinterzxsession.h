@@ -2,7 +2,7 @@
 
 /// @file sprinterzxsession.h
 /// @brief A Sprinter running the owner's DSS 1.71 system disk (the MAME pack's sp_hdd_sys.img, path in
-/// UNREAL_SPRINTER_HDD; not in the repo) on BIOS 3.06 HF2, for the ZX-mode tests (tdd-zx-mode.md §8): DSS stops
+/// UNREAL_SPRINTER_HDD; not in the repo) on BIOS 3.06 HF2 (or the fixture's BiosFile), for the ZX-mode tests (tdd-zx-mode.md §8): DSS stops
 /// at its prompt (the session copy of SYSTEM.BAT does not start Flex Navigator), commands are typed through the
 /// PC keyboard as a user types them, and the Spectrum screen is read back by OCR. Guest writes stay in memory
 /// (Session): the image file is never written.
@@ -155,15 +155,16 @@ protected:
             GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
         const char* biosOverride = std::getenv("UNREAL_SPRINTER_ZX_BIOS");  // another BIOS 3.06 image (exploration)
         const std::string bios = biosOverride ? std::string(biosOverride)
-                                              : (TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / "sp2k-3.06-hf2.rom").string();
+                                              : (TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / BiosFile()).string();
         if (!FileHelper::FileExists(bios))
-            GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+            GTEST_SKIP() << "data/rom/sprinter/" << BiosFile() << " not found";
 
         _manager = EmulatorManager::GetInstance();
         ASSERT_NE(_manager, nullptr);
         for (const auto& id : _manager->GetEmulatorIds())
             _manager->RemoveEmulator(id);
-        _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-zx", "SPRINTER", 4096, LoggerLevel::LogError);
+        _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-zx", "SPRINTER", 4096, LoggerLevel::LogError,
+                                                            nullptr, [this](CONFIG& config) { ConfigureMachine(config); });
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
@@ -203,8 +204,12 @@ protected:
         _emulator->EnableTurboMode();
     }
 
+    /// The machine config before the instance is created (an ISA population, ...)
+    virtual void ConfigureMachine(CONFIG& config) { (void)config; }
     /// The disk's own SYSTEM.BAT, which starts Flex Navigator (the owner's setup)
     virtual bool KeepFlexNavigator() const { return false; }
+    /// The BIOS image in data/rom/sprinter (UNREAL_SPRINTER_ZX_BIOS overrides it with a path)
+    virtual const char* BiosFile() const { return "sp2k-3.06-hf2.rom"; }
 
     void TearDown() override
     {

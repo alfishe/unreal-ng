@@ -217,6 +217,30 @@ The PLD sees these cycles too. Its port-number rewrite of `OUT (#1F),A` explains
 "PIO port B command: only through register BC, otherwise the Altera intercepts it"
 (`SP2000.inc:2132`; the manual p. 21).
 
+### 4.6 CTC clocking on the Sprinter (2026-10-02)
+
+The CTC's CLK/TRG pins and ZC/TO outputs as the board wires them (MAME `sprinter.cpp:1993-2008`):
+
+| Pin | Connection |
+|:--|:--|
+| TRG0, TRG1, TRG2 | X_SP / 48 = 42 MHz / 48 = **875 kHz**, from the board crystal: the same at 3.5 and 21 MHz |
+| ZC/TO0 | SIO B receive and transmit clock (the serial mouse's baud rate) |
+| ZC/TO1 | not connected |
+| ZC/TO2 | TRG3 (cascade) |
+
+The timer mode counts the CPU clock through the prescaler (Z80 CTC data sheet PS0181; MAME derives the
+CTC's clock from the CPU clock, `tmpz84c015.cpp:249` `DERIVED_CLOCK(1,1)`, and `set_clock_scale` re-derives
+it, `device.cpp:398-410`), so a timer runs six times faster at 21 MHz; the counter mode on TRG does not.
+
+What software programs (seen live, BIOS 3.06 / DSS 1.71): CTC 0 `#55` (counter, rising edge) with 45, SIO B
+in x16 mode: 875 000 / 45 / 16 = 1 215 baud for the 1 200 baud mouse. Bad Apple and deMarche's dontBlink:
+CTC 2 `#57` with 112 (ZC/TO2 at 7 812.5 Hz), CTC 3 `#D7` with 160: an interrupt at 48.83 Hz = every
+20.48 ms (one Sprinter frame), vector base `#00` -> `#06`, IM 2 with a table holding only that entry.
+unreal-ng: `Z84Ctc::SetTrigger` in the library, the wiring in the `PortDecoder_Sprinter` constructor, the
+time base the board's 42 MHz ticks in real time (base T-states x 12 + the in-frame CPU position / the clock
+multiplier), the CPU clock 12 / multiplier ticks (`SyncChipClock` at a turbo switch and at the frame
+boundary for the host speed control).
+
 ## 5. What the Sprinter firmware programs
 
 | Step | Code | WCR | MCR | CSBR | Other |
@@ -233,7 +257,8 @@ The DSS uses SIO A only to read the keyboard (`keyinter.asm`, see [materials.md]
 A CTC/IM2 timer example in `SP2000.inc:2156-2177` is commented out. So in normal operation:
 
 - the wait generator is **off** (WCR = 0) once the BIOS has started;
-- the on-chip peripherals never raise interrupts;
+- the on-chip peripherals never raise interrupts (the firmware's own code; programs do - the demos above run
+  their playback on a CTC 3 interrupt, and DSS 1.71 clocks SIO B from CTC 0, section 4.6);
 - the watchdog is never cleared (Q3);
 - every CPU wait after boot comes from the PLD's `/WAIT`.
 

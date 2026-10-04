@@ -10,6 +10,7 @@
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +38,31 @@ inline std::string Hex16(unsigned value)
     char buffer[16];
     std::snprintf(buffer, sizeof(buffer), "0x%04X", value & 0xFFFFu);
     return buffer;
+}
+
+/// Percent-encodes a path segment (RFC 3986 unreserved characters kept
+/// literal). Labels are free-form text ("umt entry"), so they must not be
+/// spliced raw into a URL path.
+inline std::string UrlEncodeSegment(const std::string& text)
+{
+    static const char* kHex = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(text.size());
+    for (char c : text)
+    {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~')
+        {
+            encoded += c;
+        }
+        else
+        {
+            encoded += '%';
+            encoded += kHex[uc >> 4];
+            encoded += kHex[uc & 0xF];
+        }
+    }
+    return encoded;
 }
 
 /// Extracts a human-readable message from a WebAPI error body ({"error": ..., "message": ...})
@@ -80,6 +106,8 @@ inline std::string FormatRegisters(const Json::Value& registers)
     {
         out << "IX=" << Hex16(index["ix"].asUInt()) << " IY=" << Hex16(index["iy"].asUInt());
     }
+    if (registers["interrupt"]["halted"].asBool())
+        out << " HALT";
     return out.str();
 }
 

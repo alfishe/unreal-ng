@@ -74,3 +74,19 @@ board gives. No real v3 measurement exists; the rule itself is checked by unit t
 Both load and run on both boards (the Qarx menu, its scroller and the game screen). Gromov's descriptions (letters
 in the top border on a correct board; border and paper pictures in line on v5) have not been judged yet: the effect
 has to be found in the running program.
+
+## BIOS 2.0 "Тест быстродействия" (hi-res)
+
+The BIOS test menu's speed test runs in hi-res and is scaled to the 12 MHz crystal (3 MHz = 1.00; solegstar,
+[zx-pk 21644 p.11](https://zx-pk.ru/threads/21644-plata-protsessora-profi-v5-06/page11.html)). termik's real 5.06
+with a 20 MHz ZQ3 read **1.50** normal and **2.45** with TURBO.
+
+| Emulated v5 (ZQ3 20 MHz) | Normal | TURBO |
+|:--|:--|:--|
+| hi-res clock and waits (design-hires.md H2a, H3) | **1.50** | **2.45** |
+| the same without waits (`contention` off) | 1.65 | 3.35 |
+
+Both figures match the board exactly, and only with the waits: the test checks the hi-res CPU clock and the v5 wait
+model together. `ProfiBoot_Test.BiosSpeedTestReadsWhatARealBoardReads` keeps it (the result bar ends at
+x = 63 + 80 x the figure).
+

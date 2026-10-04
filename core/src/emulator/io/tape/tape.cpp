@@ -571,8 +571,8 @@ uint64_t Tape::ClockCount() const
 {
     const EmulatorState& state = _context->emulatorState;
     uint64_t inFrame = _context->pCore->GetZ80()->t;
-    if (_baseClockTimeBase && state.hw_turbo_ratio_applied > 1)
-        inFrame /= state.hw_turbo_ratio_applied;
+    if (_baseClockTimeBase && (state.hw_turbo_ratio_applied > 1 || state.hw_clock_den_applied > 1))
+        inFrame = state.AudioTstate(static_cast<uint32_t>(inFrame));
     return state.t_states + inFrame;
 }
 
@@ -792,9 +792,21 @@ void Tape::handleFrameEnd()
     {
         ParkAtNextBlock();
     }
-    else if (!inTrailingPause && _framesNotListened >= TAPE_BLOCK_HOLD_FRAMES)
+    else if (!inTrailingPause)
     {
-        pausePlayback();
+        // Pause the playback: inside a pilot after TAPE_PILOT_HOLD_FRAMES (a loader may sit out a fixed delay
+        // there). In the tail of the pilot the shorter TAPE_BLOCK_HOLD_FRAMES applies again: playback must be paused
+        // (and the pilot rewound) before the head leaves the pilot, however short the pilot is
+        const bool inPilot = _currentTapeBlock != nullptr && _currentOffsetWithinPulse < _currentTapeBlock->pilotEdgeCount;
+        bool inPilotBody = inPilot;
+        if (inPilot && _currentOffsetWithinPulse < _currentTapeBlock->edgePulseTimings.size())
+        {
+            const uint64_t pulsesLeft = _currentTapeBlock->pilotEdgeCount - _currentOffsetWithinPulse;
+            const uint64_t tstatesLeft = pulsesLeft * _currentTapeBlock->edgePulseTimings[_currentOffsetWithinPulse];
+            inPilotBody = tstatesLeft > TAPE_PILOT_TAIL_TSTATES;
+        }
+        if (_framesNotListened >= (inPilotBody ? TAPE_PILOT_HOLD_FRAMES : TAPE_BLOCK_HOLD_FRAMES))
+            pausePlayback();
     }
 }
 

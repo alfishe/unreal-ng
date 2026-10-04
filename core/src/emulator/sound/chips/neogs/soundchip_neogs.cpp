@@ -594,6 +594,7 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
         static const char* kPending[] = {"none", "read", "write"};
         out.zxMode = kModes[static_cast<int>(_zx.mode())];
         out.zxOverlayInstalled = _zx.installed();
+        out.zxHostMemoryBus = zxHostMemoryBus();
         out.zxReadLatch = _zx.readLatch();
         out.zxPending = kPending[static_cast<int>(_zx.pending())];
         out.zxPendingAddress = _zx.pendingAddress();
@@ -767,13 +768,22 @@ double SoundChip_NeoGS::zxUnitsPerHostT() const
     // Host T-states count at the CPU rate; the ZX tact domain has hardware
     // turbo descaled (EmulatorState::AudioTstate)
     const unsigned ratio = _context ? _context->emulatorState.hw_turbo_ratio_applied : 1u;
-    return GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND) / static_cast<double>(ratio ? ratio : 1u);
+    const unsigned den = _context ? _context->emulatorState.ClockDen() : 1u;
+    return GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND) * den / static_cast<double>(ratio ? ratio : 1u);
 }
 
 void SoundChip_NeoGS::zxAddHostWait(uint32_t tStates)
 {
     if (_context && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->AddWaitStates(tStates);
+}
+
+bool SoundChip_NeoGS::zxHostMemoryBus() const
+{
+    // The Sprinter's ISA ZX-bus adapter passes I/O cycles only: the module never sees a host memory access (it stays
+    // selected or running, as on such a board). Before the machine's decoder exists: assume the machine's own ZX-bus;
+    // SoundManager re-checks once the card is attached (onHostBusChanged)
+    return !(_context && _context->pPortDecoder) || _context->pPortDecoder->ZxBusMemoryCycles();
 }
 
 bool SoundChip_NeoGS::zxInstall(bool installed)
@@ -825,8 +835,13 @@ void SoundChip_NeoGS::flush()
 void SoundChip_NeoGS::handleFrameStart()
 {
     _frameHadActivity = false;
+    // Nominal base, not the card's actual time: the card ends a frame up to one
+    // instruction past it, and that overshoot must not pile up frame after frame.
+    // Taken against the previous ZX anchor, so before the anchor moves
+    _frameStartTicks = GSHostClock::nextFrameBase(_frameStartTicks, _frameTicks, _runner.now(),
+                                                  GSHostClock::zxElapsedSince(_context, _frameStartZxTacts),
+                                                  GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND));
     _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
-    _frameStartTicks = _runner.now();
     _frameTicks = GSHostClock::frameUnits(_context, TICKS_PER_SECOND);
 }
 

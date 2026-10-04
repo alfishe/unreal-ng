@@ -32,16 +32,18 @@ emulator_manage {"action":"create","model":"ATM710","ram_size":512}
 emulator_manage {"action":"create","model":"ATM3"}          # 4096K fixed
 
 invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
-#   → generic rows only (keyboard, AY, mouse, Beta128 FDC) - #7FFD/#FF77/
-#     #FFF7/#EFF7 do NOT appear here (verified 2026-09-23): getPortMapEntries()
-#     is a single non-virtual PortDecoder method with no ATM-specific rows.
-#     To actually observe these registers, use port-trace (analysis/port-trace.md)
-#     filtered on the #xx77/#xxF7 low byte, or read state.pFF77/p7FFD/pEFF7
-#     indirectly via inspect_state {"aspects":["video"]} (video mode only).
+#   → ATM3: the full ZX-Evo map - #7FFD, #EFF7, #FF77, #3FF7 (window register),
+#     #37F7, #BF/#BE/#BD, Z-Controller SD (#57/#77), Kempston #1F, Covox #FB.
+#     ATM450 / ATM710: generic rows only (keyboard, AY, mouse, Beta128 FDC) -
+#     #7FFD/#FF77/#FFF7/#EFF7 do NOT appear (getPortMapEntries() has an
+#     MM_ATM3 case only). For those two models observe the registers with
+#     port-trace (analysis/port-trace.md) filtered on the #xx77/#xxF7 low
+#     byte, or read the video mode via inspect_state {"aspects":["video"]}.
 
 invoke_api {"method":"GET","path":"/emulator/{id}/state/paging"}
-#   → banks[] (per-window page/type) is populated; latches[] is EMPTY for
-#     ATM (no p7FFD/FF77/FFF7 tagging yet - same gap as above)
+#   → banks[] (per-window page/type) is populated on all three models;
+#     latches[] carries P7FFD, PEFF7 and PFFF7Window0 on ATM3 only (ATM450 /
+#     ATM710 have no latch binding yet - same gap as above)
 inspect_state {"aspects":["registers","video","fdc"]}
 ```
 
@@ -184,9 +186,11 @@ UnrealSpeccy [`dxr_atm0.cpp`](https://github.com/alfishe/unreal-speccy/blob/mast
 **Debugging a visual glitch**: use
 [ttd-visual-inspection.md](../analysis/ttd-visual-inspection.md) to get a
 reproducible frame instead of live pause/screenshot — a live GUI screenshot
-and the `/capture/screen` WebAPI endpoint were observed to genuinely
-diverge once this session for reasons not yet root-caused; TTD-seeked
-frames don't have that ambiguity. To empirically verify which physical RAM
+and the `/capture/screen` WebAPI endpoint were observed to disagree once.
+The cause was that they read different buffers (the window the presented
+frame, the endpoint the live one); now both read the same presented frame
+(see [agent-screenshot-view.md](../media/agent-screenshot-view.md)), but
+that frame lags the machine, so TTD-seeked frames are still the exact way. To empirically verify which physical RAM
 page is live for the current mode (rather than trusting the formula),
 poke a distinctive byte via `PUT /emulator/{id}/memory/ram/{page}/{offset}`
 at the address the formula predicts for a known screen column, advance one
@@ -194,8 +198,8 @@ frame, and check whether the predicted pixel changed.
 
 ### Hard disk and CD (ZX-Evo)
 
-Both models have an IDE board: `ATM3` the NemoIDE (`[HDD] Scheme=NEMO-DIVIDE`), `ATM710`
-its own ATM IDE (`Scheme=ATM`). The units are the media slots `ide0.master`
+The models have an IDE board: `ATM3` the NemoIDE (`[HDD] Scheme=NEMO-DIVIDE`), `ATM710`
+and `ATM450` their own ATM IDE (`Scheme=ATM`). The units are the media slots `ide0.master`
 (alias `hd`) and `ide0.slave`; ZX-Evo ships a CD drive on the slave (`CD1=1`,
 alias `cd`). In the ERS menu, "B. HDD boot" boots the hard disk and "D. CD
 boot" runs the disc's `AUTORUN.ZX`; with the drive empty it keeps retrying until
@@ -243,8 +247,8 @@ curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
      -d '{"model": "ATM710", "ram_size": 512}' | jq '{id, model, ram_kb}'
 
 curl -s "$BASE/emulator/$EMU_ID/ports" | jq '.entries[] | {port, device}'
-#   → generic rows only (keyboard/AY/mouse/FDC) - filtering for "F7|77" returns
-#     empty, #7FFD/#FF77/#FFF7/#EFF7 aren't in this static map (verified 2026-09-23)
+#   → ATM710 / ATM450: generic rows only (keyboard/AY/mouse/FDC) - filtering for
+#     "F7|77" returns empty; ATM3 lists #7FFD/#EFF7/#FF77/#3FF7/#37F7 and the rest
 
 curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq '.banks[] | {address_range, type, page}'
 
@@ -255,12 +259,12 @@ curl -s "$BASE/emulator/$EMU_ID" | jq '.speed_multiplier'
 
 ## Pitfalls
 
-- **`GET /ports` doesn't show ATM's own control ports** (`#7FFD`/`#FF77`/
-  `#FFF7`/`#EFF7`) — verified empty 2026-09-23; `getPortMapEntries()` is a
-  single generic `PortDecoder` method with no ATM-specific rows, and
-  `state/paging`'s `latches[]` is empty too. Use
-  [port-trace.md](../analysis/port-trace.md) to actually observe writes to
-  these registers, not the static port map.
+- **`GET /ports` shows ATM's own control ports on `ATM3` only** (`#7FFD`,
+  `#EFF7`, `#FF77`, `#3FF7`, `#37F7`, `#BF`/`#BE`/`#BD`, SD, Kempston) and
+  `state/paging`'s `latches[]` binds `P7FFD`, `PEFF7`, `PFFF7Window0` there.
+  `ATM450` and `ATM710` still return only the generic rows and an empty
+  `latches[]`; use [port-trace.md](../analysis/port-trace.md) to observe
+  writes to their control registers.
 - **`ATM3` has no `ram_size` freedom** — 4096K only; the RAM bitmask rejects
   everything else.
 - **ATM710 vs ATM3 decode quirks are the classic compatibility trap** —

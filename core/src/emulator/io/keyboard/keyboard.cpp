@@ -113,7 +113,10 @@ HostKeyboardRoute Keyboard::EffectiveHostRoute() const
 {
     if (_hostRoute != HostKeyboardRoute::Auto)
         return _hostRoute;
-    return _ps2Sink ? HostKeyboardRoute::Both : HostKeyboardRoute::Matrix;
+    if (!_ps2Sink)
+        return HostKeyboardRoute::Matrix;
+    // A controller that takes the matrix's place (Profi PROFI-XT on X9) gets the host keys alone
+    return _ps2Sink->ReplacesMatrix() ? HostKeyboardRoute::Ps2 : HostKeyboardRoute::Both;
 }
 
 bool Keyboard::ParseHostRoute(const char* text, HostKeyboardRoute& out)

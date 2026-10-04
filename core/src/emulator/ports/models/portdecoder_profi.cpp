@@ -6,12 +6,20 @@
 #include "portdecoder_profi.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
+#include "debugger/ttd/profi/ttdprofixtkbc.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "debugger/ttd/ttdpit8253.h"
+#include "debugger/ttd/ttdppi8255.h"
+#include "debugger/ttd/ttdusart8251.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/serial/serialpeer.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/audio.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/profi/profigeometry.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -41,15 +49,126 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
+    _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
+    FitKeyboard();
+
+    // The COM port (v5): the 8251's TxC / RxC is the 8253's counter 0 output. The 8253 has no RESET pin: its
+    // counters start idle at power-on and keep counting through a reset
+    _pit.PowerOn(NowBase());
+    _usart.Reset(NowBase());
+    _usart.SetClockSource([this]() { return Usart8251::ClockRate{_pit.ClockHz(), _pit.OutputPeriod(Pit8253::kCounter0)}; });
+
+    // The VG93 and the tape keep their own clocks while the CPU clock changes (turbo x2, hi-res 6/7 on v3 and
+    // ZQ3/14 on v5): without the base-clock time base their time is t_states + CPU T in the frame, which steps
+    // back at every frame boundary when the CPU runs faster than 3.5 MHz (by 29952 T in v5 hi-res) and forward
+    // when slower (v3 hi-res). The VG93 then reports Lost Data on reads polled through #BF: SP-DOS's boot loader
+    // (UNICOPY, KLUG's BBS) retried every sector on a v5 forever
+    if (_context->pBetaDisk)
+        _context->pBetaDisk->SetBaseClockTimeBase(true);
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(true);
+}
+
+void PortDecoder_Profi::FitKeyboard()
+{
+    const CONFIG& config = _context->config;
+    _keyboardKind = ProfiResolveKeyboard(static_cast<ProfiKeyboard>(config.profi_keyboard), config.mem_model);
+    if (_keyboardKind == ProfiKeyboard::Matrix)
+        return;
+
+    // The PROFI-XT controller (research-profi-keyboard.md sections 2, 5). The firmware image is a reconstruction:
+    // the only known dump (CRC 9A8E2686) has no EN I and never calls its get-byte routine, so it receives no key;
+    // rom/profixt/profi-xt-v1.27.rom has the 5 bytes at 02Eh..032h replaced by 05 14 5F 00 00 (EN I; CALL 05Fh;
+    // NOP; NOP) - data/rom/profixt/README.md. [ROM] PROFIXT= takes a clean re-dump when one turns up
+    _xtKbc = std::make_unique<ProfiXtKbc>(_context);
+    std::string error;
+    const ProfiXtKbc::Engine engine =
+        _keyboardKind == ProfiKeyboard::XtTable ? ProfiXtKbc::Engine::Table : ProfiXtKbc::Engine::Firmware;
+    if (!_xtKbc->Load(engine, config.profi_xt_rom_path, error))
+    {
+        // No image: the controller's key table keeps the extra keys working
+        MLOGWARNING("PortDecoder_Profi: %s - the PROFI-XT key table is used instead", error.c_str());
+        _keyboardKind = ProfiKeyboard::XtTable;
+        _xtKbc->Load(ProfiXtKbc::Engine::Table, "", error);
+    }
+    if (!_xtKbc->ImageNote().empty())
+        MLOGWARNING("PortDecoder_Profi: %s", _xtKbc->ImageNote().c_str());
+    // X9 takes one keyboard: the host's keys reach the controller alone (Auto route, IPs2KeySink::ReplacesMatrix)
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(_xtKbc.get());
+}
+
+void PortDecoder_Profi::OnFrameEnd()
+{
+    if (_xtKbc)
+        _xtKbc->OnFrameEnd();
+    // The COM line: what the ZX sent reaches the peer, what the peer sent arrives, without waiting for an access
+    if (_usart.Peer())
+        _usart.Advance(NowBase());
+}
+
+uint64_t PortDecoder_Profi::NowBase() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return _state->t_states;
+    return _state->t_states + _state->CpuToBaseT(z80->t);
+}
+
+void PortDecoder_Profi::SetSerialPeer(ISerialPeer* peer)
+{
+    _usart.Advance(NowBase());
+    ISerialPeer* old = _usart.Peer();
+    if (old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        peer->SetClock([this]() { return NowBase(); }, kProfiBaseClockHz);
+        // Bytes from outside arrive at their emulated time: the 8251 catches up first
+        peer->onReceive = [this]() { _usart.Advance(NowBase()); };
+    }
+    _usart.SetPeer(peer);
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Profi::DescribeNetwork()
+{
+    // The v5 board's COM port (an 8251, not a 16550 on #xxEF): the machine's own serial port, as on the ATM Turbo 2+.
+    // The v3 board has none
+    NetworkCapabilities caps;
+    if (!_board.extendedPorts)
+        return caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::Profi8251;
+    caps.attachSerialPeer = [this](ISerialPeer* peer) { SetSerialPeer(peer); };
+    caps.serialBaud = [this]() { return _usart.Baud(); };
+    return caps;
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
+    if (_xtKbc && _context->pKeyboard && _context->pKeyboard->GetPs2Sink() == _xtKbc.get())
+        _context->pKeyboard->SetPs2Sink(nullptr);
+    // The peer outlives the decoder (the network manager owns it): it must not call back into this one
+    if (ISerialPeer* peer = _usart.Peer())
+    {
+        peer->onReceive = nullptr;
+        peer->SetClock(nullptr, 0);
+    }
+
     Core* core = _context->pCore;
     if (core && core->GetZ80() && core->GetZ80()->GetMachineStepHook() == this)
         core->GetZ80()->SetMachineStepHook(nullptr);
     if (_waitsInstalled && core)
         core->RemoveBusOverlay(_waitOverlay.get());
+
+    // The next model's decoder decides the time base again
+    if (_context->pBetaDisk)
+        _context->pBetaDisk->SetBaseClockTimeBase(false);
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(false);
 
     // Battery-backed state outlives the machine ([PROFI] NvramFile); the v3 board has no clock (_nvramLoaded stays false)
     const char* nvramPath = _context->config.profi_nvram_path;
@@ -74,6 +193,10 @@ void PortDecoder_Profi::reset()
     state.border_attr = 0x07;
 
     ResetPalette();
+    _ppi.Reset();   // RESET reaches the 8255: every port an input
+    // RESET reaches the 8251 and clears the COM control register (interrupts off); the 8253 has no RESET input
+    _usart.Reset(NowBase());
+    _usart.SetBoardLatch(0);
 
     // The RTC's battery-backed cells come from [PROFI] NvramFile once, at
     // power-on; a Z80 reset does not touch the chip. Only the v5 board has the clock
@@ -150,12 +273,54 @@ void PortDecoder_Profi::SyncTurbo()
     }
 
     const bool headLoaded = followHld && _context->pBetaDisk && _context->pBetaDisk->IsHeadLoaded();
-    const uint8_t ratio = (pressed && !headLoaded) ? 2 : 1;
-    if (_state->hw_turbo_ratio == ratio)
+    const bool turbo = pressed && !headLoaded;
+
+    // Hi-res (#DFFD bit 7) switches the sync PROM to its upper half and the CPU to its other crystal at once
+    // (design-hires.md): the frame and INT first, so the clock change below rescales against the new geometry
+    const bool hires = (_state->pDFFD & 0x80) != 0;
+    SyncFrame(hires);
+    // The AY clock comes from the same video divider (CLCAY): 1.5 MHz in hi-res unless the v5's SB7 says "new"
+    if (_context->pSoundManager)
+        _context->pSoundManager->SetPsgClock(ProfiAyClockHz(_board.palette, _context->config.profi_ay_clock_new != 0, hires));
+
+    uint8_t ratio = turbo ? 2 : 1;
+    uint8_t den = 1;
+    if (hires)
+    {
+        ratio = ProfiHiresClockNum(_board.palette, ProfiClampZq3(_context->config.profi_zq3_mhz), turbo);
+        den = kProfiHiresClockDen;
+    }
+    const uint8_t currentDen = _state->hw_clock_den > 1 ? _state->hw_clock_den : 1;
+    if (_state->hw_turbo_ratio == ratio && currentDen == den)
         return;
     _state->hw_turbo_ratio = ratio;
+    _state->hw_clock_den = den;
     if (z80)
         z80->ApplyHardwareTurboNow();
+}
+
+void PortDecoder_Profi::SyncFrame(bool hires)
+{
+    // The sync PROM's lower half in Spectrum mode, its upper half in hi-res (ProfiSyncPromFrameHires): the v3's
+    // 0a1d PROM gives 320 lines there, so the frame length itself changes, not only the INT position
+    CONFIG& config = _context->config;
+    const ProfiSyncProm prom = static_cast<ProfiSyncProm>(config.profi_sync_prom);
+    const ProfiFrame f = hires ? ProfiSyncPromFrameHires(prom, config.mem_model) : ProfiSyncPromFrame(prom, config.mem_model);
+    const uint32_t intstart = hires ? ProfiHiresIntStart(f) : ProfiIntStart(f);
+    if (config.frame == f.frame && config.intstart == intstart && config.intlen == f.intLength)
+        return;
+    config.frame = f.frame;
+    config.t_line = f.tLine;
+    config.intstart = intstart;
+    config.intlen = f.intLength;
+    config.frame_duration_us = CalculateFrameDurationUs(f.frame);
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->RecomputeFrameTiming();
+}
+
+uint8_t PortDecoder_Profi::TtdClockUnits() const
+{
+    return ProfiTtdClockUnits(_board.palette, ProfiClampZq3(_context->config.profi_zq3_mhz));
 }
 
 void PortDecoder_Profi::OnMachineStep([[maybe_unused]] uint32_t t)
@@ -172,7 +337,9 @@ void PortDecoder_Profi::SyncWaits()
     // v5: the video WAIT at 3.5 MHz (unless SB8 is in its PENTAGON position) and the turbo waits; v3: turbo only
     const CONFIG& config = _context->config;
     const bool pressed = _state->profi_turbo_switch != 0;
-    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed) : pressed;
+    // In hi-res the v5 arbiter waits whatever SB8 says (design-hires.md H3)
+    const bool hires = (_state->pDFFD & 0x80) != 0;
+    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed || hires) : pressed;
     if (wanted == _waitsInstalled)
         return;
 
@@ -184,6 +351,7 @@ void PortDecoder_Profi::SyncWaits()
         setup.pentagonJumper = config.profi_wait_pentagon != 0;
         setup.romWait = config.profi_rom_wait != 0;
         setup.paperStartT = kProfiPaperStartT;
+        setup.zq3MHz = ProfiClampZq3(config.profi_zq3_mhz);
         _waitOverlay = std::make_unique<ProfiWaitOverlay>(core, core->GetZ80(), _context->pMemory, _state, setup);
         _waitsInstalled = core->AddBusOverlay(_waitOverlay.get());
         if (!_waitsInstalled)
@@ -194,6 +362,28 @@ void PortDecoder_Profi::SyncWaits()
         core->RemoveBusOverlay(_waitOverlay.get());
         _waitsInstalled = false;
     }
+}
+
+uint8_t PortDecoder_Profi::FloatingBusV3Hires(double t3Ns) const
+{
+    // research-profi-hires-timing.md 4.1: in hi-res U9 and U10 take turns on the bus within each tick of the fetch
+    // window (FLD1), which leads the displayed dots by one tick: the first half of a tick U10 (the cell's second
+    // fetch), the second half U9 (its first fetch); #FF outside FLD1. Which page each latch holds is not traced (O):
+    // this returns the pixel bytes of the cell the window is fetching (M)
+    const double rel0 = t3Ns - ProfiHiresWindowStartNs(0);
+    if (rel0 < 0)
+        return 0xFF;
+    const uint32_t line = static_cast<uint32_t>(rel0 / kProfiLineNs);
+    if (line >= kProfiHiresPaperLines)
+        return 0xFF;
+    const double rel = t3Ns - ProfiHiresWindowStartNs(line);
+    const uint32_t tick = static_cast<uint32_t>(rel / kProfiHiresTickNs);
+    if (tick >= kProfiHiresTicksPerWindow)
+        return 0xFF;
+    const bool firstHalf = (rel - tick * kProfiHiresTickNs) < kProfiHiresRequestNs;
+    const uint32_t byteIndex = tick * 2 + (firstHalf ? 1u : 0u);   // ByteOffset: even = the cell's first byte
+    const uint16_t offset = ProfiGeometry::ByteOffset(line, byteIndex);
+    return _context->pMemory->RAMPageAddress(ProfiGeometry::PixelPage(_state->p7FFD))[offset];
 }
 
 uint8_t PortDecoder_Profi::FloatingBusV3(uint32_t t3) const
@@ -302,6 +492,13 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         _lastPortDecoded = true;
         disp.decodedPort = port & 0xFF;
     }
+    // The COM port (v5): 8253 #8F..#EF, 8251 #D3 / #F3, control register #93 / #B3 - extended map only
+    else if (const ComDevice com = ComPortDevice(port); com != ComDevice::None)
+    {
+        result = ComIn(com, port);
+        _lastPortDecoded = true;
+        disp.decodedPort = port & 0xFF;
+    }
     // WD1793 (Beta128) registers and system port: only while the disk interface is
     // on the bus (DOS latch or CP/M mode, CF_DOSPORTS)
     else if (fdcPort != 0)
@@ -313,6 +510,20 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     else if (IsFEPort(port))
     {
         result = Default_Port_FE_In(port, pc);
+        // The PROFI-XT controller answers on the keyboard lines (and holds the Z80 while it does)
+        if (_xtKbc)
+        {
+            const uint8_t lines = _xtKbc->ReadPort(port);
+            if (_board.palette)
+                result &= static_cast<uint8_t>(lines | 0xC0);   // v5 X9: KD0..KD5, KD5 = bit 5 (pull-up R10)
+            else
+            {
+                // v3 KEYB: KD0..KD4; no KD5 line (bit 5 reads 1), the controller's DK5 lands on pin 2 = bit 7
+                result &= static_cast<uint8_t>(lines | 0xE0);
+                if (!(lines & 0x20))
+                    result &= 0x7F;
+            }
+        }
         // GX0 (bit 7): "palette exists" detector read by Profi 5.xx software (UniCopy).
         // Default_Port_FE_In leaves bit 7 = 1 (keyboard/tape never touch it), so only
         // override it in DS80, and only on the v5 board: the v3 has no palette, bit 7 reads 1
@@ -329,6 +540,15 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         result = Default_Port_KempstonJoystick_In();
         _lastPortDecoded = true;
         disp.decodedPort = 0x001F;
+        disp.wasHandledInline = true;
+    }
+    // The 8255: #3F (B), #5F (C), #7F (control) outside the DOS / CP/M port set; #87 / #A7 / #C7 / #E7 in the
+    // extended map. Port A at #1F is the joystick arm above when one is fitted
+    else if (const uint8_t ppiReg = PpiRegister(port, dosPorts); ppiReg != 0xFF)
+    {
+        result = _ppi.Read(ppiReg);
+        _lastPortDecoded = true;
+        disp.decodedPort = port & 0xFF;
         disp.wasHandledInline = true;
     }
     else if (uint8_t mouseReg = 0; !dosPorts && Default_IsPort_KempstonMouse(port, mouseReg))
@@ -350,13 +570,19 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     }
     // The v3 board's floating bus: an IN (A0 = 1) that no device answers reads the video's pixel latch in the
     // Spectrum raster. The lookup runs at T2 of the I/O cycle; the Z80 takes the data at T3, one T later at 3.5 MHz
-    if (!_lastPortDecoded && !_board.palette && (port & 0x0001) && !(_state->pDFFD & 0x80))
+    if (!_lastPortDecoded && !_board.palette && (port & 0x0001))
     {
         // Z80::t counts CPU clocks of the scaled frame (x the clock multiplier): T3 starts 2 clocks after T2
         const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
-        if (z80)
-            result = FloatingBusV3((z80->t + 2u) / multiplier);
+        if (z80 && !(_state->pDFFD & 0x80))
+            result = FloatingBusV3(_state->CpuToBaseT(z80->t + 2u));
+        else if (z80)
+        {
+            // Hi-res: the instant in ns at the hi-res clock (num / 7 of 3.5 MHz, host speed stripped)
+            const uint32_t num = _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1u;
+            const uint32_t host = _state->HostSpeedMultiplier() ? _state->HostSpeedMultiplier() : 1u;
+            result = FloatingBusV3Hires(static_cast<double>((z80->t + 2u) / host) * ProfiHiresCpuPeriodNs(num));
+        }
     }
 
     disp.wasDecoded = _lastPortDecoded;
@@ -452,6 +678,12 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         disp.decodedPort = port & 0xFF;
         disp.wasDecoded = true;
     }
+    else if (const ComDevice com = ComPortDevice(port); com != ComDevice::None)
+    {
+        ComOut(com, port, value);
+        disp.decodedPort = port & 0xFF;
+        disp.wasDecoded = true;
+    }
     else if (dosPorts)
     {
         const uint16_t fdcPort = DecodeFDCPort(port);
@@ -468,6 +700,12 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         {
             const uint8_t lowByte = static_cast<uint8_t>(port);
             const uint8_t lrBits = lowByte & kProfiCovoxExtLRMask;
+            if (const uint8_t ppiReg = PpiRegister(port, dosPorts); ppiReg != 0xFF)
+            {
+                _ppi.Write(ppiReg, value);
+                disp.decodedPort = lowByte;
+                disp.wasDecoded = true;
+            }
             if ((lowByte & kProfiCovoxExtMask) == kProfiCovoxExtMatch &&
                 (lrBits == kProfiCovoxExtLeftBits || lrBits == kProfiCovoxExtRightBits))
             {
@@ -485,10 +723,13 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     // Covox/SoundRive DAC: #5F (Left), #3F (Right). NORMAL mode only - the FDC/CP'M
     // port set (dosPorts above) takes priority when the disk interface is on the bus;
     // the CP/M-extended-mode aliases (#C7/#A7) are handled inside that branch instead.
-    else if (const uint8_t lowByte = port & 0xFF;
-             lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort)
+    else if (const uint8_t lowByte = port & 0xFF; PpiRegister(port, dosPorts) != 0xFF)
     {
-        if (_context->pSoundManager && _context->pSoundManager->hasCovox())
+        _ppi.Write(PpiRegister(port, dosPorts), value);
+        // The Covox DAC follows every write to B / C, whatever the 8255's mode (as Karabas Pro's covox.vhd latches
+        // it): the Profi Covox software never programs the 8255, and no BIOS sets it to output
+        if ((lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort) && _context->pSoundManager &&
+            _context->pSoundManager->hasCovox())
         {
             // Use the A ports, not B: computeStereoAmplitudes()'s mono-compatibility
             // fallback keys on LeftA/LeftB/RightA==0 and then substitutes RightB into
@@ -600,18 +841,32 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
-    // The clock is on the v5 board only
-    if (!_board.extendedPorts)
-        return {ttd::PeripheralId::ProfiPaging};
-    return {ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ds12887};
+    // The clock is on the v5 board only; the PROFI-XT controller when fitted
+    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ppi8255};
+    if (_board.extendedPorts)
+    {
+        ids.push_back(ttd::PeripheralId::Ds12887);
+        ids.push_back(ttd::PeripheralId::Pit8253);     // the COM port's baud timer
+        ids.push_back(ttd::PeripheralId::Usart8251);   // the COM port (its peer: MachineSerialPeer)
+    }
+    if (_xtKbc)
+        ids.push_back(ttd::PeripheralId::ProfiXtKbc);
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDPpi8255>(const_cast<Ppi8255&>(_ppi)));
     if (_board.extendedPorts)
+    {
         serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+        serializers.push_back(std::make_unique<ttd::TTDPit8253>(const_cast<Pit8253&>(_pit)));
+        serializers.push_back(std::make_unique<ttd::TTDUsart8251>(const_cast<Usart8251&>(_usart)));
+    }
+    if (_xtKbc)
+        serializers.push_back(std::make_unique<ttd::TTDProfiXtKbc>(*_xtKbc));
     return serializers;
 }
 
@@ -637,6 +892,82 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
     return (port & mask) == match;
 }
 
+uint8_t PortDecoder_Profi::PpiRegister(uint16_t port, bool dosPorts) const
+{
+    // The 8255's register (A6 A5 = A1 A0 of the chip) for an address it answers, else #FF. Outside the DOS / CP/M
+    // port set: #1F / #3F / #5F / #7F (the joystick read of #1F stays its own arm). In the extended map: the same
+    // registers at #87 / #A7 / #C7 / #E7 (A7 = 1, A2 = 1: decoder-prom.md, the v5 PROM)
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (!dosPorts && (low & 0x9F) == 0x1F)
+        return static_cast<uint8_t>((low >> 5) & 0x03);
+    if (dosPorts && (low & 0x9F) == 0x87 && IsExtMode())
+        return static_cast<uint8_t>((low >> 5) & 0x03);
+    return 0xFF;
+}
+
+PortDecoder_Profi::ComDevice PortDecoder_Profi::ComPortDevice(uint16_t port) const
+{
+    // The extended map's COM group (Concurrent BIOS port list, PLUSDOC bios2.txt pp. 13-14): A7 = 1, A4 = 0, A3..A0 =
+    // 1111 the 8253 (A6 A5 its register), 0011 the 8251 (A6 = 1, A5 = C/D) or the control register (A6 = 0)
+    const uint8_t low = static_cast<uint8_t>(port);
+    const uint8_t group = static_cast<uint8_t>(low & 0x9F);
+    if (group != 0x8F && group != 0x93)
+        return ComDevice::None;
+    if (!IsExtMode())
+        return ComDevice::None;
+    if (group == 0x8F)
+        return ComDevice::Pit;
+    return (low & 0x40) ? ComDevice::Usart : ComDevice::Control;
+}
+
+uint8_t PortDecoder_Profi::ComIn(ComDevice device, uint16_t port)
+{
+    const uint64_t now = NowBase();
+    switch (device)
+    {
+        case ComDevice::Pit:
+            return _pit.Read(static_cast<uint8_t>((port >> 5) & 0x03), now);
+        case ComDevice::Usart:
+            return _usart.Read((port & 0x20) ? Usart8251::kControl : Usart8251::kData, now);
+        case ComDevice::Control:
+        {
+            // D0 RI, D7 DCD of the connector (1 = asserted; the polarity is not documented), the rest float
+            _usart.Advance(now);
+            uint8_t value = 0x7E;
+            if (_usart.RiIn())
+                value |= 0x01;
+            if (_usart.DcdIn())
+                value |= 0x80;
+            return value;
+        }
+        default:
+            return 0xFF;
+    }
+}
+
+void PortDecoder_Profi::ComOut(ComDevice device, uint16_t port, uint8_t value)
+{
+    const uint64_t now = NowBase();
+    switch (device)
+    {
+        case ComDevice::Pit:
+            // The 8251's clock changes with counter 0: the line moves up to now at the old rate first
+            _usart.Advance(now);
+            _pit.Write(static_cast<uint8_t>((port >> 5) & 0x03), value, now);
+            break;
+        case ComDevice::Usart:
+            _usart.Write((port & 0x20) ? Usart8251::kControl : Usart8251::kData, value, now);
+            break;
+        case ComDevice::Control:
+            // D0: the COM interrupt enable. The interrupt controller behind it (RST #20 receive, RST #28 transmit
+            // on the bus: PLUSDOC comport.txt) is not modeled: the latch is kept, no INT is raised
+            _usart.SetBoardLatch(static_cast<uint8_t>(value & 0x01));
+            break;
+        default:
+            break;
+    }
+}
+
 bool PortDecoder_Profi::IsExtMode() const
 {
     // The extended port map: CP/M and ROM14, on the v5 board only. The v5 port decoder PROM confirms it
@@ -647,6 +978,12 @@ bool PortDecoder_Profi::IsExtMode() const
         return false;
     const bool cpm = (_state->pDFFD & 0x20) != 0;
     const bool rom14 = (_state->p7FFD & 0x10) != 0;
+    // [PROFI] ExtPorts=sys: Karabas Pro's decode (karabas-pro.vhd: "(cpm='1' and rom14='1') or (dos_act='1' and
+    // rom14='0')") also opens the map while the SYS ROM runs (DOS latch on, ROM14 = 0). ROM BIOS Plus and PQ-DOS
+    // (Vadim / Star Software) probe the FDC, RTC and IDE there; BIOS 1.0 / 2.0 instead use the VG93 at #1F..#7F
+    // from the SYS ROM and cannot boot a disk with it (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md)
+    if (_context->config.profi_ext_ports == 1 && (_state->flags & CF_TRDOS) && !rom14)
+        return true;
     return cpm && rom14;
 }
 
@@ -777,3 +1114,10 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
     if (changed & 0x80)
         _context->pScreen->InitRaster();
 }
+
+ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
+{
+    const auto* decoder = context ? dynamic_cast<const PortDecoder_Profi*>(context->pPortDecoder) : nullptr;
+    return decoder ? decoder->GetKeyboardKind() : ProfiKeyboard::Default;
+}
+

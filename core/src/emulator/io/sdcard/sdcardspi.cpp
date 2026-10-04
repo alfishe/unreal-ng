@@ -126,6 +126,27 @@ void SdCardSpi::select(bool selected)
     }
 }
 
+void SdCardSpi::LeaveForProgram()
+{
+    EndTransfer();
+    // The shell read the program from the card: it is in SPI mode and initialized
+    if (_device && _state != State::Ready)
+    {
+        _state = State::Ready;
+        _crcOn = false;
+    }
+}
+
+void SdCardSpi::EndTransfer()
+{
+    _mode = Mode::Command;
+    _out.clear();
+    _cmdLength = 0;
+    _appCommand = false;
+    _multiWrite = false;
+    _rxCount = 0;
+}
+
 void SdCardSpi::truncatedByte()
 {
     // The master restarted mid-byte: the bit stream lost its framing. A
@@ -273,7 +294,10 @@ void SdCardSpi::onCommand()
     const bool app = _appCommand;
     _appCommand = false;
 
-    // CMD12 ends a streaming read: one stuff byte, R1, a short busy
+    // CMD12 ends a streaming read: one stuff byte, R1, a short busy. CMD0 is
+    // accepted in every state (SD Physical Layer spec, card states): it drops the
+    // stream and resets the card below - firmware recovers a card in an unknown
+    // state that way (TS-BIOS retries CMD0 until it answers idle)
     if (_mode == Mode::ReadMulti)
     {
         if (index == 12)
@@ -284,8 +308,11 @@ void SdCardSpi::onCommand()
             _out.push_back(r1Flags());
             for (int i = 0; i < 4; i++)
                 _out.push_back(0x00);
+            return;
         }
-        return; // anything else is ignored while streaming
+        if (index != 0)
+            return; // anything else is ignored while streaming
+        _mode = Mode::Command;
     }
     _out.clear();
 

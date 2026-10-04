@@ -9,9 +9,13 @@
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/emulatormanager.h"
+#include "base/featuremanager.h"
 #include "emulator/mainloop.h"
+#include "emulator/sound/soundmanager.h"
 #include "common/filehelper.h"
 #include <atomic>
+#include <stdexcept>
+#include <algorithm>
 #include <cctype>
 #include <utility>
 #include <vector>
@@ -19,6 +23,11 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/testwaithelper.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include <memory>
+#include <thread>
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -570,3 +579,549 @@ TEST(Emulator_BlankDisk_Test, RefusesWhatNoDriveTakes)
 }
 
 /// endregion </Blank disks>
+
+/// region <Breakpoints during a direct run (Emulator::OnBreakpointHit)>
+
+// A control thread stepping a paused emulator (WebAPI /step, CLI, DeZog, Lua, Python) must never park on a
+// breakpoint: nothing would resume it. The breakpoint ends the run instead, and the caller learns which
+namespace
+{
+// $8000 LD A,1 / $8002 LD ($9000),A / $8005 LD A,2 / $8007 XOR A / $8008 OUT ($FE),A / $800A NOP / $800B JR $
+constexpr uint16_t kProgram = 0x8000;
+constexpr uint16_t kLdA2 = 0x8005;
+constexpr uint16_t kTarget = 0x9000;
+const uint8_t kProgramBytes[] = {0x3E, 0x01, 0x32, 0x00, 0x90, 0x3E, 0x02, 0xAF, 0xD3, 0xFE, 0x00, 0x18, 0xFE};
+
+std::unique_ptr<Emulator> DirectRunEmulator()
+{
+    auto emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
+    if (!emulator->Init())
+        return nullptr;
+    emulator->DebugOn();
+    // Memory breakpoints need the breakpoints feature too (Memory's feature cache)
+    EmulatorContext* context = emulator->GetContext();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+    Memory* memory = emulator->GetMemory();
+    memory->UpdateFeatureCache();
+    for (size_t i = 0; i < sizeof(kProgramBytes); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(kProgram + i), kProgramBytes[i]);
+    Z80State* z80 = emulator->GetZ80State();
+    z80->pc = kProgram;
+    z80->iff1 = z80->iff2 = 0;  // no frame interrupt in the way
+    return emulator;
+}
+
+uint16_t AddBreakpoint(Emulator& emulator, BreakpointTypeEnum type, uint8_t access, uint16_t address)
+{
+    auto* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = type;
+    if (type == BreakpointTypeEnum::BRK_IO)
+        breakpoint->ioType = access;
+    else
+        breakpoint->memoryType = access;
+    breakpoint->z80address = address;
+    return emulator.GetBreakpointManager()->AddBreakpoint(breakpoint);
+}
+}  // namespace
+
+TEST(Emulator_DirectRunBreakpoint_Test, ExecutionBreakpointStopsBeforeItsInstruction)
+{
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const uint16_t id = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_EXECUTE, kLdA2);
+
+    EXPECT_EQ(emulator->RunNCPUCycles(10, false), 2u);
+    Z80State* z80 = emulator->GetZ80State();
+    EXPECT_EQ(z80->pc, kLdA2);
+    EXPECT_EQ(z80->a, 1) << "LD A,2 must not have run";
+    const auto& stop = emulator->LastDirectStop();
+    EXPECT_TRUE(stop.hit);
+    EXPECT_EQ(stop.breakpointId, id);
+    EXPECT_EQ(stop.address, kLdA2);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::Execute);
+
+    // Stepping on from the breakpoint it stopped at runs LD A,2; nothing stops the next steps
+    emulator->RunSingleCPUCycle(false);
+    EXPECT_EQ(z80->pc, kLdA2 + 2);
+    EXPECT_EQ(z80->a, 2);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    EXPECT_EQ(emulator->RunNCPUCycles(2, false), 2u);
+    emulator->Release();
+}
+
+TEST(Emulator_DirectRunBreakpoint_Test, BreakpointAtTheStartIsHitWhenNotStoppedThere)
+{
+    // A fresh machine sits at $8000 without having stopped there: the breakpoint fires first,
+    // then the next step passes it
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_EXECUTE, kProgram);
+    Z80State* z80 = emulator->GetZ80State();
+
+    emulator->RunSingleCPUCycle(false);
+    EXPECT_EQ(z80->pc, kProgram);
+    EXPECT_TRUE(emulator->LastDirectStop().hit);
+
+    emulator->RunSingleCPUCycle(false);
+    EXPECT_EQ(z80->pc, kProgram + 2);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    emulator->Release();
+}
+
+/// A hit-count breakpoint counts each arrival once: stepping on from where it stopped is not another hit
+TEST(Emulator_DirectRunBreakpoint_Test, HitCountIgnoresSteppingOnFromTheStop)
+{
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    constexpr uint16_t kLoop = kProgram + 11;  // JR $: an endless loop on itself
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = kLoop;
+    spec.hitMode = BRK_HIT_EQUAL;
+    spec.hitTarget = 3;
+    std::string error;
+    BreakpointManager& brk = *emulator->GetBreakpointManager();
+    const uint16_t id = brk.AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const BreakpointDescriptor& bp = *brk.GetAllBreakpoints().at(id);
+
+    // Six instructions, then the loop: arrivals 1 and 2 run on, the 3rd stops before the JR
+    EXPECT_EQ(emulator->RunNCPUCycles(100, false), 8u);
+    EXPECT_TRUE(emulator->LastDirectStop().hit);
+    EXPECT_EQ(bp.hitCount, 3u);
+
+    emulator->RunSingleCPUCycle(false);  // the JR runs: leaving the stop is not an arrival
+    EXPECT_EQ(bp.hitCount, 3u);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    emulator->RunSingleCPUCycle(false);  // the next arrival counts, and the 4th does not stop
+    EXPECT_EQ(bp.hitCount, 4u);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    emulator->Release();
+}
+
+TEST(Emulator_DirectRunBreakpoint_Test, MemoryAndPortBreakpointsEndTheRunAfterTheirInstruction)
+{
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const uint16_t write = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_WRITE, kTarget);
+    const uint16_t out = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_IO, BRK_IO_OUT, 0xFE);
+    Z80State* z80 = emulator->GetZ80State();
+
+    EXPECT_EQ(emulator->RunNCPUCycles(10, false), 2u) << "LD ($9000),A completes, then the run ends";
+    EXPECT_EQ(z80->pc, kLdA2);
+    EXPECT_EQ(emulator->GetMemory()->DirectReadFromZ80Memory(kTarget), 1);
+    EXPECT_EQ(emulator->LastDirectStop().breakpointId, write);
+    EXPECT_EQ(emulator->LastDirectStop().kind, BreakpointHitKind::MemoryWrite);
+    EXPECT_EQ(emulator->LastDirectStop().address, kTarget);
+
+    EXPECT_EQ(emulator->RunNCPUCycles(10, false), 3u) << "LD A,2 / XOR A / OUT ($FE),A";
+    EXPECT_EQ(z80->pc, 0x800A);
+    EXPECT_EQ(emulator->LastDirectStop().breakpointId, out);
+    EXPECT_EQ(emulator->LastDirectStop().kind, BreakpointHitKind::PortOut);
+    emulator->Release();
+}
+
+TEST(Emulator_DirectRunBreakpoint_Test, StepFromABreakpointPauseNeverParksTheCaller)
+{
+    // The emulation thread runs into an execution breakpoint and parks there (the emulator's own run). A step
+    // from a control thread then used to park the caller on the same breakpoint forever (WebAPI's workers);
+    // now it runs the instruction and returns. The pause carries its cause, the step's end its outcome
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const uint16_t id = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_EXECUTE, kLdA2);
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::atomic<int> pauseCause{-1};
+    std::atomic<int> pauseAddress{-1};
+    std::atomic<int> stepPayloads{0};
+    std::atomic<int> stepStopped{-1};
+    const std::string emulatorId = emulator->GetId();
+    const uint64_t stateObserver = messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<EmulatorStateChangePayload*>(message->obj) : nullptr;
+        if (payload && payload->_payloadNumber == StatePaused && payload->emulatorId.toString() == emulatorId)
+        {
+            pauseCause.store(static_cast<int>(payload->pauseCause));
+            pauseAddress.store(payload->address);
+        }
+    });
+    const uint64_t stepObserver = messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<CpuStepPayload*>(message->obj) : nullptr;
+        if (payload && payload->emulatorId.toString() == emulatorId)
+        {
+            stepStopped.store(payload->stopped ? 1 : 0);
+            stepPayloads.fetch_add(1);
+        }
+    });
+
+    emulator->StartAsync();
+    Z80State* z80 = emulator->GetZ80State();
+    ASSERT_TRUE(TestWait::For([&] { return emulator->IsPaused() && z80->pc == kLdA2; }, std::chrono::seconds(2)));
+    EXPECT_TRUE(TestWait::For([&] { return pauseCause.load() >= 0; }, std::chrono::milliseconds(500)));
+    EXPECT_EQ(pauseCause.load(), static_cast<int>(PauseCause::Breakpoint));
+    EXPECT_EQ(pauseAddress.load(), kLdA2);
+
+    std::atomic<bool> returned{false};
+    std::thread control([&] {
+        emulator->RunSingleCPUCycle(false);
+        returned.store(true);
+    });
+    const bool done = TestWait::For([&] { return returned.load(); }, std::chrono::seconds(2));
+    if (!done)
+        emulator->Resume();  // unpark the caller so the thread can be joined
+    control.join();
+    EXPECT_TRUE(done) << "the step parked on the breakpoint";
+    EXPECT_EQ(z80->pc, kLdA2 + 2);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    EXPECT_TRUE(TestWait::For([&] { return stepPayloads.load() > 0; }, std::chrono::milliseconds(500)));
+    EXPECT_EQ(stepStopped.load(), 0);
+    EXPECT_EQ(emulator->GetBreakpointManager()->GetBreakpointById(id) != nullptr, true);
+
+    messageCenter.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, stateObserver);
+    messageCenter.RemoveObserverById(NC_EXECUTION_CPU_STEP, stepObserver);
+    emulator->Stop();
+    emulator->Release();
+}
+
+/// endregion </Breakpoints during a direct run>
+
+/// region <Host audio during direct runs>
+
+/// API run_frames and every other direct run go at full host speed: on every machine, nothing reaches the host
+/// audio callback for their duration (a SoundManager::HostOutputHold), and delivery resumes once they return.
+/// Turbo mode holds it the same way, once however often it is enabled
+class EmulatorHostAudio_Test : public ::testing::TestWithParam<const char*>
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    size_t _calls = 0;
+
+    static void Count(void* obj, int16_t*, size_t) { ++*static_cast<size_t*>(obj); }
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << "Failed to create " << GetParam();
+        _context = _emulator->GetContext();
+        ASSERT_NE(_context->pSoundManager, nullptr);
+        _context->pAudioManagerObj.store(&_calls, std::memory_order_release);
+        _context->pAudioCallback.store(&Count, std::memory_order_release);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
+};
+
+INSTANTIATE_TEST_SUITE_P(Models, EmulatorHostAudio_Test, ::testing::Values("48K", "PENTAGON", "TSL", "SPRINTER"),
+                         [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });
+
+TEST_P(EmulatorHostAudio_Test, DirectRunsHoldHostOutput)
+{
+    SoundManager* sound = _context->pSoundManager;
+    const uint64_t heldBefore = sound->hostFramesHeld();
+
+    _emulator->RunNFrames(3);
+    EXPECT_EQ(_calls, 0u) << "run_frames handed audio to the host";
+    EXPECT_GE(sound->hostFramesHeld() - heldBefore, 3u) << "run_frames frames did not pass the host boundary held";
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "the hold outlived run_frames";
+
+    _emulator->RunTStates(_context->config.frame + 100);
+    _emulator->RunUntilScanline(10);
+    _emulator->RunSingleCPUCycle();
+    EXPECT_EQ(_calls, 0u) << "a direct run handed audio to the host";
+    EXPECT_FALSE(sound->isHostOutputHeld());
+
+    // Control: a frame end outside a direct run (the paced main loop) is delivered
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(_calls, 1u) << "delivery did not resume after the direct runs";
+}
+
+TEST_P(EmulatorHostAudio_Test, TurboHoldsHostOutputOnce)
+{
+    SoundManager* sound = _context->pSoundManager;
+    _emulator->EnableTurboMode();
+    _emulator->EnableTurboMode();  // a repeated enable must not stack a second hold
+    EXPECT_TRUE(sound->isHostOutputHeld());
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "turbo left the host output held";
+    EXPECT_FALSE(sound->isMuted());
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound->isHostOutputHeld());
+}
+
+TEST_P(EmulatorHostAudio_Test, ExceptionInsideADirectRunReleasesTheHold)
+{
+    // A direct run that throws half-way (a predicate, a device) unwinds through its scope: the hold goes with it
+    SoundManager* sound = _context->pSoundManager;
+    unsigned steps = 0;
+    EXPECT_THROW(_emulator->RunUntilCondition(
+                     [&](const Z80State&) -> bool {
+                         EXPECT_TRUE(sound->isHostOutputHeld()) << "the run is not held while it runs";
+                         if (++steps == 3)
+                             throw std::runtime_error("predicate failed");
+                         return false;
+                     },
+                     _context->config.frame * 4),
+                 std::runtime_error);
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "an exception inside a direct run leaked its hold";
+    EXPECT_FALSE(_emulator->IsDirectStepping());
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
+
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(_calls, 1u) << "delivery did not resume after the failed run";
+}
+
+TEST_P(EmulatorHostAudio_Test, TurboNeverTouchesTheUserMute)
+{
+    // Turbo holds the host output; it used to mute() / unmute() the user's master mute as well, so leaving turbo
+    // unmuted a user who had muted, and a TTD replay that saved the mute during turbo restored it set for good
+    SoundManager* sound = _context->pSoundManager;
+    sound->mute();
+    _emulator->EnableTurboMode();
+    _emulator->DisableTurboMode();
+    EXPECT_TRUE(sound->isMuted()) << "leaving turbo unmuted the user";
+    sound->unmute();
+    _emulator->EnableTurboMode();
+    EXPECT_FALSE(sound->isMuted());
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::Turbo), 1);
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound->isHostOutputHeld());
+}
+
+namespace
+{
+/// The host audio callback as a frontend sees it: frames handed over, and of those, frames with any sound
+struct HostAudioSink
+{
+    std::atomic<uint64_t> calls{0};
+    std::atomic<uint64_t> audible{0};
+
+    static void Collect(void* obj, int16_t* samples, size_t count)
+    {
+        auto* sink = static_cast<HostAudioSink*>(obj);
+        sink->calls.fetch_add(1, std::memory_order_relaxed);
+        if (std::any_of(samples, samples + count, [](int16_t v) { return v != 0; }))
+            sink->audible.fetch_add(1, std::memory_order_relaxed);
+    }
+};
+
+/// DI; loop: OUT (#FE),#10; delay; OUT (#FE),#00; delay; JR loop - a beeper square wave, forever
+constexpr uint8_t kBeeperSquare[] = {0xF3, 0x3E, 0x10, 0xD3, 0xFE, 0x06, 0x40, 0x10, 0xFE,
+                                     0xAF, 0xD3, 0xFE, 0x06, 0x40, 0x10, 0xFE, 0x18, 0xEF};
+constexpr uint16_t kBeeperAt = 0x8000;
+}  // namespace
+
+/// The owner's report: a machine playing sound, paused via automation, resumed - and silent. Every pause / step /
+/// turbo / leak path, then a resume: the speakers get audible frames again. Drives the real, paced main loop:
+/// each check waits for a few emulated frames at 20 ms each (~0.5 s in all), the only way to see what a running
+/// machine hands the host
+class EmulatorHostAudioResume_Test : public ::testing::Test
+{
+protected:
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+    SoundManager* _sound = nullptr;
+    HostAudioSink _sink;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("host-audio-resume", "PENTAGON",
+                                                                            LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator);
+        _context = _emulator->GetContext();
+        _sound = _context->pSoundManager;
+        ASSERT_NE(_sound, nullptr);
+        for (size_t i = 0; i < sizeof(kBeeperSquare); i++)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kBeeperAt + i), kBeeperSquare[i]);
+        _emulator->GetZ80State()->pc = kBeeperAt;
+        _context->pAudioManagerObj.store(&_sink, std::memory_order_release);
+        _context->pAudioCallback.store(&HostAudioSink::Collect, std::memory_order_release);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _emulator->Stop();
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
+            _emulator.reset();
+        }
+    }
+
+    /// The speakers get sound: audible frames keep arriving, and nothing holds the output
+    void ExpectAudible(const char* after)
+    {
+        const uint64_t audible = _sink.audible.load();
+        EXPECT_TRUE(TestWait::For([&] { return _sink.audible.load() >= audible + 3; }, std::chrono::seconds(3)))
+            << "no sound after " << after << " (host frames " << _sink.calls.load() << ", audible "
+            << _sink.audible.load() << ", held " << _sound->isHostOutputHeld() << ")";
+        EXPECT_FALSE(_sound->isHostOutputHeld()) << after;
+        for (size_t i = 0; i < SoundManager::kHostHoldReasons; i++)
+            EXPECT_EQ(_sound->hostOutputHolds(static_cast<SoundManager::HostHoldReason>(i)), 0) << after;
+        EXPECT_FALSE(_sound->isMuted()) << after;
+    }
+};
+
+TEST_F(EmulatorHostAudioResume_Test, EveryPausePathThenResumePlaysAgain)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    const std::string id = _emulator->GetId();
+    _emulator->StartAsync();
+    ExpectAudible("start");
+
+    // WebAPI POST /pause, /resume and MCP emulator_control pause / resume (it forwards to them): EmulatorManager
+    ASSERT_TRUE(manager->PauseEmulator(id));
+    _emulator->RunNFrames(2);            // run_frames while paused
+    _emulator->RunSingleCPUCycle();      // step
+    _emulator->RunNCPUCycles(5);         // step_n
+    _emulator->RunTStates(1000);         // run_tstates
+    EXPECT_FALSE(_sound->isHostOutputHeld()) << "a direct run left the host output held";
+    ASSERT_TRUE(manager->ResumeEmulator(id));
+    ExpectAudible("WebAPI / MCP pause, steps, resume");
+
+    // CLI pause / resume and the GUI: Emulator::Pause / Resume
+    _emulator->Pause();
+    _emulator->RunFrame();
+    _emulator->Resume();
+    ExpectAudible("CLI / GUI pause, run_frame, resume");
+
+    // A step on a running machine pauses it itself; the resume after it plays again
+    _emulator->RunSingleCPUCycle();
+    ASSERT_TRUE(_emulator->IsPaused());
+    _emulator->Resume();
+    ExpectAudible("step on a running machine, resume");
+
+    // Turbo on and off while running, and across a pause
+    _emulator->EnableTurboMode();
+    EXPECT_TRUE(_sound->isHostOutputHeld());
+    _emulator->DisableTurboMode();
+    ExpectAudible("turbo on / off");
+    _emulator->Pause();
+    _emulator->EnableTurboMode();
+    _emulator->DisableTurboMode();
+    _emulator->Resume();
+    ExpectAudible("turbo on / off while paused, resume");
+
+    // A holder that leaked its hold (the regression): the resume finds it without its reason and drops it
+    _emulator->Pause();
+    auto leaked = std::make_unique<SoundManager::HostOutputHold>(_sound, SoundManager::HostHoldReason::DirectRun);
+    _emulator->Resume();
+    ExpectAudible("a leaked hold, resume");
+    EXPECT_EQ(_sound->hostOutputStaleHoldsCleared(), 1u);
+    leaked.reset();  // its late release takes nothing from anyone
+    EXPECT_FALSE(_sound->isHostOutputHeld());
+}
+
+/// A step over a CALL resumes the machine to a temporary breakpoint, so it runs paced to real time - but it is a
+/// debugger step, and every step is silent: the beeper a stepped-over subroutine plays must not reach the speakers.
+/// The hold ends with the step; a normal resume plays again. (~0.15 s: the subroutine is a real, paced run)
+TEST_F(EmulatorHostAudioResume_Test, StepOverASoundingSubroutineIsSilent)
+{
+    // DI; CALL #8010; JR $   ...   #8010: a short beeper square wave (the subroutine), then RET
+    const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};
+    const uint8_t subroutine[] = {0x11, 0x00, 0x02,                                // LD DE,#0200
+                                  0x3E, 0x10, 0xD3, 0xFE, 0x06, 0x20, 0x10, 0xFE,  // OUT (#FE),#10; delay
+                                  0xAF, 0xD3, 0xFE, 0x06, 0x20, 0x10, 0xFE,        // OUT (#FE),0; delay
+                                  0x1B, 0x7A, 0xB3, 0x20, 0xEB,                    // DEC DE; LD A,D; OR E; JR NZ
+                                  0xC9};
+    for (size_t i = 0; i < sizeof(program); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (size_t i = 0; i < sizeof(subroutine); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8010 + i), subroutine[i]);
+
+    _emulator->DebugOn();
+    _emulator->StartAsync();
+    _emulator->Pause();
+    Z80State* z80 = _emulator->GetZ80State();
+    z80->pc = 0x8001;  // the CALL
+    z80->sp = 0xFF00;
+
+    const uint64_t audibleBefore = _sink.audible.load();
+    _emulator->StepOver();
+    EXPECT_TRUE(_sound->isHostOutputHeld()) << "the stepped-over run is not held";
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->IsPaused() && z80->pc == 0x8004; }, std::chrono::seconds(5)))
+        << "the step over did not stop after the CALL, pc " << z80->pc;
+    EXPECT_EQ(_sink.audible.load(), audibleBefore) << "the subroutine's beeper reached the speakers during a step";
+    EXPECT_FALSE(_sound->isHostOutputHeld()) << "the hold outlived the step";
+    EXPECT_EQ(_sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
+}
+
+/// StepOver registers a handler on the shared BREAKPOINT topic that captures its emulator and FeatureManager. It must
+/// be gone with the emulator: a breakpoint event of another instance with a colliding id used to reach the dead
+/// handler, which locked the destroyed FeatureManager's mutex and aborted the process
+TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
+{
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    const size_t observersBefore = center.ObserverCount(NC_EXECUTION_BREAKPOINT);
+    {
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("stepover-observer", "PENTAGON",
+                                                                                LoggerLevel::LogError);
+        ASSERT_TRUE(emulator);
+        const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};  // DI; CALL #8010; JR $
+        for (size_t i = 0; i < sizeof(program); i++)
+            emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+        emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+        emulator->DebugOn();
+        emulator->StartAsync();
+        emulator->Pause();
+        emulator->GetZ80State()->pc = 0x8001;  // the CALL
+        emulator->GetZ80State()->sp = 0xFF00;
+        emulator->StepOver();  // registers the handler, resumes to the temporary breakpoint
+        EXPECT_GT(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "StepOver registered no handler: the test checks nothing";
+        emulator->Stop();
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+    }
+    EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step-over handler outlived its emulator";
+}
+
+TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
+{
+    // A TTD seek replays from a checkpoint at host speed under the replay hold; afterwards nothing holds the
+    // output and the user's mute is as it was
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* sound = context->pSoundManager;
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(4);
+    ttd->StopRecording();
+    const uint64_t replayHolds = sound->hostOutputHoldsTaken(SoundManager::HostHoldReason::TtdReplay);
+    ASSERT_TRUE(ttd->SeekTo({2, 1000}));
+    EXPECT_GT(sound->hostOutputHoldsTaken(SoundManager::HostHoldReason::TtdReplay), replayHolds)
+        << "the seek replayed without the replay hold";
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "the seek left the host output held";
+    EXPECT_FALSE(sound->isMuted()) << "the seek left the user's mute set";
+
+    size_t calls = 0;
+    context->pAudioManagerObj.store(&calls, std::memory_order_release);
+    context->pAudioCallback.store([](void* obj, int16_t*, size_t) { ++*static_cast<size_t*>(obj); },
+                                  std::memory_order_release);
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(calls, 1u) << "a frame after the seek did not reach the host";
+    context->pAudioCallback.store(nullptr, std::memory_order_release);
+    context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Host audio during direct runs>

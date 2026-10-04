@@ -24,10 +24,21 @@ SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, Spr
             _keyboardOverruns++;
         if (KeyboardIntEnabled())
             _intSource.LatchKeyboardInt();
+        OnWireByte(value);
     });
 
     _mouse.SetSampler([this](uint8_t& x, uint8_t& y, uint8_t& buttons) { SampleMouse(x, y, buttons); });
-    _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) { _chip.sio.Receive(1, value); });
+    // SIO B samples the mouse's 1 200 baud line with the clock CTC ZC/TO0 gives it: off by more than the
+    // tolerance (or no clock at all), the character is lost (a framing error, not modeled further)
+    _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) {
+        if (MouseReceiverInTune())
+        {
+            _chip.sio.Receive(1, value);
+            _mouseBytesReceived++;
+        }
+        else
+            _mouseFramingErrors++;
+    });
 
     if (_context && _context->pMouseManager)
         _context->pMouseManager->AddSink(this);
@@ -37,6 +48,21 @@ SprinterInput::~SprinterInput()
 {
     if (_context && _context->pMouseManager)
         _context->pMouseManager->RemoveSink(this);
+}
+
+double SprinterInput::MouseReceiverBaud() const
+{
+    // WR4 bits 7-6: the clock mode (x1, x16, x32, x64); ZC/TO0 is SIO B's receive and transmit clock
+    // (MAME sprinter.cpp:2006-2007). DSS 1.71: CTC 0 counts 875 kHz / 45, SIO B x16 = 1 215 baud
+    static constexpr uint32_t kClockMode[4] = {1, 16, 32, 64};
+    return _chip.ctc.OutputHz(0) / kClockMode[(_chip.sio.GetChannel(1).wr[4] >> 6) & 3];
+}
+
+bool SprinterInput::MouseReceiverInTune() const
+{
+    const double baud = MouseReceiverBaud();
+    const double error = (baud - MsSerialMouse::kBaud) / MsSerialMouse::kBaud;
+    return error <= kBaudTolerance && error >= -kBaudTolerance;
 }
 
 void SprinterInput::SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const
@@ -57,6 +83,79 @@ void SprinterInput::OnMouseMotion(int dx, int dy)
     while (!_mouseY.compare_exchange_weak(old, static_cast<uint8_t>(old + dy), std::memory_order_relaxed))
     {
     }
+    _viewUnread.fetch_or(static_cast<uint8_t>((dx ? 0x02 : 0) | (dy ? 0x04 : 0)), std::memory_order_relaxed);
+}
+
+uint64_t SprinterInput::Frame() const
+{
+    return _context ? _context->emulatorState.frame_counter : 0;
+}
+
+bool SprinterInput::PolledLately(uint64_t pollFrame) const
+{
+    const uint64_t frame = Frame();
+    return pollFrame != kNeverPolled && frame >= pollFrame && frame - pollFrame <= kPolledWithinFrames;
+}
+
+bool SprinterInput::IsMouseInUse() const
+{
+    if (!_context)
+        return true;  // no frame source (unit-test contexts): fitted is in use
+    return PolledLately(_viewPollFrame.load(std::memory_order_relaxed)) ||
+           PolledLately(_serialPollFrame.load(std::memory_order_relaxed));
+}
+
+bool SprinterInput::HasUnreadMotion() const
+{
+    if (PolledLately(_viewPollFrame.load(std::memory_order_relaxed)) && _viewUnread.load(std::memory_order_relaxed))
+        return true;
+    if (!PolledLately(_serialPollFrame.load(std::memory_order_relaxed)))
+        return false;
+    int dx = 0, up = 0;
+    _mouse.PendingMotion(dx, up);
+    return _mouse.GetState().sent < 3 || dx != 0 || up != 0;
+}
+
+MouseDeviceStatus SprinterInput::DescribeMouse() const
+{
+    MouseDeviceStatus status;
+    status.id = "sprinter";
+    status.name = "Sprinter board mouse: Microsoft serial mouse on SIO B + the PLD's Kempston view (#58)";
+    status.kind = MouseDeviceKind::SerialMicrosoft;
+    status.fitted = IsMouseFitted();
+    status.inUse = IsMouseInUse();
+    status.wheel = false;
+    status.buttons = 3;  // the Kempston view shows three, the serial packet left and right
+    status.hasPorts = true;
+    status.portButtons = PeekMouseView(0xFADF);
+    status.portX = PeekMouseView(0xFBDF);
+    status.portY = PeekMouseView(0xFFDF);
+    const BoardMouse board = GetBoardMouse();
+    status.x = board.x;
+    status.y = board.y;
+    status.buttonMask = board.buttons;
+
+    status.hasSerial = true;
+    MouseDeviceStatus::Serial& serial = status.serial;
+    const MsSerialMouse::State& line = _mouse.GetState();
+    const Z84Lib::Z84Sio::Channel& sioB = _chip.sio.GetChannel(1);
+    serial.baud = MsSerialMouse::kBaud;
+    serial.receiverBaud = MouseReceiverBaud();
+    serial.receiverInTune = MouseReceiverInTune();
+    serial.receiverEnabled = (sioB.wr[3] & 0x01) != 0;
+    serial.packetInFlight = line.sent < 3;
+    for (int i = 0; i < 3; i++)
+        serial.packet[i] = line.packet[i];
+    serial.packetBytesSent = line.sent;
+    _mouse.PendingMotion(serial.pendingDx, serial.pendingDy);
+    serial.packetsSent = _mouse.PacketsSent();
+    serial.bytesReceived = _mouseBytesReceived;
+    serial.framingErrors = _mouseFramingErrors;
+    serial.fifoCount = sioB.fifoCount;
+    for (int i = 0; i < 3; i++)
+        serial.fifo[i] = sioB.fifo[i];
+    serial.overrun = _chip.sio.OverrunLatched(1);
+    return status;
 }
 
 void SprinterInput::OnMouseButtons(uint8_t activeLowMask)
@@ -68,6 +167,7 @@ void SprinterInput::OnMouseCounters(uint8_t x, uint8_t y)
 {
     _mouseX.store(x, std::memory_order_relaxed);
     _mouseY.store(y, std::memory_order_relaxed);
+    _viewUnread.store(0x06, std::memory_order_relaxed);
 }
 
 SprinterInput::BoardMouse SprinterInput::GetBoardMouse() const
@@ -85,6 +185,15 @@ void SprinterInput::SetBoardMouse(const BoardMouse& mouse)
 }
 
 uint8_t SprinterInput::ReadMouseView(uint16_t port) const
+{
+    // A program's read: polling (IsMouseInUse), and X (A10 = 0) or Y taken
+    _viewPollFrame.store(Frame(), std::memory_order_relaxed);
+    if (port & 0x0100)
+        _viewUnread.fetch_and(static_cast<uint8_t>((port & 0x0400) == 0 ? ~0x02u : ~0x04u), std::memory_order_relaxed);
+    return PeekMouseView(port);
+}
+
+uint8_t SprinterInput::PeekMouseView(uint16_t port) const
 {
     // MAME sprinter.cpp case 0x58: #FADF buttons, #FBDF X, #FFDF Y (the Kempston address bits A8, A10)
     uint8_t x = 0, y = 0, buttons = 0xFF;
@@ -105,22 +214,61 @@ uint64_t SprinterInput::Now() const
 
 void SprinterInput::OnPcKey(PcKey key, bool pressed)
 {
-    // The PLD watches the same stream: Ctrl + Alt + Del resets the CPU, a bare F12 flips the turbo switch.
-    // Both act on the press, before the key's own bytes (the PLD decodes the make code)
-    if (pressed && !_keyboard.IsHeld(key))
-    {
-        const bool ctrl = _keyboard.IsHeld(PcKey::LeftCtrl) || _keyboard.IsHeld(PcKey::RightCtrl);
-        const bool alt = _keyboard.IsHeld(PcKey::LeftAlt) || _keyboard.IsHeld(PcKey::RightAlt);
-        const bool shift = _keyboard.IsHeld(PcKey::LeftShift) || _keyboard.IsHeld(PcKey::RightShift);
-        if ((key == PcKey::Delete || key == PcKey::KeypadDecimal) && ctrl && alt && _onReset)
-            _onReset();
-        else if (key == PcKey::Function12 && !ctrl && !alt && !shift && _onTurboSwitch)
-            _onTurboSwitch();
-    }
-
+    // The board's actions (reset, turbo) come from the bytes on the wire (OnWireByte), not from the host key
     _keyboard.OnPcKey(key, pressed);
     if (_onStepHookChange)
         _onStepHookChange();
+}
+
+void SprinterInput::OnWireByte(uint8_t value)
+{
+    // KBD.TDF, at the end of each 11-bit frame (KB_CT counting the idle clock down): at KB_CT 3 the modifier
+    // flags, KB_F12 and KB_RESET take the byte with the KB_OFF of the byte before; at KB_CT 1 KB_EXT takes "this
+    // was #E0" and the KB_F12 / KB_RESET preset makes the edge; at KB_CT 0 KB_OFF takes "this was #F0" unless
+    // KB_EXT. The byte patterns: KB_CTRL_X & KB_XXX = #14, KB_ALT_X & KB_XXX = #11, KB_SH_X = #12 or #59,
+    // KB_F12 = #07, KB_RESET = KB_ALT_X & #x11xxxx0x = #71
+    const uint8_t flags = _pldKeyboard;
+    const bool off = (flags & kPldOff) != 0;
+    const bool ctrl = (flags & kPldCtrl) != 0;
+    const bool alt = (flags & kPldAlt) != 0;
+    const bool f12 = value == 0x07 && !off;
+    const bool reset = value == 0x71 && !off && ctrl && alt;
+
+    uint8_t next = flags;
+    auto update = [&](uint8_t bit, bool match) {
+        if (match)
+            next = static_cast<uint8_t>(off ? (next & ~bit) : (next | bit));
+    };
+    update(kPldCtrl, value == 0x14);
+    update(kPldAlt, value == 0x11);
+    update(kPldShift, value == 0x12 || value == 0x59);
+    if (value == 0xE0)
+        next |= kPldExt;
+    else
+    {
+        next = static_cast<uint8_t>(next & ~kPldExt);
+        next = static_cast<uint8_t>(value == 0xF0 ? (next | kPldOff) : (next & ~kPldOff));
+    }
+    _pldKeyboard = next;
+
+    // TEST_SWITCH = TFF(!KB_SH & !KB_CTRL & !KB_ALT, KB_F12) -> TURBO_HAND; /RESET = KB_RESET & SOFT_RESET
+    if (f12 && !(next & (kPldShift | kPldCtrl | kPldAlt)) && _onTurboSwitch)
+        _onTurboSwitch();
+    if (reset && _onReset)
+        _onReset();
+}
+
+bool SprinterInput::PldActionPending() const
+{
+    const Ps2KeyboardStream::State& s = _keyboard.GetState();
+    for (uint8_t i = 0; i < s.count; i++)
+    {
+        const uint8_t value = s.queue[(s.head + i) % Ps2KeyboardStream::kQueueSize];
+        if (value == 0x07 || value == 0x71)
+            return true;
+    }
+    const auto repeat = static_cast<PcKey>(s.repeatKey);
+    return repeat == PcKey::Function12 || repeat == PcKey::Delete || repeat == PcKey::KeypadDecimal;
 }
 
 void SprinterInput::ReleaseAllPcKeys()
@@ -150,6 +298,7 @@ void SprinterInput::BeforeChipAccess(uint8_t lowByte)
             break;
         case 0x1A:
         case 0x1B:
+            _serialPollFrame.store(Frame(), std::memory_order_relaxed);
             _mouse.Advance(Now());
             break;
         default:
@@ -175,4 +324,9 @@ void SprinterInput::Clear()
     _keyboard.Clear();
     _mouse.Clear();
     _keyboardOverruns = 0;
+    _pldKeyboard = 0;
+    _mouseBytesReceived = 0;
+    _viewPollFrame.store(kNeverPolled, std::memory_order_relaxed);
+    _serialPollFrame.store(kNeverPolled, std::memory_order_relaxed);
+    _viewUnread.store(0, std::memory_order_relaxed);
 }

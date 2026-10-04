@@ -3,6 +3,9 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/ports/models/profiboard.h"
+#include "emulator/video/screenshotter.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -54,6 +57,8 @@
 #include <emulator/ports/portdecoder.h>
 #include <emulator/config.h>
 #include <emulator/io/rtc/rtcaccess.h>
+#include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -206,6 +211,42 @@ protected:
     };
     /// endregion </Fields>
 
+    /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
+    /// a table {page=, to=, slot_only=, mask=, hits=}. The breakpoint id, or -1 when refused
+    int AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access, uint16_t address, const sol::optional<sol::object>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = access;
+        spec.address = address;
+        std::string page, hits;
+        int32_t to = -1, mask = -1;
+        bool slotOnly = false;
+        if (options && options->is<std::string>())
+            page = options->as<std::string>();
+        else if (options && options->is<sol::table>())
+        {
+            sol::table t = options->as<sol::table>();
+            page = t.get<sol::optional<std::string>>("page").value_or("");
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
+            mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);  // hits=5: the 5th hit
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
     /// region <Kempston Mouse helpers (automation-interfaces §4.7)>
 protected:
     DebugMouseManager* mouseManager() const
@@ -245,6 +286,72 @@ protected:
         return results;
     }
 
+    /// One mouse device of the machine: same keys as the WebAPI `device` object
+    static sol::table mouseDeviceTable(sol::this_state s, const MouseDeviceStatus& device)
+    {
+        sol::state_view lua(s);
+        auto hexRow = [&lua](const uint8_t* bytes, size_t count) {
+            sol::table row = lua.create_table();
+            for (size_t i = 0; i < count; i++)
+            {
+                char text[4];
+                std::snprintf(text, sizeof(text), "%02X", bytes[i]);
+                row[i + 1] = std::string(text);
+            }
+            return row;
+        };
+        sol::table t = lua.create_table();
+        t["id"] = device.id;
+        t["name"] = device.name;
+        t["kind"] = MouseDeviceStatus::KindName(device.kind);
+        t["fitted"] = device.fitted;
+        t["in_use"] = device.inUse;
+        t["wheel"] = device.wheel;
+        t["buttons"] = static_cast<int>(device.buttons);
+        t["x"] = static_cast<int>(device.x);
+        t["y"] = static_cast<int>(device.y);
+        t["button_mask"] = static_cast<int>(device.buttonMask);
+        if (device.hasPorts)
+        {
+            sol::table ports = lua.create_table();
+            ports["FADF"] = static_cast<int>(device.portButtons);
+            ports["FBDF"] = static_cast<int>(device.portX);
+            ports["FFDF"] = static_cast<int>(device.portY);
+            t["ports"] = ports;
+        }
+        if (device.hasSerial)
+        {
+            const MouseDeviceStatus::Serial& serial = device.serial;
+            sol::table line = lua.create_table();
+            line["baud"] = serial.baud;
+            line["receiver_baud"] = serial.receiverBaud;
+            line["receiver_in_tune"] = serial.receiverInTune;
+            line["receiver_enabled"] = serial.receiverEnabled;
+            line["packet_in_flight"] = serial.packetInFlight;
+            line["packet"] = hexRow(serial.packet, 3);
+            line["packet_bytes_sent"] = static_cast<int>(serial.packetBytesSent);
+            sol::table pending = lua.create_table();
+            pending["dx"] = serial.pendingDx;
+            pending["dy"] = serial.pendingDy;
+            line["pending"] = pending;
+            line["packets_sent"] = static_cast<double>(serial.packetsSent);
+            line["bytes_received"] = static_cast<double>(serial.bytesReceived);
+            line["framing_errors"] = static_cast<double>(serial.framingErrors);
+            line["receiver_fifo"] = hexRow(serial.fifo, serial.fifoCount);
+            line["receiver_overrun"] = serial.overrun;
+            t["serial"] = line;
+        }
+        if (device.hasPs2)
+        {
+            sol::table ps2 = lua.create_table();
+            ps2["connected"] = device.ps2.connected;
+            ps2["resolution"] = static_cast<int>(device.ps2.resolution);
+            ps2["counts_per_mm"] = 1 << device.ps2.resolution;
+            t["ps2"] = ps2;
+        }
+        return t;
+    }
+
     /// State table: same keys as the WebAPI state object
     static sol::table mouseStateTable(sol::this_state s, const MouseStateSnapshot& state,
                                       const std::string& warning = "")
@@ -282,6 +389,21 @@ protected:
             t["pending_click"] = pending;
         }
         t["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+        // The machine's mouse (design 2026-10-03); `device` is absent (nil) when none is fitted
+        t["mouse_fitted"] = state.mouseFitted;
+        if (state.device)
+            t["device"] = mouseDeviceTable(s, *state.device);
+        sol::table devices = lua.create_table();
+        for (size_t i = 0; i < state.devices.size(); i++)
+            devices[i + 1] = mouseDeviceTable(s, state.devices[i]);
+        t["devices"] = devices;
+        sol::table queue = lua.create_table();
+        queue["ops"] = static_cast<int>(state.queuedOps);
+        sol::table remaining = lua.create_table();
+        remaining["dx"] = state.glideRemainingDx;
+        remaining["dy"] = state.glideRemainingDy;
+        queue["glide_remaining"] = remaining;
+        t["queue"] = queue;
         if (!warning.empty())
             t["warning"] = warning;
         return t;
@@ -632,7 +754,15 @@ public:
                     regs["de_"] = z80->alt.de;
                     regs["hl_"] = z80->alt.hl;
                     regs["i"] = z80->i;
-                    regs["r"] = (z80->r_hi << 7) | (z80->r_low & 0x7F);
+                    regs["r"] = Z80::RegisterR(z80);
+                    regs["memptr"] = z80->memptr;
+                    regs["im"] = z80->im;
+                    regs["iff1"] = z80->iff1 != 0;
+                    regs["iff2"] = z80->iff2 != 0;
+                    regs["halted"] = z80->halted != 0;
+                    regs["q"] = z80->q;
+                    regs["boundary"] = Z80::BoundaryName(z80->boundary);
+                    regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
                 }
             }
             return regs;
@@ -892,6 +1022,79 @@ public:
             t["format"] = frame.format;
             t["encoding"] = frame.encoding;
             t["data"] = std::string(frame.bytes.begin(), frame.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
+        // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
+        // frame.beam = {line, tstate}).
+        // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
+        // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
+        // instead of `data`; nil, error on a bad word, a missing emulator or no frame
+        lua.set_function("screenshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pScreen) return mouseError(s, "The emulator has no screen");
+
+            ScreenshotOptions options;  // the whole frame, PNG
+            if (opts)
+            {
+                const std::string area = opts->get_or<std::string>("area", "");
+                const std::string format = opts->get_or<std::string>("format", "");
+                const std::string source = opts->get_or<std::string>("source", "");
+                if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
+                    return mouseError(s, "Unknown area '" + area + "': use full or screen");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
+                if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
+                    return mouseError(s, "Unknown format '" + format + "': use png or gif");
+                options.saveTo = opts->get_or<std::string>("path", "");
+            }
+
+            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
+            if (!shot.ok) return mouseError(s, shot.errorMessage);
+
+            sol::state_view view(s);
+            auto rect = [&view](const PictureRect& r) {
+                sol::table t = view.create_table();
+                t["x"] = r.x;
+                t["y"] = r.y;
+                t["width"] = r.width;
+                t["height"] = r.height;
+                return t;
+            };
+            sol::table t = view.create_table();
+            t["format"] = Screenshotter::FormatName(shot.format);
+            t["area"] = Screenshotter::AreaName(options.area);
+            t["source"] = Screenshotter::RequestSourceName(options.source);
+            t["width"] = shot.width;
+            t["height"] = shot.height;
+            t["size"] = shot.encodedSize;
+            t["crop"] = rect(shot.crop);
+            t["screen_window"] = rect(shot.frame.screenWindow);
+            sol::table frame = view.create_table();
+            frame["width"] = shot.frame.width;
+            frame["height"] = shot.frame.height;
+            frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
+                                                                       : Screen::GetVideoModeName(shot.frame.videoMode);
+            frame["source"] = Screenshotter::SourceName(shot.frame.source);
+            frame["frame_number"] = shot.frame.frameNumber;
+            if (shot.frame.beamLine >= 0)
+            {
+                frame["partial"] = shot.frame.partial;
+                sol::table beam = view.create_table();
+                beam["line"] = shot.frame.beamLine;
+                beam["tstate"] = shot.frame.beamTstate;
+                frame["beam"] = beam;
+            }
+            t["frame"] = frame;
+            if (!shot.savedFile.empty())
+                t["file"] = shot.savedFile;
+            else
+                t["data"] = std::string(shot.bytes.begin(), shot.bytes.end());
             sol::variadic_results out;
             out.push_back(t);
             return out;
@@ -1236,14 +1439,36 @@ public:
         });
 
         // Execution control
-        lua.set_function("step", [this](sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
-            effectiveEmulator()->RunSingleCPUCycle(skipBP.value_or(true));
+        // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
+        // (stopped: a breakpoint ended it - an execution one before its instruction)
+        auto stepOutcome = [](sol::state_view state, Emulator& emulator, unsigned executed) {
+            const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+            sol::table result = state.create_table();
+            result["executed"] = executed;
+            result["stopped"] = stop.hit;
+            if (stop.hit)
+            {
+                result["breakpoint_id"] = stop.breakpointId;
+                result["address"] = stop.address;
+                result["access"] = BreakpointHitKindName(stop.kind);
+            }
+            return result;
+        };
+
+        lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            Emulator& emulator = *effectiveEmulator();
+            emulator.RunSingleCPUCycle(skipBP.value_or(true));
+            const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+            const unsigned executed = (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0 : 1;
+            return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("steps", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
-            effectiveEmulator()->RunNCPUCycles(count, skipBP.value_or(false));
+        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            Emulator& emulator = *effectiveEmulator();
+            const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
+            return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
         lua.set_function("stepover", [this]() {
@@ -1320,6 +1545,15 @@ public:
             }
             out.push_back(sol::make_object(s, std::string(Keyboard::HostRouteName(keyboard->EffectiveHostRoute()))));
             return out;
+        });
+
+        // keyboard_controller() -> the PS/2 / XT keyboard controller's name ("PROFI-XT firmware 1.27", ...), "" when the
+        // machine has none or it has no name (GET .../keyboard/status keyboard_controller)
+        lua.set_function("keyboard_controller", [this]() -> std::string {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            Keyboard* keyboard = ctx ? ctx->pKeyboard : nullptr;
+            return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
         lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
@@ -1707,6 +1941,40 @@ public:
             return mouseResult(s, *mgr, mgr->Move(static_cast<int>(dx), static_cast<int>(dy)));
         });
 
+        // A long move (-4096..4096) in steps the program follows, one per frame; input sent meanwhile queues
+        lua.set_function("mouse_glide", [this](sol::this_state s, sol::object dxArg, sol::object dyArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            long long dx = 0;
+            long long dy = 0;
+            if (!mouseIntArg(dxArg, "dx", INT_MIN, INT_MAX, dx, error) ||
+                !mouseIntArg(dyArg, "dy", INT_MIN, INT_MAX, dy, error))
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->Glide(static_cast<int>(dx), static_cast<int>(dy)));
+        });
+
+        // The machine's mouse devices (table of device tables; empty when the machine has none)
+        lua.set_function("mouse_devices", [this](sol::this_state s) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            sol::state_view lua(s);
+            sol::table devices = lua.create_table();
+            const MouseStateSnapshot state = mgr->GetState();
+            for (size_t i = 0; i < state.devices.size(); i++)
+                devices[i + 1] = mouseDeviceTable(s, state.devices[i]);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, devices));
+            return results;
+        });
+
+        lua.set_function("mouse_busy", [this]() -> bool {
+            DebugMouseManager* mgr = mouseManager();
+            return mgr && mgr->IsBusy();
+        });
+
         lua.set_function("mouse_press", [this](sol::this_state s, sol::object buttonArg) {
             DebugMouseManager* mgr = mouseManager();
             if (!mgr)
@@ -1801,11 +2069,21 @@ public:
             return mouseResult(s, *mgr, mgr->SetCounters(static_cast<int>(x), static_cast<int>(y)));
         });
 
-        lua.set_function("mouse_status", [this](sol::this_state s) {
+        lua.set_function("mouse_status", [this](sol::this_state s, sol::object deviceArg) {
             DebugMouseManager* mgr = mouseManager();
             if (!mgr)
                 return mouseError(s, "mouse manager not available");
-            const MouseStateSnapshot state = mgr->GetState();
+            // mouse_status([device]): the machine's mouse, or the device named ("kempston", "sprinter", "evo-ps2")
+            std::string deviceId;
+            if (deviceArg.valid() && deviceArg.get_type() != sol::type::lua_nil)
+            {
+                if (deviceArg.get_type() != sol::type::string)
+                    return mouseError(s, "device must be a string (kempston, sprinter, evo-ps2)");
+                deviceId = deviceArg.as<std::string>();
+            }
+            if (const MouseInjectResult check = mgr->CheckDevice(deviceId); !check.ok())
+                return mouseError(s, check.message);
+            const MouseStateSnapshot state = mgr->GetState(deviceId);
             if (!state.available)
                 return mouseError(s, "Mouse device not available");
             sol::variadic_results results;
@@ -2053,44 +2331,32 @@ public:
         });
 
         // Breakpoint management
-        lua.set_function("bp", [this](uint16_t addr) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddExecutionBreakpoint(addr)) : -1;
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_EXECUTE, addr, options);
         });
 
-        lua.set_function("bp_read", [this](uint16_t addr) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddMemReadBreakpoint(addr)) : -1;
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_READ, addr, options);
         });
 
-        lua.set_function("bp_write", [this](uint16_t addr) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddMemWriteBreakpoint(addr)) : -1;
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_WRITE, addr, options);
         });
 
-        lua.set_function("bp_port_in", [this](uint16_t port) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddPortInBreakpoint(port)) : -1;
+        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_in", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_IO, BRK_IO_IN, port, options);
         });
 
-        lua.set_function("bp_port_out", [this](uint16_t port) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddPortOutBreakpoint(port)) : -1;
+        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
         });
 
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
@@ -2123,6 +2389,32 @@ public:
             if (!ctx || !ctx->pDebugManager) return false;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->DeactivateBreakpoint(id) : false;
+        });
+
+        lua.set_function("bp_note", [this](uint16_t id, const std::string& note) -> bool {
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            return bpm ? bpm->SetBreakpointNote(id, note) : false;
+        });
+
+        lua.set_function("bp_group", [this](uint16_t id, const std::string& group) -> bool {
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            return bpm ? bpm->SetBreakpointGroup(id, group) : false;
+        });
+
+        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
+            if (!effectiveEmulator()) return false;
+            BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
+            if (!bpm) return false;
+            if (id)
+                return bpm->ResetHitCount(*id);
+            bpm->ResetAllHitCounts();
+            return true;
         });
 
         lua.set_function("bp_count", [this]() -> size_t {
@@ -2168,6 +2460,9 @@ public:
                 result["active"] = info.active;
                 result["note"] = info.note;
                 result["group"] = info.group;
+                if (!info.pageKind.empty())
+                    result["page"] = lua_view.create_table_with("kind", info.pageKind, "page", info.pageNumber);
+                result["hit_count"] = info.hitCount;
             }
             return result;
         });
@@ -2705,6 +3000,54 @@ public:
             out.push_back(StateNodeToLua(s, report));
             return out;
         });
+        // sprinter_zx_mode([deep]): the ZX (Spectrum) mode report (DeviceState::SprinterZxMode); deep = false skips
+        // the whole-RAM search for the launcher's option table
+        lua.set_function("sprinter_zx_mode", [this](sol::this_state s, sol::optional<bool> deep) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::SprinterZxMode(emulator->GetContext(), deep.value_or(true)));
+        });
+        // sprinter_pld_journal([{kinds="cnf,port_1ffd", since=N, from=F, to=F, limit=N, source="live"|"ttd"}]): who
+        // changed the PLD setup, when (DeviceState::SprinterJournal); nil + error on a bad option
+        lua.set_function("sprinter_pld_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            DeviceState::SprinterJournalQuery query;
+            std::string error;
+            if (!DeviceState::SprinterJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"),
+                                                              text("source"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterJournal(emulator->GetContext(), query)));
+            return out;
+        });
+        // sprinter_pld_journal_control({enabled=true|false, clear=true}): switch / clear the PLD journal
+        lua.set_function("sprinter_pld_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+            }
+            return StateNodeToLua(s, DeviceState::SprinterJournalControl(emulator->GetContext(), enable, clear));
+        });
         lua.set_function("sprinter_sound_ring", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -2826,6 +3169,77 @@ public:
             sol::variadic_results results;
             results.push_back(sol::make_object(s, true));
             return results;
+        });
+
+        // ISA slots (Sprinter ISA tdd §10): the report and cycles every interface uses (DeviceState::Isa,
+        // IsaAccess). Addresses are 20-bit ISA addresses (a number, or "#30A" / "0x30A" text)
+        lua.set_function("isa_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Isa(emulator->GetContext()));
+        });
+        // Ethernet frames of the frame-level cards (EthernetAccess): the capture, a frame towards a card
+        lua.set_function("network_frames", [this](sol::this_state s, sol::optional<std::string> link, sol::optional<int> last) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        lua.set_function("network_inject_frame", [this](sol::this_state s, const std::string& link, const std::string& hex) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            if (!EthernetAccess::Inject(emulator->GetContext(), link, hex, "Lua network_inject_frame", error))
+                return mouseError(s, error);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, true));
+            return results;
+        });
+        lua.set_function("isa_journal", [this](sol::this_state s, sol::optional<int> last) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::IsaJournal(emulator->GetContext(), static_cast<unsigned>(last.value_or(64))));
+        });
+        auto isaCycle = [this](sol::this_state s, const std::string& action, int slot, sol::object address,
+                               int value) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            uint32_t addr = 0;
+            if (address.is<int>())
+                addr = static_cast<uint32_t>(address.as<int>());
+            else if (!address.is<std::string>() || !IsaAccess::ParseAddress(address.as<std::string>(), addr))
+                return mouseError(s, "address: a number or \"#..\" / \"0x..\" text");
+            StateNode result;
+            std::string error;
+            if (!IsaAccess::Execute(emulator->GetContext(), action, slot, addr, value, "Lua isa", result, error))
+                return mouseError(s, error);
+            sol::variadic_results results;
+            const StateNode* v = result.find("value");
+            if (v && (action == "io_read" || action == "mem_read" || action == "io_peek" || action == "mem_peek"))
+                results.push_back(sol::make_object(s, static_cast<int>(std::strtol(v->s.c_str() + 1, nullptr, 16))));
+            else
+                results.push_back(sol::make_object(s, true));
+            return results;
+        };
+        lua.set_function("isa_io_read", [isaCycle](sol::this_state s, int slot, sol::object address) {
+            return isaCycle(s, "io_read", slot, address, -1);
+        });
+        lua.set_function("isa_io_write", [isaCycle](sol::this_state s, int slot, sol::object address, int value) {
+            return isaCycle(s, "io_write", slot, address, value);
+        });
+        lua.set_function("isa_io_peek", [isaCycle](sol::this_state s, int slot, sol::object address) {
+            return isaCycle(s, "io_peek", slot, address, -1);
+        });
+        lua.set_function("isa_mem_read", [isaCycle](sol::this_state s, int slot, sol::object address) {
+            return isaCycle(s, "mem_read", slot, address, -1);
+        });
+        lua.set_function("isa_mem_write", [isaCycle](sol::this_state s, int slot, sol::object address, int value) {
+            return isaCycle(s, "mem_write", slot, address, value);
+        });
+        lua.set_function("isa_reset", [isaCycle](sol::this_state s) {
+            return isaCycle(s, "reset", 0, sol::make_object(s, 0), -1);
+        });
+        lua.set_function("isa_latch", [isaCycle](sol::this_state s, int value) {
+            return isaCycle(s, "latch", 0, sol::make_object(s, 0), value);
         });
 
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
@@ -3196,7 +3610,7 @@ public:
                 return info;
             }
             ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-            ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+            ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
             info["state"]                    = ttd::TTDSessionStateToString(si.state);
             info["session_start_frame"]      = si.sessionStartFrame;
             info["current_end_frame"]        = si.currentEndFrame;
@@ -3321,10 +3735,10 @@ public:
             if (!emulator) return {0, 0};
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
-            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
             ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
                                                      bytes.value_or(si.historyLimitBytes));
-            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
             return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
@@ -3476,7 +3890,7 @@ public:
             if (!ctx || !ctx->pTimeTravelManager) return result;
             const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
             int idx = 1;  // Lua tables are 1-based
-            for (const auto& e : journal.Events())
+            for (const auto& e : journal.SnapshotEvents())
             {
                 sol::table marker = lua_view.create_table();
                 marker["frame"]    = e.time.frame;
@@ -3637,7 +4051,7 @@ public:
                 result["error"] = err;
                 return result;
             }
-            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
             result["ok"] = true;
             result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
             result["session_start_frame"] = info.sessionStartFrame;
@@ -4000,7 +4414,7 @@ public:
             auto* mgr = emulator->GetContext()->pTimeTravelManager;
             uint64_t fromFrame = 0;
             if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
             if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
             std::string kindStr = "executed";
             if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
@@ -4060,7 +4474,7 @@ public:
             auto* mgr = emulator->GetContext()->pTimeTravelManager;
             uint64_t fromFrame = 0;
             if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
             if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
             std::optional<ttd::TTDCoverageKind> optKind;
             if (argsTable["kind"].valid())
@@ -4491,6 +4905,18 @@ public:
             ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
 
             result["model"] = Config::GetModelFullName(config.mem_model);
+            if (IsProfiModel(config.mem_model))
+            {
+                // The board, its sync PROM and the keyboard on its connector (as GET /state/paging)
+                result["profi_board"] = config.mem_model == MM_PROFI3 ? "v3" : "v5";
+                result["profi_sync_prom"] = ProfiSyncPromName(
+                    ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+                result["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+                // The hi-res clocks (design-hires.md): the CPU clock there (no turbo), the v5's ZQ3 and SB7
+                result["profi_hires_cpu_hz"] = ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz);
+                result["profi_zq3_mhz"] = static_cast<int>(ProfiClampZq3(config.profi_zq3_mhz));
+                result["profi_ay_clock"] = (config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "new" : "old";
+            }
             result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
             result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 

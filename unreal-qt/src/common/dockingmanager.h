@@ -21,6 +21,12 @@ public:
     void addDockableWindow(QWidget* window, std::optional<Qt::Edge> initialEdge = std::nullopt,
                             bool useNativeChildWindow = false);
     void removeDockableWindow(QWidget* window);
+    /// Snap `window` to `edge` now, `offset` pixels along it from the main window's
+    /// top (left / right edge) or left (top / bottom edge); attaches it natively
+    /// when it was added with useNativeChildWindow
+    void dockAt(QWidget* window, Qt::Edge edge, int offset);
+    /// The window follows the main window (snapped to an edge)
+    bool isDocked(QWidget* window) const;
     void updateDockedWindows();
     void moveDockedWindows(const QPoint& delta);
     void onEnterFullscreen();

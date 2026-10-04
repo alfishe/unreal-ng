@@ -60,6 +60,14 @@ the PC keys exactly as it does for ZX-Evo; no automation change was needed.
   Microsoft Natural keyboard device ROM (`natural.bin`) is missing; a keyboard capture from MAME
   needs that ROM.
 
+## Mouse baud from CTC ZC/TO0 (2026-10-02, branch `sprinter-ctc-trg`)
+
+SIO B now receives with the clock the board gives it, CTC ZC/TO0 (MAME `sprinter.cpp:2006-2007`): the mouse still
+sends at 1 200 baud, and its characters arrive only while ZC/TO0 / the WR4 clock mode is within 5 % of that
+(DSS 1.71: CTC 0 `#55` with 45, x16 = 1 215 baud, seen live). Otherwise they are lost and counted
+(`z84c15.mouse.framing_errors`). Tests: `SprinterInput_Test.MouseNeedsSioBClockedAt1200Baud`; the other serial-mouse
+tests program the clock as DSS 1.71 does.
+
 ## Flex Navigator follow-up (2026-10-02, branch `sprinter-fn-input`)
 
 The owner's report: in the GUI, Tab did not switch FN's panels and the mouse did nothing.
@@ -127,3 +135,59 @@ renderer): the toolbar's mouse button was "ready"; a click on the screen capture
 host motion moved FN's pointer; a host click reached FN; with the button switched to "off" host input did not
 reach the machine while the automation still did. The software renderer was not switched live (the macOS menu
 bar was not reachable by UI scripting in that session); it shares `MouseCaptureController` with the GPU window.
+
+## Keyboard overrun, stuck keys and F12 (2026-10-03, branch `sprinter-ps2-overrun`)
+
+The owner's report: in the GUI keys sometimes stuck (cursor Down kept repeating in DSS / Flex Navigator and in
+Spectrum-mode demos), and once the machine jumped to 21 MHz as if F12 (the PLD's turbo key) had been pressed. The
+owner's instance showed SIO A with `fifo` = `5A F0 5A`, `fifo_count` 3, `overrun` true: the CPU had not read the
+keyboard for a while.
+
+### How the board connects the keyboard
+
+| Question | Answer | Sources |
+|---|---|---|
+| Where the lines go | KBD_CLKR to /RXCA and /TXCA, KBD_DATR to RXDA of the Z84C15; the same lines to the PLD (KBD_CC / KBD_DD over the XA bus) | schematic `SPRINT_3` (zxgit Sp2000, `PAGE1.pdf`); MAME `sprinter.cpp:1987-1991` |
+| Can the host hold the keyboard off | No. The only drivers onto KBD_CLK / KBD_DAT are DD17C / DD17D from latch DD16 Q3 / Q4, and the PLD writes KBD_CX = KBD_DX = GND (the LED-command sender is commented out); /RTSA, /DTRA, /W/RDYA go elsewhere; MAME drives neither line from the host side | `SP2_1K30.TDF:338-352`, `:729`, `:780-781` (both PLD source sets); schematic; MAME |
+| What a held-off AT keyboard would do | buffer its bytes and send them when the clock is released (16-byte buffer, `#00` on overflow) - never happens here | IBM AT keyboard reference |
+| Byte rate | 11-bit frames at 10-16.7 kHz, 0.66-1.1 ms a byte (model 917 µs) | AT reference; `Ps2KeyboardStream` |
+| The SIO on overrun | the 4th character overwrites the newest in the FIFO and carries the flag; RR1 bit 5 when it reaches the top, latched until Error Reset; mode "INT on first character" holds the FIFO there | Zilog SIO manual RR1 D5; Toshiba TMPZ84C015B §3.6; MAME `z80sio.cpp` |
+| BIOS / DSS on overrun | BIOS up to 3.05, DSS up to 1.62.93: one key event per frame INT, RR1 never read, so bytes are lost on the board too; BIOS 3.06 / 3.07, DSS 1.71: drain the FIFO, on RR1 bit 5 empty it, Error Reset, forget the shifts (the code is in those binaries) | BIOS-TT `KEY.asm:166-254`, `:771-789`; DSS-TT `KEYINTER.ASM:520-629`, `:1223-1238` |
+| F12 / Ctrl+Alt+Del | the PLD decodes the wire, not the SIO: `#07` (not after `#F0`, no Shift / Ctrl / Alt) toggles the turbo switch - each typematic repeat too; `#71` with Ctrl + Alt resets the CPU | `KBD.TDF`; `SP2_1K30.TDF:296`, `:521-523` |
+
+**Consensus:** the keyboard is never held off and bytes the CPU does not read in time are lost in the SIO, on the
+board as here. A corrupted SIO stream cannot switch the turbo or reset the board: the PLD sees the wire.
+
+### What was wrong here, what changed
+
+1. **SIO overrun semantics.** The Z84C15 SIO dropped the new byte and set RR1 bit 5 at once. Now it overwrites the
+   newest FIFO entry, flags that character, and RR1 bit 5 rises when it reaches the top (latched until Error
+   Reset); "INT on first character" holds the FIFO (`z84sio.cpp`). With BIOS 3.06+ / DSS 1.71 this decides
+   whether the two good characters before the overrun are used (they are now, as on the chip). The device state
+   reports `overrun` (RR1 bit 5) and `overrun_in_fifo` (a written-over character still queued); the TTD layout of
+   the chip blob is unchanged (the flags share the old `overrun` byte, bit 0 = the latch).
+2. **F12 and Ctrl+Alt+Del came from the host key.** They now come from the PLD's keyboard block decoding each byte
+   when its frame ends on the wire (`SprinterInput::OnWireByte`, KBD.TDF's Ctrl / Alt / Shift / E0 / F0 flags): a
+   held F12 toggles again with each typematic repeat, as on the board; a phantom `#07` in the SIO (F0 07 losing
+   its F0) does nothing to the turbo. The step hook runs while a `#07` / `#71` is on the wire or F12 / Delete /
+   keypad . repeats, so the action is on time even when nobody reads the SIO (Spectrum mode). TTD blob 31 is
+   version 3 (89 bytes: + the PLD flags); `boot.ttd` re-recorded.
+3. **Focus out released only the PS/2 keys.** The ZX matrix keys held when the screen lost focus stayed down,
+   and their press counter kept them down even through a later press and release of the same key: a stuck cursor
+   key in Spectrum-mode programs. `KeyboardManager::postHeldKeyReleases` now releases the matrix keys too.
+4. **The keyboard invents nothing.** It repeats only the last key made while it is held (500 ms, 10.9 / s) and stops
+   at the release; checked with the CPU deaf for 30 frames. A key stuck in DSS / FN with the keyboard repeating
+   means the host's key-up never reached the machine: focus out now covers both halves; a TTD replay that hands
+   input back while the host holds different keys is not reconciled (open).
+
+**The owner's F12 jump** is not explained by the stream: before and after, nothing in the SIO reaches the turbo.
+The turbo also comes on through software (the SYS port) and through every CPU reset (DCP `TB_SW.prn = /RESET`, a
+Spectrum-mode exit by reset returns to DSS at 21 MHz), and on the board each typematic repeat of a held F12.
+
+**Tests:** `Z84Sio_Test.Overrun_OverwritesTheNewestAndLatchesAtTheTop`, `Overrun_ErrorResetBeforeTheFlaggedCharacter`,
+`Overrun_FirstCharacterModeHoldsTheFifo`; `SprinterInput_Test.FullFifoOverruns`, `CtrlAltDelResetsTheCpu`,
+`F12TogglesTheTurboSwitch`, `HeldF12RepeatsAndTogglesAgain`, `OverrunWithTheCpuDeafLosesBytesButInventsNothing`
+(the reproduction: Enter, Down through its typematic, Shift+F12, F12's break, 30 frames deaf: two old bytes + the
+newest `#07` in the FIFO, a phantom F12 for the software, no turbo switch, nothing repeating);
+`TTDSprinter_Test.Input_RoundTripsTheKeyboardWireAndTheMousePacket` (PLD flags in blob 31);
+`KeyboardManager_Test.FocusOutReleasesThePhysicalAndTheMatrixKeys` (unreal-qt-tests).

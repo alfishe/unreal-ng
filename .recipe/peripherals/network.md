@@ -19,6 +19,12 @@ instance:
 Everything the host answers is a TTD input: a recorded session replays with
 the network unplugged.
 
+Frame-level cards (the Sprinter's NE2000 in ISA slot 2) reach the same
+virtual network through the **Ethernet gateway** (a switch + router at
+`10.0.2.2`, MAC `52:55:0A:00:02:02`): `state/network` lists them under
+`slots` and `ethernet_gateway`, and `GET /network/frames` captures their
+frames. Recipe: [machines/sprinter-network.md](../machines/sprinter-network.md).
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).
@@ -67,10 +73,12 @@ takes the same values for the card's side:
 | `ComPort=` / `ZxWifi=` | Peer |
 |:--|:--|
 | `NONE` | nothing on the line (the ZX-Evo's registers still answer) |
-| `LOOPBACK` | every byte the ZX sends comes back |
+| `LOOPBACK` | every byte the ZX sends comes back; CTS / DSR / DCD held active |
+| `PLUG` | an RS-232 loopback test plug: bytes come back, the UART's own RTS drives CTS and DTR drives DSR / DCD (only the inputs the card wires to its connector) |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
 | `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
 | `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |
+| `MODEM[,<guest port>]` | an emulated Hayes modem: `AT` commands, `ATDT <host>[:<port>]` (port 23 by default) or `ATDT <number>` from `[NETWORK] ModemPhonebook=5551234=bbs.example.org:23,...` dials through the virtual network; `CONNECT <rate>` / `BUSY` (refused) / `NO ANSWER` / `NO CARRIER`, DCD follows the call, `+++` (a second of silence around it) returns to command mode, `ATO` / `ATH`; with `<guest port>` a host client of that guest port (`Forward=`) rings it (`RING`, RI; `ATA` or `ATS0=n` answers). See [The Hayes modem](#the-hayes-modem) |
 | `SERIAL:<device>[,<baud>]` | a host serial device (`/dev/tty.usbserial-0001`, `/dev/ttyUSB0`, `COM3`); it follows the rate and format the ZX programs (`<baud>` until then, 115200 by default); `ComModemLines=1` passes RTS / DTR and reports CTS / DSR / RI / DCD (off by default: USB ESP boards wire RTS / DTR to reset / boot) |
 
 The ZX-Evo's UART behaves like the AVR firmware chosen by `[EVO] Avr=`
@@ -102,6 +110,11 @@ polling loop enough for the 8051's serial interrupt; with the `contention`
 feature off they are gone and received bytes are lost (`lost` in
 `machine_serial`; tdd-atm2-kbc.md §7.1). Details:
 [tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md).
+
+On the ZX Profi v5 (`PROFI`, `PROFI-PLUS`) the machine's serial port is the board's 8251 USART (`#D3` data, `#F3`
+control / status, clocked by an 8253 at `#8F..#EF`, extended port map only): `ComPort=` plugs into it, it is not on
+#xxEF, `inspect_state network` shows it as `machine_serial` (flavor `usart8251`). Details:
+[profi.md](../machines/profi.md#serial-port-com).
 
 The other real-world way on the ATM Turbo 2+ is the **ATM2IOESP** card
 (`Card=ATM2IOESP`, `Atm2IoEsp=AT|ESPNET|...`, `Atm2IoEspAddress=0xF0`, 0xF8
@@ -157,7 +170,12 @@ after start closes its hello box; F1..F10 pick the divisor.
 The ESP modules sit on the virtual network: joined to the access point
 `UnrealNG` with a DHCP lease (10.0.2.15 first), DNS through the virtual
 network, every answer journaled. `EspChip=ESP32` (8 ESPNET sockets, AT 2.x
-answers) or `ESP8266` (4 sockets, NonOS AT 1.7). `com_port.recent_exchanges`
+answers), `ESP8266` (4 sockets, NonOS AT 1.7.4), `ESP8266-AT221` or
+`ESP8266-AT222` (Espressif ESP-AT 2.2.1 / 2.2.2 for the ESP8266: `AT+SYSSTORE`
+only on 2.2.2, passive receive refused on 2.2.1, `+PING:` / `+CIPRECVDATA:<len>,`
+reply forms, `CWMODE=1,0`, `CWLAPOPT`, `CIPDNS`, `SYSLOG`, `CIPTCPOPT`). The
+Sprinter's SprinterESP card (ISA slot, [sprinter-network.md](../machines/sprinter-network.md))
+takes an ESP8266 build from `EspChip`, ESP-AT 2.2.2 otherwise. `com_port.recent_exchanges`
 in the network state lists the last requests and replies (ESPNET frames by
 name, AT lines as text) - the first place to look when a program and the
 module disagree. Details: [reference-esp-modules.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-esp-modules.md).
@@ -165,6 +183,27 @@ module disagree. Details: [reference-esp-modules.md](../../docs/inprogress/2026-
 NedoOS with an ESP module: boot `sd_bootesp.$C` for the kernel driver (ESPNET;
 `ini/network.ini currentNetwork=0`), or set `currentNetwork=1` (AT) / `2`
 (userland ESPNET) for the C apps (zxdb, gopher, girc, time2, ...).
+
+### The Hayes modem
+
+`MODEM` is a peer like the others: it fits on every serial port (ZX-Evo / TS-Conf COM port, ZX-WiFi, ATM2IOESP,
+the ATM Turbo 2+ controller's RS-232, the Sprinter's ISA modem card and SprinterSerial). There is no telephone
+network: a number is a host endpoint. A dialed string with letters, `.` or `:` is a host name or address
+(`ATDT bbs.example.org:2323`, `ATDT 192.168.1.20`); a string of digits (`-`, `(`, `)`, spaces and the pause
+modifiers ignored) is looked up in the phone book (`ModemPhonebook=`, runtime `modem_phonebook`); an unknown number
+gets `NO CARRIER`. Commands: `E Q V X` (results: verbose `CR LF text CR LF` or numeric), `Sn=v` / `Sn?` (S0 rings
+to answer, S2 escape character, S3 / S4 / S5 CR LF BS, S7 seconds to wait for the carrier, S12 escape guard in
+1/50 s), `I0-I4`, `Z`, `&F`, `&C` (DCD: 0 always on, 1 follows the call - default), `&D` (DTR dropping: 0 ignored,
+1 command mode, 2 hang up - default, 3 reset), `&S`, `A/`; init-string settings (`L M &K &Q &W \N %C +...`) are
+accepted. CTS is always on (the modem buffers), DSR on (`&S0`). Everything from the host is journaled: a TTD
+replay repeats a call byte for byte with no host. The network state shows it as `modem` (in `com`, or in the
+slot row): `mode` (command / dialing / online / online_command), `lines` (CTS, DSR, DCD, RI, the ZX's DTR),
+`call` (dialed, link phase, remote, ringing, held bytes), `last_result`, `settings`, `phonebook`, `counters` and a
+`journal` of commands and results.
+
+Worked example (a ZX-Evo, a telnet BBS on the host's port 2323): `network set com_port=modem
+modem_phonebook=1=127.0.0.1:2323`; in a terminal program at any rate: `ATZ` -> `OK`, `ATDT1` -> `CONNECT 115200`,
+the BBS's text; `+++` -> `OK`; `ATH` -> `OK`.
 
 A quick check without software: `com_port=loopback`, then from Z80 code
 `LCR=3` (`#FBEF`), `MCR=2` (RTS, `#FCEF`), a byte to `#F8EF`, wait for LSR
@@ -175,7 +214,7 @@ bit 0 (`#FDEF`), read `#F8EF`: the same byte.
 | Kernel | Adapter | Notes |
 |:--|:--|:--|
 | `sd_boot.$C` (NedoOS release, the ZX-Evo W5300 kernel) | ZXNETUSB | `autoexec.bat` runs `wizcfg.com`: it finds the card, gets a DHCP lease, programs the chip |
-| `sd_bootesp.$C` | ESP on the COM port | not emulated yet (network TDD step N3) |
+| `sd_bootesp.$C` | ESP on the COM port | the ESPNET module (`com_port=espnet`) answers; see the COM port section above |
 
 `bin/net.ini` `DHCP 1` (the default) takes the lease from the virtual
 network; a static `IP=` / `GW=` / `MASK=` works too (the virtual network does

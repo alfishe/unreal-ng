@@ -123,7 +123,7 @@ applied in the file named in the last column.
 
 | # | Question | Decision | Applied in |
 |---|---|---|---|
-| Q1 | Default ROM | **3.04** (CRC `1729cb5c`) by default, 3.06 selectable, tests on both. The exact 3.04 image was found in the board repository; the ZXMAK2 `SP_304.BIN` is the same build with 5 different bytes (a board-id variant). No public 3.04 source exists, so S0 disassembles ROM pages 8 and 0 | [materials.md](materials.md) §5 |
+| Q1 | Default ROM | **Since 2026-10-03 (owner): 3.06 Hotfix 2** (`sp2k-3.06-hf2.rom`, CRC `9aa7bb29`) is the shipped default again, until the BIOS author publishes his fixed head; 3.04 and 3.07 BETA 1 selectable. From 2026-10-02 (owner: switch the default straight to 3.07) to 2026-10-03 it was 3.07 BETA 1 (`sp2k-3.07-beta1.rom`, CRC `a06a1a02`); tests that cover 3.04 / 3.06 select them explicitly ([bios-versions.md](bios-versions.md) §6.1). Originally (review round 1): **3.04** (CRC `1729cb5c`) by default, 3.06 selectable, tests on both. The exact 3.04 image was found in the board repository; the ZXMAK2 `SP_304.BIN` is the same build with 5 different bytes (a board-id variant). No public 3.04 source exists, so S0 disassembles ROM pages 8 and 0 | [materials.md](materials.md) §5 |
 | Q2 | Fast start or full start | **Full start** (the ROM loader streams the bitstream) is the user default; `FastStart=1` is the default for tests; an equivalence test keeps both paths identical | [tdd-ports-memory.md](tdd-ports-memory.md) §6, [tdd-integration.md](tdd-integration.md) §1.1 |
 | Q3 | Accelerator stops on INT and resumes on RETI | implemented in S5 as a **config option, default on** (decided 2026-10-01 after the S0 check; off = MAME's behavior, kept for comparisons). S0 checks the PLD (AHDL) sources for whether the standard configuration has it, so the documented default is the right one. **S0 result (2026-10-01): it has it** (`ACCELER.TDF` `ACC_BLK`: INT acknowledge blocks new accelerator operations, the first M1 after `RETI` unblocks, the mode register is kept, `RETN` does not unblock); default **on** (owner decision 2026-10-01) | [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §1.3 |
 | Q4 | End of the bitstream | count the **real bitstream**: 59 215 bytes × 8 writes (the loader shifts out one bit per write; S0 traces the loader for the exact count). **S0 result (2026-10-01, static): exactly 473 720 writes** (no preamble writes, the loop never ends by itself); **confirmed at run time on MAME** (2026-10-01: 0 writes before the stream, 473 720 while the loader reads `#0100-#E84E`); a watchdog timeout stays. The configuration is identified by a hash of the first 4 096 writes (MAME-compatible) and a hash of the full stream | [tdd-ports-memory.md](tdd-ports-memory.md) §6 |
@@ -222,7 +222,7 @@ from the BIOS start, frames are MAME's.
 | (d) timing at 21 MHz (access 799 to 9 989, 61.4 ms) | | S1: +1 245 µs; **fixed: +5.7 µs** | port wait clock fixed (technical-design §4) |
 | (c) logo palette in video RAM | full at frame 58 (302 720), fade one step per frame to frame 186; `logo.png` = frame 60 (302 548) | the same sums, frame by frame, 58-186 | **equal**; build-up 55-57 moves by up to a frame with the start offset (also between MAME runs) |
 | (c) loader | 473 720 writes, last at 6 691 665 T (1.912 s) | 473 720, last at 6 691 671 T (+6 T: the shared Z80 reset charges 3 T before the first fetch, and the probe read the clock after the 3-T write cycle where MAME stamps its start), 113 T per byte | **equal** (the CPU reset after it is not in MAME) |
-| (a) INT positions, FN_SYNC A = 1/2/3/0 | 60 896 / 64 480 / 66 272 / 66 272 T | the same | **equal** |
+| (a) INT positions, FN_SYNC A = 1/2/3/0 | 60 896 / 64 480 / 66 272 / 66 272 T | the same squares; since 2026-10-03 the PLD's edge, 10 T earlier (research-zx-mode §7.1) | **equal** squares, MAME's edge 10 T late |
 | (a) INT acknowledge | routine's first fetch 6.5-10.5 T after the edge | 7-8 T | **equal**; the acknowledge ends the pulse (PLD) |
 | (b) IDE detection | drives in MAME's default slots: master `#52`/IDENTIFY abort `#51`, slave CD `#10`/`#11` polled 280 frames; boot screen frame 507 (10.38 s) | no drive: `#FF`, 1 550 frames per unit; prompt at frame 3 291 (67.4 s) without F4 | **expected difference** (MAME emulates drives; `#FF` was S0-S3b's empty bus, `#7F` since 2026-10-02, §9) |
 | (e) page `#40` | CRC `b7f09600` | equal (`SprinterBoot_Test`) | **equal** |
@@ -301,7 +301,7 @@ Findings and deviations from the design (applied in the documents named):
   first" (tdd-video §3, hardware-reference §6.3; T-VID-2 checks the high nibble).
 - **Blank square = pen `#400`** (text paper colour 0, the PLD's `DCOL` clear; MAME the same), not a
   forced black (tdd-video §3).
-- **HOLD after power-on = `#77`** (no shift): the S1 decoder had 0, which is a 14-pixel / 7-line offset;
+- **HOLD after power-on = `#77`** (no shift): the S1 decoder had 0, which is a 14-pixel / 14-line offset (the vertical step is 2 lines per unit, fixed 2026-10-03);
   MAME starts with no offset and the BIOS sets HOLD from CMOS `#1F`.
 - **Hook 3 is the renderer only**: `SprinterPldConfiguration::VideoRenderer()`; the INT source stays
   Standard's until a module needs another rule (tdd-video §1).

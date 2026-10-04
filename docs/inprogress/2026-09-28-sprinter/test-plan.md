@@ -55,7 +55,8 @@ folders.
 | ID | Case | Expected |
 |---|---|---|
 | T-CFG-1 | the full bitstream write count (constant from the S0 loader trace) while loading | configured, CPU reset, window 3 = `#40`, starting = 1; not configured after 4 096 writes |
-| T-CFG-2 | a stream whose first 4 096 writes match MAME's Game constant, no Game module registered | Standard active, warning with both hashes logged |
+| T-CFG-2 | a stream whose first 4 096 writes match MAME's Game constant (the full hash another); then a stream nobody knows | Game active, `selected_by` = `head_hash`; then Standard, `unknown_bitstream`, warning with both hashes logged (since 2026-10-03: before the Game module the first one ran Standard) |
+| T-GAME-1…6 | the Game module: selection by full / head hash, cells `#EE`, back to Standard by reload and RESET, reports, screen, TTD blob (`SprinterPldGame_Test`); the grid-offset picture (`SprinterGameVideo_Test`, MAME's frame from MAME's video RAM); GAME_00 / TEST_005 / TEST_010 / LDConf START.BAT from the MAME pack's disk (`SprinterGameConfig_Test`, `UNREAL_SPRINTER_HDD`) | [game-configuration.md](game-configuration.md) §6 |
 | T-CFG-3 | fast start vs full start (ROM-gated, 3.04 and 3.06) | identical PLD state and RAM at the first BIOS instruction |
 | T-CFG-4 | code `#2E` | back to loading; fast RAM kept; module chosen again after the load |
 | T-CFG-5 | a load that stops before the count | watchdog ends it: Standard active, warning logged, CPU reset |
@@ -85,7 +86,7 @@ ACC-1 / R-2 in `sprintervideoboot_test.cpp`, ACC-2 / R-3 in `sprinter_boot_test.
 | T-VID-4 | border square, blank square | border color = text palette 0 index `border × 9`; blank = pen `#400` (text paper colour 0, S2) |
 | T-VID-5 | palette byte order | video RAM holds R, G, B: the BIOS CGA "blue" (`#A8,#00,#00` as B, G, R to function `#A4`) is `#00,#00,#A8` in video RAM and renders blue (decision HW §4.5, S2) |
 | T-VID-6 | RGMOD bit 0 flips mid-frame | lines after the beam use page 1 |
-| T-VID-7 | HOLD `#00` vs `#77` | picture offset 14 pixels, 7 lines |
+| T-VID-7 | HOLD `#00` vs `#77` | picture offset 14 pixels, 14 lines (2 lines per high-nibble unit) |
 | T-VID-8 | INT list from a hand-built mode page (run of `#FD` squares) | INT T-states match MAME's `update_int` on the same page |
 | T-VID-9 | 312 vs 320 lines | 69 888 / 71 680 T per frame; INT list recomputed |
 | T-VID-10 (ROM) | BIOS `FN_SINC` Pentagon / Scorpion / Spectrum | INT T-states equal the MAME captures (S0) |
@@ -166,8 +167,10 @@ callback period, interrupt vector. PIO: register file. Keyboard encoder: a press
 
 Location: `core/tests/emulator/machines/sprinter/`. Every test starts with fast start and
 `EnableTurboMode()` unless it checks pixels, stops as soon as its condition holds (`TestWait::For`),
-and skips with a message when the ROM or the image is missing. Each test runs on BIOS 3.04 (the
-default) and 3.06 (review round 1, Q1), as two parameterized instances.
+and skips with a message when the ROM or the image is missing. Each test runs on BIOS 3.04 and 3.06
+(review round 1, Q1), as two parameterized instances. Since 2026-10-03 the shipped default is 3.06 Hotfix 2 (3.07 BETA 1 on 2026-10-02..03)
+([bios-versions.md](bios-versions.md) §6.1): a test pinned to one BIOS selects it explicitly
+(`SprinterFixture::SelectBios`).
 
 | ID | Maps to | Condition checked |
 |---|---|---|
@@ -199,7 +202,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 | Requirement | Tests |
 |---|---|
 | FR-3 configuration | T-CFG-1…6, R-1 |
-| FR-9 configuration modules | T-PLDM-1…5, T-CFG-2 |
+| FR-9 configuration modules | T-PLDM-1…5, T-CFG-2, T-GAME-1…6 |
 | FR-4 port table | T-DCP-1…8 |
 | FR-5 memory | T-MEM-1…9 |
 | FR-6 clock/waits | T-MEM-10, clock-ratio tests incl. the TTD round-trip of `hw_turbo_ratio` (technical design §3, PLAN #60) |

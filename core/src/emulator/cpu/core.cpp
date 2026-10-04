@@ -89,6 +89,8 @@ bool Core::Init()
     _state->scorpion_turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
     _state->hw_turbo_ratio = 1;                 // No hardware turbo engaged at power-on (model-neutral)
     _state->hw_turbo_ratio_applied = 1;
+    _state->hw_clock_den = 1;                   // A whole multiple of the base clock (the Profi's hi-res clock is not)
+    _state->hw_clock_den_applied = 1;
     _state->scorpionDosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
 
     // Initialize speed multiplier from configuration
@@ -506,6 +508,10 @@ void Core::Release()
     _context->pPortDecoder = nullptr;
 
     _context->pSoundManager = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_turboHostHoldMutex);
+        _turboHostHold.Release();  // before the sound manager it holds goes
+    }
     if (_sound != nullptr)
     {
         // Detach sound chips from the PortDecoder
@@ -964,17 +970,21 @@ void Core::EnableTurboMode(bool withAudio)
     _context->config.turbo_mode = true;
     _context->config.turbo_mode_audio = withAudio;
 
-    // Always mute audible output in turbo mode to avoid chipmunk sounds
-    // Audio generation may still occur if withAudio=true (for recording)
-    // Drop to the low-quality DSP path as well: HQ is pure CPU cost at turbo speed.
-    // The user's soundhq setting is not modified - it comes back when turbo ends.
+    // Nothing reaches the host audio callback in turbo mode - not even silence at turbo speed, and no chipmunk
+    // sound: one host output hold per turbo span (taken after turbo_mode is set, so a resume reconcile never
+    // sees it without its reason). Audio generation may still occur if withAudio=true (for recording).
+    // The user's master mute is left alone. Drop to the low-quality DSP path as well: HQ is pure CPU cost at
+    // turbo speed. The user's soundhq setting is not modified - it comes back when turbo ends.
     if (_context->pSoundManager)
     {
-        _context->pSoundManager->mute();
         _context->pSoundManager->setTurboLowQualityOverride(true);
+        // Re-taken on every enable: the move-assignment gives the previous hold back first, so a span holds
+        // exactly one however often it is enabled (and a hold a reconcile dropped is replaced, not trusted)
+        std::lock_guard<std::mutex> lock(_turboHostHoldMutex);
+        _turboHostHold = SoundManager::HostOutputHold(_context->pSoundManager, SoundManager::HostHoldReason::Turbo);
     }
 
-    MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
+    MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, host output: held)",
              withAudio ? "ON" : "OFF");
 
     // Notify consumers (HUD speed indicator, status bar)
@@ -988,16 +998,18 @@ void Core::EnableTurboMode(bool withAudio)
 //
 void Core::DisableTurboMode()
 {
+    // The hold goes first, then the flag (see EnableTurboMode)
+    {
+        std::lock_guard<std::mutex> lock(_turboHostHoldMutex);
+        _turboHostHold.Release();
+    }
     _context->config.turbo_mode = false;
 
-    // Restore audible output and the previous DSP quality
+    // Restore the previous DSP quality
     if (_context->pSoundManager)
-    {
-        _context->pSoundManager->unmute();
         _context->pSoundManager->setTurboLowQualityOverride(false);
-    }
 
-    MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
+    MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, host output released");
 
     // Notify consumers (HUD speed indicator, status bar)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1038,7 +1050,7 @@ void Core::AdjustFrameCounters()
 {
     /// region <Input parameters validation>
     // Calculate scaled frame limit based on speed multiplier
-    uint32_t scaledFrame = _config->frame * _state->current_z80_frequency_multiplier;
+    uint32_t scaledFrame = _state->BaseToCpuT(_config->frame);
 
     if (_z80->t < scaledFrame)
         return;
@@ -1077,10 +1089,16 @@ void Core::ApplyNetworkConfiguration()
         _networkManager->ApplyConfiguration();
 }
 
+void Core::OnNetworkFrameDevices()
+{
+    if (_networkManager)
+        _networkManager->OnFrameDevices();
+}
+
 void Core::OnNetworkFrame()
 {
     if (_networkManager)
-        _networkManager->OnFrame();
+        _networkManager->OnFrameHost();
 }
 
 void Core::RefitIde()

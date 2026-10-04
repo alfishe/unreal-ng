@@ -222,6 +222,15 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
         disp.wasHandledInline = true;
     }
 
+    // Port #FE: border, tape MIC out and the beeper (A0=0, not claimed by the AY mirrors)
+    if (IsPort_FE(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+    {
+        Default_Port_FE_Out(port, value, pc);
+        disp.decodedPort = 0x00FE;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+
     // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
     // Mask: 0b1100'0000'0000'0010, Match: 0b1100'0000'0000'0000
     if ((port & 0xC002) == 0xC000)

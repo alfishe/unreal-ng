@@ -103,7 +103,39 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   from its INT handler and goes silent with the block on; the literal PLD `ACC_BLK` reading and MAME agree); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
   `.recipe/machines/sprinter-sound.md`
 
+- [x] Default BIOS 3.07 BETA 1 (owner decision 2026-10-02, "switch the default straight to 3.07"; replaces Q1's 3.04;
+  branch `sprinter-default-bios-306`; [bios-versions.md](bios-versions.md) §6.1): `[ROM] SPRINTER=` in the shipped
+  config, catalog labels, automation texts, recipes; 3.04-pinned tests select 3.04 explicitly
+  (`SprinterFixture::SelectBios`); the TTD corpus fixture `boot.ttd` re-recorded on 3.07 BETA 1
+- [x] Default BIOS back to 3.06 Hotfix 2 (owner decision 2026-10-03, branch `sprinter-bios-head`;
+  [bios-versions.md](bios-versions.md) §6.1): the upstream head is the kept 3.07 BETA 1 and still has the floppy
+  IY bug; 3.07 BETA 1 stays selectable with its `known_issues` warning. `[ROM] SPRINTER=`, catalog labels,
+  automation texts, recipes, AGENTS.md; `boot.ttd` re-recorded on 3.06 Hotfix 2
+- [x] Debugger crash at address 0 during a Sprinter reset (2026-10-02, branch `sprinter-debugger-null-bank`;
+  [crash-debugger-null-window.md](crash-debugger-null-window.md)): `Memory::Reset` put the null 48K ROM role into
+  window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
+  window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
+  (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
+- [x] Keyboard overrun, stuck keys, F12 (2026-10-03, branch `sprinter-ps2-overrun`;
+  [s4-input-outcome.md](s4-input-outcome.md) last section): the board never holds the keyboard off (PLD KBD_CX =
+  KBD_DX = GND), so unread bytes are lost in the SIO as on the board; the Z84C15 SIO now overruns as the data sheets
+  and MAME do (newest entry overwritten, RR1 bit 5 when it reaches the top, latched until Error Reset); F12 and
+  Ctrl+Alt+Del come from the PLD's keyboard block decoding the wire (typematic F12 repeats toggle again; an SIO
+  overrun cannot switch the turbo), TTD blob 31 v3, `boot.ttd` re-recorded; focus out releases the ZX matrix keys
+  as well as the PS/2 keys
+
+- [x] Spectrum mode: attributes lagged behind the pixels in Pentagon multicolor demos (owner report 2026-10-03,
+  `scroller.trd`, `atarin.trd` in P128; branch `sprinter-zx-shadow-squares`; [research-zx-mode.md](research-zx-mode.md)
+  §7.1): the frame INT sat at MAME's place, 10 T after the PLD's edge (`CT5` rising 2 T into the first square
+  after the INT run), so the Sprinter read each cell 17 980 T after the INT where a Pentagon reads it after
+  17 988; now 17 990. With it: a video RAM byte lands 1 T before the write cycle's end, a `#7FFD` write catches
+  the beam up (bit 3 picks the screen), and a text / Spectrum square keeps the font byte latched at its start
+  (the attribute is read every half T). The shadow copy was right: the same conditions and address as MAME, the
+  address as the PLD's `VXA` (`VIDEO2.TDF`), and both demos' pixels equal the PENTAGON model's frame for frame. Open: mode bytes written inside a square are not latched (no known program needs it)
+
 ## Remaining
+
+Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.md](open-items-2026-10-03.md).
 
 - **Next (owner order, 2026-10-02):**
   1. ~~Automation audit P1 + P2~~ **done** (2026-10-02, branch `sprinter-automation`; status per gap in
@@ -116,20 +148,40 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
        base differs); a per-T table-write history (not only first / last) if a tool needs it;
      - a Qt view of the mode map / palettes / video RAM (the debugger-model work; the data is all in the reports);
      - G18-G21 (P3) unchanged.
+     - ~~the GUI status bar said "text 40 (mixed)" in the Spectrum mode~~ **fixed** (2026-10-02, branch
+       `sprinter-statusbar-zx`): the classifier reads all three mode bytes, ZX-40 squares are `spectrum`
+       ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
-     picture, no sound - find and fix each cause with MAME's code as the reference.
+     picture, no sound - find and fix each cause with MAME's code as the reference. **Pass done 2026-10-03:
+     [demo-status.md](demo-status.md)** (BUYAN/20X20: a race in the demo, closed 2026-10-03). ~~The Game PLD configuration for GAME_00 / LDConf
+     START.BAT~~ **done 2026-10-03** (branch `sprinter-pld-game`, [game-configuration.md](game-configuration.md)): the
+     Game module (selected by the bitstream's full hash `#C0FA3055`, cell `#EE` = `#41`, the per-square grid-offset
+     picture), all five automation surfaces + the status bar, recipe, MAME captures, env-gated HDD tests.
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
-  3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
-     (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
+     dontBlink's picture freeze at ~5:10 (2026-10-03): a race in the demo's SP-repair log (an INT between
+     `#0D1E LD SP,#3F74` and `#0D25 LD HL,(#031D)` overwrites its return address). Timing luck at clock level, MAME
+     freezes the same way in 4 of 6 runs; analysis [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2. It hits with BIOS 3.06 Hotfix 2
+     (the default again since 2026-10-03) and 3.07 BETA 1 alike. The owner checks it on a real board.
+  3. ~~Mouse in the GUI through the shared MouseManager~~ **done**: host mouse -> MouseManager -> board mouse
+     (2026-10-02, `s4-input-outcome.md`); capture only while a program polls SIO B or the `#58` view, and the
+     automation mouse on the board mouse (status `device.serial`, glide, FN drive icon clicked through the API)
+     2026-10-03, branch `mouse-api-routing` ([design](../2026-10-03-mouse-api-routing/design.md)). Then S6b
+     (ISA / ZX-bus / NeoGS: PROPLAY MOD playback; **ISA I2 done 2026-10-04**, branch `sprinter-isa-i2-neogs`: slot 1 =
+     ZX-bus adapter + NeoGS, ProPlay vs MAME in [i2-outcome.md](../2026-10-02-sprinter-isa/i2-outcome.md)), the S7
+     remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
      decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
      confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
   5. **Owner decision 2026-10-02** (the developer-interest ranking, [peripherals-survey.md](peripherals-survey.md)
      §10, accepted; "the network definitely first"). After the demo pass:
      - ISA I1 and network SN1-SN3 **before** the NeoGS (S6b). The network kits had about 340 commits in 2026
-       and are the only new programs that need a card.
+       and are the only new programs that need a card. **ISA I1 done 2026-10-03** (branch `sprinter-isa-network`:
+       `SprinterIsaBus`, window-3 routing, the `#9FBD` latch, `[ISA]` slots, TTD blob 33, `state/isa` /
+       `control/isa` on every surface, recipe `.recipe/machines/sprinter-isa.md`; ISA tdd §14). **Network SN0-SN2 done
+       2026-10-03** (same branch): NE2000 RTL8019AS in ISA slot 2 by default, the Ethernet gateway, the RTL8019AS kit
+       end to end, TTD blob 45; recipe `.recipe/machines/sprinter-network.md`, network tdd §18.
      - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
        the BIOS / DSS developer's main work since 2024-10.
      - The Centronics printer drops to P4.
@@ -138,6 +190,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
   tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
   SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
+  - **Owner, 2026-10-03: the open items of this ZX-mode section are doubtful** - kept for the record, not
+    scheduled, not to be deleted; take one only on the owner's request ([open-items-2026-10-03.md](open-items-2026-10-03.md) §2)
   - [x] Z1 (S) faithful path on unreal-ng against MAME (2026-10-02, branch `sprinter-zx-timing`, tdd-zx-mode §4.1, §11):
     every launcher mode (SP, P128, P512, SC256, ORIGIN) runs the zxtime program; frame, clock, INT position (identical
     mode tables), INT count / repeat, 21 MHz loop counts and the picture equal MAME's; launcher + TRD / SCL RAM disk,
@@ -147,16 +201,44 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     BASIC's `LOAD ""` loads at 3.5 MHz and fails at 21 MHz (T-ZX-7, T-ZX-8)
   - [x] Z3 (M) "original waits" (2026-10-02): `SprinterOrigWaits`, the PLD's 4-T CT5 period (not 5.33 T), windows 1 and
     3 with `#7FFD` bit 2; A/B in tdd-zx-mode §11.1
-  - [ ] Z3 follow-up (Q1): the CT phase from a real board - zxtime (testdata/machines/sprinter/zx-timing) reports the
-    average; an INT-relative 1-T probe is needed for the phase once a board confirms the waits
+  - [x] Z3 follow-up (Q1): the CT phase - **derived from the PLD** (2026-10-03, branch `sprinter-origwait-demos`): INT is
+    a `CT5` rise, so the waits are 0, 2, 1, 0 T by T1 from INT mod 4 (tdd-zx-mode §3.3, §10 Q1; T-ZX-9
+    `OrigWaits_ExactPatternFromInt`). Open, low: a board report (zxtime's average, an INT-relative probe) would confirm it
   - [ ] BIOS 3.06 Hotfix 2: DSS text does not scroll at the bottom line (MAME too; BIOS 3.06 of 2025 scrolls): find
     out whether HF2 needs a newer PLD bitstream or has a bug; ask the BIOS author
   - [ ] Owner's report (a), `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del: not reproduced (tdd-zx-mode §11
     finding 3); the turbo-after-reset fix may be it. Ask for the exact steps (BIOS, mode, what ran, which keys; a held
     SPACE / ESC right after the reset swaps `/ret-fn` and `/ret-zx` by design)
+  - [x] Owner's report (c), 2026-10-02: Flex Navigator's video mode not back after the ZX mode and a reset - done
+    2026-10-02 (branch `sprinter-zx-reset-video`, tdd-zx-mode §11 finding 5): `/RESET` presets ALL_MODE `#FF`,
+    clears RGMOD / PORT_Y (PLD), BIOS 3.07 BETA 1 reads ALL_MODE back; MAME gap B8
   - [ ] Owner's report (b), "Disk Error after the catalog" from a RAM-disk TRD: not reproduced on 11 images; ask for
     the image. The "comdos" catalog was TWIX's disk (finding 4)
-  - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
+  - [x] Temporal effects in the Spectrum mode (2026-10-03, branch `sprinter-temporal-effects`; owner report "ZX DLSS
+    does not work on the Sprinter"): the ZX DLSS input came only from the ZX per-T renderer's plane B; now the
+    Sprinter renderer writes plane B too (`DrawSpanPlaneB`), `ScreenSprinter::TemporalInput` hands over the 352 x 288
+    ZX frame of the Spectrum squares and the output goes back two pixels wide; native modes report "not applicable".
+    Across the Edge: paper plane B identical to a Pentagon on the same frames
+    ([temporal-effects-manager.md](../2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md) §7 "Machine support")
+  - [x] Spectrum mode: the border one character (8 ZX pixels) ahead of the paper (owner report 2026-10-03, Across
+    the Edge in P128; branch `sprinter-zx-border-phase`): the border color was drawn from the port callback (IORQ);
+    the PLD latches it on `/IOWR` rising, at the I/O cycle's end (`SP2_ACEX.TDF:310-315`), and samples it with the
+    attribute every half T. Now drawn from IORQ + 4 T (`ScreenSprinter::CatchUpToBorderLatch`): Across's split-screen
+    border edge 168 -> 176 against the paper's 176, as the PENTAGON model ([research-zx-mode.md](research-zx-mode.md) §7.1).
+    The PLD sources give IORQ + 3 T (edge 174, still visibly 2 ZX pixels ahead); the owner chose the PENTAGON picture
+  - [ ] Check the border latch against a board (a photo / capture of Across the Edge's split screen on a Sprinter):
+    `kBorderLatchAfterIorqT` is 4 T by owner decision, 1 T beyond the PLD's latch; one constant if a board says 3
+  - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
+    border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
+    change 8 lines off in the bottom border
+  - [x] Z4 (2026-10-03, branch `sprinter-zx-mode-report`; [tdd-zx-mode.md](tdd-zx-mode.md) §12): the ZX mode report
+    (which mode file - SP.ZX / P128.ZX / ORIGIN.ZX ... - from the hardware and from the launcher's own text and option
+    table in RAM, each option with its evidence, clock request / F12 / MHz, INT, ROMs by CRC, the decode of `#01FD` and
+    the other ZX ports), the PLD journal (who changed CNF, turbo, `#1FFD`, `#7FFD`, ALL_MODE, the port table ... with
+    frame, T, PC; also from a TTD recording), the TTD port journals on the Sprinter (since ISA I2 also with the NeoGS on the adapter: no ZX-DMA without host memory cycles), the
+    Qt status line "ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)"; all five surfaces
+  - [ ] The launchers parse `int-sc`, not the `/sc-int` that SC256.ZX and SCORPION.ZX carry: the Scorpion INT is never
+    applied (both launchers' option tables; research §4 corrected). Report upstream (the `.ZX` files or the parser)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
     2026-10-02 (owner: yes, via the shared pipeline, lower priority): built on the shared snapshot pipeline
@@ -168,8 +250,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
     pad 2 read on PIO A with PIO B bit 7, the select counters reset at each frame INT (gap I10, C13) - S-M; host
     gamepads through the shared input path, journaled for TTD, all five automation surfaces.
-  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
-    counter-mode inputs and ZC outputs (gap I7, C11) - S.
+  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) (gap I7) - S.
+  - [x] CTC counter mode, TRG inputs and ZC/TO outputs (gap C11), the mouse baud from CTC ZC0 (gap I7) - done
+    2026-10-02 (branch `sprinter-ctc-trg`): TRG0-2 = 875 kHz in real time, ZC/TO2 -> TRG3, ZC/TO0 -> SIO B;
+    Bad Apple and dontBlink (both wait for the 48.83 Hz CTC 3 tick, vector #06) play with sound
+    (`SprinterCtcDemo_Test`, env `UNREAL_SPRINTER_HDD`); TTD blob 29 v2; `state sprinter` z84c15.ctc shows the
+    inputs, live counts and ZC/TO rates.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
     media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
@@ -189,7 +275,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     `cd-plugin-int` (START STOP UNIT stops the play, the tray opens); since `cd-eject-unmount` the guest's eject
     also empties the CD slot in the media manager (the plugin's Eject leaves `ide0.slave` empty).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
-  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
+  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed. (The board
+    cannot send them either: the PLD drives KBD_CX = KBD_DX = GND, hardware-reference §13.)
+  - Keyboard, open (2026-10-03): the owner's live GUI check of the overrun / focus fixes; a TTD replay that hands
+    input back while the host holds other keys than the journal left held is not reconciled (the keyboard keeps
+    the recorded keys down until the host presses and releases them); the PLD's own ZX matrix decoder (code `#40`
+    from the wire, disabled while ALL_MODE bit 0 is set) is still the host's matrix keys - S.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
   developer interest in §10; priority order, functional items only):**
   - P2: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT
@@ -213,7 +304,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
-  `UNETESP.DLL`, owner: must be supported) (M), SN4 modem / SprinterSerial (S-M, needs I4), SN5 3C509B (M), SN6
+  `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; **built 2026-10-03**, branch `sprinter-sn4-modem`, network tdd §18: BC-Term dials a BBS over the ISA interrupt), SN5 3C509B (M; **built 2026-10-03**, branch `sprinter-sn5-3c509b`, the 3C509B kit end to end), SN6
   host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
@@ -233,6 +324,18 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - FDC off bit (density write data bit 1, MAME) unverified in the PLD;
   - a MAME reference for the floppy boot time needs a MAME whose WD1793 PLL follows `set_clock_scale`
     during a command (0.289 does not).
+  - [x] 3.07 BETA 1 "Invalid EXE file" for programs on a floppy (2026-10-03): firmware, not emulation - the
+    beta's FDD driver returns with IY changed and DSS 1.71.57 relies on it; MAME shows the same; the DSS of
+    the beta's recovery disk works ([bios-versions.md](bios-versions.md) §5.2). Tests:
+    `Fdc_Bios307SectorReadLoop_HdSide1`, `SprinterFloppyExe_Test` (env-gated). Owner decision 2026-10-03: 3.07 BETA 1
+    stays the default, unchanged; the warning is the BIOS report's `known_issues` (all surfaces, Qt status bar) and
+    the recipes. Upstream: [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) (to send to the BIOS author).
+  - [x] Upstream head check (2026-10-03): the public `beta` head `f546c4e` is the kept `sp2k-3.07-beta1.rom`,
+    byte for byte (every beta commit since 2026-01-19 calls itself "3.07 BETA 1"); its FDD driver still
+    changes IY. `make-bios.py` now fixes the default CMOS date (`--cmos-date`), which used to come from the
+    host clock ([bios-versions.md](bios-versions.md) §3.2, §5.3).
+  - [ ] When the BIOS author pushes the build with the newer fixes: build it, run `SprinterFloppyExe_Test` and
+    dontBlink to the end logo, then add it or replace the default (owner decides).
 - Flex Navigator (ACC-8, S4) stops after its splash: the BIOS `RESETD` RESTORE from track 71 (213 ms)
   outlasts the BIOS `WREST` wait (65 536 polls, ~184 ms here), the BIOS zeroes the track register and
   the RESTORE ends at track 9 ([roadmap-and-plan.md](roadmap-and-plan.md) §8). The wait needs at least
@@ -253,8 +356,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   test: boot 3.04, run `UP306.EXE`, reboot, ROM CRC = `187f4382`. First step when it is picked up:
   identify the chip and IDs from the BIOS flash routines and `UP306.EXE`.
 - Sound follow-ups after S6 ([s6-sound-outcome.md](s6-sound-outcome.md) §7): the stereo order on a real board
-  (MAME swaps 16-bit stereo), the PLD's AY + CBL mix levels in one DAC word, MOD playback through the General
-  Sound on the ISA ZX-bus adapter (S6b), a real-board check of the accelerator INT suspend (default now off).
+  (MAME swaps 16-bit stereo), the PLD's AY + CBL mix levels in one DAC word, ~~MOD playback through the General
+  Sound on the ISA ZX-bus adapter (S6b)~~ (ISA I2, 2026-10-04), a real-board check of the accelerator INT suspend (default now off).
 - IDE follow-ups after S3b ([roadmap-and-plan.md](roadmap-and-plan.md) §9):
   - DSS 1.71 needs a BIOS newer than 3.04 (bios-versions.md §5.1): which BIOS function, and whether 3.05 does;
   - code `#29` (drive address) reads `#FF` (the shared core has no drive-address register);
@@ -280,8 +383,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   source address once per square, invalidated by video RAM writes into the mode table or the
   square's source) and measure with the same benchmark.
 - Hook 3, second half: a configuration module's own INT source (with the first module that needs
-  it, e.g. Game).
+  it; Game does not: its INT is Standard's, the program waits with EI / HALT on the mode table's INT).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
-- After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams
-  against MAME.
+- ~~After v1: DooM and Video PLD configuration modules~~ - not planned (2026-10-03): Sprinter 97
+  (FLEX) bitstreams only, their functions are in the Sp2000's Standard
+  ([pld-configurations.md](pld-configurations.md) §6). Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
+  Mode0 bits 5-4, whether `/RESET` clears the grid offset).
+- LDConf's `STREAM.300` / `.303` / `.305` (other Standard core builds?) run as Standard with "unknown bitstream";
+  name them once their source is known.

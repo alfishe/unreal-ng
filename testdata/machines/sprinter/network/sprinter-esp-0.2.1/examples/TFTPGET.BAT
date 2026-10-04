@@ -1,0 +1,1 @@
+TFTP.EXE 192.168.1.36 GET fformat.txt -o FFORMAT.TXT -y

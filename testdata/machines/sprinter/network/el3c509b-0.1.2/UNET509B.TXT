@@ -1,0 +1,268 @@
+UNET509B.DLL -- universal network API for the 3C509B
+
+UNET509B.DLL is a loadable library (libman 1.3 / L1) that gives any
+Sprinter DSS program TCP, UDP, DNS and ping through a small numbered
+API, without linking the network stack into the program itself.
+
+The same API is implemented by UNETRTL.DLL (RTL8019AS) and
+UNETESP.DLL (ESP Wi-Fi) in the sibling kits. Function numbers,
+register conventions and error codes are identical, so **one consumer
+binary can drive any of the three cards** -- pick the DLL by name at
+run time, for example from the NET environment variable (509B,
+RTL or WIFI).
+
+The authoritative contract is src/include/unet.inc in this source
+tree, mirrored byte for byte from the sibling projects; the build
+fails if it ever drifts (Stage 7's own gate). This page covers only
+what is specific to the 3C509B backend.
+
+For running UNETTEST.EXE scenarios against this DLL in MAME or on
+real hardware, see docs/STAGE14_TESTING_RU.md.
+
+Prerequisites
+
+The network must already be configured, exactly as for the
+stand-alone utilities:
+
+NETCFG -i          seed NET_* from NET.CFG (static or DHCP)
+IFUP               bring the link up
+
+Both publish NET=509B alongside NET_IP and NET_MAC.
+
+Loading
+
+UNETTEST.EXE (and any other consumer) loads the DLL by name through
+libman13.asm, either from the calling program's own directory or
+from a path given with -d. The file must keep its name
+UNET509B.DLL so NET=509B-driven launchers can find it by
+convention.
+
+Window rules
+
+INIT refuses to load into window 3: that window is the ISA
+aperture, and a DLL living there would page itself out on every card
+access. Load it into window 1 or window 2 instead (libman's normal
+choice); the loader detects and rejects window 3 itself, so a
+misconfigured launcher fails cleanly at INIT instead of hanging the
+first time a UNET function opens the ISA window.
+
+Protocol codecs (IPv4/TCP/UDP/ICMP/ARP/DNS framing) live in a second
+file appended to UNET509B.DLL itself, loaded into window 0 on demand
+and mapped out again before the ISA window ever opens. If that overlay
+cannot be loaded (missing file, out of DSS memory, I/O error),
+NETINIT fails with NERR_HW and LASTERR reads `st=01 nerr=01
+tcp=FF (or tcp=<DSS error>` when the DSS page allocation itself was
+refused) -- this backend does not degrade to a codec-less mode, unlike
+the sibling's own resolver-only overlay. The overlay also carries the
+text parsers NETINIT needs for NET_HW, NET_IDPORT, NET_IP and
+NET_MASK, so it is loaded before the environment is read: an overlay
+failure is therefore reported as NERR_HW even on a machine that has no
+network configuration at all. GETINFO and LASTERR themselves never
+depend on the overlay, so they stay usable before NETINIT and after a
+failed one.
+
+What this backend supports
+
+GETCAPS reports 0x023F = `TCP | UDP | RESOLVE | PING | MULTICHAN |
+ASYNCSEND | LISTEN, ABI 0x0100 -- full parity with UNETRTL.DLL`.
+
+| Capability   | State | Note |
+|--------------|-------|------|
+| TCP        | yes   | channels 0 and 1; SEND chunks at the 536-byte MSS |
+| UDP        | yes   | connected UDP, payload up to the standard 1472-byte MTU |
+| RESOLVE    | yes   | software DNS through the cold overlay |
+| PING       | yes   | software ICMP echo; DE returns real milliseconds, not tick count |
+| MULTICHAN  | yes   | channels 0 and 1 may be open simultaneously |
+| LISTEN     | yes   | passive TCP open; see "Passive open (LISTEN)" below |
+| ASYNCSEND  | yes   | SEND can suspend with NERR_AGAIN; see "Non-blocking SEND" below |
+| RAWETH     | no    | no raw-frame entry point in the current ABI |
+| RXFLOW     | no    | the card buffers receive in its own on-card FIFO |
+
+Receive path
+
+The shipped DLL keeps full IPv4/TCP validation while avoiding a mandatory
+one-call-per-MSS receive loop. It first reads the fixed 54-byte
+Ethernet/IPv4/TCP prefix. A plain established, in-order data segment can then
+be copied directly from the FIFO into the active caller buffer while its TCP
+checksum is accumulated; one RECV continues draining complete MSSes until
+the buffer no longer has room. The advertised transient window is limited to
+five MSSes (2680 bytes). The first directly delivered segment is acknowledged
+immediately, later segments use cumulative ACKs in pairs, and the final ACK
+sent as RECV returns advertises only the durable 536-byte per-channel pending
+capacity.
+
+Packets for another channel, insufficient caller space, a caller buffer in
+WIN0 (hidden while the cold overlay is mapped), and all non-ordinary packets
+use the original pending/slow path. SYN, FIN, RST, TCP options, pure ACKs,
+duplicates, out-of-order data and invalid IPv4 headers therefore retain the
+complete protocol parser. The two channels keep separate pending storage and
+state. A caller stack in WIN0 remains supported: COLD.RUN saves its address
+before remapping PAGE0 and switches to the overlay's private stack without a
+PUSH/POP that would cross the mapping change. Only direct delivery to a WIN0
+data buffer is disabled.
+
+A developer-only perf-fast image changes only the ordinary direct data copy
+to omit the TCP checksum calculation. It continues checking IPv4, tuple,
+sequence, flags and header shape and continues generating every outgoing
+checksum. That image lives under build/perf-fast, is not present in either
+release artifact manifest, and is not safe for distribution.
+
+Differences from the RTL/ESP backends
+
+These are the only places where a portable consumer can observe which
+card it got. None of them changes the calling convention.
+
+- RXPAUSE / RXRESUME are no-ops and always return NERR_OK,
+  including before NETINIT. The card buffers receive in its own
+  FIFO, so there is no flow-control state to get wrong.
+- SETOPT RXTRIG returns NERR_NOTSUP. It selects a hardware FIFO
+  threshold this card's driver does not expose. SETOPT CANCELKEYS
+  and SETOPT SENDSLICE work normally.
+- PING round-trip time is real milliseconds, from this driver's
+  own measured polling quantum, not a coarse tick count.
+- GETINFO fields 8 (SSID) and 9 (BAUD) return an empty string --
+  they are Wi-Fi properties. Field 0 (backend name) returns 509B;
+  the hardware descriptor field returns whatever NET_HW published
+  after the last successful probe, in <slot>/#<base> form.
+- LASTERR is a fixed-layout diagnostic line:
+
+  509B hw=1 st=02 nerr=04 tcp=1E el3=EA/000C
+
+  hw is whether NETINIT completed, st the operation stage that
+  failed (01 NETINIT, 02 CONNECT, 03 SEND, 04 RECV, 05 CLOSE), nerr
+  the UNET status returned, tcp the TCP-layer failure code (FF or a
+  DSS error code for a st=01 overlay-load failure), and el3 the 3C509B
+  driver's own last stage/status pair. Before the first failure, each
+  LASTERR call formats the live state. A non-zero API return freezes the
+  complete line at that point; successful calls do not change it, and only
+  the next failure replaces it. A caller may therefore drain a peer response
+  and close the channel before logging the original SEND failure.
+- The ARP cache is disabled. Every CONNECT/UDPOPEN/RESOLVE/
+  PING resolves its next hop with a single fresh ARP exchange
+  instead of trusting a stale cache entry -- one exchange per call,
+  not per segment.
+
+Bounded TCP retransmission
+
+UNET509B.DLL splits TCP payloads at the 536-byte MSS and sends them
+stop-and-wait: each segment must receive its cumulative ACK before the
+next segment is sent. A missing segment or ACK is retried with the
+same sequence number, up to three attempts with a doubling wait (1s,
+then 2s, then 4s -- 7 seconds total). Exhaustion returns NERR_SEND;
+DE still reports the bytes confirmed before the failing chunk.
+
+A payload-bearing frame that arrives for the channel while SEND
+waits is not discarded: it is queued in that channel's 536-byte
+receive buffer and returned by the next RECV.
+
+An orderly peer FIN before the current chunk is fully acknowledged returns
+NERR_CLOSED, not NERR_SEND. DE includes the exact cumulative ACK prefix
+of that chunk. The channel and its pending response remain connected until
+RECV has returned every byte; the following RECV returns
+NERR_CLOSED/DE=0 and releases the channel (or re-arms an accepted LISTEN
+channel). CLOSE is idempotent afterward. RST keeps the destructive close
+path. If FIN carries the full ACK, the current SEND succeeds; the close is
+reported by RECV instead. This is the same public behavior as UNETRTL 0.3.8.
+
+To discover that queued data without blocking, call STATUS on the
+channel: bit 2 (UNET_ST_RXPEND) is set while the channel holds bytes
+no RECV has drained yet. RECV's own optional flag word (IX) is
+always 0 in this backend: neither UNET_RXF_MORE nor
+UNET_RXF_XCHAN is reported, so poll the other channel's STATUS
+rather than waiting for a cross-channel hint.
+
+Non-blocking SEND
+
+By default SEND blocks like any stop-and-wait TCP client: up to
+three retry attempts (see above) before it gives up. `SETOPT
+UNET_OPT_SENDSLICE (option value in DE`) trades that block for a
+bounded one: DE=0 restores the default blocking behavior; any other
+value is the maximum number of milliseconds one SEND call may wait
+before returning, clamped to a 50 ms minimum (1..49 are raised to 50).
+
+While a slice expires with the current attempt's ACK still
+outstanding, SEND returns NERR_AGAIN and DE reports the bytes
+already confirmed by earlier chunks of the same call -- the in-flight
+segment is neither dropped nor retransmitted yet. The very next SEND
+call on that channel must pass the *same* buffer pointer and length as
+the original call (a resume, not a new send); calling SEND with
+different arguments, or on a different channel, while a send is
+suspended returns NERR_STATE. Once the whole retry budget is
+exhausted with no ACK, SEND finally reports NERR_SEND as usual.
+
+While a SEND is suspended, CONNECT, UDPOPEN, CLOSE, NETDONE,
+NETINIT, LISTEN, UNLISTEN, RESOLVE and PING all return
+NERR_BUSY. RECV remains available on any channel: it is the only
+way a suspended send's ACK can actually be discovered and drained.
+
+Developer test:
+
+python3 tools/host/stage14_responder.py tcp-stall --bind 192.168.7.44 --port 8080
+UNETTEST -a 192.168.7.44 8080
+
+UNETTEST -a SETOPTs a short SENDSLICE, CONNECTs, then SENDs a
+~1200-byte payload against the stalling peer above; it prints how many
+NERR_AGAIN resumes were needed before the transfer settled. See
+docs/STAGE14_TESTING_RU.md for the MAME walkthrough.
+
+Passive open (LISTEN)
+
+LISTEN (A=channel, DE=local TCP port 1..65535) arms one closed
+channel as a single-backlog server socket; there is only ever one
+listening channel across both, and LISTEN on a second channel while
+one is already listening returns NERR_STATE. Progress happens
+inside the normal receive/poll path: an unsolicited SYN to the armed
+port gets a SYN+ACK, and once the peer's final ACK arrives the channel
+is promoted to an ordinary connected channel indistinguishable from
+one CONNECT made -- STATUS reports the listening bit while armed,
+and once a peer is accepted, the normal established-connection bits.
+
+UNLISTEN (A=the currently listening channel) stops the server. If
+no peer has been accepted yet, this simply closes the socket. If a
+peer *has* been accepted, that connection is left running -- UNLISTEN
+only detaches the "please re-arm this port" bookkeeping -- and the
+consumer closes it separately with CLOSE when done. Symmetrically,
+closing an accepted connection with CLOSE automatically re-arms the
+same channel back to LISTEN on the same port, so a simple
+accept-serve-close loop never needs to call LISTEN more than once.
+
+Developer test:
+
+python3 tools/host/stage14_responder.py listen-client --host 192.168.7.21 --port 9000
+
+(run it twice -- the DSS side accepts and serves exactly two peers on
+the same channel before UNLISTEN, to prove the CLOSE-triggered
+re-arm above actually works). See docs/STAGE14_TESTING_RU.md for the
+MAME walkthrough.
+
+Two channels
+
+Channel arguments 0 and 1 have independent TCP/UDP tuples, sequence
+state, timeouts, close state and pending data. Applications should
+follow the normal UNET rule: service a channel whose STATUS shows
+UNET_ST_RXPEND promptly, and do not issue more work on a channel
+whose receive buffer is already pending. Since RECV reports no
+cross-channel hint here, an application working both channels polls
+STATUS on each rather than relying on UNET_RXF_XCHAN.
+
+Interrupt and window state on return
+
+Every function returns with the ISA window closed and the
+caller's interrupt state restored exactly as found: the driver
+samples the caller's IFF2 before disabling interrupts to map the
+card, and re-enables them only if that sample said they were on. A
+consumer that keeps interrupts enabled across the call gets them back
+enabled; a consumer that calls in with interrupts already disabled
+does not have them force-enabled by the DLL.
+
+Transmit setup also stays within one bounded ISA session for stale-status
+drain, TX-free inspection, FIFO write and the first 256 completion polls. If
+completion is still unknown, the driver closes ISA before its final 1 ms wait
+and single poll. A timeout recovers TX but never retransmits the frame whose
+outcome is unknown.
+
+UNET509B.DLL is published in both the release archive and the
+floppy image, so a consumer can take the ready-built file without
+installing the assembler or libman. Its L1 header records the ABI
+line in the numeric version field and the full package revision in
+the 15-byte text tag, for example UNET509B v0.1.2.

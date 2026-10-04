@@ -37,6 +37,7 @@
 #include "tape/tapemanagerwindow.h"
 #include "media/mediapanelwindow.h"
 #include "network/networkwindow.h"
+#include "debugger/vdac2/ft812debugwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreenwrapper.h"
@@ -153,6 +154,7 @@ private slots:
     void handleToolBarToggled(bool visible);
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();
+    void handleSaveScreenshotRequested();
     void handleStatusBarToggled(bool visible);
     void handleHudOverlayToggled(bool visible);
     void handleGpuAccelerationToggled(bool enabled);
@@ -165,6 +167,9 @@ private slots:
     void handleTapeManagerToggled(bool visible);
     void handleMediaPanelToggled(bool visible);
     void handleNetworkWindowToggled(bool visible);
+    void handleFt812DebugToggled(bool visible);
+    /// Dock the FT812 Debug window level with the picture (opening: also when undocked)
+    void placeFt812DebugWindow(bool opening);
     void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
@@ -362,6 +367,7 @@ private:
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
     NetworkWindow* networkWindow = nullptr;
+    Ft812DebugWindow* _ft812DebugWindow = nullptr;  // Debug -> FT812 Debug (VDAC2 machines only)
     DeviceScreenWrapper* _screenWrapper = nullptr;
     HudOverlayWrapper* _hudWrapper = nullptr;
     std::shared_ptr<HudModel> _hudModel;
@@ -390,6 +396,13 @@ private:
     /// refuses these instead of binding the UI to a released instance
     std::mutex _destroyedEmulatorIdsMutex;
     std::unordered_set<std::string> _destroyedEmulatorIds;
+    /// Id of the instance the UI finished adopting (guarded by the mutex above).
+    /// The destroy notice runs on the MessageCenter worker and reads this, never
+    /// _emulator (written by the UI thread); adoptEmulator() commits it under the
+    /// same lock it checks the destroyed set with, so a removal racing an
+    /// adoption is seen by exactly one side
+    std::string _adoptedEmulatorId;
+    void setAdoptedEmulatorId(const std::string& id);
     bool isEmulatorGone(const std::shared_ptr<Emulator>& emulator);
     uint32_t _lastFrameCount = 0;
     /// model: a ZX-Poly configuration name or a base model; empty asks. An empty

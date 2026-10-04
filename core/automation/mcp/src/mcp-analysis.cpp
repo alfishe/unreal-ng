@@ -9,6 +9,8 @@
 // analyze_performance actions:
 //   coverage_start/stop/read/gaps/clear → /coverage* endpoints
 //   frame_cost                          → GET /frame_cost
+//   vdac2_line_budget                   → GET /vdac2/metrics[?lines=1&in_flight=1] (FT812 line metrics)
+//   vdac2_line_budget_set               → PUT /vdac2/metrics {margin?, measure_always?}
 //   profile_start/stop/status           → unified profiler control
 //   profile_report                      → fan-out: opcode counters + memory status
 //                                        + calltrace entries + unified status
@@ -304,6 +306,32 @@ void RegisterDebugCode(ToolRegistry& registry)
 namespace
 {
 
+/// One line a person reads: the FT812 line budget of the last finished frame
+std::string SummarizeLineBudget(const Json::Value& m)
+{
+    std::ostringstream out;
+    out << "VDAC2 line budget, FT812 frame " << m["frame"].asUInt64() << ": ";
+    if (!m["valid"].asBool())
+        out << "not measured (the frame was not drawn: the monitor showed the Evo or turbo skipped it; "
+               "measure_always draws every frame)";
+    else
+        out << "worst line " << m["worst_line"].asUInt() << " = " << m["worst_clocks"].asUInt() << " of "
+            << m["hard_budget"].asUInt() << " clocks (soft " << m["soft_budget"].asUInt() << ", margin "
+            << m["margin"].asUInt() << " %), " << m["lines_over_soft"].asUInt() << " line(s) over soft, "
+            << m["lines_over_hard"].asUInt() << " over hard (broken on a real card), " << m["lines"].asUInt()
+            << " lines";
+    out << "; measure_always " << (m["measure_always"].asBool() ? "on" : "off");
+    if (m.isMember("in_flight"))
+    {
+        const Json::Value& f = m["in_flight"];
+        if (f["known"].asBool())
+            out << "; frame in flight: " << f["lines_passed"].asUInt() << " line(s) passed";
+        else
+            out << "; frame in flight: " << f["reason"].asString();
+    }
+    return out.str();
+}
+
 void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -311,7 +339,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "frame_cost",
-                               "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace"})
+                               "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
+                               "vdac2_line_budget", "vdac2_line_budget_set"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -319,7 +348,11 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         "Analysis operation: executed-address coverage, per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
         "trace (on decoders with internal port codes - ZX-Evo decode arms - each event also carries code / code_name, "
         "and session.codes lists them), or gs_porttrace (General Sound coprocessor triage - CPU steps/interrupts/DAC "
-        "fetches + event trace).";
+        "fetches + event trace), or the TS-Conf VDAC2 card's FT812 line budget: vdac2_line_budget (the last finished "
+        "frame's per-line cost against the line period; lines / in_flight add the per-line costs and the frame in "
+        "flight, the latter on a paused machine) and vdac2_line_budget_set (margin = soft budget percent 0..50, "
+        "measure_always = draw and measure every frame, also not shown). The metrics are part of the chip state: "
+        "after a time_travel seek they are those of that moment.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -339,6 +372,18 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["frames"]["type"] = "integer";
     schema["properties"]["frames"]["default"] = 10;
     schema["properties"]["frames"]["description"] = "Emulated frames to run for porttrace (1-1000)";
+    schema["properties"]["lines"]["type"] = "boolean";
+    schema["properties"]["lines"]["description"] = "vdac2_line_budget: include the cost of every line (line_clocks)";
+    schema["properties"]["in_flight"]["type"] = "boolean";
+    schema["properties"]["in_flight"]["description"] =
+        "vdac2_line_budget: include the frame in flight (lines passed so far; paused machine only)";
+    schema["properties"]["margin"]["type"] = "integer";
+    schema["properties"]["margin"]["minimum"] = 0;
+    schema["properties"]["margin"]["maximum"] = 50;
+    schema["properties"]["margin"]["description"] = "vdac2_line_budget_set: soft budget, percent below the line period";
+    schema["properties"]["measure_always"]["type"] = "boolean";
+    schema["properties"]["measure_always"]["description"] =
+        "vdac2_line_budget_set: draw and measure every FT812 frame, also while the monitor shows the Evo or turbo skips";
     schema["required"].append("action");
 
     registry.Register(
@@ -409,6 +454,64 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             if (action == "frame_cost")
             {
                 ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", done);
+                return;
+            }
+            if (action == "vdac2_line_budget" || action == "vdac2_line_budget_set")
+            {
+                std::string suffix = "/vdac2/metrics";
+                auto body = std::make_shared<Json::Value>(Json::objectValue);
+                const bool set = action == "vdac2_line_budget_set";
+                if (set)
+                {
+                    if (!args.isMember("margin") && !args.isMember("measure_always"))
+                    {
+                        done(ToolResult::Error("vdac2_line_budget_set needs margin (0..50) and/or measure_always"));
+                        return;
+                    }
+                    if (args.isMember("margin"))
+                    {
+                        if (!args["margin"].isUInt() || args["margin"].asUInt() > 50)
+                        {
+                            done(ToolResult::Error("margin is a percent from 0 to 50"));
+                            return;
+                        }
+                        (*body)["margin"] = args["margin"].asUInt();
+                    }
+                    if (args.isMember("measure_always"))
+                        (*body)["measure_always"] = args["measure_always"].asBool();
+                }
+                else
+                {
+                    std::string query;
+                    if (args["lines"].asBool())
+                        query += "lines=1&";
+                    if (args["in_flight"].asBool())
+                        query += "in_flight=1&";
+                    if (!query.empty())
+                    {
+                        query.pop_back();
+                        suffix += "?" + query;
+                    }
+                }
+                TargetResolver::ResolveFromArgs(args, caller, [set, suffix, body, &caller, done](bool ok, const std::string& id) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(id));
+                        return;
+                    }
+                    caller.Call(set ? "PUT" : "GET", Endpoint(id, suffix), set ? body.get() : nullptr,
+                                [body, done](int status, Json::Value response) {
+                                    if (status >= 200 && status < 300)
+                                    {
+                                        const std::string text = SummarizeLineBudget(response);
+                                        done(ToolResult::Ok(text, std::move(response)));
+                                        return;
+                                    }
+                                    const std::string details = DescribeErrorBody(response);
+                                    done(ToolResult::Error("WebAPI returned HTTP " + std::to_string(status) +
+                                                           (details.empty() ? "" : ": " + details)));
+                                });
+                });
                 return;
             }
             if (action == "profile_start")
@@ -665,7 +768,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
                                             "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
-                                            "gs_porttrace"));
+                                            "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set"));
         });
 }
 

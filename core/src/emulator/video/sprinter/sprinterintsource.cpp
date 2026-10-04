@@ -57,7 +57,12 @@ std::vector<uint32_t> SprinterIntSource::ComputePositions(const SprinterVideoRam
             else
             {
                 if (armed)
-                    positions.push_back((scrB * 8u + 7u) * kLineTStates + (scrA * 16u) / 4u);
+                {
+                    // MAME's beam position of the square, then the PLD's edge: kIntBeforeMameT earlier
+                    const uint32_t frame = static_cast<uint32_t>(frameLines) * kLineTStates;
+                    const uint32_t mame = (scrB * 8u + 7u) * kLineTStates + (scrA * 16u) / 4u;
+                    positions.push_back((mame + frame - kIntBeforeMameT) % frame);
+                }
                 armed = false;
             }
         }

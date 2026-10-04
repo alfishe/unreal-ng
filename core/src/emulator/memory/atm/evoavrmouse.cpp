@@ -22,10 +22,33 @@ void EvoAvrMouse::SetConnected(bool connected)
 {
     const uint8_t value = connected ? 1 : 0;
     if (_connected.exchange(value, std::memory_order_relaxed) != value)
+    {
         ResetRegisters(connected);
+        _lastPollFrame.store(kNeverPolled, std::memory_order_relaxed);  // a new mouse: nobody read it yet
+    }
 }
 
 uint8_t EvoAvrMouse::ReadRegister(uint8_t selectRegister) const
+{
+    if (_frame)
+        _lastPollFrame.store(_frame(), std::memory_order_relaxed);
+    if (selectRegister == 1 || selectRegister == 2)
+        _unreadMotion.fetch_and(static_cast<uint8_t>(~(1u << selectRegister)), std::memory_order_relaxed);
+    return PeekRegister(selectRegister);
+}
+
+bool EvoAvrMouse::IsMouseInUse() const
+{
+    if (!IsConnected())
+        return false;
+    if (!_frame)
+        return true;  // no frame source (unit-test contexts): connected is in use
+    const uint64_t last = _lastPollFrame.load(std::memory_order_relaxed);
+    const uint64_t frame = _frame();
+    return last != kNeverPolled && frame >= last && frame - last <= kPolledWithinFrames;
+}
+
+uint8_t EvoAvrMouse::PeekRegister(uint8_t selectRegister) const
 {
     switch (selectRegister)
     {
@@ -81,6 +104,7 @@ void EvoAvrMouse::OnMouseMotion(int dx, int dy)
     const int countsY = dy * scale;
     _x.store(static_cast<uint8_t>(_x.load(std::memory_order_relaxed) + countsX), std::memory_order_relaxed);
     _y.store(static_cast<uint8_t>(_y.load(std::memory_order_relaxed) + countsY), std::memory_order_relaxed);
+    _unreadMotion.fetch_or(static_cast<uint8_t>((dx ? 0x02 : 0) | (dy ? 0x04 : 0)), std::memory_order_relaxed);
 }
 
 void EvoAvrMouse::OnMouseButtons(uint8_t activeLowMask)
@@ -111,6 +135,31 @@ void EvoAvrMouse::OnMouseCounters(uint8_t x, uint8_t y)
     // Debug write (automation `counters`): the registers as given
     _x.store(x, std::memory_order_relaxed);
     _y.store(y, std::memory_order_relaxed);
+    _unreadMotion.store(0x06, std::memory_order_relaxed);
+}
+
+MouseDeviceStatus EvoAvrMouse::DescribeMouse() const
+{
+    MouseDeviceStatus status;
+    status.id = "evo-ps2";
+    status.name = "PS/2 wheel mouse on the ZX-Evo AVR";
+    status.kind = MouseDeviceKind::Ps2Avr;
+    status.fitted = IsConnected();
+    status.inUse = IsMouseInUse();
+    status.wheel = true;
+    status.buttons = 3;
+    status.hasPorts = true;
+    status.portButtons = PeekRegister(0);
+    status.portX = PeekRegister(1);
+    status.portY = PeekRegister(2);
+    status.x = status.portX;
+    status.y = status.portY;
+    // Active low D0 left, D1 right, D2 middle: the low bits of the button register
+    status.buttonMask = static_cast<uint8_t>(0xF8 | (status.portButtons & 0x07));
+    status.hasPs2 = true;
+    status.ps2.connected = IsConnected();
+    status.ps2.resolution = Resolution();
+    return status;
 }
 
 EvoAvrMouse::State EvoAvrMouse::GetState() const

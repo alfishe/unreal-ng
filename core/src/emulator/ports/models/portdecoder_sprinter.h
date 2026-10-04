@@ -7,7 +7,9 @@
 
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/machineeventjournal.h"
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
@@ -19,8 +21,10 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 #include "emulator/video/sprinter/sprintervramregion.h"
 
+class ScreenSprinter;
 class SprinterMemory;
 class SprinterVideoRenderer;
+class SprinterBeamVideo;
 namespace ttd
 {
 class TTDSprinterPld;
@@ -61,12 +65,21 @@ class TTDSprinterPld;
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits), and the ZX mode's
 ///     "original waits" at 3.5 MHz (SprinterOrigWaits).
-class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook
+class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook, public IZ84InterruptObserver
 {
 public:
     /// Port trace internal codes: the PLD codes #00-#FF as they are; the
     /// Z84C15's own ports as kTraceZ84Base + the low address byte
     static constexpr uint16_t kTraceZ84Base = 0x100;
+    /// Port trace internal codes of ISA cycles (they are memory cycles in window 3, shown beside the port
+    /// accesses): kTraceIsaBase + (memory ? 2 : 0) + slot index; the decoded port is the ISA address's low
+    /// 16 bits, the raw port the CPU address (Sprinter ISA tdd §10)
+    static constexpr uint16_t kTraceIsaBase = 0x200;
+    /// The Z84C15's time base: the board crystal X_SP = 42 MHz, 12 ticks per base T-state (3.5 MHz = X_SP / 12)
+    static constexpr uint32_t kChipTicksPerBaseT = 12;
+    static constexpr uint64_t kChipClockHz = 42'000'000;
+    /// CTC TRG0-TRG2: X_SP / 48 = 875 kHz, independent of the CPU clock (MAME sprinter.cpp:1993-1995)
+    static constexpr uint32_t kCtcTriggerHz = 875'000;
 
     /// region <Constructors / Destructors>
 public:
@@ -89,6 +102,25 @@ public:
     bool IsPagingLocked() const override { return false; }
     /// 3.5 or 21 MHz
     uint8_t TtdClockUnits() const override { return 6; }
+    /// The IM2 vector (the Z84C15 daisy chain, the PLD's INT answering #FF) and the stepped engines (PLD
+    /// resets, the loader watchdog, the CTC) follow the checkpointed state and the TTD input journal only
+    /// (s7-ttd-outcome.md): the port journals record on the Sprinter
+    bool TtdEnginesSealed() const override { return true; }
+    /// A session recorded with another ISA slot population is refused (blob 33's kinds against the fitted cards)
+    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const override;
+    /// A ZX-bus only through an ISA ZX-bus adapter ([ISA] SlotN=ZXBUS; 2026-10-02-sprinter-isa/tdd.md §6, phase I2):
+    /// the General Sound / NeoGS of [SOUND] GSType is fitted only then. The adapter passes I/O cycles only, so
+    /// no ZX-bus card sees the Sprinter's memory cycles (the NeoGS ZX-DMA cannot install)
+    bool ZxBusPresent() const override { return _zxBusSlot >= 0; }
+    bool ZxBusMemoryCycles() const override { return false; }
+    /// The slot (0 / 1) whose ZX-bus adapter carries the General Sound; -1: no adapter
+    int ZxBusSlot() const { return _zxBusSlot; }
+    /// No ZX-bus for network cards (ZXNETUSB / ZX-WiFi refused with the reason), no serial port of its own; the two
+    /// ISA slots take the network cards of [ISA] (network tdd §5.2): NetworkManager builds them, the slot wrapper
+    /// (IsaBusDeviceCard) reaches them
+    NetworkCapabilities DescribeNetwork() override;
+    /// The PLD journal (PldJournal below)
+    MachineEventJournal* GetMachineEventJournal() override { return &_journal; }
     /// The WD1793 clock and data separator follow the #BD density latch (codes #16 / #17)
     /// alone: STEP and DRQ never change them, [Beta128] TurboVG= cannot override them
     FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::Latched; }
@@ -96,13 +128,14 @@ public:
     bool HasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
-    /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView)
+    /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView; this debug read: PeekMouseView)
     bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
     {
         static constexpr uint16_t kPorts[3] = {0xFADF, 0xFBDF, 0xFFDF};
-        value = reg < 3 ? _input.ReadMouseView(kPorts[reg]) : 0xFF;
+        value = reg < 3 ? _input.PeekMouseView(kPorts[reg]) : 0xFF;
         return true;
     }
+    bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
     RtcBinding GetRtcBinding() override;
@@ -122,6 +155,18 @@ public:
     void OnMachineFrameRollover(uint32_t frameLength) override;
     /// endregion
 
+    /// The frame boundary: the host speed control's next multiplier reaches the Z84C15's clock
+    void OnFrameEnd() override;
+
+    /// region <ISA interrupt lines -> PIO port B (ISA phase I4, tdd §4.5)>
+    /// The daisy chain took / ended an interrupt: the ISA slot report counts and journals the PIO port B ones
+    void OnChipAcknowledge(uint8_t vector) override;
+    void OnChipReti() override;
+    /// When the step hook next catches the cards up (base T-states, UINT64_MAX: never): set while the PIO waits for
+    /// an ISA interrupt (port B in bit mode, interrupt enabled, an IRQ bit monitored) and a card has a timed event
+    uint64_t IsaLineDeadline() const { return _isaDeadline; }
+    /// endregion
+
     /// region <PLD state and parts>
 public:
     SprinterPldState& GetPldState() { return _pld; }
@@ -134,6 +179,9 @@ public:
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
     SprinterInput& GetInput() { return _input; }
+    /// The two ISA-8 slots (Sprinter ISA tdd §4): window 3 in ISA mode reaches them, code #1B writes the latch
+    SprinterIsaBus& GetIsaBus() { return _isaBus; }
+    const SprinterIsaBus& GetIsaBus() const { return _isaBus; }
     Ds12887& GetRtc() { return _rtc; }
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
@@ -146,6 +194,14 @@ public:
     SprinterAccelerator* GetAccelerator() const { return _activeAccelerator; }
     /// The picture of the active module (hook 3), Standard's when it brings none
     const SprinterVideoRenderer& VideoRenderer() const;
+    /// The active module's beam-ordered picture (hook 3: the Game module's grid offset); null for a
+    /// stateless picture (Standard) and while the PLD is not configured. ScreenSprinter runs it on every
+    /// catch-up and closes its frame at every frame start
+    SprinterBeamVideo* BeamVideo() const { return _beamVideo; }
+    /// Why the active module runs (reports, the journal): `key` = "full_hash" (the bitstream is the module's),
+    /// "head_hash" (only MAME's first-4 096-writes hash matches), "unknown_bitstream" (no module knows it:
+    /// Standard), "watchdog" (the load never ended: Standard), "loading" or "not_configured"; `why` = a sentence
+    void ModuleSelection(std::string& key, std::string& why) const;
 
     /// Port table index and code (§3.1)
     uint16_t LookupIndex(uint16_t port, bool isRead) const;
@@ -169,6 +225,8 @@ public:
     void OnConfigurationWrite(uint8_t value);
     /// The PLD resets the CPU at the next instruction boundary
     void RequestCpuReset(SprinterResetKind kind);
+    /// SprinterMemory: a CPU write to page #A0 with #1FFD = #10 (the soft restart): journaled, then the reset
+    void OnResetPageWrite();
 
     /// Start the configured standard machine at the BIOS entry with the state
     /// the ROM loader would leave (fast start, tdd-ports-memory §6)
@@ -203,6 +261,22 @@ public:
     SprinterMemory* GetSprinterMemory() const { return _sprinterMemory; }
     /// endregion </PLD state and parts>
 
+    /// region <PLD journal (machineeventjournal.h; tdd-zx-mode.md §12)>
+public:
+    /// What changed the PLD's setup, with frame, T and PC: port table writes (one event per frame, with
+    /// the decodes of the key ZX ports it changed), CNF/SYS (turbo request, map, clean rules), the CPU
+    /// clock, ALL_MODE, RGMOD, HOLD, the frame length, #7FFD / #1FFD (on a change of the value), the
+    /// bitstream load and the module chosen, F12, Ctrl+Alt+Del, the page #A0 reset, RESET, power on.
+    /// On by default; off costs nothing (no table watch, no event built)
+    MachineEventJournal& PldJournal() { return _journal; }
+    void SetPldJournalEnabled(bool on);
+    /// SprinterMemory's write intercept: a store into page #40 (the port table) while the journal is on
+    void OnPortTableWrite(uint16_t addr);
+    /// The table codes of the key ZX ports (SprinterZxPorts) for every map, DOS state and direction
+    /// (PN5 = 0): the journal's "what a table write changed"
+    std::vector<uint8_t> KeyPortDecodes() const;
+    /// endregion
+
     /// region <TTD (phase S7; debugger/ttd/sprinter/ttdsprinter.h)>
 public:
     /// A TTD serializer loaded part of the machine's state: re-derive what follows from it - the
@@ -230,6 +304,10 @@ private:
     void PerformPendingReset();
     void FinishLoad(bool watchdog);
     void ApplyTurbo();
+    /// The Z84C15's clock: ticks of the 42 MHz crystal since the machine's power-on (monotonic, real time)
+    uint64_t ChipClock() const;
+    /// The CPU clock the Z84C15 counts (CTC timers, watchdog) at `multiplier` x 3.5 MHz
+    void SyncChipClock(uint8_t multiplier);
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
@@ -237,9 +315,31 @@ private:
     void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
+    /// A CPU write is about to change a video RAM byte (the graphics pages, the Spectrum screen shadow, the
+    /// accelerator): the renderer draws the beam up to the moment the byte lands (ScreenSprinter::CatchUpToWrite)
+    void CatchUpScreenToWrite();
+    /// A border write: the renderer draws the beam up to the moment the PLD latches it (ScreenSprinter::CatchUpToBorderLatch)
+    void CatchUpScreenToBorderLatch();
+    /// The context's screen as a ScreenSprinter while a CPU runs it, else null
+    ScreenSprinter* SprinterScreen();
     /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
     void NoteVideoLatches();
     void LoadFastRamImage();
+    /// A load ended: the cells get the configuration's initial contents (hook 5, Standard's by default)
+    void ApplyInitialCells();
+    /// A load begins: remember the module that ran (SprinterPldState::moduleBeforeLoad)
+    void NoteModuleBeforeLoad();
+    static constexpr uint8_t kNoModule = 0xFF;
+
+    /// The journal is on and the machine runs live (a TTD replay re-executes history: nothing is noted)
+    bool JournalOn() const { return _journal.Enabled() && !_context->ttdReplayActive; }
+    /// Append an event at the current frame, base T and `pc`
+    void JournalEvent(const char* kind, uint16_t pc, int port, int value, int previous, std::string text,
+                      std::vector<std::string> details = {});
+    /// The CPU's PC (host actions: keys, the RESET button)
+    uint16_t CpuPc() const;
+    /// The frame end: one "port_table" event for the table bytes written this frame
+    void FlushPortTableWrites();
 
     uint8_t FdcRead(uint8_t code);
     void FdcWrite(uint8_t code, uint8_t value);
@@ -252,11 +352,16 @@ private:
     SprinterPldState _pld{};
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
+    /// The Sprinter screen CatchUpScreenToWrite draws on (the context's screen, checked when it changes)
+    ScreenSprinter* _screen = nullptr;
+    const Screen* _screenSeen = nullptr;
     SprinterVramRegion _vramRegion{_vram};
     SprinterIntSource _intSource{_context, _vram};
     /// The standard accelerator and the one in use (hook 4)
     SprinterAccelerator _accelerator{_context, _pld};
     SprinterAccelerator* _activeAccelerator = nullptr;
+    /// The active module's beam-ordered picture (hook 3), refreshed with the accelerator
+    SprinterBeamVideo* _beamVideo = nullptr;
     Z84Lib::Z84C15 _z84;
     /// The keyboard (SIO A) and the serial mouse (SIO B)
     SprinterInput _input{_context, _z84, _intSource, _pld};
@@ -274,8 +379,53 @@ private:
 
     /// The Covox / Covox-Blaster (codes #88 / #89, page #FD), its INT through _intSource
     CovoxBlaster _cbl{_context};
+    /// The ISA-8 slots and the #9FBD latch; the population comes from [ISA] at creation
+    SprinterIsaBus _isaBus;
+    int _zxBusSlot = -1;           ///< the slot of the ZX-bus adapter with the GS (-1: none)
+    uint8_t _instanceNumber = 0;   ///< among the live Sprinters (the automatic MAC)
+    /// A card hung its ISA cycle (UM9003 reset port): the CPU waits for RESET - halted, interrupts off
+    void StallCpuOnIsa(int slot);
+    /// The ZX-bus adapters of [ISA] (phase I2), fitted when the decoder is built (before SoundManager attaches the GS)
+    void FitZxBusAdapters();
+    /// The slots' IRQ / DRQ lines into PIO port B (only a change reaches the PIO: its bit-mode edge), the journal
+    /// and counters of the edges and the requests they cause; then the next deadline
+    void PushIsaLines();
+    /// The cards to now, then PushIsaLines (a read of PIO port B data, a write of its control, a deadline)
+    void SyncIsaLines();
+    /// A PIO request latched since `ipBefore` (a line edge, a mask written while the condition holds): journal it
+    void NotePioRequest(bool ipBefore);
+    /// The PIO waits for a slot's IRQ: port B in mode 3, its interrupt enabled, PB0 or PB1 input and monitored
+    bool IsaIrqArmed() const;
+    void RescheduleIsaLines();
+    /// The cards' clock: base T-states now (ComPort::Now)
+    uint64_t IsaNow() const;
+    SprinterIsaBus::PioView IsaPioView();
+    uint64_t _isaDeadline = UINT64_MAX;
+    bool _isaRescheduleOnStep = false;   ///< a TTD restore: the deadline from the restored cards at the next step
+    bool _pioBIusSeen = false;           ///< PIO port B under service as the journal last saw it (observation)
+    uint8_t _pioBServiceSlots = 0;       ///< the slots whose lines caused that service (bit n = slot n + 1)
+    /// The instance's place among the running emulators (the automatic MAC 02:53:50:00:<instance>:<slot>)
+    uint8_t NetworkInstanceIndex() const;
+    /// An ISA cycle into the port trace (only while a capture runs)
+    void TraceIsaCycle(bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value);
     uint16_t _pc = 0;             ///< PC of the I/O in progress (border writes)
     int64_t _dcpOpenedFrame = -1;
     uint16_t _dcpOpenedPc = 0;
     uint64_t _loggedUnknownCodes[4] = {};  ///< one log line per unknown code
+
+    /// The PLD journal and what it compares against (observation only, not machine state: not in TTD)
+    MachineEventJournal _journal;
+    struct TableWrites
+    {
+        uint32_t count = 0;
+        uint32_t firstT = 0;
+        uint32_t lastT = 0;
+        uint16_t firstPc = 0;
+        uint16_t lastPc = 0;
+        uint16_t firstOffset = 0;
+        uint16_t lastOffset = 0;
+    } _tableWrites;
+    std::vector<uint8_t> _journalDecodes;  ///< KeyPortDecodes at the last port_table event (empty: none yet)
+    int _journalLast7ffd = -1;             ///< the last raw #7FFD / #1FFD value journaled
+    int _journalLast1ffd = -1;
 };

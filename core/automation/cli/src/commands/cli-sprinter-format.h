@@ -13,6 +13,10 @@
 ///   state sprinter video [page=0|1] [all=1] [squares=1]  the mode table: one letter per square
 ///   state sprinter palette [0-7|all|used]            the palettes (R, G, B per pen)
 ///   state sprinter ring                              the Covox-Blaster sample ring
+///   state sprinter zx [deep=0]                       the ZX (Spectrum) mode: launcher configuration, clock, ports
+///   state sprinter journal [kinds=a,b] [since=N] [from=F] [to=F] [limit=N] [source=live|ttd]
+///                                                    who changed the PLD setup, when (frame, T, PC)
+///   state sprinter journal on|off|clear              switch / clear the PLD journal
 ///   state sprinter bios                              the BIOS images, which one runs, the start options
 ///   state sprinter bios <3.04|3.06|3.07|file|-> [fast_start=0|1] [accel_int_suspend=0|1] [reset=0|1]
 ///                                                    select (the image loads at the reset; reset=1 default)
@@ -234,6 +238,92 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             return "Error: " + error + newline;
         return PaletteText(DeviceState::SprinterPalette(context, palette), newline);
     }
+    if (sub == "zx" || sub == "zx-mode" || sub == "zxmode")
+    {
+        bool deep = true;
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            if (args[i] == "deep=0" || args[i] == "deep=off")
+                deep = false;
+            else if (args[i] != "deep=1" && args[i] != "deep=on")
+                return "Error: unknown option '" + args[i] + "' (deep=0|1)" + newline;
+        }
+        const StateNode report = DeviceState::SprinterZxMode(context, deep);
+        const StateNode* available = report.find("available");
+        if (available && !available->b)
+            return "Error: " + Field(report, "description") + newline;
+        return Field(report, "summary") + newline + std::string("Sprinter ZX mode") + newline + "================" + newline +
+               DeviceState::ToText(report);
+    }
+    if (sub == "journal" || sub == "pld-journal" || sub == "pld")
+    {
+        if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
+        {
+            const StateNode r = DeviceState::SprinterJournalControl(context, args[2] == "clear" ? -1 : (args[2] == "on" ? 1 : 0),
+                                                                       args[2] == "clear");
+            const StateNode* available = r.find("available");
+            if (available && !available->b)
+                return "Error: " + Field(r, "description") + newline;
+            return "PLD journal " + std::string(Field(r, "enabled") == "on" ? "on" : "off") + ", " + Field(r, "held") +
+                   " event(s) held" + newline;
+        }
+        std::string kinds, since, from, to, limit, source;
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            if (eq == std::string::npos)
+                return "Error: expected key=value, got '" + args[i] + "' (kinds, since, from, to, limit, source)" + newline;
+            const std::string key = args[i].substr(0, eq);
+            const std::string value = args[i].substr(eq + 1);
+            if (key == "kinds" || key == "kind")
+                kinds = value;
+            else if (key == "since")
+                since = value;
+            else if (key == "from")
+                from = value;
+            else if (key == "to")
+                to = value;
+            else if (key == "limit")
+                limit = value;
+            else if (key == "source")
+                source = value;
+            else
+                return "Error: unknown option '" + key + "' (kinds, since, from, to, limit, source)" + newline;
+        }
+        DeviceState::SprinterJournalQuery query;
+        std::string error;
+        if (!DeviceState::SprinterJournalQueryFromStrings(kinds, since, from, to, limit, source, query, error))
+            return "Error: " + error + newline;
+        const StateNode report = DeviceState::SprinterJournal(context, query);
+        const StateNode* events = report.find("events");
+        if (!events)
+            return "Error: " + Field(report, "description") + newline;
+        std::string out = "PLD journal (" + Field(report, "source") + "): " + std::to_string(events->items.size()) + " event(s)";
+        if (report.find("error"))
+            out += ", " + Field(report, "error");
+        out += newline;
+        for (const StateNode& e : events->items)
+        {
+            out += "frame " + Field(e, "frame") + " T " + Field(e, "t") + " (line " + Field(e, "line") + " T " + Field(e, "t_in_line") +
+                   ") PC " + Field(e, "pc") + " " + Field(e, "kind") + ": " + Field(e, "text") + newline;
+            if (const StateNode* details = e.find("details"))
+                for (const StateNode& d : details->items)
+                    out += "    " + d.s + newline;
+        }
+        if (const StateNode* queries = report.find("ttd_queries"))
+        {
+            out += "TTD port-events queries (the table now):" + std::string(newline);
+            for (const StateNode& q : queries->items)
+            {
+                std::string ports;
+                if (const StateNode* list = q.find("ports"))
+                    for (const StateNode& p : list->items)
+                        ports += " " + Field(p, "port") + "/" + Field(p, "port_mask");
+                out += "  " + Field(q, "kind") + ":" + (ports.empty() ? std::string(" (no port reaches it)") : ports) + newline;
+            }
+        }
+        return out;
+    }
     if (sub == "bios")
     {
         if (args.size() <= 2)
@@ -280,7 +370,7 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
         return out;
     }
     if (sub != "ports" && sub != "port" && sub != "lookup")
-        return "Error: unknown subcommand '" + args[1] + "'. Available: ports, port <hex>, text, video, palette, ring, bios" +
+        return "Error: unknown subcommand '" + args[1] + "'. Available: ports, port <hex>, text, video, palette, ring, bios, zx, journal" +
                newline;
 
     std::string map, dos, pn5, rw, positional, error;

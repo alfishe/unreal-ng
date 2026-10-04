@@ -71,6 +71,7 @@ void Z84C15::PowerOn()
     _wdtRunning = (system.wdtmr & 0x80) != 0;
     _wdtFired = false;
     _wdtStart = Now();
+    _wdtClocksBefore = 0;
 
     Reset();
 }
@@ -86,6 +87,18 @@ void Z84C15::SetClock(std::function<uint64_t()> clock)
 {
     _clock = clock;
     ctc.SetClock(std::move(clock));
+}
+
+void Z84C15::SetSystemClockPeriod(uint32_t num, uint32_t den)
+{
+    if (!num || !den || (num == ctc.SystemClockNum() && den == ctc.SystemClockDen()))
+        return;
+    // The watchdog's clocks so far at the old rate
+    const uint64_t now = Now();
+    if (now > _wdtStart)
+        _wdtClocksBefore += Detail::MulDivFloor(now - _wdtStart, ctc.SystemClockDen(), ctc.SystemClockNum());
+    _wdtStart = now;
+    ctc.SetSystemClockPeriod(num, den);
 }
 
 bool Z84C15::Owns(uint16_t port)
@@ -204,12 +217,16 @@ void Z84C15::Write(uint8_t lowByte, uint8_t value)
 uint64_t Z84C15::WatchdogDeadline() const
 {
     const uint32_t shift = 16u + 2u * ((system.wdtmr >> 5) & 0x03);
-    return _wdtStart + (uint64_t{1} << shift);
+    const uint64_t period = uint64_t{1} << shift;
+    if (_wdtClocksBefore >= period)
+        return _wdtStart;
+    return _wdtStart + Detail::MulDivCeil(period - _wdtClocksBefore, ctc.SystemClockNum(), ctc.SystemClockDen());
 }
 
 void Z84C15::ClearWatchdog()
 {
     _wdtStart = Now();
+    _wdtClocksBefore = 0;
     _wdtFired = false;
 }
 
@@ -243,6 +260,20 @@ uint64_t Get64(const uint8_t*& p)
         v |= static_cast<uint64_t>(*p++) << (8 * i);
     return v;
 }
+
+void Put32(uint8_t*& p, uint32_t v)
+{
+    for (int i = 0; i < 4; i++)
+        *p++ = static_cast<uint8_t>(v >> (8 * i));
+}
+
+uint32_t Get32(const uint8_t*& p)
+{
+    uint32_t v = 0;
+    for (int i = 0; i < 4; i++)
+        v |= static_cast<uint32_t>(*p++) << (8 * i);
+    return v;
+}
 }  // namespace
 
 void Z84C15::SaveState(uint8_t* dst) const
@@ -264,7 +295,10 @@ void Z84C15::SaveState(uint8_t* dst) const
     *p++ = _wdtRunning ? 1 : 0;
     *p++ = _wdtFired ? 1 : 0;
     Put64(p, _wdtStart);
+    Put64(p, _wdtClocksBefore);
 
+    Put32(p, ctc.SystemClockNum());
+    Put32(p, ctc.SystemClockDen());
     *p++ = ctc.Vector();
     for (uint8_t i = 0; i < 4; i++)
     {
@@ -273,8 +307,11 @@ void Z84C15::SaveState(uint8_t* dst) const
         *p++ = ch.timeConstant;
         *p++ = ch.awaitingConstant;
         *p++ = ch.running;
-        Put64(p, ch.loadClock);
-        Put64(p, ch.zeroCounts);
+        *p++ = ch.waitingTrigger;
+        *p++ = ch.down;
+        Put64(p, ch.anchor);
+        Put64(p, ch.zeroBase);
+        Put64(p, ch.zeroSeen);
         *p++ = ch.ip;
         *p++ = ch.ius;
     }
@@ -328,7 +365,11 @@ void Z84C15::LoadState(const uint8_t* src)
     _wdtRunning = *p++ != 0;
     _wdtFired = *p++ != 0;
     _wdtStart = Get64(p);
+    _wdtClocksBefore = Get64(p);
 
+    const uint32_t clkNum = Get32(p);
+    const uint32_t clkDen = Get32(p);
+    ctc.RestoreSystemClockPeriod(clkNum, clkDen);
     ctc.SetVector(*p++);
     for (uint8_t i = 0; i < 4; i++)
     {
@@ -337,8 +378,11 @@ void Z84C15::LoadState(const uint8_t* src)
         ch.timeConstant = *p++;
         ch.awaitingConstant = *p++;
         ch.running = *p++;
-        ch.loadClock = Get64(p);
-        ch.zeroCounts = Get64(p);
+        ch.waitingTrigger = *p++;
+        ch.down = *p++;
+        ch.anchor = Get64(p);
+        ch.zeroBase = Get64(p);
+        ch.zeroSeen = Get64(p);
         ch.ip = *p++;
         ch.ius = *p++;
     }
@@ -374,6 +418,8 @@ void Z84C15::LoadState(const uint8_t* src)
         port.ip = *p++;
         port.ius = *p++;
     }
+
+    ctc.Refresh();
 }
 
 /// endregion </State>

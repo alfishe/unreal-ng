@@ -186,6 +186,12 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
             paging["profi_board"] = (config.mem_model == MM_PROFI3) ? "v3" : "v5";
             paging["profi_sync_prom"] = ProfiSyncPromName(
                 ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+            // The keyboard on the connector: matrix, xt (the PROFI-XT firmware), xttable (its key table)
+            paging["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+            // The hi-res clocks (design-hires.md): the CPU clock there (no turbo), the v5's ZQ3 and SB7
+            paging["profi_hires_cpu_hz"] = ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz);
+            paging["profi_zq3_mhz"] = static_cast<int>(ProfiClampZq3(config.profi_zq3_mhz));
+            paging["profi_ay_clock"] = (config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "new" : "old";
             paging["port_dffd"] = static_cast<int>(state.pDFFD);
             paging["port_dffd_hex"] = StringHelper::Format("0x%02X", state.pDFFD);
 
@@ -1498,6 +1504,17 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
     Json::Value ret;
 
     ret["model"] = Config::GetModelFullName(config.mem_model);
+    // The Profi board, its sync PROM and the keyboard on its connector (as GET /state/memory reports them)
+    if (IsProfiModel(config.mem_model))
+    {
+        ret["profi_board"] = (config.mem_model == MM_PROFI3) ? "v3" : "v5";
+        ret["profi_sync_prom"] =
+            ProfiSyncPromName(ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+        ret["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+        ret["profi_hires_cpu_hz"] = ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz);
+        ret["profi_zq3_mhz"] = static_cast<int>(ProfiClampZq3(config.profi_zq3_mhz));
+        ret["profi_ay_clock"] = (config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "new" : "old";
+    }
 
     // Latches array - from tagged port registry
     Json::Value latches = Json::arrayValue;

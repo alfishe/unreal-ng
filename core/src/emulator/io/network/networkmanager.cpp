@@ -11,6 +11,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
@@ -18,7 +19,9 @@
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/serial/esp/atmodule.h"
 #include "emulator/io/serial/esp/espnetmodule.h"
+#include "emulator/io/serial/hayesmodempeer.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 NetworkManager::NetworkManager(EmulatorContext* context) : _context(context)
 {
@@ -62,7 +65,7 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (caps.zifi && networkOn)
             plan.zifiPeer = zifiPeer;
     }
-    else if (caps.serialPort == SerialPort::Atm2Kbc)
+    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251)
     {
         // Not on #xxEF: a ZX-WiFi card fits beside it
         plan.machineSerial = true;
@@ -78,6 +81,61 @@ NetworkManager::Plan NetworkManager::MakePlan() const
 
     if (!caps.zifi && !zifiPeer.empty())
         plan.notes.push_back("ZiFi: the machine has no ZiFi (TS-Conf, or a ZX-Evo with [EVO] Avr=TS2016-02 / TS2016-04)");
+
+    // Network cards in expansion slots: hardware the machine config fits (like the machine's own serial port they
+    // are there with the network off - then with no cable)
+    for (const PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+    {
+        if (!slot.networkCard)
+            continue;
+        if (!IsFrameCardKind(slot.configured) && slot.configured != "sprinteresp" && slot.configured != "modem" &&
+            slot.configured != "dual16552")
+        {
+            const std::string why = slot.configured + ": not built yet";
+            plan.notes.push_back(slot.id + ": " + why);
+            continue;
+        }
+        Plan::SlotCard card;
+        card.slotId = slot.id;
+        card.kind = slot.configured;
+        card.chip = slot.chip;
+        card.portKey = slot.portKey;
+        card.base = slot.base;
+        card.irq = slot.irq;
+        card.mac = slot.mac;
+        if (slot.configured == "sprinteresp")
+        {
+            // The board's ESP-12F is an ESP8266: an ESP8266 build from [NETWORK] EspChip, else ESP-AT 2.2.2 (what the
+            // Sprinter ESP Network Kit expects); automatic MAC in Espressif's form, per instance and slot
+            card.chip = "TL16C550C";
+            const auto firmware = static_cast<EspModule::Firmware>(net.espChip);
+            card.espFirmware = static_cast<uint8_t>(EspModule::ChipOf(firmware) == EspModule::Chip::Esp8266
+                                                        ? firmware
+                                                        : EspModule::Firmware::Esp8266At222);
+            if (slot.macAuto)
+                card.mac = {0x5C, 0xCF, 0x7F, 0x5A, slot.instance, card.mac[5]};
+            card.peer = peerOf(slot.peer.c_str(), "AT");
+        }
+        if (slot.configured == "modem")
+        {
+            // The card's own modem on its UART (peer MODEM; another ComPortSpec replaces it, for tests)
+            card.chip = "16550A";
+            card.peer = peerOf(slot.peer.c_str(), "MODEM");
+        }
+        if (slot.configured == "dual16552")
+        {
+            // SprinterSerial: COM1 (USB) and COM2 (RS-232) lines, nothing on them by default
+            card.chip = "PC16552D";
+            card.peer = peerOf(slot.peer.c_str(), "NONE");
+            card.peerB = peerOf(slot.peerB.c_str(), "NONE");
+            card.irqB = slot.irqB;
+            card.partialDecode = slot.partialDecode;
+        }
+        plan.slotCards.push_back(card);
+    }
+    plan.ethernetLink = false;
+    for (const Plan::SlotCard& card : plan.slotCards)
+        plan.ethernetLink = plan.ethernetLink || (networkOn && IsFrameCardKind(card.kind));
 
     if (!networkOn)
         return plan;
@@ -105,7 +163,8 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     if (cards & networkspec::kCardZxWifi)
     {
         // The card's 16550 sits on #F8EF..#FFEF: a clash with the machine's own #xxEF device disables the card
-        const bool ownOnEf = caps.serialPort != SerialPort::None && caps.serialPort != SerialPort::Atm2Kbc;
+        const bool ownOnEf = caps.serialPort != SerialPort::None && caps.serialPort != SerialPort::Atm2Kbc &&
+                             caps.serialPort != SerialPort::Profi8251;
         if (plan.serial != Plan::Serial::None || ownOnEf || (decoder && decoder->ReservesLowByte(ComPort::kPortLowByte)))
         {
             const char* note = caps.serialPort == SerialPort::EvoAvr
@@ -122,27 +181,34 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     return plan;
 }
 
-std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specText, uint32_t espBaud) const
+std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specText, uint32_t espBaud,
+                                                      std::optional<EspModule::Firmware> firmware,
+                                                      const std::array<uint8_t, 6>* mac) const
 {
     ComPortSpec spec;
     std::string error;
     ComPortSpec::Parse(specText.empty() ? "NONE" : specText, spec, error);
-    const EspModule::Chip chip =
-        _context->config.network.espChip == 1 ? EspModule::Chip::Esp8266 : EspModule::Chip::Esp32;
+    const EspModule::Firmware build =
+        firmware ? *firmware : static_cast<EspModule::Firmware>(_context->config.network.espChip);
+    const EspModule::Chip chip = EspModule::ChipOf(build);
     std::unique_ptr<EspModule> esp;
     switch (spec.kind)
     {
         case ComPortSpec::Kind::Loopback:
             return std::make_unique<LoopbackPeer>();
+        case ComPortSpec::Kind::Plug:
+            return std::make_unique<LoopbackPeer>(true);
         case ComPortSpec::Kind::Tcp:
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
         case ComPortSpec::Kind::At:
-            esp = std::make_unique<AtModule>(_network.get(), chip);
+            esp = std::make_unique<AtModule>(_network.get(), build, mac);
             break;
         case ComPortSpec::Kind::Espnet:
             esp = std::make_unique<EspnetModule>(_network.get(), chip);
             break;
+        case ComPortSpec::Kind::Modem:
+            return std::make_unique<HayesModemPeer>(_network.get(), spec, _context->config.network.modemPhonebook);
         default:
             return nullptr;   // nothing on the line
     }
@@ -270,6 +336,22 @@ void NetworkManager::Refit()
             net.atm2IoEspAddress = *change->atm2IoEspAddress;
         if (change->zifi)
             copy(net.zifi, sizeof(net.zifi), *change->zifi);
+        if (change->modemPhonebook)
+            copy(net.modemPhonebook, sizeof(net.modemPhonebook), *change->modemPhonebook);
+        if (!change->slotPeers.empty() && _context->pPortDecoder)
+        {
+            const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+            for (const auto& [slotKey, peer] : change->slotPeers)
+            {
+                const std::string slotId = slotKey.substr(0, 4);
+                const int channel = slotKey.size() > 4 ? 1 : 0;
+                for (const PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+                {
+                    if (slot.id == slotId && slot.setPeer)
+                        slot.setPeer(channel, peer);
+                }
+            }
+        }
         if (change->kbcFirmware)
         {
             // A new controller chip in the socket: it boots afresh; its peer is plugged in again below
@@ -288,8 +370,9 @@ void NetworkManager::Refit()
     if (!_firmwareNote.empty())
         plan.notes.push_back(_firmwareNote);
     const bool same = plan == _plan && !_forceRefit &&
-                      (_network || _com || _atm2IoEsp ||
-                       (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty() && !plan.atm2IoEsp));
+                      (_network || _com || _atm2IoEsp || !_slotCards.empty() ||
+                       (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty() && !plan.atm2IoEsp &&
+                        plan.slotCards.empty()));
     _forceRefit = false;
     if (same)
     {
@@ -315,11 +398,27 @@ void NetworkManager::Refit()
             _zifi->SaveState(*keep->zifi);
         }
     }
-    Unplug();
+    // The Ethernet boards stay when their part of the plan is the same (hardware: only the cable changes); a UART
+    // card is rebuilt around its kept 16550 registers, because its peer lives on the network that is rebuilt
+    auto frameCards = [](const Plan& p) {
+        std::vector<Plan::SlotCard> out;
+        for (const Plan::SlotCard& c : p.slotCards)
+        {
+            if (IsFrameCardKind(c.kind))
+                out.push_back(c);
+        }
+        return out;
+    };
+    const bool keepSlotCards = frameCards(plan) == frameCards(_plan) && !_slotCards.empty();
+    const bool networkOnNow = !_context->pFeatureManager || _context->pFeatureManager->isEnabled(Features::kNetwork);
+    Unplug(keepSlotCards);
     _plan = plan;
 
+    bool slotPeers = false;
+    for (const Plan::SlotCard& card : plan.slotCards)
+        slotPeers = slotPeers || ((!card.peer.empty() || !card.peerB.empty()) && networkOnNow);
     if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty() || !plan.atm2IoEspPeer.empty() ||
-        !plan.zifiPeer.empty())
+        !plan.zifiPeer.empty() || plan.ethernetLink || slotPeers)
     {
         std::unique_ptr<IHostNet> host;
         if (_context->config.network.hostAccess)
@@ -330,6 +429,30 @@ void NetworkManager::Refit()
         }
         _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
         _context->pVirtualNetwork = _network.get();
+    }
+    if (plan.ethernetLink && _network)
+    {
+        EmulatorContext* context = _context;
+        _gateway = std::make_unique<EthernetGateway>(*_network, [context]() { return context->emulatorState.frame_counter; });
+        // A modem that answers calls owns its guest port: the gateway leaves that Forward= rule to it
+        std::vector<uint16_t> modemPorts;
+        auto modemPort = [&modemPorts](const std::string& text) {
+            ComPortSpec spec;
+            std::string error;
+            if (!text.empty() && ComPortSpec::Parse(text, spec, error) && spec.kind == ComPortSpec::Kind::Modem && spec.port)
+                modemPorts.push_back(spec.port);
+        };
+        modemPort(plan.peer);
+        modemPort(plan.machinePeer);
+        modemPort(plan.atm2IoEspPeer);
+        modemPort(plan.zifiPeer);
+        for (const Plan::SlotCard& card : plan.slotCards)
+        {
+            modemPort(card.peer);
+            modemPort(card.peerB);
+        }
+        _gateway->SetReservedGuestPorts(std::move(modemPorts));
+        _context->pEthernetGateway = _gateway.get();
     }
     if (plan.zxNetUsb)
     {
@@ -344,10 +467,184 @@ void NetworkManager::Refit()
         FitMachineSerial(plan);
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
+    FitSlotCards(plan);
     UpdateStatus();
 }
 
-void NetworkManager::Unplug()
+PcSerialCard* NetworkManager::SerialCard(const std::string& slotId) const
+{
+    for (const SlotCard& c : _slotCards)
+    {
+        if (c.serial && c.slotId == slotId)
+            return c.serial.get();
+    }
+    return nullptr;
+}
+
+IEthernetCard* NetworkManager::EthernetCard(const std::string& portKey) const
+{
+    for (const SlotCard& c : _slotCards)
+    {
+        if (c.ethernet && c.ethernet->PortKey() == portKey)
+            return c.ethernet.get();
+    }
+    return nullptr;
+}
+
+void NetworkManager::FitSlotCards(const Plan& plan)
+{
+    // Kept across the refit (the Ethernet boards): only the cable is new
+    for (SlotCard& card : _slotCards)
+    {
+        if (card.ethernet && _gateway)
+        {
+            card.ethernet->SetLink(_gateway.get());
+            _gateway->Attach(card.ethernet.get());
+        }
+    }
+    std::vector<std::pair<std::string, Uart16550::State>> keep;
+    keep.swap(_serialKeep);
+    if (plan.slotCards.empty() || !_context || !_context->pPortDecoder)
+        return;
+    PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+    EmulatorContext* context = _context;
+    // The cards' time: base T-states (3.5 MHz units) - the wire speed does not change with the CPU's turbo
+    auto clock = [context]() -> uint64_t {
+        if (!context->pCore || !context->pCore->GetZ80())
+            return context->emulatorState.t_states;
+        const uint32_t multiplier = context->emulatorState.current_z80_frequency_multiplier
+                                        ? context->emulatorState.current_z80_frequency_multiplier
+                                        : 1u;
+        return context->emulatorState.t_states + context->pCore->GetZ80()->t / multiplier;
+    };
+    for (const Plan::SlotCard& want : plan.slotCards)
+    {
+        bool present = false;
+        for (const SlotCard& have : _slotCards)
+            present = present || have.slotId == want.slotId;
+        if (present)
+            continue;
+        for (PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+        {
+            if (slot.id != want.slotId)
+                continue;
+            if (want.kind == "modem" || want.kind == "dual16552")
+            {
+                PcSerialCard::Settings settings;
+                settings.preset = want.kind == "modem" ? PcSerialCard::Preset::Modem : PcSerialCard::Preset::Dual16552;
+                settings.base = want.base;
+                settings.irq = want.irq;
+                settings.irqB = want.irqB;
+                settings.partialDecode = want.partialDecode;
+                SlotCard card;
+                card.slotId = want.slotId;
+                card.serial = std::make_unique<PcSerialCard>(_context, settings, MakePeer(want.peer, kDefaultEspBaud),
+                                                             settings.preset == PcSerialCard::Preset::Dual16552
+                                                                 ? MakePeer(want.peerB, kDefaultEspBaud)
+                                                                 : nullptr,
+                                                             want.slotId);
+                for (const auto& [key, state] : keep)
+                {
+                    for (int ch = 0; ch < card.serial->Channels(); ++ch)
+                    {
+                        if (key == card.serial->PortKey(ch))
+                            card.serial->RestoreUart(ch, state);
+                    }
+                }
+                std::string why;
+                if (!slot.fit || !slot.fit(card.serial.get(), why))
+                {
+                    _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
+                    continue;
+                }
+                _slotCards.push_back(std::move(card));
+                continue;
+            }
+            if (want.kind == "sprinteresp")
+            {
+                SlotCard card;
+                card.slotId = want.slotId;
+                // The ESP-12F on the card: AT firmware at 115200 (or what the line names: a real ESP on USB, ...)
+                card.serial = std::make_unique<PcSerialCard>(
+                    _context, PcSerialCard::Preset::SprinterEsp,
+                    MakePeer(want.peer, kDefaultEspBaud, static_cast<EspModule::Firmware>(want.espFirmware), &want.mac),
+                    want.slotId);
+                for (const auto& [key, state] : keep)
+                {
+                    if (key == card.serial->PortKey(0))
+                        card.serial->RestoreUart(state);
+                }
+                std::string why;
+                if (!slot.fit || !slot.fit(card.serial.get(), why))
+                {
+                    _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
+                    continue;
+                }
+                _slotCards.push_back(std::move(card));
+                continue;
+            }
+            SlotCard card;
+            card.slotId = want.slotId;
+            if (want.kind == "el3c509b")
+            {
+                // The 3Com EtherLink III: its EEPROM carries the slot's base, IRQ and MAC (network tdd §9)
+                EtherLink3::Settings settings;
+                settings.variant = want.chip == "3C509B-TP" ? EtherLink3::Variant::Tp : EtherLink3::Variant::Tpo;
+                settings.base = want.base;
+                settings.irq = want.irq;
+                settings.mac = want.mac;
+                settings.key = want.portKey;
+                card.ethernet = std::make_unique<EtherLink3>(settings, clock);
+            }
+            else
+            {
+                Ne2000Board::Settings settings;
+                settings.variant = want.chip == "UM9003"   ? Ne2000Board::Variant::Um9003
+                                   : want.chip == "NE1000" ? Ne2000Board::Variant::Ne1000
+                                                           : Ne2000Board::Variant::Rtl8019as;
+                settings.base = want.base;
+                settings.irq = want.irq;
+                settings.mac = want.mac;
+                settings.key = want.portKey;
+                card.ethernet = std::make_unique<Ne2000Board>(settings, clock);
+            }
+            std::string why;
+            if (!slot.fit || !slot.fit(card.ethernet.get(), why))
+            {
+                _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
+                continue;
+            }
+            if (_gateway)
+            {
+                card.ethernet->SetLink(_gateway.get());
+                _gateway->Attach(card.ethernet.get());
+            }
+            _slotCards.push_back(std::move(card));
+        }
+    }
+}
+
+void NetworkManager::UnplugSlotCards()
+{
+    if (_slotCards.empty())
+        return;
+    if (_context && _context->pPortDecoder)
+    {
+        PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+        for (const SlotCard& card : _slotCards)
+        {
+            for (PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+            {
+                std::string why;
+                if (slot.id == card.slotId && slot.fit)
+                    slot.fit(nullptr, why);
+            }
+        }
+    }
+    _slotCards.clear();
+}
+
+void NetworkManager::Unplug(bool keepSlotCards)
 {
     if (_context)
     {
@@ -367,6 +664,52 @@ void NetworkManager::Unplug()
         _context->pVirtualNetwork = nullptr;
     }
     // The adapters first: their sockets close through the virtual network
+    if (_context)
+        _context->pEthernetGateway = nullptr;
+    for (SlotCard& card : _slotCards)
+    {
+        if (card.ethernet)
+            card.ethernet->SetLink(nullptr);
+    }
+    _gateway.reset();
+    // UART cards: their 16550 registers are kept for the card fitted next; the peer goes with the network
+    for (const SlotCard& card : _slotCards)
+    {
+        if (card.serial)
+        {
+            for (int ch = 0; ch < card.serial->Channels(); ++ch)
+            {
+                Uart16550::State state;
+                card.serial->Com(ch).Uart().SaveState(state);
+                _serialKeep.emplace_back(card.serial->PortKey(ch), state);
+            }
+        }
+    }
+    if (!keepSlotCards)
+        UnplugSlotCards();
+    else
+    {
+        std::vector<SlotCard> kept;
+        std::vector<std::string> pulled;
+        for (SlotCard& card : _slotCards)
+        {
+            if (card.serial)
+                pulled.push_back(card.slotId);
+            else
+                kept.push_back(std::move(card));
+        }
+        if (!pulled.empty() && _context && _context->pPortDecoder)
+        {
+            PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+            for (PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+            {
+                std::string why;
+                if (slot.fit && std::find(pulled.begin(), pulled.end(), slot.id) != pulled.end())
+                    slot.fit(nullptr, why);
+            }
+        }
+        _slotCards = std::move(kept);
+    }
     _machinePeer.reset();
     _atm2IoEsp.reset();
     if (_com)
@@ -442,7 +785,29 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             return false;
         }
     }
+    if (change.modemPhonebook)
     {
+        std::map<std::string, std::string> book;
+        if (!HayesModemPeer::ParsePhonebook(*change.modemPhonebook, book, error))
+        {
+            error = "modem_phonebook: " + error;
+            return false;
+        }
+        if (change.modemPhonebook->size() >= sizeof(_context->config.network.modemPhonebook))
+        {
+            error = "modem_phonebook: too long";
+            return false;
+        }
+    }
+    for (const auto& [slotId, peer] : change.slotPeers)
+    {
+        if (peer.size() >= sizeof(sprinterisa::SlotConfig::peer))
+        {
+            error = slotId + "_peer: too long";
+            return false;
+        }
+    }
+        {
         std::lock_guard<std::mutex> lock(_changeMutex);
         _pendingChange = change;
     }
@@ -464,11 +829,31 @@ void NetworkManager::Reset()
 
 void NetworkManager::OnFrame()
 {
+    OnFrameDevices();
+    OnFrameHost();
+}
+
+void NetworkManager::OnFrameDevices()
+{
+    // The devices' own frame work: a pending refit, the cards' and the gateway's timers, the serial peers' flushes,
+    // retries, a dialed link's connect, a modem's escape guard time. It runs before the TTD checkpoint of the boundary
+    // (MainLoop), so the checkpoint holds its result: a replay that starts from that checkpoint does not run it again
+    // and a replay that runs through the boundary runs it in the same place. The host's answers come after it (Pump,
+    // OnFrameHost; during a replay from the journal at the first instruction after the boundary). Work after Pump would
+    // see an answer live that it sees a frame later in a replay (the modem's DNS answer and the connect it starts)
     if (_refitPending)
         Refit();
+    for (SlotCard& card : _slotCards)
+    {
+        if (card.ethernet)
+            card.ethernet->OnFrame();
+    }
+    // The ports' peers work with a virtual network (without one a line has nothing on it: a ZX-Evo's AVR UART
+    // catches up at its next access); the cards in expansion slots always (their UARTs feed the slot's IRQ line)
     if (_network)
     {
-        _network->Pump();
+        if (_gateway)
+            _gateway->OnFrame();
         if (_com)
             _com->OnFrame();
         if (_machinePeer)
@@ -477,8 +862,25 @@ void NetworkManager::OnFrame()
             _atm2IoEsp->OnFrame();
         if (_zifi)
             _zifi->OnFrame();
+    }
+    for (SlotCard& card : _slotCards)
+    {
+        if (card.serial)
+            card.serial->OnFrame();
+    }
+}
+
+void NetworkManager::OnFrameHost()
+{
+    if (_network)
+    {
+        // The host's answers (journaled inputs: after the boundary's checkpoint, like the keyboard's); the gateway
+        // and the peers handle each at once (OnNetEvent)
+        _network->Pump();
         UpdateStatus();
     }
+    else if (!_slotCards.empty())
+        UpdateStatus();   // a slot card's registers in the report follow every frame
     else if ((_com || _plan.machineSerial || _atm2IoEsp) && _context && _context->emulatorState.frame_counter % 25 == 0)
     {
         // A serial port with nothing on its line (a ZX-Evo's AVR UART): no
@@ -508,6 +910,13 @@ void NetworkManager::FillPeerStatus(const ISerialPeer* peer, Status::Com& c) con
         c.phase = kPhases[static_cast<int>(stream->GetPhase())];
         c.error = stream->LastError();
     }
+    if (const auto* modem = dynamic_cast<const HayesModemPeer*>(peer))
+    {
+        c.modem = StateNode::Object();
+        modem->Describe(c.modem);
+        for (const HayesModemPeer::Exchange& e : modem->RecentExchanges())
+            c.exchanges.emplace_back(e.command, e.result);
+    }
 }
 
 void NetworkManager::UpdateStatus()
@@ -525,7 +934,8 @@ void NetworkManager::UpdateStatus()
         s.atm2IoEsp = net.atm2IoEsp[0] ? std::string(net.atm2IoEsp) : std::string("AT");
         s.atm2IoEspAddress = net.atm2IoEspAddress;
         s.zifi = net.zifi[0] ? std::string(net.zifi) : std::string("NONE");
-        s.espChip = net.espChip == 1 ? "ESP8266" : "ESP32";
+        s.modemPhonebook = net.modemPhonebook;
+        s.espChip = EspModule::FirmwareName(static_cast<EspModule::Firmware>(net.espChip));
         s.avrFirmware = Uart16550::AvrFirmwareName(static_cast<Uart16550::AvrFirmware>(_context->config.atm.evo_avr));
         s.dnsMode = net.dnsPass ? "PASS" : "HOST";
         s.hosts = net.hosts;
@@ -551,10 +961,11 @@ void NetworkManager::UpdateStatus()
         if (caps.reloadFirmware)   // the board has the keyboard controller socket
             st.settings.kbcFirmware = Atm2Kbc::FirmwareName(static_cast<Atm2Kbc::Firmware>(_context->config.atm.kbc_firmware));
         st.zifiMachine = caps.zifi;
-        st.serialPort = caps.serialPort == SerialPort::EvoAvr    ? "evo-avr"
-                        : caps.serialPort == SerialPort::ZiFi    ? "zifi"
-                        : caps.serialPort == SerialPort::Atm2Kbc ? "atm2-kbc"
-                                                                 : "none";
+        st.serialPort = caps.serialPort == SerialPort::EvoAvr      ? "evo-avr"
+                        : caps.serialPort == SerialPort::ZiFi      ? "zifi"
+                        : caps.serialPort == SerialPort::Atm2Kbc   ? "atm2-kbc"
+                        : caps.serialPort == SerialPort::Profi8251 ? "profi-8251"
+                                                                   : "none";
         if (caps.serialPort == SerialPort::Atm2Kbc)
         {
             auto& m = st.machineSerial;
@@ -575,6 +986,27 @@ void NetworkManager::UpdateStatus()
                     m.bytesOut = line.bytesOut;
                     m.lost = line.lost;
                 }
+            }
+            FillPeerStatus(_machinePeer.get(), m);
+        }
+        if (caps.serialPort == SerialPort::Profi8251)
+        {
+            // The ZX Profi v5's 8251: the line as the program set it (mode word, the 8253's counter 0)
+            auto& m = st.machineSerial;
+            m.fitted = true;
+            m.flavor = "usart8251";
+            m.baud = caps.serialBaud ? caps.serialBaud() : 0;
+            m.modemLines = _context->config.network.comModemLines != 0;
+            if (auto* profi = dynamic_cast<PortDecoder_Profi*>(_context->pPortDecoder))
+            {
+                const Usart8251& usart = profi->GetUsart();
+                const Usart8251::State& chip = usart.GetState();
+                m.frameBits = usart.FrameBits();
+                m.rts = usart.Rts();
+                m.dtr = usart.Dtr();
+                m.bytesIn = chip.bytesIn;
+                m.bytesOut = chip.bytesOut;
+                m.lost = chip.overruns;
             }
             FillPeerStatus(_machinePeer.get(), m);
         }
@@ -649,6 +1081,51 @@ void NetworkManager::UpdateStatus()
         c.frameBits = uart.FrameBits();
         st.zifiRegisters = _zifi->GetView();
     }
+    if (_context && _context->pPortDecoder)
+    {
+        const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+        for (const PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+        {
+            Status::Slot s;
+            s.id = slot.id;
+            s.bus = slot.bus;
+            s.label = slot.label;
+            s.configured = slot.configured;
+            for (const SlotCard& card : _slotCards)
+            {
+                if (card.slotId == slot.id && card.ethernet)
+                {
+                    s.card = card.ethernet->Kind();
+                    s.details = StateNode::Object();
+                    card.ethernet->Describe(s.details);
+                }
+                if (card.slotId == slot.id && card.serial)
+                {
+                    s.card = card.serial->Kind();
+                    s.details = StateNode::Object();
+                    card.serial->Describe(s.details);
+                    // The lines as configured ([ISA] SlotNPeer / SlotNPeerB, runtime isaN_peer / isaN_peer_b), in
+                    // ComPortSpec terms
+                    for (const Plan::SlotCard& want : _plan.slotCards)
+                    {
+                        if (want.slotId != slot.id)
+                            continue;
+                        s.details["peer_spec"] = want.peer.empty() ? std::string("NONE") : want.peer;
+                        if (s.details.find("channel_b"))
+                            s.details["channel_b"]["peer_spec"] = want.peerB.empty() ? std::string("NONE") : want.peerB;
+                    }
+                }
+            }
+            for (const std::string& note : _plan.notes)
+            {
+                if (note.compare(0, slot.id.size() + 1, slot.id + ":") == 0)
+                    s.note = note.substr(slot.id.size() + 2);
+            }
+            st.expansionSlots.push_back(std::move(s));
+        }
+    }
+    if (_gateway)
+        st.ethernetGateway = _gateway->Describe();
     if (_context)
         st.frame = _context->emulatorState.frame_counter;
     std::lock_guard<std::mutex> lock(_statusMutex);
@@ -781,16 +1258,25 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         }
         else if (key == "esp_chip" || key == "espchip")
         {
-            const std::string v = lower(value);
-            if (v == "esp32")
-                out.espChip = 0;
-            else if (v == "esp8266")
-                out.espChip = 1;
-            else
+            EspModule::Firmware firmware = EspModule::Firmware::Esp32At220;
+            if (!EspModule::ParseFirmware(value, firmware))
             {
-                error = "esp_chip: esp32 | esp8266";
+                error = "esp_chip: esp32 | esp8266 | esp8266-at221 | esp8266-at222";
                 return false;
             }
+            out.espChip = static_cast<uint8_t>(firmware);
+        }
+        else if (key == "isa1_peer" || key == "isa2_peer" || key == "isa1_peer_b" || key == "isa2_peer_b")
+        {
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
+            {
+                error = key + ": " + why;
+                return false;
+            }
+            // "isa1" = the first UART's line, "isa1.b" the second's (SprinterSerial's COM2)
+            out.slotPeers.emplace_back(key.substr(0, 4) + (key.size() > 9 ? ".b" : ""), spec.ToString());
         }
         else if (key == "com_modem_lines" || key == "commodemlines")
         {
@@ -851,6 +1337,17 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
             }
             out.zifi = spec.ToString();
         }
+        else if (key == "modem_phonebook" || key == "phonebook")
+        {
+            std::map<std::string, std::string> book;
+            std::string why;
+            if (!HayesModemPeer::ParsePhonebook(value, book, why))
+            {
+                error = "modem_phonebook: " + why;
+                return false;
+            }
+            out.modemPhonebook = value;
+        }
         else if (key == "zx_wifi" || key == "zxwifi")
         {
             ComPortSpec spec;
@@ -877,7 +1374,8 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         {
             error = "unknown setting '" + rawKey +
                     "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
-                    "com_modem_lines, esp_chip, avr_firmware, kbc_firmware, atm2ioesp, atm2ioesp_address, zifi)";
+                    "com_modem_lines, esp_chip, avr_firmware, kbc_firmware, atm2ioesp, atm2ioesp_address, zifi, isa1_peer, "
+                    "isa2_peer, isa1_peer_b, isa2_peer_b, modem_phonebook)";
             return false;
         }
     }

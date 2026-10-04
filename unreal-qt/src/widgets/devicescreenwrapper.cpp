@@ -187,6 +187,29 @@ void DeviceScreenWrapper::refresh()
         _gpuWindow->refresh();
     else if (_software)
         _software->refresh();
+    emit refreshed();
+}
+
+QRect DeviceScreenWrapper::pictureGlobalRect() const
+{
+    if (_useGPU && _gpuWindow)
+    {
+        const QSize size = _gpuWindow->drawnPictureSize();
+        const QPoint center = _gpuWindow->mapToGlobal(QPoint(_gpuWindow->width() / 2, _gpuWindow->height() / 2));
+        return QRect(center.x() - size.width() / 2, center.y() - size.height() / 2, size.width(), size.height());
+    }
+    if (_software)
+        return QRect(_software->mapToGlobal(QPoint(0, 0)), _software->size());
+    return {};
+}
+
+QRectF DeviceScreenWrapper::pictureSourceRect() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->displaySourceRect();
+    if (_software)
+        return _software->displaySourceRect();
+    return {};
 }
 
 void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t)> fn)

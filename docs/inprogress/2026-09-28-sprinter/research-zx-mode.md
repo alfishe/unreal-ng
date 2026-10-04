@@ -127,7 +127,7 @@ The `.ZX` options and what each one does on the hardware:
 | `/7FFD`, `/1FFD` | the 128 / Scorpion paging ports work | CNF "clean" bits (the PLD clears `#7FFD` / `#1FFD` bits otherwise; hardware-reference §5) |
 | `/mem512` | Pentagon 512 (`#7FFD` bits 6-7) | CNF bit 7; 32 Spectrum pages |
 | `/lines312` | 312-line frame (69 888 T) instead of 320 (71 680 T) | PLD codes `#2C` / `#2D` via `FN_SYNC` |
-| `/sc-int`, `/origin` | INT position: Scorpion, or original Spectrum; default Pentagon | `FN_SYNC` mode 1 / 3 (2 = Pentagon) |
+| `/sc-int`, `/origin` | INT position: Scorpion, or original Spectrum; default Pentagon | `FN_SYNC` mode 1 / 3 (2 = Pentagon). **Correction 2026-10-03:** both launchers' option tables know the word `int-sc` (`spectrum.asm` PARAMS `._Int_sc`, the Peters Plus table at `#88C8`); `/sc-int` in SC256.ZX / SCORPION.ZX matches nothing, so the Scorpion INT is never asked for - which is why §7.2 measured line 287 there |
 | `/origin` (also) | "original waits" on | ALL_MODE = `#FA` instead of `#FE` (bit 2 = 0) |
 | `/to-trdos` | start TR-DOS and run `boot` | the stub jumps to `#3D29` with `#7FFD` = `#10` |
 | `/ret-zx`, `/ret-fn` | after Ctrl+Alt+Del: restart the Spectrum, or go back to DSS | BIOS reset intercept (`RST_CONF.CUSTOM`) |
@@ -221,10 +221,77 @@ when it holds Spectrum page 5 or 7) are copied into video RAM in the PLD's Spect
 the BIOS writes shows a Spectrum screen with border squares (hardware-reference §6). The border color
 comes from `#FE` bits 0-2 through the border squares. The picture is 256×192 doubled horizontally
 inside the 640×256 picture (MAME screenshot [mame-menu-sprinter.png](../../../testdata/machines/sprinter/reference/zx-mode/mame-menu-sprinter.png)).
+The mode table is not bypassed: the launcher's table (dumped 2026-10-02 from the 128 menu and the TR-DOS
+prompt) has border squares `#F8` around 32 × 24 ZX-40 squares from square (4, 4), `m0` = `#30` | third << 6,
+`m1` = `m2` = the cell's address low byte; the reports classify them as Spectrum squares
+([tdd-video.md](tdd-video.md) §7, "Spectrum screen squares").
+
+**Multicolor: when the beam reads a cell (2026-10-03).** Report: in the P128 mode (`\zx\spectrum.exe
+\zx\p128.zx \trd\scroller.trd`, also `atarin.trd`) the attributes lagged behind the pixels, while the
+PENTAGON model showed the demos right. Cause: the INT-to-picture distance. A Spectrum program that changes
+attributes under the beam (multicolor) counts T-states from the INT to the moment the video logic reads a
+cell; the Pentagon reads the first cell 17 988 T after its INT (unreal-ng's demo-verified figure). unreal-ng
+put the Sprinter's INT where MAME does (beam column `scr_a = a + 6` of the first square after the INT run),
+which made the distance **17 980 T**: the Sprinter read every cell 8 T earlier than a Pentagon, so an
+attribute written just in time for a Pentagon arrived after the cell was read and showed one line (or one
+frame) later. The PLD puts the edge 10 T earlier: `INTT` is clocked by `CT5`, which rises 2 T into the
+period of the first square without the INT pattern (`VIDEO2.TDF`), and `INT_X` is set on its rising
+edge (`SP2_ACEX.TDF:744`) - INT to the first Spectrum cell **17 990 T**, the Pentagon's within the PLD's
+2-T phase ([tdd-video.md](tdd-video.md) §3, §5). Inside a cell the PLD reads the attribute every half T
+and the pixel byte once at the cell's start, so a write that lands inside a cell recolors its rest and
+changes its pixels from the next cell on.
+
+Worked example (the INT squares at (40, 33)-(41, 33), the Pentagon setting): the INT is at line 287,
+T 182 (MAME: T 192); the next frame's first Spectrum pixel is line 48, T 28 = frame T 10 780; distance
+71 680 - 64 470 + 10 780 = 17 990 T. A program that writes the attribute of line *k* of the top-left cell
+with `LD (HL),A` starting 17 980 + 224 *k* T after the INT (the byte lands at 17 986 + 224 *k*) colors line
+*k* on a Pentagon and now on the Sprinter; with MAME's INT place it landed 6 T after the Sprinter's read and
+colored line *k* + 1 (`ScreenSprinter_Test.SpectrumScreen_MulticolorRace_SameAttributesAsPentagon`).
+
+Measured on the two demos (BIOS 3.07, WebAPI captures of every frame, the paper area of every 25th
+Sprinter frame of the first 1 450 after RUN compared with the best matching frame of the same demo on the
+PENTAGON model; MAME's `sprinter` driver captured the same way with `mame-zxsteps.sh`, `ZXK_SNAP_EVERY=1`):
+
+| Demo | Before (frames differing / pixels) | After | MAME |
+|---|---|---|---|
+| `scroller.trd` | 21 / 466 | 21 / 258 | 20 / 258 |
+| `atarin.trd` | 19 / 1 198 (attribute squares 7-21 lines tall) | 4 / 14 | 2 / 16 |
+
+The remaining differences are single 8-pixel cells on single lines of one screen column, where the demo
+writes while the beam passes (the two machines differ by 2 T there); MAME has the same ones in
+`scroller.trd`. Why MAME matches with its later INT place was not analysed (its CPU timing in the P128
+mode is the candidate).
+
+**Border against the paper** (owner report 2026-10-03, Across the Edge `\trd\across\0.trd` in P128: "the
+border is one character ahead of the paper"). The INT move above shifts paper and border alike; what was
+wrong is the border's own latency. The PLD clocks `BORDER[]` on `/IOWR` rising (`SP2_ACEX.TDF:310-315`:
+`/IOWR = DFF(/WR or /IO)`, preset while `/IO` is high), i.e. when `/IORQ` ends at the falling edge of T3,
+2.5 T after IORQ goes low; the video logic loads `DCOL` with `BRD = DIR_PORT[7..5] = BORDER[2..0]`
+(`SP2_ACEX.TDF:1022`) in a border square every half T, in the same slot as an attribute
+(`VIDEO2.TDF` `DCOL`), so border and attribute share the path to the screen. unreal-ng called the
+renderer at the port callback (IORQ) and drew the new color from there: 3 T early against the PLD,
+1 T early against an attribute. Now the beam is drawn with the old color up to the I/O cycle's end
+(IORQ + 3 T, the same 0.5 T rounding as the video RAM write: `ScreenSprinter::CatchUpToBorderLatch`).
+
+Measured, the same Pentagon-timed `OUT` on both machines (unit test, IORQ 4-7 T after the beam left the
+paper; ZX column of the first new-color pixel) and Across the Edge's split screen (WebAPI captures, every
+4th of 2 400 frames from the disk menu; the column where the top border turns grey/black, the paper edge at
+ZX column 176 - 48 = 128):
+
+| | PENTAGON | Sprinter before | Sprinter now |
+|---|---|---|---|
+| test: IORQ 4 T after the paper | 268 | 260 (- 8) | 268 |
+| Across the Edge: border edge (paper edge 176) | 176 | 168 (- 8) | 176 |
+
+The PLD's latch alone (IORQ + 3 T) left 2 ZX pixels (1 T), and they were visible in Across the Edge: the
+Sprinter reads the paper 2 T later after its INT (17 990 T) than a Pentagon (17 988 T), but its border latch
+is only 1 T later than the PENTAGON model draws a border (2 T after IORQ). By owner decision (2026-10-03)
+the border is drawn from IORQ + 4 T, 1 T beyond the PLD's latch, so the picture matches the PENTAGON model
+exactly; a capture from a real board decides whether 3 is right after all (TODO).
 
 ### 7.2 Frame and INT
 
-| Mode | Lines | T per frame (3.5 MHz) | INT position (MAME, FN_SYNC) |
+| Mode | Lines | T per frame (3.5 MHz) | INT position (MAME, FN_SYNC; unreal-ng's PLD edge is 10 T earlier, §7.1) |
 |---|---|---|---|
 | Pentagon (default) | 320 | 71 680 | line 287 (T 192) |
 | Scorpion (`/sc-int`) | 320 or 312 | 71 680 / 69 888 | line 271 per `int.csv`; **line 287 T 192 with launcher v2.03 on BIOS 3.06** (SC256.ZX, MAME and unreal-ng, identical mode tables; correction 2026-10-02) |
@@ -254,8 +321,8 @@ Worked example: an `LD A,(#4000)` whose T2 (where the CPU samples /WAIT) falls o
 on alternating 2-T and 0-T waits: 1 T per read, what the zxtime program measures in unreal-ng
 (testdata/machines/sprinter/zx-timing). That is a **uniform slowdown**, not the ULA's frame-position pattern, so
 timing-exact multicolor effects do not match a real Spectrum either way. It is used by `ORIGIN.ZX`. MAME does not
-model it; unreal-ng does since 2026-10-02 (tdd-zx-mode §3.3, the phase relative to the frame is a placeholder until a
-board is measured). Whether the released bitstream was built from this `UPDATE` sheet is **unverified** (the
+model it; unreal-ng does since 2026-10-02 (tdd-zx-mode §3.3; the phase follows from the PLD: INT is a `CT5` rise, so an access
+waits 0, 2, 1, 0 T by its T1 from INT mod 4 - derived 2026-10-03, a board would still confirm it). Whether the released bitstream was built from this `UPDATE` sheet is **unverified** (the
 BIOS-TT changelog mentions the bit as `FN_SINC` bit 3): zxtime on a board answers it.
 
 ### 7.4 Sound
@@ -349,9 +416,9 @@ does not reset).
 | Tape input on `#FE` bit 6 | **works**: 48 BASIC `LOAD ""` loads a TAP at 3.5 MHz (P128.ZX) | `SprinterZxTimeModes_Test.Tape_LoadsAt35MhzNotInTurbo` |
 | Tape time base at 21 MHz | **real time** since 2026-10-02 (`Tape::SetBaseClockTimeBase`, Sprinter only): at 21 MHz the ROM loader fails as on the board | `core/src/emulator/io/tape/tape.cpp` |
 | Fast tape loading trap | would fire in ZX mode: all three 48 ROMs on the disk (`BASIC_48`, `SP__48`, `SC__48`) carry the LD-BYTES signature at `#0556` | `tapefastload.cpp:110-129` |
-| "Original waits" (ALL_MODE bit 2) | **built** 2026-10-02 (4-T CT5 period, phase placeholder) | `SprinterOrigWaits` (`sprinterwaits.h`) |
+| "Original waits" (ALL_MODE bit 2) | **built** 2026-10-02 (4-T CT5 period; phase derived from the PLD 2026-10-03) | `SprinterOrigWaits` (`sprinterwaits.h`) |
 | Snapshot loading | **wrong**: the SNA/Z80 loaders write physical RAM pages 0-7 (`loader_sna.cpp:657`, `memory.RAMPageAddress`), which on the Sprinter are system pages, not the Spectrum pages; nothing refuses a snapshot on the Sprinter (goals FR-51 asked for a refusal) | `core/src/loaders/snapshot/` |
-| ZX-mode state for automation | only `registers.all_mode.zx_screen_shadow` (automation audit row 14) | `sprinterdevicestate.cpp` |
+| ZX-mode state for automation | `registers.all_mode.zx_screen_shadow` (automation audit row 14); the picture: `picture_mode` `spectrum` (machine report, `/state/sprinter/video`, the GUI status bar "Spectrum 256x192, screen 5", 2026-10-02) | `sprinterdevicestate.cpp`, `SprinterPicture` |
 
 ### 10.1 ZX-Evo / TS-Conf for comparison
 

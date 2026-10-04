@@ -49,9 +49,9 @@ enum MemoryBitsEnum : uint8_t
 
 struct MemoryPageDescriptor
 {
-    MemoryBankModeEnum mode;
-    uint8_t page;
-    uint16_t addressInPage;
+    MemoryBankModeEnum mode = BANK_INVALID;
+    uint8_t page = 0xFF;          ///< ROM, RAM or cache (fast RAM) page; 0xFF with BANK_INVALID
+    uint16_t addressInPage = 0;
 };
 
 // Memory interface descriptor
@@ -125,8 +125,17 @@ protected:
     uint8_t* _romBase = nullptr;
 
     MemoryBankModeEnum _bank_mode[4];  // Mode for each of four banks
-    uint8_t* _bank_read[4];            // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
-    uint8_t* _bank_write[4];           // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
+    // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows. Never null
+    // once the constructor ran: every mapping path stores a valid page (DirectReadFromZ80Memory
+    // and the debugger read them from other threads)
+    uint8_t* _bank_read[4] = {};
+    uint8_t* _bank_write[4] = {};
+
+    /// Set by a model whose windows may read differently from the mapped page (a bus redirect):
+    /// DirectReadFromZ80Memory then asks ToolReadRedirect. False on every other machine
+    bool _toolReadRedirect = false;
+    /// What the CPU would read at `addr` given the mapped page's byte `normal`, side-effect free
+    virtual uint8_t ToolReadRedirect([[maybe_unused]] uint16_t addr, uint8_t normal) const { return normal; }
 
     /// Cached RAM page numbers per bank for TTD hot path optimization.
     /// Updated only when bank mapping changes (SetRAMPageToBank*).

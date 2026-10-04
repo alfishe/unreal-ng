@@ -315,6 +315,38 @@ public:
 // still ignore the field continue to work, but instance-filtered observers
 // will treat nil as "does not match my instance".
 
+/// What kind of access a breakpoint fired on (BreakpointTriggeredPayload's address is the
+/// PC, the memory address or the port accordingly)
+enum class BreakpointHitKind : uint8_t
+{
+    Execute = 0,
+    MemoryRead,
+    MemoryWrite,
+    PortIn,
+    PortOut
+};
+
+/// The automation surfaces' name of a breakpoint access kind
+inline const char* BreakpointHitKindName(BreakpointHitKind kind)
+{
+    switch (kind)
+    {
+        case BreakpointHitKind::Execute: return "execute";
+        case BreakpointHitKind::MemoryRead: return "read";
+        case BreakpointHitKind::MemoryWrite: return "write";
+        case BreakpointHitKind::PortIn: return "port_in";
+        case BreakpointHitKind::PortOut: return "port_out";
+    }
+    return "execute";
+}
+
+/// Why the emulator paused, carried with NC_EMULATOR_STATE_CHANGE (StatePaused)
+enum class PauseCause : uint8_t
+{
+    Request = 0,  // Pause() called by a user, a surface or the machine
+    Breakpoint    // a breakpoint fired during the emulator's own run
+};
+
 /// Payload for NC_EMULATOR_STATE_CHANGE.
 /// `_payloadNumber` carries the new EmulatorStateEnum value (StateRun /
 /// StatePaused / StateResumed / StateStopped) — same as the legacy
@@ -323,6 +355,12 @@ class EmulatorStateChangePayload : public SimpleNumberPayload
 {
 public:
     unreal::UUID emulatorId;
+    // StatePaused only: the cause, and for a breakpoint which one and where. Set at the
+    // post: the notification is delivered later, when the emulator may have moved on
+    PauseCause pauseCause{PauseCause::Request};
+    uint16_t breakpointId{0xFFFF};
+    uint16_t address{0};
+    BreakpointHitKind hitKind{BreakpointHitKind::Execute};
 
     EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
         : SimpleNumberPayload(newState), emulatorId(id) {}
@@ -359,6 +397,37 @@ public:
     {}
 
     virtual ~BreakpointTriggeredPayload() = default;
+};
+
+/// Payload of NC_EXECUTION_CPU_STEP posted when a direct run ends (Emulator::DirectStepScope:
+/// RunSingleCPUCycle, RunNCPUCycles, RunFrame, RunTStates, RunUntil*). The other posts of
+/// NC_EXECUTION_CPU_STEP carry no payload. `stopped`: a breakpoint ended the run early
+class CpuStepPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    bool stopped{false};
+    uint16_t breakpointId{0xFFFF};
+    uint16_t address{0};
+    BreakpointHitKind hitKind{BreakpointHitKind::Execute};
+
+    explicit CpuStepPayload(const unreal::UUID& id) : emulatorId(id) {}
+    explicit CpuStepPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
+    virtual ~CpuStepPayload() = default;
+};
+
+/// Payload of NC_BREAKPOINTS_CHANGED: the breakpoint set of this emulator changed (added,
+/// removed, enabled, disabled, regrouped)
+class BreakpointsChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string cpu = "main";        ///< which CPU's breakpoints (protocol.md §5.2)
+    std::vector<uint16_t> ids;       ///< the breakpoints added, removed or changed (hidden ones never)
+
+    explicit BreakpointsChangedPayload(const unreal::UUID& id) : emulatorId(id) {}
+    explicit BreakpointsChangedPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
+    virtual ~BreakpointsChangedPayload() = default;
 };
 
 /// Payload for NC_FEATURE_CHANGED.

@@ -828,6 +828,7 @@ TEST_F(McpTools_Test, InspectState_RegionChangesMixerBios_ReadTheirEndpoints)
     bios["loaded"] = "sp2k-3.04.rom";
     bios["rom_file"] = "rom/sprinter/sp2k-3.04.rom";
     bios["reload_pending"] = false;
+    bios["known_issues"].append("the floppy driver returns with IY changed");
     bios["options"]["fast_start"] = false;
     bios["options"]["accel_int_suspend"] = false;
     _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/bios"] = {200, bios};
@@ -846,6 +847,7 @@ TEST_F(McpTools_Test, InspectState_RegionChangesMixerBios_ReadTheirEndpoints)
     EXPECT_NE(result.text.find("PC 0x8123: rgmod 0x00 -> 0x01"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("covox (COVOX): muted"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[sprinter_bios] loaded sp2k-3.04.rom"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("KNOWN ISSUE: the floppy driver returns with IY changed"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_SprinterAspect_OtherMachineIsUnavailable)
@@ -1281,12 +1283,50 @@ TEST_F(McpTools_Test, MouseInput_ClickWithPreMove_StopsOnMoveError)
     Json::Value args;
     args["action"] = "click";
     args["button"] = "left";
-    args["dx"] = 200;
+    args["dx"] = 100;
     mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
 
     EXPECT_TRUE(result.isError);
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/move"));
     EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/click"));
+}
+
+// A pre-move beyond -127..127 glides (design 2026-10-03 §4): the click queues behind the glide in the core
+TEST_F(McpTools_Test, MouseInput_ClickWithLongPreMove_Glides)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/glide"] = {200, Json::Value(Json::objectValue)};
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/click"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "click";
+    args["button"] = "left";
+    args["dx"] = 300;
+    args["dy"] = -40;
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    EXPECT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/glide"));
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/move"));
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/click"));
+}
+
+TEST_F(McpTools_Test, MouseInput_GlideAndStatusDevice)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/glide"] = {200, Json::Value(Json::objectValue)};
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status?device=sprinter"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "glide";
+    args["dx"] = -1000;
+    args["dy"] = 1000;
+    EXPECT_FALSE(RunTool(*_registry, "mouse_input", args, *_caller).isError);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/glide"));
+
+    Json::Value status;
+    status["action"] = "status";
+    status["device"] = "sprinter";
+    EXPECT_FALSE(RunTool(*_registry, "mouse_input", status, *_caller).isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/mouse/status?device=sprinter"));
 }
 
 TEST_F(McpTools_Test, MouseInput_Press_RequiresButton)
@@ -1348,6 +1388,63 @@ TEST_F(McpTools_Test, AnalyzePerformance_FrameCost_GetsEndpoint)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/frame_cost"));
 }
 
+TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudget_GetsMetricsAndSummarizes)
+{
+    Json::Value reply;
+    reply["valid"] = true;
+    reply["frame"] = 1234;
+    reply["lines"] = 768;
+    reply["hard_budget"] = 1344;
+    reply["soft_budget"] = 1209;
+    reply["worst_line"] = 402;
+    reply["worst_clocks"] = 1247;
+    reply["lines_over_soft"] = 12;
+    reply["lines_over_hard"] = 0;
+    reply["margin"] = 10;
+    reply["measure_always"] = false;
+    reply["in_flight"]["known"] = false;
+    reply["in_flight"]["reason"] = "the machine is running: pause it to read the frame in flight";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac2/metrics?lines=1&in_flight=1"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "vdac2_line_budget";
+    args["lines"] = true;
+    args["in_flight"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("worst line 402 = 1247 of 1344"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("12 line(s) over soft"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("pause it"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
+{
+    Json::Value reply;
+    reply["valid"] = false;
+    reply["measure_always"] = true;
+    _caller->routes["PUT /api/v1/emulator/emu-1/vdac2/metrics"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "vdac2_line_budget_set";
+    args["measure_always"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/vdac2/metrics");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["measure_always"].asBool());
+    EXPECT_FALSE(call->body.isMember("margin"));
+    EXPECT_NE(result.text.find("not measured"), std::string::npos) << result.text;
+
+    Json::Value bad;
+    bad["action"] = "vdac2_line_budget_set";
+    bad["margin"] = 60;
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", bad, *_caller).isError);
+    Json::Value empty;
+    empty["action"] = "vdac2_line_budget_set";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/labels"] = {200, Json::Value(Json::objectValue)};
@@ -1371,6 +1468,140 @@ TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)
 
     ASSERT_FALSE(result.isError);
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/screen/digest"));
+}
+
+namespace
+{
+/// What GET /capture/screen answers for a whole Pentagon frame
+Json::Value ScreenshotBody(bool saved = false)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["format"] = "png";
+    body["area"] = "full";
+    body["width"] = 352;
+    body["height"] = 288;
+    body["size"] = 1234;
+    body["frame"]["width"] = 352;
+    body["frame"]["height"] = 288;
+    body["frame"]["mode"] = "Pentagon128K";
+    body["frame"]["source"] = "native";
+    body["frame"]["frame_number"] = 77;
+    body["screen_window"]["x"] = 48;
+    body["screen_window"]["y"] = 48;
+    body["screen_window"]["width"] = 256;
+    body["screen_window"]["height"] = 192;
+    body["crop"]["x"] = 0;
+    body["crop"]["y"] = 0;
+    body["crop"]["width"] = 352;
+    body["crop"]["height"] = 288;
+    if (saved)
+    {
+        body["saved"] = true;
+        body["file"] = "scratch/my shot.png";
+    }
+    else
+    {
+        body["data"] = "iVBORw0KGgo=";
+    }
+    return body;
+}
+}  // namespace
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_WithoutArguments_LeavesTheDefaultsToTheServer)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, ScreenshotBody()};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/capture/screen"))
+        << "no query: the server's defaults (whole frame, PNG) apply";
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ForwardsAreaFormatAndAnEncodedPath)
+{
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?format=png&area=screen&path=scratch%2Fmy%20shot.png";
+    _caller->routes["GET " + route] = {200, ScreenshotBody(true)};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["area"] = "screen";
+    args["format"] = "png";
+    args["path"] = "scratch/my shot.png";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route)) << "a path with a slash and a space must be percent-encoded";
+    EXPECT_NE(result.text.find("saved to scratch/my shot.png"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_SaysWhatTheImageIs)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, ScreenshotBody()};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("352x288 png"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("full of the 352x288 Pentagon128K frame"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("screen window 256x192 at (48,48)"), std::string::npos) << result.text;
+    EXPECT_FALSE(result.structured.isMember("data")) << "the pixels only come with include_image";
+    EXPECT_TRUE(result.structured.isMember("screen_window")) << "the geometry stays in the structured answer";
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_IncludeImageKeepsTheData)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, ScreenshotBody()};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["include_image"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.structured["data"].asString(), "iVBORw0KGgo=");
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_LiveFrameIsAskedForAndTheBeamIsReported)
+{
+    Json::Value body = ScreenshotBody();
+    body["source"] = "live";
+    body["frame"]["partial"] = true;
+    body["frame"]["beam"]["line"] = 120;
+    body["frame"]["beam"]["tstate"] = 26880;
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?source=live"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["source"] = "live";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/capture/screen?source=live"));
+    EXPECT_NE(result.text.find("live frame"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("beam stopped at line 120 T 26880 (half-drawn frame)"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_AServerRefusalIsAnErrorWithItsReason)
+{
+    Json::Value refusal;
+    refusal["error"] = "Bad Request";
+    refusal["message"] = "Unknown area 'border': use full or screen";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?area=border"] = {400, refusal};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["area"] = "border";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Unknown area 'border'"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("400"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, CaptureMedia_BoundedEveryNthRecording_ReportsCapturedFramesProgress)

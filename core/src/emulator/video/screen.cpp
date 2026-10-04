@@ -744,7 +744,7 @@ uint32_t Screen::GetCurrentTstate()
     // but ULA/screen expects unscaled t-states based on base 3.5MHz clock
     // Video signal timing is independent of CPU speed
     uint32_t scaledTstate = cpu->t;
-    uint32_t unscaledTstate = scaledTstate / state.current_z80_frequency_multiplier;
+    uint32_t unscaledTstate = state.CpuToBaseT(scaledTstate);
 
     return unscaledTstate;
 }
@@ -1035,10 +1035,131 @@ void Screen::ResizePresentSlotsLocked(size_t size)
         _presentSlotProcessed[i] = false;
         _presentSlotShown[i] = false;
         _presentSlotReport[i] = zxdlss::FrameReport{};
+        _presentSlotGeometry[i] = PictureGeometry{};
     }
     _presentBufferSize = size;
     _presentLatchCounter = 0;
 }
+
+/// region <Frame geometry>
+
+PictureRect Screen::WorkingWindow() const
+{
+    const uint16_t width = _framebuffer.width;
+    const uint16_t height = _framebuffer.height;
+    const VideoModeEnum mode = _framebuffer.videoMode;
+    if (mode < M_MAX)
+    {
+        const RasterDescriptor& rd = rasterDescriptors[mode];
+        const bool fits = rd.screenWidth > 0 && rd.screenHeight > 0 &&
+                          static_cast<uint32_t>(rd.screenOffsetLeft) + rd.screenWidth <= width &&
+                          static_cast<uint32_t>(rd.screenOffsetTop) + rd.screenHeight <= height;
+        if (fits)
+            return PictureRect{rd.screenOffsetLeft, rd.screenOffsetTop, rd.screenWidth, rd.screenHeight};
+    }
+    // No descriptor row (or one that does not fit the frame): the whole frame is the picture
+    return PictureRect{0, 0, width, height};
+}
+
+PictureGeometry Screen::DescribeNativeFrame() const
+{
+    PictureGeometry g;
+    g.width = _framebuffer.width;
+    g.height = _framebuffer.height;
+    g.stride = static_cast<uint32_t>(g.width) * RGBA_SIZE;
+    g.screenWindow = WorkingWindow();
+    g.videoMode = _framebuffer.videoMode;
+    g.source = FrameSource::Native;
+    g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    return g;
+}
+
+PictureGeometry Screen::DescribeExternalFrame() const
+{
+    PictureGeometry g;
+    g.width = _external.width;
+    g.height = _external.height;
+    g.stride = static_cast<uint32_t>(g.width) * RGBA_SIZE;
+    g.screenWindow = PictureRect{0, 0, g.width, g.height};  // the card's picture has no border: all of it is the picture
+    g.videoMode = M_NUL;
+    g.source = FrameSource::External;
+    g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    return g;
+}
+
+bool Screen::CaptureCurrentFrame(FrameSnapshot& out) const
+{
+    const FramebufferDescriptor& fb = IsExternalPictureActive() ? _external : _framebuffer;
+    if (fb.memoryBuffer == nullptr || fb.width == 0 || fb.height == 0)
+        return false;
+    out.geometry = IsExternalPictureActive() ? DescribeExternalFrame() : DescribeNativeFrame();
+    out.pixels.assign(fb.memoryBuffer, fb.memoryBuffer + static_cast<size_t>(out.geometry.stride) * out.geometry.height);
+    return true;
+}
+
+bool Screen::SnapshotLive(FrameSnapshot& out, bool emulationParked, uint32_t timeoutMs)
+{
+    if (emulationParked)
+    {
+        if (!CaptureCurrentFrame(out))
+            return false;
+        // Where the beam stopped: the pixels it has not reached are still the previous frame's
+        if (_context && _context->pCore && _context->pCore->GetZ80() && out.geometry.source == FrameSource::Native)
+        {
+            const uint64_t tacts = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
+            const uint32_t perLine = GetTstatesPerLine();
+            out.geometry.beamTstate = static_cast<int32_t>(tacts);
+            out.geometry.beamLine = perLine ? static_cast<int32_t>(tacts / perLine) : -1;
+            out.geometry.partial = IsScreenHQEnabled() && tacts > 0 && tacts < GetMaxFrameTiming();
+        }
+        return true;
+    }
+
+    std::lock_guard<std::mutex> oneAtATime(_liveRequestMutex);
+    std::unique_lock<std::mutex> lock(_liveMutex);
+    _liveDone = false;
+    _liveOk = false;
+    _livePending.store(true, std::memory_order_release);
+    if (!_liveCv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return _liveDone; }))
+    {
+        _livePending.store(false, std::memory_order_release);  // under the lock: the server takes it too
+        return false;
+    }
+    if (!_liveOk)
+        return false;
+    out = std::move(_liveResult);
+    return true;
+}
+
+void Screen::ServeLiveRequest()
+{
+    if (!_livePending.load(std::memory_order_acquire))
+        return;
+    std::lock_guard<std::mutex> lock(_liveMutex);
+    if (!_livePending.exchange(false, std::memory_order_acq_rel))
+        return;  // the waiter gave up in between
+    _liveOk = CaptureCurrentFrame(_liveResult);
+    _liveDone = true;
+    _liveCv.notify_all();
+}
+
+bool Screen::SnapshotPresented(FrameSnapshot& out)
+{
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    size_t index = 0;
+    const uint8_t* slot = PresentedSlotLocked(&index);
+    if (!slot)
+        return false;
+    const PictureGeometry& g = _presentSlotGeometry[index];
+    // Nothing latched into the slot yet (geometry empty), or a slot that does not match the buffer
+    if (g.width == 0 || g.height == 0 || static_cast<size_t>(g.stride) * g.height != _presentBufferSize)
+        return false;
+    out.pixels.assign(slot, slot + _presentBufferSize);
+    out.geometry = g;
+    return true;
+}
+
+/// endregion </Frame geometry>
 
 void Screen::PostVideoModeChanged()
 {
@@ -1105,6 +1226,8 @@ void Screen::LatchExternalFrame()
     const size_t index = _presentLatchCounter % PRESENT_SLOTS;
     VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
     _presentPlaneB[index].clear();  // plane B belongs to the ZX raster
+    _presentSlotWindow[index] = TemporalWindow{};  // no temporal output for an external frame
+    _presentSlotGeometry[index] = DescribeExternalFrame();
     _presentSlotSerial[index] = ++_presentSerial;
     _presentSlotProcessed[index] = false;
     _presentSlotShown[index] = false;
@@ -1136,6 +1259,7 @@ void Screen::LatchFramebuffer()
             _presentPlaneB[index].assign(_planeB.begin(), _planeB.end());
         else if (!_presentPlaneB[index].empty())
             _presentPlaneB[index].clear();
+        _presentSlotGeometry[index] = DescribeNativeFrame();
         _presentSlotSerial[index] = ++_presentSerial;
         _presentSlotProcessed[index] = false;
         _presentSlotShown[index] = false;
@@ -1146,14 +1270,19 @@ void Screen::LatchFramebuffer()
         // one back (WriteTemporalOutput takes _presentMutex: Submit must not)
         if (_temporal)
         {
-            // The colors the frame is drawn in now: the live palette, not a copy
-            uint32_t palette[16];
-            GetRGBAPalette16(palette);
-            const bool planeB = _planeBEnabled && !_planeB.empty();
+            // The machine's ZX frame (plane B, the colors it is drawn in now, where it sits
+            // in the framebuffer); nothing to prepare while no algorithm is selected
+            TemporalFrame& frame = _temporalFrame;
+            frame.planeB = nullptr;
+            frame.width = frame.height = 0;
+            frame.window = TemporalWindow{};
+            frame.notApplicable.clear();
+            if (_temporal->IsEnabled())
+                TemporalInput(frame);
+            _presentSlotWindow[index] = frame.window;
             _temporalDelayFrames.store(
-                static_cast<uint8_t>(_temporal->Submit(_presentSerial, planeB ? _planeB.data() : nullptr,
-                                                       static_cast<int>(_framebuffer.width),
-                                                       static_cast<int>(_framebuffer.height), palette)),
+                static_cast<uint8_t>(_temporal->Submit(_presentSerial, frame.planeB, frame.width, frame.height,
+                                                       frame.palette, &frame.notApplicable)),
                 std::memory_order_release);
         }
         UpdateAudioDelay();
@@ -1184,7 +1313,9 @@ void Screen::FlushAndPresentFramebuffer()
         _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
     else
         _presentPlaneB[0].clear();
+    _presentSlotGeometry[0] = DescribeNativeFrame();
     _presentSlotSerial[0] = ++_presentSerial;
+    _presentSlotWindow[0] = TemporalWindow{};  // never submitted: the effect restarts below
     _presentSlotProcessed[0] = false;
     _presentSlotShown[0] = false;
     _presentSlotReport[0] = zxdlss::FrameReport{};
@@ -1323,23 +1454,60 @@ TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const 
 {
     using Result = TemporalEffects::WriteResult;
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentSlots[0] == nullptr || _framebuffer.width != static_cast<uint32_t>(width) ||
-        _framebuffer.height != static_cast<uint32_t>(height) ||
-        _presentBufferSize != static_cast<size_t>(width) * height * RGBA_SIZE)
+    const int fbWidth = static_cast<int>(_framebuffer.width);
+    const int fbHeight = static_cast<int>(_framebuffer.height);
+    if (_presentSlots[0] == nullptr || _presentBufferSize != static_cast<size_t>(fbWidth) * fbHeight * RGBA_SIZE)
         return Result::Gone;
     for (size_t i = 0; i < PRESENT_SLOTS; i++)
     {
         if (_presentSlotSerial[i] != serial)
             continue;
+        // The ZX frame's place in this slot's framebuffer (recorded at its latch)
+        const TemporalWindow& w = _presentSlotWindow[i];
+        if (w.width != width || w.height != height || w.scaleX < 1 || w.x0 < 0 || w.y0 < 0 ||
+            w.x0 + width * w.scaleX > fbWidth || w.y0 + height > fbHeight)
+            return Result::Gone;
         // Framebuffer format: RGBA8888 (LE uint32 0xAABBGGRR), byte order R, G, B, A
-        uint8_t* dst = _presentSlots[i];
-        const size_t pixels = static_cast<size_t>(width) * height;
-        for (size_t p = 0; p < pixels; ++p)  // SIMD-CANDIDATE(O-14): RGB8 -> RGBA8888 expand
+        uint8_t* const slot = _presentSlots[i];
+        if (w.scaleX == 1 && w.x0 == 0 && width == fbWidth)
         {
-            dst[p * 4 + 0] = rgb[p * 3 + 0];
-            dst[p * 4 + 1] = rgb[p * 3 + 1];
-            dst[p * 4 + 2] = rgb[p * 3 + 2];
-            dst[p * 4 + 3] = 0xFF;
+            // A ZX raster: the output is the frame
+            uint8_t* dst = slot + static_cast<size_t>(w.y0) * fbWidth * RGBA_SIZE;
+            const size_t pixels = static_cast<size_t>(width) * height;
+            for (size_t p = 0; p < pixels; ++p)  // SIMD-CANDIDATE(O-14): RGB8 -> RGBA8888 expand
+            {
+                dst[p * 4 + 0] = rgb[p * 3 + 0];
+                dst[p * 4 + 1] = rgb[p * 3 + 1];
+                dst[p * 4 + 2] = rgb[p * 3 + 2];
+                dst[p * 4 + 3] = 0xFF;
+            }
+        }
+        else
+        {
+            // A ZX frame inside a wider picture (the Sprinter's Spectrum mode): every ZX pixel
+            // scaleX framebuffer pixels; the columns left and right of the window are border,
+            // they repeat the frame's edge pixel so the border stays one color
+            auto rgba = [](const uint8_t* p) {
+                return 0xFF000000u | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[0];
+            };
+            for (int y = 0; y < height; ++y)
+            {
+                uint32_t* row = reinterpret_cast<uint32_t*>(slot) + static_cast<size_t>(w.y0 + y) * fbWidth;
+                const uint8_t* src = rgb + static_cast<size_t>(y) * width * 3;
+                const uint32_t left = rgba(src);
+                const uint32_t right = rgba(src + static_cast<size_t>(width - 1) * 3);
+                int x = 0;
+                for (; x < w.x0; ++x)
+                    row[x] = left;
+                for (int zx = 0; zx < width; ++zx)
+                {
+                    const uint32_t c = rgba(src + static_cast<size_t>(zx) * 3);
+                    for (int k = 0; k < w.scaleX; ++k)
+                        row[x++] = c;
+                }
+                for (; x < fbWidth; ++x)
+                    row[x] = right;
+            }
         }
         _presentSlotProcessed[i] = true;
         _presentSlotReport[i] = report;
@@ -1347,6 +1515,17 @@ TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const 
         return _presentSlotShown[i] ? Result::WrittenAfterShown : Result::Written;
     }
     return Result::Gone;
+}
+
+void Screen::TemporalInput(TemporalFrame& frame)
+{
+    // A ZX raster: plane B is the ZX frame, and the frame is the whole framebuffer
+    frame.planeB = (_planeBEnabled && !_planeB.empty()) ? _planeB.data() : nullptr;
+    frame.width = static_cast<int>(_framebuffer.width);
+    frame.height = static_cast<int>(_framebuffer.height);
+    // The colors the frame is drawn in now: the live palette, not a copy
+    GetRGBAPalette16(frame.palette);
+    frame.window = TemporalWindow{0, 0, 1, frame.width, frame.height};
 }
 
 /// Emulation thread: the audio waits as long as the video beyond the configured
@@ -1414,6 +1593,12 @@ uint16_t Screen::GetDisplayHeight() const
 }
 
 /// endregion </Display viewport>
+
+uint16_t Screen::FirstStoredRasterLine() const
+{
+    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
+    return static_cast<uint16_t>(timing.vSyncLines + timing.vBlankLines);
+}
 
 const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
 {

@@ -20,6 +20,8 @@ what create requests accept). `ram_size` is validated against the model's
 | `PENTAGON` | Pentagon | 128, 512, **1024** | creatable (1024 → Pentagon-1024 decoder) |
 | `48K` | ZX-Spectrum 48k | 48 | creatable |
 | `128k` | ZX-Spectrum 128k | 128 | creatable |
+| `PLUS2` | ZX-Spectrum +2 (grey) | 128 | creatable; 128K hardware, Amstrad ROM (config `spectrum2`) |
+| `PLUS2A` | ZX-Spectrum +2A | 128 | creatable; the +3 without its floppy controller (config `spectrum2a`) |
 | `PLUS3` | ZX-Spectrum +3 | 128 | creatable |
 | `ATM450` | ATM-Turbo v4.50 | **512**, 1024 | creatable; boots the system ROM menu (CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48), see [machines/atm.md](../machines/atm.md) |
 | `ATM710` | ATM-Turbo 2+ v7.10 | 128, 256, 512, 1024 | creatable |
@@ -28,14 +30,27 @@ what create requests accept). `ram_size` is validated against the model's
 | `PROFSCORP` | ZS Scorpion + PROF ROM | 256, 1024 | creatable |
 | `PROFI` (alias `PROFI5`) | Profi v5 | 512, **1024** | creatable; IDE hard disks on `ide0.master` / `ide0.slave` (see [machines/profi.md](../machines/profi.md)) |
 | `PROFI3` | Profi v3 | **512**, 1024 | creatable; Kramis BIOS, monochrome hi-res, no palette, extended ports, RTC or IDE (see [machines/profi.md](../machines/profi.md)) |
-| `TSL`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
+| `TSL` (alias `TSCONF`) | TS-Config | 4096 | creatable; TS-BIOS, TSU, DMA, SD slot `sd.zc` (see [machines/tsconf.md](../machines/tsconf.md)) |
+| `SPRINTER` | Sprinter 2000 | 4096 | creatable; BIOS 3.04 on its own Z84C15, floppy, IDE, PS/2 (see [machines/sprinter.md](../machines/sprinter.md)) |
+| `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
+
+Variants and ZX-Poly are created by name like any model and appear in the
+runtime list too:
+
+| Name | What it is |
+|:--|:--|
+| `TSL-VDAC2` (alias `TSCONF-VDAC2`) | TS-Conf with the VDAC2 card (FT812 graphics on the IDE connector), see [machines/tsconf-vdac2.md](../machines/tsconf-vdac2.md); list entry has `variant: true`, `base_model` |
+| `PROFI-PLUS` (alias `PROFIPLUS`) | Profi v5 with the V0.03 port decoder (`[PROFI] ExtPorts=sys`) and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, see [machines/profi.md](../machines/profi.md) |
+| `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` | four synchronized instances of the base model, see [machines/zxpoly.md](../machines/zxpoly.md); list entry has `zxpoly: true`, `base_model` |
+
+An instance created from a variant reports `variant` / `variant_title` in its identity.
 
 The runtime list is **authoritative over this table** — builds and branches
-differ (see "Branches" below):
+differ:
 
 ```text
 emulator_manage {"action":"list_models"}
-#   → models[] with id, full_name, default_ram_kb, available_ram_sizes_kb, creatable
+#   → models[] with id, name (short name), full_name, default_ram_kb, available_ram_sizes_kb, creatable
 invoke_api     {"path":"/emulator/models"}
 ```
 
@@ -50,8 +65,8 @@ talking to): `GET /emulator/status` → `server.git_branch` / `server.git_commit
 emulator_manage {"action":"create","model":"SCORPION","ram_size":1024}
 #   → Created and started emulator <id> (model <symbolic_id>)
 
-inspect_state {"aspects":["ram_size"]}
-#   → ram_kb: 1024 for the instance above
+inspect_state {"aspects":["machine"]}
+#   → machine.ram_kb: 1024 for the instance above (identity: model, ram_kb, config_folder, ...)
 ```
 
 - `ram_size` is optional; omit it for the model default (e.g. SCORPION → 256).
@@ -67,7 +82,7 @@ inspect_state {"aspects":["ram_size"]}
 
 ```bash
 # Models + creatable flags (authoritative)
-curl -s "$BASE/emulator/models" | jq '.models[] | {id, creatable, default_ram_kb}'
+curl -s "$BASE/emulator/models" | jq '.models[] | {name, creatable, default_ram_kb}'
 
 # Create with model + RAM
 curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
@@ -95,26 +110,24 @@ Create response and `GET /emulator/{id}` share the identity fields:
 - `GET|POST /emulator/{id}/memory/page/{type}/{page}` — read or force-bank a
   page (automation-only views of the memory model).
 - `inspect_state {"aspects":[...]}` — per-topic snapshots: `registers`,
-  `rom`, `video`, `fdc`, `mouse`, `ram_size`, `audio_ay`, `audio_fm`,
+  `rom`, `video`, `fdc`, `mouse`, `machine` (identity incl. `ram_kb`), `audio_ay`, `audio_fm`,
   `audio_gs` (see the sound recipes).
 - Machine blocks: `GET /state/tsconf` (aspect `tsconf`,
   [tsconf.md](../machines/tsconf.md)); `GET /state/sprinter`,
   `/state/sprinter/ports[/lookup]`, `/state/sprinter/text` (aspects `sprinter`,
   `sprinter_ports`, `sprinter_text`, [sprinter.md](../machines/sprinter.md)).
 
-## Branches that add machines and cards
+## Sound cards and config keys
 
-Work-in-progress hardware lives on side branches — a recipe may name one:
+General Sound and MoonSound are on `master`, selected by config keys:
 
-| Branch | Adds | Config delta |
+| Key | Values | Notes |
 |:--|:--|:--|
-| `generalsound` | General Sound **Z80 LLE** mode (default `GSType=Z80` on clone models), GS state + port-trace endpoints | `GSType=Z80`, `GS=rom/gs105a.rom` |
-| `moonsound` | MoonSound (OPL4) card engine; clone-only policy | `MoonSound=1` clones, `=0` real Sinclairs |
+| `[SOUND] GSType` | `NGS` (shipped default: NeoGS card), `Z80` (classic GS, Z80 LLE), `LW` (lightweight player), `BASS` (deprecated alias of `LW`), `NONE` | `GS=rom/gs105a.rom` for the Z80 card |
+| `[SOUND] MoonSound` | `1` clones, `0` real Sinclairs | MoonSound (OPL4) engine; clone-only policy |
 
-On `master` the same config keys exist but some are inert (`MoonSound=` has
-no engine; `GSType=BASS` is the legacy HLE mode). Always check
-`server.git_branch` before asserting hardware behavior that depends on a
-branch. Design docs: [docs/inprogress/](../../docs/inprogress/) —
+Check `server.git_branch` / `server.git_commit` before asserting behavior that
+depends on a side branch. Design docs: [docs/inprogress/](../../docs/inprogress/) —
 `2026-09-19-general-sound/`, `2026-09-13-moonsound/`.
 
 ## Pitfalls

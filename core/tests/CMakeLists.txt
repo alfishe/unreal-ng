@@ -216,7 +216,9 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/debug-event-hub.cpp
         )
+        target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/webapi/src)
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/mcp/src)
         # Plain signature (no keyword) to match the existing target_link_libraries call below
         target_link_libraries(${PROJECT_NAME} jsoncpp_static)

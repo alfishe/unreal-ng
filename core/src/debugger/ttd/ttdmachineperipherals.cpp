@@ -8,6 +8,9 @@
 #include "network/ttdserialport.h"
 #include "network/ttdzifi.h"
 #include "network/ttdzxnetusb.h"
+#include "network/ttdethernetnics.h"
+#include "emulator/cpu/core.h"
+#include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -131,6 +134,40 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto zifi = std::make_unique<TTDZiFi>(context);
         registry.Register(PeripheralId::ZiFi, zifi.get());
         ownedSerializers.push_back(std::move(zifi));
+    }
+    // Network cards in expansion slots (the Sprinter's ISA NE2000): hardware, there with the network off too
+    if (context->pCore && context->pCore->GetNetworkManager() && !context->pCore->GetNetworkManager()->SlotCards().empty())
+    {
+        auto nics = std::make_unique<TTDEthernetNics>(context);
+        registry.Register(PeripheralId::EthernetNics, nics.get());
+        ownedSerializers.push_back(std::move(nics));
+    }
+    // UART cards in expansion slots (the Sprinter's SprinterESP): hardware, there with the network off too
+    if (context->pCore && context->pCore->GetNetworkManager())
+    {
+        NetworkManager* manager = context->pCore->GetNetworkManager();
+        for (int n = 0; n < 2; ++n)
+        {
+            const std::string slot = "isa" + std::to_string(n + 1);
+            if (!manager->SerialCard(slot))
+                continue;
+            // One blob per UART: channel A under SlotSerial1 / 2, a second channel (SprinterSerial's COM2) under
+            // SlotSerial1B / 2B
+            for (int ch = 0; ch < manager->SerialCard(slot)->Channels(); ++ch)
+            {
+                const PeripheralId id = ch == 0 ? (n == 0 ? PeripheralId::SlotSerial1 : PeripheralId::SlotSerial2)
+                                                : (n == 0 ? PeripheralId::SlotSerial1B : PeripheralId::SlotSerial2B);
+                auto serial = std::make_unique<TTDSerialPort>(
+                    context,
+                    [manager, slot, ch]() {
+                        PcSerialCard* card = manager->SerialCard(slot);
+                        return card && ch < card->Channels() ? &card->Com(ch) : nullptr;
+                    },
+                    id, std::string(n == 0 ? "SlotSerial1" : "SlotSerial2") + (ch ? "B" : ""));
+                registry.Register(id, serial.get());
+                ownedSerializers.push_back(std::move(serial));
+            }
+        }
     }
     if (context->pMachineSerialPeer)
     {

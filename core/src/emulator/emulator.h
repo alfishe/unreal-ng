@@ -12,7 +12,9 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <shared_mutex>
 #include <string>
+#include <utility>
 
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
@@ -25,6 +27,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
+#include "emulator/notifications.h"
 #include "emulator/rzx/rzxsession.h"
 
 
@@ -128,6 +131,55 @@ protected:
     // Control flow
     volatile bool _stopRequested = false;
 
+    /// Direct stepping (RunNFrames, RunTStates, RunUntil*, ...) drives the Z80 on the caller's thread while
+    /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
+    /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
+    std::atomic<int> _directStepDepth{0};
+
+public:
+    /// A breakpoint stop: which breakpoint, where (PC, memory address or port) and on what access
+    struct BreakpointStop
+    {
+        bool hit = false;
+        uint16_t breakpointId = 0xFFFF;
+        uint16_t address = 0;
+        BreakpointHitKind kind = BreakpointHitKind::Execute;
+    };
+
+private:
+    /// The breakpoint that stopped the current / last direct run (OnBreakpointHit)
+    BreakpointStop _directStop;
+    /// A breakpoint's pause: Pause() puts it into its NC_EMULATOR_STATE_CHANGE payload, then clears it
+    BreakpointStop _pendingPauseCause;
+    /// The emulator is stopped at an execution breakpoint at this PC (nothing executed since)
+    bool _stoppedAtExecBreakpoint = false;
+    uint16_t _stoppedAtExecPc = 0;
+    /// The direct run's first instruction may pass the execution breakpoint the emulator is stopped at
+    bool _passExecBreakpointArmed = false;
+    uint16_t _passExecBreakpointPc = 0;
+    /// A direct run's loops end on a stop request or on a breakpoint stop
+    bool RunHalted() const { return _stopRequested || _directStop.hit; }
+    /// Marks a direct-stepping call for its duration and holds the host audio output meanwhile (a direct run is
+    /// never paced to real time: the machine computes the same samples, the speakers get nothing, as while
+    /// paused); the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
+    /// skipped updates meanwhile refreshes once, at the end. The first one in starts a new run: no breakpoint
+    /// stop yet, and the first instruction may leave the execution breakpoint the emulator is stopped at
+    class DirectStepScope
+    {
+    public:
+        explicit DirectStepScope(Emulator& emulator);
+        ~DirectStepScope();
+        DirectStepScope(const DirectStepScope&) = delete;
+        DirectStepScope& operator=(const DirectStepScope&) = delete;
+
+    private:
+        Emulator& _emulator;
+        /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
+        /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
+        /// it unmarks it, so Resume's reconcile never sees this hold without its run
+        SoundManager::HostOutputHold _hostHold;
+    };
+
     // Emulator state
     // _pauseWaitMutex guards _isPaused transitions so the parked CPU thread's
     // CV predicate (WaitWhilePaused) can never miss a Pause/Resume/Stop flip;
@@ -146,11 +198,24 @@ protected:
     std::mutex _stopMutex;
     volatile bool _isDebug = false;
     volatile bool _isReleased = false;
+
+    // Context leases (LeaseContext): readers hold _leaseMutex shared; the
+    // removal sets _retiring, then takes it exclusively before Stop()/Release()
+    mutable std::shared_mutex _leaseMutex;
+    std::atomic<bool> _retiring{false};
     std::atomic<bool> _romReloadPending{false};  ///< RequestRomReload: reread the ROM at the next Reset
 
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
     uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    /// A step over that steps across a CALL resumes the machine to a temporary breakpoint: the machine then runs
+    /// paced to real time, but it is a debugger step and must be silent like every other step. The host output
+    /// hold (reason DirectRun) lasts from that resume to the stop: the breakpoint, a cancel or any pause
+    SoundManager::HostOutputHold _stepOverHostHold;
+    /// Id of the NC_EXECUTION_BREAKPOINT observer StepOver() registers; its handler captures this emulator and its
+    /// FeatureManager, so it must be unregistered before either goes away. Never from inside the handler (deadlock)
+    uint64_t _stepOverObserverId = 0;
+    void RemoveStepOverObserver();
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
 
     // Frame step target (persistent to prevent cumulative drift)
@@ -449,9 +514,10 @@ public:
 
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
-    void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
+    /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
+    unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
-    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
+    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames (64-bit T-state budget: TStateRunBudget)
     void StepOver();                                              // Execute instruction, skip calls and subroutines
     void StepOut();                                               // Run until the current subroutine returns (SP-tracking)
 
@@ -459,7 +525,7 @@ public:
     void CancelPendingStepOver();
 
     // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
-    void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
+    void RunTStates(uint64_t tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
     void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
@@ -467,7 +533,7 @@ public:
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
     /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
-    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0,
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
                            bool notifyDebugger = true);
 
     /// Start the current frame again after machine state was replaced from
@@ -521,11 +587,84 @@ public:
     /// Release() has run: the context and every subsystem are gone. A holder
     /// of a shared_ptr (a UI binding) must not call into the instance any more
     bool IsReleased() const { return _isReleased; }
+
+    /// A short-lived guarantee that the context (and every subsystem it points
+    /// to) stays alive: EmulatorManager::RemoveEmulator() waits for all live
+    /// leases before it stops and frees the instance. Empty (false) once the
+    /// removal has begun or the instance is released - the holder then must not
+    /// touch the instance. For threads that do not own the instance (the UI):
+    /// a raw GetContext() can be freed by a removal on another thread at any
+    /// moment. Keep a lease for one handler at most, and never remove the leased
+    /// instance (or wait for a thread that does) while holding it.
+    class ContextLease
+    {
+    public:
+        ContextLease() = default;
+        ContextLease(ContextLease&& other) noexcept
+            : _lock(std::move(other._lock)), _context(std::exchange(other._context, nullptr))
+        {
+        }
+        ContextLease& operator=(ContextLease&& other) noexcept
+        {
+            _lock = std::move(other._lock);
+            _context = std::exchange(other._context, nullptr);
+            return *this;
+        }
+        ContextLease(const ContextLease&) = delete;
+        ContextLease& operator=(const ContextLease&) = delete;
+
+        EmulatorContext* get() const { return _context; }
+        EmulatorContext* operator->() const { return _context; }
+        explicit operator bool() const { return _context != nullptr; }
+
+    private:
+        friend class Emulator;
+        ContextLease(std::shared_lock<std::shared_mutex>&& lock, EmulatorContext* context)
+            : _lock(std::move(lock)), _context(context)
+        {
+        }
+
+        std::shared_lock<std::shared_mutex> _lock;
+        EmulatorContext* _context = nullptr;
+    };
+    ContextLease LeaseContext();
+
+    /// The removal has begun (EmulatorManager): LeaseContext() refuses from now on
+    bool IsRetiring() const { return _retiring.load(); }
+    /// EmulatorManager, first step of a removal: refuse new leases
+    void BeginRetirement();
+    /// EmulatorManager, before Stop()/Release(): wait until every lease taken
+    /// before BeginRetirement() has ended. Hold no lock a lease holder may wait for
+    void WaitForContextLeases();
     void SetState(EmulatorStateEnum state);
 
     // Status methods
     bool IsRunning();
     bool IsPaused();
+
+    /// True when no emulation thread is drawing: not running, or paused and confirmed parked (the pause loop
+    /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another
+    /// thread. False while the thread runs, or between a pause request and its confirmation
+    bool IsEmulationParked();
+    /// Run `work` on the caller's thread while the emulation stays parked: a confirmed pause and no direct run on any
+    /// thread. Resume() waits for it (the pause flag cannot flip meanwhile), so the caller is the only thread driving
+    /// the machine. Returns false, without running `work`, when the machine is not parked. `work` must not pause,
+    /// resume or step this emulator
+    bool RunWhileParked(const std::function<void()>& work);
+    /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
+    bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
+
+    /// Every debugger breakpoint hit goes through here (the Z80's instruction start, memory reads and writes,
+    /// port reads and writes). On the emulator's own run it pauses, notifies and parks the emulation thread
+    /// until Resume(), as before. During a direct run (a control thread stepping a paused emulator: WebAPI,
+    /// CLI, DeZog, Lua, Python) it must not park - nothing would resume the caller - so it records the stop
+    /// (LastDirectStop), notifies, and the run ends after the current step. An execution breakpoint stops a
+    /// direct run before its instruction: the return value true tells the Z80 not to execute it. The
+    /// execution breakpoint the emulator is stopped at does not stop the run's first instruction (stepping
+    /// on from a breakpoint)
+    bool OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
+    /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked
+    const BreakpointStop& LastDirectStop() const { return _directStop; }
     bool IsDestroying();  // Thread-safe check for destruction state
     bool IsDebug();
     std::string GetStatistics();

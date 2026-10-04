@@ -144,6 +144,11 @@ void MainLoop::Run(volatile bool& stopRequested)
         {
             MLOGINFO("Pause requested");
 
+            // Status reads while paused take the published TTD summary: make
+            // it exact before anyone can see this thread parked
+            if (_context->pTimeTravelManager)
+                _context->pTimeTravelManager->OnMachineParking();
+
             // Signal that we've entered paused state
             {
                 std::lock_guard<std::mutex> lock(_pauseMutex);
@@ -457,6 +462,11 @@ void MainLoop::CompleteFrame()
     if (_context->pMediaManager)
         _context->pMediaManager->ApplyPending();
 
+    // The network devices' own boundary work (timers, a serial peer's flush, a dialed link's connect) belongs to the
+    // state the checkpoint holds; the host's answers to them are journaled input and come after it (below)
+    if (_context->pCore)
+        _context->pCore->OnNetworkFrameDevices();
+
     if (_context->pTimeTravelManager)
     {
         try
@@ -494,8 +504,8 @@ void MainLoop::CompleteFrame()
         _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
 
-    // Network adapters: a pending refit, the virtual network's own answers,
-    // then the host's (journaled like the input above: after the checkpoint)
+    // Network adapters: the virtual network's own answers, then the host's
+    // (journaled like the input above: after the checkpoint)
     if (_context->pCore)
     {
         _context->pCore->OnNetworkFrame();
@@ -643,12 +653,22 @@ void MainLoop::OnFrameEnd()
             _frameEndHook(true);
 
         if (!_context->ttdReplayActive)
+        {
+            // A waiting screenshot of the live frame (source=live): this finished frame, before it is latched
+            _context->pScreen->ServeLiveRequest();
             _context->pScreen->LatchFramebuffer();
+        }
     }
     else if (_frameEndHook && !_context->ttdReplayActive)
     {
         _frameEndHook(false);
     }
+
+    // A frame that was not rendered (turbo render decimation) leaves the last rendered, finished frame in the
+    // buffer, which is what the window shows: a waiting live screenshot gets it now instead of waiting for the next
+    // rendered frame (at unlimited speed that can be many frames). A throwaway TTD replay pass is not a frame
+    if (!_renderThisFrame && !_context->ttdReplayActive)
+        _context->pScreen->ServeLiveRequest();
 
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)

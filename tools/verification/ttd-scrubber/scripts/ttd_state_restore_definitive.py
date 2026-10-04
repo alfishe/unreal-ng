@@ -71,7 +71,8 @@ def get_state(iid):
             attr_md5 = hashlib.md5(bytes(data)).hexdigest()
             attr_first = data[0]
     # Screen
-    st, body = http("GET", f"/api/v1/emulator/{iid}/capture/screen")
+    # The server default changed to PNG + area=full; ask for GIF + the working picture explicitly so the hashed bytes keep their old meaning.
+    st, body = http("GET", f"/api/v1/emulator/{iid}/capture/screen?format=gif&area=screen")
     scr_md5 = hashlib.md5(body).hexdigest() if st == 200 else None
     return {"r": r, "pc": pc, "attr_md5": attr_md5, "attr_first": attr_first, "screen_md5": scr_md5}
 

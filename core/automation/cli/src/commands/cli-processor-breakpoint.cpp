@@ -12,81 +12,128 @@
 #include <iomanip>
 #include <sstream>
 
-// HandleBreakpoint - lines 1363-1437
+
+bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, size_t addressIndex, size_t flagsFrom,
+                                       BreakpointSpec& spec, std::string& error) const
+{
+    // The address, or a range "A-B" (both ends inclusive)
+    const std::string& target = args[addressIndex];
+    const size_t dash = target.find('-', 1);
+    uint16_t address = 0;
+    if (!ParseAddress(dash == std::string::npos ? target : target.substr(0, dash), address))
+    {
+        error = "Invalid address '" + target + "' (0-65535, hex as 0x.., #.. or $..; a range as A-B)";
+        return false;
+    }
+    spec.address = address;
+    if (dash != std::string::npos)
+    {
+        uint16_t end = 0;
+        if (!ParseAddress(target.substr(dash + 1), end))
+        {
+            error = "Invalid range end in '" + target + "'";
+            return false;
+        }
+        spec.hasEnd = true;
+        spec.addressEnd = end;
+    }
+
+    // Flags anywhere after the fixed arguments; the rest is the note
+    std::string note;
+    for (size_t i = flagsFrom; i < args.size(); i++)
+    {
+        const std::string& a = args[i];
+        const bool hasValue = i + 1 < args.size();
+        if (a == "--page")
+        {
+            if (!hasValue || !BreakpointManager::ParsePageSpec(args[++i], spec.page, spec.pageType, error))
+            {
+                if (error.empty())
+                    error = "--page needs a page: ramN, romN or cacheN (e.g. --page ram5)";
+                return false;
+            }
+            spec.hasPage = true;
+        }
+        else if (a == "--slot-only")
+            spec.slotOnly = true;
+        else if (a == "--mask")
+        {
+            uint16_t mask = 0;
+            if (!hasValue || !ParseAddress(args[++i], mask))
+            {
+                error = "--mask needs a 16-bit mask (e.g. --mask 0x00FF)";
+                return false;
+            }
+            spec.portMask = mask;
+        }
+        else if (a == "--hits")
+        {
+            if (!hasValue || !BreakpointManager::ParseHitSpec(args[++i], spec.hitMode, spec.hitTarget, error))
+            {
+                if (error.empty())
+                    error = "--hits needs N (the Nth hit), >=N (from the Nth on) or %N (every Nth)";
+                return false;
+            }
+        }
+        else
+            note += (note.empty() ? "" : " ") + a;
+    }
+    spec.note = note;
+    return true;
+}
+
+std::string CLIProcessor::AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what)
+{
+    std::string error;
+    const uint16_t id = manager.AddBreakpoint(spec, error);
+    if (id == BRK_INVALID)
+        return std::string("Error: ") + error;
+    onBreakpointsChanged();
+    // The manager's own one-line description: address, range, access, page, mask, hit policy, note
+    std::string line = manager.FormatBreakpointInfo(id);
+    const size_t first = line.find_first_not_of(' ');
+    return std::string(what) + " #" + std::to_string(id) + " set: " + (first == std::string::npos ? line : line.substr(first));
+}
+
+// HandleBreakpoint
 void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
-
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address> [note]" << NEWLINE << "Sets an execution breakpoint at the specified address."
-           << NEWLINE << "Examples:" << NEWLINE << "  bp 0x1234       - Set breakpoint at address 0x1234" << NEWLINE
-           << "  bp $1234        - Set breakpoint at address $1234 (hex)" << NEWLINE
-           << "  bp #1234        - Set breakpoint at address #1234 (hex)" << NEWLINE
-           << "  bp 1234         - Set breakpoint at address 1234 (decimal)" << NEWLINE
-           << "  bp 1234 Main loop - Set breakpoint with a note" << NEWLINE << "Use 'bplist' to view all breakpoints";
+        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN [--slot-only]] [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Sets an execution breakpoint: one address or a range. With a page it fires on that page through any"
+           << NEWLINE << "slot that shows it (--slot-only: only through the slot of the address). --hits stops on the"
+           << NEWLINE << "Nth hit only, from the Nth on (>=N) or on every Nth (%N); every hit is counted." << NEWLINE
+           << "Examples:" << NEWLINE << "  bp 0x1234            - Breakpoint at 0x1234" << NEWLINE
+           << "  bp 0x8000-0x80FF     - Anywhere in 0x8000-0x80FF" << NEWLINE
+           << "  bp 0xC000 --page ram32 - RAM page 32 offset 0, in whatever slot it is mapped" << NEWLINE
+           << "  bp 0x0038 --hits 50  - The 50th interrupt" << NEWLINE
+           << "  bp 1234 Main loop    - With a note" << NEWLINE << "Use 'bplist' to view all breakpoints";
         session.SendResponse(ss.str());
-
         return;
     }
-
-    uint16_t address;
-    if (!ParseAddress(args[0], address))
-    {
-        session.SendResponse("Invalid address format or out of range (must be 0-65535)");
-        return;
-    }
-
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
         return;
     }
-
-    uint16_t bpId = bpManager->AddExecutionBreakpoint(address);
-
-    // Add note if provided
-    if (bpId != BRK_INVALID && args.size() > 1)
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_EXECUTE;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 1, spec, error))
     {
-        // Collect all remaining arguments as the note
-        std::string note;
-        for (size_t i = 1; i < args.size(); ++i)
-        {
-            if (i > 1)
-                note += " ";
-            note += args[i];
-        }
-
-        // Set the note for this breakpoint
-        auto& breakpoints = bpManager->GetAllBreakpoints();
-        if (breakpoints.find(bpId) != breakpoints.end())
-        {
-            breakpoints.at(bpId)->note = note;
-        }
+        session.SendResponse("Error: " + error);
+        return;
     }
-
-    std::ostringstream oss;
-    if (bpId != BRK_INVALID)
-    {
-        oss << "Breakpoint #" << bpId << " set at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
-
-        // Notify UI components that breakpoints have changed
-        onBreakpointsChanged();
-    }
-    else
-    {
-        oss << "Failed to set breakpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
-    }
-
-    session.SendResponse(oss.str());
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Breakpoint"));
 }
 
 // HandleBPList - lines 1439-1468
@@ -121,200 +168,142 @@ void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<
     session.SendResponse(list);
 }
 
-// HandleWatchpoint - lines 1470-1564
+// HandleWatchpoint
 void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
-
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-
-    if (args.empty() || args.size() < 2)
+    if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: wp <address> <type> [note]" << NEWLINE << "Sets a memory watchpoint at the specified address."
-           << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
+        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN [--slot-only]] [--hits N|>=N|%N] [note]"
+           << NEWLINE << "Sets a memory watchpoint on one address or a range (with a page: on that page through any slot"
+           << NEWLINE << "that shows it)." << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
            << "  w    - Watch for memory writes" << NEWLINE << "  rw   - Watch for both reads and writes" << NEWLINE
-           << "Examples:" << NEWLINE << "  wp 0x1234 r     - Watch for reads at address 0x1234" << NEWLINE
-           << "  wp $4000 w      - Watch for writes at address $4000 (hex)" << NEWLINE
-           << "  wp #8000 rw     - Watch for reads/writes at address #8000 (hex)" << NEWLINE
-           << "  wp 49152 rw Stack pointer - Watch for reads/writes with a note";
+           << "Examples:" << NEWLINE << "  wp 0x1234 r          - Reads at 0x1234" << NEWLINE
+           << "  wp 0x4000-0x57FF w   - Writes to the screen bitmap" << NEWLINE
+           << "  wp 0x0100 w --page ram7 - Writes to RAM page 7 offset #0100, in whatever slot" << NEWLINE
+           << "  wp #5C3A rw --hits >=10 IY area - From the 10th access on, with a note";
         session.SendResponse(ss.str());
-
         return;
     }
-
-    uint16_t address;
-    if (!ParseAddress(args[0], address))
-    {
-        session.SendResponse("Invalid address format or out of range (must be 0-65535)\n");
-        return;
-    }
-
-    std::string typeStr = args[1];
+    const std::string& typeStr = args[1];
     uint8_t memoryType = BRK_MEM_NONE;
-
-    // Parse the type string
     if (typeStr.find('r') != std::string::npos)
         memoryType |= BRK_MEM_READ;
     if (typeStr.find('w') != std::string::npos)
         memoryType |= BRK_MEM_WRITE;
-
     if (memoryType == BRK_MEM_NONE)
     {
         session.SendResponse("Invalid watchpoint type. Use 'r', 'w', or 'rw'.");
         return;
     }
-
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
         return;
     }
-
-    uint16_t bpId = bpManager->AddCombinedMemoryBreakpoint(address, memoryType);
-
-    // Add note if provided
-    if (bpId != BRK_INVALID && args.size() > 2)
+    BreakpointSpec spec;
+    spec.access = memoryType;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 2, spec, error))
     {
-        // Collect all remaining arguments as the note
-        std::string note;
-        for (size_t i = 2; i < args.size(); ++i)
-        {
-            if (i > 2)
-                note += " ";
-            note += args[i];
-        }
-
-        // Set the note for this breakpoint
-        auto& breakpoints = bpManager->GetAllBreakpoints();
-        if (breakpoints.find(bpId) != breakpoints.end())
-        {
-            breakpoints.at(bpId)->note = note;
-        }
+        session.SendResponse("Error: " + error);
+        return;
     }
-
-    std::ostringstream oss;
-    if (bpId != BRK_INVALID)
-    {
-        oss << "Watchpoint #" << bpId << " set at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
-        oss << " (";
-        if (memoryType & BRK_MEM_READ)
-            oss << "read";
-        if ((memoryType & BRK_MEM_READ) && (memoryType & BRK_MEM_WRITE))
-            oss << "/";
-        if (memoryType & BRK_MEM_WRITE)
-            oss << "write";
-    }
-    else
-    {
-        oss << "Failed to set watchpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
-    }
-
-    session.SendResponse(oss.str());
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Watchpoint"));
 }
 
-// HandlePortBreakpoint - lines 1566-1662
+// HandlePortBreakpoint
 void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
-
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-
-    if (args.empty() || args.size() < 2)
+    if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: bport <port> <type> [note]" << NEWLINE << "Sets a port breakpoint at the specified port address."
-           << NEWLINE << "Types:" << NEWLINE << "  i    - Watch for port IN operations" << NEWLINE
+        ss << "Usage: bport <port> <i|o|io> [--mask M] [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Sets a port breakpoint. With --mask it matches every port where (port & M) == (<port> & M)." << NEWLINE
+           << "Types:" << NEWLINE << "  i    - Watch for port IN operations" << NEWLINE
            << "  o    - Watch for port OUT operations" << NEWLINE << "  io   - Watch for both IN and OUT operations"
-           << NEWLINE << "Examples:" << NEWLINE << "  bport 0x1234 i     - Watch for IN operations at port 0x1234"
-           << NEWLINE << "  bport $FE o        - Watch for OUT operations at port $FE (hex)" << NEWLINE
-           << "  bport #A0 io       - Watch for IN/OUT at port #A0 (hex)" << NEWLINE
-           << "  bport 254 io Keyboard port - Watch for IN/OUT with a note";
+           << NEWLINE << "Examples:" << NEWLINE << "  bport 0x7FFD o       - OUT to 0x7FFD" << NEWLINE
+           << "  bport 0xFE i --mask 0x00FF - IN from #FE with any high byte (the keyboard)" << NEWLINE
+           << "  bport 254 io Keyboard port - IN/OUT with a note";
         session.SendResponse(ss.str());
-
         return;
     }
-
-    uint16_t port;
-    if (!ParseAddress(args[0], port, 0xFFFF))
-    {
-        session.SendResponse("Invalid port format or out of range (must be 0-65535)\n");
-        return;
-    }
-
-    std::string typeStr = args[1];
+    const std::string& typeStr = args[1];
     uint8_t ioType = BRK_IO_NONE;
-
-    // Parse the type string
     if (typeStr.find('i') != std::string::npos)
         ioType |= BRK_IO_IN;
     if (typeStr.find('o') != std::string::npos)
         ioType |= BRK_IO_OUT;
-
     if (ioType == BRK_IO_NONE)
     {
         session.SendResponse("Invalid port breakpoint type. Use 'i', 'o', or 'io'.");
         return;
     }
-
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
         return;
     }
-
-    uint16_t bpId = bpManager->AddCombinedPortBreakpoint(port, ioType);
-
-    // Add note if provided
-    if (bpId != BRK_INVALID && args.size() > 2)
+    BreakpointSpec spec;
+    spec.type = BRK_IO;
+    spec.access = ioType;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 2, spec, error))
     {
-        // Collect all remaining arguments as the note
-        std::string note;
-        for (size_t i = 2; i < args.size(); ++i)
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Port breakpoint"));
+}
+
+// HandleBPHits: bphits reset [id]
+void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    if (args.empty() || args[0] != "reset")
+    {
+        session.SendResponse(std::string("Usage: bphits reset [id]") + NEWLINE +
+                             "Sets the hit counters back to 0 (one breakpoint, or all); bplist shows them.");
+        return;
+    }
+    if (args.size() > 1)
+    {
+        uint16_t id = 0;
+        if (!ParseAddress(args[1], id) || !bpManager->ResetHitCount(id))
         {
-            if (i > 2)
-                note += " ";
-            note += args[i];
+            session.SendResponse("Error: no breakpoint " + args[1]);
+            return;
         }
-
-        // Set the note for this breakpoint
-        auto& breakpoints = bpManager->GetAllBreakpoints();
-        if (breakpoints.find(bpId) != breakpoints.end())
-        {
-            breakpoints.at(bpId)->note = note;
-        }
+        session.SendResponse("Hit counter of #" + std::to_string(id) + " reset");
+        return;
     }
-
-    std::ostringstream oss;
-    if (bpId != BRK_INVALID)
-    {
-        oss << "Port breakpoint #" << bpId << " set at port 0x" << std::hex << std::setw(4) << std::setfill('0')
-            << port;
-        oss << " (";
-        if (ioType & BRK_IO_IN)
-            oss << "in";
-        if ((ioType & BRK_IO_IN) && (ioType & BRK_IO_OUT))
-            oss << "/";
-        if (ioType & BRK_IO_OUT)
-            oss << "out";
-        oss << ")";
-    }
-    else
-    {
-        oss << "Failed to set port breakpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << port;
-    }
-
-    session.SendResponse(oss.str());
+    bpManager->ResetAllHitCounts();
+    session.SendResponse("All hit counters reset");
 }
 
 // HandleBPClear - lines 1664-1836

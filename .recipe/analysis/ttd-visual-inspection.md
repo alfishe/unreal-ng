@@ -9,12 +9,12 @@ the capture call lands."
 Use this instead of live pause/screenshot cycles whenever you need to be
 certain two inspections (or a screenshot you're comparing against a
 person's own screenshot) are of the *same* instant. A live `pause` +
-`capture/screen` round-trip is not that guarantee — the present/latch
-pipeline can have a frame or two of delay, and if the GUI's own render
-path diverges from the capture endpoint's framebuffer (a real
-possibility, not hypothetical — it happened during this session's ATM
-video investigation), the two will visibly disagree even though the
-machine is genuinely paused. Seeking TTD to a recorded frame removes that
+`capture/screen` round-trip is not that guarantee — a screenshot takes the
+presented frame, which lags the machine by the present delay (2 frames by
+default, more with ZX DLSS), so two calls a moment apart can land on
+different frames while the machine is running. (The GUI and the screenshot
+read that same presented frame; see
+[agent-screenshot-view.md](../media/agent-screenshot-view.md).) Seeking TTD to a recorded frame removes that
 ambiguity: the same frame, seeked twice, reads back bit-identical state.
 
 This composes three recipes that already exist — read them for full
@@ -49,7 +49,7 @@ time_travel        {"action":"bookmark_add","label":"glitch"}
 # 3. seek to an exact frame (absolute, or by bookmark) and inspect it
 time_travel        {"action":"seek","frame":3520}         # or {"action":"seek_bookmark","label":"glitch"}
 inspect_state      {"aspects":["registers","video","screen_ocr","ttd"]}
-capture_media      {"action":"screenshot","mode":"full","format":"png",
+capture_media      {"action":"screenshot","area":"full","format":"png",
                    "filename":"scratch/frame-3520.png"}   # server-side save: ../media/agent-screenshot-view.md
 
 # 4. step one frame/instruction at a time around that point
@@ -76,11 +76,15 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/
 
 # inspect that exact frame
 curl -s "$BASE/emulator/$EMU_ID/state/registers" | jq '{pc, af, hl}'
-curl -s "$BASE/emulator/$EMU_ID/capture/screen?format=png&mode=full&path=scratch/frame-3520.png" | jq '{saved, file}'
+curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=scratch/frame-3520.png" | jq '{saved, file}'
 
 # byte-level checks at this frame
 curl -s "$BASE/emulator/$EMU_ID/memory/read/0xC000?length=256&format=full" | jq '.data[:8]'
 ```
+
+For a whole range of frames, `POST /ttd/export-clip` writes a lossless clip in
+one call instead of a seek and a capture per frame (see
+[ttd-recording.md](ttd-recording.md#inspect-a-file-search-port-journals-export-a-clip)).
 
 ## Why record first instead of just pausing live
 
@@ -95,7 +99,7 @@ curl -s "$BASE/emulator/$EMU_ID/memory/read/0xC000?length=256&format=full" | jq 
   glitch boundary to see exactly which frame introduced it, then
   `step-instruction` within that frame to find which write did it.
 - **A screenshot of a seeked frame IS the frame.** There's no present-queue
-  latency or live-vs-capture divergence to worry about — TTD restores
+  latency to worry about — TTD restores
   full state (including the framebuffer) to that recorded point before
   you inspect it.
 

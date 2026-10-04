@@ -20,12 +20,18 @@ protected:
 
     void Make(EspModule::Chip chip, const VirtualNetworkConfig& config)
     {
+        Make(chip == EspModule::Chip::Esp8266 ? EspModule::Firmware::Esp8266NonOs174 : EspModule::Firmware::Esp32At220,
+             config);
+    }
+
+    void Make(EspModule::Firmware firmware, const VirtualNetworkConfig& config = {})
+    {
         _esp.reset();
         _net.reset();
         auto host = std::make_unique<FakeHostNet>();
         _host = host.get();
         _net = std::make_unique<VirtualNetwork>(nullptr, std::move(host), config);
-        _esp = std::make_unique<AtModule>(_net.get(), chip);
+        _esp = std::make_unique<AtModule>(_net.get(), firmware);
         _esp->SetClock([this]() { return _now; }, 3500000);
         _esp->OnLineSettings(SerialLine());
         Read(300000);   // the power-up banner
@@ -397,4 +403,153 @@ TEST_F(AtModule_Test, StateRoundTrip)
     while (copy->HasByte())
         out.push_back(static_cast<char>(copy->TakeByte()));
     EXPECT_EQ(out, "+CIPMUX:1\r\n\r\nOK\r\n") << "echo off and mux on came back";
+}
+
+// The ESP8266 ESP-AT 2.2.1 / 2.2.2 presets (network tdd §8.3; the Sprinter ESP Network Kit tells them apart by
+// AT+SYSSTORE? and needs the 2.x command forms)
+TEST_F(AtModule_Test, Esp8266At22x_IdentityAndTheSysstoreProbe)
+{
+    Make(EspModule::Firmware::Esp8266At222);
+    Init();
+    Cmd("AT+GMR");
+    std::string out = Read();
+    EXPECT_NE(out.find("AT version:2.2.2.0("), std::string::npos) << out;
+    EXPECT_NE(out.find("ESP8266"), std::string::npos) << out;
+    Cmd("AT+SYSSTORE?");
+    EXPECT_EQ(Read(), "+SYSSTORE:1\r\n\r\nOK\r\n");
+    Cmd("AT+SYSSTORE=0");
+    EXPECT_EQ(Read(), "\r\nOK\r\n");
+    Cmd("AT+SYSSTORE?");
+    EXPECT_EQ(Read(), "+SYSSTORE:0\r\n\r\nOK\r\n");
+
+    Make(EspModule::Firmware::Esp8266At221);
+    Init();
+    Cmd("AT+GMR");
+    out = Read();
+    EXPECT_NE(out.find("AT version:2.2.1.0("), std::string::npos) << out;
+    Cmd("AT+SYSSTORE?");
+    EXPECT_EQ(Read(), "\r\nERROR\r\n") << "2.2.1 has no SYSSTORE: the kit's 2.2.1 profile";
+    Cmd("AT+CIPRECVMODE=1");
+    EXPECT_EQ(Read(), "\r\nERROR\r\n") << "2.2.1: active +IPD receive only";
+    Cmd("AT+CIPRECVDATA=0,10");
+    EXPECT_EQ(Read(), "\r\nERROR\r\n");
+
+    Make(EspModule::Firmware::Esp8266NonOs174);
+    Init();
+    Cmd("AT+SYSSTORE?");
+    EXPECT_EQ(Read(), "\r\nERROR\r\n") << "NonOS 1.7.4 has no SYSSTORE";
+}
+
+TEST_F(AtModule_Test, Esp8266At22x_CommandsTheKitSends)
+{
+    Make(EspModule::Firmware::Esp8266At222);
+    Init();
+    for (const char* ok : {"AT+CWMODE=1,0", "AT+SYSLOG=1", "AT+CWDHCP=1,1", "AT+SLEEP=0", "AT+CIPTCPOPT=0,-1,0,1",
+                           "AT+CIPSERVERMAXCONN=2", "AT+CIPDNS=1,\"1.1.1.1\",\"8.8.8.8\""})
+    {
+        Cmd(ok);
+        EXPECT_EQ(Read(), "\r\nOK\r\n") << ok;
+    }
+    Cmd("AT+CIPDNS?");
+    EXPECT_EQ(Read(), "+CIPDNS:1,\"1.1.1.1\",\"8.8.8.8\"\r\n\r\nOK\r\n");
+    Cmd("AT+CIPSERVERMAXCONN?");
+    EXPECT_EQ(Read(), "+CIPSERVERMAXCONN:2\r\n\r\nOK\r\n");
+    Cmd("AT+UART_CUR?");
+    EXPECT_EQ(Read(), "+UART_CUR:115200,8,1,0,3\r\n\r\nOK\r\n");
+    Cmd("AT+CWLAPOPT=1,23");
+    EXPECT_EQ(Read(), "\r\nOK\r\n");
+    Cmd("AT+CWLAP");
+    EXPECT_EQ(Read(2000000), "+CWLAP:(3,\"UnrealNG\",-48,6)\r\n\r\nOK\r\n") << "ecn, ssid, rssi, channel (mask 23)";
+    Cmd("AT+PING=\"10.0.2.2\"");
+    const std::string ping = Read(100000);
+    EXPECT_EQ(ping.rfind("+PING:", 0), 0u) << ping;
+    Cmd("AT+CIPSTA?");
+    EXPECT_NE(Read().find("+CIPSTA:ip:\"10.0.2.15\""), std::string::npos);
+
+    Make(EspModule::Firmware::Esp8266NonOs174);
+    Init();
+    Cmd("AT+CWMODE=1,0");
+    EXPECT_EQ(Read(), "\r\nERROR\r\n") << "NonOS 1.7.4: one argument";
+}
+
+TEST_F(AtModule_Test, Esp8266At222_PassiveReceiveInThe2xForm)
+{
+    Make(EspModule::Firmware::Esp8266At222);
+    Init();
+    Cmd("AT+CIPRECVMODE=1");
+    Read();
+    const uint16_t socket = Connect();
+    Read();
+    const uint8_t data[] = {'a', 'b', 'c'};
+    _host->Push(NetEventType::Data, socket, NetEventStatus::Ok, {}, std::vector<uint8_t>(data, data + 3));
+    _net->Pump();
+    EXPECT_EQ(Read(), "+IPD,3\r\n");
+    Cmd("AT+CIPRECVDATA=3");
+    EXPECT_EQ(Read(), "+CIPRECVDATA:3,abc\r\n\r\nOK\r\n");
+}
+
+// The module's RST and GPIO0 pins (a card that wires them: the SprinterESP's 16550 OUT1 / OUT2)
+TEST_F(AtModule_Test, ResetPin_SilentWhileHeldThenBootsAtTheFactoryLine)
+{
+    Make(EspModule::Firmware::Esp8266At222);
+    Init();
+    Cmd("AT+CIPMUX=1");
+    Cmd("AT+UART_CUR=230400,8,1,0,0");
+    Read(50000);
+    EXPECT_EQ(_esp->Baud(), 230400u);
+    _esp->SetResetPin(true);
+    EXPECT_TRUE(_esp->ResetHeld());
+    EXPECT_FALSE(_esp->HasByte());
+    Cmd("AT");
+    EXPECT_EQ(Read(1000000), "") << "held in reset: nothing answers";
+    _esp->SetResetPin(false);
+    EXPECT_EQ(_esp->Baud(), 115200u) << "UART_CUR forgotten: the factory rate";
+    EXPECT_TRUE(_esp->HonorsRts());
+    const std::string boot = Read(2500000);
+    EXPECT_EQ(boot.rfind("\r\nready\r\n", 0), 0u) << boot;
+    EXPECT_NE(boot.find("WIFI GOT IP"), std::string::npos) << "the saved access point joins again";
+    Cmd("AT+CIPMUX?");
+    EXPECT_EQ(Read(), "AT+CIPMUX?\r\n+CIPMUX:0\r\n\r\nOK\r\n") << "echo back on, the session settings reset";
+    EXPECT_EQ(_esp->HardwareResets(), 1u);
+}
+
+TEST_F(AtModule_Test, FlashPin_LowAtReleaseIsTheRomDownloadMode)
+{
+    Make(EspModule::Firmware::Esp8266At222);
+    Init();
+    _esp->SetFlashPin(true);
+    _esp->SetResetPin(true);
+    _esp->SetResetPin(false);
+    EXPECT_TRUE(_esp->DownloadMode());
+    Cmd("AT");
+    EXPECT_EQ(Read(1500000), "") << "the ROM waits for a flasher: no AT";
+    _esp->SetFlashPin(false);
+    _esp->SetResetPin(true);
+    _esp->SetResetPin(false);
+    EXPECT_FALSE(_esp->DownloadMode());
+    EXPECT_NE(Read(1500000).find("ready"), std::string::npos);
+}
+
+TEST_F(AtModule_Test, PinsAndPresetSettingsSurviveTheStateRoundTrip)
+{
+    Make(EspModule::Firmware::Esp8266At222);
+    Init();
+    Cmd("AT+SYSSTORE=0");
+    Cmd("AT+CIPDNS=1,\"9.9.9.9\"");
+    Read();
+    _esp->SetFlashPin(true);
+    auto state = std::make_unique<netstate::EspModuleState>();
+    _esp->SaveState(*state);
+    auto copy = std::make_unique<AtModule>(_net.get(), EspModule::Firmware::Esp8266At222);
+    copy->SetClock([this]() { return _now; }, 3500000);
+    copy->LoadState(*state, nullptr);
+    EXPECT_TRUE(copy->FlashPinLow());
+    EXPECT_FALSE(copy->SysStore());
+    EXPECT_EQ(copy->ManualDns(0), NetIp(9, 9, 9, 9));
+
+    _esp->SetResetPin(true);   // the session settings go with the reset; the pin state stays in the blob
+    _esp->SaveState(*state);
+    copy->LoadState(*state, nullptr);
+    EXPECT_TRUE(copy->ResetHeld());
+    EXPECT_TRUE(copy->SysStore());
 }

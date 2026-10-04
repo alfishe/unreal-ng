@@ -531,7 +531,8 @@ void SpeedControlWidget::updateLabel()
     const PresetConfig& cfg = presets[pos];
     QString text = cfg.label;
 
-    if (_emulator)
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    if (context)
     {
         switch (cfg.stepType)
         {
@@ -548,15 +549,13 @@ void SpeedControlWidget::updateLabel()
                 break;
             case StepType::Scanlines:
                 {
-                    auto* ctx = _emulator->GetContext();
-                    unsigned L = ctx->config.t_line;
+                    unsigned L = context->config.t_line;
                     text += QString(" (%1T)").arg(L * cfg.lineNum);
                 }
                 break;
             case StepType::Frame:
                 {
-                    auto* ctx = _emulator->GetContext();
-                    unsigned F = ctx->config.frame;
+                    unsigned F = context->config.frame;
                     text += QString(" (%1T)").arg(F);
                 }
                 break;
@@ -568,7 +567,8 @@ void SpeedControlWidget::updateLabel()
 
 unsigned SpeedControlWidget::getTStatesForPreset(int position) const
 {
-    if (!_emulator)
+    EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+    if (!ctx)
         return 0;
 
     const auto& presets = getPresets();
@@ -581,7 +581,6 @@ unsigned SpeedControlWidget::getTStatesForPreset(int position) const
     if (cfg.frameNum == 0 && cfg.lineNum == 0)
         return 1;
 
-    auto* ctx = _emulator->GetContext();
     unsigned F = ctx->config.frame;    // t-states per frame
     unsigned L = ctx->config.t_line;   // t-states per scanline
 

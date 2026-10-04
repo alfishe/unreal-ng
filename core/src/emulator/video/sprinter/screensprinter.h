@@ -59,6 +59,8 @@ public:
     /// region <Screen>
     void CreateTables() override {}
     void InitRaster() override;
+    /// The frame start: also closes the beam-ordered picture's previous frame (SprinterBeamVideo::CloseFrame)
+    void InitFrame() override;
     void SetVideoMode(VideoModeEnum mode) override;
     void UpdateScreen() override;
     void DrawRange(uint32_t fromTstate, uint32_t toTstate) override;
@@ -71,7 +73,18 @@ public:
     void CaptureFamilyLatches(videomap::VideoLatches& latches) const override;
     bool DigestSurface(ScreenDigestSurface& out) const override;
     bool IndexedFrame(std::vector<uint16_t>& pens, uint16_t& width, uint16_t& height, std::string& encoding) const override;
+    void TemporalInput(TemporalFrame& frame) override;
     /// endregion </Screen>
+
+    /// Temporal effects (ZX DLSS) in the Spectrum mode: where the 352 x 288 ZX frame (256 x 192
+    /// paper + 48 of border all round, as a Pentagon draws it) sits in the 736 x 288 framebuffer.
+    /// The Spectrum mode is the mode table the launcher writes (SprinterPicture: Spectrum, not
+    /// mixed): 32 x 24 Spectrum squares in ZX order, square (a0 + c, b0 + r) = character cell
+    /// (r, c), each ZX pixel two 14 MHz pixels. Worked example: the launcher's table has cell
+    /// (0, 0) at square (4, 4): paper at (48 + 64, 16 + 32) = (112, 48), the ZX frame at
+    /// (112 - 96, 48 - 48) = (16, 0). False with the reason when there is no such picture
+    /// (a native mode) or it does not leave the ZX border inside the frame
+    bool SpectrumWindow(const SprinterVideoInputs& in, TemporalWindow& window, std::string& why) const;
 
     /// The frame height the raster runs with now: 320 or 312 lines
     uint16_t FrameLines() const { return _frameLines; }
@@ -81,8 +94,41 @@ public:
     /// The inputs the picture is drawn with now (tests, the debug mapper)
     SprinterVideoInputs CurrentInputs() const;
 
+    /// A CPU (or accelerator) write is about to change video RAM: draw the beam up to the moment the byte
+    /// lands, with the old contents. The callback runs at the end of the 3-T write cycle (cpu->t); the
+    /// PLD stores the byte in its next write slot after /WR (VIDEO2.TDF E_WR, VCM state 2: every half T),
+    /// about 1.5 T into the cycle, so the beam positions before the cycle's end - kWriteLandsBeforeEndT
+    /// still read the old byte (MAME's update_now in ram_w / vram_w; ScreenZX does the same for #FE)
+    void CatchUpToWrite();
+    static constexpr uint32_t kWriteLandsBeforeEndT = 1;
+
+    /// A border write (#FE, code #C2) is about to change the border color: draw the beam up to the moment the
+    /// PLD latches it, with the old color. The port callback runs at IORQ (T2 of the 4-T I/O cycle, op_D3);
+    /// the PLD clocks BORDER on /IOWR rising (SP2_ACEX.TDF:310-315: /IOWR = /WR or /IO, preset when /IO
+    /// goes high), i.e. when /IORQ ends at T3's falling edge, 2.5 T after the callback, and the video logic
+    /// samples it every half T with the attribute (VIDEO2.TDF DCOL <- BRD on LWR_COL). In the rounding of
+    /// kWriteLandsBeforeEndT (a byte stored 1.5 T into its cycle lands at T 2) that is the I/O cycle's end,
+    /// 3 T after the callback: drawn at the callback, the border ran 3 T (6 ZX pixels) ahead of the paper
+    /// of a Pentagon-timed program (Across the Edge in P128 mode).
+    /// The constant is 4, one T more than the PLD sources give: the Sprinter's first paper pixel comes 2 T
+    /// later after its INT than the Pentagon's (17 990 vs 17 988 T), so with the PLD's 3 T a Pentagon-timed
+    /// border split still ended 2 ZX pixels before the paper edge - visible in Across the Edge. Owner
+    /// decision (2026-10-03): the picture must match the PENTAGON model exactly, so the border keeps the
+    /// Pentagon's position relative to the paper. Revisit with a capture from a real board
+    void CatchUpToBorderLatch();
+    static constexpr uint32_t kBorderLatchAfterIorqT = 4;
+
 private:
+    /// Draw [_prevTstate, end) - every beam position before `end` - with the state of now
+    void DrawTo(uint32_t end);
+    /// Before a write lands at base T `t`: if the beam is inside a text / Spectrum square there, keep the
+    /// font byte the video logic latched at the square's start (SprinterVideoInputs::FontLatch)
+    void LatchFont(uint32_t t);
     PortDecoder_Sprinter* Decoder() const;
+    /// The framebuffer is the 736 x 288 Sprinter raster
+    bool FramebufferReady() const;
+    /// ZX DLSS plane B while it is on (the framebuffer's size), else null
+    uint16_t* PlaneB();
     /// Apply the PLD's frame height (codes #2C / #2D) at a frame start
     void ApplyFrameLines();
     /// The raster zones of the visible-first Sprinter raster (RasterState)
@@ -91,4 +137,9 @@ private:
     mutable PortDecoder_Sprinter* _decoder = nullptr;
     mutable SprinterVideoView _view;
     uint16_t _frameLines = 320;
+    SprinterVideoInputs::FontLatch _fontLatch;
+    uint64_t _fontLatchFrame = 0;  ///< the frame _fontLatch belongs to (frame_counter)
+    uint32_t _fontLatchCheckedT = ~0u;  ///< the last moment LatchFont looked at, and its frame
+    uint64_t _fontLatchCheckedFrame = 0;
+    std::vector<uint16_t> _zxPlaneB;  // the ZX frame's plane B for the temporal effect (only while it runs)
 };

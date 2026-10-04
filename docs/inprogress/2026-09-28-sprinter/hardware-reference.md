@@ -41,7 +41,7 @@ including the port addresses, can change at run time (MAN §1.2-1.4).
 | Turbo | ×6 = 21 MHz; switched by the CNF/SYS port (§5) when bit 1 = 1: bit 0 = turbo on/off; a keyboard "turbo" key (F12 in MAME) can force it off | INC `SP2000.inc:226-300`; MAME `sprinter.cpp:864-871`, `:1767-1771`; PLD `KBD.TDF` output `KB_F12` |
 | Memory waits in turbo | main RAM is not fast enough for 21 MHz: every RAM access is stretched to the next 6-clock slot (MAME models "align to a multiple of 6 clocks, then +6 − cycle length"). Fast RAM has no waits | MAN §1 ("КЭШ … без тактов ожидания"); MAME `sprinter.cpp:1720-1731` |
 | Port waits in turbo | the DCP lookup costs a RAM access; in turbo the PLD holds WAIT "depending on the needed cycle length" | MAN §13.1; MAME `sprinter.cpp:581`, `:704` (`do_mem_wait(4)`) |
-| "Original ZX waits" | ALL_MODE bit 2 = 0 (and no turbo): accesses to `#4000-#7FFF`, or to window 3 while `#7FFD` bit 2 is set (`V_RAM = PN2`: pages 4-7), wait while the video counter bit `CT5` = 0: a fixed **4 T** cycle (`CT[2..0]` counts mod 6: 24 clocks low, 24 high), the same on every line, not the ULA pattern: 2, 1, 0 or 0 T by where T2 falls. Set by the launcher's `/origin` (ALL_MODE `#FA`) | PLD `SP2_ACEX.TDF:558-559` (`WAIT_ORIG`, the `UPDATE` build; that the release was built from it is unverified), `VIDEO2.TDF:280-298`, `DCP.TDF:577`; INC `SP2000.inc:550-560`; [research-zx-mode.md](research-zx-mode.md) §7.3. Modeled in unreal-ng since 2026-10-02 (`SprinterOrigWaits`, phase placeholder; S8 Z3), not by MAME |
+| "Original ZX waits" | ALL_MODE bit 2 = 0 (and no turbo): accesses to `#4000-#7FFF`, or to window 3 while `#7FFD` bit 2 is set (`V_RAM = PN2`: pages 4-7), wait while the video counter bit `CT5` = 0: a fixed **4 T** cycle (`CT[2..0]` counts mod 6: 24 clocks low, 24 high), the same on every line, not the ULA pattern: 2, 1, 0 or 0 T by where T2 falls. Set by the launcher's `/origin` (ALL_MODE `#FA`) | PLD `SP2_ACEX.TDF:558-559` (`WAIT_ORIG`, the `UPDATE` build; that the release was built from it is unverified), `VIDEO2.TDF:280-298`, `DCP.TDF:577`; INC `SP2000.inc:550-560`; [research-zx-mode.md](research-zx-mode.md) §7.3. Modeled in unreal-ng since 2026-10-02 (`SprinterOrigWaits`, S8 Z3; the phase follows from the PLD: INT is a `CT5` rise, waits 0, 2, 1, 0 T by T1 from INT mod 4, tdd-zx-mode §3.3), not by MAME |
 | Interrupt vector | the INT acknowledge reads `#FF` (IM 2 tables must cover it) | MAME `sprinter.cpp:1961` |
 
 ## 3. Memory
@@ -310,7 +310,7 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
 |---|---|---|
 | **SYS** `#7C` / `#3C` (write) | `#7C` puts the system ROM in window 0, `#3C` removes it. bit 1 = 1: bit 0 = turbo on/off; bit 1 = 0: bit 0 = BIOS page half (ROM 0 / ROM 8). bit 2 = 1 enables bits 3-7: bits 4-3 = map number (CNF 0-3), bit 5 = reset Pentagon port bits 0-5, bit 6 = reset Scorpion port, bit 7 = 0 resets Pentagon-512 bits 6-7. A CPU reset of the running configuration (Ctrl+Alt+Del, a write to page `#A0`) presets the turbo bit: the CPU restarts at 21 MHz if the front-panel switch allows | INC `SP2000.inc:226-300`; MAME `sprinter.cpp:691-697`, `:864-885` (MAME keeps `m_turbo` across a reset); PLD `DCP.TDF:649-663` (`TB_SW.prn = /RESET`) |
 | **CNF** `#74` / `#24` | same bits; bit 0 selects vROM set (`#E0-#E3` vs `#E4-#E7`, `#EB` vs `#EF`) when bit 1 = 0 | INC `SP2000.inc:268-290` |
-| **ALL_MODE** `#204E` | bit 0 = 1: accelerator on, keyboard interrupt on, Spectrum screen addressing off; bit 2: Spectrum memory waits; bit 3: keyboard interrupt separate from the accelerator | INC `SP2000.inc:550-560`; MAME `sprinter.cpp:197`, `:1208`, `:1708` |
+| **ALL_MODE** `#204E` | bit 0 = 1: accelerator on, keyboard interrupt on, Spectrum screen addressing off; bit 2: Spectrum memory waits; bit 3: keyboard interrupt separate from the accelerator. Every `/RESET` (Ctrl+Alt+Del, page `#A0`, the RESET button) presets it to `#FF`; RGMOD and PORT_Y are cleared by the same `/RESET` | INC `SP2000.inc:550-560`; MAME `sprinter.cpp:197`, `:1208`, `:1708` (MAME keeps all three across a reset); PLD `SP2_ACEX.TDF:1041` (`ALL_MODE[].prn = /RESET`), `:958` (`RGMOD[].clrn`), `ACCELER.TDF:204` (`AGR[].clrn`, PORT_Y) |
 
 ## 6. Video
 
@@ -338,6 +338,12 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
   320-line frame, at the same horizontal position (pixel 768 of 896, T 192 of the line) and on MAME
   screen line 271 (Scorpion, also the cold-start default of 3.04), 287 (Pentagon, 16 lines later) or
   295 (Spectrum, 8 lines after Pentagon); MAME's paper is lines 16-271.
+- **The PLD's edge is 10 T before MAME's place** (2026-10-03): `INTT = DFF(!(INTTX & CTV[2..0] = 7), CT5)`
+  (`VIDEO2.TDF`) changes on `CT5` rising, 2 T into the 4-T period of the square the video logic is reading,
+  and `INT_X` above is clocked by `INTT` rising - the first square after the INT run. That square is read at
+  T `12 + 4a` of the line in MAME's (and unreal-ng's) picture coordinates, so the edge is at T `14 + 4a`;
+  MAME's `scr_a = a + 6` gives T `24 + 4a`. In the Spectrum mode the PLD's edge makes INT to the first
+  Spectrum cell 17 990 T, the Pentagon's 17 988 within 2 T (research-zx-mode §7.1).
 - HOLD register (`#CB`) shifts the picture by up to 7 squares horizontally (2-pixel steps) and 7 lines
   vertically (MAME `sprinter.cpp:850-852`).
 
@@ -481,10 +487,30 @@ survives until changed; reset selects primary (MAME `:1582`).
 ## 11. ISA
 
 Two 8-bit slots reached through memory: set `#1FFD` = `#10` (Scorpion extended page), then put
-`#D0`/`#D2`/`#D4`/`#D6` in window 3 (memory or I/O, slot 0 or 1); CPU A13-A0 become ISA A13-A0,
-port `#9FBD` gives A19-A14, AEN and RESET. ISA interrupts arrive on the CPU's PIO port B
-(MAN §8, §9.3; INC `SP2000.inc:596-602`; MAME `sprinter.cpp:1246-1276`). No emulator implements
-ISA memory; MAME fits a ZX-bus adapter in slot 0 (`:1975`).
+`#D0`/`#D2`/`#D4`/`#D6` in window 3; CPU A13-A0 become ISA A13-A0, port `#9FBD` gives A19-A14, AEN and RESET.
+ISA interrupts arrive on the CPU's PIO port B (MAN §8, §9.3; INC `SP2000.inc:596-602`; MAME `sprinter.cpp:1246-1276`).
+MAME fits a ZX-bus adapter in slot 0 (`:1975`).
+
+Corrections from the ISA research ([2026-10-02-sprinter-isa/research.md](../2026-10-02-sprinter-isa/research.md) §10),
+applied when ISA phase I1 landed (2026-10-03, branch `sprinter-isa-network`):
+
+- **Page byte:** bit 2 = I/O (1) / memory (0), bit 1 = slot: `#D0` memory slot 1, `#D2` memory slot 2, `#D4` I/O slot 1,
+  `#D6` I/O slot 2 (INC / MAME, confirmed by the schematic: DD7 74ALS138). MAN §8 and INFO_012 have it the other way.
+- **`#9FBD`** (port-table code `#1B`, a 74HC374, DD6): bits 0-5 = A14-A19, bit 6 = AEN, bit 7 = RESET DRV to both slots.
+  The latch has no reset input: a machine reset keeps it; power-on starts it at 0 in the emulator (MAME too).
+- **No direct port path** to ISA on the Sp2000 (ISA research §4.4), although BIOS 3.04 maps `#A3-#BF` (DOS off) to
+  code `#32`: it reaches no slot, an `IN` reads `#FF`.
+- **ISA memory exists** (ISA RAM cards: Shaos's TIMER runs code from one): "ISA memory reads `#FF`" is a MAME gap, not
+  the hardware. In unreal-ng window 3 in ISA mode is a real cycle of the slot's card (memory and I/O, opcode fetches
+  too; an empty slot reads `#FF`); tool reads peek without side effects (`SprinterIsaBus`, `/state/isa`).
+- **Interrupts and DRQ / DACK** reach PIO port B (bits 0-5); the IRQ pins of each slot are tied together (ISA phase I4,
+  built 2026-10-03). From the SP2000 schematic (`SPRINT_3.pdf`): J6 B4 and B21-B25 are net `IRQ1` -> Z84C15 pin 53
+  (PB0), J7's are `IRQ2` -> pin 54 (PB1); `DRQ2` PB2, `DACK2` PB3, `DRQ1` PB4, `DACK1` PB5, PB6 / PB7 the printer; every
+  one of the six nets has a 3.9 kOhm pull-up to VCC (R165-R170), no inverter. ISA IRQs are active high, so a pin no card
+  drives reads 1 and a card that drives its pin holds it low until it requests. The chip's IEI (pin 72) is tied to VCC
+  and its IEO (pin 71) goes nowhere: the PLD's `/INT` (frame, keyboard, Covox-Blaster) is wired-OR on `/INT` and is not
+  gated by an on-chip service. The program sets PIO port B to bit mode (`#CF`), the IRQ bit as input, the interrupt
+  control word (enable, OR, active high), the mask and the vector; the CPU takes IM 2 through the daisy chain
 
 **Network and serial cards (research 2026-10-02,
 [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/research.md)).** The main board has no free serial port:
@@ -511,6 +537,12 @@ turbo (`#1B`), TR-DOS drive mapping (`#1E`) (INC `SP2000.inc:1013-1160`).
 |---|---|---|
 | ZX matrix | the PLD decodes the AT keyboard's serial stream into an 8×5 matrix read at `#FE` (code `#40`); PC keys map to ZX combinations (arrows = CS+5..8, etc.); Ctrl+Alt+Del resets | PLD `KBD.TDF` (`KB_RESET`, `KB_F12`); INC `SP2000.inc:422-517` (key map); MAME approximates with a host-key matrix (`sprinter.cpp:1669-1704`) |
 | Raw scan codes | the same stream enters SIO channel A (`#18` data, `#19` control), set-2 codes, a 3-byte FIFO; the BIOS and DSS read keys here | MAN §9.4; DSS-162 `keyinter.asm:859-860`; MAME `sprinter.cpp:1987-1991` |
+| Wiring | connector KBD_CLK / KBD_DAT, 3.9k pull-ups, 150 Ω + KC147 clamp -> KBD_CLKR to the Z84C15's /RXCA and /TXCA (pins 33, 34), KBD_DATR to RXDA (32); the same lines reach the PLD as KBD_CC / KBD_DD through the multiplexed XA0 / XA1 bus. The only drivers onto the lines are DD17C / DD17D (open-collector NANDs) fed from latch DD16 KR1533TM9 Q3 / Q4 (KBD_CX / KBD_DX, written from XA0 / XA1 on WR_AWG) | schematic `SPRINT_3` / `PAGE1.pdf` (Sp2000, zxgit); MAME `sprinter.cpp:1987-1991` |
+| No hold-off | the PLD writes KBD_CX = KBD_DX = GND (the LED-command sender `KEY_D` / `K_DATA` and `KBD_BLK` are commented out): the clock is never inhibited, the keyboard is never told to wait. /RTSA, /DTRA, /W/RDYA do not touch the keyboard. MAME's `pc_kbdc` leaves the host side of both lines idle too | `SP2_1K30.TDF:338-352`, `:729`, `:780-781` (both PLD source sets agree); schematic |
+| Byte rate | the keyboard clocks 11-bit frames at 10-16.7 kHz: 0.66-1.1 ms a byte (model: 12 kHz, 917 µs); typematic 500 ms / 10.9 per second (power-on default; no command can reach the keyboard) | IBM AT keyboard reference; `Ps2KeyboardStream` |
+| SIO overrun | a character completing with three in the FIFO overwrites the newest one and carries the overrun flag; RR1 bit 5 shows it when that character reaches the top, latched until Error Reset (WR0 command 6); in the interrupt-on-first-character mode the FIFO does not advance past it until Error Reset | Zilog Z80 SIO technical manual (RR1 D5); Toshiba TMPZ84C015B data book §3.6 (RR1 D5); MAME `z80sio.cpp` `queue_received`, `data_read` |
+| Software on overrun | BIOS SETUP up to 3.05 and DSS up to 1.62.93: one key event per frame INT, RR1 never read, so bytes are lost when keys come faster than one event per frame or the CPU does not poll; BIOS 3.06 / 3.07 and DSS 1.71: drain the FIFO every INT, and on RR1 bit 5 empty it, Error Reset, clear the shift flags | BIOS-TT `SETUP/KEY.asm:166-254`, `:771-789`; DSS-TT `KEYINTER.ASM:520-629`, `:1223-1238` (2024-02-18 / -29); the RR1 test `D3 19 DB 19 E6 20` is in BIOS 3.06 / 3.06 HF2 / 3.07 beta 1 and the DSS 1.71 floppy, not in 2.17 / 3.04 / 3.05 or DSS 1.60-1.62.93 |
+| PLD keyboard block | decodes the wire, not the SIO, at the end of each byte: Ctrl `#14`, Alt `#11`, Shift `#12` / `#59` set on make, cleared after `#F0` (E0 prefixes kept transparent); `#71` with Ctrl + Alt -> /RESET; each `#07` not after `#F0` with no Shift / Ctrl / Alt toggles TEST_SWITCH = TURBO_HAND (so F12's typematic repeats toggle again); /RESET presets TEST_SWITCH | `KBD.TDF` (KB_CT, KB_OFF, KB_EXT, KB_CTRL_X, KB_ALT_X, KB_SH_X, KB_F12, KB_RESET); `SP2_1K30.TDF:296`, `:521-523` |
 | Keyboard interrupt | ALL_MODE bits 0/3 enable an INT after each 11-bit frame | MAME `sprinter.cpp:1706-1718` |
 | Mouse | MS serial mouse on SIO channel B (`#1A`/`#1B`, clocked by CTC channel 0 in MAME `:2006-2007`); Kempston view `#FADF` buttons, `#FBDF` X, `#FFDF` Y | MAN §9.1; MAME `sprinter.cpp:2000-2008`, `:644-659` |
 | Joystick | Kempston at `#1F` (DOS off) and `#FF` (DOS on, with DRQ/INTRQ); extended 3-button pads through the CPU's serial DTR / PIO lines | INC `SP2000.inc:382-399`; MAME `sprinter.cpp:1330-1374` |
@@ -554,3 +586,19 @@ Sources: MAN §1.4, §14; BIOS-TT `bios/loader/loader.asm`, `rom/SETUP/MAIN.asm:
 
 Other resets: writing page `#A0` (§3.4) = soft reset; code `#2E` (`OUT` to `#40BC`) = reload the PLD
 (MAME `sprinter.cpp:779-783`); Ctrl+Alt+Del = hardware reset from the keyboard block.
+
+What the board's `/RESET` does to the configured PLD (`SP2_ACEX.TDF:294-306`: the keyboard's Ctrl+Alt+Del and the
+page-`#A0` counter both pull the `/RESET` pin, which the PLD reads back; 2026-10-02):
+
+| Register | On `/RESET` | Source |
+|---|---|---|
+| ALL_MODE | `#FF` (accelerator, keyboard INT on, Spectrum screen addressing off, no original waits) | `SP2_ACEX.TDF:1041` |
+| RGMOD, PORT_Y | 0 | `SP2_ACEX.TDF:958`; `ACCELER.TDF:204` |
+| Turbo | on (if the front-panel switch allows) | `DCP.TDF:663` |
+| CNF, SYS, ROM_RG, AROM16, `#7FFD` / `#1FFD` (clean rules), DOS, CASH_ON, STARTING | cleared / set as in MAME's `machine_reset` | `DCP.TDF:662-713`, `SP2_ACEX.TDF:563-837` |
+| Accelerator mode, ALT_ACC, the Covox-Blaster | off | `ACCELER.TDF:221`, `:270-271`; `SP2_ACEX.TDF:1161-1162` |
+| HOLD | kept: reset by the configuration's own `/RES` only (`#77` after a load) | `SP2_ACEX.TDF:827-830`, `DCP.TDF:258` |
+| Border, the cells `#C0-#EF` | kept | `SP2_ACEX.TDF:313-315` (no reset term) |
+
+BIOS 3.07 BETA 1 depends on the ALL_MODE preset: its reset intercept (`EXP.asm` `Setup_Starter`, the beta's "ALL_MODE
+readable") reads the register back and writes what it read.

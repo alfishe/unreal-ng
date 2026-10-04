@@ -21,6 +21,20 @@
 
 /// region <Helper functions>
 
+/// The ZX Profi shows both of its pictures - the 352x288 Spectrum frame and the 608x288 hi-res frame (512x240
+/// hi-res pixels at 12 MHz, one stored line per TV line) - in the same 352:288 window, and switches between them at
+/// any moment (the BIOS, CP/M, PQ-DOS). A full-frame recording therefore is that window at the recording's scale
+/// (352x288 x 1..4), every frame scaled into it the way the screen does (nearest pixel), and the encoder gets
+/// scale 1: the file shows what the screen shows, and a mode switch does not change the picture size mid-file
+constexpr uint16_t kProfiWindowWidth = 352;
+constexpr uint16_t kProfiWindowHeight = 288;
+
+static bool RecordsProfiDisplay(const EmulatorContext* context, VideoCaptureRegion region)
+{
+    return context && region == VideoCaptureRegion::FullFrame &&
+           (context->config.mem_model == MM_PROFI || context->config.mem_model == MM_PROFI3);
+}
+
 static const char* GetRecordingModeString(RecordingMode mode)
 {
     switch (mode)
@@ -380,6 +394,17 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
         return false;
     }
 
+    // MainScreen: the frame's own working window (the geometry every screenshot uses), locked now
+    _mainScreenX = _mainScreenY = _mainScreenWidth = _mainScreenHeight = 0;
+    if (_captureRegion == VideoCaptureRegion::MainScreen && _context && _context->pScreen)
+    {
+        const PictureRect window = _context->pScreen->DescribeCurrentFrame().screenWindow;
+        _mainScreenX = window.x;
+        _mainScreenY = window.y;
+        _mainScreenWidth = window.width;
+        _mainScreenHeight = window.height;
+    }
+
     // Use capture-region dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
@@ -391,11 +416,10 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
 
             if (_captureRegion == VideoCaptureRegion::MainScreen)
             {
-                const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
-                if (rd.screenWidth > 0 && rd.screenHeight > 0)
+                if (_mainScreenWidth > 0 && _mainScreenHeight > 0)
                 {
-                    _videoWidth = rd.screenWidth;
-                    _videoHeight = rd.screenHeight;
+                    _videoWidth = _mainScreenWidth;
+                    _videoHeight = _mainScreenHeight;
                 }
             }
             else if (_captureRegion == VideoCaptureRegion::Viewport)
@@ -416,6 +440,11 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
             // stretch the display applies (BUGS.md #6)
             if (StoresHalfHeightLines(fb.videoMode))
                 _videoHeight = static_cast<uint16_t>(_videoHeight * 2);
+            if (RecordsProfiDisplay(_context, _captureRegion))
+            {
+                _videoWidth = static_cast<uint16_t>(kProfiWindowWidth * _scaleFactor);
+                _videoHeight = static_cast<uint16_t>(kProfiWindowHeight * _scaleFactor);
+            }
         }
         else
         {
@@ -528,6 +557,11 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
             // half-height stored lines, as the display does (BUGS.md #6)
             if (StoresHalfHeightLines(fb.videoMode))
                 _videoHeight = static_cast<uint16_t>(_videoHeight * 2);
+            if (RecordsProfiDisplay(_context, _captureRegion))
+            {
+                _videoWidth = static_cast<uint16_t>(kProfiWindowWidth * _scaleFactor);
+                _videoHeight = static_cast<uint16_t>(kProfiWindowHeight * _scaleFactor);
+            }
         }
         else
         {
@@ -823,25 +857,25 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     FramebufferDescriptor stretched;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context->pScreen && framebuffer.memoryBuffer)
     {
-        const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[framebuffer.videoMode];
-        if (rd.screenWidth > 0 && rd.screenHeight > 0 &&
-            rd.screenOffsetLeft + rd.screenWidth <= framebuffer.width &&
-            rd.screenOffsetTop + rd.screenHeight <= framebuffer.height)
+        // The window locked at recording start (the frame's own geometry); a frame it no longer fits is encoded whole
+        if (_mainScreenWidth > 0 && _mainScreenHeight > 0 &&
+            _mainScreenX + _mainScreenWidth <= framebuffer.width &&
+            _mainScreenY + _mainScreenHeight <= framebuffer.height)
         {
-            size_t rowBytes = static_cast<size_t>(rd.screenWidth) * 4;
-            _cropBuffer.resize(rowBytes * rd.screenHeight);
+            size_t rowBytes = static_cast<size_t>(_mainScreenWidth) * 4;
+            _cropBuffer.resize(rowBytes * _mainScreenHeight);
 
             const uint8_t* src = framebuffer.memoryBuffer +
-                (static_cast<size_t>(rd.screenOffsetTop) * framebuffer.width + rd.screenOffsetLeft) * 4;
-            for (uint16_t y = 0; y < rd.screenHeight; y++)
+                (static_cast<size_t>(_mainScreenY) * framebuffer.width + _mainScreenX) * 4;
+            for (uint16_t y = 0; y < _mainScreenHeight; y++)
             {
                 memcpy(_cropBuffer.data() + y * rowBytes, src, rowBytes);
                 src += static_cast<size_t>(framebuffer.width) * 4;
             }
 
             cropped.videoMode = framebuffer.videoMode;
-            cropped.width = rd.screenWidth;
-            cropped.height = rd.screenHeight;
+            cropped.width = _mainScreenWidth;
+            cropped.height = _mainScreenHeight;
             cropped.memoryBuffer = _cropBuffer.data();
             cropped.memoryBufferSize = _cropBuffer.size();
             toEncode = &cropped;
@@ -881,7 +915,30 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     // pixels at half height, and the display stretches the framebuffer
     // vertically to the true pixel aspect; a file is square-pixel, so each
     // stored line doubles here - the same stretch, the same pixels (BUGS.md #6)
-    if (toEncode->memoryBuffer && StoresHalfHeightLines(toEncode->videoMode))
+    if (toEncode->memoryBuffer && RecordsProfiDisplay(_context, _captureRegion))
+    {
+        // The Profi's window at the recording's scale (see kProfiWindowWidth): nearest-pixel scale of whichever
+        // frame this is
+        const uint32_t srcW = toEncode->width;
+        const uint32_t srcH = toEncode->height;
+        const uint32_t dstW = kProfiWindowWidth * _scaleFactor;
+        const uint32_t dstH = kProfiWindowHeight * _scaleFactor;
+        _aspectBuffer.resize(static_cast<size_t>(dstW) * dstH * 4);
+        for (uint32_t y = 0; y < dstH; y++)
+        {
+            const uint8_t* srcRow = toEncode->memoryBuffer + static_cast<size_t>(y * srcH / dstH) * srcW * 4;
+            uint8_t* dstRow = _aspectBuffer.data() + static_cast<size_t>(y) * dstW * 4;
+            for (uint32_t x = 0; x < dstW; x++)
+                std::memcpy(dstRow + static_cast<size_t>(x) * 4, srcRow + static_cast<size_t>(x * srcW / dstW) * 4, 4);
+        }
+        stretched = *toEncode;
+        stretched.width = static_cast<uint16_t>(dstW);
+        stretched.height = static_cast<uint16_t>(dstH);
+        stretched.memoryBuffer = _aspectBuffer.data();
+        stretched.memoryBufferSize = _aspectBuffer.size();
+        toEncode = &stretched;
+    }
+    else if (toEncode->memoryBuffer && StoresHalfHeightLines(toEncode->videoMode))
     {
         const size_t rowBytes = static_cast<size_t>(toEncode->width) * 4;
         _aspectBuffer.resize(rowBytes * toEncode->height * 2);
@@ -1180,7 +1237,8 @@ bool RecordingManager::InitializeEncoder()
     config.qualityPreset = _qualityPreset;
     config.ffmpegPath = _ffmpegPath;
     config.captureRegion = _captureRegion;
-    config.scaleFactor = _scaleFactor;
+    // The Profi's window is already at the recording's scale (RecordsProfiDisplay)
+    config.scaleFactor = RecordsProfiDisplay(_context, _captureRegion) ? 1 : _scaleFactor;
 
     // Determine container from filename extension
     size_t dotPos = _outputFilename.rfind('.');

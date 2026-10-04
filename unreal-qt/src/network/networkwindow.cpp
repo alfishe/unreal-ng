@@ -42,7 +42,9 @@ namespace
         PeerTcp,
         PeerSerial,
         PeerEspnet,
-        PeerAt
+        PeerAt,
+        PeerModem,
+        PeerPlug
     };
 
     ComPortSpec::Kind KindOf(int index)
@@ -54,6 +56,8 @@ namespace
             case PeerSerial: return ComPortSpec::Kind::Serial;
             case PeerEspnet: return ComPortSpec::Kind::Espnet;
             case PeerAt: return ComPortSpec::Kind::At;
+            case PeerModem: return ComPortSpec::Kind::Modem;
+            case PeerPlug: return ComPortSpec::Kind::Plug;
             default: return ComPortSpec::Kind::None;
         }
     }
@@ -67,6 +71,8 @@ namespace
             case ComPortSpec::Kind::Serial: return PeerSerial;
             case ComPortSpec::Kind::Espnet: return PeerEspnet;
             case ComPortSpec::Kind::At: return PeerAt;
+            case ComPortSpec::Kind::Modem: return PeerModem;
+            case ComPortSpec::Kind::Plug: return PeerPlug;
             default: return PeerNone;
         }
     }
@@ -95,11 +101,13 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
 
     _kind = new QComboBox(this);
     _kind->addItem(tr("Nothing connected"));
-    _kind->addItem(tr("Loopback plug (every byte comes back)"));
+    _kind->addItem(tr("Echo (every byte comes back, lines held active)"));
     _kind->addItem(tr("TCP: a host endpoint (BBS, test harness)"));
     _kind->addItem(tr("Serial: a host serial device (real ESP, modem)"));
     _kind->addItem(tr("ESP module, ESPNET firmware (NedoOS)"));
     _kind->addItem(tr("ESP module, AT firmware (Espressif)"));
+    _kind->addItem(tr("Hayes modem (ATDT dials host:port or a phone book number)"));
+    _kind->addItem(tr("Loopback test plug (bytes back; RTS -> CTS, DTR -> DSR / DCD)"));
     layout->addWidget(_kind);
 
     _tcpRow = new QWidget(this);
@@ -148,6 +156,20 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     espLine->addWidget(_espBaud, 1);
     layout->addWidget(_espRow);
 
+    // A modem may also answer calls: host clients of a guest port (Forward=) ring it
+    _modemRow = new QWidget(this);
+    auto* modemLine = new QHBoxLayout(_modemRow);
+    modemLine->setContentsMargins(0, 0, 0, 0);
+    _modemPort = new QSpinBox(_modemRow);
+    _modemPort->setRange(0, 65535);
+    _modemPort->setSpecialValueText(tr("no incoming calls"));
+    _modemPort->setToolTip(tr("Guest TCP port whose host clients ring the modem (RING, RI; ATA or S0 answers); "
+                              "reach it from the host with a Forward= rule"));
+    modemLine->addWidget(new QLabel(tr("Answers calls on guest port"), _modemRow));
+    modemLine->addWidget(_modemPort, 1);
+    layout->addWidget(_modemRow);
+    connect(_modemPort, &QSpinBox::valueChanged, this, &SerialPeerEditor::edited);
+
     connect(_kind, &QComboBox::currentIndexChanged, this, [this] {
         updateFields();
         emit edited();
@@ -162,7 +184,9 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
 
 void SerialPeerEditor::setSpec(const ComPortSpec& spec)
 {
-    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud), b6(_espBaud);
+    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud), b6(_espBaud), b7(_modemPort);
+    if (spec.kind == ComPortSpec::Kind::Modem)
+        _modemPort->setValue(spec.port);
     _kind->setCurrentIndex(IndexOf(spec.kind));
     if (spec.kind == ComPortSpec::Kind::Tcp)
     {
@@ -205,6 +229,8 @@ ComPortSpec SerialPeerEditor::spec() const
     }
     if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
         spec.baud = _espBaud->currentData().toUInt();
+    if (spec.kind == ComPortSpec::Kind::Modem)
+        spec.port = static_cast<uint16_t>(_modemPort->value());
     return spec;
 }
 
@@ -225,6 +251,7 @@ void SerialPeerEditor::updateFields()
     _tcpRow->setVisible(_kind->currentIndex() == PeerTcp);
     _serialRow->setVisible(_kind->currentIndex() == PeerSerial);
     _espRow->setVisible(_kind->currentIndex() == PeerEspnet || _kind->currentIndex() == PeerAt);
+    _modemRow->setVisible(_kind->currentIndex() == PeerModem);
 }
 
 /// endregion </SerialPeerEditor>
@@ -266,6 +293,38 @@ void NetworkWindow::buildUi()
         label->setStyleSheet(QStringLiteral("color: palette(mid);"));
         return label;
     };
+
+    // Expansion slots (the Sprinter's ISA slots): fitted when the machine is created, from [ISA] in its config
+    _slotsBox = new QGroupBox(tr("Expansion slots"), _settingsPage);
+    auto* slotsLayout = new QVBoxLayout(_slotsBox);
+    _slots = new QLabel(_slotsBox);
+    _slots->setWordWrap(true);
+    _slots->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _slots->setToolTip(tr("The population comes from [ISA] Slot1= / Slot2= of the machine config (or the create "
+                          "options) and stays for the instance's lifetime; the Status tab shows each card's registers"));
+    slotsLayout->addWidget(_slots);
+    for (int n = 0; n < 2; ++n)
+    {
+        // A UART card's line (SprinterESP: AT = its own ESP-12F; LOOPBACK, TCP, a real ESP on a USB adapter)
+        _slotPeerRow[n] = new QWidget(_slotsBox);
+        auto* rowForm = new QFormLayout(_slotPeerRow[n]);
+        rowForm->setContentsMargins(0, 0, 0, 0);
+        _slotPeer[n] = new SerialPeerEditor(_slotPeerRow[n]);
+        _slotPeerLabel[n] = new QLabel(tr("Slot %1: its UART is wired to").arg(n + 1), _slotPeerRow[n]);
+        rowForm->addRow(_slotPeerLabel[n], _slotPeer[n]);
+        _slotPeerRow[n]->setVisible(false);
+        slotsLayout->addWidget(_slotPeerRow[n]);
+        // SprinterSerial's COM2 (#2F8, the DB-9): an external modem (MODEM), a host endpoint, a real port
+        _slotPeerRowB[n] = new QWidget(_slotsBox);
+        auto* rowFormB = new QFormLayout(_slotPeerRowB[n]);
+        rowFormB->setContentsMargins(0, 0, 0, 0);
+        _slotPeerB[n] = new SerialPeerEditor(_slotPeerRowB[n]);
+        rowFormB->addRow(tr("Slot %1 SprinterSerial COM2 (#2F8, DB-9) is wired to").arg(n + 1), _slotPeerB[n]);
+        _slotPeerRowB[n]->setVisible(false);
+        slotsLayout->addWidget(_slotPeerRowB[n]);
+    }
+    _slotsBox->setVisible(false);
+    page->addWidget(_slotsBox);
 
     // ZX-Bus cards
     auto* cards = new QGroupBox(tr("ZX-Bus cards"), _settingsPage);
@@ -354,6 +413,10 @@ void NetworkWindow::buildUi()
     _espChip = new QComboBox(esp);
     _espChip->addItem(tr("ESP32 (8 sockets, AT 2.x)"), QStringLiteral("ESP32"));
     _espChip->addItem(tr("ESP8266 (4 sockets, AT NonOS 1.7)"), QStringLiteral("ESP8266"));
+    _espChip->addItem(tr("ESP8266, ESP-AT 2.2.1"), QStringLiteral("ESP8266-AT221"));
+    _espChip->addItem(tr("ESP8266, ESP-AT 2.2.2 (Sprinter ESP Network Kit)"), QStringLiteral("ESP8266-AT222"));
+    _espChip->setToolTip(tr("The firmware of an emulated ESP module. The SprinterESP card's ESP-12F is an ESP8266: it "
+                            "takes an ESP8266 entry from here, ESP-AT 2.2.2 otherwise"));
     espForm->addRow(tr("Emulated chip"), _espChip);
     _modemLines = new QCheckBox(tr("Pass RTS / DTR to a host serial device, report CTS / DSR / RI / DCD"), esp);
     _modemLines->setToolTip(tr("Off by default: USB ESP boards wire RTS / DTR to reset / boot"));
@@ -375,6 +438,11 @@ void NetworkWindow::buildUi()
     _forwards = new QLineEdit(net);
     _forwards->setPlaceholderText(tr("tcp:<host port>:<guest port>,..."));
     netForm->addRow(tr("Guest servers"), _forwards);
+    _modemPhonebook = new QLineEdit(net);
+    _modemPhonebook->setPlaceholderText(tr("5551234=bbs.example.org:23,5550000=10.0.2.2:2323"));
+    _modemPhonebook->setToolTip(tr("Numbers a Hayes modem (peer MODEM, any serial port) dials with ATDT: "
+                                   "<number>=<host>[:<port>]; letters, '.' or ':' in a dialed number make it a host name"));
+    netForm->addRow(tr("Modem phone book"), _modemPhonebook);
     _timeout = new QSpinBox(net);
     _timeout->setRange(500, 120000);
     _timeout->setSingleStep(500);
@@ -418,12 +486,16 @@ void NetworkWindow::buildUi()
         connect(box, &QCheckBox::toggled, this, &NetworkWindow::onEdited);
     for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _atm2IoEspAddress, _espChip, _dnsMode})
         connect(combo, &QComboBox::currentIndexChanged, this, &NetworkWindow::onEdited);
-    for (QLineEdit* edit : {_hosts, _forwards})
+    for (QLineEdit* edit : {_hosts, _forwards, _modemPhonebook})
         connect(edit, &QLineEdit::textEdited, this, &NetworkWindow::onEdited);
     connect(_timeout, &QSpinBox::valueChanged, this, &NetworkWindow::onEdited);
     connect(_comPort, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_zxWifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_atm2IoEspPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
+    for (SerialPeerEditor* editor : _slotPeer)
+        connect(editor, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
+    for (SerialPeerEditor* editor : _slotPeerB)
+        connect(editor, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_zifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
 }
 
@@ -474,10 +546,11 @@ void NetworkWindow::refresh()
     const StateNode network = DeviceState::Network(context);
     const NetworkForm form = NetworkFormFromState(network);
 
-    const QString serial = form.serialPort == "evo-avr"    ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
-                           : form.serialPort == "zifi"     ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
-                           : form.serialPort == "atm2-kbc" ? tr("the keyboard controller's RS-232 (IN #FE commands)")
-                                                           : tr("none");
+    const QString serial = form.serialPort == "evo-avr"      ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
+                           : form.serialPort == "zifi"       ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
+                           : form.serialPort == "atm2-kbc"   ? tr("the keyboard controller's RS-232 (IN #FE commands)")
+                           : form.serialPort == "profi-8251" ? tr("the 8251 COM port (#D3 / #F3, 8253 baud timer)")
+                                                             : tr("none");
     _machine->setText(tr("This machine: ZX-Bus %1; its own serial port: %2.")
                           .arg(form.zxBus ? tr("yes") : tr("no"), serial));
 
@@ -490,6 +563,10 @@ void NetworkWindow::refresh()
     _comPort->setDevices(devices);
     _zxWifiPeer->setDevices(devices);
     _atm2IoEspPeer->setDevices(devices);
+    for (SerialPeerEditor* editor : _slotPeer)
+        editor->setDevices(devices);
+    for (SerialPeerEditor* editor : _slotPeerB)
+        editor->setDevices(devices);
     _zifiPeer->setDevices(devices);
 
     if (!_dirty)
@@ -504,9 +581,27 @@ void NetworkWindow::refresh()
         _applied.kbcFirmware = form.kbcFirmware;
         _applied.internalIo = form.internalIo;
         _applied.zifiMachine = form.zifiMachine;
+        for (int n = 0; n < 2; ++n)
+        {
+            _applied.slotUart[n] = form.slotUart[n];
+            _applied.slotCard[n] = form.slotCard[n];
+            _applied.slotUartB[n] = form.slotUartB[n];
+            _slotPeerRow[n]->setVisible(form.slotUart[n]);
+            _slotPeerRowB[n]->setVisible(form.slotUartB[n]);
+        }
     }
     updateAvailability();
     updateStatusTree(network);
+
+    const StateNode isa = DeviceState::Isa(context);
+    const StateNode* isaAvailable = isa.find("available");
+    const std::vector<NetworkSlotRow> rows =
+        NetworkSlotRows(network, isaAvailable && isaAvailable->b ? &isa : nullptr);
+    QStringList lines;
+    for (const NetworkSlotRow& row : rows)
+        lines << QStringLiteral("<b>%1</b>: %2").arg(Q(row.label).toHtmlEscaped(), Q(row.line).toHtmlEscaped());
+    _slots->setText(lines.join(QStringLiteral("<br>")));
+    _slotsBox->setVisible(!rows.empty());
 }
 
 void NetworkWindow::loadForm(const NetworkForm& form)
@@ -517,6 +612,19 @@ void NetworkWindow::loadForm(const NetworkForm& form)
     _zxWifiPeer->setSpec(form.zxWifiPeer);
     _atm2IoEsp->setChecked(form.atm2IoEsp);
     _atm2IoEspPeer->setSpec(form.atm2IoEspPeer);
+    for (int n = 0; n < 2; ++n)
+    {
+        _slotPeer[n]->setSpec(form.slotPeer[n]);
+        _slotPeerRow[n]->setVisible(form.slotUart[n]);
+        const QString card = form.slotCard[n] == "modem"       ? tr("Slot %1 ISA modem: its 16550A is wired to (MODEM = the card's own modem)")
+                             : form.slotCard[n] == "dual16552" ? tr("Slot %1 SprinterSerial COM1 (#3F8, USB) is wired to")
+                                                               : tr("Slot %1 SprinterESP: its 16550 is wired to");
+        _slotPeerLabel[n]->setText(card.arg(n + 1));
+        _slotPeerB[n]->setSpec(form.slotPeerB[n]);
+        _slotPeerRowB[n]->setVisible(form.slotUartB[n]);
+    }
+    if (_modemPhonebook->text() != Q(form.modemPhonebook))
+        _modemPhonebook->setText(Q(form.modemPhonebook));
     _atm2IoEspAddress->setCurrentIndex(std::max(0, _atm2IoEspAddress->findData(form.atm2IoEspAddress)));
     _zifiPeer->setSpec(form.zifiPeer);
     _comPort->setSpec(form.comPort);
@@ -542,6 +650,14 @@ NetworkForm NetworkWindow::readForm() const
     form.zxWifiPeer = _zxWifiPeer->spec();
     form.atm2IoEsp = _atm2IoEsp->isChecked();
     form.atm2IoEspPeer = _atm2IoEspPeer->spec();
+    for (int n = 0; n < 2; ++n)
+    {
+        if (form.slotUart[n])
+            form.slotPeer[n] = _slotPeer[n]->spec();
+        if (form.slotUartB[n])
+            form.slotPeerB[n] = _slotPeerB[n]->spec();
+    }
+    form.modemPhonebook = S(_modemPhonebook->text());
     form.atm2IoEspAddress = _atm2IoEspAddress->currentData().toUInt();
     form.zifiPeer = _zifiPeer->spec();
     form.comPort = _comPort->spec();
@@ -591,7 +707,9 @@ void NetworkWindow::updateAvailability()
     if (!a.kbcFirmware && !a.avrFirmware)
         _avrWhy->setText(Q(a.avrFirmwareWhy + " " + a.kbcFirmwareWhy));
     const bool esp = NetworkPeerIsEsp(form.comPort) || (form.zxWifi && NetworkPeerIsEsp(form.zxWifiPeer)) ||
-                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer)) || NetworkPeerIsEsp(form.zifiPeer);
+                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer)) || NetworkPeerIsEsp(form.zifiPeer) ||
+                     (form.slotUart[0] && NetworkPeerIsEsp(form.slotPeer[0])) ||
+                     (form.slotUart[1] && NetworkPeerIsEsp(form.slotPeer[1]));
     _espChip->setEnabled(esp);
     const bool serial = form.comPort.kind == ComPortSpec::Kind::Serial ||
                         (form.zxWifi && form.zxWifiPeer.kind == ComPortSpec::Kind::Serial) ||

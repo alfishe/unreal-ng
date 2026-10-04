@@ -1,5 +1,7 @@
 // eve-emu - scissor, alpha test, stencil, blend, color mask, tag (spec §6.6).
 #include "eve-render.h"
+#include "eve-profile.h"
+#include "eve-simd.h"
 
 namespace EveLib
 {
@@ -69,42 +71,46 @@ bool BlendSpanFast(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t c
     uint8_t* dst = run.color + kChannels * static_cast<uint32_t>(first);
     const uint8_t src = ctx.blendSrc;
     const uint8_t dstFactor = ctx.blendDst;
-    if (src == kBlendOne && dstFactor == kBlendOne && ctx.colorMask == kMaskAlpha)
+    if (src == kBlendOne && dstFactor == kBlendOne)
     {
-        // dst.a = min(src.a + dst.a, 255)
-        // SIMD-CANDIDATE: saturating byte add on every fourth byte.
-        for (uint32_t i = 0; i < count; ++i, dst += kChannels)
-            dst[kChannelAlpha] = Saturate((rgba[i] & kChannelMax) + dst[kChannelAlpha]);
+        // dst = min(src + dst, 255) on the channels COLOR_MASK lets through (R-Type's masks
+        // accumulate alpha alone, the SDK's test6 adds whole pixels)
+        Simd::AddSaturate(dst, rgba, count, ctx.colorMask);
     }
-    else if (src == kBlendDstAlpha && dstFactor == kBlendZero && ctx.colorMask == kRgb)
+    else if (src == kBlendDstAlpha && dstFactor == kBlendZero && ctx.colorMask == kRgb && kMultiplyRoundDiv255)
     {
         // dst.rgb = src.rgb x dst.a
-        // SIMD-CANDIDATE: three channels times one per pixel.
-        for (uint32_t i = 0; i < count; ++i, dst += kChannels)
-        {
-            const uint32_t p = rgba[i];
-            const uint32_t da = dst[kChannelAlpha];
-            dst[0] = Multiply((p >> kPackRed) & kChannelMax, da);
-            dst[1] = Multiply((p >> kPackGreen) & kChannelMax, da);
-            dst[2] = Multiply((p >> kPackBlue) & kChannelMax, da);
-        }
+        Simd::MultiplyRgbByDstAlpha(dst, rgba, count);
     }
-    else if (src == kBlendOneMinusDstAlpha && dstFactor == kBlendOne && ctx.colorMask == kRgb)
+    else if ((src == kBlendOneMinusDstAlpha || src == kBlendDstAlpha) && dstFactor == kBlendOne && ctx.colorMask == kRgb &&
+             kMultiplyRoundDiv255)
     {
-        // dst.rgb = min(src.rgb x (255 - dst.a) + dst.rgb, 255)
-        // SIMD-CANDIDATE: three channels times one plus the destination, saturated.
-        for (uint32_t i = 0; i < count; ++i, dst += kChannels)
+        // dst.rgb = min(src.rgb x (255 - dst.a) + dst.rgb, 255), or x dst.a (the SDK's
+        // CMD_GRADIENT test draws its ramp through the alpha this way)
+        Simd::AddRgbTimesDstAlpha(dst, rgba, count, src == kBlendOneMinusDstAlpha);
+    }
+    else if (src == kBlendOne && dstFactor == kBlendZero)
+    {
+        // dst = src on the channels COLOR_MASK lets through (x 255 / 255 and x 0 are exact);
+        // Zuma's masks write alpha alone this way
+        if (ctx.colorMask == kMaskAlpha)
         {
-            const uint32_t p = rgba[i];
-            const uint32_t inverse = kChannelMax - dst[kChannelAlpha];
-            dst[0] = Saturate(static_cast<uint32_t>(Multiply((p >> kPackRed) & kChannelMax, inverse)) + dst[0]);
-            dst[1] = Saturate(static_cast<uint32_t>(Multiply((p >> kPackGreen) & kChannelMax, inverse)) + dst[1]);
-            dst[2] = Saturate(static_cast<uint32_t>(Multiply((p >> kPackBlue) & kChannelMax, inverse)) + dst[2]);
+            for (uint32_t i = 0; i < count; ++i, dst += kChannels)
+                dst[kChannelAlpha] = static_cast<uint8_t>(rgba[i] & kChannelMax);
+        }
+        else
+        {
+            const uint8_t mask[kChannels] = {kMaskRed, kMaskGreen, kMaskBlue, kMaskAlpha};
+            const uint32_t shift[kChannels] = {kPackRed, kPackGreen, kPackBlue, 0};
+            for (uint32_t i = 0; i < count; ++i, dst += kChannels)
+                for (uint32_t c = 0; c < kChannels; ++c)
+                    if (ctx.colorMask & mask[c])
+                        dst[c] = static_cast<uint8_t>((rgba[i] >> shift[c]) & kChannelMax);
         }
     }
     else
         return false;
-    if (ctx.tagMask)
+    if (WritesTag(run))
         std::memset(run.tag + first, ctx.tag, count);
     return true;
 }
@@ -153,15 +159,18 @@ void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t
     for (uint32_t c = 0; c < kChannels; ++c)
         if (ctx.colorMask & mask[c])
             dst[c] = out[c];
-    if (ctx.tagMask)
+    if (WritesTag(run))
         run.tag[x] = ctx.tag;
-    if (Mode == LineMode::Probe && x == run.probeX)
+    if constexpr (Mode == LineMode::Probe)
     {
-        EvePixelSource& p = *run.probe;
-        p.written = 1;
-        p.commandIndex = run.commandIndex;
-        p.command = run.commandWord;
-        p.primitive = run.primitive;
+        if (x == run.probeX)
+        {
+            EvePixelSource& p = *run.probe;
+            p.written = 1;
+            p.commandIndex = run.commandIndex;
+            p.command = run.commandWord;
+            p.primitive = run.primitive;
+        }
     }
 }
 
@@ -183,6 +192,14 @@ void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count
     // DST_ALPHA / ZERO and ONE_MINUS_DST_ALPHA / ONE), the same arithmetic per pixel
     if (!alphaTest && !stencilActive && BlendSpanFast(run, first, rgba, count))
         return;
+#ifdef EVE_PROFILE
+    {
+        char key[96];
+        std::snprintf(key, sizeof key, "blend %u/%u mask %X%s%s", ctx.blendSrc, ctx.blendDst, ctx.colorMask,
+                      alphaTest ? " alpha-test" : "", stencilActive ? " stencil" : "");
+        Profile().generalBlends[key] += count;
+    }
+#endif
     const uint8_t mask[kChannels] = {kMaskRed, kMaskGreen, kMaskBlue, kMaskAlpha};
     // SIMD-CANDIDATE: the blend of a span, four channels per pixel.
     for (uint32_t i = 0; i < count; ++i)
@@ -227,7 +244,7 @@ void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count
                     if (ctx.colorMask & mask[c])
                         dst[c] = out[c];
         }
-        if (ctx.tagMask)
+        if (WritesTag(run))
             run.tag[x] = ctx.tag;
     }
 }
@@ -274,15 +291,18 @@ void ClearLine(LineRun& run, uint32_t mask)
                 run.stencil[x] = static_cast<uint8_t>((run.stencil[x] & ~ctx.stencilWriteMask) |
                                                       (ctx.clearStencil & ctx.stencilWriteMask));
     }
-    if ((mask & kClearTag) && ctx.tagMask)
+    if ((mask & kClearTag) && WritesTag(run))
         std::memset(run.tag + first, ctx.clearTag, count);
-    if (Mode == LineMode::Probe && (mask & kClearColor) && run.probeX >= first && run.probeX < last)
+    if constexpr (Mode == LineMode::Probe)
     {
-        EvePixelSource& p = *run.probe;
-        p.written = 1;
-        p.commandIndex = run.commandIndex;
-        p.command = run.commandWord;
-        p.primitive = kPrimNone;
+        if ((mask & kClearColor) && run.probeX >= first && run.probeX < last)
+        {
+            EvePixelSource& p = *run.probe;
+            p.written = 1;
+            p.commandIndex = run.commandIndex;
+            p.command = run.commandWord;
+            p.primitive = kPrimNone;
+        }
     }
     run.fillCost += static_cast<uint64_t>(last - first) * (kFillCostScale / kPrimitivePixelsPerClock);
 }

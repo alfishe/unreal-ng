@@ -1,6 +1,7 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include <emulator/ports/models/profiboard.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <iomanip>
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -55,16 +56,18 @@ std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>&
     return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
 }
 
-/// --sprinter-bios <3.04|3.06|3.07|file>, --fast-start 0|1, --accel-int-suspend 0|1 (a new SPRINTER's firmware
+/// --sprinter-bios <3.04|3.06|3.07|file>, --fast-start 0|1, --accel-int-suspend 0|1, --isa-slot1 / --isa-slot2 <kind> (a new SPRINTER's firmware
 /// and start options, core SprinterBios - the WebAPI's "sprinter": {...}); removed from args
 bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONFIG&)>& out, std::string& error)
 {
-    std::string bios, fastStart, intSuspend;
+    std::string bios, fastStart, intSuspend, slot1, slot2;
     for (size_t i = 0; i < args.size(); i++)
     {
         std::string* target = args[i] == "--sprinter-bios"        ? &bios
                               : args[i] == "--fast-start"          ? &fastStart
                               : args[i] == "--accel-int-suspend"   ? &intSuspend
+                              : args[i] == "--isa-slot1"           ? &slot1
+                              : args[i] == "--isa-slot2"           ? &slot2
                                                                    : nullptr;
         if (!target)
             continue;
@@ -77,14 +80,89 @@ bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONF
         args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
         i--;
     }
-    if (bios.empty() && fastStart.empty() && intSuspend.empty())
+    if (bios.empty() && fastStart.empty() && intSuspend.empty() && slot1.empty() && slot2.empty())
         return true;
     SprinterBios::Options options;
     std::string path;
     if (!SprinterBios::OptionsFromStrings(bios, fastStart, intSuspend, "", options, error) ||
+        !SprinterBios::IsaSlotFromString(slot1, 0, options, error) || !SprinterBios::IsaSlotFromString(slot2, 1, options, error) ||
         (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
         return false;
     out = SprinterBios::CreateOverride(options);
+    return true;
+}
+
+/// --profi-keyboard <matrix|xt|xttable|default>: the keyboard of a new PROFI / PROFI3 ([PROFI] Keyboard=, the
+/// WebAPI's "profi": {"keyboard"}), added to `machine` (the other model options); removed from args
+bool TakeProfiOptions(std::vector<std::string>& args, std::function<void(CONFIG&)>& machine, std::string& error)
+{
+    // --profi-zq3 <16..24> and --profi-ay-clock <old|new>: the hi-res clocks ([PROFI] ZQ3MHz / AyClock)
+    uint8_t zq3 = 0;
+    int ayNew = -1;
+    for (size_t i = 0; i < args.size();)
+    {
+        if (args[i] == "--profi-zq3" || args[i] == "--profi-ay-clock")
+        {
+            const bool isZq3 = args[i] == "--profi-zq3";
+            const std::string value = i + 1 < args.size() ? args[i + 1] : "";
+            if (isZq3)
+            {
+                const int mhz = std::atoi(value.c_str());
+                if (mhz < 16 || mhz > 24 || (mhz % 2) != 0)
+                {
+                    error = "--profi-zq3 expects an even 16..24 (MHz)";
+                    return false;
+                }
+                zq3 = static_cast<uint8_t>(mhz);
+            }
+            else
+            {
+                if (value != "old" && value != "new")
+                {
+                    error = "--profi-ay-clock expects old | new";
+                    return false;
+                }
+                ayNew = value == "new" ? 1 : 0;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            continue;
+        }
+        i++;
+    }
+    if (std::function<void(CONFIG&)> clocks = ProfiClockOverride(zq3, ayNew))
+    {
+        if (!machine)
+            machine = std::move(clocks);
+        else
+            machine = [first = machine, clocks](CONFIG& config) {
+                first(config);
+                clocks(config);
+            };
+    }
+
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        if (args[i] != "--profi-keyboard")
+            continue;
+        ProfiKeyboard keyboard = ProfiKeyboard::Default;
+        if (i + 1 >= args.size() || !ParseProfiKeyboard(args[i + 1].c_str(), keyboard))
+        {
+            error = "--profi-keyboard expects matrix | xt | xttable | default";
+            return false;
+        }
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        std::function<void(CONFIG&)> profi = ProfiKeyboardOverride(keyboard);
+        if (!profi)
+            return true;
+        if (!machine)
+            machine = std::move(profi);
+        else
+            machine = [first = machine, profi](CONFIG& config) {
+                first(config);
+                profi(config);
+            };
+        return true;
+    }
     return true;
 }
 
@@ -669,7 +747,8 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
     std::optional<RamPowerOn> ramPowerOn;
     std::string optionError;
     std::function<void(CONFIG&)> sprinterOptions;
-    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError))
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError) ||
+        !TakeProfiOptions(args, sprinterOptions, optionError))
     {
         session.SendResponse("Error: " + optionError + NEWLINE);
         return;
@@ -774,7 +853,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
     std::optional<RamPowerOn> ramPowerOn;
     std::string optionError;
     std::function<void(CONFIG&)> sprinterOptions;
-    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError))
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError) ||
+        !TakeProfiOptions(args, sprinterOptions, optionError))
     {
         session.SendResponse("Error: " + optionError + NEWLINE);
         return;

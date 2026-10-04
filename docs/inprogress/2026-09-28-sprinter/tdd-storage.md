@@ -125,6 +125,17 @@ accelerator opcode snooping). Consequence here: TR-DOS 5.04Em and Spectrum progr
 | `#1F` rewrite | at the I/O cycle: when the port's low byte is `#1F`, the instruction at `m1_pc` is an unprefixed `#D3` / `#DB` with operand `#1F` and the operand's window holds RAM, the port becomes `#xx0F` (MAME `check_accel`). MEMPTR's visible high byte is A either way |
 | Media | slots `fdd.a`-`fdd.d` from the generic `FloppyDriveSlots`; `.img` 1.44 MB / 720 KB through `LoaderRawPcFloppy`, TRD as usual |
 
+### 2.7 BIOS 3.07 BETA 1's FDD driver (2026-10-03)
+
+The beta rewrote the driver on IY (one table per drive, `SELECT_FDD`), with the same WD1793 command sequence as
+3.06: `#BD` latch from the table's density bit, Beta `#FF` = drive + `#3C` (head 0) / `#2C` (head 1), SEEK `#18`,
+READ ADDRESS `#C0` for the sector size, READ SECTOR `#80` one sector per command, first DRQ awaited with mask
+`#40`, then DRQ / INTRQ with mask `#C0` and `JP P`, the byte count in DE'. The controller answers it as it answers
+3.06 (`PortDecoderSprinter_Test.Fdc_Bios307SectorReadLoop_HdSide1` runs that loop on a side-1 HD sector). What
+changed for the callers is IY: every FDD function returns with IY at its drive table, and DSS 1.71.57 keeps a
+pointer of its own in IY, so programs on a floppy fail with "Invalid EXE file" under the beta. Firmware, MAME
+agrees; details, evidence and the workaround in [bios-versions.md](bios-versions.md) §5.2.
+
 ## 3. IDE adapter
 
 ### 3.1 Position in the IDE design

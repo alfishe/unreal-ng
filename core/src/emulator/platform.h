@@ -3,6 +3,7 @@
 
 #include "sysdefs.h"
 #include "common/sound/filters/filtervoicing.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -32,7 +33,8 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 // Subscribe when adopting an emulator, unsubscribe when releasing it.
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
-constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Single CPU step executed (debug mode only)
+constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
+constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
@@ -607,6 +609,7 @@ struct CONFIG
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
+	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
 	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
@@ -719,7 +722,7 @@ struct CONFIG
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
 		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:
-		/// the AVR's 16550): NONE | LOOPBACK | TCP:<host>:<port> |
+		/// the AVR's 16550): NONE | LOOPBACK | PLUG | TCP:<host>:<port> |
 		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
@@ -737,8 +740,13 @@ struct CONFIG
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
-		/// ESP module of ComPort=ESPNET / AT: 0 = ESP32 (8 sockets), 1 = ESP8266 (4 sockets)
+		/// ESP module of ComPort=ESPNET / AT (EspModule::Firmware): 0 = ESP32 (8 sockets, AT 2.2.0), 1 = ESP8266
+		/// (4 sockets, NonOS AT 1.7.4), 2 = ESP8266 ESP-AT 2.2.1, 3 = ESP8266 ESP-AT 2.2.2. The SprinterESP card's
+		/// ESP-12F takes an ESP8266 value from here, else 2.2.2 (the Sprinter ESP Network Kit's firmware)
 		uint8_t espChip;
+		/// The Hayes modem's phone book (ComPortSpec MODEM, any serial port): "<number>=<host>[:<port>],..." (','
+		/// separates: ';' starts an INI comment); a number dialed with ATDT is looked up by its digits
+		char modemPhonebook[512];
 	} network;
 
 	struct
@@ -830,6 +838,8 @@ struct CONFIG
 		uint8_t accel_int_suspend = 0;
 		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
 		char cmos_path[FILENAME_MAX];
+		// The two ISA-8 slots ([ISA] section, Sprinter ISA tdd §5): read at instance creation
+		sprinterisa::IsaConfig isa;
 	} sprinter;
 
 	uint8_t use_comp_pal;
@@ -871,9 +881,15 @@ struct CONFIG
 	uint8_t profi_wait_pentagon;          // [PROFI] WaitConfig=pentagon: v5 jumper SB8, no video WAIT at 3.5 MHz
 	uint8_t profi_rom_wait;               // [PROFI] RomWait: v5 ROM one-shot gives 1 wait at 3.5 MHz too
 	uint8_t profi_turbo;                  // [PROFI] Turbo: the front-panel turbo switch at power-on
+	uint8_t profi_zq3_mhz;                // [PROFI] ZQ3MHz: the v5's third crystal (hi-res CPU clock = ZQ3 / 4), 16-24
+	uint8_t profi_ay_clock_new;           // [PROFI] AyClock=new: v5 jumper SB7 "CLCAY NEW", the AY at 1.75 MHz in hi-res too
 	uint8_t profi_cpm;                    // [PROFI] CpmSwitch: the v5 front-panel CP/M switch at power-on
 	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
 	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)
+	uint8_t profi_ext_ports;              // [PROFI] ExtPorts: 0 cpm (the extended port map with CP/M and ROM14, the 5.0
+	                                      // decoder PROM), 1 sys (also with the DOS latch on and ROM14 = 0, as Karabas Pro)
+	uint8_t profi_keyboard;               // [PROFI] Keyboard: a ProfiKeyboard (ports/models/profiboard.h), 0 = the board's own
+	char profi_xt_rom_path[FILENAME_MAX]; // [ROM] PROFIXT: the PROFI-XT controller firmware instead of rom/profixt/profi-xt-v1.27.rom
 	char kay_rom_path[FILENAME_MAX];
 	char quorum_rom_path[FILENAME_MAX];
 	char tsl_rom_path[FILENAME_MAX];
@@ -1138,6 +1154,35 @@ struct EmulatorState
                                                 // below must use this one (a mid-frame flip otherwise made
                                                 // HostSpeedMultiplier() read 0 for that frame - "blip delivered 958,
                                                 // accumulator expects 882"). Never 0: 1 is the base clock
+    uint8_t hw_clock_den;                       // Denominator of the hardware clock ratio: CPU T per base T =
+                                                // hw_turbo_ratio / hw_clock_den. 1 (or 0) for every machine with a
+                                                // clock that is a whole multiple of 3.5 MHz; the Profi in hi-res runs
+                                                // at 3 / 5 MHz = 6/7, 10/7 (design-hires.md section 2). Requested by the
+                                                // decoder together with hw_turbo_ratio
+    uint8_t hw_clock_den_applied;               // hw_clock_den as composed into the running clock (see the _applied
+                                                // ratio above). Read through ClockDen()
+
+    /// Denominator of the clock in effect; 1 for every machine at a whole multiple of the base clock
+    uint32_t ClockDen() const { return hw_clock_den_applied > 1 ? hw_clock_den_applied : 1u; }
+
+    /// CPU T-states of `baseT` base (3.5 MHz) T-states at the composed clock: the frame length and the INT window
+    /// the CPU loop runs against. Host speed x hardware ratio / denominator
+    uint32_t BaseToCpuT(uint32_t baseT) const
+    {
+        const uint32_t multiplier = current_z80_frequency_multiplier ? current_z80_frequency_multiplier : 1u;
+        if (hw_clock_den_applied <= 1) [[likely]]
+            return baseT * multiplier;
+        return static_cast<uint32_t>(static_cast<uint64_t>(baseT) * multiplier / hw_clock_den_applied);
+    }
+
+    /// Base (raster) T-state of the in-frame CPU position `t`: what the ULA / video and the frame counters see
+    uint32_t CpuToBaseT(uint32_t t) const
+    {
+        const uint32_t multiplier = current_z80_frequency_multiplier ? current_z80_frequency_multiplier : 1u;
+        if (hw_clock_den_applied <= 1) [[likely]]
+            return t / multiplier;
+        return static_cast<uint32_t>(static_cast<uint64_t>(t) * hw_clock_den_applied / multiplier);
+    }
 
     /// Host speed-control multiplier alone (current = host x hw_turbo_ratio_applied).
     /// Audio sample budgeting must use THIS: the host control makes frames
@@ -1158,16 +1203,21 @@ struct EmulatorState
     /// descale Screen::GetCurrentTstate applies for the ULA
     uint32_t AudioTstate(uint32_t t) const
     {
-        if (hw_turbo_ratio_applied <= 1) [[likely]]
+        if (hw_turbo_ratio_applied <= 1 && hw_clock_den_applied <= 1) [[likely]]
             return t;
-        return t / hw_turbo_ratio_applied;
+        const uint32_t ratio = hw_turbo_ratio_applied ? hw_turbo_ratio_applied : 1u;
+        if (hw_clock_den_applied <= 1)
+            return t / ratio;
+        return static_cast<uint32_t>(static_cast<uint64_t>(t) * hw_clock_den_applied / ratio);
     }
 
     /// TTD time units per base (1x) T-state: the least common multiple of the
     /// model's hardware CPU clock ratios (1 = no turbo; Scorpion and ATM 7.10
     /// 2; ZX-Evo 4; a 1x / 6x machine such as the Sprinter 6; ZX Next 8). One unit is the
     /// shortest T-state the model can run at. Set once from the model's port
-    /// decoder (TtdClockUnits)
+    /// decoder (TtdClockUnits). With a fractional ratio (hw_clock_den) the
+    /// numerators count: the Profi v5 in hi-res at 10/7 and 20/7 needs 20, so a
+    /// CPU T-state is 7 units at 10/7 (units x den / ratio stays whole)
     uint8_t ttd_clock_units;
 
     /// TTD time units per CPU T-state at the applied clock. The in-frame
@@ -1181,9 +1231,10 @@ struct EmulatorState
         // the model selects, so the division is exact. Machines at the base
         // clock (every machine without a turbo) never divide
         const uint32_t units = ttd_clock_units ? ttd_clock_units : 1;
-        if (hw_turbo_ratio_applied <= 1) [[likely]]
+        if (hw_turbo_ratio_applied <= 1 && hw_clock_den_applied <= 1) [[likely]]
             return units;
-        const uint32_t perT = units / hw_turbo_ratio_applied;
+        const uint32_t ratio = hw_turbo_ratio_applied ? hw_turbo_ratio_applied : 1u;
+        const uint32_t perT = units * ClockDen() / ratio;
         return perT ? perT : 1;
     }
 
