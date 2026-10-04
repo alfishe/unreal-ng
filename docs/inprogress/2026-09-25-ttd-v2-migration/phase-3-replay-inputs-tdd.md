@@ -470,6 +470,15 @@ Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileRe
 - CI gate rows updated: fewer journal records (no port OUTs), and 20 more bytes for the segment table.
 - Tests: `timetravelmanager_journalsegments_test.cpp` (7 tests). Two identical machines: the journal over the whole session against segments switched mid-frame; the answers are equal at every 7,919th T-state. Also: segments travel with the file, a run between stop and live resume is not covered, a resume from an earlier point cuts them, and inside a segment the journal answers without a replay. The port find-last test is rewritten for the port journal. Five compilable mutants are caught.
 
+**As built, J2 (2026-10-04).** `TimeTravelManager::BuildWriteJournal(fromT, toT, progress)`:
+
+- **Which frames.** Every frame overlapping `(fromT, toT]` that no segment covers yet is replayed with `RegenerateFrameWrites`. Its writes join the journal in time order. A partly covered frame's records are replaced by the full frame.
+- **Segments.** The built frames join the segments, and touching spans merge into one.
+- **Progress and cancel.** The callback is called once per frame and once at the end. Returning `false` stops the build and keeps what is built.
+- **Not built.** The last frame of a session (no checkpoint after it) and frames holding a v1 marker without its data. Both are counted in the result.
+- **Limits.** Refused while recording. The machine returns to where it stood.
+- **Tests.** Built records equal those a twin machine recorded live, record for record. Also covered: a built span joining a segment that started mid-frame; a cancelled build; refusals. Four mutants are caught.
+
 E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance

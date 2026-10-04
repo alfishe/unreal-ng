@@ -268,3 +268,155 @@ TEST(TimeTravelManager_JournalSegments_Test, RecordingAgainFromAnEarlierPointCut
     ASSERT_EQ(segments.size(), 1u) << "one span: up to the cut, then on from it";
     EXPECT_TRUE(m.ttd->GetSessionInfo().writeJournalComplete);
 }
+
+// ===========================================================================
+// Building the journal by replay (BuildWriteJournal, J2)
+// ===========================================================================
+
+namespace
+{
+/// The journal's records with @p from < globalT <= @p to
+std::vector<ttd::TTDWriteRecord> Records(const ttd::TTDWriteJournal& j, uint64_t from, uint64_t to)
+{
+    std::vector<ttd::TTDWriteRecord> out;
+    for (uint64_t seq = j.SeqTail(); seq < j.SeqHead(); ++seq)
+        if (j.RecordAt(seq).globalT > from && j.RecordAt(seq).globalT <= to)
+            out.push_back(j.RecordAt(seq));
+    return out;
+}
+
+void ExpectSameRecords(const std::vector<ttd::TTDWriteRecord>& a, const std::vector<ttd::TTDWriteRecord>& b)
+{
+    ASSERT_EQ(a.size(), b.size());
+    for (size_t k = 0; k < a.size(); ++k)
+    {
+        ASSERT_EQ(uint64_t(a[k].globalT), uint64_t(b[k].globalT)) << "record " << k;
+        ASSERT_EQ(a[k].addr, b[k].addr) << "record " << k;
+        ASSERT_EQ(a[k].value, b[k].value) << "record " << k;
+        ASSERT_EQ(a[k].m1pc, b[k].m1pc) << "record " << k;
+        ASSERT_EQ(a[k].physPage, b[k].physPage) << "record " << k;
+    }
+}
+}  // namespace
+
+TEST(TimeTravelManager_JournalSegments_Test, BuildingTheWholeSessionEqualsTheRecordedJournal)
+{
+    Machine whole, built;
+    ASSERT_NE(whole.ttd, nullptr);
+    ASSERT_NE(built.ttd, nullptr);
+    whole.ttd->SetEnableWriteJournal(true);
+    for (Machine* m : {&whole, &built})
+    {
+        ASSERT_TRUE(m->ttd->StartRecording());
+        m->Frames(4);
+        m->ttd->StopRecording();
+    }
+    ASSERT_TRUE(built.ttd->SeekTo({built.ttd->GetCheckpoint(1)->time.frame, 3000}));
+    const ttd::TTDTimePoint home = built.ttd->CurrentPosition();
+
+    uint64_t lastDone = 0, calls = 0;
+    const ttd::TTDJournalBuildResult r = built.ttd->BuildWriteJournal(0, UINT64_MAX, [&](uint64_t done, uint64_t total) {
+        EXPECT_LE(done, total);
+        lastDone = done;
+        ++calls;
+        return true;
+    });
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_FALSE(r.cancelled);
+    EXPECT_EQ(r.framesBuilt, built.ttd->GetCheckpointCount() - 1) << "every frame but the last";
+    EXPECT_EQ(r.framesRefused, 0u);
+    EXPECT_GT(r.records, 0u);
+    EXPECT_EQ(lastDone, r.framesBuilt) << "the last call reports the end";
+    EXPECT_EQ(calls, r.framesBuilt + 1);
+    EXPECT_TRUE(built.ttd->CurrentPosition() == home) << "the machine is back where it stood";
+
+    const ttd::TTDSessionInfo info = built.ttd->GetSessionInfo();
+    ASSERT_EQ(info.writeJournalSegments.size(), 1u);
+    EXPECT_TRUE(info.writeJournalComplete) << "the whole session is covered now";
+    const ttd::TTDJournalSegment seg = info.writeJournalSegments[0];
+    ExpectSameRecords(Records(*built.ttd->GetWriteJournal(), seg.from, seg.to),
+                      Records(*whole.ttd->GetWriteJournal(), seg.from, seg.to));
+    ExpectSameAnswers(whole, built);
+
+    const ttd::TTDJournalBuildResult again = built.ttd->BuildWriteJournal(0, UINT64_MAX);
+    ASSERT_TRUE(again.ok);
+    EXPECT_EQ(again.framesBuilt, 0u) << "covered frames are left as they are";
+    EXPECT_EQ(again.framesCovered, r.framesBuilt);
+}
+
+TEST(TimeTravelManager_JournalSegments_Test, ABuiltSpanJoinsTheRecordedSegment)
+{
+    Machine whole, partial;
+    ASSERT_NE(whole.ttd, nullptr);
+    ASSERT_NE(partial.ttd, nullptr);
+    whole.ttd->SetEnableWriteJournal(true);
+    ASSERT_TRUE(whole.ttd->StartRecording());
+    ASSERT_TRUE(partial.ttd->StartRecording());
+    whole.Frames(3);
+    partial.Frames(3);
+    partial.TStates(5000);
+    whole.TStates(5000);
+    partial.ttd->SetEnableWriteJournal(true);   // a segment starting inside frame 4
+    whole.Frames(3);
+    partial.Frames(3);
+    whole.ttd->StopRecording();
+    partial.ttd->StopRecording();
+    const ttd::TTDJournalSegment recorded = partial.ttd->GetSessionInfo().writeJournalSegments.at(0);
+
+    // Build from the second frame up to inside the segment: the partly
+    // covered frame is replaced by its full writes, and the spans join
+    const uint64_t from = partial.ttd->GlobalT(partial.ttd->GetCheckpoint(1)->time);
+    const ttd::TTDJournalBuildResult r = partial.ttd->BuildWriteJournal(from, recorded.from + 1);
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_GE(r.framesBuilt, 2u);
+    const std::vector<ttd::TTDJournalSegment> segments = partial.ttd->GetSessionInfo().writeJournalSegments;
+    ASSERT_EQ(segments.size(), 1u) << "the built frames and the recorded segment are one span";
+    EXPECT_LT(segments[0].from, recorded.from);
+    EXPECT_EQ(segments[0].to, recorded.to);
+    ExpectSameRecords(Records(*partial.ttd->GetWriteJournal(), segments[0].from, segments[0].to),
+                      Records(*whole.ttd->GetWriteJournal(), segments[0].from, segments[0].to));
+    ExpectSameAnswers(whole, partial);
+}
+
+TEST(TimeTravelManager_JournalSegments_Test, ACancelledBuildKeepsWhatItBuilt)
+{
+    Machine whole, built;
+    ASSERT_NE(whole.ttd, nullptr);
+    ASSERT_NE(built.ttd, nullptr);
+    whole.ttd->SetEnableWriteJournal(true);
+    for (Machine* m : {&whole, &built})
+    {
+        ASSERT_TRUE(m->ttd->StartRecording());
+        m->Frames(5);
+        m->ttd->StopRecording();
+    }
+    const ttd::TTDJournalBuildResult r =
+        built.ttd->BuildWriteJournal(0, UINT64_MAX, [](uint64_t done, uint64_t) { return done < 2; });
+    ASSERT_TRUE(r.ok);
+    EXPECT_TRUE(r.cancelled);
+    EXPECT_EQ(r.framesBuilt, 2u);
+    ASSERT_EQ(built.ttd->GetSessionInfo().writeJournalSegments.size(), 1u);
+    EXPECT_FALSE(built.ttd->GetSessionInfo().writeJournalComplete);
+    ExpectSameAnswers(whole, built);
+}
+
+TEST(TimeTravelManager_JournalSegments_Test, BuildingIsRefusedWhileRecording_AndSkipsFramesItCannotReplay)
+{
+    Machine m;
+    ASSERT_NE(m.ttd, nullptr);
+    ASSERT_TRUE(m.ttd->StartRecording());
+    m.Frames(2);
+    const ttd::TTDJournalBuildResult refused = m.ttd->BuildWriteJournal(0, UINT64_MAX);
+    EXPECT_FALSE(refused.ok);
+    EXPECT_NE(refused.error.find("recording"), std::string::npos) << refused.error;
+
+    m.TStates(3000);
+    m.ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "test marker");   // a v1 barrier: no data
+    m.Frames(3);
+    m.ttd->StopRecording();
+    const ttd::TTDJournalBuildResult r = m.ttd->BuildWriteJournal(0, UINT64_MAX);
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_EQ(r.framesRefused, 1u) << "the frame holding the marker";
+    EXPECT_EQ(r.framesBuilt, m.ttd->GetCheckpointCount() - 2);
+    EXPECT_EQ(m.ttd->GetSessionInfo().writeJournalSegments.size(), 2u) << "around the refused frame";
+}

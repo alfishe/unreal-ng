@@ -204,6 +204,22 @@ struct TTDJournalSegment
     bool operator==(const TTDJournalSegment& o) const { return from == o.from && to == o.to; }
 };
 
+/// What BuildWriteJournal did
+struct TTDJournalBuildResult
+{
+    bool ok = false;              ///< false: refused, see `error` (a cancelled build is ok, with `cancelled`)
+    std::string error;
+    bool cancelled = false;       ///< the progress callback asked to stop; the frames built so far are kept
+    uint64_t framesBuilt = 0;     ///< replayed, their writes added to the journal
+    uint64_t framesCovered = 0;   ///< already inside a journal segment, left as they were
+    uint64_t framesRefused = 0;   ///< hold a v1 marker without its data: cannot be replayed
+    uint64_t records = 0;         ///< writes added
+};
+
+/// Called after each frame of a build: (frames done, frames to build). Return
+/// false to stop; what is built so far is kept
+using TTDJournalBuildProgress = std::function<bool(uint64_t done, uint64_t total)>;
+
 struct TTDSessionInfo
 {
     TTDSessionState state = TTDSessionState::Idle;
@@ -1423,6 +1439,19 @@ public:
     /// @return false when the session has no checkpoint of @p frame or none
     ///         after it, while recording, or when a v1 marker lies in the frame
     bool RegenerateFrameWrites(uint64_t frame, std::vector<TTDSearchResult>& out);
+
+    /// @brief Build the write journal for a span of recorded history by
+    /// replaying it (D40, Phase 3 J2). Every frame that overlaps machine time
+    /// (fromT, toT] and is not inside a journal segment yet is replayed with
+    /// every memory write collected; the writes join the journal in time
+    /// order and the frames join its segments. Slow - about 2-4 ms per frame,
+    /// like RZX playback - so @p progress reports each frame and can stop
+    /// the build (the frames built so far are kept). The session's last
+    /// frame (no checkpoint after it) and frames holding a v1 marker without
+    /// its data are not built. Refused while recording. The machine returns
+    /// to where it stood (positioned in history, as after any search).
+    TTDJournalBuildResult BuildWriteJournal(uint64_t fromT, uint64_t toT,
+                                            const TTDJournalBuildProgress& progress = nullptr);
 
     /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
     TTDCoverageProbeResult QueryCoverageProbe(

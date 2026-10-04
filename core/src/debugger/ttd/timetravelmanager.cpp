@@ -5700,6 +5700,149 @@ bool TimeTravelManager::RegenerateFrameWrites(uint64_t frame, std::vector<TTDSea
     return true;
 }
 
+TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint64_t toT,
+                                                          const TTDJournalBuildProgress& progress)
+{
+    TTDJournalBuildResult r;
+    if (!_context)
+    {
+        r.error = "no machine";
+        return r;
+    }
+    if (_state == TTDSessionState::Recording)
+    {
+        r.error = "stop the recording first: the journal is built by replaying recorded history";
+        return r;
+    }
+    if (_timeline.size() < 2)
+    {
+        r.error = "the session has no complete frame to replay";
+        return r;
+    }
+    if (toT <= fromT)
+    {
+        r.error = "the span is empty";
+        return r;
+    }
+    const TTDTimePoint home = CurrentPosition();
+
+    // The spans covered now (the ring's evicted part already left out): the
+    // journal is rebuilt below and must not claim them back
+    _journalSegments = JournalSegments();
+
+    // The frames to build: those overlapping (fromT, toT] that a segment does
+    // not cover yet
+    std::vector<size_t> frames;
+    for (size_t i = 0; i + 1 < _timeline.size(); ++i)
+    {
+        const uint64_t a = CheckpointStartT(_timeline[i]);
+        const uint64_t b = CheckpointStartT(_timeline[i + 1]);
+        if (b <= fromT || a >= toT)
+            continue;
+        bool inside = false;
+        for (const TTDJournalSegment& s : _journalSegments)
+            inside = inside || (s.from <= a && b <= s.to);
+        if (inside)
+            ++r.framesCovered;
+        else
+            frames.push_back(i);
+    }
+
+    struct BuiltFrame
+    {
+        TTDJournalSegment span;
+        std::vector<TTDWriteRecord> records;
+    };
+    std::vector<BuiltFrame> built;
+    std::vector<TTDSearchResult> hits;
+    for (size_t k = 0; k < frames.size(); ++k)
+    {
+        if (progress && !progress(k, frames.size()))
+        {
+            r.cancelled = true;
+            break;
+        }
+        const size_t i = frames[k];
+        if (!RegenerateFrameWrites(_timeline[i].time.frame, hits))
+        {
+            ++r.framesRefused;
+            continue;
+        }
+        BuiltFrame f{{CheckpointStartT(_timeline[i]), CheckpointStartT(_timeline[i + 1])}, {}};
+        f.records.reserve(hits.size());
+        for (const TTDSearchResult& h : hits)
+        {
+            const uint64_t t = GlobalT(h.time);
+            if (t <= f.span.from || t > f.span.to)
+                continue;
+            TTDWriteRecord rec{};
+            rec.globalT = t;
+            rec.addr = h.addr;
+            rec.isIo = 0;
+            rec.m1pc = h.pc;
+            rec.value = h.value;
+            rec.physPage = static_cast<uint8_t>(h.physPage);   // as the live journal stores it
+            f.records.push_back(rec);
+        }
+        r.records += f.records.size();
+        built.push_back(std::move(f));
+        ++r.framesBuilt;
+    }
+    if (!r.cancelled && progress)
+        progress(frames.size(), frames.size());
+
+    if (!built.empty())
+    {
+        // The journal again, in time order: its records outside the built
+        // frames, and the built frames' records (they replace any partial
+        // ones a frame already had)
+        size_t total = _writeJournal ? _writeJournal->Size() : 0;
+        for (const BuiltFrame& f : built)
+            total += f.records.size();
+        auto merged = std::make_unique<TTDWriteJournal>(
+            std::max<size_t>(_writeJournalBytes, total * sizeof(TTDWriteRecord)), false);
+        uint64_t seq = _writeJournal ? _writeJournal->SeqTail() : 0;
+        const uint64_t head = _writeJournal ? _writeJournal->SeqHead() : 0;
+        for (const BuiltFrame& f : built)
+        {
+            for (; seq < head && _writeJournal->RecordAt(seq).globalT <= f.span.from; ++seq)
+                merged->Append(_writeJournal->RecordAt(seq));
+            for (; seq < head && _writeJournal->RecordAt(seq).globalT <= f.span.to; ++seq)
+            {
+            }
+            for (const TTDWriteRecord& rec : f.records)
+                merged->Append(rec);
+        }
+        for (; seq < head; ++seq)
+            merged->Append(_writeJournal->RecordAt(seq));
+        _writeJournal = std::move(merged);
+
+        // The built frames join the segments; touching or overlapping spans merge
+        for (const BuiltFrame& f : built)
+            _journalSegments.push_back(f.span);
+        std::sort(_journalSegments.begin(), _journalSegments.end(),
+                  [](const TTDJournalSegment& a, const TTDJournalSegment& b) { return a.from < b.from; });
+        std::vector<TTDJournalSegment> joined;
+        for (const TTDJournalSegment& s : _journalSegments)
+        {
+            if (!joined.empty() && s.from <= joined.back().to)
+                joined.back().to = std::max(joined.back().to, s.to);
+            else
+                joined.push_back(s);
+        }
+        _journalSegments = std::move(joined);
+    }
+
+    // Back where the machine stood
+    if (r.framesBuilt || r.framesRefused)
+    {
+        const TTDTimePoint end = SessionEndPosition();
+        SeekTo(end < home ? end : home);
+    }
+    r.ok = true;
+    return r;
+}
+
 std::optional<TTDSearchResult>
 TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
                                   TTDExternalEvent* outBlockingMarker,
