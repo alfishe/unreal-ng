@@ -14,7 +14,7 @@ Measured 2026-10-04 on branch `ttd-engine`, Release, on the shared development h
 | Session file not larger than v1's | Yes, on all 46 configurations: **2.3 to 62 times smaller** |
 | Recorded bytes, memory, counted work not larger than v1 | Yes, on all 46 |
 | Memory report is the real total (FR-16) | Within 1-2% of what the engine's allocations hold (`TimeTravelEngineHeap_Test`) |
-| Capture p99 ≤ 1 ms, memory restore p99 ≤ 5 ms | Capture yes on all 46 (at most 781 µs). Restore: 44 of 46; the two others (Pentagon *game* 8.6 ms, *Eye Ache* 7.6 ms) were measured at a load of 60-93 and are pending a rerun on a quiet host. Phase 4 did not change the restore path; Phase 3 measured them at p99 0.9 ms (*game*) and 0.5 ms (*Eye Ache*), at a load of 13-16 |
+| Capture p99 ≤ 1 ms, memory restore p99 ≤ 5 ms | Capture yes on all 46 (at most 781 µs). Restore: yes on all 46. The first full run had two outliers (Pentagon *game* 8.6 ms, *Eye Ache* 7.6 ms) at a load of 60-93; rerun alone twice (2026-10-04, load 26-41, master 3aeb89fb5): *game* p99 891 / 914 µs, *Eye Ache* 528 / 525 µs, as in Phase 3 (0.9 / 0.5 ms) |
 
 The check is `tools/verification/ttd-bench/ttd_engine_d33.py` (now also comparing the session file, `bm7_file_bpf`). The baseline is `testdata/ttd/bench/engine-phase4-full.json` (`UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_ENGINE=all`, 600 frames, with seeks).
 
@@ -94,7 +94,6 @@ The file is smaller than v1's for three reasons. Every piece version is stored o
 
 ## Open after Phase 4
 
-- Rerun the two restore timings on a quiet host (load < 12).
 - A Kaitai-generated parser run (no compiler on the build host).
 - The screenshot's size and frame-time cost on the matrix (`bm3_stream_screenshot_bpf`, `bm1_overhead_screenshot_pct`).
 - Not dropped by the ring yet: the sector-read journal (rare) and the write journal (off by default).
