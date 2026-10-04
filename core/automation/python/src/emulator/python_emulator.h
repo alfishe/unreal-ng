@@ -796,8 +796,9 @@ namespace PythonBindings
                     regs["iff1"] = z80->iff1 != 0;
                     regs["iff2"] = z80->iff2 != 0;
                     regs["halted"] = z80->halted != 0;
+                    regs["q"] = z80->q;
+                    regs["boundary"] = Z80::BoundaryName(z80->boundary);
                     regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
-                    regs["frame"] = self.GetContext()->emulatorState.frame_counter;
                 }
                 return regs;
             }, "Get all registers as dictionary")
@@ -1483,7 +1484,7 @@ namespace PythonBindings
                 std::string error;
                 const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_EXECUTE, page, error);
                 return id == BRK_INVALID ? -1 : static_cast<int>(id);
-            }, "Add execution breakpoint; page 'ram:32' / 'rom:3' / 'cache:0': only while that page is mapped at the address (-1: bad page)",
+            }, "Add execution breakpoint; page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
                py::arg("addr"), py::arg("page") = "")
             .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
                 auto* ctx = self.GetContext();
@@ -1493,7 +1494,7 @@ namespace PythonBindings
                 std::string error;
                 const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_READ, page, error);
                 return id == BRK_INVALID ? -1 : static_cast<int>(id);
-            }, "Add memory read breakpoint (watchpoint); page 'ram:32' / 'rom:3' / 'cache:0': only while that page is mapped at the address (-1: bad page)",
+            }, "Add memory read breakpoint (watchpoint); page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
                py::arg("addr"), py::arg("page") = "")
             .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
                 auto* ctx = self.GetContext();
@@ -1503,7 +1504,7 @@ namespace PythonBindings
                 std::string error;
                 const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_WRITE, page, error);
                 return id == BRK_INVALID ? -1 : static_cast<int>(id);
-            }, "Add memory write breakpoint (watchpoint); page 'ram:32' / 'rom:3' / 'cache:0': only while that page is mapped at the address (-1: bad page)",
+            }, "Add memory write breakpoint (watchpoint); page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
                py::arg("addr"), py::arg("page") = "")
             .def("bp_port_in", [](Emulator& self, uint16_t port) -> int {
                 auto* ctx = self.GetContext();
@@ -1588,8 +1589,13 @@ namespace PythonBindings
                     result["active"] = info.active;
                     result["note"] = info.note;
                     result["group"] = info.group;
-                    if (!info.page.empty())
-                        result["page"] = info.page;
+                    if (!info.pageKind.empty())
+                    {
+                        py::dict page;
+                        page["kind"] = info.pageKind;
+                        page["page"] = info.pageNumber;
+                        result["page"] = page;
+                    }
                 }
                 return result;
             }, "Get last triggered breakpoint info (id, type, address, access)")

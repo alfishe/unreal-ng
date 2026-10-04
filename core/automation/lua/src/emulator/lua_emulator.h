@@ -643,8 +643,9 @@ public:
                     regs["iff1"] = z80->iff1 != 0;
                     regs["iff2"] = z80->iff2 != 0;
                     regs["halted"] = z80->halted != 0;
+                    regs["q"] = z80->q;
+                    regs["boundary"] = Z80::BoundaryName(z80->boundary);
                     regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
-                    regs["frame"] = emulator->GetContext()->emulatorState.frame_counter;
                 }
             }
             return regs;
@@ -2169,7 +2170,7 @@ public:
         });
 
         // Breakpoint management
-        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
+        // Optional page ("ram32", "rom3", "cache0"): only while that page is mapped at the address
         lua.set_function("bp", [this](uint16_t addr, sol::optional<std::string> page) -> int {
             if (!effectiveEmulator()) return -1;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2181,7 +2182,7 @@ public:
             return id == BRK_INVALID ? -1 : static_cast<int>(id);
         });
 
-        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
+        // Optional page ("ram32", "rom3", "cache0"): only while that page is mapped at the address
         lua.set_function("bp_read", [this](uint16_t addr, sol::optional<std::string> page) -> int {
             if (!effectiveEmulator()) return -1;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2193,7 +2194,7 @@ public:
             return id == BRK_INVALID ? -1 : static_cast<int>(id);
         });
 
-        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
+        // Optional page ("ram32", "rom3", "cache0"): only while that page is mapped at the address
         lua.set_function("bp_write", [this](uint16_t addr, sol::optional<std::string> page) -> int {
             if (!effectiveEmulator()) return -1;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2312,8 +2313,8 @@ public:
                 result["active"] = info.active;
                 result["note"] = info.note;
                 result["group"] = info.group;
-                if (!info.page.empty())
-                    result["page"] = info.page;
+                if (!info.pageKind.empty())
+                    result["page"] = lua_view.create_table_with("kind", info.pageKind, "page", info.pageNumber);
             }
             return result;
         });

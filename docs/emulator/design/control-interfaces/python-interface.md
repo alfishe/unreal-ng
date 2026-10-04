@@ -334,9 +334,10 @@ class Emulator:
         """Execute up to N instructions; a breakpoint ends the run early. Returns the same dict"""
 
     def get_registers(self) -> dict:
-        """pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr im iff1 iff2 halted t frame
-        (r with bit 7 as last written; memptr = the internal WZ latch; t = CPU T-states since
-        the frame's start; frame = the frame number)"""
+        """pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
+        (r with bit 7 as last written; memptr = the internal WZ latch; q = the flag capture
+        register; boundary = none / prefix_dd / prefix_fd / int_shadow / ld_a_ir / nmi_ack;
+        t = CPU T-states since the frame's start)"""
 
     def get_register(self, name: str) -> int | None:
         """Any name of the register table (a, hl, af', ir, memptr / wz, im, iff1, iff2, ...)"""
@@ -725,7 +726,7 @@ Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where
 
 ```python
 id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 on failure)
-id = emu.bp(0xC000, page="ram:32")  # only while RAM page 32 is mapped at #C000 ("rom:3", "cache:0"; -1: no such page)
+id = emu.bp(0xC000, page="ram32")   # only while RAM page 32 is mapped at #C000 ("rom3", "cache0"; -1: no such page)
 id = emu.bp_read(0x4000)            # memory read; page= as for bp
 id = emu.bp_write(0x5C00)           # memory write; page= as for bp
 id = emu.bp_port_in(0xFE)
@@ -735,8 +736,8 @@ emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 emu.bp_count()
-print(emu.bp_list())                # the text table; a page breakpoint ends "in ram:32"
-emu.bp_status()                     # the last hit, see below; 'page' when it is bound to one
+print(emu.bp_list())                # the text table; a page breakpoint ends "in ram32"
+emu.bp_status()                     # the last hit, see below; 'page' = {'kind', 'page'} when it is bound to one
 ```
 
 ### DebugManager Class

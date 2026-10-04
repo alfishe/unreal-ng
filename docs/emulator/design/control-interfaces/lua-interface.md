@@ -467,8 +467,10 @@ emu:run_frame()          -- Run exactly one video frame
 emu:run_frames(count)    -- Run exactly N video frames
 
 -- Registers (global functions, the bound or selected emulator)
-regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr im iff1 iff2 halted t frame
--- r with bit 7 as last written; memptr = the internal WZ latch; t = CPU T-states since the frame's start
+regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
+-- r with bit 7 as last written; memptr = the internal WZ latch; q = the flag capture register;
+-- boundary = what the next INT / NMI sampling sees (none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack);
+-- t = CPU T-states since the frame's start
 v = get_register("memptr")        -- any name of the register table, nil when unknown
 ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1, iff2 > 1
 
@@ -583,8 +585,8 @@ stops where: [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/an
 
 ```lua
 id = bp(0x8000)                -- execution breakpoint, returns its id (-1 on failure)
-id = bp(0xC000, "ram:32")      -- only while RAM page 32 is mapped at #C000 ("rom:3", "cache:0")
-id = bp_read(0x4000)           -- memory read; bp_read(addr, "ram:5") bound to a page
+id = bp(0xC000, "ram32")       -- only while RAM page 32 is mapped at #C000 ("rom3", "cache0")
+id = bp_read(0x4000)           -- memory read; bp_read(addr, "ram5") bound to a page
 id = bp_write(0x5C00)          -- memory write; bp_write(addr, page) the same
 id = bp_port_in(0xFE)
 id = bp_port_out(0xFE)
@@ -593,8 +595,8 @@ bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
 n = bp_count()
-print(bp_list())               -- the text table; a page breakpoint ends "in ram:32"
-st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, page}
+print(bp_list())               -- the text table; a page breakpoint ends "in ram32"
+st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, page = {kind, page}}
 ```
 
 ### Analyzer Management

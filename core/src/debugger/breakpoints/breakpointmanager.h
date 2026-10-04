@@ -1,6 +1,8 @@
 #pragma once
 #include <map>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
@@ -164,6 +166,10 @@ protected:
 
     // Hot-path state for fast breakpoint checks (Phase 0 optimization)
     BreakpointHotState _hotState;
+
+    // What the surfaces were last told (id -> the fields they show): breakpoints_changed names the ids
+    // that differ from it, so no mutation has to report what it touched
+    std::map<uint16_t, std::string> _published;
     /// endregion </Fields>
 
     // region <Constructors / destructors>
@@ -205,7 +211,9 @@ public:
         bool active = false;        // Current enable state
         std::string note;           // User annotation
         std::string group;          // Group name
-        std::string page;           // "ram:32" for a breakpoint bound to a page, "" otherwise
+        std::string page;           // "ram32" for a breakpoint bound to a page, "" otherwise
+        std::string pageKind;       // "ram" / "rom" / "cache" with pageNumber (protocol {kind, page}), "" otherwise
+        uint8_t pageNumber = 0;
     };
 
     /// Get structured info about the last triggered breakpoint
@@ -246,11 +254,14 @@ public:
                                                MemoryBankModeEnum pageType,
                                                const std::string& owner = OWNER_INTERACTIVE);
 
-    /// A page condition as every automation surface writes it: "ram:32", "rom:3", "cache:0" (the page in
-    /// decimal or as 0x.. / #.. / $..). False with the reason in `error` for anything else
+    /// A page as the text surfaces write it (debugger protocol): "ram32", "rom3", "cache0", any case, the
+    /// number decimal or as 0x.. / #.. / $... False with the reason in `error` for anything else. JSON
+    /// carries the same as {kind, page}
     static bool ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType, std::string& error);
-    /// "ram:32" for a breakpoint bound to a page, "" for one that matches the address in any page
+    /// "ram32" for a breakpoint bound to a page, "" for one that matches the address in any page
     static std::string PageSpecName(const BreakpointDescriptor& breakpoint);
+    /// "ram", "rom" or "cache": the protocol's page kind
+    static const char* PageKindName(MemoryBankModeEnum pageType);
     /// Whether this machine has the page (RAM: config ramsize; ROM, cache: the emulator's page ceilings)
     bool HasPage(uint8_t page, MemoryBankModeEnum pageType) const;
     /// A memory breakpoint (memoryType: BRK_MEM_* bits) at the address, bound to `pageSpec` when it is not
@@ -320,8 +331,14 @@ protected:
     /// Rebuild hot-path filter state from current breakpoint set.
     /// Called after every mutation (add/remove/activate/deactivate).
     void RebuildFilters();
-    /// NC_BREAKPOINTS_CHANGED for this emulator (WebAPI event breakpoints_changed)
+    /// NC_BREAKPOINTS_CHANGED for this emulator with the ids added, removed or changed since the last one
+    /// (none: nothing posted). Hidden breakpoints (step-over, traps) are internal and never reported
     void NotifyBreakpointsChanged();
+    /// The ids added, removed or changed since the last call (sorted, hidden ones left out); remembers the
+    /// current set as published
+    std::vector<uint16_t> TakeChangedIds();
+    /// The fields a surface shows for one breakpoint, as one comparable string
+    static std::string PublishedFields(const BreakpointDescriptor& breakpoint);
 
     // endregion </Helper methods>
 };
@@ -343,6 +360,7 @@ public:
     using BreakpointManager::_breakpointMapByPort;
     using BreakpointManager::_context;
     using BreakpointManager::_hotState;
+    using BreakpointManager::TakeChangedIds;
     using BreakpointManager::_logger;
 
     using BreakpointManager::AddMemoryBreakpoint;

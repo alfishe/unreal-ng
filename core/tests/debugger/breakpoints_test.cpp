@@ -1175,22 +1175,22 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
 }
 
 
-/// The page condition every automation surface writes ("ram:32", "rom:3", "cache:0"), checked against the
+/// The page as the text surfaces write it ("ram32", "rom3", "cache0"; JSON {kind, page}), checked against the
 /// machine's pages, named back the same way and shown in the text listing
 TEST_F(BreakpointManager_test, PageSpec_ParseNameAndMachinePages)
 {
     uint8_t page = 0;
     MemoryBankModeEnum type = BANK_INVALID;
     std::string error;
-    EXPECT_TRUE(BreakpointManager::ParsePageSpec("RAM:0x20", page, type, error));
+    EXPECT_TRUE(BreakpointManager::ParsePageSpec("RAM0x20", page, type, error));
     EXPECT_EQ(page, 0x20);
     EXPECT_EQ(type, BANK_RAM);
-    EXPECT_TRUE(BreakpointManager::ParsePageSpec("rom:$3", page, type, error));
+    EXPECT_TRUE(BreakpointManager::ParsePageSpec("rom$3", page, type, error));
     EXPECT_EQ(page, 3);
     EXPECT_EQ(type, BANK_ROM);
-    EXPECT_TRUE(BreakpointManager::ParsePageSpec("cache:1", page, type, error));
+    EXPECT_TRUE(BreakpointManager::ParsePageSpec("cache1", page, type, error));
     EXPECT_EQ(type, BANK_CACHE);
-    for (const char* bad : {"ram", "ram:", "ram:256", "ram:12x", "vram:1", "32"})
+    for (const char* bad : {"ram", "ram:5", "ram256", "ram12x", "vram1", "32"})
     {
         error.clear();
         EXPECT_FALSE(BreakpointManager::ParsePageSpec(bad, page, type, error)) << bad;
@@ -1203,15 +1203,16 @@ TEST_F(BreakpointManager_test, PageSpec_ParseNameAndMachinePages)
     EXPECT_FALSE(_brkManager->HasPage(MAX_CACHE_PAGES, BANK_CACHE));
 
     error.clear();
-    EXPECT_EQ(_brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram:8", error), BRK_INVALID);
+    EXPECT_EQ(_brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram8", error), BRK_INVALID);
     EXPECT_NE(error.find("no page"), std::string::npos) << error;
-    const uint16_t id = _brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram:7", error);
+    const uint16_t id = _brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram7", error);
     ASSERT_NE(id, BRK_INVALID);
     const BreakpointDescriptor* bp = _brkManager->GetAllBreakpoints().at(id);
     EXPECT_EQ(bp->matchType, BRK_MATCH_BANK_ADDR);
     EXPECT_EQ(bp->page, 7);
-    EXPECT_EQ(BreakpointManager::PageSpecName(*bp), "ram:7");
-    EXPECT_NE(_brkManager->GetBreakpointListAsString().find("in ram:7"), std::string::npos);
+    EXPECT_EQ(BreakpointManager::PageSpecName(*bp), "ram7");
+    EXPECT_STREQ(BreakpointManager::PageKindName(bp->pageType), "ram");
+    EXPECT_NE(_brkManager->GetBreakpointListAsString().find("in ram7"), std::string::npos);
 
     const uint16_t plain = _brkManager->AddMemoryBreakpointInPageSpec(0x8000, BRK_MEM_WRITE, "", error);
     EXPECT_EQ(BreakpointManager::PageSpecName(*_brkManager->GetAllBreakpoints().at(plain)), "")
@@ -1237,4 +1238,30 @@ TEST_F(BreakpointManager_test, SetNoteAndGroup)
     EXPECT_EQ(bp->group, "game") << "a refused group leaves the old one";
     EXPECT_TRUE(_brkManager->SetBreakpointNote(id, ""));
     EXPECT_TRUE(bp->note.empty());
+}
+
+/// breakpoints_changed names what changed (protocol.md §5.2 {cpu, ids[]}): ids added, changed or removed
+/// since the last report, never a hidden (step-over) breakpoint, nothing when nothing changed
+TEST_F(BreakpointManager_test, ChangedIdsSinceLastReport)
+{
+    _brkManager->TakeChangedIds();
+    const uint16_t a = _brkManager->AddExecutionBreakpoint(0x8000);
+    const uint16_t b = _brkManager->AddMemWriteBreakpoint(0x4000);
+    EXPECT_EQ(_brkManager->TakeChangedIds(), (std::vector<uint16_t>{a, b}));
+    EXPECT_TRUE(_brkManager->TakeChangedIds().empty()) << "nothing changed since";
+
+    _brkManager->DeactivateBreakpoint(b);
+    _brkManager->SetBreakpointNote(a, "loop");
+    EXPECT_EQ(_brkManager->TakeChangedIds(), (std::vector<uint16_t>{a, b}));
+
+    auto* stepOver = new BreakpointDescriptor();
+    stepOver->memoryType = BRK_MEM_EXECUTE;
+    stepOver->z80address = 0x9000;
+    stepOver->hidden = true;
+    const uint16_t hidden = _brkManager->AddBreakpoint(stepOver);
+    ASSERT_NE(hidden, BRK_INVALID);
+    EXPECT_TRUE(_brkManager->TakeChangedIds().empty()) << "a hidden breakpoint is internal";
+
+    _brkManager->RemoveBreakpointByID(a);
+    EXPECT_EQ(_brkManager->TakeChangedIds(), (std::vector<uint16_t>{a}));
 }

@@ -423,6 +423,17 @@ TEST_F(SprinterMemory_Test, ToolReads_MatchCpuReadsInEveryMapping)
     _decoder->UpdateBanks();
     ASSERT_EQ(_memory->GetMemoryBankMode(0), BANK_CACHE);
     expectAllMatch("fast RAM in window 0");
+    // The debugger's page of a fast RAM window (page-bound breakpoints key on it): the cache page the window
+    // points at, never an unset value
+    for (uint8_t fastPage = 0; fastPage < MAX_CACHE_PAGES; fastPage++)
+    {
+        _sprinterMemory->MapFastRamToBank(0, fastPage);
+        const MemoryPageDescriptor where = _memory->MapZ80AddressToPhysicalPage(0x1234);
+        EXPECT_EQ(where.mode, BANK_CACHE);
+        EXPECT_EQ(where.page, fastPage);
+        EXPECT_EQ(where.addressInPage, 0x1234);
+    }
+    _decoder->UpdateBanks();
     Pld().cacheOn = 0;
     Pld().romOff = 1;
     _decoder->UpdateBanks();

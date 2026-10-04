@@ -175,3 +175,19 @@ TEST_F(DebugEventHub_Test, BadRequestsGetAnError)
     EXPECT_EQ(messages[1]["op"].asString(), "error");
     EXPECT_EQ(messages[1]["id"].asString(), "q");
 }
+
+TEST_F(DebugEventHub_Test, BreakpointsChangedCarriesTheIds)
+{
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s"})", inbox.Sender());
+    auto* payload = new BreakpointsChangedPayload(std::string(kFirst));
+    payload->ids = {2, 5};
+    MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED, payload, true);
+    ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 1; }, std::chrono::seconds(2)));
+    const Json::Value event = inbox.Events()[0];
+    EXPECT_EQ(event["event"].asString(), "breakpoints_changed");
+    EXPECT_EQ(event["cpu"].asString(), "main");
+    ASSERT_EQ(event["ids"].size(), 2u);
+    EXPECT_EQ(event["ids"][0].asUInt(), 2u);
+    EXPECT_EQ(event["ids"][1].asUInt(), 5u);
+}

@@ -3,8 +3,11 @@
 - **Date:** 2026-09-28
 - **Status:** draft for review. Built for the main CPU (2026-10-03): the step's `PauseEvent` fields
   in the `/step` / `/steps` replies (`stop`), and §5's WebSocket channel with the `debug` topic
-  (`paused`, `resumed`, `step_done`, `breakpoints_changed`; `seq` per emulator). Not yet: `cpu`
-  other than main, `positions`, `edited`, `targets_changed`, `run_control`, the other topics.
+  (`paused`, `resumed`, `step_done`, `breakpoints_changed` with `{cpu, ids[]}`; `seq` per emulator).
+  §7's `/registers` additions (`memptr`, `q`, `halted`, `boundary`, `t`) and the `Breakpoint` `page` as
+  `{kind, page}` (CLI `--page ram5`) are on every surface; the page key is still the CPU address, not
+  yet the physical one. Not yet: `cpu` other than main, `positions`, `edited`, `targets_changed`,
+  `run_control`, the other topics.
 - **Part of:** [the debugger model](README.md). It carries the fields of
   [widget-catalog.md](widget-catalog.md) under the rules of
   [rules.md](rules.md).

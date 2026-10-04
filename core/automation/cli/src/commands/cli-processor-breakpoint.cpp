@@ -14,22 +14,36 @@
 
 namespace
 {
-/// An optional page condition at args[index] ("ram:32", "rom:3", "cache:0"): returns how many arguments it
-/// took (0 or 1); -1 with `error` set for a page this machine does not have
-int TakePageSpec(const std::vector<std::string>& args, size_t index, const BreakpointManager& bpManager, uint8_t& page,
-                 MemoryBankModeEnum& pageType, std::string& error)
+/// The arguments from `from` on, split into an optional `--page ram32` (debugger protocol; anywhere after the
+/// fixed arguments) and the rest, which is the note. Returns 1 with the page, 0 without one, -1 with `error`
+/// for a malformed page or one this machine does not have
+int TakePageFlag(const std::vector<std::string>& args, size_t from, const BreakpointManager& bpManager, uint8_t& page,
+                 MemoryBankModeEnum& pageType, std::vector<std::string>& noteArgs, std::string& error)
 {
-    if (index >= args.size() || !BreakpointManager::ParsePageSpec(args[index], page, pageType, error))
+    int found = 0;
+    for (size_t i = from; i < args.size(); ++i)
     {
-        error.clear();
-        return 0;  // not a page: the note starts here
+        if (args[i] != "--page")
+        {
+            noteArgs.push_back(args[i]);
+            continue;
+        }
+        if (i + 1 >= args.size())
+        {
+            error = "--page needs a page: ramN, romN or cacheN (e.g. --page ram5)";
+            return -1;
+        }
+        const std::string& spec = args[++i];
+        if (!BreakpointManager::ParsePageSpec(spec, page, pageType, error))
+            return -1;
+        if (!bpManager.HasPage(page, pageType))
+        {
+            error = "This machine has no page " + spec;
+            return -1;
+        }
+        found = 1;
     }
-    if (!bpManager.HasPage(page, pageType))
-    {
-        error = "This machine has no page " + args[index];
-        return -1;
-    }
-    return 1;
+    return found;
 }
 }  // namespace
 
@@ -47,11 +61,11 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address> [ram:N|rom:N|cache:N] [note]" << NEWLINE
+        ss << "Usage: bp <address> [--page ramN|romN|cacheN] [note]" << NEWLINE
            << "Sets an execution breakpoint at the specified address; with a page it fires only while that page is"
            << NEWLINE << "mapped at the address." << NEWLINE
            << "Examples:" << NEWLINE << "  bp 0x1234       - Set breakpoint at address 0x1234" << NEWLINE
-           << "  bp 0xC000 ram:32 - Only while RAM page 32 is at 0xC000" << NEWLINE
+           << "  bp 0xC000 --page ram32 - Only while RAM page 32 is at 0xC000" << NEWLINE
            << "  bp $1234        - Set breakpoint at address $1234 (hex)" << NEWLINE
            << "  bp #1234        - Set breakpoint at address #1234 (hex)" << NEWLINE
            << "  bp 1234         - Set breakpoint at address 1234 (decimal)" << NEWLINE
@@ -78,7 +92,8 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     uint8_t page = 0;
     MemoryBankModeEnum pageType = BANK_RAM;
     std::string pageError;
-    const int pageArgs = TakePageSpec(args, 1, *bpManager, page, pageType, pageError);
+    std::vector<std::string> noteArgs;
+    const int pageArgs = TakePageFlag(args, 1, *bpManager, page, pageType, noteArgs, pageError);
     if (pageArgs < 0)
     {
         session.SendResponse(pageError);
@@ -88,16 +103,15 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
                              : bpManager->AddExecutionBreakpoint(address);
 
     // Add note if provided
-    const size_t noteStart = 1 + static_cast<size_t>(pageArgs);
-    if (bpId != BRK_INVALID && args.size() > noteStart)
+    if (bpId != BRK_INVALID && !noteArgs.empty())
     {
         // Collect all remaining arguments as the note
         std::string note;
-        for (size_t i = noteStart; i < args.size(); ++i)
+        for (size_t i = 0; i < noteArgs.size(); ++i)
         {
-            if (i > noteStart)
+            if (i > 0)
                 note += " ";
-            note += args[i];
+            note += noteArgs[i];
         }
 
         bpManager->SetBreakpointNote(bpId, note);
@@ -167,7 +181,7 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     if (args.empty() || args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: wp <address> <type> [ram:N|rom:N|cache:N] [note]" << NEWLINE
+        ss << "Usage: wp <address> <type> [--page ramN|romN|cacheN] [note]" << NEWLINE
            << "Sets a memory watchpoint at the specified address (with a page: only while that page is mapped there)."
            << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
            << "  w    - Watch for memory writes" << NEWLINE << "  rw   - Watch for both reads and writes" << NEWLINE
@@ -212,7 +226,8 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     uint8_t page = 0;
     MemoryBankModeEnum pageType = BANK_RAM;
     std::string pageError;
-    const int pageArgs = TakePageSpec(args, 2, *bpManager, page, pageType, pageError);
+    std::vector<std::string> noteArgs;
+    const int pageArgs = TakePageFlag(args, 2, *bpManager, page, pageType, noteArgs, pageError);
     if (pageArgs < 0)
     {
         session.SendResponse(pageError);
@@ -222,16 +237,15 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
                              : bpManager->AddCombinedMemoryBreakpoint(address, memoryType);
 
     // Add note if provided
-    const size_t noteStart = 2 + static_cast<size_t>(pageArgs);
-    if (bpId != BRK_INVALID && args.size() > noteStart)
+    if (bpId != BRK_INVALID && !noteArgs.empty())
     {
         // Collect all remaining arguments as the note
         std::string note;
-        for (size_t i = noteStart; i < args.size(); ++i)
+        for (size_t i = 0; i < noteArgs.size(); ++i)
         {
-            if (i > noteStart)
+            if (i > 0)
                 note += " ";
-            note += args[i];
+            note += noteArgs[i];
         }
 
         bpManager->SetBreakpointNote(bpId, note);

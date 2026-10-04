@@ -1283,7 +1283,8 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
     ss << "                                     IR: " << std::setw(4) << z80State->ir_ << "  (I: " << std::setw(2)
        << static_cast<int>(z80State->i) << ", R: " << std::setw(2) << static_cast<int>(Z80::RegisterR(z80State)) << ")"
        << NEWLINE;
-    ss << "                                     MEMPTR: " << std::setw(4) << z80State->memptr << NEWLINE;
+    ss << "                                     MEMPTR: " << std::setw(4) << z80State->memptr << "  Q: " << std::setw(2)
+       << static_cast<int>(z80State->q) << NEWLINE;
     ss << NEWLINE;
 
     // Flags and interrupt state in two columns
@@ -1299,7 +1300,8 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
 
     ss << "  H: " << ((z80State->f & 0x10) ? "1" : "0") << " (Half-carry)";
     ss << "                    IM: " << std::dec << static_cast<int>(z80State->im) << NEWLINE;
-    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)" << NEWLINE;
+    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)";
+    ss << "                Boundary: " << Z80::BoundaryName(z80State->boundary) << NEWLINE;
     ss << "  P/V: " << ((z80State->f & 0x04) ? "1" : "0") << " (Parity/Overflow)" << NEWLINE;
     ss << "  N: " << ((z80State->f & 0x02) ? "1" : "0") << " (Add/Subtract)" << NEWLINE;
     ss << "  C: " << ((z80State->f & 0x01) ? "1" : "0") << " (Carry)" << NEWLINE << NEWLINE;

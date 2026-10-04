@@ -906,5 +906,7 @@ public:
     static bool SetRegisterValue(Z80State* state, const std::string& name, uint16_t value);
     /// R as LD A,R reads it: bit 7 as last written, bits 6:0 the refresh counter
     static uint8_t RegisterR(const Z80Registers* state);
+    /// Z80BoundaryEnum as the debugger protocol names it: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack
+    static const char* BoundaryName(uint8_t boundary);
     /// endregion </Register Access API>
 };

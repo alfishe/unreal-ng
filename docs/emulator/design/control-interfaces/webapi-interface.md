@@ -362,7 +362,7 @@ PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true}
 
 ### State Inspection
 ```
-GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr), interrupt (iff1, iff2, im, halted), timing (t = CPU T in the frame, frame), flags
+GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr, q, t = CPU T in the frame), interrupt (iff1, iff2, im, halted, boundary), flags
 PUT /api/v1/emulator/{id}/registers/{name}    Set a register (body {"value":N}): the register table names, memptr / wz, im (0-2), iff1 / iff2 (0-1); 400 out of range
 GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
 PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
@@ -647,13 +647,14 @@ GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakp
 {
   "type": "execution|read|write|port_in|port_out",
   "address": 32768,
-  "page": "ram:32",
+  "page": {"kind": "ram", "page": 32},
   "note": "optional annotation",
   "group": "optional group name"
 }
 ```
 
-`page` (optional, execution / read / write): `ram:N`, `rom:N` or `cache:N`. The breakpoint fires only
+`page` (optional, execution / read / write): `{kind: ram | rom | cache, page}` (debugger protocol; the text
+form `"ram32"` is accepted too). The breakpoint fires only
 while that page is mapped at the address - for example code in TS-Conf RAM page 32 at `#C000`, not
 whatever else is paged in there. 400 for a page the machine does not have. The list and
 `/breakpoints/status` (`last_triggered_page`) name it back the same way.

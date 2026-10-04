@@ -49,9 +49,9 @@ enum MemoryBitsEnum : uint8_t
 
 struct MemoryPageDescriptor
 {
-    MemoryBankModeEnum mode;
-    uint8_t page;
-    uint16_t addressInPage;
+    MemoryBankModeEnum mode = BANK_INVALID;
+    uint8_t page = 0xFF;          ///< ROM, RAM or cache (fast RAM) page; 0xFF with BANK_INVALID
+    uint16_t addressInPage = 0;
 };
 
 // Memory interface descriptor

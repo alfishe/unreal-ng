@@ -422,6 +422,8 @@ class BreakpointsChangedPayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
+    std::string cpu = "main";        ///< which CPU's breakpoints (protocol.md §5.2)
+    std::vector<uint16_t> ids;       ///< the breakpoints added, removed or changed (hidden ones never)
 
     explicit BreakpointsChangedPayload(const unreal::UUID& id) : emulatorId(id) {}
     explicit BreakpointsChangedPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
