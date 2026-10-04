@@ -141,6 +141,11 @@ public:
     /// @return true if recording started successfully
     bool StartRecordingWithEncoder(const std::string& filename, std::unique_ptr<EncoderBase> encoder);
 
+    /// `src` (srcW x srcH RGBA) scaled by the nearest pixel into a dstW x dstH picture, centered, its aspect kept,
+    /// the rest opaque black. Same size: a plain copy
+    static void FitPicture(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH,
+                           std::vector<uint8_t>& out);
+
     /// Stop current recording and finalize output file
     void StopRecording();
 
@@ -349,6 +354,9 @@ public:
     /// endregion </Configuration>
 
 protected:
+    /// The capture region's rectangle and the output size of a recording about to start
+    void PrepareVideoGeometry();
+
     /// region <Internal state>
     EmulatorContext* _context = nullptr;
 
@@ -391,6 +399,7 @@ protected:
     VideoCaptureRegion _captureRegion = VideoCaptureRegion::FullFrame;
     uint32_t _scaleFactor = 1;
     std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping
+    std::vector<uint8_t> _fitBuffer;  // Reused per-frame: the screen region's current window fitted into the file's size
     std::vector<uint8_t> _aspectBuffer;  // Reused per-frame: the half-height TS-Conf lines doubled
     // Size of the first encoded frame: the encoders take one size per file, so a
     // picture of another size (an external picture source switched on or off,
@@ -399,8 +408,8 @@ protected:
     uint16_t _encodedHeight = 0;
     bool _sizeChangeLogged = false;
 
-    // MainScreen window (the frame's working window, locked at recording start: the encoders take one size per
-    // file, and a window that moves, like the TS-Conf graphics window, must not change the size mid-recording)
+    // MainScreen window at the recording's start. The encoders take one size per file, so the file keeps the size of
+    // that window; a window that moves or changes later (the TS-Conf graphics window) is fitted into it, see CaptureFrame
     uint16_t _mainScreenX = 0;
     uint16_t _mainScreenY = 0;
     uint16_t _mainScreenWidth = 0;
