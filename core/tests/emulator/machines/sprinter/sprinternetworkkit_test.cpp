@@ -19,6 +19,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/pcserialcard.h"
 #include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/hayesmodempeer.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
 #include "emulator/state/devicestate.h"
 
@@ -606,4 +607,178 @@ TEST_F(SprinterBcTerm_Test, ReceivesTheEspsAnswerThroughTheIsaInterrupt)
     EXPECT_NE(IrqJournal().find("INT acknowledged: PIO port B, IM 2 vector #00 -> table #B500"), std::string::npos)
         << "the replay journals them (the interrupt ring keeps them while BC-Term polls MSR)\n" << IrqJournal();
     EXPECT_EQ(c.acknowledged - acksLive, c.serviceEnds - servicesLive);
+}
+
+// BC-Term 1.11 (C:\MODEM\BCTERM.EXE on the MAME-pack system disk) with the ISA Hayes modem in slot 1 (network
+// phase SN4, T-NET-13): BC-Term finds the 16550A at #3F8 (page #D4), programs it at 57 600 baud (divisor 2 of
+// 1.8432 MHz) and PIO port B for IM 2, sends its init string "ATZ"; the modem answers OK. Typed "ATDT5551234"
+// dials the phone book entry 5551234 = bbs.test:23: the name resolves through the virtual network, the scripted
+// host's banner server answers, the modem says CONNECT 57600 and raises DCD, the banner arrives through the
+// UART's receive interrupt (PB0 -> IM 2). Typed text reaches the BBS byte for byte and comes back (it echoes);
+// +++ with its guard times returns to command mode, ATH hangs up. Then the session replays from its first
+// checkpoint without any host: the card's blob (UART + modem + call) and the ISA blob are equal byte for byte.
+// Boot-bound (BIOS POST and DSS from the hard disk, then BC-Term): a few seconds of host time.
+class SprinterBcTermModem_Test : public SprinterZxSession_Test
+{
+protected:
+    static constexpr uint32_t kBbs = NetIp(192, 0, 2, 30);
+    static constexpr const char* kBanner = "Welcome to the Unreal BBS\r\n";
+
+    void ConfigureMachine(CONFIG& config) override
+    {
+        sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[0];
+        slot.kind = static_cast<uint8_t>(sprinterisa::CardKind::Modem);
+        slot.base = sprinterisa::kModemDefaultBase;
+        slot.irq = sprinterisa::kModemDefaultIrq;
+        std::snprintf(config.network.modemPhonebook, sizeof(config.network.modemPhonebook), "5551234=bbs.test:23");
+    }
+
+    HayesModemPeer* Modem()
+    {
+        PcSerialCard* card = _context->pCore->GetNetworkManager()->SerialCard("isa1");
+        return card ? card->Modem() : nullptr;
+    }
+
+    void Type(const std::string& text)
+    {
+        Keys()->TypeText(text, 2);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !Keys()->IsSequenceRunning(); }, 2000, 1);
+    }
+
+    /// ENTER held as a person presses it: BC-Term's keyboard routine misses the short tap TypeText makes (its
+    /// letters it takes; checked 2026-10-03 with a 6-frame hold)
+    void Enter()
+    {
+        Keys()->TapKey("enter", 6);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    }
+
+    void Trace(const char* what)
+    {
+        if (!std::getenv("UNREAL_SPRINTER_NET_TRACE"))
+            return;
+        std::string log;
+        if (HayesModemPeer* modem = Modem())
+        {
+            for (const HayesModemPeer::Exchange& e : modem->RecentExchanges())
+                log += "> " + e.command + "\n< " + e.result + "\n";
+        }
+        std::printf("--- %s (frame %llu)\n%s\n%sISA: %s\n", what, static_cast<unsigned long long>(Frame()),
+                    ScreenText().c_str(), log.c_str(), DeviceState::Isa(_context).find("irq_summary")->s.c_str());
+        const StateNode net = DeviceState::Network(_context);
+        std::printf("SLOT: %s\nJOURNAL:\n%s\n", DeviceState::ToText(net.find("slots")->items[0]).c_str(),
+                    DeviceState::ToText(DeviceState::IsaJournal(_context, 40)).c_str());
+        SaveScreen(std::string("bcterm-modem-") + what + ".png");
+    }
+
+    Z80* Cpu() { return _context->pCore->GetZ80(); }
+
+    /// Stop exactly at a frame boundary (both the live run and the replay, for blob comparisons)
+    void RunToBoundary()
+    {
+        const uint64_t frame = Frame();
+        for (int guard = 0; guard < 4 && Frame() == frame; guard++)
+            _emulator->RunTStates(Cpu()->t < Cpu()->_frameLimit ? Cpu()->_frameLimit - Cpu()->t : 1u, true);
+    }
+};
+
+TEST_F(SprinterBcTermModem_Test, DialsTheBbsAndTalksThroughTheIsaInterrupt)
+{
+    auto host = std::make_unique<ScriptedHostNet>();
+    ScriptedHostNet* scripted = host.get();
+    scripted->AddName("bbs.test", kBbs);
+    scripted->AddBanner({kBbs, 23}, kBanner);
+    ASSERT_NE(_context->pVirtualNetwork, nullptr) << "the modem's line needs the virtual network";
+    _context->pVirtualNetwork->ReplaceHost(std::move(host));
+
+    BootToPrompt();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ASSERT_TRUE(ttd->StartRecording());
+
+    Dss("C:\\MODEM\\BCTERM.EXE");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 300);
+    Trace("started");
+    ASSERT_NE(Modem(), nullptr);
+    const PcSerialCard* card = _context->pCore->GetNetworkManager()->SerialCard("isa1");
+    EXPECT_EQ(card->Com().Uart().Baud(), 57600u) << "BC-Term's default rate on a 1.8432 MHz UART";
+    EXPECT_TRUE(card->Com().Uart().GetView().mcr & Uart16550::kMcrOut2) << "OUT2: the IRQ driver on";
+    const Z84Lib::Z84Pio::Port& b = _decoder->GetZ84().pio.GetPort(1);
+    ASSERT_EQ(b.mode, 3) << "BC-Term programs PIO port B in bit mode\n" << ScreenText();
+    EXPECT_EQ(Cpu()->im, 2);
+    ASSERT_FALSE(Modem()->RecentExchanges().empty()) << "BC-Term sent its init string\n" << ScreenText();
+    EXPECT_EQ(Modem()->RecentExchanges().front().command, "ATZ");
+    EXPECT_EQ(Modem()->RecentExchanges().front().result, "OK");
+    EXPECT_TRUE(ScreenHas("OK")) << ScreenText();
+
+    // Dial the phone book number: the name resolves, the banner server answers
+    Type("ATDT5551234");
+    Enter();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Welcome to the Unreal BBS"); }, 500, 5);
+    Trace("connected");
+    EXPECT_TRUE(ScreenHas("CONNECT 57600")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("Welcome to the Unreal BBS")) << ScreenText();
+    EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Online);
+    EXPECT_TRUE(card->Com().Uart().GetView().msr & Uart16550::kMsrDcd) << "DCD reached the UART";
+    const SprinterIsaBus::Counters& c = _decoder->GetIsaBus().GetCounters(0);
+    EXPECT_GE(c.acknowledged, 1u) << "the bytes came in through the PIO port B interrupt";
+    EXPECT_EQ(c.acknowledged, c.serviceEnds);
+
+    // Typed text goes to the BBS byte for byte; it echoes, the echo is on the screen
+    Type("hello unreal");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("hello unreal"); }, 300, 5);
+    EXPECT_TRUE(ScreenHas("hello unreal")) << ScreenText();
+    const uint16_t socket = Modem()->Link().Socket();
+    const std::vector<uint8_t> received = scripted->Received(socket);
+    EXPECT_EQ(std::string(received.begin(), received.end()), "hello unreal") << "what the BBS got";
+    EXPECT_EQ(card->Com().Uart().GetView().overruns, 0u);
+
+    // +++ after a second of silence, a second more: OK, the call held; ATH ends it
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 60);
+    Type("+++");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 70);
+    Trace("escaped");
+    EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Escaped) << ScreenText();
+    Type("ATH");
+    Enter();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 20);
+    Trace("hung-up");
+    EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Command);
+    EXPECT_FALSE(card->Com().Uart().GetView().msr & Uart16550::kMsrDcd) << "DCD dropped";
+    EXPECT_EQ(Modem()->LastResult(), "OK");
+
+    // Replay from the first checkpoint with no host at all: the same blobs at the same frame boundary
+    for (int f = 0; f < 3; ++f)
+        RunToBoundary();
+    const uint64_t endFrame = Frame();
+    std::unordered_map<uint8_t, std::vector<uint8_t>> recorded;
+    ttd->GetPeripheralRegistry().CaptureAll(recorded);
+    ttd->StopRecording();
+    ASSERT_GE(ttd->GetCheckpointCount(), 2u);
+    _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
+    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
+    while (Frame() < endFrame)
+        RunToBoundary();
+    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
+    ttd->GetPeripheralRegistry().CaptureAll(live);
+    for (ttd::PeripheralId id : {ttd::PeripheralId::SlotSerial1, ttd::PeripheralId::SprinterIsa})
+    {
+        const uint8_t key = static_cast<uint8_t>(id);
+        ASSERT_EQ(live.count(key), 1u) << int(key);
+        ASSERT_EQ(recorded.count(key), 1u) << int(key);
+        const std::vector<uint8_t> x = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
+        const std::vector<uint8_t> y = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
+        ASSERT_EQ(x.size(), y.size()) << "device " << int(key);
+        size_t count = 0;
+        std::string diffs;
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            if (x[i] != y[i] && count++ < 16)
+                diffs += " @" + std::to_string(i) + ":" + std::to_string(y[i]) + "->" + std::to_string(x[i]);
+        }
+        EXPECT_EQ(count, 0u) << "device " << int(key) << " differs after the replay (recorded->replayed)" << diffs;
+    }
+    EXPECT_TRUE(ScreenHas("Welcome to the Unreal BBS")) << "the replayed screen\n" << ScreenText();
 }

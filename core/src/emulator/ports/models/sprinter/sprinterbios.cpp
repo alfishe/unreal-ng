@@ -135,8 +135,21 @@ bool ApplyToConfig(CONFIG& config, const Options& options, std::string& error)
         config.sprinter.accel_int_suspend = static_cast<uint8_t>(options.accelIntSuspend);
     for (int n = 0; n < 2; n++)
     {
-        if (options.isaSlot[n] >= 0)
-            config.sprinter.isa.slot[n].kind = static_cast<uint8_t>(options.isaSlot[n]);
+        if (options.isaSlot[n] < 0)
+            continue;
+        sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[n];
+        slot.kind = static_cast<uint8_t>(options.isaSlot[n]);
+        // A kind's own defaults where the configured values do not fit it (an INI written for an NE2000)
+        uint16_t base = 0;
+        if (options.isaSlot[n] == static_cast<int>(sprinterisa::CardKind::Modem) &&
+            !sprinterisa::ParseModemBase(std::to_string(slot.base), base))
+        {
+            slot.base = sprinterisa::kModemDefaultBase;
+            slot.irq = sprinterisa::kModemDefaultIrq;
+        }
+        if (options.isaSlot[n] == static_cast<int>(sprinterisa::CardKind::Dual16552) &&
+            !sprinterisa::ValidSerialJumper(0, slot.irq))
+            slot.irq = sprinterisa::kSerialDefaultIrqA;
     }
     return true;
 }

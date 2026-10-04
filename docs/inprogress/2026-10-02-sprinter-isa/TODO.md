@@ -37,6 +37,8 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   immediate below the trigger level)
 - [ ] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial):
   [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md), phases SN0-SN6; SN1 needs I1, SN4 needs I4.
+  SN4 built 2026-10-03 (ISA modem + SprinterSerial: their IRQs ride the I4 lines - the modem's through MCR OUT2,
+  SprinterSerial's through jumpers J5 / J6; BC-Term takes them over IM 2).
   **SN3 built 2026-10-03**: the SprinterESP (`PcSerialCard`, `[ISA] SlotN=SPRINTERESP`) decodes A13-A3 and ignores
   AEN (`IIoBusDevice::IgnoresAen`, the slot report says so); its INTR is wired to IRQ3 for I4.
   **SN0-SN2 built 2026-10-03**: the NE2000 sits in slot 2 by default (`IsaBusDeviceCard` over `IIoBusDevice`); the
