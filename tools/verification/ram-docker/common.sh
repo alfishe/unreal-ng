@@ -57,7 +57,7 @@ get_platform_arch() {
 
 # Docker image configuration
 DOCKER_IMAGE_NAME="unrealng-build"
-DOCKER_IMAGE_TAG="qt6.9.3"
+DOCKER_IMAGE_TAG="qt6.9.3-ubuntu24.04"
 DOCKER_FULL_IMAGE="${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
 DOCKERFILE_PATH="${PROJECT_ROOT}/docker/Dockerfile.universal"
 

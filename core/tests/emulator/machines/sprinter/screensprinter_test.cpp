@@ -334,7 +334,7 @@ TEST_F(ScreenSprinter_Test, RgmodMidFrame_LinesAfterTheBeamUsePage1)
     EXPECT_EQ(Pld().rgMod, 0x01);
 }
 
-// T-VID-7: HOLD #77 = no shift; #00 moves the picture 14 pixels right and 7 lines down
+// T-VID-7: HOLD #77 = no shift; #00 moves the picture 14 pixels right and 14 lines down (2 lines per high-nibble unit)
 TEST_F(ScreenSprinter_Test, Hold_00Vs77)
 {
     SetMode(0, 0, 0, 0x60, 0x01, 0x00);  // palette 1, source column 8
@@ -346,9 +346,15 @@ TEST_F(ScreenSprinter_Test, Hold_00Vs77)
 
     WriteCode(SprinterCode::Hold, 0x00);
     Render();
-    EXPECT_EQ(Pixel(48 + 14, 16 + 7), PenColor(0x199));
-    EXPECT_NE(Pixel(48 + 13, 16 + 7), PenColor(0x199));
-    EXPECT_NE(Pixel(48 + 14, 16 + 6), PenColor(0x199));
+    EXPECT_EQ(Pixel(48 + 14, 16 + 14), PenColor(0x199));
+    EXPECT_NE(Pixel(48 + 13, 16 + 14), PenColor(0x199));
+    EXPECT_NE(Pixel(48 + 14, 16 + 13), PenColor(0x199));
+
+    // One high-nibble unit is 2 lines: HOLD #67 is 2 lines down of #77, #87 is 2 lines up (RRAID.EXE's scroll)
+    WriteCode(SprinterCode::Hold, 0x67);
+    Render();
+    EXPECT_EQ(Pixel(48, 16 + 2), PenColor(0x199));
+    EXPECT_NE(Pixel(48, 16 + 1), PenColor(0x199));
 }
 
 // T-VID-9: codes #2D / #2C: 312 / 320 lines from the next frame start (config.frame, the
