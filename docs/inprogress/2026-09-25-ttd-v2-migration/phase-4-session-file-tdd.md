@@ -147,7 +147,30 @@ v1 files keep `schemaVersion = 1` and stay readable only by the schema-1 reader 
 - **Index** (finalized files): the part table (offset, size, first frame, frame count, branch, dependency list offset), the frame table (each frame's start in machine time, D21, and its part), per-stream totals. 12 bytes per frame in the frame table: 2.2 MB per hour at 50 frames per second (arithmetic).
 - **Trailer** (24 bytes, last in the file): index offset u64, index size u32, index CRC32C u32, magic `TTDX`, a u32 trailer CRC. A reader looks at the last 24 bytes first.
 
-**As built (2026-10-04), the container.** `core/src/debugger/ttd/engine/ttdcontainer.{h,cpp}` implements the layout above as written, with two simplifications: the part-end record is stored uncompressed (it is read at open), and the per-stream totals in the index are counts only (records, stored and raw bytes). File I/O goes through `core/src/platform/fileio.h` (append with `fsync` / `FlushFileBuffers`, read at an offset); no memory mapping (§5.3.1). The engine's streams go in next.
+**As built (2026-10-04), the container.** `core/src/debugger/ttd/engine/ttdcontainer.{h,cpp}` implements the layout above as written, with two simplifications: the part-end record is stored uncompressed (it is read at open), and the per-stream totals in the index are counts only (records, stored and raw bytes). File I/O goes through `core/src/platform/fileio.h` (append with `fsync` / `FlushFileBuffers`, read at an offset); no memory mapping (§5.3.1). 
+
+**As built (2026-10-04), the engine session in the file.** `core/src/debugger/ttd/engine/ttdsessionfile.{h,cpp}`, `TTDSessionFile::Save` / `Load`. What changed from the table below while building it:
+
+- No reference-block (2) or device-state (4) stream: device states are pieces of their own regions (Phase 2), and the reference tables are rebuilt on load by the same code that builds them on capture (`TimeTravelEngine::ImportCheckpoint`).
+- The bus and sector journals have streams of their own, 13–16 (IN, OUT, interrupt vectors, sector reads), written as columns like v1's journal blocks; the write journal (7) uses v1's column blocks.
+- Versions keep their stored encoding and payload (`TTDPieceStore::Import`); the file numbers them as they appear, since the store reuses its ids.
+- A stream with nothing in a part writes no record.
+
+The 9 corpus sessions, saved with 50 checkpoints per part (`TTDSessionFile_Test`):
+
+| Session | Checkpoints | v1 file | Engine file | Of which pieces | Write journal |
+|---|---|---|---|---|---|
+| boot | 301 | 4,776,969 | 638,271 | 391,791 | 234,220 |
+| sprites | 301 | 6,790,665 | 1,947,545 | 1,243,044 | 694,707 |
+| active_demo | 301 | 1,168,824 | 152,293 | 125,626 | 13,137 |
+| demo_7threality | 301 | 1,314,338 | 245,392 | 201,189 | 34,350 |
+| demo_across-the-edge-second | 301 | 3,897,791 | 411,981 | 270,268 | 106,948 |
+| idle_session | 301 | 1,290,600 | 189,530 | 109,803 | 68,438 |
+| dizzyx | 496 | 2,280,383 | 612,204 | 333,961 | 251,913 |
+| greenberet-load | 1,011 | 1,321,736 | 301,566 | 100,083 | 55,913 |
+| tsfm_tech_support | 301 | 1,801,973 | 369,205 | 261,741 | 82,279 |
+
+Every session loads back checkpoint for checkpoint (every region, every device, the events, journals and configuration), and saving the loaded session gives the same bytes. Damage stops the load before the first unreachable part; a file cut short loads its complete parts. Writing as it records (the writer thread) and segments (§5.3) build on this.
 
 #### 5.2.2 Streams
 

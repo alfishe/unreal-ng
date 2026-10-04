@@ -5,6 +5,7 @@
 #include <functional>
 #include <iterator>
 
+#include "debugger/ttd/engine/ttdbytes.h"
 #include "debugger/ttd/ttdcompression.h"
 #include "platform/fileio.h"
 
@@ -22,85 +23,8 @@ constexpr uint16_t kIndexVersion = 1;
 constexpr uint32_t kMaxRawSize = 1u << 30;        ///< a record never decompresses to more (allocation bound)
 constexpr uint32_t kMaxHeaderSize = 64u << 20;
 
-class ByteWriter
-{
-public:
-    void U8(uint8_t v) { bytes.push_back(v); }
-    void U16(uint16_t v) { Raw(&v, 2); }
-    void U32(uint32_t v) { Raw(&v, 4); }
-    void U64(uint64_t v) { Raw(&v, 8); }
-    void Varint(uint64_t v)
-    {
-        while (v >= 0x80)
-        {
-            bytes.push_back(static_cast<uint8_t>(v | 0x80));
-            v >>= 7;
-        }
-        bytes.push_back(static_cast<uint8_t>(v));
-    }
-    void Bytes(const uint8_t* p, size_t n) { bytes.insert(bytes.end(), p, p + n); }
-    std::vector<uint8_t> bytes;
-
-private:
-    // Little endian on every supported host (static_assert below)
-    void Raw(const void* p, size_t n) { Bytes(static_cast<const uint8_t*>(p), n); }
-};
-
-class ByteReader
-{
-public:
-    ByteReader(const uint8_t* data, size_t size) : _p(data), _end(data + size) {}
-    bool U8(uint8_t& v) { return Raw(&v, 1); }
-    bool U16(uint16_t& v) { return Raw(&v, 2); }
-    bool U32(uint32_t& v) { return Raw(&v, 4); }
-    bool U64(uint64_t& v) { return Raw(&v, 8); }
-    bool Varint(uint64_t& v)
-    {
-        v = 0;
-        for (int shift = 0; shift < 64; shift += 7)
-        {
-            uint8_t b = 0;
-            if (!U8(b))
-                return false;
-            v |= static_cast<uint64_t>(b & 0x7F) << shift;
-            if ((b & 0x80) == 0)
-                return true;
-        }
-        return false;
-    }
-    bool Bytes(std::vector<uint8_t>& out, size_t n)
-    {
-        if (static_cast<size_t>(_end - _p) < n)
-            return false;
-        out.assign(_p, _p + n);
-        _p += n;
-        return true;
-    }
-    bool Skip(size_t n)
-    {
-        if (static_cast<size_t>(_end - _p) < n)
-            return false;
-        _p += n;
-        return true;
-    }
-    size_t Left() const { return static_cast<size_t>(_end - _p); }
-
-private:
-    bool Raw(void* out, size_t n)
-    {
-        if (static_cast<size_t>(_end - _p) < n)
-            return false;
-        std::memcpy(out, _p, n);
-        _p += n;
-        return true;
-    }
-    const uint8_t* _p;
-    const uint8_t* _end;
-};
-
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "the TTD container is written little endian; this host is not"
-#endif
+using ByteWriter = TTDByteWriter;
+using ByteReader = TTDByteReader;
 
 void PutU32(uint8_t* p, uint32_t v) { std::memcpy(p, &v, 4); }
 uint32_t GetU32(const uint8_t* p)

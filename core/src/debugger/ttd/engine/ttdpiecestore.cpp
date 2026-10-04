@@ -57,6 +57,27 @@ TTDPieceId TTDPieceStore::StoreFull(const uint8_t* bytes, uint32_t crc)
     return id;
 }
 
+TTDPieceId TTDPieceStore::Import(Encoding encoding, TTDPieceId base, uint16_t depth, uint32_t crc,
+                                  const uint8_t* payload, size_t size)
+{
+    const bool difference = IsDifference(encoding);
+    if (difference != (base != kNone) || (difference && (base >= _versions.size() || _versions[base].refcount == 0)) ||
+        (encoding == Encoding::Zero) != (size == 0) || size > UINT32_MAX ||
+        static_cast<uint8_t>(encoding) > static_cast<uint8_t>(Encoding::Ranges))
+        return kNone;
+    const TTDPieceId id = Allocate();
+    Version& v = _versions[id];
+    v.encoding = encoding;
+    v.crc32c = crc;
+    v.depth = difference ? depth : 0;
+    v.base = base;
+    if (size)
+        v.payload = _arena.Store(payload, static_cast<uint32_t>(size));
+    if (difference)
+        AddRef(base);
+    return id;
+}
+
 TTDPieceId TTDPieceStore::InternFirst(const uint8_t* bytes)
 {
     return StoreFull(bytes, codec::Crc32C(bytes, kPiece));

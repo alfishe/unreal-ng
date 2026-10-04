@@ -53,6 +53,14 @@ struct TTDSyncMiss
 };
 
 /// One recorded frame boundary
+/// One piece of a region taking a new version (TimeTravelEngine::ImportCheckpoint)
+struct TTDImportedChange
+{
+    uint32_t region = 0;
+    uint32_t piece = 0;
+    uint32_t id = 0;   ///< TTDPieceId
+};
+
 struct TTDEngineCheckpoint
 {
     static constexpr uint32_t kNoParent = 0xFFFFFFFFu;
@@ -329,6 +337,14 @@ public:
     /// content changed. Frames must increase
     bool CaptureFrame(const TTDFrameInput& input, std::string& error);
 
+    /// A checkpoint read from a session file (Phase 4): its fields, and the
+    /// pieces whose version changes there, sorted by region, each with a
+    /// version already in the store (its reference passes to the session).
+    /// The reference tables are rebuilt as CaptureFrame builds them. A
+    /// session that imported a checkpoint is read-only: CaptureFrame refuses
+    bool ImportCheckpoint(TTDEngineCheckpoint cp, const std::vector<TTDImportedChange>& changes, std::string& error);
+    bool IsReadOnly() const { return _readOnly; }
+
     /// Work and time of the last CaptureFrame
     const TTDEngineCaptureWork& LastCaptureWork() const { return _lastWork; }
 
@@ -426,7 +442,14 @@ public:
     }
 
 private:
+    friend class TTDSessionFile;   // reads and rebuilds a session as a whole (Phase 4)
+
     bool _open = false;
+    bool _readOnly = false;   ///< loaded from a file: CaptureFrame refuses
+    /// An event whose machine time is set: the log, and the RZX frame index
+    bool AppendTimedEvent(const TTDEvent& ev);
+    void NoteChange(uint32_t region, uint32_t piece, TTDPieceId next);
+    void CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint::RegionRefs& refs, bool snapshot);
     struct PieceChange
     {
         uint32_t piece;

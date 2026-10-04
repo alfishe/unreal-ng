@@ -77,6 +77,19 @@ public:
     /// reference) when the content did not change
     TTDPieceId Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes);
 
+    /// A version as stored elsewhere (a session file, Phase 4): its encoding,
+    /// its base (a difference only: one reference is taken on it), depth, the
+    /// CRC of the raw piece and the payload, kept as it is. Returns its id with
+    /// one reference; kNone when the fields do not fit together
+    TTDPieceId Import(Encoding encoding, TTDPieceId base, uint16_t depth, uint32_t crc, const uint8_t* payload,
+                      size_t size);
+    /// The stored payload of @p id (null for a Zero version)
+    const uint8_t* PayloadData(TTDPieceId id) const
+    {
+        return _versions[id].payload.size ? _arena.Data(_versions[id].payload) : nullptr;
+    }
+    uint32_t CrcOf(TTDPieceId id) const { return _versions[id].crc32c; }
+
     void AddRef(TTDPieceId id) { _versions[id].refcount++; }
     /// Drop one reference; a version whose last reference goes is freed, and
     /// with it the reference it held on its base
