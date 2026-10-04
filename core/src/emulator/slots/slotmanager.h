@@ -49,7 +49,7 @@ constexpr uint32_t SlotGroupBit(SlotCardGroup group)
 }
 
 /// The groups whose devices the slot set decides (the others still come from their legacy fields)
-constexpr uint32_t kSlotDecidedGroups = SlotGroupBit(SlotCardGroup::Socket);
+constexpr uint32_t kSlotDecidedGroups = SlotGroupBit(SlotCardGroup::Socket) | SlotGroupBit(SlotCardGroup::GeneralSound);
 
 class SlotManager
 {

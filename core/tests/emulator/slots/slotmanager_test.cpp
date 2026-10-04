@@ -551,6 +551,42 @@ TEST(SlotManager_Test, SocketBoardComesFromTheSlot)
     }
 }
 
+/// Step 3: the General Sound personality comes from the slot (the runtime switch stays until SL-6). Five machines
+/// (about 20 ms each)
+TEST(SlotManager_Test, GeneralSoundComesFromTheSlot)
+{
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = gs\nzxbus.1.ram = 512k");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->config.sound.gsTypeKind, GSTypeKind::Z80) << "the ini's GSType=NGS ignored";
+        EXPECT_EQ(m.Context()->config.sound.gsRamKB, 512u) << "the card's RAM option";
+        EXPECT_NE(m.Context()->pSoundManager->getGeneralSound(), nullptr);
+    }
+    {
+        StagedMachine m("scorpion", "zxbus.2 = gs-lw");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->config.sound.gsTypeKind, GSTypeKind::LW);
+    }
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = moonsound");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->pSoundManager->getGeneralSound(), nullptr) << "no GS card in the slots";
+    }
+    {
+        // The 128K edge has no IORQGE: refused without the override ...
+        StagedMachine m("spectrum128", "edge.1 = neogs\nedge.1.adapter = zxbus-to-sinclair-edge");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->pSoundManager->getGeneralSound(), nullptr);
+    }
+    {
+        // ... fitted as unrealistic with it
+        StagedMachine m("spectrum128", "edge.1 = neogs\nedge.1.adapter = zxbus-to-sinclair-edge\nedge.1.fit = unrealistic");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->config.sound.gsTypeKind, GSTypeKind::NGS);
+        EXPECT_NE(m.Context()->pSoundManager->getGeneralSound(), nullptr);
+    }
+}
+
 TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)
 {
     Emulator emulator(LoggerLevel::LogError);
