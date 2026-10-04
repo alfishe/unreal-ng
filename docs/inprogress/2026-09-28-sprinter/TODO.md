@@ -164,7 +164,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
      `#0D1E LD SP,#3F74` and `#0D25 LD HL,(#031D)` overwrites its return address). Timing luck at clock level, MAME
      freezes the same way in 4 of 6 runs; analysis [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2. It hits with BIOS 3.06 Hotfix 2
      (the default again since 2026-10-03) and 3.07 BETA 1 alike. The owner checks it on a real board.
-  3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
+  3. ~~Mouse in the GUI through the shared MouseManager~~ **done**: host mouse -> MouseManager -> board mouse
+     (2026-10-02, `s4-input-outcome.md`); capture only while a program polls SIO B or the `#58` view, and the
+     automation mouse on the board mouse (status `device.serial`, glide, FN drive icon clicked through the API)
+     2026-10-03, branch `mouse-api-routing` ([design](../2026-10-03-mouse-api-routing/design.md)). Then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback; **ISA I2 done 2026-10-04**, branch `sprinter-isa-i2-neogs`: slot 1 =
      ZX-bus adapter + NeoGS, ProPlay vs MAME in [i2-outcome.md](../2026-10-02-sprinter-isa/i2-outcome.md)), the S7
      remainder (Qt docks, CD).

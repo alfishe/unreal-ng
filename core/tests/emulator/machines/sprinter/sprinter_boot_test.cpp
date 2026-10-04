@@ -1248,6 +1248,41 @@ protected:
         return box;
     }
 
+    static constexpr uint32_t kFn115Bar = 0x00FFFF;  // FN 1.15: a cyan bar on blue panels
+    struct Point
+    {
+        int x;
+        int y;
+    };
+    /// FN 1.15's drive icons in the 640x256 picture (the drive bar above the left panel)
+    static constexpr Point kDriveIconC = {74, 35};
+    static constexpr Point kDriveIconD = {98, 35};
+
+    /// The picture as a PNG in $UNREAL_MOUSE_DUMP_DIR (diagnostics; nothing without the variable)
+    void DumpPicture(const std::string& name)
+    {
+        const char* dir = std::getenv("UNREAL_MOUSE_DUMP_DIR");
+        if (!dir)
+            return;
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const std::string file = std::string(dir) + "/" + name + ".png";
+        lodepng::encode(file, fb.memoryBuffer, fb.width, fb.height);
+    }
+
+    /// Home the pointer (a glide far up and left: FN clamps it at the corner), glide to (x, y) of the picture
+    /// (FN 1.15 in the 640-pixel mode: one count per pixel) and click there with the left button
+    void ClickAt(int x, int y, bool click = true)
+    {
+        ASSERT_TRUE(Mouse()->Glide(-1000, 1000).ok());
+        ASSERT_TRUE(Mouse()->Glide(x, -y).ok());
+        if (click)
+            ASSERT_TRUE(Mouse()->Click(MouseButton::Left, 5).ok());
+        for (int i = 0; i < 100 && (Mouse()->IsBusy() || Mouse()->IsClickPending()); i++)
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 1);
+        ASSERT_FALSE(Mouse()->IsBusy()) << "the glide did not end";
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 60);
+    }
+
     /// The panel list's row `row` (8 pixels each from y = 79), its middle line
     static constexpr int RowY(int row) { return 79 + 8 * row + 3; }
 
@@ -1387,6 +1422,62 @@ TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
 
     // The mouse: the serial packets on SIO B DSS 1.71 reads; "system bat" is row 14 of the root of drive C
     ExerciseMouse(kBar, 14, 30);
+}
+
+// FN 1.15 on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD; not in the repo): the drive icon "D" clicked
+// through the automation mouse (DebugMouseManager: what the WebAPI / MCP / CLI / Lua / Python mouse surfaces call)
+// switches the left panel to drive D; the "C" icon brings drive C back, the same picture as before. The pointer is
+// homed first: a glide far up and left, which FN clamps at the screen's corner, then a glide to the icon - the
+// pattern of the mouse recipe (.recipe/input/mouse.md). Boot-bound (BIOS 3.06, DSS 1.71, FN from the hard disk):
+// ~8 s host time with the turbo mode
+TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115ClickTheDriveIcon)
+{
+    const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+    if (!path || !FileHelper::FileExists(path))
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
+    // Drive D: the pack's data disk on the slave ($UNREAL_SPRINTER_HDD_MEDIA, or sp_hdd_media.img next to the system disk)
+    const char* mediaEnv = std::getenv("UNREAL_SPRINTER_HDD_MEDIA");
+    const std::string media =
+        mediaEnv ? std::string(mediaEnv) : (std::filesystem::path(path).parent_path() / "sp_hdd_media.img").string();
+    if (!FileHelper::FileExists(media))
+        GTEST_SKIP() << "the data disk for drive D (UNREAL_SPRINTER_HDD_MEDIA or sp_hdd_media.img) not found";
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    InsertHdd(path);
+    InsertHdd(media, "ide0.slave");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+    ASSERT_TRUE(ScreenHas("Shell version")) << ScreenText();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);
+    ASSERT_EQ(ActivePanel(kFn115Bar), 'L') << "FN starts on the left panel";
+
+    const MouseStateSnapshot status = Mouse()->GetState();
+    ASSERT_TRUE(status.device.has_value());
+    EXPECT_EQ(status.device->id, "sprinter");
+    EXPECT_TRUE(status.device->inUse) << "DSS 1.71 polls SIO B";
+    EXPECT_TRUE(status.device->serial.receiverInTune) << "DSS 1.71 clocks SIO B at ~1 200 baud";
+
+    // The pointer onto the drive bar first (no click), so the reference picture has it off the list
+    ClickAt(kDriveIconC.x, kDriveIconC.y, false);
+    const std::vector<uint32_t> driveC = Picture();
+    DumpPicture("fn115-drive-c");
+    ClickAt(kDriveIconD.x, kDriveIconD.y);
+    const std::vector<uint32_t> driveD = Picture();
+    DumpPicture("fn115-drive-d");
+    const Box changed = Changed(driveC, driveD, 0, 360);
+    EXPECT_FALSE(changed.Empty()) << "the left panel did not change";
+    EXPECT_GT(changed.bottom - changed.top, 100) << "the whole list changed, not just the pointer";
+    EXPECT_EQ(ActivePanel(kFn115Bar), 'L') << "still the left panel";
+
+    ClickAt(kDriveIconC.x, kDriveIconC.y);
+    const std::vector<uint32_t> driveCAgain = Picture();
+    DumpPicture("fn115-drive-c-again");
+    // The left panel's path line and list (picture rows 64-230; the pointer stays on the drive bar above)
+    const uint32_t width = _context->pScreen->GetFramebufferDescriptor().width;
+    const auto listRows = [width](const std::vector<uint32_t>& picture) {
+        return std::vector<uint32_t>(picture.begin() + 64 * width, picture.begin() + 230 * width);
+    };
+    EXPECT_TRUE(Changed(listRows(driveC), listRows(driveCAgain), 0, 360).Empty()) << "drive C back: the list as before";
+    EXPECT_FALSE(Changed(listRows(driveD), listRows(driveCAgain), 0, 360).Empty());
 }
 
 /// endregion </Flex Navigator input>

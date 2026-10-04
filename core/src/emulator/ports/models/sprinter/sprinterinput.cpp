@@ -32,7 +32,10 @@ SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, Spr
     // tolerance (or no clock at all), the character is lost (a framing error, not modeled further)
     _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) {
         if (MouseReceiverInTune())
+        {
             _chip.sio.Receive(1, value);
+            _mouseBytesReceived++;
+        }
         else
             _mouseFramingErrors++;
     });
@@ -80,6 +83,79 @@ void SprinterInput::OnMouseMotion(int dx, int dy)
     while (!_mouseY.compare_exchange_weak(old, static_cast<uint8_t>(old + dy), std::memory_order_relaxed))
     {
     }
+    _viewUnread.fetch_or(static_cast<uint8_t>((dx ? 0x02 : 0) | (dy ? 0x04 : 0)), std::memory_order_relaxed);
+}
+
+uint64_t SprinterInput::Frame() const
+{
+    return _context ? _context->emulatorState.frame_counter : 0;
+}
+
+bool SprinterInput::PolledLately(uint64_t pollFrame) const
+{
+    const uint64_t frame = Frame();
+    return pollFrame != kNeverPolled && frame >= pollFrame && frame - pollFrame <= kPolledWithinFrames;
+}
+
+bool SprinterInput::IsMouseInUse() const
+{
+    if (!_context)
+        return true;  // no frame source (unit-test contexts): fitted is in use
+    return PolledLately(_viewPollFrame.load(std::memory_order_relaxed)) ||
+           PolledLately(_serialPollFrame.load(std::memory_order_relaxed));
+}
+
+bool SprinterInput::HasUnreadMotion() const
+{
+    if (PolledLately(_viewPollFrame.load(std::memory_order_relaxed)) && _viewUnread.load(std::memory_order_relaxed))
+        return true;
+    if (!PolledLately(_serialPollFrame.load(std::memory_order_relaxed)))
+        return false;
+    int dx = 0, up = 0;
+    _mouse.PendingMotion(dx, up);
+    return _mouse.GetState().sent < 3 || dx != 0 || up != 0;
+}
+
+MouseDeviceStatus SprinterInput::DescribeMouse() const
+{
+    MouseDeviceStatus status;
+    status.id = "sprinter";
+    status.name = "Sprinter board mouse: Microsoft serial mouse on SIO B + the PLD's Kempston view (#58)";
+    status.kind = MouseDeviceKind::SerialMicrosoft;
+    status.fitted = IsMouseFitted();
+    status.inUse = IsMouseInUse();
+    status.wheel = false;
+    status.buttons = 3;  // the Kempston view shows three, the serial packet left and right
+    status.hasPorts = true;
+    status.portButtons = PeekMouseView(0xFADF);
+    status.portX = PeekMouseView(0xFBDF);
+    status.portY = PeekMouseView(0xFFDF);
+    const BoardMouse board = GetBoardMouse();
+    status.x = board.x;
+    status.y = board.y;
+    status.buttonMask = board.buttons;
+
+    status.hasSerial = true;
+    MouseDeviceStatus::Serial& serial = status.serial;
+    const MsSerialMouse::State& line = _mouse.GetState();
+    const Z84Lib::Z84Sio::Channel& sioB = _chip.sio.GetChannel(1);
+    serial.baud = MsSerialMouse::kBaud;
+    serial.receiverBaud = MouseReceiverBaud();
+    serial.receiverInTune = MouseReceiverInTune();
+    serial.receiverEnabled = (sioB.wr[3] & 0x01) != 0;
+    serial.packetInFlight = line.sent < 3;
+    for (int i = 0; i < 3; i++)
+        serial.packet[i] = line.packet[i];
+    serial.packetBytesSent = line.sent;
+    _mouse.PendingMotion(serial.pendingDx, serial.pendingDy);
+    serial.packetsSent = _mouse.PacketsSent();
+    serial.bytesReceived = _mouseBytesReceived;
+    serial.framingErrors = _mouseFramingErrors;
+    serial.fifoCount = sioB.fifoCount;
+    for (int i = 0; i < 3; i++)
+        serial.fifo[i] = sioB.fifo[i];
+    serial.overrun = _chip.sio.OverrunLatched(1);
+    return status;
 }
 
 void SprinterInput::OnMouseButtons(uint8_t activeLowMask)
@@ -91,6 +167,7 @@ void SprinterInput::OnMouseCounters(uint8_t x, uint8_t y)
 {
     _mouseX.store(x, std::memory_order_relaxed);
     _mouseY.store(y, std::memory_order_relaxed);
+    _viewUnread.store(0x06, std::memory_order_relaxed);
 }
 
 SprinterInput::BoardMouse SprinterInput::GetBoardMouse() const
@@ -108,6 +185,15 @@ void SprinterInput::SetBoardMouse(const BoardMouse& mouse)
 }
 
 uint8_t SprinterInput::ReadMouseView(uint16_t port) const
+{
+    // A program's read: polling (IsMouseInUse), and X (A10 = 0) or Y taken
+    _viewPollFrame.store(Frame(), std::memory_order_relaxed);
+    if (port & 0x0100)
+        _viewUnread.fetch_and(static_cast<uint8_t>((port & 0x0400) == 0 ? ~0x02u : ~0x04u), std::memory_order_relaxed);
+    return PeekMouseView(port);
+}
+
+uint8_t SprinterInput::PeekMouseView(uint16_t port) const
 {
     // MAME sprinter.cpp case 0x58: #FADF buttons, #FBDF X, #FFDF Y (the Kempston address bits A8, A10)
     uint8_t x = 0, y = 0, buttons = 0xFF;
@@ -212,6 +298,7 @@ void SprinterInput::BeforeChipAccess(uint8_t lowByte)
             break;
         case 0x1A:
         case 0x1B:
+            _serialPollFrame.store(Frame(), std::memory_order_relaxed);
             _mouse.Advance(Now());
             break;
         default:
@@ -238,4 +325,8 @@ void SprinterInput::Clear()
     _mouse.Clear();
     _keyboardOverruns = 0;
     _pldKeyboard = 0;
+    _mouseBytesReceived = 0;
+    _viewPollFrame.store(kNeverPolled, std::memory_order_relaxed);
+    _serialPollFrame.store(kNeverPolled, std::memory_order_relaxed);
+    _viewUnread.store(0, std::memory_order_relaxed);
 }

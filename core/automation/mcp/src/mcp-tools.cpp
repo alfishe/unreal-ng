@@ -1191,7 +1191,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
         "dots per T) and framebuffer placement (works for ATM, Profi, AlCo modes too), 'video_text' = exact text of an ATM / "
         "ZX-Evo text mode (80x25 codes and attributes; unavailable in bitmap modes - use screen_ocr), 'mouse' = "
-        "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
+        "the machine's mouse (Kempston interface, Sprinter serial mouse, ZX-Evo PS/2: device, fitted, ports, serial line) incl. Kempston port routing, 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it). "
         "'tsconf' = the TS-Conf machine (memory map, video, TSU summary, interrupts, DMA, clock, SD), 'tsconf_tsu' = its TSU "
         "objects for debug views (tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells); both unavailable on "
@@ -1272,7 +1272,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
         "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
-        "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
+        "the machine's mouse device + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
         "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
         "sprinter_zx_mode, sprinter_pld_journal). "
@@ -2520,6 +2520,24 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[mouse] " << value["description"].asString();
+                                else if (value.isMember("device") && value["device"].isObject())
+                                {
+                                    // The machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2)
+                                    const Json::Value& device = value["device"];
+                                    out << "\n[mouse] " << device["id"].asString() << " (" << device["kind"].asString()
+                                        << ")" << (device["in_use"].asBool() ? ", in use" : "") << ", x "
+                                        << device["x"].asInt() << " y " << device["y"].asInt()
+                                        << (device["wheel"].asBool() ? ", wheel" : "");
+                                    if (device.isMember("serial"))
+                                        out << ", serial receiver " << device["serial"]["receiver_baud"].asDouble() << " baud"
+                                            << (device["serial"]["receiver_in_tune"].asBool() ? " (in tune)" : " (out of tune)")
+                                            << ", " << device["serial"]["packets_sent"].asUInt64() << " packets";
+                                    if (device["id"].asString() == "kempston" && value.isMember("routing"))
+                                        out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
+                                            << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                                else if (value.isMember("mouse_fitted") && !value["mouse_fitted"].asBool())
+                                    out << "\n[mouse] no mouse fitted (input refused)";
                                 else
                                 {
                                     out << "\n[mouse] " << (value["present"].asBool() ? "fitted" : "not fitted")
@@ -2824,23 +2842,30 @@ void RegisterMouseInput(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"move", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
+    for (const char* action : {"move", "glide", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Kempston mouse (relative device). 'move' shifts counters by dx/dy emulated pixels; 'click' presses a button for N "
-        "frames. Input is applied immediately; call control_execution run_frames to let the program react.";
+        "The machine's own mouse (relative device): Kempston interface, the Sprinter's serial mouse, the ZX-Evo / "
+        "TS-Conf PS/2 mouse; a machine without a mouse refuses with 409. 'move' shifts by dx/dy emulated pixels "
+        "(-127..127); 'glide' moves up to -4096..4096 in steps the program follows (one per frame; input sent "
+        "meanwhile queues behind it, so a click after a glide lands where it ended); 'click' presses a button for N "
+        "frames. Input is applied immediately; call control_execution run_frames to let the program react. 'status' "
+        "names the device and what it gives the guest (ports, serial line, PS/2).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["dx"]["type"] = "integer";
-    schema["properties"]["dx"]["minimum"] = -127;
-    schema["properties"]["dx"]["maximum"] = 127;
-    schema["properties"]["dx"]["description"] = "+ = right (move; optional pre-move for click)";
+    schema["properties"]["dx"]["minimum"] = -4096;
+    schema["properties"]["dx"]["maximum"] = 4096;
+    schema["properties"]["dx"]["description"] = "+ = right (move: -127..127; glide: -4096..4096; optional pre-move for click)";
     schema["properties"]["dy"]["type"] = "integer";
-    schema["properties"]["dy"]["minimum"] = -127;
-    schema["properties"]["dy"]["maximum"] = 127;
-    schema["properties"]["dy"]["description"] = "+ = UP (move; optional pre-move for click)";
+    schema["properties"]["dy"]["minimum"] = -4096;
+    schema["properties"]["dy"]["maximum"] = 4096;
+    schema["properties"]["dy"]["description"] = "+ = UP (move: -127..127; glide: -4096..4096; optional pre-move for click)";
+    schema["properties"]["device"]["type"] = "string";
+    schema["properties"]["device"]["description"] =
+        "status: report this device of the machine (kempston, sprinter, evo-ps2); default the first fitted one";
     Json::Value buttonEnum(Json::arrayValue);
     for (const char* button : {"left", "right", "middle"})
     {
@@ -2864,15 +2889,31 @@ void RegisterMouseInput(ToolRegistry& registry)
 
     registry.Register(
         "mouse_input",
-        "Send Kempston mouse input to the emulator: relative move (dx/dy), press/release/click buttons, set the exact "
-        "pressed set, wheel steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
+        "Send mouse input to the machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2): relative move (dx/dy), "
+        "glide (long moves the program can follow), press/release/click buttons, set the exact pressed set, wheel "
+        "steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/mouse/status", nullptr, caller, "Mouse status", done);
+                const std::string device = args.isMember("device") ? args["device"].asString() : std::string();
+                ResolveAndForward(args, "GET", device.empty() ? "/mouse/status" : "/mouse/status?device=" + device,
+                                  nullptr, caller, "Mouse status", done);
+                return;
+            }
+            if (action == "glide")
+            {
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    done(ToolResult::Error("glide requires 'dx' or 'dy'"));
+                    return;
+                }
+                Json::Value body;
+                body["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                body["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                ResolveAndForward(args, "POST", "/mouse/glide", &body, caller, "Mouse glide started", done);
                 return;
             }
             if (action == "release_all")
@@ -2948,13 +2989,16 @@ void RegisterMouseInput(ToolRegistry& registry)
                     return;
                 }
 
-                // Pre-move then click, in order; the click is skipped if the move fails
+                // Pre-move then click, in order; the click is skipped if the move fails. A pre-move beyond
+                // -127..127 glides: the click queues behind the glide and lands where it ended
                 Json::Value moveBody;
                 moveBody["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
                 moveBody["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                const auto beyondMove = [](const Json::Value& v) { return v.isInt() && (v.asInt() > 127 || v.asInt() < -127); };
+                const std::string moveSuffix = beyondMove(moveBody["dx"]) || beyondMove(moveBody["dy"]) ? "/mouse/glide" : "/mouse/move";
 
                 TargetResolver::ResolveFromArgs(
-                    args, caller, [&caller, moveBody, clickBody, okText, done](bool ok, const std::string& idOrError) {
+                    args, caller, [&caller, moveBody, moveSuffix, clickBody, okText, done](bool ok, const std::string& idOrError) {
                         if (!ok)
                         {
                             done(ToolResult::Error(idOrError));
@@ -2983,7 +3027,7 @@ void RegisterMouseInput(ToolRegistry& registry)
                         };
 
                         std::vector<SeriesStep> steps;
-                        steps.push_back(makeStep("move", "/mouse/move", moveBody));
+                        steps.push_back(makeStep("move", moveSuffix, moveBody));
                         steps.push_back(makeStep("click", "/mouse/click", clickBody));
 
                         RunSeries(std::move(steps), [done, okText, id](Json::Value acc) {

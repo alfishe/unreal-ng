@@ -60,8 +60,9 @@ deleted. Take one only on the owner's request.
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - ~~Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback)~~ **done 2026-10-04** (ISA I2,
   branch `sprinter-isa-i2-neogs`, [i2-outcome.md](../2026-10-02-sprinter-isa/i2-outcome.md)): ProPlay plays a MOD at
-  MAME's pitch and timing; open: the NeoGS RAM in TTD (its replay is not bit-exact), the MAME ISA I/O tap. The mouse
-  in the GUI through the shared MouseManager.
+  MAME's pitch and timing; open: the MAME ISA I/O tap; the NeoGS RAM joins TTD with TTD v2 (owner, 2026-10-04).
+  ~~The mouse in the GUI through the shared MouseManager~~ done (capture only while polled, automation on the board
+  mouse: [2026-10-03-mouse-api-routing](../2026-10-03-mouse-api-routing/design.md)).
 - P2: ATAPI CD on the Sprinter's IDE (media change, eject, ATAPI boot); the CompactFlash identity check;
   LDConf (reloading the PLD configuration at run time).
 - Lower: two Sega-style pads, serial mouse variants, tape input (`#FE` bit 6), Centronics printer, SIO B

@@ -670,6 +670,10 @@ public:
     /// PS/2 mouse, the Sprinter board mouse); no side effects. False: the
     /// Kempston device answers (Mouse::ReadRegister)
     virtual bool PeekMouseRegister([[maybe_unused]] uint8_t reg, [[maybe_unused]] uint8_t& value) const { return false; }
+    /// The machine's mouse ports read a mouse built into the machine (the ZX-Evo AVR's PS/2 mouse, the
+    /// Sprinter board mouse), never the Kempston interface (Mouse): that one is then not wired, and
+    /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
+    virtual bool HasMachineMouse() const { return false; }
 
 
     /// region <TTD model-specific state (parent TDD 6.4)>

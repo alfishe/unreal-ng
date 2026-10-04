@@ -766,12 +766,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "Mouse Injection:" << NEWLINE;
     oss << "  mouse move <dx> <dy>           - Move by dx,dy pixels (+x right, +y up; -127..127)" << NEWLINE;
+    oss << "  mouse glide <dx> <dy>          - Long move (-4096..4096), one step per frame" << NEWLINE;
     oss << "  mouse press|release <button>   - Press or release left|right|middle (l|r|m)" << NEWLINE;
     oss << "  mouse click <button> [frames]  - Press, hold for frames (default 2), release" << NEWLINE;
     oss << "  mouse buttons <none|b1,b2..>   - Set exactly which buttons are pressed" << NEWLINE;
     oss << "  mouse wheel <steps>            - Scroll wheel -7..7 (+ = away from you)" << NEWLINE;
     oss << "  mouse clear                    - Release all buttons, cancel pending click" << NEWLINE;
-    oss << "  mouse status                   - Show counters, buttons, wheel, port values" << NEWLINE;
+    oss << "  mouse status [device]          - Show counters, port values, the machine's mouse" << NEWLINE;
+    oss << "  mouse devices                  - The machine's mouse devices" << NEWLINE;
     oss << "  mouse set <x> <y>              - Debug: write raw X/Y counters (0..255)" << NEWLINE;
     oss << NEWLINE;
     oss << "Joystick Injection (Kempston, IN #1F):" << NEWLINE;

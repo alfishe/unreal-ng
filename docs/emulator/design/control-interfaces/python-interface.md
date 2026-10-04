@@ -500,7 +500,8 @@ emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
 
 ### Mouse Input
 
-`Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands
+`Emulator` methods that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands
 and the WebAPI `/mouse/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
 Units, limits and the reasoning behind them: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
@@ -509,6 +510,9 @@ the program on the machine moves its own cursor by that much. `dy` positive = **
 
 ```python
 emu.mouse_move(dx, dy)                  # -127..127 each, not both 0
+emu.mouse_glide(dx, dy)                 # -4096..4096; one step per frame, later input queues behind it
+emu.mouse_busy()                        # True while a glide (and its queue) is in progress
+emu.mouse_devices()                     # the machine's mouse devices (list of device dicts)
 emu.mouse_press(button)                 # "left" | "right" | "middle" (or "l" | "r" | "m")
 emu.mouse_release(button)
 emu.mouse_click(button, frames=2)       # hold 1..65535 frames, then release on its own
@@ -516,7 +520,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status()                      # state dict (below)
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```
@@ -531,8 +535,9 @@ Every changing method returns the resulting **state dict**:
  'ports': {'FADF': 255, 'FBDF': 41, 'FFDF': 80},   # what IN returns now (integers, as in the WebAPI)
  'pending_click': None,       # or {'button': 'left', 'frames_left': 1}
  'ttd_journal': 'supported'}
-# plus 'warning': '...' when the change cannot reach the program
-# (mouse not fitted, or a wheel step with no wheel fitted)
+# plus the machine's mouse: 'mouse_fitted', 'device' (None when none is fitted; the WebAPI
+# device object: id, kind, fitted, in_use, ports, and 'serial' or 'ps2'), 'devices', 'queue'
+# plus 'warning': '...' when a wheel step was sent with no wheel fitted
 ```
 
 `mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
@@ -553,6 +558,8 @@ so a mistake is not silently ignored):
 |-------|-----------|
 | Out-of-range value, zero move/wheel, unknown button name | `ValueError` (message says which value and the allowed range) |
 | TTD replay in progress | `RuntimeError("TTD replay in progress; live mouse input refused")` |
+| No mouse fitted on the machine | `RuntimeError("no mouse fitted on this machine: ...")` |
+| `mouse_status(device=...)` names a device the machine does not have | `ValueError` (lists the ids it has) |
 | No mouse manager / device | `RuntimeError` |
 
 **Worked example** (paused, reproducible):

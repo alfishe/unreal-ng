@@ -91,6 +91,15 @@ public:
     /// the mouse is part of the board. Input moves the board's counters; the
     /// serial mouse samples them, the PLD's Kempston view reads them
     bool IsMouseFitted() const override { return true; }
+    /// A program read the board mouse within kPolledWithinFrames frames: the PLD's Kempston view
+    /// (code #58) or SIO B, the serial mouse's receiver (DSS 1.71 polls it from its frame INT).
+    /// BIOS SETUP and a DSS without a mouse driver read neither: a click then captures nothing
+    bool IsMouseInUse() const override;
+    /// The board mouse: counters, the PLD's Kempston view, the serial line and SIO B's receiver
+    MouseDeviceStatus DescribeMouse() const override;
+    /// The view a program polls has not taken the last motion: the Kempston view's X or Y unread, or
+    /// motion not yet sent as serial packets (counted only while that view is polled)
+    bool HasUnreadMotion() const override;
     void OnMouseMotion(int dx, int dy) override;
     void OnMouseButtons(uint8_t activeLowMask) override;
     /// Neither view has a wheel (Microsoft two-button mouse; MAME's code #58 has no wheel nibble)
@@ -156,6 +165,8 @@ public:
     /// The PLD's Kempston view of the board's mouse (code #58): A8 = 0 buttons
     /// (active low, D0 left, D1 right, D2 middle, D7-D3 = 1), else A10 = 0 X, else Y
     uint8_t ReadMouseView(uint16_t port) const;
+    /// The same value without counting as a program's read (debug and automation)
+    uint8_t PeekMouseView(uint16_t port) const;
 
     Ps2KeyboardStream& KeyboardStream() { return _keyboard; }
     MsSerialMouse& SerialMouse() { return _mouse; }
@@ -166,6 +177,8 @@ public:
     bool MouseReceiverInTune() const;
     /// Statistics: mouse characters lost to a receive clock out of tune (not in TTD: no machine state)
     uint64_t MouseFramingErrors() const { return _mouseFramingErrors; }
+    /// Statistics: mouse characters SIO B received (not in TTD)
+    uint64_t MouseBytesReceived() const { return _mouseBytesReceived; }
 
     /// Statistics: bytes the SIO refused (FIFO full)
     uint64_t KeyboardOverruns() const { return _keyboardOverruns; }
@@ -192,6 +205,16 @@ private:
     uint64_t _keyboardOverruns = 0;
     uint8_t _pldKeyboard = 0;  ///< kPld* flags
     uint64_t _mouseFramingErrors = 0;
+    uint64_t _mouseBytesReceived = 0;
+    /// Frames (EmulatorState::frame_counter) of the last program access to each view; polling for
+    /// IsMouseInUse and glide pacing, not machine state (TTD does not save them)
+    static constexpr uint64_t kNeverPolled = ~uint64_t{0};
+    mutable std::atomic<uint64_t> _viewPollFrame{kNeverPolled};
+    std::atomic<uint64_t> _serialPollFrame{kNeverPolled};
+    /// Bit 1: X moved since the Kempston view's X was read, bit 2: Y
+    mutable std::atomic<uint8_t> _viewUnread{0};
+    uint64_t Frame() const;
+    bool PolledLately(uint64_t pollFrame) const;
     /// An asynchronous receiver samples mid-bit: about half a bit over the 9.5 bits up to the stop bit, shared by
     /// both ends; 5 % is the usual budget
     static constexpr double kBaudTolerance = 0.05;
