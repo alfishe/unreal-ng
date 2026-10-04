@@ -1,6 +1,8 @@
 # TODO - ZX-MultiSound (UzixLS) sound card
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q5 recorded. No code yet. Depends on the
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q5 recorded. Card logic CL-0 / CL-1 built 2026-10-04
+(branch `multisound`, not committed): `MultiSoundLogic` agrees with the card's CPLD Verilog on every scenario and the
+full decode sweep. Depends on the
 [ZX-bus slots](../2026-10-03-zx-bus-slots/TODO.md) (SL-1 to SL-5).
 
 ## Documents
@@ -26,7 +28,16 @@
 ## Remaining
 
 - [ ] Owner review of the design
-- [ ] Independent modules (can start before the slots work): SAA-0..3, SAM-0..5, ML-0..2, CL-0..2
+- [ ] Independent modules (can start before the slots work): SAA-0..3, SAM-0..5, ML-0..2
+- [x] CL-0 RTL co-simulation (`tools/verification/multisound/`: pinned `top.v`, Verilator testbench, `.msc` scenarios,
+  sweep tables) and CL-1 `MultiSoundLogic` + `core-tests` ([tdd-card-logic.md](tdd-card-logic.md) §2, §4, §5)
+- [x] RTL findings F1-F11 folded into [hardware-reference.md](hardware-reference.md) and [architecture.md](architecture.md)
+  (GS INT / 321, DAC transfer, IORQGE direction, GS flag rules, GS memory map) - [tdd-card-logic.md](tdd-card-logic.md) §7
+- [ ] CL-2 rest: real-program traces with reads and M1 context (TSFM players with status polling, VGMPLAY.WMF, GS MOD
+  player, WC MIDI player, Ball Quest) once the card is on the bus (integration phase); one write-only trace (TFM Music
+  Compiler player) is in the corpus
+- [ ] MS-2 input from the RTL: GS INT 321 clocks of 12 MHz, port reads `#FF`, flag rules on any access, GS memory map
+  incl. the ROM's A15 wiring (check `gma[15]` -> 27C512 A15 in the rev.A2 schematic)
 - [ ] MS-1 `Ym2203Pair` extraction (TSFM bit-identical)
 - [ ] MS-2 GS profile (16 MHz, 1-2 MB, no `#33`, DAC sink)
 - [ ] MS-3..MS-8 card, mixer, TTD, surfaces, real software, docs (after slots SL-4 / SL-5)

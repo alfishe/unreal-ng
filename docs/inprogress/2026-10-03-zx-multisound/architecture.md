@@ -55,7 +55,7 @@ flowchart LR
 |---|---|---|
 | YM2203 pair | 3.5 MHz exact (DDS average) | 1 : 1 on a 3.5 MHz host, a true ratio on 3.5469 MHz hosts (128K) |
 | SAA1099 | 8 MHz | 16 : 7 |
-| GS Z80 | 16 MHz, INT from 12 MHz / 320 | card units as today (`GSCardRunner`) |
+| GS Z80 | 16 MHz, INT from 12 MHz / 321 (RTL) | card units as today (`GSCardRunner`) |
 | SAM2695 | its internal rate | library `hostTickRate` |
 
 - **Why the YM pair needs a ratio:** today TSFM uses "one YM master clock = one CPU T-state" because the TSFM's clock
@@ -101,7 +101,7 @@ in Verilator ([tdd-card-logic.md](tdd-card-logic.md)).
 | Parameter | Classic (default) | MultiSound |
 |---|---|---|
 | CPU clock | 12 MHz | 16 MHz |
-| INT period | 320 clocks of 12 MHz | same (37.5 kHz from the 12 MHz DDS, not the CPU clock) |
+| INT period | 320 clocks of 12 MHz | **321** clocks of 12 MHz (37.383 kHz from the 12 MHz DDS, not the CPU clock; low 33 clocks), per the RTL ([tdd-card-logic.md](tdd-card-logic.md) §7 F8) |
 | RAM | 128-512 KB (`[SOUND] GSRamSize`) | 1 MB or 2 MB (`gsRam`); `_ramPairMask` widened, banking unchanged |
 | Host ports | `#B3`, `#BB`, `#33` | `#B3`, `#BB` |
 | ROM | `[ROM] GS` | GS 1.05b (`data/rom/gs105b.rom`, shipped with the card profile) |
@@ -122,7 +122,7 @@ check on register 7 / 14 / 15 writes only). The same hook later serves the 128K'
 ### 4.4 `MultiSoundDacs`
 
 Four channels `{sample, volume}`; inputs: GS sample event (memory read at `#6000-#7FFF`), GS volume (ports 6-9),
-SounDrive port write (sample + volume 63). Output: ideal DAC value `sample × volume / 63` per channel (sigma-delta
+SounDrive port write (sample + volume 63). Output: ideal DAC value `level × gain / (128 × 64)` per channel (`MultiSoundLogic::SampleLevel` / `VolumeGain64`: level -127..+127, gain = volume, 63 counts as 64; measured exact against the RTL, tdd-card-logic.md §7 F9) (sigma-delta
 noise not modeled; optional `Authentic` mode adds the 1-pole 16.3 kHz board filter), stereo by the board weights
 (channels 0-1 left, 2-3 right), deltas into a blip pair on the card axis.
 

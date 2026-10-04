@@ -1,0 +1,34 @@
+# L1, L2, L8, L9, L11, L12: one write and one read per decoded port family, plus near misses.
+# Default header: mask pro, ram 1m, dip ym,saa,gs,sd, cpu 3.5
+out FFFD 07     # YM register (A13 = 1): address write to chip 0, IORQGE
+out BFFD 3F     # YM data: chip 0, A0 = 1, IORQGE
+out EFFD 08     # A13 = 1 mirror
+out E00D 09     # A13 = 1, A12-A4 free
+out DFFD 0A     # A13 = 0: YM address write, no IORQGE (the #DFFD family)
+out C00D 0B     # A13 = 0 mirror
+out 800D 3E     # YM data mirror
+out 7FFD 10     # A15 = 0: not decoded
+out FFFC 11     # A3-A0 = C: not decoded
+out FFF5 12     # A3 = 0 (ZX-Evo / ATM style partial decodes are not used)
+in FFFD         # register read mode after reset: chip 0, A0 = 1
+in BFFD         # IORQGE, but the card does not drive (reads float)
+in DFFD         # drives the YM value without IORQGE
+out 00FF 21     # SAA data (A8 = 0)
+out 01FF 1C     # SAA address (A8 = 1)
+out FEFF 22     # A8 = 0 mirror
+out 00FE 23     # not SAA
+in 00FF         # SAA has no read
+out 12B3 31     # GS data
+out 34BB 32     # GS command
+in 56B3         # GS output register, clears the data flag
+in 78BB         # GS status
+out 000F 80     # SounDrive channel 0
+out 001F 81     # channel 1
+out 004F 82     # channel 2
+out 005F 83     # channel 3
+out FF0F 84     # A15-A8 free
+out 002F 85     # A5 = 1: not SounDrive
+out 008F 86     # A7 = 1: not SounDrive
+out 000E 87     # A0 = 0: not SounDrive
+in 000F         # SounDrive has no read
+in 001F         # (Kempston joystick port: the card stays off the bus)

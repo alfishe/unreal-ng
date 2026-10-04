@@ -1,0 +1,12 @@
+# L17: the reset state
+out FFFD F3     # chip 1, register read, FM on, SAA on
+out 00B3 11
+out 00BB 22
+gout 0000 05
+gout 0003 33
+out 000F 44
+gout 0006 15
+m1 0000
+reset
+in FFFD         # chip 0, register read (not status), FM muted, SAA off, lock off, GS and DACs zero
+in 00BB
