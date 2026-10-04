@@ -5,7 +5,7 @@
 | **Date** | 2026-10-03 |
 | **Status** | Draft for owner review |
 | **Requirements** | [requirements.md](requirements.md) |
-| **Decisions** | [open-questions.md](open-questions.md) Q1-Q6 |
+| **Decisions** | [open-questions.md](open-questions.md) Q1-Q7 |
 | **Matrix** | [compatibility-matrix.md](compatibility-matrix.md) |
 | **Plan and tests** | [tdd.md](tdd.md) |
 | **Related** | [Sprinter ISA](../2026-10-02-sprinter-isa/tdd.md) (the first slot bus), [Sprinter network](../2026-10-02-sprinter-network/tdd.md) (`IIoBusDevice`, `NetworkCapabilities::expansionSlots`), [media manager](../2026-09-28-storage-manager/technical-design.md) (slot / medium split, queued changes), TTD v2 D38 (device set fixed per session; branch `ttd-engine`, `phase-2-device-state-tdd.md` §5.4.3) |
@@ -15,7 +15,7 @@
 1. [What exists today](#1-what-exists-today)
 2. [Target model](#2-target-model)
 3. [Declarations: machines and cards](#3-declarations-machines-and-cards)
-4. [The port claim table and IORQGE](#4-the-port-claim-table-and-iorqge)
+4. [The port claim table and bus arbitration](#4-the-port-claim-table-and-bus-arbitration)
 5. [SlotManager: plan and apply](#5-slotmanager-plan-and-apply)
 6. [Configuration](#6-configuration)
 7. [Ownership of existing devices](#7-ownership-of-existing-devices)
@@ -99,9 +99,11 @@ flowchart TB
 
 ```cpp
 // core/src/emulator/slots/busdeclaration.h (sketch)
-enum class BusKind : uint8_t { AySocket, ZxBus, SinclairEdge, Scorpion, Isa8 };
+enum class BusKind : uint8_t { AySocket, ZxBus, SinclairEdge, AtmIoBus, ProfiBus, Isa8 };   // Scorpion = ZxBus (research §11)
 enum class BusSignal : uint32_t { Iorqge = 1, IoDos = 2, Dos = 4, Wait = 8, Plus12V = 16, Reset = 32,
-                                  RomCs = 64, M1 = 128, Rfsh = 256, Int = 512, Nmi = 1024 };
+                                  CsRom = 64, RdRom = 128, M1 = 256, Rfsh = 512, Int = 1024, Nmi = 2048,
+                                  Busrq = 4096, Busak = 8192 };       // CsRom = board output, RdRom = override input
+enum class Arbitration : uint8_t { CardWins, BoardWins, UlaOnly, None };   // research-machines.md §1
 
 struct BusDeclaration
 {
@@ -109,7 +111,9 @@ struct BusDeclaration
     BusKind kind;
     uint32_t signals;            // BusSignal mask
     int physicalSlots;           // informational (real board); our limit is unlimited (owner rule)
-    ReadConflictRule readRule;   // what a read returns when two non-IORQGE drivers answer (default WiredAnd)
+    Arbitration arbitration;     // how IORQGE and the board's own ports interact (§4)
+    ReadConflictRule readRule;   // two drivers on one read (default WiredAnd: a modeling choice, flagged as a bus fight)
+    std::vector<uint16_t> boardPorts; // BoardWins: the ports the board hides from the slots (porthit), as mask/match list
 };
 
 struct BuiltInDevice
@@ -118,6 +122,7 @@ struct BuiltInDevice
     std::vector<Function> functions;
     std::vector<PortClaim> ports;
     bool switchable;             // a machine setting can switch it off (R-COMP-5)
+    bool socketed;               // a chip in a socket: a plan can take it out (Q7, ZX-Evo YM2149)
 };
 
 struct MachineBuses { std::vector<BusDeclaration> buses; std::vector<BuiltInDevice> builtIn; };
@@ -137,7 +142,7 @@ struct PortClaim
 {
     uint16_t mask, match;        // claims port p when (p & mask) == match
     PortDir dir;                 // In, Out, InOut
-    bool iorqge;                 // true: the card pulls IORQGE; the machine decode stays silent on this cycle
+    bool iorqge;                 // true: the card pulls IORQGE (effect depends on the bus arbitration, §4)
     bool lockedOnRomFetch;       // MultiSound SAA / SounDrive: ignored while M1 runs from #0000-#3FFF
 };
 
@@ -147,11 +152,13 @@ struct CardType
     const char* displayName;
     BusKind nativeBus;
     uint32_t requiredSignals;
+    CycleDetection detection;    // Iorq (default) | RdWr (sees cycles the board hides, §4.1)
     OptionSchema options;                                          // DIP switches, RAM sizes, firmware variants
-    std::vector<Function> (*Functions)(const CardOptions&);       // claims follow the options (R-COMP-2)
-    std::vector<PortClaim> (*Ports)(const CardOptions&);
     std::unique_ptr<ICard> (*Create)(CardContext&, const CardOptions&);
 };
+// Functions, claims, options, required signals and detection come from the reference data (reference-data.md,
+// core/src/emulator/slots/refdata/cards.cpp); only Create() is card code. Option-dependent functions and claims carry
+// a typed When{option, anyOf} condition.
 ```
 
 ```cpp
@@ -184,46 +191,68 @@ A function is a short string from one enum-backed table (`ay-socket`, `gs`, `saa
 `midi`, `net.zxnetusb`, `serial.ef`, `kempston-joystick`, `kempston-mouse`, `beta128`, `ide.<scheme>`, ...). The
 compatibility matrix is computed from them ([compatibility-matrix.md](compatibility-matrix.md)).
 
-## 4. The port claim table and IORQGE
+## 4. The port claim table and bus arbitration
 
-One table replaces the three mechanisms. It is rebuilt when the slot set changes (never on the hot path).
+One table replaces the three mechanisms. It is rebuilt when the machine starts (slot changes restart the machine,
+Q6), never on the hot path.
 
-**Structure:**
+### 4.1 Research results that shape it
+
+[research-machines.md](research-machines.md) shows that IORQGE does **not** mean the same on every machine, and
+[research-cards.md](research-cards.md) shows that cards do not all detect an I/O cycle the same way:
+
+| Arbitration mode (per bus) | Machines | Rule |
+|---|---|---|
+| `CardWins` | NemoBus standard / Kay, Pentagon-1024SL class, Scorpion ZS-256 (incl. Turbo+), ATM with the CPU-socket ZX-bus adapter | a card driving IORQGE hides the cycle from lower slots and from the **whole** board decoder (reads and writes) |
+| `BoardWins` | ZX-Evo Baseconf, TS-Conf, Profi (`/OUTIORQ`) | the board masks /IORQ to the slots for its own ports (`porthit`); IORQGE only lets slot 1 block slot 2; a card cannot shadow a built-in |
+| `UlaOnly` | 48K | IORQGE silences only the ULA's `#FE` |
+| `None` | 128K, +2A, +3 (no IORQGE on the edge) | no suppression; card and board both answer |
+
+| Cycle detection (per card) | Cards | Meaning |
+|---|---|---|
+| `Iorq` (default) | almost all | the card sees a cycle only when its /IORQ is active |
+| `RdWr` | ZX-MultiSound ("RD or WR without MREQ and M1") | the card sees every I/O cycle, including those the board hides by masking /IORQ |
+
+### 4.2 Structure
+
 - `std::array<uint8_t, 8192> claimedBits` - one bit per 16-bit port: "some card claims this port". The hot path for a
-  port no card claims is one load and one bit test (cheaper than today's `map::find`).
-- For a claimed port: a compact list in a per-low-byte bucket (`buckets[256]`), each entry `{mask, match, dir, iorqge,
-  lockedOnRomFetch, ICard*}`, sorted IORQGE first, then slot order.
+  port no card claims is one load and one bit test (today: an always-empty `std::map::find` plus an array index on
+  every IN / OUT, and two map lookups in `PeripheralPortIn/Out`; research §code).
+- Per claimed port: a compact entry list in a per-low-byte bucket (`buckets[256]`): `{mask, match, dir, iorqge,
+  lockedOnRomFetch, detection, ICard*}`, sorted IORQGE first, then slot order.
+- Per machine: the set of board ports (`porthit` for `BoardWins` machines), precomputed into a second bitmap.
 
-**OUT cycle:**
-1. Every claiming card whose entry matches gets the write (bus writes are seen by every listener; a SounDrive
-   and the machine can both latch).
-2. If any matching entry has `iorqge`, the machine's native decode is skipped for this cycle. Otherwise the machine
-   decodes as today.
+### 4.3 Cycle resolution
 
-**IN cycle:**
-1. IORQGE claimers answer; the machine decode is skipped. Several IORQGE claimers on one port: the first by slot
-   order drives, the clash is reported (it is an accidental clash, R-COMP-6, the later card is disabled at plan time,
-   so at run time this cannot happen).
-2. Otherwise passive claimers and the machine both may drive; the bus's `ReadConflictRule` combines them (default:
-   wired AND, as an NMOS data bus with two drivers settles low; a machine declares otherwise if documented).
-3. Nobody drives: the floating-bus rule of the machine, unchanged.
+For an access to port `p` (read or write):
 
-**Shadowing.** A built-in device whose port claims are covered by a card's IORQGE claims is *shadowed*: it is not
-called for those ports, and if it is a sound source its mixer row is muted and marked `shadowed by zxbus.N` (the
-hardware: it never sees the cycle, so it holds its last state and makes no new sound; a TurboSound in the ZX-Evo
-FPGA stays silent).
+1. **Which cards see it.** `CardWins` / `UlaOnly` / `None`: every matching card. `BoardWins`: if `p` is a board port,
+   only cards with `detection = RdWr`; otherwise every matching card.
+2. **Which cards are hidden by IORQGE.** Slot order: a card that drives IORQGE on `p` hides the cycle from later
+   slots (all modes).
+3. **Is the board hidden.** `CardWins`: yes if a visible card drives IORQGE on `p`. `UlaOnly`: only the `#FE` decode.
+   `BoardWins` / `None`: never.
+4. **Writes** go to every visible card and, unless hidden, to the board decoder.
+5. **Reads:** the drivers are the visible cards that answer reads plus the board unless hidden. One driver: its value.
+   Several: the bus's `readRule` (`WiredAnd` is a modeling choice, research found no documented answer; the slot report
+   flags every such port as a bus fight). Nobody: the machine's floating-bus rule (ZX-Evo: the FPGA drives `#FF`).
 
-**The `#DFFD` case (MultiSound):** the card claims `#DFFD` writes *without* IORQGE (its decode covers A15-A14 only,
-IORQGE needs A13 = 1). The table delivers the write to the card *and* the machine's `#DFFD` paging, which is exactly
-what the real board does.
+**Shadowing** is step 3 on `CardWins` machines: the built-in device on `p` gets no cycle and, if it is a sound source,
+its row is marked `shadowed by zxbus.N`. On `BoardWins` machines a card port equal to a board port is dead for `Iorq`
+cards (reported as an incompatibility at plan time, not as shadowing) and a bus fight for `RdWr` cards on reads.
 
-**ROM-fetch lock:** entries with `lockedOnRomFetch` consult one flag the Z80 already has at hand (the last M1
-address in `#0000-#3FFF`); the flag is computed only when such an entry matches.
+**Socketed built-ins.** A built-in chip in a socket (the ZX-Evo YM2149, the AY of boards that socket it) can be
+*removed* by a plan, the physical fix for a bus fight (owner decision Q7: the MultiSound on ZX-Evo empties the
+socket).
 
-**Migration of today's rules:** R6 ("legacy device keeps priority unless the observer claims") becomes "IORQGE claims
-win; otherwise wired combine"; `OverrideDecodeForFullDecodeClaim` becomes an IORQGE claim; the Beta-128 exception
-stays as a machine rule (Beta-128 is a built-in device with its own DOS gate); IDE first stays. Each rule move is a
-separate, tested step (tdd.md phase SL-3).
+**The `#DFFD` case (MultiSound on `CardWins`):** the card claims `#DFFD` writes without IORQGE; the write reaches the
+card and the machine's `#DFFD` paging, as on the real board.
+
+**ROM-fetch lock:** entries with `lockedOnRomFetch` consult the last M1 address; read only when such an entry matches.
+
+**Migration of today's rules:** R6 and `OverrideDecodeForFullDecodeClaim` become step 3 / step 5 of the resolution;
+the Beta-128 exception becomes a declared built-in property; "IDE decodes first" stays a machine rule. Each move is a
+separate tested step (tdd.md SL-3).
 
 ## 5. SlotManager: plan and apply
 
@@ -269,9 +298,11 @@ public:
    that slot (`Fit::Adapter`). Without `replaceIfIncompatible` (automation) or the UI's confirmation, refuse.
 4. **Function clashes:** the union of every fitted card sharing any function with the new card -> `removed`.
    Built-in devices sharing a function: fixed -> refuse (even with the flag); switchable -> `builtInSwitchedOff`.
-5. **Shadowing:** built-in devices covered by the new card's IORQGE claims -> `shadowed`. A *card* in a slot that would
-   be shadowed (TSFM in the AY socket under a MultiSound) is a pointless pair -> `removed`, and the socket returns to
-   the machine's own AY.
+5. **Shadowing (`CardWins` buses only):** built-in devices covered by the new card's IORQGE claims -> `shadowed`. A
+   *card* in a slot that would be shadowed (TSFM in the AY socket under a MultiSound) is a pointless pair ->
+   `removed`, and the socket returns to the machine's own AY. **`BoardWins` buses:** a claim of an `Iorq` card on a
+   board port is dead -> incompatibility (refused / override); an `RdWr` card's read claim on a board port is a bus
+   fight -> a socketed built-in on that port is planned out of its socket (Q7), otherwise `fit: unrealistic`.
 6. **Lost functions:** functions offered by removed cards and not by the new card.
 7. **Media:** every media slot of every removed card; a dirty medium without a disposition -> refuse.
 8. **TTD:** recording -> refuse ("TTD session <id> is recording; the device set is fixed for a session").
@@ -282,7 +313,9 @@ For `SetOptions`, the same algorithm runs with "the card as it would be with the
 
 **Apply = restart with the new configuration** (owner decision Q6: no hot plug, no adventures). An allowed plan
 writes the new slot set into the instance's configuration and restarts the machine through the same path as a model
-switch (`ModelSwitch::Run` / `CreateEmulatorWithModel`): a new emulator is built from the configuration, every card
+switch (`ModelSwitch::Run` / `CreateEmulatorWithModel`; research: `ModelSwitchRequest` gains a `configOverride`
+combined with today's `RamPowerOnOverride`, the same model is allowed, and the instance's create-time override
+(Sprinter ISA, Profi options) is carried - today a model switch silently drops it): a new emulator is built from the configuration, every card
 is created once at start, the claim table is built once, and media are carried over by `TakeMediaSet` with the
 stranded-media rules (the removed cards' media slots, such as `sd.ngs`, are reported like stranded media). If the
 new machine fails to start, the previous configuration is restored and started again, and the reply carries the
@@ -333,14 +366,20 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the fi
 ## 8. TTD and snapshots
 
 - **Device set fixed per session** (D38): the slot set and every card's options go into the session's configuration
-  fingerprint (branch `ttd-engine`, "configuration fingerprint" step). `SlotManager::Request` refuses while recording.
+  fingerprint (branch `ttd-engine`: `CaptureConfigFingerprint` takes `uint64` fields, so each slot adds
+  `slots.<slotId>` = hash(card + options), `affectsRestore = true`). `SlotManager::Request` refuses while recording.
   `PortDecoder::TtdSessionMatches` (today Sprinter-only) moves to `SlotManager`: a session whose slot set differs from
   the machine's is refused with the difference listed.
 - **Per-card blobs:** a card contributes its chip modules' serializers through `CollectTtdSerializers`;
   `RegisterMachinePeripherals` asks `SlotManager` instead of `SoundManager` / `NetworkManager` for fitted cards. Blob
   ids stay those of the chip modules (TSFM 4, GS 5, NeoGS 12, MoonSound 10, ...); a card with its own glue logic (the
-  MultiSound decoder) adds one id. Two instances of one module in two cards (two SAA chips) need an instance index in
-  the registry key (`{PeripheralId, instance}`), checked against the engine's registry key format.
+  MultiSound decoder) adds one id. Two instances of one module in two cards: on master the registry is keyed by `PeripheralId`
+  alone and a duplicate **silently overwrites**; on `ttd-engine` the device table is keyed by `TTDDeviceKey{type,
+  instance}` and refuses duplicates, but the per-id map still collapses them before. Rule: cards name their chip
+  instances by slot (`zxbus.1.saa`); a configuration with two instances of one id lands only after `ttd-engine` (and
+  its id-keyed map is replaced by the device key). Until then the plan refuses such a set with that reason.
+- **Fixture corpus:** the Sprinter and TS-Conf fixtures were recorded with the classic GS swapped in; card migration must
+  keep every blob byte-identical (`TTD_Corpus_Test.EveryFixtureLoadsRestoresAndReplaysExactly`).
 - **Snapshots** (SZX and our own): the slot set is written where the format allows (SZX has blocks for some cards);
   loading a snapshot plans its cards like an INI (no override), reporting what could not be fitted.
 
@@ -376,5 +415,5 @@ The create-time options (`"sprinter": {"isa_slot1": ...}`, `[ISA] SlotN`) stay f
 | Moving three dispatch mechanisms into one changes subtle priorities (R6, Beta-128 exception, IDE first) | one rule per step, each with the existing tests plus new IORQGE tests; the TTD corpus and machine boot tests as regression net |
 | TTD fixture churn when ownership moves | blob ids and layouts unchanged; only the registry's source of devices changes; fixtures re-recorded only where a format change is the point |
 | Read-conflict rule (wired AND) is a guess for some boards | the rule is per bus declaration and documented per machine; research step SL-0 collects schematics |
-| Two instances of one chip module (TTD registry key) | checked in SL-0 against the engine branch; instance index added if needed |
+| Two instances of one chip module (TTD registry key) | SL-0 found: master overwrites, `ttd-engine` keys by type + instance; such sets wait for `ttd-engine` and are refused before |
 | Concurrent branches touching `SoundManager` / decoders | migration one card per merge, rebased on master each time |

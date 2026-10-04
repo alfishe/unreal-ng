@@ -96,3 +96,17 @@ configuration ("why look for adventures out of nothing"). No hot plug: cards are
 A change goes: plan -> refusal or confirmation -> new configuration written -> restart through the model-switch path
 (media carried over by its rules). The General Sound personality switch, which today rebuilds the card at run time,
 becomes a slot replace with a restart. A model switch carries the slot set and plans it against the new machine.
+
+## Q7. How is the ZX-MultiSound modeled on the ZX-Evo?
+
+**Owner decision (2026-10-03): A - faithfully, with an empty socket.** Facts from research (research-machines.md §13,
+review correction): the ZX-Evo hides its own ports from the slots by masking /IORQ (`porthit`), has no data buffers,
+and its AY is one socketed YM2149. The MultiSound ignores /IORQ (it detects I/O cycles as RD / WR without MREQ and M1),
+so its writes reach both chips and a `#FFFD` read is driven by both (a bus fight) unless the YM2149 is taken out.
+
+- The ZX-Evo declares its AY as a **socketed, removable** built-in.
+- Plugging a MultiSound plans "take the YM2149 out of its socket" and reports it
+  (`ay-socket: chip removed - otherwise #FFFD reads are a bus fight`). Qt: warning + done; automation: refused without
+  `replaceIfIncompatible`.
+- With the override that keeps the chip, reads follow the bus's read rule and the fit is reported as `unrealistic`.
+- The TS-Conf `FREE_IORQ` FPGA build stays a possible later machine option (not in this work).
