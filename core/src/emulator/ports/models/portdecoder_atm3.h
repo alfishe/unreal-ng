@@ -149,6 +149,7 @@ public:
         value = _evoAvr.Ps2Mouse().PeekRegister(reg);
         return true;
     }
+    bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </SD card>
     /// endregion </Types>

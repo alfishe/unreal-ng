@@ -344,6 +344,71 @@ namespace PythonBindings
         return *button;
     }
 
+    /// One mouse device of the machine: same keys as the WebAPI `device` object
+    inline py::dict MouseDeviceDict(const MouseDeviceStatus& device)
+    {
+        auto hexRow = [](const uint8_t* bytes, size_t count) {
+            py::list row;
+            for (size_t i = 0; i < count; i++)
+            {
+                char text[4];
+                std::snprintf(text, sizeof(text), "%02X", bytes[i]);
+                row.append(std::string(text));
+            }
+            return row;
+        };
+        py::dict d;
+        d["id"] = device.id;
+        d["name"] = device.name;
+        d["kind"] = MouseDeviceStatus::KindName(device.kind);
+        d["fitted"] = device.fitted;
+        d["in_use"] = device.inUse;
+        d["wheel"] = device.wheel;
+        d["buttons"] = static_cast<int>(device.buttons);
+        d["x"] = static_cast<int>(device.x);
+        d["y"] = static_cast<int>(device.y);
+        d["button_mask"] = static_cast<int>(device.buttonMask);
+        if (device.hasPorts)
+        {
+            py::dict ports;
+            ports["FADF"] = static_cast<int>(device.portButtons);
+            ports["FBDF"] = static_cast<int>(device.portX);
+            ports["FFDF"] = static_cast<int>(device.portY);
+            d["ports"] = ports;
+        }
+        if (device.hasSerial)
+        {
+            const MouseDeviceStatus::Serial& serial = device.serial;
+            py::dict line;
+            line["baud"] = serial.baud;
+            line["receiver_baud"] = serial.receiverBaud;
+            line["receiver_in_tune"] = serial.receiverInTune;
+            line["receiver_enabled"] = serial.receiverEnabled;
+            line["packet_in_flight"] = serial.packetInFlight;
+            line["packet"] = hexRow(serial.packet, 3);
+            line["packet_bytes_sent"] = static_cast<int>(serial.packetBytesSent);
+            py::dict pending;
+            pending["dx"] = serial.pendingDx;
+            pending["dy"] = serial.pendingDy;
+            line["pending"] = pending;
+            line["packets_sent"] = serial.packetsSent;
+            line["bytes_received"] = serial.bytesReceived;
+            line["framing_errors"] = serial.framingErrors;
+            line["receiver_fifo"] = hexRow(serial.fifo, serial.fifoCount);
+            line["receiver_overrun"] = serial.overrun;
+            d["serial"] = line;
+        }
+        if (device.hasPs2)
+        {
+            py::dict ps2;
+            ps2["connected"] = device.ps2.connected;
+            ps2["resolution"] = static_cast<int>(device.ps2.resolution);
+            ps2["counts_per_mm"] = 1 << device.ps2.resolution;
+            d["ps2"] = ps2;
+        }
+        return d;
+    }
+
     /// State dict: same keys as the WebAPI state object
     inline py::dict MouseStateDict(const MouseStateSnapshot& state, const std::string& warning = "")
     {
@@ -383,6 +448,20 @@ namespace PythonBindings
             d["pending_click"] = py::none();
         }
         d["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+        // The machine's mouse (design 2026-10-03)
+        d["mouse_fitted"] = state.mouseFitted;
+        d["device"] = state.device ? py::object(MouseDeviceDict(*state.device)) : py::object(py::none());
+        py::list devices;
+        for (const MouseDeviceStatus& device : state.devices)
+            devices.append(MouseDeviceDict(device));
+        d["devices"] = devices;
+        py::dict queue;
+        queue["ops"] = state.queuedOps;
+        py::dict remaining;
+        remaining["dx"] = state.glideRemainingDx;
+        remaining["dy"] = state.glideRemainingDy;
+        queue["glide_remaining"] = remaining;
+        d["queue"] = queue;
         if (!warning.empty())
             d["warning"] = warning;
         return d;
@@ -399,6 +478,7 @@ namespace PythonBindings
                 throw py::value_error(result.message);
             case MouseInjectStatus::NoDevice:
             case MouseInjectStatus::ReplayActive:
+            case MouseInjectStatus::NoMouseFitted:
             default:
                 throw std::runtime_error(result.message.empty() ? "mouse manager not available" : result.message);
         }
@@ -3243,6 +3323,21 @@ namespace PythonBindings
                 DebugMouseManager& mgr = MouseManagerOrThrow(self);
                 return MouseResultOrThrow(mgr, mgr.Move(dx, dy));
             }, "Move the mouse by dx,dy emulated pixels (+x right, +y up; -127..127)", py::arg("dx"), py::arg("dy"))
+            .def("mouse_glide", [](Emulator& self, int dx, int dy) -> py::dict {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.Glide(dx, dy));
+            }, "Long move (-4096..4096) in steps the program follows, one per frame; input sent meanwhile queues",
+               py::arg("dx"), py::arg("dy"))
+            .def("mouse_devices", [](Emulator& self) -> py::list {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                py::list devices;
+                for (const MouseDeviceStatus& device : mgr.GetState().devices)
+                    devices.append(MouseDeviceDict(device));
+                return devices;
+            }, "The machine's mouse devices (kempston, sprinter, evo-ps2)")
+            .def("mouse_busy", [](Emulator& self) -> bool {
+                return MouseManagerOrThrow(self).IsBusy();
+            }, "True while a glide (and the input queued behind it) is in progress")
             .def("mouse_press", [](Emulator& self, const std::string& button) -> py::dict {
                 MouseButton resolved = MouseButtonOrThrow(button);
                 DebugMouseManager& mgr = MouseManagerOrThrow(self);
@@ -3281,9 +3376,11 @@ namespace PythonBindings
                 DebugMouseManager& mgr = MouseManagerOrThrow(self);
                 return MouseResultOrThrow(mgr, mgr.SetCounters(x, y));
             }, "Debug: write raw mouse X/Y counters (0..255)", py::arg("x"), py::arg("y"))
-            .def("mouse_status", [](Emulator& self) -> py::dict {
+            .def("mouse_status", [](Emulator& self, const std::string& device) -> py::dict {
                 DebugMouseManager& mgr = MouseManagerOrThrow(self);
-                MouseStateSnapshot state = mgr.GetState();
+                if (const MouseInjectResult check = mgr.CheckDevice(device); !check.ok())
+                    throw py::value_error(check.message);
+                MouseStateSnapshot state = mgr.GetState(device);
                 if (!state.available)
                     throw std::runtime_error("Mouse device not available");
                 py::dict d = MouseStateDict(state);
@@ -3301,7 +3398,8 @@ namespace PythonBindings
                     d["routing"] = routing;
                 }
                 return d;
-            }, "Get mouse counters, buttons, wheel, port values and port routing")
+            }, "Get mouse counters, buttons, wheel, port values, port routing and the machine's mouse device",
+               py::arg("device") = std::string())
             .def("mouse_click_pending", [](Emulator& self) -> bool {
                 return MouseManagerOrThrow(self).IsClickPending();
             }, "True while a timed mouse click is still holding its button")

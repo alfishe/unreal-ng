@@ -1,10 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "emulator/io/mouse/mousedevicestatus.h"
 
 class EmulatorContext;
 class Mouse;
@@ -26,14 +29,16 @@ enum class MouseInjectStatus : uint8_t
     Ok,
     NoDevice,         // context has no Mouse
     InvalidArgument,  // out-of-range value or unknown name; message says which
-    ReplayActive      // TTD replay in progress - live input refused
+    ReplayActive,     // TTD replay in progress - live input refused
+    NoMouseFitted     // the machine has no mouse a program can read ([INPUT] Mouse=NONE, feature off); message says why
 };
 
 struct MouseInjectResult
 {
     MouseInjectStatus status = MouseInjectStatus::Ok;
     std::string message;  // human-readable, reused by every front end
-    std::string warning;  // set on success when the input cannot reach the guest (device absent)
+    std::string warning;  // set on success when part of the input cannot reach the guest (no wheel fitted)
+    bool queued = false;  // accepted behind a glide still in progress: applied in order at frame ends
 
     bool ok() const { return status == MouseInjectStatus::Ok; }
 };
@@ -53,6 +58,16 @@ struct MouseStateSnapshot
     std::optional<MouseButton> pendingClickButton;
     uint16_t pendingClickFramesLeft = 0;
     bool journalSupported = true;  // TTD records mouse input (MouseMove/Buttons/Wheel/Counters)
+
+    /// The machine's mouse (docs/inprogress/2026-10-03-mouse-api-routing/design.md): `device` is the one
+    /// reported (the first fitted one, or the one asked for); `devices` every device the ports read
+    bool mouseFitted = false;
+    std::optional<MouseDeviceStatus> device;
+    std::vector<MouseDeviceStatus> devices;
+    /// Automation input waiting behind a glide
+    size_t queuedOps = 0;
+    int glideRemainingDx = 0;
+    int glideRemainingDy = 0;
 
     bool IsPressed(MouseButton button) const { return (buttonMask & static_cast<uint8_t>(button)) == 0; }
 };
@@ -81,6 +96,8 @@ public:
     static constexpr int MAX_MOVE_PER_CALL = 127;        // a larger counter jump reads as a move the other way
     static constexpr int MAX_WHEEL_PER_CALL = 7;         // same ambiguity on the 4-bit wheel nibble
     static constexpr uint32_t MAX_CLICK_FRAMES = 65535;
+    static constexpr int MAX_GLIDE_PER_CALL = 4096;      // a glide's total per axis (stepped, see Glide)
+    static constexpr uint16_t GLIDE_WAIT_FRAMES = 10;    // a step waits at most this long for the program's read
 
     explicit DebugMouseManager(EmulatorContext* context);
     ~DebugMouseManager() = default;
@@ -98,6 +115,25 @@ public:
     MouseInjectResult SetCounters(int x, int y);               // debug: raw counter write, 0..255
     /// endregion </Automation - immediate, validated>
 
+    /// region <Automation - glide (design 2026-10-03 §4)>
+    /// A move of up to MAX_GLIDE_PER_CALL per axis in steps a program can follow: the first step now,
+    /// one per frame after it, each once the program has read the last (IMouseSink::HasUnreadMotion,
+    /// at most GLIDE_WAIT_FRAMES). A step is at most MouseManager::MotionStepLimit (127 for 8-bit
+    /// counters). Input sent while a glide is in progress queues behind it and is applied in order,
+    /// one item per frame: a click after a glide lands where the glide ended.
+    /// Worked example (Kempston, a program polling every frame): Glide(300, 0) -> X += 127 now,
+    /// +127 at the end of the next frame, +46 at the end of the frame after
+    MouseInjectResult Glide(int dx, int dy);
+    /// The glide and the input queued behind it are still in progress
+    bool IsBusy() const;
+    /// Drop the queued input (the motion already applied stays)
+    void CancelQueue();
+    /// endregion
+
+    /// The device the surfaces report: "" = the default (the first fitted one). InvalidArgument for an id
+    /// the machine does not have (the message lists the ones it has)
+    MouseInjectResult CheckDevice(const std::string& deviceId) const;
+
     /// region <Automation - timed>
     /// Press now, release after holdFrames emulated frames (released in OnFrame)
     MouseInjectResult Click(MouseButton button, uint32_t holdFrames = DEFAULT_CLICK_FRAMES);
@@ -111,7 +147,7 @@ public:
     void ApplyHostWheel(int steps);
     /// endregion </Host input>
 
-    MouseStateSnapshot GetState() const;
+    MouseStateSnapshot GetState(const std::string& deviceId = "") const;
 
     /// region <Names>
     static std::optional<MouseButton> ResolveButtonName(const std::string& name);  // left/l, right/r, middle/m
@@ -124,7 +160,7 @@ public:
 
 private:
     Mouse* Device() const;
-    MouseInjectResult Guard() const;  // NoDevice / ReplayActive
+    MouseInjectResult Guard() const;  // NoDevice / ReplayActive / NoMouseFitted
     MouseInjectResult Success(const std::string& message) const;
 
     // Submit through the TTD live-input gateway (ownership + journal + apply on the
@@ -141,9 +177,39 @@ private:
 
     void CancelPendingLocked();
 
+    /// region <Queue behind a glide>
+    struct QueuedOp
+    {
+        enum class Kind : uint8_t
+        {
+            Motion,
+            Press,
+            Release,
+            SetButtons,
+            Wheel,
+            Click,
+        };
+        Kind kind = Kind::Motion;
+        int dx = 0;
+        int dy = 0;
+        uint8_t bits = 0;  // SetButtons: pressed bits; Press / Release / Click: the button
+        uint32_t frames = 0;  // Click: hold
+    };
+    /// Queue `op` when input is waiting (returns true, result marked queued)
+    bool EnqueueIfBusyLocked(const QueuedOp& op, MouseInjectResult& result);
+    /// One step of a motion op: at most the step limit per axis; returns true when the op is done
+    bool ApplyMotionStepLocked(Mouse& mouse, QueuedOp& op);
+    void ApplyQueuedLocked(Mouse& mouse, QueuedOp& op);
+    void ProcessQueueLocked(Mouse* mouse);
+    int StepLimit() const;
+    bool HasUnreadMotion() const;
+    /// endregion
+
     EmulatorContext* _context = nullptr;
 
     mutable std::mutex _mutex;  // pending click state: automation thread vs emulator thread
     std::optional<MouseButton> _pendingButton;
     uint16_t _pendingFrames = 0;
+    std::deque<QueuedOp> _queue;
+    uint16_t _waitFrames = 0;
 };

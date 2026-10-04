@@ -69,9 +69,22 @@ void MsSerialMouse::Advance(uint64_t now)
         _state.lastButtons = buttons;
         BuildPacket(dx, -up, (buttons & 0x01) == 0, (buttons & 0x02) == 0, _state.packet);
         _state.sent = 0;
+        _packetsSent++;
         // The line was idle: the first character's frame starts now (the last one ended before)
         _state.nextByteAt = now + _charT;
     }
+}
+
+void MsSerialMouse::PendingMotion(int& dx, int& up) const
+{
+    dx = 0;
+    up = 0;
+    if (!_sampler || !_state.synced)
+        return;
+    uint8_t x = 0, y = 0, buttons = 0xFF;
+    _sampler(x, y, buttons);
+    dx = static_cast<int8_t>(static_cast<uint8_t>(x - _state.lastX));
+    up = static_cast<int8_t>(static_cast<uint8_t>(y - _state.lastY));
 }
 
 void MsSerialMouse::Rebase(uint64_t now)
@@ -84,4 +97,5 @@ void MsSerialMouse::Clear()
 {
     std::memset(&_state, 0, sizeof(_state));
     _state.sent = 3;
+    _packetsSent = 0;
 }
