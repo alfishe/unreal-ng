@@ -1,0 +1,15 @@
+# The per-cycle outcome does not depend on the host clock: the L1-L12 checks at 14 MHz (ZX-Evo turbo)
+cpu 14
+out FFFD F0
+out BFFD 3F
+out DFFD 0A
+in FFFD
+in BFFD
+out 01FF 1C
+out 00FF 21
+out 00B3 31
+in 00B3
+in 00BB
+out 000F 80
+m1 0000
+out 001F 81

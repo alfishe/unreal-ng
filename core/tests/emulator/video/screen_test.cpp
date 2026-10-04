@@ -1,8 +1,13 @@
 #include "pch.h"
 #include "stdafx.h"
 
+#include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/platform.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
@@ -182,4 +187,51 @@ TEST_F(Screen_Test, UlaProfile_OnlySinclairMachinesHaveFerrantiContention)
         EXPECT_EQ(rs.borderUpdateTStates, c.ferranti ? 4 : 1);
         EXPECT_EQ(_context->pUlaContention->IsContentionEnabled(), c.ferranti);
     }
+}
+
+/// A video mode change that keeps the frame size (Pentagon <-> AlCo, ZX <-> 128K, any TS mode) is only a new label: a
+/// guest that switches it mid-frame must keep the lines the beam already drew and the presented frames, and no
+/// consumer needs to re-attach (the GUI did, twice a frame: a flicker). A change of the frame size reallocates, and
+/// tells the consumers
+TEST(ScreenModeSwitch_Test, SameSizeSwitchKeepsTheFramesAndStaysQuiet)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    Screen* screen = context->pScreen;
+    emulator->RunNFrames(3);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    std::atomic<int> notifications{0};
+    const uint64_t observer = mc.AddObserver(NC_VIDEO_MODE_CHANGED, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<EmulatorFramePayload*>(message->obj) : nullptr;
+        if (payload && payload->_emulatorId == emulator->GetUUID())
+            notifications.fetch_add(1);
+    });
+
+    FramebufferDescriptor before = screen->GetFramebufferDescriptor();
+    ASSERT_EQ(before.videoMode, M_PENTAGON128K);
+    uint32_t* pixels = reinterpret_cast<uint32_t*>(before.memoryBuffer);
+    pixels[5 * before.width + 5] = 0xFF123456u;  // a pixel the beam drew
+    FrameSnapshot presentedBefore;
+    ASSERT_TRUE(screen->SnapshotPresented(presentedBefore));
+
+    screen->SetVideoMode(M_P16);  // the same 352x288 frame
+
+    const FramebufferDescriptor after = screen->GetFramebufferDescriptor();
+    EXPECT_EQ(after.videoMode, M_P16);
+    EXPECT_EQ(after.memoryBuffer, before.memoryBuffer) << "the buffer stays";
+    EXPECT_EQ(pixels[5 * before.width + 5], 0xFF123456u) << "the lines already drawn stay";
+    FrameSnapshot presentedAfter;
+    ASSERT_TRUE(screen->SnapshotPresented(presentedAfter));
+    EXPECT_EQ(presentedAfter.pixels, presentedBefore.pixels) << "the presented frames stay";
+
+    // A frame of another size is a new buffer: the consumers are told. It also flushes the queue (in order), so the
+    // count shows whether the same-size change posted anything before it
+    screen->SetVideoMode(M_P384);
+    ASSERT_TRUE(TestWait::ForAtLeast(notifications, 1));
+    EXPECT_EQ(notifications.load(), 1) << "only the change of size is announced";
+
+    mc.RemoveObserverById(NC_VIDEO_MODE_CHANGED, observer);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

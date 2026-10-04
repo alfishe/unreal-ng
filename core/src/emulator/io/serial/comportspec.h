@@ -6,7 +6,10 @@
 /// every automation surface.
 ///
 ///   NONE (or empty)              no COM port
-///   LOOPBACK                     every byte comes back
+///   LOOPBACK                     every byte comes back; the peer holds CTS / DSR / DCD active
+///   PLUG                         a loopback test plug: every byte comes back and the ZX's own RTS drives
+///                                CTS, DTR drives DSR and DCD (an RS-232 loopback connector); with no peer
+///                                at all the inputs read inactive, as an open RS-232 receiver input
 ///   TCP:<host>:<port>            a host TCP endpoint (telnet BBS, harness); the
 ///                                host is an IPv4 address or a name, resolved
 ///                                through the virtual network's DNS (Hosts=
@@ -40,6 +43,7 @@ struct ComPortSpec
     {
         None,
         Loopback,
+        Plug,
         Tcp,
         Serial,
         Espnet,

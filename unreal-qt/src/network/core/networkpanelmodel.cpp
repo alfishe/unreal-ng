@@ -208,8 +208,9 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
                                : "This keyboard controller firmware has no RS-232: choose V31 or later.";
         }
     }
-    else if (form.serialPort != "evo-avr")
+    else if (form.serialPort != "evo-avr" && form.serialPort != "profi-8251")
     {
+        // (the ZX Profi v5's 8251 takes a peer like the ZX-Evo's 16550)
         a.comPort = false;
         a.comPortWhy = "This machine has no serial port of its own: a ZX-WiFi card adds one.";
     }

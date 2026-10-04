@@ -169,6 +169,17 @@ emulator has a folder with a `run.sh` that follows a small contract, so adding o
 
 ---
 
+### SAA1099 co-simulation (`saa1099/`)
+
+Runs our SAA1099 model and the reference implementations (SAASound, MAME, the MiSTer RTL under Verilator) on
+the same register streams and compares every generator clock by clock; holds the consensus table the model
+follows. References are fetched at pinned revisions into a git-ignored `refs/`.
+
+*   **Use-case:** any change to `core/src/emulator/sound/chips/saa1099/`; refreshing its golden digests.
+*   **Usage:** `saa1099/fetch-refs.sh && saa1099/build.sh && saa1099/run-cosim.py`; see [saa1099/README.md](saa1099/README.md).
+
+---
+
 ## Compatibility
 All scripts are designed to be cross-platform and have been tested on:
 *   **macOS** (using `hdiutil` and `sysctl`)

@@ -1,0 +1,24 @@
+# L3, L5, L6, L7, L11: the control byte with the pro mask (d[7:4] = 1111)
+in FFFD         # reset: register read mode, chip 0
+out FFFD F0     # chip 0, status read, FM on, SAA clock on; also an address write to chip 0
+in FFFD         # status of chip 0 (A0 = 0)
+out FFFD F1     # chip 1 (the address write goes to the new chip)
+in FFFD
+out BFFD 55     # data to chip 1
+out FFFD F6     # chip 0, register read, FM muted, SAA on
+in FFFD
+out FFFD F8     # SAA clock off, FM on, chip 0, status
+out FFFD FF     # a plain TurboSound "chip 0" byte: chip 1, register read, FM muted, SAA off
+out FFFD FE     # chip 0, register read, FM muted, SAA off
+out FFFD EF     # d[7:4] = 1110: an ordinary address write
+out FFFD F3     # chip 1, register read, FM on, SAA on
+out EFFD F0     # A13 = 1 mirror is a control port too
+out DFFD F5     # the #DFFD family carries control bytes (no IORQGE)
+dip saa,gs,sd   # YM off: the SAA clock block still sees control bytes
+out FFFD F8     # SAA clock off; no YM write, no IORQGE, the YM latches stay
+out FFFD F0     # SAA clock on
+dip ym,gs,sd    # SAA off: control bytes still switch the YM latches; the SAA clock stays as it was
+out FFFD F9
+out FFFD F0
+dip ym,saa,gs,sd
+out FFFD F4     # FM muted, SAA on

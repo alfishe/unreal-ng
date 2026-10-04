@@ -170,6 +170,26 @@ TEST_F(TTD_AY_Serializer_Test, RoundTrip_RichRegisterState_PreservesRegisters)
     EXPECT_EQ(_chipA->getCurrentRegister(), _chipB->getCurrentRegister());
 }
 
+/// A TTD restore puts the saved registers back, never the reset state: a chip restored onto a freshly reset one
+/// keeps the saved port directions and latches (R7 bits 6 / 7, R14 / R15), and the bus reads follow them
+TEST_F(TTD_AY_Serializer_Test, RestoreKeepsSavedPortStateNotTheResetState)
+{
+    _chipA->writeRegister(AY_PORTA, 0x5A);
+    _chipA->writeRegister(AY_PORTB, 0x3C);
+    _chipA->writeRegister(AY_MIXER_CONTROL, 0b0111'1000);  // port A output, port B input, tones on
+    _chipA->setRegister(AY_PORTA);
+
+    _chipB->reset();
+    RoundTripBuffers rt = DoRoundTrip(_chipA, _chipB);
+    EXPECT_EQ(rt.before, rt.after);
+
+    EXPECT_EQ(_chipB->readRegister(AY_MIXER_CONTROL), 0b0111'1000);
+    EXPECT_EQ(_chipB->readRegister(AY_PORTA), 0x5A);
+    EXPECT_EQ(_chipB->readRegister(AY_PORTB), 0x3C);
+    EXPECT_EQ(_chipB->readCurrentRegister(), 0x5A) << "port A output: IN #FFFD reads the latch";
+    EXPECT_EQ(_chipB->readRegisterOnBus(AY_PORTB), 0xFF) << "port B input: the pins";
+}
+
 TEST_F(TTD_AY_Serializer_Test, RoundTrip_GeneratorPhase_AdvancedCountersPreserved)
 {
     // Write registers that enable tone/noise/envelope, then drive updateState

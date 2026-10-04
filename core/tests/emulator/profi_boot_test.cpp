@@ -27,6 +27,7 @@
 #include "emulator/video/profi/profigeometry.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/video/screen.h"
 
@@ -34,6 +35,10 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/io/network/networkmanager.h"
+#include "emulator/io/serial/serialpeer.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -463,6 +468,16 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         ASSERT_TRUE(_emulator->LoadROM(rom)) << rom;
         _emulator->Reset(true);
     }
+    if (const char* hdd = std::getenv("PROFI_HDD"))
+    {
+        // A hard-disk image on ide0.master (the image is written to: pass a copy)
+        MediaSource source;
+        source.path = hdd;
+        InsertOptions options;
+        options.immediate = true;
+        ASSERT_TRUE(context->pMediaManager->Insert("ide0.master", source, options).Ok()) << hdd;
+        _emulator->Reset(true);
+    }
     // PROFI_PORTTRACE=<file>: every IN / OUT from here on, written at the end (development aid)
     const char* portTraceFile = std::getenv("PROFI_PORTTRACE");
     PortDiagnosticRecorder* portTrace = nullptr;
@@ -504,7 +519,11 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         TapKeys("ENT,J,SP,SP,ENT");   // leave the copyright screen / the 128 menu (Tape Loader), then LOAD ""
     }
     else
-        _emulator->RunNFrames(600, true);   // the BIOS menu
+    {
+        // The BIOS menu (PROFI_BOOT_FRAMES: another count, e.g. to stop a hard-disk boot before its program starts)
+        const char* bootFramesEnv = std::getenv("PROFI_BOOT_FRAMES");
+        _emulator->RunNFrames(bootFramesEnv ? std::atoi(bootFramesEnv) : 600, true);
+    }
     const bool disk = path.size() > 4 && (path.substr(path.size() - 4) == ".trd" || path.substr(path.size() - 4) == ".TRD");
     const bool bootDisk = path.size() > 4 && (path.substr(path.size() - 4) == ".udi" || path.substr(path.size() - 4) == ".UDI" ||
                                               path.substr(path.size() - 4) == ".fdi" || path.substr(path.size() - 4) == ".FDI" ||
@@ -618,6 +637,75 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         const std::string file = "scratch/profi/" + name + "-" + std::to_string(f) + ".png";
         lodepng_encode32_file(file.c_str(), fb.memoryBuffer, fb.width, fb.height);
     }
+    if (const char* bdosEnv = std::getenv("PROFI_BDOSLOG"))
+    {
+        // Steps after the frames: every CP/M BDOS entry (PC = 5): function, DE, the caller and the A / HL / DE the
+        // call returns with, one line per call, at most 400 lines (development aid)
+        Z80* z = context->pCore->GetZ80();
+        const long steps = std::atol(bdosEnv);
+        int lines = 0;
+        // The log starts at the PROFI_BDOSLOG_ENTRY-th entry (default 1) of a .COM program (PC = #100; a DOS shell
+        // enters #100 for itself first)
+        const char* entryEnv = std::getenv("PROFI_BDOSLOG_ENTRY");
+        int entries = entryEnv ? std::atoi(entryEnv) : 1;
+        bool armed = false;
+        for (long i = 0; i < steps && lines < 400; i++)
+        {
+            if (!armed && z->pc == 0x100)
+            {
+                // PROFI_BDOSLOG_MATCH=<hex bytes>: only the entry whose #100 holds these bytes (the program's first
+                // bytes, as xxd prints them); else the PROFI_BDOSLOG_ENTRY-th entry
+                bool match = true;
+                if (const char* hex = std::getenv("PROFI_BDOSLOG_MATCH"))
+                {
+                    for (size_t k = 0; hex[2 * k] && hex[2 * k + 1] && match; k++)
+                    {
+                        const char pair[3] = {hex[2 * k], hex[2 * k + 1], 0};
+                        match = z->DirectRead(static_cast<uint16_t>(0x100 + k)) == std::strtoul(pair, nullptr, 16);
+                    }
+                    if (match)
+                        armed = true;
+                }
+                else if (--entries <= 0)
+                    armed = true;
+            }
+            if (armed && z->pc == 5)
+            {
+                const uint16_t sp = z->sp;
+                const uint16_t ret = static_cast<uint16_t>(z->DirectRead(sp) | (z->DirectRead(static_cast<uint16_t>(sp + 1)) << 8));
+                const uint8_t function = z->c;
+                const uint16_t de = z->de;
+                for (long k = 0; k < 2000000 && z->pc != ret; k++)
+                    _emulator->RunSingleCPUCycle(true);
+                if (function == 0x48 && ret == 0x89B1)
+                    continue;   // the PQ-DOS shell's idle poll
+                std::cout << std::hex << "BDOS c=" << int(function) << " de=" << de << " from=" << ret << " -> a=" << int(z->a)
+                          << " hl=" << z->hl << " de=" << z->de << std::dec << "\n";
+                lines++;
+                continue;
+            }
+            _emulator->RunSingleCPUCycle(true);
+        }
+    }
+    if (const char* untilEnv = std::getenv("PROFI_UNTIL_PC"))
+    {
+        // Steps after the frames until PC = PROFI_UNTIL_PC (hex) for the PROFI_UNTIL_HIT-th time (default 1), at most
+        // 50 million steps; the dumps below then show that moment (development aid)
+        Z80* z = context->pCore->GetZ80();
+        const uint16_t target = static_cast<uint16_t>(std::strtoul(untilEnv, nullptr, 16));
+        const char* hitEnv = std::getenv("PROFI_UNTIL_HIT");
+        int hits = hitEnv ? std::atoi(hitEnv) : 1;
+        long steps = 0;
+        for (; steps < 50000000L; steps++)
+        {
+            if (z->pc == target && --hits <= 0)
+                break;
+            _emulator->RunSingleCPUCycle(true);
+        }
+        std::cout << std::hex << "UNTIL pc=" << z->pc << " af=" << z->af << " bc=" << z->bc << " de=" << z->de
+                  << " hl=" << z->hl << " 7ffd=" << int(context->emulatorState.p7FFD)
+                  << " dffd=" << int(context->emulatorState.pDFFD) << std::dec << " steps=" << steps << "\n";
+    }
     if (const char* traceEnv = std::getenv("PROFI_TRACE"))
     {
         // Instruction trace after the frames (development aid): PC, the two paging latches and SP per step, until
@@ -631,6 +719,60 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
             if (z->halted && !z->iff1)
                 break;
             _emulator->RunSingleCPUCycle(true);
+        }
+    }
+    if (const char* watchEnv = std::getenv("PROFI_WATCH"))
+    {
+        // Steps after the frames until a byte of the hi-res cell rectangle PROFI_WATCH_RECT ("col,row,w,h" in 8x8
+        // cells) changes in the bitmap or attribute page; prints PC and registers per change (development aid)
+        int col = 21, row = 3, w = 22, h = 4;
+        if (const char* rect = std::getenv("PROFI_WATCH_RECT"))
+            std::sscanf(rect, "%d,%d,%d,%d", &col, &row, &w, &h);
+        Z80* z = context->pCore->GetZ80();
+        Memory* memory = context->pMemory;
+        std::vector<uint16_t> watchPages = {6, 0x3A};   // PROFI_WATCH_PAGES: another hex list, e.g. "4,38"
+        if (const char* pagesEnv = std::getenv("PROFI_WATCH_PAGES"))
+        {
+            watchPages.clear();
+            std::stringstream list(pagesEnv);
+            std::string token;
+            while (std::getline(list, token, ','))
+                watchPages.push_back(static_cast<uint16_t>(std::strtoul(token.c_str(), nullptr, 16)));
+        }
+        std::vector<uint16_t> offsets;
+        for (int v = row * 8; v < (row + h) * 8; v++)
+            for (int c = col; c < col + w; c++)
+                offsets.push_back(ProfiGeometry::ByteOffset(static_cast<uint32_t>(v), static_cast<uint32_t>(c)));
+        auto snapshot = [&](std::vector<uint8_t>& out) {
+            out.clear();
+            for (uint16_t page : watchPages)
+                for (uint16_t o : offsets)
+                    out.push_back(memory->RAMPageAddress(page)[o]);
+        };
+        std::vector<uint8_t> before;
+        std::vector<uint8_t> now;
+        snapshot(before);
+        const long steps = std::atol(watchEnv);
+        int reported = 0;
+        for (long i = 0; i < steps && reported < 40; i++)
+        {
+            const uint16_t pc = z->pc;
+            _emulator->RunSingleCPUCycle(true);
+            snapshot(now);
+            if (now == before)
+                continue;
+            for (size_t k = 0; k < now.size(); k++)
+                if (now[k] != before[k])
+                {
+                    std::cout << std::hex << "W step=" << std::dec << i << std::hex << " pc=" << pc
+                              << " page=" << watchPages[k / offsets.size()] << " off=" << offsets[k % offsets.size()]
+                              << " " << int(before[k]) << "->" << int(now[k]) << " hl=" << z->hl << " de=" << z->de
+                              << " bc=" << z->bc << " 7ffd=" << int(context->emulatorState.p7FFD)
+                              << " dffd=" << int(context->emulatorState.pDFFD) << std::dec << "\n";
+                    break;
+                }
+            before = now;
+            reported++;
         }
     }
     if (std::getenv("PROFI_DUMP"))
@@ -662,6 +804,29 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
             std::fclose(f);
         }
     }
+    if (const char* pagesPrefix = std::getenv("PROFI_DUMP_PAGES"))
+    {
+        // The hi-res screen pages at the end (development aid): <prefix>-<page>.bin for 4, 6, 0x38, 0x3A
+        for (uint16_t page : {uint16_t(4), uint16_t(6), uint16_t(0x38), uint16_t(0x3A)})
+        {
+            const std::string file = std::string(pagesPrefix) + "-" + std::to_string(page) + ".bin";
+            if (FILE* f = std::fopen(file.c_str(), "wb"))
+            {
+                std::fwrite(context->pMemory->RAMPageAddress(page), 1, 0x4000, f);
+                std::fclose(f);
+            }
+        }
+    }
+    if (const char* ramFile = std::getenv("PROFI_DUMP_RAM"))
+    {
+        // All RAM pages in page order at the end (development aid)
+        if (FILE* f = std::fopen(ramFile, "wb"))
+        {
+            for (uint16_t page = 0; page <= context->pMemory->GetRamMask(); page++)
+                std::fwrite(context->pMemory->RAMPageAddress(page), 1, 0x4000, f);
+            std::fclose(f);
+        }
+    }
     if (const char* memFile = std::getenv("PROFI_DUMP_MEM"))
     {
         // The Z80's 64K view at the end (development aid)
@@ -679,3 +844,115 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
               << " pDFFD=" << int(context->emulatorState.pDFFD) << std::dec << " frame T=" << context->config.frame
               << " clock=" << context->emulatorState.current_z80_frequency << "\n";
 }
+
+/// region <PROFI-PLUS: ROM BIOS Plus 0.41h1 (docs/inprogress/2026-10-04-profi-plus/design.md, phase P4b)>
+
+class ProfiPlusBoot_Test : public ::testing::Test
+{
+protected:
+    EmulatorManager* _manager = nullptr;
+    std::shared_ptr<Emulator> _emulator;
+
+    void SetUp() override
+    {
+        _manager = EmulatorManager::GetInstance();
+        ASSERT_NE(_manager, nullptr);
+        // BIOS Plus's board test probes the AY: the test build fits none unless asked (software-zoo.md section 10)
+        SoundCardScope sound(TestSound::TurboSound);
+        _emulator = _manager->CreateEmulatorWithModel("profi-plus-boot", "PROFI-PLUS", LoggerLevel::LogError);
+        if (!_emulator)
+            GTEST_SKIP() << "PROFI-PLUS is not creatable (missing configs/profi or data/rom/profi/bios-plus-041h1.rom)";
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            const std::string id = _emulator->GetId();
+            _emulator.reset();
+            _manager->RemoveEmulator(id);
+        }
+    }
+};
+
+/// @brief The board test at power-on reports every device of the board "Ok" (no HDD image attached: the HDD lines
+///        are not part of it). BIOS Plus 0.41h1 keeps the result in its system variable (IY + 2), one bit per failed
+///        device, cleared when the device passes (SYS page #06A5..#06E4): bit 0 FDC, bit 1 parallel (8255), bits 2
+///        and 3 serial (8253 + 8251, #2720), bit 4 RTC; bits 5 / 6 the sound chip (one of them clears: AY or YM),
+///        bit 7 the hard disk. The screen prints "Ok" for the serial interface when bits 1 and 2 are clear (#0746).
+///        Checked against a mutant without the COM port: (IY + 2) = #AC, serial failed and nothing else
+TEST_F(ProfiPlusBoot_Test, BoardTestReportsEveryDeviceOk)
+{
+    // Slower than the 50 ms guideline on purpose: the real BIOS boots to its board-test screen
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(300, true);
+
+    const Z80* z80 = context->pCore->GetZ80();
+    const uint16_t iy = z80->iy;
+    const uint8_t result = context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(iy + 2));
+    std::ostringstream where;
+    where << std::hex << "pc=" << z80->pc << " iy=" << iy << " (iy+2)=" << int(result);
+    ASSERT_EQ(iy, 0x4000) << "BIOS Plus's system variables: " << where.str();
+    EXPECT_EQ(result & 0x01, 0) << "Floppy Disc Controller: " << where.str();
+    EXPECT_EQ(result & 0x02, 0) << "Parallel interface: " << where.str();
+    EXPECT_EQ(result & 0x0C, 0) << "Serial interface (8253 + 8251): " << where.str();
+    EXPECT_EQ(result & 0x10, 0) << "RTC: " << where.str();
+    EXPECT_NE(result & 0x60, 0x60) << "Sound Chip: " << where.str();
+}
+
+/// @brief The 8251 is the machine's own serial port: ComPort= plugs the peer into it through the network manager,
+///        and the state report names it
+TEST_F(ProfiPlusBoot_Test, ComPortPlugsIntoThe8251)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"com_port", "plug"}}, change, error)) << error;
+    ASSERT_TRUE(context->pCore->GetNetworkManager()->RequestChange(change, error)) << error;
+
+    ASSERT_NE(context->pMachineSerialPeer, nullptr);
+    EXPECT_STREQ(context->pMachineSerialPeer->Kind(), "plug");
+    EXPECT_EQ(context->pComPort, nullptr) << "no 16550 on #xxEF";
+    auto* decoder = dynamic_cast<PortDecoder_Profi*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    EXPECT_EQ(decoder->GetUsart().Peer(), context->pMachineSerialPeer);
+
+    const NetworkManager::Status st = context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.serialPort, "profi-8251");
+    EXPECT_TRUE(st.machineSerial.fitted);
+    EXPECT_EQ(st.machineSerial.flavor, "usart8251");
+    EXPECT_EQ(st.machineSerial.peer, "plug");
+}
+
+/// @brief TTD: the BIOS's COM setup is recorded and replays to the same 8253 / 8251 state after a seek back
+TEST_F(ProfiPlusBoot_Test, TtdReplaysTheComPortExactly)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS programs the COM port during its boot
+    EmulatorContext* context = _emulator->GetContext();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    ASSERT_TRUE(ttd->StartRecording());
+    _emulator->RunNFrames(2);
+    const uint64_t before = context->emulatorState.frame_counter;
+    _emulator->RunNFrames(150);
+    const uint64_t end = context->emulatorState.frame_counter;
+    auto* decoder = dynamic_cast<PortDecoder_Profi*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    const Pit8253::State pit = decoder->GetPit().GetState();
+    const Usart8251::State usart = decoder->GetUsart().GetState();
+    EXPECT_EQ(Pit8253::ModeOf(pit.counter[0]), 3) << "the BIOS set the baud divider";
+    ttd->StopRecording();
+
+    ASSERT_TRUE(ttd->SeekTo({before, 0}));
+    _emulator->RunNFrames(static_cast<int>(end - before));
+    ASSERT_EQ(context->emulatorState.frame_counter, end);
+    EXPECT_EQ(std::memcmp(&decoder->GetPit().GetState(), &pit, sizeof(pit)), 0) << "the 8253 as recorded";
+    EXPECT_EQ(std::memcmp(&decoder->GetUsart().GetState(), &usart, sizeof(usart)), 0) << "the 8251 as recorded";
+}
+
+/// endregion </PROFI-PLUS>

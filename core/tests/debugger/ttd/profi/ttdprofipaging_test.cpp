@@ -28,19 +28,28 @@ protected:
 TEST_F(TTDProfiPaging_Test, DecoderDeclaresProfiPaging)
 {
     const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 3u);
+    ASSERT_EQ(ids.size(), 6u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::ProfiPaging);
-    EXPECT_EQ(ids[1], ttd::PeripheralId::Ds12887) << "the RTC (PLAN #13a RTC in TTD, built by #60(c))";
-    EXPECT_EQ(ids[2], ttd::PeripheralId::ProfiXtKbc) << "the PROFI-XT keyboard controller, fitted by default on v5";
+    EXPECT_EQ(ids[1], ttd::PeripheralId::Ppi8255) << "the board's 8255 (joystick, printer / Covox)";
+    EXPECT_EQ(ids[2], ttd::PeripheralId::Ds12887) << "the RTC (PLAN #13a RTC in TTD, built by #60(c))";
+    EXPECT_EQ(ids[3], ttd::PeripheralId::Pit8253) << "the COM port's baud timer";
+    EXPECT_EQ(ids[4], ttd::PeripheralId::Usart8251) << "the COM port";
+    EXPECT_EQ(ids[5], ttd::PeripheralId::ProfiXtKbc) << "the PROFI-XT keyboard controller, fitted by default on v5";
 
     auto serializers = _context->pPortDecoder->CreateTTDSerializers();
-    ASSERT_EQ(serializers.size(), 3u);
+    ASSERT_EQ(serializers.size(), 6u);
     EXPECT_EQ(serializers[0]->TTDPeripheralId(), ttd::PeripheralId::ProfiPaging);
     EXPECT_EQ(serializers[0]->TTDDeviceName(), "ProfiPaging");
-    EXPECT_EQ(serializers[1]->TTDPeripheralId(), ttd::PeripheralId::Ds12887);
-    EXPECT_EQ(serializers[1]->TTDDeviceName(), "Ds12887");
-    EXPECT_EQ(serializers[2]->TTDPeripheralId(), ttd::PeripheralId::ProfiXtKbc);
-    EXPECT_EQ(serializers[2]->TTDDeviceName(), "ProfiXtKbc");
+    EXPECT_EQ(serializers[1]->TTDPeripheralId(), ttd::PeripheralId::Ppi8255);
+    EXPECT_EQ(serializers[1]->TTDDeviceName(), "Ppi8255");
+    EXPECT_EQ(serializers[2]->TTDPeripheralId(), ttd::PeripheralId::Ds12887);
+    EXPECT_EQ(serializers[2]->TTDDeviceName(), "Ds12887");
+    EXPECT_EQ(serializers[3]->TTDPeripheralId(), ttd::PeripheralId::Pit8253);
+    EXPECT_EQ(serializers[3]->TTDDeviceName(), "Pit8253");
+    EXPECT_EQ(serializers[4]->TTDPeripheralId(), ttd::PeripheralId::Usart8251);
+    EXPECT_EQ(serializers[4]->TTDDeviceName(), "Usart8251");
+    EXPECT_EQ(serializers[5]->TTDPeripheralId(), ttd::PeripheralId::ProfiXtKbc);
+    EXPECT_EQ(serializers[5]->TTDDeviceName(), "ProfiXtKbc");
 }
 
 /// @brief Save -> mutate -> load restores #DFFD and every palette entry

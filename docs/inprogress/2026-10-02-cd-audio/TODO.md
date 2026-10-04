@@ -33,6 +33,11 @@ results: [README.md](README.md).
   drive - now START STOP UNIT stops the play and LoEj opens / closes a tray (NOT READY 3Ah / 02h while
   open, PREVENT ALLOW honored; TTD: in the CdDrive stage bytes, layout unchanged); sense data is
   discarded by the next command (SPC)
+- [x] Guest eject unmounts the slot (branch `cd-eject-unmount`): an accepted START STOP UNIT eject asks the
+  media manager (`MediaManager::GuestEject`, the drive's eject listener from `IdeUnitSlot`) for its normal
+  eject at the frame boundary - slot empty on every surface; tray open until a Load (no disc: 3Ah / 01h)
+  or an insert; no recording guard / invalidation, skipped during TTD replay (sealed: the detach after a
+  guest eject changes no drive state, so replay matches the recording); every IDE board
 - [x] cdplay's frozen `[PLAYING] 00:00` and "`1` played the track under the cursor": cdplay ignores the
   drive's errors (documented; the ZX-Evo keyboard delivers the digits right)
 - [x] Activity LED: data reads only (READ, READ CD); audio shows on the HUD's "CD"

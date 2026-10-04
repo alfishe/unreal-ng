@@ -1,0 +1,37 @@
+; noise clocked by tone generator 0 / 3 (source 3), and back to a fixed rate (item 5)
+16 A #08
+24 D #C8
+32 A #0B
+40 D #64
+48 A #10
+56 D #05
+64 A #11
+72 D #60
+80 A #16
+88 D #33
+96 A #1C
+104 D #02
+112 A #1C
+120 D #01
+128 A #00
+136 D #FF
+144 A #01
+152 D #FF
+160 A #02
+168 D #FF
+176 A #03
+184 D #FF
+192 A #04
+200 D #FF
+208 A #05
+216 D #FF
+224 A #14
+232 D #00
+240 A #15
+248 D #3F
+256 A #1C
+264 D #01
+; switch both back to fixed rates mid count
+120272 A #16
+120280 D #21
+240288 END

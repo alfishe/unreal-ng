@@ -326,23 +326,25 @@ TEST_F(BreakpointHotpathBench, HotStateFilterValidation)
     // Add exec breakpoint at 0x0000
     _brkManager->AddExecutionBreakpoint(0x0000);
     EXPECT_EQ(hot->hasExec, 1);
-    EXPECT_TRUE(hot->addressFlags[0x0000] & BRK_FILTER_EXEC);
-    EXPECT_FALSE(hot->addressFlags[0x0001] & BRK_FILTER_EXEC);
+    EXPECT_TRUE(hot->MemoryBit(BRK_KIND_EXEC, 0x0000));
+    EXPECT_FALSE(hot->MemoryBit(BRK_KIND_EXEC, 0x0001));
 
     // Add write breakpoint at 0x5C78
     _brkManager->AddMemWriteBreakpoint(0x5C78);
     EXPECT_EQ(hot->hasWrite, 1);
-    EXPECT_TRUE(hot->addressFlags[0x5C78] & BRK_FILTER_WRITE);
-    EXPECT_FALSE(hot->addressFlags[0x5C78] & BRK_FILTER_READ);
+    EXPECT_TRUE(hot->MemoryBit(BRK_KIND_WRITE, 0x5C78));
+    EXPECT_FALSE(hot->MemoryBit(BRK_KIND_READ, 0x5C78));
 
     // Add read breakpoint at 0x4000
     _brkManager->AddMemReadBreakpoint(0x4000);
     EXPECT_EQ(hot->hasRead, 1);
-    EXPECT_TRUE(hot->addressFlags[0x4000] & BRK_FILTER_READ);
+    EXPECT_TRUE(hot->MemoryBit(BRK_KIND_READ, 0x4000));
 
     // Add port breakpoints (different ports to avoid key collision)
     _brkManager->AddPortInBreakpoint(0xFE);
     EXPECT_EQ(hot->hasPortIn, 1);
+    EXPECT_TRUE(hot->PortBit(BRK_PORT_IN, 0xFE));
+    EXPECT_FALSE(hot->PortBit(BRK_PORT_IN, 0xFF));
     _brkManager->AddPortOutBreakpoint(0x7FFD);  // Different port
     EXPECT_EQ(hot->hasPortOut, 1);
 
@@ -356,7 +358,7 @@ TEST_F(BreakpointHotpathBench, HotStateFilterValidation)
             break;
         }
     }
-    EXPECT_FALSE(hot->addressFlags[0x5C78] & BRK_FILTER_WRITE);
+    EXPECT_FALSE(hot->MemoryBit(BRK_KIND_WRITE, 0x5C78));
 
     // Clear all - everything should reset
     _brkManager->ClearBreakpoints();
@@ -365,5 +367,6 @@ TEST_F(BreakpointHotpathBench, HotStateFilterValidation)
     EXPECT_EQ(hot->hasWrite, 0);
     EXPECT_EQ(hot->hasPortIn, 0);
     EXPECT_EQ(hot->hasPortOut, 0);
-    EXPECT_EQ(hot->addressFlags[0x0000], 0);
+    EXPECT_FALSE(hot->MemoryBit(BRK_KIND_EXEC, 0x0000));
+    EXPECT_TRUE(hot->PortBit(BRK_PORT_IN, 0xFE) == false);
 }
