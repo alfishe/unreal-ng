@@ -68,7 +68,7 @@ deleted. Take one only on the owner's request.
 - ~~DooM and Video PLD configurations (gap V12)~~ - **closed 2026-10-03, not planned**: they exist only as
   Sprinter 97 (FLEX EPF10K10) bitstreams, no Sp2000 build exists, and the Sp2000 merged their functions into
   Standard (DooM's line stretching = the accelerator's `#C7` scale register; Video = `HDD_FLIP` / `HDDR`); the
-  Sp2000 DOOM demo and the 2026 video player run on Standard ([pld-configurations.md](pld-configurations.md) §5).
+  Sp2000 DOOM demo and the 2026 video player run on Standard ([pld-configurations.md](pld-configurations.md) §6).
 
 - **ISA I4 (2026-10-03), settled from the PLD source:** when the PIO port B (or any on-chip source) and the PLD's
   `/INT` are pending together, the chip answers the acknowledge and the PLD presets its INT flip-flop on the same

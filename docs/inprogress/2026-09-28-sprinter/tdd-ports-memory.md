@@ -348,7 +348,7 @@ v1 shipped **Standard only**; Game followed on 2026-10-03. DooM and Video module
 build exists, and the Sp2000 merged their functions into Standard (DooM's line stretching is the
 accelerator's `#C7` scale register; Video's disk-to-memory logic matches `HDD_FLIP` / `HDDR`). The
 Sp2000 DOOM demo and the 2026 video player run on Standard. Details:
-[pld-configurations.md](pld-configurations.md) §5.
+[pld-configurations.md](pld-configurations.md) §6.
 
 ## 7. Reset kinds
 
