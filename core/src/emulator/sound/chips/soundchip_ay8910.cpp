@@ -487,12 +487,20 @@ uint8_t SoundChip_AY8910::readRegisterOnBus(uint8_t regAddr) const
     if (regAddr > 0x0F)
         return 0xFF;
 
-    // R7 bit 6 = 1 makes port A (R14) an output, bit 7 = 1 port B (R15); 0 = input
-    const uint8_t mixer = _registers[AY_MIXER_CONTROL];
-    if ((regAddr == AY_PORTA && (mixer & 0b0100'0000) == 0) || (regAddr == AY_PORTB && (mixer & 0b1000'0000) == 0))
-        return IO_PORT_INPUT_PINS;
+    if (regAddr < AY_PORTA)
+        return _registers[regAddr];
 
-    return _registers[regAddr];
+    // I/O ports. R7 bit 6 = 1 makes port A (R14) an output, bit 7 = 1 port B (R15); 0 = input:
+    // an input reads its pins (pulled up), an output its latch
+    const int port = regAddr - AY_PORTA;
+    const bool isOutput = (_registers[AY_MIXER_CONTROL] & (0b0100'0000 << port)) != 0;
+    uint8_t pins = isOutput ? _registers[regAddr] : IO_PORT_INPUT_PINS;
+
+    // Board wiring (the 128K family only): a pin the board holds low reads low
+    if (_ioPortInput) [[unlikely]]
+        pins &= _ioPortInput->AyIoPortBoardLevels(port);
+
+    return pins;
 }
 
 void SoundChip_AY8910::writeCurrentRegister(uint8_t value)

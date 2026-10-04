@@ -7,6 +7,7 @@
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/ayioportinput.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 /// Information:
@@ -423,6 +424,11 @@ protected:
     // Tracks whether this chip has received any register writes (for TurboSound detection)
     bool _hasBeenWritten = false;
 
+    // Board wiring on the I/O port pins (ayioportinput.h), set by the machine that has some (the 128K family).
+    // Null on every other machine: the R14 / R15 read is the chip alone. Board configuration, not chip state:
+    // not in the TTD blob, not touched by reset()
+    const IAyIoPortInput* _ioPortInput = nullptr;
+
     /// endregion </Fields>
 
     /// region <Interfacing fields>
@@ -473,10 +479,17 @@ public:
     /// An I/O port in input mode (R7 bit 6 for R14 / port A, bit 7 for R15 / port B, 0 = input)
     /// reads its pins, not the latch: "when in the input mode, the contents of registers R16
     /// and/or R17 will follow the signals applied to the I/O port(s)" (GI AY-3-8910 datasheet).
-    /// Nothing drives the pins in this emulator, so they read #FF through the on-chip pull-ups
-    /// ("all pins will read normally high"). Every other register, and a port in output mode,
-    /// reads the register file as before
+    /// With nothing attached they read #FF through the on-chip pull-ups ("all pins will read
+    /// normally high"); a port in output mode reads its latch. A board that wires the pins
+    /// (setIoPortInput) can hold them low: the read is then the chip's level AND the board's
+    /// (a pin held low reads 0 in either direction; TODO.md item 4). Every other register reads
+    /// the register file
     uint8_t readRegisterOnBus(uint8_t regAddr) const;
+
+    /// Board wiring on the I/O port pins (ayioportinput.h); null detaches. Set by the machine,
+    /// never by shared code; it is configuration, so reset() and a TTD load keep it
+    void setIoPortInput(const IAyIoPortInput* input) { _ioPortInput = input; }
+    const IAyIoPortInput* ioPortInput() const { return _ioPortInput; }
 
     /// The pin level an I/O port presents while it is an input: the on-chip pull-ups (#FF)
     static constexpr uint8_t IO_PORT_INPUT_PINS = 0xFF;
