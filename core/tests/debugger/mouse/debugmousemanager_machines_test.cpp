@@ -249,10 +249,16 @@ TEST_P(DebugMouseManagerMachines_Test, MouseNoneRefusesOrKeepsTheBoardMouse)
     EXPECT_EQ(Api()->GetState().portX, 0xFF) << GetParam() << ": nothing drives the mouse ports";
 }
 
-INSTANTIATE_TEST_SUITE_P(CreatableModels, DebugMouseManagerMachines_Test,
-                         ::testing::Values("PENTAGON", "48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "TSL", "TSL-VDAC2",
-                                           "SPRINTER", "ATM3", "ATM710", "ATM450", "PROFI", "PROFI3", "SCORPION",
-                                           "PROFSCORP", "ZXPOLY-48K", "ZXPOLY-128K", "ZXPOLY-PENTAGON"),
+// TSL-VDAC2 only exists in builds with the card (ENABLE_VDAC2; the stand-alone unreal-qt project, used by
+// CMake CI and docker/linux/build.sh, builds without it). A directive cannot sit inside the macro arguments
+const char* const kMouseModels[] = {"PENTAGON",   "48K",        "128k",      "PLUS2",       "PLUS2A",  "PLUS3", "TSL",
+#ifdef ENABLE_VDAC2
+                                    "TSL-VDAC2",
+#endif
+                                    "SPRINTER",   "ATM3",       "ATM710",    "ATM450",      "PROFI",   "PROFI3",
+                                    "SCORPION",   "PROFSCORP",  "ZXPOLY-48K", "ZXPOLY-128K", "ZXPOLY-PENTAGON"};
+
+INSTANTIATE_TEST_SUITE_P(CreatableModels, DebugMouseManagerMachines_Test, ::testing::ValuesIn(kMouseModels),
                          [](const ::testing::TestParamInfo<const char*>& info) {
                              std::string name = info.param;
                              for (char& c : name)

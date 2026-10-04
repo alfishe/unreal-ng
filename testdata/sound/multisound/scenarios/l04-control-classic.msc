@@ -1,0 +1,14 @@
+# L4: the unofficial issue #11 patch (ctrlMask = classic): five compared bits while the SAA DIP is off
+mask classic
+dip ym,gs,sd
+out FFFD F0     # SAA off: #F0-#F7 are ordinary YM addresses (Ball Quest)
+out FFFD F7
+in FFFD
+out FFFD F8     # #F8-#FF are control bytes: chip 0, status, FM on
+in FFFD
+out FFFD F9     # chip 1
+out FFFD FE     # chip 0, register read, FM muted
+dip ym,saa,gs,sd
+out FFFD F0     # SAA on: the four-bit mask, as pro
+out FFFD F5
+in FFFD

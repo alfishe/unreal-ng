@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -593,6 +594,14 @@ TEST_P(IdeControllerCd_Test, PlaysAudioOnTheBoard)
     ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
     EXPECT_TRUE(context->pTimeTravelManager->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive)) << board;
     context->pTimeTravelManager->StopRecording();
+
+    // The guest ejects (START STOP UNIT LoEj): the play stops and, at the frame boundary, the slot is
+    // empty as after a user's eject - on every board, through the shared media manager
+    packet({0x1B, 0, 0, 0, 0x02});
+    ASSERT_EQ(channel.ReadRegister(StatusCommand) & Status::ERR, 0) << board;
+    EXPECT_EQ(player->PeekStatus(), CdAudioStatus::Idle) << board;
+    emulator->RunNFrames(1);
+    EXPECT_FALSE(context->pMediaManager->Info(slot)->present) << board << ": the guest's eject emptied the slot";
 }
 
 INSTANTIATE_TEST_SUITE_P(Boards, IdeControllerCd_Test,
@@ -616,3 +625,143 @@ INSTANTIATE_TEST_SUITE_P(Boards, IdeControllerCd_Test,
                          });
 
 /// endregion </CD audio on every board>
+
+/// region <The guest ejects the disc>
+
+namespace
+{
+    /// A ZX-Evo (ATM3: its CD drive on the IDE slave) with the Enhanced CD test disc
+    class IdeControllerCdEject_Test : public ::testing::Test
+    {
+    protected:
+        Emulator* _emulator = nullptr;
+        EmulatorContext* _context = nullptr;
+        std::unique_ptr<ScratchFolder> _folder;
+        MediaSource _source;
+
+        void SetUp() override
+        {
+            _emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+            ASSERT_NE(_emulator, nullptr);
+            _context = _emulator->GetContext();
+            _folder = std::make_unique<ScratchFolder>("ide-cd-eject");
+            _source.path = cdtest::WriteMusicDisc(_folder->Path(), 2, 4, 300);
+            ASSERT_TRUE(Insert());
+            Packet({0x00});  // the unit attention of the insert
+        }
+        void TearDown() override
+        {
+            _folder.reset();
+            if (_emulator)
+                EmulatorTestHelper::CleanupEmulator(_emulator);
+            MessageCenter::DisposeDefaultMessageCenter();
+        }
+
+        bool Insert()
+        {
+            InsertOptions now;
+            now.immediate = true;
+            const bool ok = _context->pMediaManager->Insert("ide0.slave", _source, now).Ok();
+            _emulator->RunNFrames(1);
+            return ok;
+        }
+        AtaChannel& Channel() { return _context->pIdeController->Channel(); }
+        AtapiCdrom& Cd() { return *static_cast<AtapiCdrom*>(Channel().Unit(1)); }
+        bool Present() { return _context->pMediaManager->Info("ide0.slave")->present; }
+
+        /// A packet to the slave as a driver sends it; true when it completed without CHECK CONDITION
+        bool Packet(std::vector<uint8_t> cdb)
+        {
+            cdb.resize(12, 0);
+            Channel().WriteRegister(DeviceHead, 0xB0);
+            Channel().WriteRegister(ErrorFeatures, 0);
+            Channel().WriteRegister(CylinderLow, 0xFE);
+            Channel().WriteRegister(CylinderHigh, 0xFF);
+            Channel().WriteRegister(StatusCommand, Command::Packet);
+            for (size_t i = 0; i < 12; i += 2)
+                Channel().WriteData(static_cast<uint16_t>(cdb[i] | (cdb[i + 1] << 8)));
+            return (Channel().ReadRegister(StatusCommand) & Status::ERR) == 0;
+        }
+        /// REQUEST SENSE: key, ASC, ASCQ
+        std::vector<uint8_t> Sense()
+        {
+            Packet({0x03, 0, 0, 0, 18});
+            std::vector<uint8_t> data;
+            for (int i = 0; i < 9; i++)
+            {
+                const uint16_t w = Channel().ReadData();
+                data.push_back(static_cast<uint8_t>(w));
+                data.push_back(static_cast<uint8_t>(w >> 8));
+            }
+            return {data[2], data[12], data[13]};
+        }
+    };
+}  // namespace
+
+TEST_F(IdeControllerCdEject_Test, GuestEjectEmptiesTheSlotLikeAUserEject)
+{
+    // The Sprinter CDPLAYER.FLX sequence: Play (PLAY AUDIO MSF 00:02:00 - 80:00:74), Eject (1B ... 02)
+    const uint64_t revision = _context->pMediaManager->Revision();
+    ASSERT_TRUE(Packet({0x47, 0x00, 0x00, 0x00, 0x02, 0x00, 0x50, 0x00, 0x4A, 0x00, 0x00, 0x00}));
+    _emulator->RunNFrames(2);
+    ASSERT_EQ(Cd().Audio().PeekStatus(), CdAudioStatus::Playing);
+    ASSERT_TRUE(Packet({0x1B, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(Cd().Audio().PeekStatus(), CdAudioStatus::Idle);
+    EXPECT_TRUE(Present()) << "applied at the frame boundary, not inside the command";
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(Present()) << "the slot is empty";
+    EXPECT_GT(_context->pMediaManager->Revision(), revision) << "every surface sees the change";
+    EXPECT_FALSE(Cd().HasDisc());
+    EXPECT_TRUE(Cd().TrayOpen()) << "the tray stays open";
+    MediaRequest info{"info", "ide0.slave", "", {}};
+    const MediaReply reply = MediaControl(_context).Execute(info);
+    ASSERT_TRUE(reply.result.Ok());
+    EXPECT_EQ(reply.body.find("info")->find("state")->s, "empty");
+
+    // No unit attention for an eject the guest asked for: TEST UNIT READY says NOT READY, tray open
+    EXPECT_FALSE(Packet({0x00}));
+    EXPECT_EQ(Sense(), (std::vector<uint8_t>{0x02, 0x3A, 0x02}));
+
+    // Load with no disc: the tray closes, still no medium (MEDIUM NOT PRESENT - TRAY CLOSED)
+    EXPECT_TRUE(Packet({0x1B, 0, 0, 0, 0x03}));
+    EXPECT_FALSE(Cd().TrayOpen());
+    EXPECT_FALSE(Packet({0x00}));
+    EXPECT_EQ(Sense(), (std::vector<uint8_t>{0x02, 0x3A, 0x01}));
+
+    // Eject again (the tray opens, no disc to take out) and insert from outside: the tray closes with it
+    EXPECT_TRUE(Packet({0x1B, 0, 0, 0, 0x02}));
+    EXPECT_TRUE(Cd().TrayOpen());
+    ASSERT_TRUE(Insert());
+    EXPECT_TRUE(Present());
+    EXPECT_FALSE(Cd().TrayOpen());
+    EXPECT_FALSE(Packet({0x00}));
+    EXPECT_EQ(Sense(), (std::vector<uint8_t>{0x06, 0x28, 0x00})) << "a new disc: UNIT ATTENTION";
+    EXPECT_TRUE(Packet({0x00}));
+}
+
+TEST_F(IdeControllerCdEject_Test, PreventAllowKeepsTheDisc)
+{
+    ASSERT_TRUE(Packet({0x1E, 0, 0, 0, 0x01}));  // PREVENT MEDIUM REMOVAL
+    EXPECT_FALSE(Packet({0x1B, 0, 0, 0, 0x02}));
+    EXPECT_EQ(Sense(), (std::vector<uint8_t>{0x05, 0x53, 0x02}));
+    _emulator->RunNFrames(2);
+    EXPECT_TRUE(Present()) << "a refused eject leaves the slot alone";
+    EXPECT_FALSE(Cd().TrayOpen());
+    ASSERT_TRUE(Packet({0x1E, 0, 0, 0, 0x00}));
+    ASSERT_TRUE(Packet({0x1B, 0, 0, 0, 0x02}));
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(Present());
+}
+
+TEST_F(IdeControllerCdEject_Test, UserEjectStillReportsAndOpensTheTray)
+{
+    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.slave").Ok());
+    _emulator->RunNFrames(1);
+    EXPECT_TRUE(Cd().TrayOpen());
+    EXPECT_FALSE(Packet({0x00}));
+    EXPECT_EQ(Sense()[0], 0x06) << "taken out from outside: reported as a change, as before";
+    EXPECT_FALSE(Packet({0x00}));
+    EXPECT_EQ(Sense(), (std::vector<uint8_t>{0x02, 0x3A, 0x02}));
+}
+
+/// endregion </The guest ejects the disc>

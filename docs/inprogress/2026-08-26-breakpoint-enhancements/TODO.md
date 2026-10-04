@@ -1,9 +1,9 @@
 # TODO — Breakpoint enhancements (2026-08-26)
 
-**Status:** not started (design only). [design.md](design.md) covers address
-ranges, hit counters, conditions, IRQ breakpoints; no corresponding code
-exists in `core/` (verified 2026-09-16 — only the condition design overlaps
-with `../2026-08-17-conditional-breakpoints/`).
+**Status:** ranges and hit counters done (2026-10-04, branch `bp-matching`, through the hot-path
+matching design of
+[../2026-08-17-conditional-breakpoints/hotpath-matching-design.md](../2026-08-17-conditional-breakpoints/hotpath-matching-design.md));
+conditions and IRQ breakpoints open. [design.md](design.md) covers all four.
 
 ## Progress
 - Design complete (315 lines): data model, evaluation cost analysis, UI plan.
@@ -12,9 +12,8 @@ with `../2026-08-17-conditional-breakpoints/`).
   to hook.
 
 ## Remaining (value order)
-1. **Address-range breakpoints** — one range instead of N points; highest
-   user value (ROM/RAM bank watch).
-2. **Hit counters** — break after N hits; trivial once ranges exist.
+1. ~~Address-range breakpoints~~ — done 2026-10-04 (`address_end`, CLI `bp A-B`).
+2. ~~Hit counters~~ — done 2026-10-04 (`hit_count`, policies equal / at_least / multiple).
 3. **Conditions** — implemented via the expression evaluator track
    (`../2026-08-26-expression-evaluator/` + `../2026-08-17-conditional-breakpoints/`).
 4. **IRQ breakpoints** — break on interrupt entry (needs IM1/IM2 vector

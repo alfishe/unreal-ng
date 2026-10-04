@@ -1,0 +1,45 @@
+; envelope buffered write: acts at point 3 / 4, not at once (item 4)
+16 A #09
+24 D #C8
+32 A #10
+40 D #50
+48 A #1C
+56 D #02
+64 A #1C
+72 D #01
+80 A #00
+88 D #FF
+96 A #01
+104 D #FF
+112 A #02
+120 D #FF
+128 A #03
+136 D #FF
+144 A #04
+152 D #FF
+160 A #05
+168 D #FF
+176 A #14
+184 D #04
+192 A #15
+200 D #00
+208 A #1C
+216 D #01
+224 A #18
+232 D #06
+240 A #18
+248 D #86
+; mid-period write of a new shape: waits for the loop point
+9256 A #18
+9264 D #8B
+; single decay, then a write after it ended: acts at once
+49272 A #18
+49280 D #84
+89288 A #18
+89296 D #8C
+; disable mid-envelope: direct-acting
+129304 A #18
+129312 D #8E
+134320 A #18
+134328 D #00
+139336 END

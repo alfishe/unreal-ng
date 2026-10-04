@@ -33,7 +33,12 @@ Verified 2026-10-02 on macOS GUI builds: WebAPI, MCP, CLI, Lua and Python (`tool
 - **Bitrates** (optional, kbps, 0 = encoder default): `video_bitrate` 100..200000,
   `audio_bitrate` 32..512 (needs `audio`).
 - **Picture**: `scale` 1..4 (integer upscale; 2 keeps color detail through H.264 chroma
-  subsampling), `region` `full` (with border) or `screen`, `fps` 1..100.
+  subsampling), `region` `full` (the default: the whole frame with its border) or `screen` (the
+  working picture), `fps` 1..100. `screen` gives the file the size of the working window at the
+  start; when the window changes later (a TS-Conf program switching its `V_CONFIG` window, the
+  Pentagon overscan toggle) the new window is scaled into that size with its aspect kept and
+  black bars, never cut. A `full` recording of a TS-Conf machine is always 720x576 (720x288
+  with every line doubled to square pixels).
 
 Timestamps are emulated time: a recording made in turbo mode plays at normal speed, and the
 sound track has exactly the frames' length.
@@ -108,7 +113,9 @@ ffmpeg -v info -i scratch/run.mp4 -map 0:a -af astats=measure_perchannel=none -f
 ```
 
 - Video size = framebuffer x `scale` (Pentagon 352x288 -> 704x576 at 2x; Sprinter 736x288 is
-  stored at half height, so 1472x1152; TS-Conf 720x288 -> 1440x1152).
+  stored at half height, so 1472x1152; TS-Conf 720x288 -> 1440x1152). The ZX Profi (`PROFI`, `PROFI3`,
+  `PROFI-PLUS`) records its screen window, 352x288 x `scale` (704x576 at 2x), in both its Spectrum and its 608x288
+  hi-res mode, scaled the way the screen shows it; a switch between the modes keeps recording (full-frame region).
 - Frame count = emulated seconds / frame length (Pentagon 20.48 ms, 48.83 fps).
 - Audio: AAC 48 kHz stereo in the file (the core rate, 44.1 kHz by default, is converted).
 - `duration` of the audio and video streams agree within a millisecond or two; the sound starts

@@ -208,6 +208,14 @@ private:
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
     uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    /// A step over that steps across a CALL resumes the machine to a temporary breakpoint: the machine then runs
+    /// paced to real time, but it is a debugger step and must be silent like every other step. The host output
+    /// hold (reason DirectRun) lasts from that resume to the stop: the breakpoint, a cancel or any pause
+    SoundManager::HostOutputHold _stepOverHostHold;
+    /// Id of the NC_EXECUTION_BREAKPOINT observer StepOver() registers; its handler captures this emulator and its
+    /// FeatureManager, so it must be unregistered before either goes away. Never from inside the handler (deadlock)
+    uint64_t _stepOverObserverId = 0;
+    void RemoveStepOverObserver();
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
 
     // Frame step target (persistent to prevent cumulative drift)
@@ -638,6 +646,11 @@ public:
     /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another
     /// thread. False while the thread runs, or between a pause request and its confirmation
     bool IsEmulationParked();
+    /// Run `work` on the caller's thread while the emulation stays parked: a confirmed pause and no direct run on any
+    /// thread. Resume() waits for it (the pause flag cannot flip meanwhile), so the caller is the only thread driving
+    /// the machine. Returns false, without running `work`, when the machine is not parked. `work` must not pause,
+    /// resume or step this emulator
+    bool RunWhileParked(const std::function<void()>& work);
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
 

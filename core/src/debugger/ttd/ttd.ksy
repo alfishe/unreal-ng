@@ -559,7 +559,7 @@ types:
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232: netstate::Com, the peer part only),
+          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
@@ -612,7 +612,21 @@ types:
           reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2),
           48 SlotSerial1B (the second UART of the card in expansion slot 1: SprinterSerial's COM2; the same
           netstate::SerialPort; a Hayes modem peer keeps its command state in the record's ESP bytes, peer kind 6),
-          49 SlotSerial2B (the same for expansion slot 2).
+          49 SlotSerial2B (the same for expansion slot 2),
+          50 Ppi8255 (an 8255 PPI, the ZX Profi's: Ppi8255::State - u1 mode word, u1 port A, B, C output latches),
+          51 Pit8253 (an 8253 PIT, the ZX Profi v5's COM baud timer: Pit8253::State - per counter u1 control, out,
+          gate, has count, counting, load pending, new count, fired, write MSB, read MSB, latched, LSB written, u2
+          count register, output latch, u4 reload, counting element, mode 3 pulses left; then u4 reserved, u8 last
+          clock, u8 fraction; 104 bytes; only on the v5 board),
+          52 Usart8251 (an 8251 USART, the ZX Profi v5's COM port: Usart8251::State - u1 mode, command, expect, sync
+          1, sync 2, errors, RX data, RX ready, TX buffer, TX full, TX shifter, TX busy, RX shifter, RX busy, the
+          board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
+          on the v5 board; its peer is MachineSerialPeer),
+          53 Saa1099 (a Philips
+          SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
+          generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
+          divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
+          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

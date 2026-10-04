@@ -461,7 +461,7 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             _lastSeenT = nowT();
             _seenT = true;
             const uint8_t reg = _currentChip->getCurrentRegisterIndex();
-            _currentChip->latchRegister(reg, value);
+            _currentChip->latchRegister(reg, value, static_cast<uint64_t>(_lastSeenT));
             queueSsgWrite(_currentChip == _chip0 ? 0 : 1, reg, value);
             break;
         }

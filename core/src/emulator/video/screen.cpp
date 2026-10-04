@@ -612,7 +612,12 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     }
 
     // Allocate framebuffer
+    const uint8_t* const bufferBefore = _framebuffer.memoryBuffer;
+    const uint16_t widthBefore = _framebuffer.width;
+    const uint16_t heightBefore = _framebuffer.height;
     AllocateFramebuffer(_mode);
+    const bool sameFrame = bufferBefore != nullptr && bufferBefore == _framebuffer.memoryBuffer &&
+                           widthBefore == _framebuffer.width && heightBefore == _framebuffer.height;
 
     // Notify consumers that the video mode changed. JUSTIFICATION: mode
     // switches are not only UI-driven - guest software switches modes by
@@ -622,8 +627,11 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // address) is different afterwards; a GUI consumer with cached
     // dimensions has CopyPresentedFramebuffer rejecting every copy (dst too
     // small) and freezes on the last frame. Consumers must re-attach.
-    // Skipped during construction (pEmulator not wired yet).
-    PostVideoModeChanged();
+    // Skipped during construction (pEmulator not wired yet). Not announced when the frame is the same buffer of
+    // the same size: nothing to re-attach, and the GUI's re-attach blanks its picture for a moment (a guest that
+    // switches the mode mid-frame made it flicker)
+    if (!sameFrame)
+        PostVideoModeChanged();
 
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
@@ -906,6 +914,11 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         if (newSize != 0 && newSize == _framebuffer.memoryBufferSize)
         {
             _framebuffer.videoMode = mode;
+            // The same frame layout (the usual case: Pentagon <-> AlCo, ZX <-> 128K, the TS modes): only the label
+            // changes. A guest switches it mid-frame by a port write (zifi.spg: three times a frame), and the lines
+            // the beam already drew and the presented frames are valid pictures - clearing them left a black frame
+            if (_framebuffer.width == rd.fullFrameWidth && _framebuffer.height == rd.fullFrameHeight)
+                return;
             _framebuffer.width = rd.fullFrameWidth;
             _framebuffer.height = rd.fullFrameHeight;
             ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);

@@ -278,6 +278,16 @@ void EventQueue::RemoveObserverById(const std::string& topic, uint64_t observerI
     WaitForDispatchesToComplete();
 }
 
+size_t EventQueue::ObserverCount(const std::string& topic)
+{
+    int topicId = ResolveTopic(topic);
+
+    std::lock_guard<std::mutex> lock(m_mutexObservers);
+
+    ObserverVectorPtr observers = GetObservers(topicId);
+    return observers != nullptr ? observers->size() : 0;
+}
+
 int EventQueue::ResolveTopic(const char* topic)
 {
     std::string strTopic(topic);
@@ -390,20 +400,17 @@ void EventQueue::Post(int id, MessagePayload* obj, bool autoCleanupPayload)
 
         m_cvEvents.notify_one();
     }
+    else if (autoCleanupPayload && obj != nullptr)
+    {
+        // Invalid topic id - the message is never queued, so nobody else would free the payload
+        delete obj;
+    }
 }
 
 void EventQueue::Post(std::string topic, MessagePayload* obj, bool autoCleanupPayload)
 {
-    int id = ResolveTopic(topic);
-    if (id >= 0)
-    {
-        Post(id, obj, autoCleanupPayload);
-    }
-    else if (autoCleanupPayload && obj != nullptr)
-    {
-        // Topic not registered - clean up payload to prevent leak
-        delete obj;
-    }
+    // Post(int) frees the payload itself when the topic is not registered
+    Post(ResolveTopic(topic), obj, autoCleanupPayload);
 }
 
 // Lookup for observer list for topic with <id>

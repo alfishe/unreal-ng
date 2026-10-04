@@ -143,7 +143,7 @@ public:
         std::string card;                 ///< "ZXNETUSB" or empty
         std::string cards;                ///< the ZX-Bus cards fitted: "ZXNETUSB,ZXWIFI" | "NONE"
         bool zxBus = true;                ///< the machine takes ZX-Bus cards
-        std::string serialPort;           ///< the machine's own: none | evo-avr | zifi | atm2-kbc
+        std::string serialPort;           ///< the machine's own: none | evo-avr | zifi | atm2-kbc | profi-8251
         bool internalIo = false;          ///< the ATM Turbo 2+ INTERNAL I/O connector (ATM2IOESP)
         std::vector<std::string> notes;   ///< configured devices not fitted, and why
 
@@ -186,7 +186,7 @@ public:
         struct Com
         {
             bool fitted = false;
-            std::string flavor;           ///< evo (the ZX-Evo AVR) | zxwifi (a 16550 card) | atm2kbc (ATM Turbo 2+ keyboard controller)
+            std::string flavor;           ///< evo (the ZX-Evo AVR) | zxwifi (a 16550 card) | atm2kbc (ATM Turbo 2+ keyboard controller) | usart8251 (ZX Profi v5)
             std::string firmware;         ///< evo: the AVR firmware ([EVO] Avr=); atm2kbc: [ATM] Kbc=
             std::string peer;             ///< loopback | tcp | serial
             std::string target;           ///< host:port (resolved address), device,baud
@@ -197,7 +197,7 @@ public:
             Uart16550::View uart;
             uint32_t baud = 0;
             uint32_t frameBits = 0;
-            /// atm2kbc: no 16550 (`uart` stays empty) - the MCU's line
+            /// atm2kbc / usart8251: no 16550 (`uart` stays empty) - the MCU's line, the 8251's (lost: its overruns)
             bool rts = false, dtr = false;
             uint64_t bytesIn = 0, bytesOut = 0, lost = 0;
             size_t pending = 0;           ///< bytes the peer holds for the ZX
@@ -209,7 +209,7 @@ public:
         } com;
 
         /// The machine's own serial port when it is no 16550 on #xxEF (ATM
-        /// Turbo 2+ keyboard controller): fitted beside a ZX-WiFi card's `com`
+        /// Turbo 2+ keyboard controller, ZX Profi v5 8251): fitted beside a ZX-WiFi card's `com`
         Com machineSerial;
 
         /// The ATM2IOESP card (a 16550 on the INTERNAL I/O connector)
@@ -245,7 +245,7 @@ private:
         enum class Serial : uint8_t { None, EvoAvr, ZxWifi } serial = Serial::None;
         uint8_t avr = 0;                  ///< EvoAvr: the AVR firmware
         std::string peer;                 ///< ComPortSpec of the serial port's peer
-        bool machineSerial = false;       ///< the machine's own port is no 16550 (Atm2Kbc)
+        bool machineSerial = false;       ///< the machine's own port is no 16550 (Atm2Kbc, Profi8251)
         std::string machinePeer;          ///< ComPortSpec of its peer
         bool atm2IoEsp = false;           ///< the ATM2IOESP card on the INTERNAL I/O connector
         std::string atm2IoEspPeer;        ///< ComPortSpec of its ESP

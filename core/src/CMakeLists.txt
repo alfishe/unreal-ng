@@ -99,12 +99,21 @@ if (NOT TARGET opl4)
     add_subdirectory(3rdparty/opl4 EXCLUDE_FROM_ALL)
 endif()
 
+# libsam2695 — Dream SAM2695 General MIDI synthesizer (serial MIDI receiver, the chip's MIDI
+# implementation, SF2 voice model), vendored in-house at 3rdparty/sam2695 like libopl4 (std-lib
+# only, own CMakeLists.txt). EXCLUDE_FROM_ALL keeps its sam2695tests / sam2695render binaries out
+# of default builds; build them by name. Nothing in the emulator uses the library yet.
+if (NOT TARGET sam2695)
+    add_subdirectory(3rdparty/sam2695 EXCLUDE_FROM_ALL)
+endif()
+
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/sam2695/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (root ENABLE_VDAC2)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
@@ -264,6 +273,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 # compiles core sources directly into its own binary and must see the same
 # gate as the core library build (a mismatch would be an ODR hazard).
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
+
+# Link libsam2695 (SAM2695 General MIDI synthesizer). PRIVATE for the same reason as opl4; the
+# gate is PUBLIC so core-tests, which compiles core sources itself, sees the same definition.
+target_link_libraries(${PROJECT_NAME} PRIVATE sam2695)
+target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_SAM2695=1)
 
 
 # TS-Conf VDAC2 card: the FT812 library (root CMakeLists.txt, ENABLE_VDAC2). The

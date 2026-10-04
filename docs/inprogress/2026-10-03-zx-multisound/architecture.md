@@ -55,7 +55,7 @@ flowchart LR
 |---|---|---|
 | YM2203 pair | 3.5 MHz exact (DDS average) | 1 : 1 on a 3.5 MHz host, a true ratio on 3.5469 MHz hosts (128K) |
 | SAA1099 | 8 MHz | 16 : 7 |
-| GS Z80 | 16 MHz, INT from 12 MHz / 320 | card units as today (`GSCardRunner`) |
+| GS Z80 | 16 MHz, INT from 12 MHz / 321 (RTL) | card units as today (`GSCardRunner`) |
 | SAM2695 | its internal rate | library `hostTickRate` |
 
 - **Why the YM pair needs a ratio:** today TSFM uses "one YM master clock = one CPU T-state" because the TSFM's clock
@@ -101,7 +101,7 @@ in Verilator ([tdd-card-logic.md](tdd-card-logic.md)).
 | Parameter | Classic (default) | MultiSound |
 |---|---|---|
 | CPU clock | 12 MHz | 16 MHz |
-| INT period | 320 clocks of 12 MHz | same (37.5 kHz from the 12 MHz DDS, not the CPU clock) |
+| INT period | 320 clocks of 12 MHz | **321** clocks of 12 MHz (37.383 kHz from the 12 MHz DDS, not the CPU clock; low 33 clocks), per the RTL ([tdd-card-logic.md](tdd-card-logic.md) §7 F8) |
 | RAM | 128-512 KB (`[SOUND] GSRamSize`) | 1 MB or 2 MB (`gsRam`); `_ramPairMask` widened, banking unchanged |
 | Host ports | `#B3`, `#BB`, `#33` | `#B3`, `#BB` |
 | ROM | `[ROM] GS` | GS 1.05b (`data/rom/gs105b.rom`, shipped with the card profile) |
@@ -119,12 +119,22 @@ when register 14 / 15 changes or register 7 bits 6 / 7 change the direction. Zer
 check on register 7 / 14 / 15 writes only). The same hook later serves the 128K's own MIDI / RS-232 out on the AY
 (PLAN follow-up, not in this work).
 
-### 4.4 `MultiSoundDacs`
+### 4.4 `MultiSoundDacs` (as built, 2026-10-04)
 
-Four channels `{sample, volume}`; inputs: GS sample event (memory read at `#6000-#7FFF`), GS volume (ports 6-9),
-SounDrive port write (sample + volume 63). Output: ideal DAC value `sample × volume / 63` per channel (sigma-delta
-noise not modeled; optional `Authentic` mode adds the 1-pole 16.3 kHz board filter), stereo by the board weights
-(channels 0-1 left, 2-3 right), deltas into a blip pair on the card axis.
+`core/src/emulator/slots/cards/multisound/multisounddacs.{h,cpp}`; the board constants and the RC filter in
+`multisoundanalog.{h,cpp}`. Self-contained like `MultiSoundLogic` (no slot, emulator or SoundManager dependency).
+
+| Item | Behavior |
+|---|---|
+| Inputs | strobe events with the time their strobe **ends** on the card axis (`hostTickRate`, e.g. 3.5 MHz audio T-states): `GsSample(t, ch, byte)` (GS memory read at `#6000-#7FFF`), `GsVolume(t, ch, vol)` (GS ports 6-9), `SoundriveWrite(t, ch, byte)` (sample + volume 63) |
+| Register semantics | the same three writes as `MultiSoundLogic` (L14): `ConvertSample`, 6-bit volume, SounDrive = volume 63 |
+| Ordering (tdd-card-logic F7) | events wait in a queue sorted by strobe end (1024 slots); `Run(t)` applies those ending at or before `t`. The card calls it once both the host and the GS timeline have reached `t`, so the later-ending strobe wins whatever order the timelines hand events over in. Equal end time = same last edge: GS sample over SounDrive sample, SounDrive volume over GS volume. An event ending before the time already run to is applied at once (`LateEvents()`); a full queue runs to its earliest event |
+| Transfer (F9) | per channel `level x gain` units (`SampleLevel` x `VolumeGain64`: -127..+127 with `#7F` / `#80` both 0, 63 counts as 64); full scale `kChannelFullScale` = 128 x 64 (never reached). The 0.5 midpoint is dropped (the coupling capacitors remove it); sigma-delta noise not modeled |
+| Output | channels 0 + 1 left, 2 + 3 right, no cross-feed; steps into a blip_buf pair at their exact time; `EndFrame(t, stereo, frames)` as `Saa1099` |
+| HiFi / Authentic | Authentic adds the per-channel RC (1k series, 10n shunt, 47k load: 16.25 kHz, 1-pole) after the band-limited synthesis (the network is linear and equal on both channels of a side, so the side sum is filtered); bilinear, prewarped so the corner is exact (clamped to 0.45 x the output rate) |
+| TTD | fixed 11.3 KB blob: version, four channels, time axis, the pending queue, late-event counter; no `PeripheralId` (the card's blob set carries it). Output buffers and filter history are render layer: a load restarts the frame with one step to the restored level |
+
+The board weight (0.208) and the absolute level are the mixer's (§5).
 
 ## 5. Mixer rows
 
@@ -132,6 +142,37 @@ Each source is its own `SoundManager` row so the user can mute / solo / record i
 FM`, `MS SSG`, `MS SAA`, `MS DAC` (GS + SounDrive), `MS MIDI`. The board weights (hardware reference §4.5) are applied
 inside the card before the rows, so the rows' unity volume equals the real board. New `AudioSourceType` values go
 before `Custom`; `AudioActivityIndicators::HUD_SOURCES` grows accordingly.
+
+**As built (2026-10-04):** `MultiSoundMixer` (`.../multisound/multisoundmixer.{h,cpp}`, not registered yet; MS-4 wires
+the rows). `Mix(input, output)` takes one block of every source at the output rate and writes the five rows (int16,
+interleaved stereo; a sixth `external` output exists for the J3 line input, which has no emulated source).
+
+| Source | Input (module convention) | Calibration (row level, 1.0 = INT16_MAX) | Weight L / R |
+|---|---|---|---|
+| FM 1, FM 2 | mono, DAC word / 32768 | `kFmFullScale` 0.7033 = TSFM `kFmBaseGain` 0.30 x `TSFM_FmTrimDb` 7.4 dB (the TSFM board measurement, TSFM ISSUES #1) | 1.000 / 1.000 |
+| SSG A / B / C, both chips | mono, YM2149 table level 0..1 | `kSsgChannelFullScale` 0.30 (the emulator's SSG channel, the level that measurement was taken against at equal board weights) | A 0.417 / 0; B 0.213 / 0.213; C 0 / 0.417 |
+| SAA L / R | `Saa1099::EndFrame` units | `kSaaUnit` 1 / 32767 (module convention; absolute level unmeasured) | 0.833 own side |
+| MIDI L / R | `sam2695::Synth::Render` (+-1.0) | `kMidiFullScale` 1.0 (module convention; unmeasured) | 1.000 own side |
+| DAC L / R | `MultiSoundDacs::EndFrame` units | `kDacUnit`: 2.5 V per channel full scale (U14 at 5 V) x `kLevelPerVolt` (= 0.7033 / 1.25 V, the YM3014B's +-Vdd/4 full scale) | 0.208 own side |
+| External (J3) | volts | `kLevelPerVolt` | 0.417 own side |
+
+So the MS FM row equals the TSFM module's FM level and every other source sits where the board puts it relative to
+FM: a full-scale DAC channel is 0.417 x a full-scale FM word (via volts), an SSG channel at full volume 0.125 / 0.70.
+Every weight is computed from the component values (`MultiSoundBoard::kWeight*` = Rf / Rin, designators in
+`multisoundanalog.h`) and tested against the table.
+
+- **SAA weight:** the network's pass band is 10k / (1k + 1k + 10k) = **0.833**; the 0.825 of hardware reference §4.5
+  is the same network at 1 kHz (tested). Its -3 dB corner computes to **7.02 kHz** (-10.3 dB at 20 kHz).
+- **SSG naming:** A left, B centre at 0.213, C right is what the emulator calls ABC (`AYStereoMode::ABC`).
+- **Inversion:** the summing amplifiers invert every source alike (the external input too), so relative polarity is
+  kept and the overall inversion is inaudible: not modeled.
+- **AC coupling** (`acCoupling`, default on, both modes): one 1-pole high-pass per coupling capacitor at
+  1 / (2 pi R 10 uF) with the resistance it drives (FM 5k = 3.2 Hz, SSG A / C 24k = 0.66 Hz, SSG B 23.5k, SAA 12k,
+  MIDI 10k, DAC 48k); it removes the DC of the unipolar SSG and SAA outputs as the board does.
+- **Authentic:** the SAA's 2-pole ladder (exact analog prototype from the five components, bilinear, prewarped at
+  7.02 kHz). The DAC RC is `MultiSoundDacs`' own Authentic mode; the YM3014B hold-cap corner is unknown and not
+  modeled.
+- Filter state is render layer (not in TTD).
 
 ## 6. Shadowing and compatibility
 

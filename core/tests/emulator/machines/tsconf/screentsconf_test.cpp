@@ -526,3 +526,81 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
         }
     }
 }
+
+/// A program that changes the video mode mid-frame (zifi.spg: a 256C header, a TXT list, a 256C status bar, every
+/// frame) keeps what the beam already drew. All TS modes share one 720x288 frame and the hardware has no
+/// framebuffer to clear, so a V_CONFIG mode change must not wipe the lines above it (it did: only the last
+/// segment survived, a black screenshot with a status bar at the bottom)
+TEST_F(ScreenTSConf_Test, VID6_ModeChangeMidFrameKeepsTheDrawnLines)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x06);
+    ts.cram[0xA6] = 0x03E0;  // the border: green, nothing else in the picture is
+    const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
+    Reg(TsConfReg::VConfig, 0x00);
+
+    TsConfEngine& engine = _decoder->GetEngine();
+    engine.OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    Screen()->InitRaster();
+    Screen()->ResetPrevTstate();
+    auto runTo = [&](uint32_t line) {
+        const uint32_t t = line * TsConfEngine::kLineTacts;
+        _z80->t = t;
+        engine.CatchUp(t);
+        Screen()->UpdateScreen();
+    };
+    runTo(60);
+    Reg(TsConfReg::VConfig, 0x01);  // ZX -> 16C
+    runTo(90);
+    Reg(TsConfReg::VConfig, 0x03);  // 16C -> TXT
+    runTo(120);
+    Reg(TsConfReg::VConfig, 0x02);  // TXT -> 256C
+    runTo(150);
+
+    uint32_t* buffer = nullptr;
+    size_t size = 0;
+    Screen()->GetFramebufferData(&buffer, &size);
+    auto at = [&](uint32_t dot, uint32_t line) { return buffer[Fy(line) * 720 + Fx(dot)]; };
+    EXPECT_EQ(at(100, 40), border) << "a line drawn in the first mode";
+    EXPECT_EQ(at(100, 70), border) << "a line drawn in the second mode";
+    EXPECT_EQ(at(100, 100), border) << "a line drawn in the third mode";
+    EXPECT_EQ(at(100, 130), border) << "a line of the last mode";
+}
+
+/// GEOM-2: with T_CONFIG[0] the TSU works in the whole 360x288 window and its sprites and tiles show over the
+/// border. The picture then is that whole window, not the V_CONFIG graphics window (area=screen cut the sprites
+/// that sit on the border). Nothing to show beyond the V_CONFIG window when no TSU layer is on, or NOTSU hides it
+TEST_F(ScreenTSConf_Test, GEOM2_WorkingWindowIncludesTheTsuWindow)
+{
+    const PictureRect small{104, 48, 512, 192};  // V_CONFIG 256x192
+    const PictureRect whole{0, 0, 720, 288};
+    struct Case
+    {
+        uint8_t vConfig;
+        uint8_t tConfig;
+        PictureRect expected;
+        const char* why;
+    };
+    const Case cases[] = {
+        {0x00, 0x00, small, "no TSU layer, window bit off"},
+        {0x00, 0x01, small, "window bit on but no layer enabled: nothing to show outside"},
+        {0x00, 0x80, small, "sprites on, window bit off: the TSU stays in the graphics window"},
+        {0x00, 0x81, whole, "sprites on, 360x288 TS window"},
+        {0x00, 0x21, whole, "tile layer 0 on, 360x288 TS window"},
+        {0x00, 0x41, whole, "tile layer 1 on, 360x288 TS window"},
+        {0x10, 0x81, small, "NOTSU hides the TSU"},
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(c.why);
+        Reg(TsConfReg::VConfig, c.vConfig);
+        Reg(TsConfReg::TConfig, c.tConfig);
+        PixelAfterFrame(0, 0);
+        const PictureRect w = Screen()->WorkingWindow();
+        EXPECT_EQ(w.x, c.expected.x);
+        EXPECT_EQ(w.y, c.expected.y);
+        EXPECT_EQ(w.width, c.expected.width);
+        EXPECT_EQ(w.height, c.expected.height);
+    }
+}
