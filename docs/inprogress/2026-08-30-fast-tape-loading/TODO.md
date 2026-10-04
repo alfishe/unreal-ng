@@ -115,8 +115,10 @@ The single-cause hypothesis below was only partly right:
      with `#28` there, so the loader fills memory with `#15` (the runaway measured earlier). MAME's Pentagon has `#20` and
      loads the tape. Listing and details: `docs/disasm/games/dizzy-x-kid-dr-loader/`. Decision (owner, 2026-10-03):
      no ROM change; the protection is behaving as its authors intended and is documented as such.
-   - **O2 TIMOFEY, 48K:** unchanged (back to BASIC with the tape at block 2 of 5; blocks 3-5 hold 45568 bytes, more than a
-     48K takes, and it runs on Pentagon); very likely 128K-only, not proven.
+   - **O2 TIMOFEY, 48K: closed 2026-10-03, a 128K-only release (owner decision: incompatible, documented).** Back to
+     BASIC with the tape at block 2 of 5. Evidence, from the tape bytes (not traced in a debugger): block 2 contains
+     `LD BC,#7FFD` and `OUT (C),A` (128K paging), blocks 2-4 hold 45568 bytes (33792 + 9216 + 2560), more than a 48K
+     machine has free, and it loads on Pentagon. Described in `testdata/loaders/tap/README.md`.
    - **O3 HACKER_SHURIK, Pentagon, fast off:** no longer reproduces: all Pentagon cases reach the end of the tape. The one
      "dead" verdict (48K, signal, key every 500 frames) is the liveness check of the sweep (a screen that does not react to
      0 / 1 / ENTER / SPACE / N), not a loader failure.
