@@ -3425,6 +3425,15 @@ bool Emulator::IsEmulationParked()
     return !_isRunning || !_mainloop || (_isPaused && _mainloop->IsPauseConfirmed());
 }
 
+bool Emulator::RunWhileParked(const std::function<void()>& work)
+{
+    std::lock_guard<std::mutex> lock(_pauseWaitMutex);
+    if (!_isRunning || !_mainloop || !_isPaused || !_mainloop->IsPauseConfirmed() || IsDirectStepping())
+        return false;
+    work();
+    return true;
+}
+
 bool Emulator::IsDestroying()
 {
     return _state == StateDestroying || _isReleased;
