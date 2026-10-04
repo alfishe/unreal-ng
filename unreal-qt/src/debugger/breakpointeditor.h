@@ -44,6 +44,11 @@ private:
     
     QComboBox* _typeCombo;
     QLineEdit* _addressEdit;
+    QLineEdit* _endEdit;        // optional range end
+    QLineEdit* _pageEdit;       // optional page "ram5": a physical breakpoint
+    QCheckBox* _slotOnlyCheck;  // with a page: only through the slot of the address
+    QLineEdit* _maskEdit;       // ports: optional mask
+    QLineEdit* _hitsEdit;       // optional hit policy "5", ">=5", "%5"
     QGroupBox* _memoryAccessBox;
     QGroupBox* _portAccessBox;
     QCheckBox* _readCheck;

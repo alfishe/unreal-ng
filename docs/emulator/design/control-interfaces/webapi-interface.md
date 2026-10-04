@@ -440,7 +440,7 @@ GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette f
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's RS-232 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, summary_line, the card's own fields (the ZX-bus adapter's zx_bus: the General Sound / NeoGS behind it - personality, ports #B3 / #BB / #33, cpu_addresses, status flags, machine_reset, reset_held / reset_pulses; or why its ZX-bus is empty), irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
@@ -657,25 +657,38 @@ DELETE /api/v1/emulator/{id}/breakpoints                   Clear all
 DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}           Remove specific
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
-GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info
+GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
+POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
 ```
 
 #### Add Breakpoint Request
 ```json
 {
-  "type": "execution|read|write|port_in|port_out",
+  "type": "execution|read|write|rw|port_in|port_out|port",
   "address": 32768,
+  "address_end": 33023,
   "page": {"kind": "ram", "page": 32},
+  "slot_only": false,
+  "port_mask": 255,
+  "hits": ">=5",
   "note": "optional annotation",
   "group": "optional group name"
 }
 ```
 
-`page` (optional, execution / read / write): `{kind: ram | rom | cache, page}` (debugger protocol; the text
-form `"ram32"` is accepted too). The breakpoint fires only
-while that page is mapped at the address - for example code in TS-Conf RAM page 32 at `#C000`, not
-whatever else is paged in there. 400 for a page the machine does not have. The list and
-`/breakpoints/status` (`last_triggered_page`) name it back the same way.
+Everything but `type` and `address` is optional (the debugger protocol's Breakpoint fields):
+
+| Field | Meaning |
+|:--|:--|
+| `address_end` | Range end, inclusive. A range costs the hot path what one address costs, however many there are. |
+| `page` | `{kind: ram \| rom \| cache, page}` (or the text `"ram32"`): a **physical** breakpoint on that page at offset `address & #3FFF`. It fires through whatever slot shows the page: TS-Conf code paged into `#C000` or `#8000`, the 128K's RAM 5 at `#4000` and `#C000`. With a range, the range stays inside the page. 400 for a page the machine does not have. |
+| `slot_only` | With `page`: only through the slot of `address` (the old "while page X is at this address"). |
+| `port_mask` | Ports: matches when `(port & port_mask) == (address & port_mask)`; `255` catches `#FE` on any high byte. |
+| `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
+
+Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
+page, a mask on a memory breakpoint, a hit policy without a target. The reply and the list carry
+`address_end`, `page` + `slot_only`, `port_mask`, `hit_mode`, `hit_target` and the live `hit_count`.
 
 `note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
 on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.

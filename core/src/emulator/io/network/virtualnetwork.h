@@ -81,6 +81,9 @@ public:
     void Rebind(uint16_t id, INetGuest* guest, uint32_t cookie);
 
     void Connect(uint16_t id, const NetEndpoint& to);
+    /// The same with TLS done by the host (IHostNet::TcpConnectTls): the guest's firmware speaks TLS (the ZiFi
+    /// ESP32-S3's WiFiClientSecure); the socket then carries plaintext, which is what the journal records
+    void ConnectTls(uint16_t id, const NetEndpoint& to, const std::string& serverName);
 
     /// A NetProto::Serial socket opens a host serial device (the COM port's
     /// SERIAL: peer): Connected or ConnectFailed follows, then Data events;

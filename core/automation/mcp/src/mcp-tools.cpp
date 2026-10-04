@@ -742,7 +742,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list"})
+                               "bp_list", "bp_reset_hits"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -761,22 +761,36 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out";
+    schema["properties"]["address_end"]["type"] = "integer";
+    schema["properties"]["address_end"]["description"] = "Optional for bp_add: range end, inclusive (execution / read / write)";
+    schema["properties"]["slot_only"]["type"] = "boolean";
+    schema["properties"]["slot_only"]["description"] = "Optional for bp_add with page: only through the slot of address";
+    schema["properties"]["port_mask"]["type"] = "integer";
+    schema["properties"]["port_mask"]["description"] =
+        "Optional for bp_add of port_in / port_out: match (port & port_mask) == (address & port_mask); 255 catches #FE "
+        "on any high byte";
+    schema["properties"]["hits"]["type"] = "string";
+    schema["properties"]["hits"]["description"] =
+        "Optional for bp_add: stop on the Nth hit only ('5'), from the Nth on ('>=5') or every Nth ('%5'); every hit is "
+        "counted (bp_list shows hit_count)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - the breakpoint fires only while "
-        "that page is mapped at the address (e.g. code in RAM page 32 at #C000, not whatever else is paged in there)";
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - a physical breakpoint on that "
+        "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
+        "address)";
     schema["properties"]["note"]["type"] = "string";
     schema["properties"]["note"]["description"] = "Optional annotation for bp_add";
     schema["properties"]["group"]["type"] = "string";
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
-    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable";
+    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
     schema["required"].append("action");
 
     registry.Register(
         "control_execution",
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
-        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list). "
+        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
         "Stepping actions automatically include the new register snapshot.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -841,6 +855,15 @@ void RegisterControlExecution(ToolRegistry& registry)
                     ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "Breakpoints of " + id, done);
                     return;
                 }
+                if (action == "bp_reset_hits")
+                {
+                    Json::Value body(Json::objectValue);
+                    if (args.isMember("bp_id"))
+                        body["id"] = args["bp_id"];
+                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset"), &body, caller,
+                                args.isMember("bp_id") ? "Hit counter reset" : "All hit counters reset", done);
+                    return;
+                }
                 if (action == "bp_clear")
                 {
                     ForwardCall("DELETE", Endpoint(id, "/breakpoints"), nullptr, caller, "Cleared all breakpoints on " + id, done);
@@ -856,7 +879,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
-                    for (const char* key : {"page", "note", "group"})
+                    for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
+                                            "note", "group"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
@@ -1978,7 +2002,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
                                     const Json::Value& machineSerial = value["machine_serial"];
                                     if (machineSerial["fitted"].asBool())
-                                        out << "\n[com] keyboard controller " << machineSerial["kbc_firmware"].asString() << " RS-232, "
+                                        out << (machineSerial["flavor"].asString() == "usart8251"
+                                                    ? std::string("\n[com] 8251 COM port, ")
+                                                    : "\n[com] keyboard controller " + machineSerial["kbc_firmware"].asString() + " RS-232, ")
                                             << machineSerial["peer"].asString()
                                             << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
                                             << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()

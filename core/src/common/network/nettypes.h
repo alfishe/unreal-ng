@@ -53,6 +53,7 @@ enum class NetEventStatus : uint8_t
     AddressInUse = 4,
     Denied = 5,          ///< blocked by the virtual network's allow / deny rules
     Error = 6,
+    TlsFailed = 7,       ///< a TLS connect: the handshake or the peer's certificate failed (hosttls.h)
 };
 
 enum class NetProto : uint8_t

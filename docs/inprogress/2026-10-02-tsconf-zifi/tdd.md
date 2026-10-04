@@ -206,6 +206,21 @@ network queues), so `sendAll` fails only on a closed socket; network events reac
 boundary (up to 20 ms); the S3 SNTP timing is lwIP's defaults [inferred]; the E01 diagnostics HTTP server (port
 8268) is not emulated.
 
+**HTTPS (S3).** The firmware's `NetClient::httpGet` uses `WiFiClientSecure` (mbedTLS, its CA bundle) for port 443
+and after a redirect to `https://` ([src/net_client.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/net_client.cpp)
+`openTls`, `applyRedirect`: a downgrade to `http://` is "redirect tls downgrade", the proxy is never used for
+HTTPS, the Host field omits the default port 443). Emulated with TLS **done by the host**: `IHostNet::TcpConnectTls`
+(`HostNetBridge` + `common/network/hosttls.{h,cpp}`, OpenSSL through memory BIOs, TLS 1.2+, the server's
+certificate checked against the host's trust store and the name, SNI) and `VirtualNetwork::ConnectTls` /
+`EspStack::Connect(..., tlsServerName)`. The guest slot carries the **plaintext**, which is what the journal
+records: a replay needs no host and no keys, and the TTD state is unchanged (the module's flag byte bit 64 =
+`_httpTls`). Without OpenSSL (`-DUNREAL_HOST_TLS=OFF`) the connect fails as `NetEventStatus::TlsFailed` and the
+program sees `get:tls connect failed`, the firmware's answer when the handshake fails. Timeout: 24 s for connect +
+handshake (`connect(host, port, 12000)` + `setHandshakeTimeout(12)`) [inferred: the two added]. Deviation: the
+error text is always "tls connect failed" (the firmware may add mbedTLS's own reason as "tls: <reason>"); the host
+trust store stands in for the firmware's bundle. Checked with the real S3 `zifi.spg` 0.733: "Demos:
+bbb.retroscene.org" (301 to `https://`, then the list over TLS 1.3) and a demo saved to the SD card byte-exact.
+
 **Open:** SMB (S3: the firmware is libsmb2 in server mode plus a 10 000-line adapter, NBNS / LLMNR / WS-Discovery),
-TLS for the S3's HTTPS GET and redirects to HTTPS, WC Update (HTTPS to GitHub, git SHA-1 over VFS reads), the
-online update.
+WC Update (HTTPS to GitHub, git SHA-1 over VFS reads), the online update (its check is a manifest over HTTPS; the
+install would run a downloaded ESP32-S3 image, which an emulated module cannot).

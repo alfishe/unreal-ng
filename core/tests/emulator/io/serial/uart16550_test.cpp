@@ -562,3 +562,56 @@ TEST_F(Uart16550_Test, AvrWaitIsInterruptPlusLoopPhasePlusService)
     Uart16550 chip = Make(Uart16550::Flavor::Chip16550);
     EXPECT_EQ(chip.AccessCycles(Uart16550::kLsr, true, now), 0u) << "a real 16550 holds nobody";
 }
+
+/// An RS-232 loopback test plug (ComPort=PLUG): bytes come back, the UART's own RTS drives CTS and DTR drives DSR
+/// and DCD, RI stays open; plain LOOPBACK holds the inputs active and no peer at all reads them inactive
+/// (SprinterSerial COM1 with nothing plugged in, owner decision 2026-10-04)
+TEST(Uart16550Plug_Test, LoopbackPlugWiresRtsToCtsAndDtrToDsrDcd)
+{
+    constexpr uint64_t now = 1000;
+    const uint8_t lines = Uart16550::kMsrCts | Uart16550::kMsrDsr | Uart16550::kMsrRi | Uart16550::kMsrDcd;
+
+    LoopbackPeer plug(true);
+    Uart16550 u(Uart16550::DefaultParams(Uart16550::Flavor::Chip16550), 3500000);
+    u.SetPeer(&plug);
+    EXPECT_STREQ(plug.Kind(), "plug");
+    EXPECT_EQ(u.Read(kMsr, now) & lines, 0) << "RTS and DTR low: CTS, DSR, DCD inactive";
+
+    u.Write(kMcr, Uart16550::kMcrRts, now);
+    EXPECT_EQ(u.Read(kMsr, now) & lines, Uart16550::kMsrCts) << "RTS -> CTS";
+
+    u.Write(kMcr, Uart16550::kMcrDtr, now);
+    EXPECT_EQ(u.Read(kMsr, now) & lines, Uart16550::kMsrDsr | Uart16550::kMsrDcd) << "DTR -> DSR and DCD";
+
+    u.Write(kMcr, Uart16550::kMcrRts | Uart16550::kMcrDtr | Uart16550::kMcrOut1, now);
+    EXPECT_EQ(u.Read(kMsr, now) & lines, Uart16550::kMsrCts | Uart16550::kMsrDsr | Uart16550::kMsrDcd)
+        << "OUT1 is not on the connector: RI stays open";
+
+    // Auto-CTS (AFE): the transmitter follows the looped RTS (115200 8N1, FIFOs on)
+    u.Write(kLcr, 0x83, now);
+    u.Write(kRbr, 0x01, now);
+    u.Write(kLcr, 0x03, now);
+    u.Write(kFcr, 0x07, now);
+    const uint64_t charT = u.CharacterT();
+    u.Write(kMcr, Uart16550::kMcrAfe | Uart16550::kMcrDtr, now);
+    u.Write(kRbr, 0x5A, now);
+    u.Advance(now + 5 * charT);
+    EXPECT_EQ(u.Read(kLsr, now + 5 * charT) & 0x41, 0x00) << "RTS low: the plug holds CTS low, nothing is sent";
+    u.Write(kMcr, Uart16550::kMcrAfe | Uart16550::kMcrDtr | Uart16550::kMcrRts, now + 5 * charT);
+    u.Advance(now + 6 * charT);    // CTS seen here: the byte starts
+    u.Advance(now + 7 * charT);    // ...leaves the TX pin into the plug and starts back on RX
+    u.Advance(now + 8 * charT);    // ...and arrives
+    EXPECT_EQ(u.Read(kLsr, now + 8 * charT) & 0x01, 0x01) << "RTS high: the byte goes out and comes back";
+    EXPECT_EQ(u.Read(kRbr, now + 8 * charT), 0x5A);
+
+    LoopbackPeer echo;
+    Uart16550 e(Uart16550::DefaultParams(Uart16550::Flavor::Chip16550), 3500000);
+    e.SetPeer(&echo);
+    EXPECT_EQ(e.Read(kMsr, now) & lines, Uart16550::kMsrCts | Uart16550::kMsrDsr | Uart16550::kMsrDcd)
+        << "LOOPBACK holds CTS, DSR and DCD active whatever RTS and DTR do";
+
+    Uart16550 open(Uart16550::DefaultParams(Uart16550::Flavor::Chip16550), 3500000);
+    open.Write(kMcr, Uart16550::kMcrRts | Uart16550::kMcrDtr, now);
+    EXPECT_EQ(open.Read(kMsr, now) & lines, 0) << "nothing plugged in: every input reads inactive";
+}
+

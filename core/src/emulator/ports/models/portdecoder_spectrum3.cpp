@@ -13,10 +13,12 @@
 
 PortDecoder_Spectrum3::PortDecoder_Spectrum3(EmulatorContext* context) : PortDecoder(context)
 {
+    Spectrum128AyIoPort::Attach(_context, &_ayIoPort);
 }
 
 PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
 {
+    Spectrum128AyIoPort::Attach(_context, nullptr);
     MLOGDEBUG("PortDecoder_Spectrum3::~PortDecoder_Spectrum3()");
 }
 /// endregion </Constructors / Destructors>

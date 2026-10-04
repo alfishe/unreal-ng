@@ -1,0 +1,35 @@
+# L12, L13: the GS mailbox registers and flags, host side and GS side
+in 00BB         # status after reset: 7E
+out 00B3 A5     # data register, data flag set
+in 00BB
+gin 0002        # GS reads the data register: clears the data flag
+in 00BB
+out 00BB 1C     # command register, command flag set
+gin 0001        # GS reads the command register (no flag change)
+in 00BB
+gin 0004        # GS reads the status
+gout 0005 00    # any access to port 5 clears the command flag
+in 00BB
+gout 0003 3C    # output register, data flag set
+in 00BB
+in 00B3         # host reads the output register: clears the data flag
+in 00BB
+gin 0003        # a GS read of port 3 also sets the data flag
+gout 0002 00    # a GS write to port 2 also clears it
+gout 0000 01    # page register
+gin 000A        # port #0A: data flag = ~page bit 0 -> 0
+gout 0000 02
+gout 000A 00    # -> 1
+gout 0009 20    # volume 3 bit 5
+gin 000B        # port #0B: command flag = volume 3 bit 5 -> 1
+gout 0009 1F
+gout 000B 00    # -> 0
+out 005F 80     # SounDrive channel 3: volume 63
+gin 000B        # -> 1 (the volume register is shared with the SounDrive)
+gin 0015        # port mirrors: only A3-A0 decode (#15 = port 5)
+gout 0013 77    # #13 = port 3
+gin 0014        # #14 = port 4 (status)
+gin 0012        # #12 = port 2
+gin 0007        # unused ports read #FF
+gin 00FF
+gout 1203 99    # A15-A8 of the GS port address are ignored

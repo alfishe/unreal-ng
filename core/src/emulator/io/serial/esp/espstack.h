@@ -116,8 +116,9 @@ public:
     /// The same in a given slot (AT link ids); -1 when the slot is taken
     int OpenAt(int slot, bool tcp);
 
-    /// Start a TCP connection; onDone(Connect) follows
-    void Connect(int slot, const NetEndpoint& to);
+    /// Start a TCP connection; onDone(Connect) follows. With `tlsServerName` the host does TLS to that name
+    /// (status TlsFailed when the handshake fails) and the slot carries plaintext
+    void Connect(int slot, const NetEndpoint& to, const std::string& tlsServerName = {});
     void Bind(int slot, uint16_t port) { _slots[static_cast<size_t>(slot)].localPort = port; }
     /// Make a TCP slot a server on its bound port (backlog = the slot count)
     void Listen(int slot);

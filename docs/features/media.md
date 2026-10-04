@@ -211,6 +211,18 @@ ENCOUNTERED ON THIS TRACK, 05h / 63h), PLAY AUDIO MSF plays the audio before it.
 only while the drive moves data from the disc to the host (READ (10) / (12), READ CD); status polls
 and audio play leave it dark - playing audio shows on the HUD's "CD" indicator (the drive's mixer row).
 
+**The guest's eject empties the slot.** When the guest ejects the disc (START STOP UNIT with LoEj,
+Start 0, accepted - not when PREVENT ALLOW MEDIUM REMOVAL holds it), the media manager takes the disc
+out of the slot at the next frame boundary through its normal eject: the slot is `empty` on every
+surface (media panel, HUD, `media info`, WebAPI / MCP / CLI / Lua / Python), with the usual
+`MEDIA_EJECTED` event. The tray stays open (NOT READY, MEDIUM NOT PRESENT - TRAY OPEN, 02h / 3Ah / 02h)
+until the guest loads (closes) it - with no disc then: 02h / 3Ah / 01h, tray closed - or a disc is
+inserted, which closes it (UNIT ATTENTION). A user's eject also leaves the tray open, and is reported
+to the guest as a change as before. Under time travel the guest's eject is guest I/O, not an outside
+input: it does not end or invalidate a recording, and a replay across it reproduces the drive's state
+without touching the slot again (the slot stays as the live run left it; continuing live from before
+the eject leaves the drive empty - insert the disc again).
+
 **Enhanced CD (CD-Extra, multisession).** A disc with its audio tracks in session 1 and a data track in
 session 2 plays in an audio player and reads in a computer drive. Between the two sessions lie the
 first session's lead-out (1:30) and the second's lead-in (1:00): 11 250 frames nothing reads, then

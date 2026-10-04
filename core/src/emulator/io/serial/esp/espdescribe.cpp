@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 
+#include "common/network/hosttls.h"
 #include "emulator/io/serial/esp/atmodule.h"
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/esp/zififtpserver.h"
@@ -115,6 +116,8 @@ void Describe(const EspModule& esp, StateNode& e)
         }
         s["bad_checksums"] = static_cast<uint64_t>(native->BadChecksums());
         s["resyncs"] = static_cast<uint64_t>(native->Resyncs());
+        if (native->GetVariant() == ZiFiNativeModule::Variant::S3)
+            s["https"] = HostTls::Available() ? "host TLS (OpenSSL)" : "unavailable: this build has no TLS";
         // The file bridge (Z3b): the FTP server, its sessions and the VFS client's traffic with the Z80
         {
             StateNode fb = StateNode::Object();

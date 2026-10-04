@@ -256,6 +256,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     Bad Apple and dontBlink (both wait for the 48.83 Hz CTC 3 tick, vector #06) play with sound
     (`SprinterCtcDemo_Test`, env `UNREAL_SPRINTER_HDD`); TTD blob 29 v2; `state sprinter` z84c15.ctc shows the
     inputs, live counts and ZC/TO rates.
+  - ATAPI CD (2026-10-04): BIOS detection, CDX 2025 `LIST` / `COPY` / `OPEN`, the guest's eject emptying the slot,
+    media change, and the BIOS boot from CD verified ([atapi-cd-boot.md](atapi-cd-boot.md)); open: a DSS loader for
+    a CD, the DSS CD file system (`beta_cdfs`). The boot path is an automated test since 2026-10-04
+    (`SprinterBoot_Test.Bios306_BootsFromAnAtapiCd`).
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
     media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
@@ -272,7 +276,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     only and has no track skip ([disassembly](../../disasm/software/sprinter/cdplayer-flx/README.md)). The
     owner's "no INT after Play, FN stuck" (2026-10-02): INTs and FN keep working (PC #A441 is FN's idle HALT); the
     plugin's Stop / Pause / skip buttons are unimplemented, and its Eject was ignored by the drive - fixed on branch
-    `cd-plugin-int` (START STOP UNIT stops the play, the tray opens).
+    `cd-plugin-int` (START STOP UNIT stops the play, the tray opens); since `cd-eject-unmount` the guest's eject
+    also empties the CD slot in the media manager (the plugin's Eject leaves `ide0.slave` empty).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed. (The board
     cannot send them either: the PLD drives KBD_CX = KBD_DX = GND, hardware-reference §13.)

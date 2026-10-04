@@ -885,10 +885,11 @@ Advanced debugging features for the selected emulator instance. The emulator sup
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bp <addr>` | `break`, `breakpoint` | `<address> [--page ramN\|romN\|cacheN] [note]` | Set an execution breakpoint at `<address>`. Emulation pauses when PC reaches this address. Address can be hex (0x8000) or decimal (32768). With a page (`bp 0xC000 --page ram32`) it fires only while that page is mapped at the address. Returns breakpoint ID for future reference. |
-| `wp <addr> <type>` | `watchpoint` | `<address> <r\|w\|rw> [--page ramN\|romN\|cacheN] [note]` | Set a memory watchpoint at `<address>`:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>With a page it fires only while that page is mapped at the address. Useful for tracking when memory is accessed. |
-| `bport <port> <type>` | `portbreak` | `<port> <in\|out\|both>` | Set an I/O port breakpoint:<br/>• `in` - break on port IN operation<br/>• `out` - break on port OUT operation<br/>• `both` - break on either IN or OUT<br/>Essential for debugging I/O operations (keyboard, sound, disk, ports). |
-| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port<br/>• Active/Inactive<br/>• Group name<br/>• Optional annotation |
+| `bp <addr>` | `break`, `breakpoint` | `<address>[-<end>] [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set an execution breakpoint on an address or a range (`bp 0x8000-0x80FF`). Address can be hex (0x8000) or decimal (32768). `--page`: a physical breakpoint on that page at offset `address & #3FFF`, through any slot that shows the page (`--slot-only`: only through the slot of the address). `--hits` stops on the Nth hit only, from the Nth on (`>=N`) or every Nth (`%N`); every hit is counted. Returns the breakpoint id and its description. |
+| `wp <addr> <type>` | `watchpoint` | `<address>[-<end>] <r\|w\|rw> [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set a memory watchpoint on an address or a range:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>`wp 0x4000-0x57FF w` watches the screen bitmap; `--page` / `--slot-only` / `--hits` as for `bp`. |
+| `bport <port> <type>` | `portbreak` | `<port> <i\|o\|io> [--mask M] [--hits N\|>=N\|%N] [note]` | Set an I/O port breakpoint:<br/>• `i` - break on port IN operation<br/>• `o` - break on port OUT operation<br/>• `io` - break on either IN or OUT<br/>`--mask M` matches every port where `(port & M) == (<port> & M)`: `bport 0xFE i --mask 0x00FF` catches the keyboard read on any high byte. `--hits` as for `bp`. |
+| `bphits reset [id]` | | `reset [breakpoint-id]` | Set the hit counters back to 0, of one breakpoint or of all (`bplist` shows them as "(hit Nx)"). |
+| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port, a range end ("to 0x80FF"), the page ("in ram32", "(this slot only)"), a port mask<br/>• Active/Inactive<br/>• The hit policy ("hits >=5") and the hits so far ("(hit 12x)")<br/>• Optional annotation |
 | `bpclear [id\|all]` | `bc` | `[breakpoint-id \| all]` | Clear breakpoints:<br/>• No argument: clear ALL breakpoints and watchpoints<br/>• `<id>`: clear specific breakpoint by ID<br/>• `all`: explicitly clear all (same as no argument)<br/>**Warning**: This permanently deletes breakpoints. Use `bpoff` to temporarily disable instead. |
 
 #### 4.2 Breakpoint Group Management
@@ -1380,11 +1381,11 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frames, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+| `videorecord status` | | Show recording state, output file, frames, region, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,

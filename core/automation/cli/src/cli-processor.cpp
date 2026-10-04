@@ -119,6 +119,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
                         {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
                         {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
+                        {"bphits", &CLIProcessor::HandleBPHits},          // Breakpoint hit counters (reset)
                         {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
                         {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
                         {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
@@ -707,7 +708,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
-    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (+ sound: --audio aac)" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac)" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;

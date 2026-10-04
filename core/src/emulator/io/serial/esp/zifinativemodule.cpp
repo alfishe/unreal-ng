@@ -19,6 +19,7 @@ namespace
 {
 constexpr uint64_t kWifiTimeoutUs = 10000000;     // kWifiTimeoutMs (S3 main.cpp:41, E01 main.cpp:23)
 constexpr uint64_t kConnectTimeoutUs = 8000000;   // NetClient::open: connect(host, port, 8000)
+constexpr uint64_t kTlsConnectTimeoutUs = 24000000;   // openTls: connect(host, port, 12000) + setHandshakeTimeout(12)
 constexpr uint64_t kHeaderTimeoutUs = 10000000;   // readHttpHeader: 10 s
 constexpr uint64_t kProbeTimeoutUs = 3000000;     // NetClient::probe: connect(host, port, 3000)
 constexpr uint64_t kNtpDnsTimeoutUs = 3000000;    // E01 ntp_client.cpp:38 hostByName(.., 3000)
@@ -751,6 +752,7 @@ void ZiFiNativeModule::Finish(uint8_t respCmd, const std::vector<uint8_t>& data,
     _op = Op::None;
     _phase = Phase::None;
     _request.clear();
+    _httpTls = false;
     // ESP01S: the loop reads the UART again; what waited there reaches the parser now
     if (_variant == Variant::Esp01s)
         _lastByteAt = Now();
@@ -931,10 +933,13 @@ void ZiFiNativeModule::StartHttpGet(const std::vector<uint8_t>& payload)
     _httpPort = static_cast<uint16_t>(payload[next] | (payload[next + 1] << 8));
     Stack().Close(kClientSlot);
     _bodyActive = false;
-    // S3: port 443 is HTTPS (WiFiClientSecure); the virtual network has no TLS (the firmware's own failure)
-    if (_variant == Variant::S3 && _httpPort == 443)
-        return HttpFail("tls connect failed");
-    _viaProxy = _variant == Variant::S3 && _proxyStatus == 1 && !_proxyHost.empty();
+    // S3: port 443 is HTTPS (NetClient::httpGet: useTls = port == 443; a redirect decides itself). The host does
+    // the TLS (hosttls.h): the client slot carries plaintext. The proxy is never used for HTTPS
+    if (_redirects == 0)
+        _httpTls = _variant == Variant::S3 && _httpPort == 443;
+    if (_httpTls)
+        _opDeadline = Now() + MicrosToT(kTlsConnectTimeoutUs);
+    _viaProxy = _variant == Variant::S3 && !_httpTls && _proxyStatus == 1 && !_proxyHost.empty();
     _opPort = _viaProxy ? _proxyPort : _httpPort;
     const std::string target = _viaProxy ? _proxyHost : host;
     uint32_t addr = 0;
@@ -963,7 +968,7 @@ void ZiFiNativeModule::HttpConnect()
         text = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nUser-Agent: ZiFi (ZX Evo)\r\nAccept: */*\r\nConnection: close\r\n\r\n";
     else
     {
-        const bool otherPort = _httpPort != 80 && _httpPort != 0;
+        const bool otherPort = _httpPort != (_httpTls ? 443 : 80) && _httpPort != 0;
         const std::string hostField = otherPort ? host + ":" + port : host;
         if (_viaProxy)
             text = "GET http://" + hostField + path + " HTTP/1.0\r\nHost: " + hostField +
@@ -1071,9 +1076,17 @@ void ZiFiNativeModule::HttpHeader()
         CopyString(_request, 0, kHostMax, host, next, true);
         CopyString(_request, next + 2, kPathMax, path, after, false);
         uint16_t port = _httpPort;
+        // applyRedirect: https:// turns TLS on, http:// off (a downgrade from TLS is refused), // keeps it
+        const bool wasTls = _httpTls;
+        bool useTls = _httpTls;
         if (StartsNoCase(location, 0, "https://"))
-            return HttpFail("tls connect failed");
-        const bool absolute = StartsNoCase(location, 0, "http://") || location.rfind("//", 0) == 0;
+            useTls = true;
+        else if (StartsNoCase(location, 0, "http://"))
+            useTls = false;
+        if (wasTls && !useTls)
+            return HttpFail("redirect tls downgrade");
+        const bool absolute = StartsNoCase(location, 0, "http://") || StartsNoCase(location, 0, "https://") ||
+                              location.rfind("//", 0) == 0;
         if (absolute)
         {
             const size_t a = location.find("//") + 2;
@@ -1083,7 +1096,7 @@ void ZiFiNativeModule::HttpHeader()
             const std::string authority = location.substr(a, ae - a);
             const size_t colon = authority.rfind(':');
             host = colon == std::string::npos ? authority : authority.substr(0, colon);
-            port = 80;
+            port = useTls ? 443 : 80;
             if (colon != std::string::npos)
             {
                 const unsigned long p = std::strtoul(authority.c_str() + colon + 1, nullptr, 10);
@@ -1126,6 +1139,7 @@ void ZiFiNativeModule::HttpHeader()
             _held = static_cast<uint16_t>(frame.size());
         }
         _request = payload;
+        _httpTls = useTls;
         ++_redirects;
         _phase = Phase::Resolve;
         _opDeadline = Now() + MicrosToT(kConnectTimeoutUs);
@@ -1567,7 +1581,13 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
         Stack().Close(slot);
         if (Stack().OpenAt(slot, true) < 0)
             return;
-        Stack().Connect(slot, NetEndpoint{done.addr, _opPort});
+        std::string tlsName;
+        if (slot == kClientSlot && HttpOp() && _httpTls)
+        {
+            size_t next = 0;
+            CopyString(_request, 0, kHostMax, tlsName, next, true);   // the SNI and the certificate's name
+        }
+        Stack().Connect(slot, NetEndpoint{done.addr, _opPort}, tlsName);
         if (_phase == Phase::Resolve)
             _phase = Phase::Connect;
         return;
@@ -1595,7 +1615,8 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
         if (!ok)
         {
             Stack().Close(kClientSlot);
-            return _op == Op::Open ? Finish(0x90, {0}, "open:connect failed") : HttpFail("connect failed");
+            return _op == Op::Open ? Finish(0x90, {0}, "open:connect failed")
+                                   : HttpFail(_httpTls ? "tls connect failed" : "connect failed");
         }
         if (_op == Op::Open)
             return Finish(0x90, {1});
@@ -1653,7 +1674,7 @@ void ZiFiNativeModule::Timeout()
             return Finish(0x90, {0}, "open:connect failed");
         case Op::HttpGet:
             Stack().Close(kClientSlot);
-            return HttpFail(_phase == Phase::Header ? "header timeout" : "connect failed");
+            return HttpFail(_phase == Phase::Header ? "header timeout" : _httpTls ? "tls connect failed" : "connect failed");
         case Op::Weather:
             if (_phase == Phase::Retry)
                 return WeatherRequest();
@@ -1663,7 +1684,7 @@ void ZiFiNativeModule::Timeout()
                 return WeatherAttemptFailed("reply timeout", true);
             }
             Stack().Close(kClientSlot);
-            return HttpFail(_phase == Phase::Header ? "header timeout" : "connect failed");
+            return HttpFail(_phase == Phase::Header ? "header timeout" : _httpTls ? "tls connect failed" : "connect failed");
         case Op::Probe:
             Stack().Close(kProbeSlot);
             return Finish(0xA1, {0, 0, 0});
@@ -1933,7 +1954,7 @@ void ZiFiNativeModule::SaveFirmware(netstate::EspModuleState& out) const
     put16(_held);
     put8(_lastStep);
     put8(static_cast<uint8_t>((_bodyActive ? 1 : 0) | (_bodyLengthKnown ? 2 : 0) | (_viaProxy ? 4 : 0) | (_iniJoin ? 8 : 0) |
-                              (_softRestart ? 16 : 0) | (_passwordKnown ? 32 : 0)));
+                              (_softRestart ? 16 : 0) | (_passwordKnown ? 32 : 0) | (_httpTls ? 64 : 0)));
     put64(_opDeadline);
     put64(_opStart);
     put64(_lastByteAt);
@@ -1984,6 +2005,7 @@ void ZiFiNativeModule::LoadFirmware(const netstate::EspModuleState& in)
     _iniJoin = flags & 8;
     _softRestart = flags & 16;
     _passwordKnown = flags & 32;
+    _httpTls = flags & 64;
     _opDeadline = get64();
     _opStart = get64();
     _lastByteAt = get64();

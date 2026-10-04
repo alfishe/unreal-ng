@@ -85,6 +85,16 @@ the ROM area (48K BASIC ROM too) cannot reach these ports.
 **There is no GS control port `#33`** on this card (the classic GS has it). Software that resets the GS through
 `#33` gets no effect.
 
+IORQGE details (verified in the RTL co-simulation, [tdd-card-logic.md](tdd-card-logic.md) §7):
+
+- IORQGE depends on the address and M1 only, **not on the direction**: `IN #BFFD` asserts it too, while the card does
+  not drive the data bus for that read (the YM data port is write-only on the card). On a machine that obeys IORQGE
+  the read returns the floating bus.
+- It also follows the address during memory and refresh cycles (M1 high); machines qualify it with their own I/O
+  decode, so this has no effect and is not modeled.
+- The control-byte check of the SAA clock uses its own decode with the `saa` enable only: with the `ym` DIP off a
+  `#FFFD` write still starts / stops the SAA clock (no IORQGE, nothing reaches a YM).
+
 ### 3.2 The `#DFFD` behavior
 
 `#DFFD` (A13 = 0) matches the YM decode, so a write reaches the selected YM2203 (as an address, or as a control byte if
@@ -108,6 +118,10 @@ Differences from the classic TSFM (which uses the top **five** bits `11111` and 
 
 1. `#F0-#F7` are control bytes here, register addresses on a TSFM.
 2. The control byte **also reaches the selected YM2203 as an address write** (the chip select is not gated by data).
+   When the byte switches chips, the **newly selected** chip latches it: `ym_chip_sel` changes on the first 32 MHz
+   edge after the CPLD has seen the write (`ioreq` is registered on the falling edge), so the old chip sees CS and
+   /WR together for half a 32 MHz period (15.6 ns, measured in the RTL simulation) and has CS high when /WR rises.
+   That is far below the YM2203 write pulse width; the model treats it as no write.
    Harmless for registers (no YM2203 register at `#F0-#FF`), but it replaces the chip's latched address: a later
    `#BFFD` write without a new address goes nowhere. On a TSFM the latch is untouched.
 3. Any plain TurboSound chip switch (`#FF` / `#FE`) has bit 3 = 1 and **stops the SAA**, and has bit 2 = 1 and **mutes
@@ -129,7 +143,8 @@ not modeled).
 
 | Port | Returns |
 |---|---|
-| `#FFFD` (and mirrors) | the selected YM2203's status or register (per bit 1) |
+| `#FFFD` (and mirrors, `#DFFD` family included) | the selected YM2203's status or register (per bit 1) |
+| `#BFFD` (and mirrors) | nothing: the card asserts IORQGE but does not drive (floating bus) |
 | `#xxB3` | GS output register (`gs_reg_out`) |
 | `#xxBB` | GS status: bit 7 data flag, bit 0 command flag, bits 1-6 = 1 |
 | others | the card does not drive |
@@ -154,29 +169,60 @@ not modeled).
 | Item | MultiSound | Classic GS |
 |---|---|---|
 | CPU clock | 16 MHz | 12 MHz |
-| INT | 12 MHz / 320 = 37.5 kHz (counter on the 12 MHz DDS clock) | 37.5 kHz |
+| INT | 12 MHz / **321** = 37.383 kHz (counter 0-320 on the 12 MHz DDS clock; the reload compare `g_int_cnt[8:6] == 3'b101` fires at 320 and the next count is 0), low for 33 clocks = 2.75 µs [RTL, measured in simulation] | 37.5 kHz |
 | RAM | 1 MB (2 MB firmware option) | 128-512 KB |
 | ROM | GS 1.05b ([psbhlw/gs-firmware](https://github.com/psbhlw/gs-firmware)) | 1.04 / 1.05a |
 | Host ports | `#B3`, `#BB` | `#B3`, `#BB`, `#33` |
-| Page register | port 0, bits 0-6 (`gs_page`); ROM at page 0 above `#8000` | same scheme |
+| Page register | port 0, bits 0-6 (`gs_page`); ROM at page 0 above `#8000` (details below) | same scheme |
 | DAC volumes | ports 6-9, 6 bits | same |
 | DAC samples | memory reads at `#6000-#7FFF`, channel = A9-A8 | same |
 
-Status flags [RTL]: data flag set by a host `#B3` write and by a GS port-3 write, cleared by a host `#B3` read and by a
-GS port-2 read, a GS access to port `#0A` sets it to the inverse of page bit 0; command flag set by a host `#BB` write, cleared by GS port 5, port
-`#0B` sets it from volume-3 bit 5 (the classic GS's documented quirks).
+Status flags [RTL]: data flag set by a host `#B3` write and by a GS port-3 access, cleared by a host `#B3` read and by a
+GS port-2 access, a GS access to port `#0A` sets it to the inverse of page bit 0; command flag set by a host `#BB`
+write, cleared by a GS port-5 access, port `#0B` sets it from volume-3 bit 5 (the classic GS's documented quirks).
+On the GS side **any access, read or write**, triggers the rule (the RTL edge-detects `giorq_n` low without M1 and
+looks at A3-A0 only), so a GS write to port 2 also clears the data flag and a read of port 3 also sets it. Volume 3 is
+the register shared with the SounDrive: after a SounDrive write to channel 3 (volume 63) port `#0B` sets the command
+flag.
+
+GS ports [RTL]: only A3-A0 decode (ports mirror every 16). Writes: 0 page, 3 output register, 6-9 volumes (6 bits).
+Reads driven by the CPLD: 4 status, 2 data register, 1 command register, every other port `#FF`; the interrupt
+acknowledge also reads `#FF` (IM 2 vector).
+
+GS memory map [RTL] (`grom_n`, `gram*_n`, `gma[18:15]`; a chip address is `gma << 15 | A14-A0`):
+
+| GS address | 1 MB build | 2 MB build (`GS_RAM_2MB`) |
+|---|---|---|
+| `#0000-#3FFF` | ROM, `gma = 1` (ROM address `#8000-#BFFF` if the ROM's A15 is `gma[15]`; schematic check pending for MS-2) | same |
+| `#4000-#7FFF` | RAM 1, `gma = 1`: chip address `#C000-#FFFF` | same |
+| `#8000-#FFFF`, page 0 | ROM, `gma = 0` | same |
+| `#8000-#FFFF`, page != 0 | RAM 1 (page bit 4 = 0) or RAM 2 (bit 4 = 1), `gma` = page bits 0-3; bit 5 ignored | RAM 1-4 by page bits 5-4, `gma` = bits 0-3 |
+
+Page bit 6 takes part in the "page 0 = ROM" test but selects no RAM: page `#40` is RAM 1 / `gma` 0, not ROM. Page
+register bit 7 is outside `gs_page` (`#80` acts as page 0).
 
 ### 4.3 SounDrive and the shared DACs
 
-Four DAC channels, each written by either the GS (memory read at `#6000-#7FFF`) or the SounDrive port. A SounDrive write
-sets the channel's volume to 63 (maximum) and its sample; a GS volume write sets the 6-bit volume. Last writer wins.
+Four DAC channels, each written by either the GS (memory read at `#6000-#7FFF`, opcode fetches included) or the
+SounDrive port. A SounDrive write sets the channel's volume to 63 (maximum) and its sample; a GS volume write sets the
+6-bit volume. Last writer wins: every register is rewritten on each 32 MHz edge while its strobe is active, so the
+strobe whose last active edge is later wins; only on the same last edge does the RTL's priority decide (GS sample over
+SounDrive sample, SounDrive volume over GS volume) [RTL, simulated with overlapping cycles].
 The sample is converted from offset binary: values `< #80` have bits 0-6 inverted (sign-magnitude conversion in the
 RTL). Each channel is a 1-bit first-order sigma-delta at 32 MHz with a PWM volume gate.
+
+Transfer function [RTL, measured in simulation, exact]: the pin outputs the sign bit on an accumulator carry and the
+32 MHz clock itself (50 % = the midpoint) otherwise, so the mean output is
+`0.5 + 0.5 x level / 128 x gain / 64`, with `level` = +magnitude for bytes `>= #80` and -magnitude below
+(`#00` = -127, `#7F` and `#80` both 0, `#FF` = +127; full scale is never reached) and `gain` = the volume for 0-62 and
+**64 for volume 63** (the `|| (&vol)` term). A volume of 0 gives the midpoint.
 
 ### 4.4 MIDI
 
 - SAM2695 pin 16 (MIDI IN) is wired **directly to U4 pin 14 = IOA2** [SCH], no level shifter / inverter. This is the
   128K convention (AY register 14 bit 2 is MIDI out). The YM is 5 V, the SAM2695 3.3 V (works in practice).
+- IOA2 output stage (YM2203 datasheet, [tdd-midi-line.md](tdd-midi-line.md) §2.0): pull-up 60-600 kOhm while the
+  port is an input (reset state: the line idles high), actively driven both ways as an output (VOH >= 2.4 V at 0.4 mA).
 - Software bit-bangs the serial line at 31 250 baud by writing register 14 of YM chip 1 (and must set register 7 bit 6
   to make port A an output).
 - SAM2695 straps: XDIV tied high (= 12 MHz clock mode, datasheet; matches the 12 MHz DDS clock), MICIN grounded, parallel bus unused (/CS, /RD, A0 grounded, /WR high), reset shared
@@ -199,8 +245,11 @@ AC-coupled (10 µF) and therefore inverted, except the external input (DC-couple
 | DAC 2, 3 (GS ch 3-4, SounDrive `#4F`, `#5F`) | 0 | 0.208 | 1-pole, about 16.3 kHz |
 | External input J3 (on-board header, not the edge) | 0.417 | 0.417 | none |
 
-- SSG stereo is **ACB with B in the center**, from 3.3k loads per channel (the ratios hold whatever the chip's output
-  impedance).
+- SSG stereo is A left, **B in the center**, C right (what the emulator calls ABC), from 3.3k loads per channel (the
+  ratios hold whatever the chip's output impedance).
+- SAA network, recomputed from the components for `MultiSoundMixer`: pass-band (DC) gain 10k / 12k = **0.833**; the
+  0.825 above is its value at 1 kHz; the -3 dB corner is **7.02 kHz** (-10.3 dB at 20 kHz).
+  DAC RC: 1 / (2 pi (1k || 47k) 10n) = 16.25 kHz.
 - GS stereo is **hard left / hard right** (channels 1-2 left, 3-4 right), no cross-feed - unlike our generic GS mix
   (50 % cross-feed).
 - Absolute levels of the SSG, SAA and SAM2695 outputs are not in the schematic; only the mixer weights are exact. The
@@ -244,5 +293,4 @@ ports and `#FF` removed from IORQGE (2023-12), YM chips swapped (2024-01, "fixes
 |---|---|
 | YM3014B output impedance (FM low-pass corner) | YM3014B datasheet / measurement |
 | Absolute output levels of SSG, SAA1099, SAM2695 relative to each other | measurement on a real card (owner) or chip datasheets |
-| YM2203 IOA output type (push-pull vs pull-up) | YM2203 datasheet (affects nothing logical) |
 | Bus fight result on a `#DFFD` read | machine schematics (slots design SL-0) |

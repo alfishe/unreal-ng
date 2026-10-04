@@ -974,7 +974,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             return;
         }
 
-        // videorecord start [format] [filename] [--fps N] [--scale N] [--audio-rate N|auto]
+        // videorecord start [format] [filename] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
         //                   [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
         CliVideoRecord::StartOptions options;
         std::string optionError;
@@ -1004,6 +1004,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         // Configuration setters refuse changes mid-recording — apply while idle
         rm->SetVideoFrameRate(fps);
         rm->SetScaleFactor(scale);
+        rm->SetCaptureRegion(options.screenRegion ? VideoCaptureRegion::MainScreen : VideoCaptureRegion::FullFrame);
 
         // Optional core-rate pin before the first sample is stamped: the
         // recording must start (and stay) at the requested audio rate. The
@@ -1038,7 +1039,8 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         }
 
         std::stringstream ss;
-        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale;
+        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale << ", "
+           << (options.screenRegion ? "screen" : "full") << " region";
         if (rm->HasAudio())
             ss << ", audio " << rm->GetAudioCodec() << " " << rm->GetAudioSampleRate() << " Hz "
                << rm->GetAudioChannels() << " ch";
@@ -1109,6 +1111,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         ss << "  Output: " << output << NEWLINE;
     const RecordingManager::RecordingStats stats = rm->GetStats();
     ss << "  Frames: " << stats.framesRecorded << NEWLINE;
+    ss << "  Region: " << (rm->GetCaptureRegion() == VideoCaptureRegion::MainScreen ? "screen" : "full") << NEWLINE;
     if (!rm->GetVideoCodec().empty())
         ss << "  Video codec: " << rm->GetVideoCodec() << NEWLINE;
     if (rm->HasAudio())

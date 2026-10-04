@@ -361,6 +361,8 @@ bool Uart16550::CtsForTx() const
     // 16550 without AFE just send
     if (Evo() || !(_mcr & kMcrAfe) || (_mcr & kMcrLoop))
         return true;
+    if (_peer && _peer->MirrorsModemLines())
+        return RtsAsserted();   // a loopback plug: CTS is our own RTS
     return _peer ? _peer->Cts() : false;
 }
 
@@ -400,11 +402,17 @@ uint8_t Uart16550::PopRx()
 void Uart16550::UpdateModemStatus()
 {
     uint8_t lines = 0;
+    // A loopback test plug's wires: its CTS is our RTS, its DSR and DCD our DTR (RI stays open)
+    const bool plug = _peer && _peer->MirrorsModemLines();
+    const bool peerCts = plug ? RtsAsserted() : (_peer && _peer->Cts());
+    const bool peerDsr = plug ? (_mcr & kMcrDtr) != 0 : (_peer && _peer->Dsr());
+    const bool peerDcd = plug ? (_mcr & kMcrDtr) != 0 : (_peer && _peer->Dcd());
+    const bool peerRi = !plug && _peer && _peer->Ri();
     if (Evo())
     {
         // Only CTS is a pin; DSR and DCD read 1, RI 0
         lines = kMsrDsr | kMsrDcd;
-        if (_peer && _peer->Cts())
+        if (peerCts)
             lines |= kMsrCts;
     }
     else if (_mcr & kMcrLoop)
@@ -418,18 +426,15 @@ void Uart16550::UpdateModemStatus()
     else if (_params.ctsOnly)
     {
         lines = kMsrDsr | kMsrDcd;
-        if (_peer && _peer->Cts())
+        if (peerCts)
             lines |= kMsrCts;
     }
     else
     {
-        if (_peer)
-        {
-            if (_peer->Cts()) lines |= kMsrCts;
-            if (_peer->Dsr()) lines |= kMsrDsr;
-            if (_peer->Ri()) lines |= kMsrRi;
-            if (_peer->Dcd()) lines |= kMsrDcd;
-        }
+        if (peerCts) lines |= kMsrCts;
+        if (peerDsr) lines |= kMsrDsr;
+        if (peerRi) lines |= kMsrRi;
+        if (peerDcd) lines |= kMsrDcd;
         // Pins the card does not wire to the line read their own level
         lines = static_cast<uint8_t>((lines & _params.msrWired) | (_params.msrUnwired & ~_params.msrWired & 0xF0));
     }

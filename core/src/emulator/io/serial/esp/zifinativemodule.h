@@ -16,7 +16,8 @@
 ///    work runs on the other core: while one network command runs, the module still answers ECHO, PING,
 ///    GET_STEP, SYS_INFO and SYS_RESET; another network command gets its ACK, EE "network busy" and an empty
 ///    result. HTTP GET follows up to 4 redirects, refuses chunked bodies, ends the body at Content-Length, can go
-///    through the zifi.ini proxy; HTTPS (port 443) needs TLS, which the virtual network does not do
+///    through the zifi.ini proxy (not for HTTPS); HTTPS (port 443, a redirect to https://) is TLS done by the host
+///    (hosttls.h: the certificate checked against the name, as WiFiClientSecure with its CA bundle)
 ///  - ESP01S: ESP-01S (ESP8266), native-0.2.2 (https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project,
 ///    src/main.cpp): one loop - a command that waits for the network holds every later byte in the UART until
 ///    it is done. Plain HTTP only, no redirects, no proxy; FTP / OTA commands, no SMB / weather / GitHub update
@@ -316,6 +317,7 @@ private:
     uint16_t _httpPort = 0;         ///< HttpGet: the server's port (the proxy is _opPort)
     uint8_t _redirects = 0;
     bool _viaProxy = false;
+    bool _httpTls = false;          ///< S3 HttpGet: HTTPS (port 443 or a redirect to https://), TLS done by the host
     bool _iniJoin = false;          ///< Join came from WIFI_INI (reply 83, then the proxy)
     std::vector<uint8_t> _request;  ///< the held request's payload (rebuilt from the buffer after a load)
     bool _softRestart = false;      ///< the last start was SYS_RESET (SYS_INFO "RST:")

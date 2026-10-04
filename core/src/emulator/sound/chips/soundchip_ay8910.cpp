@@ -327,13 +327,23 @@ SoundChip_AY8910::SoundChip_AY8910(EmulatorContext* context) : PortDecoder(conte
 
 /// region <Methods>
 
+/// The /RESET (power-on, machine reset) state of the chip: every register is 0.
+///   - GI AY-3-8910: "applying logic 0 (ground) to the Reset pin will reset all registers to 0"
+///   - Yamaha YM2149: "the contents of all registers in the array are reset to 0"
+///   - Yamaha YM2203 (/IC, the SSG half uses this class): "All the content of register array become 0"
+///   - AY8930 (Microchip), the decap-derived GI model (lvd2/ay-3-8910_reverse_engineered): the same
+/// Every register of every variant is 0 (source table: docs/inprogress/2026-10-04-ay-reset/TODO.md);
+/// until 2026-10-04 this reset set R7 = #FF. With R7 = 0 both I/O ports are inputs and read #FF
+/// through the pull-ups (readRegisterOnBus); every amplitude (R8-R10) is 0, so the chip is silent.
+/// The generators keep their own start state (see below). Snapshot loaders and TTD restore set
+/// the registers after this, so a loaded state is never replaced by the reset state
 void SoundChip_AY8910::reset()
 {
-    // Reset whole registers array
+    // Reset whole registers array (the register file and the generator-side register view)
     memset(&_registers, 0x00, sizeof(_registers));
     _currentRegister = 0;
-    _registers[AY_MIXER_CONTROL] = 0xFF;  // Mute all generator outputs
     std::memcpy(_appliedRegisters, _registers, sizeof(_registers));
+    refreshIoPortPins();
 
     // Reset generators
     _toneGenerators[AY_CHANNEL_A].reset();
@@ -341,6 +351,15 @@ void SoundChip_AY8910::reset()
     _toneGenerators[AY_CHANNEL_C].reset();
     _noiseGenerator.reset();
     _envelopeGenerator.reset();
+
+    // The generator start state is deliberately NOT derived from the register file and stays
+    // bit-identical to the one before 2026-10-04 (pinned by GeneratorStartAfterResetIsUnchanged):
+    //   - tone and noise gated off until the program writes R7 (e4c3bbbaf, b852df9f3), although
+    //     R7 = 0 would enable them on the chip;
+    //   - noise LFSR seed 1 (sources disagree: AY8930 datasheet all ones, GI decap all zeros);
+    //   - envelope shape 8, continuous sawtooth (279eb3d4e, for software that never writes R13),
+    //     although R13 reads 0 and the decap restarts the envelope as shape 0.
+    // All three are open owner decisions: docs/inprogress/2026-10-04-ay-reset/TODO.md
 
     // Apply stereo mode (sets panning coefficients)
     setStereoMode(_stereoMode);
@@ -458,9 +477,31 @@ void SoundChip_AY8910::setRegister(uint8_t regAddr)
 
 uint8_t SoundChip_AY8910::readCurrentRegister()
 {
-    uint8_t result = readRegister(_currentRegister);
+    uint8_t result = readRegisterOnBus(_currentRegister);
 
     return result;
+}
+
+uint8_t SoundChip_AY8910::readRegisterOnBus(uint8_t regAddr) const
+{
+    // Invalid register address: nothing drives the bus
+    if (regAddr > 0x0F)
+        return 0xFF;
+
+    if (regAddr < AY_PORTA)
+        return _registers[regAddr];
+
+    // I/O ports. R7 bit 6 = 1 makes port A (R14) an output, bit 7 = 1 port B (R15); 0 = input:
+    // an input reads its pins (pulled up), an output its latch
+    const int port = regAddr - AY_PORTA;
+    const bool isOutput = (_registers[AY_MIXER_CONTROL] & (0b0100'0000 << port)) != 0;
+    uint8_t pins = isOutput ? _registers[regAddr] : IO_PORT_INPUT_PINS;
+
+    // Board wiring (the 128K family only): a pin the board holds low reads low
+    if (_ioPortInput) [[unlikely]]
+        pins &= _ioPortInput->AyIoPortBoardLevels(port);
+
+    return pins;
 }
 
 void SoundChip_AY8910::writeCurrentRegister(uint8_t value)
@@ -482,13 +523,13 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
 }
 
 
-void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
+void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, uint64_t t)
 {
-    latchRegister(regAddr, value);
+    latchRegister(regAddr, value, t);
     applyRegister(regAddr, value);
 }
 
-void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value)
+void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value, uint64_t t)
 {
     // Invalid register address provided - ignore it
     if (regAddr > 0x0F)
@@ -500,6 +541,38 @@ void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value)
     _hasBeenWritten = true;
 
     _registers[regAddr] = value;
+
+    // I/O port pins: only with a listener (out of line, per OUT, never per sample)
+    if (_ioPortListener) [[unlikely]]
+    {
+        if (AyIoPort::AffectsPins(regAddr))
+            notifyIoPortPins(t);
+    }
+}
+
+void SoundChip_AY8910::setIoPortListener(IAyIoPortListener* listener)
+{
+    _ioPortListener = listener;
+    // A new listener starts from the pins as they are: it hears changes from now on
+    refreshIoPortPins();
+}
+
+void SoundChip_AY8910::refreshIoPortPins()
+{
+    for (int port = 0; port < AyIoPort::PortCount; port++)
+        _ioPortPins[port] = ioPortPins(port);
+}
+
+void SoundChip_AY8910::notifyIoPortPins(uint64_t t)
+{
+    for (int port = 0; port < AyIoPort::PortCount; port++)
+    {
+        const uint8_t pins = ioPortPins(port);
+        if (pins == _ioPortPins[port])
+            continue;
+        _ioPortPins[port] = pins;
+        _ioPortListener->OnIoPortPins(t, port, pins);
+    }
 }
 
 void SoundChip_AY8910::applyRegister(uint8_t regAddr, uint8_t value)
@@ -656,14 +729,7 @@ double SoundChip_AY8910::getChannelVolume(uint8_t channel) const
 
 uint8_t SoundChip_AY8910::portDeviceInMethod([[maybe_unused]] uint16_t port)
 {
-    uint8_t result = 0xFF;
-
-    if (_currentRegister < 0x10)
-    {
-        result = _registers[_currentRegister];
-    }
-
-    return result;
+    return readRegisterOnBus(_currentRegister);
 }
 
 void SoundChip_AY8910::portDeviceOutMethod(uint16_t port, uint8_t value)
@@ -858,7 +924,7 @@ std::string SoundChip_AY8910::dumpAY8910MixerState()
     ss << "  Channel B noise: " << (!(regValue & 0b0001'0000) ? "On " : "Off");
     ss << "  Channel C noise: " << (!(regValue & 0b0010'0000) ? "On " : "Off") << std::endl;
     ss << "  Port A I/O ctrl: " << (!(regValue & 0b0100'0000) ? "IN " : "OUT");
-    ss << "  Port B I/O ctrl: " << (!(regValue & 0b0100'0000) ? "IN " : "OUT") << std::endl;
+    ss << "  Port B I/O ctrl: " << (!(regValue & 0b1000'0000) ? "IN " : "OUT") << std::endl;
 
     return ss.str();
 }
@@ -1075,6 +1141,9 @@ void SoundChip_AY8910::TTDLoadState(const uint8_t* src)
 
     // --- Generator-side register view ---
     std::memcpy(_appliedRegisters, cur, 16); cur += 16;
+
+    // The I/O port pins follow from the restored registers; a listener keeps its own state (silent)
+    refreshIoPortPins();
 
     // Note: _tick, filters, panning, mixer buffers, stereoMode, chipModel are
     // intentionally not restored — they are host-side / user-config / transient

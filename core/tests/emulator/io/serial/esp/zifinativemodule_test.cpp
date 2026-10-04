@@ -396,11 +396,67 @@ TEST_F(ZiFiNativeModule_Test, Http_RedirectsChunkedAndHttpsOnS3)
     std::vector<Reply> r = Read();
     ASSERT_EQ(Cmds(r), "EE 94");
     EXPECT_EQ(r[0].Text(), "get:chunked unsupported");
+}
 
+TEST_F(ZiFiNativeModule_Test, Http_HttpsThroughTheHostAndRedirectsToHttps)
+{
+    // NetClient::httpGet / applyRedirect (S3): a 301 to https:// is followed over TLS (done by the host: the slot
+    // carries plaintext), the Host field drops the default port, a downgrade to http:// is refused
+    Send(ZiFiNativeModule::kNetHttpGet, HostPort("example.org", 80, "/", true));
+    Read();
+    AnswerDns(NetIp(93, 184, 216, 34));
+    Read();
+    FakeHostNet::Command connect = *_host->Last("connect");
+    _host->Push(NetEventType::Connected, connect.socket);
+    _net->Pump();
+    Read();
+    const std::string moved = "HTTP/1.1 301 Moved Permanently\r\nLocation: https://example.org/page\r\n\r\n";
+    _host->Push(NetEventType::Data, connect.socket, NetEventStatus::Ok, {}, Bytes(moved.begin(), moved.end()));
+    _net->Pump();
+    Read();
+    AnswerDns(NetIp(93, 184, 216, 34));
+    Read();
+    ASSERT_NE(_host->Last("connect-tls"), nullptr) << "the redirect goes over TLS";
+    const FakeHostNet::Command tls = *_host->Last("connect-tls");
+    EXPECT_EQ(tls.endpoint.port, 443);
+    EXPECT_EQ(std::string(tls.data.begin(), tls.data.end()), "example.org") << "SNI and the certificate's name";
+    _host->Push(NetEventType::Connected, tls.socket);
+    _net->Pump();
+    Read();
+    EXPECT_EQ(LastSent().rfind("GET /page HTTP/1.0\r\nHost: example.org\r\n", 0), 0u) << LastSent();
+    const std::string ok = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc";
+    _host->Push(NetEventType::Data, tls.socket, NetEventStatus::Ok, {}, Bytes(ok.begin(), ok.end()));
+    _net->Pump();
+    std::vector<Reply> r = Read();
+    ASSERT_EQ(Cmds(r), "94");
+    EXPECT_EQ(r[0].data, Bytes({1, 200, 0, 3, 0, 0, 0}));
+    Send(ZiFiNativeModule::kNetRecv, Bytes({0xFF, 0x03}));
+    EXPECT_EQ(Read()[0].data, Bytes({0, 'a', 'b', 'c'}));
+
+    // Port 443 asked for directly; the handshake fails (a bad certificate, no TLS in the build)
     Send(ZiFiNativeModule::kNetHttpGet, HostPort("93.184.216.34", 443, "/", true));
+    Read();
+    const FakeHostNet::Command direct = *_host->Last("connect-tls");
+    EXPECT_EQ(std::string(direct.data.begin(), direct.data.end()), "93.184.216.34");
+    _host->Push(NetEventType::ConnectFailed, direct.socket, NetEventStatus::TlsFailed);
+    _net->Pump();
     r = Read();
-    ASSERT_EQ(Cmds(r), "FE EE 94");
-    EXPECT_EQ(r[1].Text(), "get:tls connect failed") << "HTTPS: no TLS in the virtual network";
+    ASSERT_EQ(Cmds(r), "EE 94");
+    EXPECT_EQ(r[0].Text(), "get:tls connect failed");
+
+    // https -> http is refused
+    Send(ZiFiNativeModule::kNetHttpGet, HostPort("93.184.216.34", 443, "/", true));
+    Read();
+    const FakeHostNet::Command again = *_host->Last("connect-tls");
+    _host->Push(NetEventType::Connected, again.socket);
+    _net->Pump();
+    Read();
+    const std::string down = "HTTP/1.1 302 Found\r\nLocation: http://93.184.216.34/\r\n\r\n";
+    _host->Push(NetEventType::Data, again.socket, NetEventStatus::Ok, {}, Bytes(down.begin(), down.end()));
+    _net->Pump();
+    r = Read();
+    ASSERT_EQ(Cmds(r), "EE 94");
+    EXPECT_EQ(r[0].Text(), "get:redirect tls downgrade");
 }
 
 TEST_F(ZiFiNativeModule_Test, Http_Esp01sFollowsNothingAndSendsItsOwnRequest)

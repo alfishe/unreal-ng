@@ -125,6 +125,12 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     // The ISA slots: the population of [ISA] (network cards are fitted into it by NetworkManager), ISA cycles
     // into the port trace while a capture runs
     _isaBus.Configure(_context->config.sprinter.isa);
+    for (int n = 0; n < 2; ++n)
+    {
+        const std::string warning = sprinterisa::SlotWarning(_context->config.sprinter.isa.slot[n], n);
+        if (!warning.empty())
+            MLOGWARNING("PortDecoder_Sprinter: %s", warning.c_str());
+    }
     FitZxBusAdapters();
     _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
         TraceIsaCycle(write, space, slot, address, value);

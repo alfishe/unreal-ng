@@ -138,7 +138,7 @@ void EspStack::Query(const NetEndpoint& to, const std::vector<uint8_t>& request)
         _network->SendTo(_querySocket, 0xC3F0, to, request.data(), static_cast<uint32_t>(request.size()));
 }
 
-void EspStack::Connect(int slot, const NetEndpoint& to)
+void EspStack::Connect(int slot, const NetEndpoint& to, const std::string& tlsServerName)
 {
     Slot& s = _slots[static_cast<size_t>(slot)];
     if (s.vnetId)
@@ -156,7 +156,10 @@ void EspStack::Connect(int slot, const NetEndpoint& to)
             onDone({Done::Kind::Connect, slot, NetEventStatus::Error, 0, {}});
         return;
     }
-    _network->Connect(s.vnetId, to);
+    if (tlsServerName.empty())
+        _network->Connect(s.vnetId, to);
+    else
+        _network->ConnectTls(s.vnetId, to, tlsServerName);
 }
 
 void EspStack::ArmListener(int slot)

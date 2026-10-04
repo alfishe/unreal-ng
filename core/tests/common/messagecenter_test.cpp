@@ -21,6 +21,7 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "3rdparty/message-center/messagecenter_fast.h"
 #include "3rdparty/message-center/eventqueue_emulator.h"
+#include "_helpers/testwaithelper.h"
 
 /// region <From messagecenter_disposal_test.cpp>
 
@@ -423,3 +424,101 @@ TEST(MessageCenterVariants_Test, FastCenter_ThroughputSanity)
 }
 
 /// endregion </From messagecenter_variants_test.cpp>
+
+/// region <Payload ownership of Post()>
+
+/// Regression: Post() used to default to autoCleanupPayload=false, so every payload posted with the
+/// default arguments (about a hundred call sites) was never deleted - one leaked object per message.
+/// The default now transfers ownership to the queue, matching Message's own default.
+
+namespace
+{
+struct CountedPayload : public MessagePayload
+{
+    explicit CountedPayload(int* destroyed) : _destroyed(destroyed) {}
+    ~CountedPayload() override { ++*_destroyed; }
+
+    int* _destroyed;
+};
+}  // namespace
+
+TEST(EventQueuePayloadOwnership_Test, DefaultPostDeletesPayloadAfterDelivery)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+    queue.RegisterTopic("ownership_default");
+
+    queue.Post("ownership_default", new CountedPayload(&destroyed));
+    EXPECT_EQ(destroyed, 0) << "payload must stay alive while the message is queued";
+
+    Message* message = queue.GetQueueMessage();
+    ASSERT_NE(message, nullptr);
+    queue.Dispatch(message->tid, message);  // Dispatch() owns and deletes the message
+
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(EventQueuePayloadOwnership_Test, DefaultPostDeletesPayloadOfUnregisteredTopic)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+
+    queue.Post("ownership_unregistered", new CountedPayload(&destroyed));
+
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(EventQueuePayloadOwnership_Test, DefaultPostDeletesPayloadOfInvalidTopicId)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+
+    queue.Post(-1, new CountedPayload(&destroyed));
+
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(EventQueuePayloadOwnership_Test, ExplicitNoCleanupLeavesPayloadToTheCaller)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+    queue.RegisterTopic("ownership_retained");
+
+    auto* retained = new CountedPayload(&destroyed);
+    queue.Post("ownership_retained", retained, false);
+    queue.Post("ownership_unregistered", retained, false);
+
+    Message* message = queue.GetQueueMessage();
+    ASSERT_NE(message, nullptr);
+    queue.Dispatch(message->tid, message);
+
+    EXPECT_EQ(destroyed, 0);
+    delete retained;
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(MessageCenterPayloadOwnership_Test, DefaultPostsAreFreedThroughTheWorkerThread)
+{
+    // End to end: real worker thread, a registered observer, payloads posted with default arguments
+    MessageCenter::DisposeDefaultMessageCenter();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter(true);
+    const int kCount = 100;
+    int destroyed = 0;  // Only touched by the worker thread until the wait below succeeds
+    std::atomic<int> delivered{0};
+
+    mc.RegisterTopic("ownership_worker");
+    uint64_t id = mc.AddObserver("ownership_worker", [&](int, Message*) { delivered++; });
+
+    for (int i = 0; i < kCount; i++)
+    {
+        mc.Post("ownership_worker", new CountedPayload(&destroyed));
+    }
+
+    EXPECT_TRUE(TestWait::For([&] { return delivered.load() == kCount; }));
+    mc.RemoveObserverById("ownership_worker", id);  // Waits for in-flight dispatches to complete
+    MessageCenter::DisposeDefaultMessageCenter();   // Joins the worker; payloads queued past the wait are freed too
+
+    EXPECT_EQ(destroyed, kCount);
+}
+
+/// endregion </Payload ownership of Post()>

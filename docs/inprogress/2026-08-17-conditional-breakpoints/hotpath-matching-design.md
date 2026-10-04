@@ -1,9 +1,10 @@
 # Breakpoint matching on the hot path
 
 - **Date:** 2026-10-03
-- **Status:** design, measured in [PoC 022](../../../tools/poc/022-breakpoint-matching/README.md)
-  (2026-10-04, relative numbers on the loaded dev machine). Filter choice made: `globalbits` (§6). Not
-  implemented yet.
+- **Status:** implemented (2026-10-04, branch `bp-matching`): ranges, physical and slot-only page
+  breakpoints, masked ports, hit counts, on every automation surface and in the unreal-qt editor; filter
+  `globalbits` (§6). Measured in [PoC 022](../../../tools/poc/022-breakpoint-matching/README.md) and by
+  the A/B of §8.
 - **Part of:** the conditional-breakpoints track. It makes [design.md](design.md) §5.2 concrete for the
   address part of a breakpoint (exact addresses, ranges, physical pages, slot filters, port masks, hit
   counts). Conditions (F1) plug into the hit path later (§7).
@@ -45,40 +46,37 @@ rebuilt when the breakpoint set changes, never on the hot path.
 flowchart LR
     subgraph PerKind["Per kind: exec / read / write"]
         G["gate: has[k]<br/>1 byte"]
-        F["filter: 64K bits<br/>8 KB, L1"]
-        Z["CPU-address heads<br/>64K x uint16 = 128 KB<br/>(allocated when the kind is armed)"]
-        SP["slot pointers [4]<br/>to the page slices of the page<br/>each slot shows now"]
-    end
-    subgraph Slices["Per page that has physical breakpoints"]
-        PB["page bits 2 KB"]
-        PH["page heads 16K x uint16 = 32 KB"]
-    end
-    subgraph Bound["Per (page, slot) with slot-bound breakpoints"]
-        BB["bits 2 KB"]
-        BH["heads 32 KB"]
+        F["filter: 64K bits<br/>8 KB, L1<br/>(physical offsets marked in all 4 slots)"]
+        Z["CPU-address heads<br/>64K x uint32<br/>(allocated when the kind has CPU-address breakpoints)"]
+        PS["page slices, by page id<br/>16K heads each<br/>(only pages with physical breakpoints)"]
     end
     subgraph Ports["Per direction: in / out"]
         PG["gate"]
         PF["port bits 8 KB"]
-        PHD["port heads 64K x uint16<br/>(masks expanded at set time)"]
+        PHD["port heads 64K x uint32<br/>(masks expanded at set time)"]
     end
-    C["candidate lists<br/>{descriptor, next}<br/>several breakpoints on one address"]
-    SP --> PB & PH & BB & BH
+    C["interned candidate sets<br/>the active breakpoints covering an address, in id order<br/>(set 0 = none)"]
     Z --> C
-    PH --> C
-    BH --> C
+    PS --> C
     PHD --> C
 ```
 
-- A **head** is the index of the first candidate for that address (0 = none). Several breakpoints can
-  cover one address (a code point inside a watched range, two ranges overlapping), so the candidates of one
-  address form a short list.
+- A **head** is the number of a candidate set: the active breakpoints that cover that address, in id order
+  (0 = none). Several breakpoints can cover one address (a code point inside a watched range, two ranges
+  overlapping), so a set can hold several.
+- **Sets are interned.** The covering set changes only at a range boundary, so N ranges make at most 2N + 1
+  distinct sets. The same set is shared between kinds and pages. (A first version extended sets breakpoint
+  by breakpoint and made 758 000 sets for 10 000 overlapping ranges; the sweep of §5.1 makes at most 20 001.)
+- **Physical breakpoints** (`BRK_MATCH_BANK_ADDR`: page + offsets) live in their page's slice. The resolve
+  asks `Memory::MapZ80AddressToPhysicalPage` which page the slot shows, so paging needs no tracking (§5.2).
+  A slot-only breakpoint sits in the same slice and is skipped when the access comes through another slot.
 - Only **active** breakpoints are painted. Disabling one repaints, so the hot path never meets a disabled
   one.
 - **Hidden** breakpoints (step-over, step-out, traps) are painted like the others: they must stop the run.
   They are only left out of what the surfaces are told ([protocol](../2026-09-28-debugger-model/protocol.md) §5).
-- Footprint when armed: about 136 KB per memory kind in use, 136 KB per port direction in use, 34 KB per page
-  (or page and slot) with physical or slot-bound breakpoints. A kind with no breakpoints costs its gate byte.
+- Footprint when armed: 8 KB filter plus a 256 KB head table per memory kind with CPU-address breakpoints,
+  64 KB per page with physical breakpoints, the same per port direction. A kind with no breakpoints costs its
+  gate byte.
 
 ## 4. One access (the hot path)
 
@@ -99,10 +97,10 @@ flowchart TD
     G -- no --> NO2["no hit<br/>(the unarmed path: one byte)"]
     G -- yes --> F{"filter bit for a?<br/>(8 KB, L1)"}
     F -- no --> NO3["no hit<br/>(the common armed path)"]
-    F -- yes --> H["heads, in order:<br/>1. CPU-address head[a]<br/>2. head in the page slice of slot a>>14, offset a & #3FFF<br/>3. head in the slot-bound slice of that slot"]
+    F -- yes --> H["heads, in order:<br/>1. CPU-address head[a]<br/>2. the page the slot shows (Memory), then<br/>the head in that page's slice at a & #3FFF"]
     H --> L{"a candidate left?"}
     L -- no --> NO4["no hit<br/>(the filter said maybe; only with the<br/>over-approximating filter, §6)"]
-    L -- yes --> K{"candidate passes?<br/>kind bit, slot filter,<br/>(later: condition, §7)"}
+    L -- yes --> K{"candidate passes?<br/>slot-only: the right slot,<br/>(later: condition, §7)"}
     K -- no --> NEXT["next candidate"] --> L
     K -- yes --> HC{"hit count policy:<br/>stop now? (F5)"}
     HC -- "not yet" --> CNT["hit_count++"] --> NEXT
@@ -120,7 +118,7 @@ repetitions on the loaded dev machine, four real programs):
 |:--|:--|:--|:--|
 | unarmed | debug mode on, no breakpoint of this kind | the gate byte | 0 (the reference, 0.49-0.51 ns with the replay loop) |
 | armed miss / hit, CPU addresses and ranges | the overwhelming case | gate + one L1 bit test (+ one load on a hit) | 0.42-0.54, flat from 1 to 10 000 breakpoints (02, 03) |
-| physical / slot-bound | page breakpoints armed | + the slot pointer and the page slice | 0.93-1.21; 1.2-1.4 paging every 64 accesses (04) |
+| physical / slot-only | page breakpoints armed | the same bit test; on a set bit the page from Memory and the page slice | 0.93-1.21; 1.2-1.4 paging every 64 accesses (04) |
 | ports | port breakpoints armed | gate + port bit (+ one load) | 0.33, flat (05) |
 | whole matcher, mixed set | everything armed at once, one dispatching function | as above | 1.2-1.5 up to 1 000; 1.6-2.0 at 10 000 (06; includes a dispatch the inline call sites do not have) |
 | today, for comparison | one breakpoint of the kind armed | an out-of-line call, filter, up to two hash lookups | 1.6-1.7 empty, 2.6-3.7 with 10 000 hitting (01) |
@@ -131,41 +129,39 @@ repetitions on the loaded dev machine, four real programs):
 
 ```mermaid
 flowchart TD
-    M["a breakpoint added, removed,<br/>enabled, disabled or changed"] --> CLR["clear the tables of the kinds involved"]
-    CLR --> P["for every active breakpoint of those kinds"]
+    M["a breakpoint added, removed,<br/>enabled, disabled or changed"] --> B{"inside a batch?"}
+    B -- yes --> PEND["mark pending;<br/>EndBatch repaints once"]
+    B -- no --> CLR["clear gates, filters, heads, sets"]
+    CLR --> P["for every active breakpoint, in id order"]
     P --> S{"space?"}
-    S -- "CPU address / range" --> PZ["paint start..end into the filter<br/>and the CPU-address heads"]
-    S -- "physical page" --> PP["paint the offsets into that page's slice<br/>(created on first use)"]
-    S -- "slot-bound" --> PBD["paint the offsets into the (page, slot) slice"]
-    S -- "port + mask" --> PPT["paint every matching port<br/>into the port bits and heads"]
-    PZ & PP & PBD & PPT --> GATE["set the gates"]
-    GATE --> PTR["point the slots at the slices<br/>of the pages they show now"]
-    PTR --> FL["rebuild the filter variant's<br/>per-slot part, if it has one (§6)"]
-    FL --> N["tell the surfaces: breakpoints_changed {cpu, ids}"]
+    S -- "CPU address / range" --> PZ["filter bits start..end;<br/>an interval for the CPU-address sweep"]
+    S -- "physical page" --> PP["filter bits of the offsets in all 4 slots<br/>(slot-only: its slot);<br/>an interval for that page's sweep"]
+    S -- "port + mask" --> PPT["every matching port:<br/>port bit, port candidate list"]
+    PZ & PP & PPT --> SW["sweep each space: walk the interval ends in order,<br/>keep the active set, intern it at each change,<br/>fill the heads run by run"]
+    SW --> N["tell the surfaces: breakpoints_changed {cpu, ids}"]
 ```
 
-Painting is at most 64K entries per kind plus 16K per touched page, a fraction of a millisecond, and runs on
-the thread that changes the set, as today (`RebuildFilters`).
+The rebuild is O(64K + N log N) per kind. Ten thousand overlapping 256-byte ranges build in about 40 ms in one
+batch. `BreakpointManager::Batch` (or `BeginBatch` / `EndBatch`) is for an import or a script that sets many
+breakpoints: one repaint and one `breakpoints_changed` at the end, instead of one per breakpoint (which would
+make N additions cost N rebuilds).
 
-### 5.2 Remap
+### 5.2 Remap: nothing to do
 
-Every place in `Memory` that points a slot at another page ends in `UpdateSlotContention(slot)`. That is
-where the manager hears about it - one call per slot change, made only while breakpoints are armed, so a
-machine without breakpoints pays nothing new.
+The filter does not depend on what a slot shows (§6: a physical offset is marked in all four slots), and the
+resolve asks the memory model for the page of the access only after a filter hit. So paging does no work for
+the debugger at all, and there is no notification that could be forgotten on some paging path.
 
-```mermaid
-flowchart TD
-    W["paging port written:<br/>slot s now shows page P"] --> UC["Memory::UpdateSlotContention(s)"]
-    UC --> ARM{"breakpoints armed?"}
-    ARM -- no --> DONE["done (unchanged path)"]
-    ARM -- yes --> PT["slot pointers[s] = slices of P<br/>(page slice, (P, s) slot-bound slice,<br/>or the shared empty slice): a few stores"]
-    PT --> V{"filter variant with<br/>a per-slot part? (§6)"}
-    V -- no --> DONE2["done"]
-    V -- yes --> RB["recombine the slot's 2 KB of filter<br/>per armed kind"] --> DONE2
-```
+The PoC rejected the alternatives that do work on a remap. Rebuilding per-slot id tables costs 21-335 ns per
+access on a trace that switches pages every 64 accesses (experiment 04, `merged`). An exact per-slot filter
+recombined on each remap costs up to 1.9 ns more there (experiment 06, `slotbits`).
 
-The PoC rejected rebuilding whole per-slot id tables on a remap: 32 KB per kind per remap costs 35-115 ns per
-access on a trace that switches pages every 64 accesses (experiment 04, `merged`).
+### 5.3 Stepping on from a stop
+
+A run stopped at an execution breakpoint executes that instruction when it goes on. The emulator arms a pass
+for that address (`ArmExecPass`, from `DirectStepScope`); the check skips it once, without a hit and without
+counting it. A hit-count policy therefore sees each arrival once. The emulator's own run needs no pass: its
+breakpoint parks on the hit and continues the same instruction on resume.
 
 ## 6. The one open choice: which filter
 
@@ -227,3 +223,25 @@ page's 2 KB bit slice before the id slices.
   - debug mode on with no breakpoints (the unarmed path, must not be slower);
   - debug mode on with 10, 1 000 and 10 000 mixed breakpoints (frames per second against today's
     single-address equivalent).
+
+### 8.1 Measured on the emulator (2026-10-04)
+
+`BM_BreakpointFrame_*` (`core/benchmarks/debugger/breakpoint_frame_benchmark.cpp`): one 48K frame idling in
+BASIC per iteration. The same file was built against master `c0cf88cab` and against the branch (it uses only
+the single-address API both have), and the two ran interleaved, 4 rounds x 3 repetitions, on the shared
+machine at load 45-63. Median of 12 runs, µs per frame:
+
+| State | master | branch | change | above "debug off": master -> branch |
+|:--|--:|--:|--:|:--|
+| debug mode off | 1674 | 1673 | -0.1% | - |
+| debug mode on, no breakpoint | 1767 | 1735 | -1.8% | +5.5% -> +3.7% |
+| 10 breakpoints (never hit) | 1786 | 1738 | -2.7% | +6.7% -> +3.9% |
+| 1 000 | 1774 | 1743 | -1.8% | +6.0% -> +4.2% |
+| 10 000 | 1831 | 1800 | -1.7% | +9.4% -> +7.6% |
+
+- With debug mode off nothing changes: the fast memory interface never reaches the check.
+- Every debug state got faster, while ranges, physical pages, masks and hit counts were added. The inline
+  gate saves the call that today's code makes on every access.
+- What remains above "debug off" (about 3.7%) is the debug memory interface itself (access tracking, TTD
+  probes), not the breakpoint check.
+

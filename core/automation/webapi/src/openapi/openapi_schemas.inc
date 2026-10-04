@@ -296,9 +296,35 @@
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("write");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_in");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("rw");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port");
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
-        "Z80 address (0-65535) or port number (0-255)";
+        "Z80 address (0-65535) or port number (0-65535); with a page, its offset in the page is address & #3FFF";
+    schemas["AddBreakpointRequest"]["properties"]["address_end"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["address_end"]["description"] =
+        "Optional range end, inclusive (execution / read / write / rw). With a page the range stays inside one 16K "
+        "page. The hot path checks a range as fast as one address, however many there are";
+    schemas["AddBreakpointRequest"]["properties"]["slot_only"]["type"] = "boolean";
+    schemas["AddBreakpointRequest"]["properties"]["slot_only"]["description"] =
+        "With a page: fire only through the slot of 'address' (#0000/#4000/#8000/#C000), not wherever the page is "
+        "mapped";
+    schemas["AddBreakpointRequest"]["properties"]["port_mask"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["port_mask"]["description"] =
+        "Ports only: match when (port & port_mask) == (address & port_mask); default #FFFF (exact). #00FF catches #FE "
+        "on any high byte";
+    schemas["AddBreakpointRequest"]["properties"]["hits"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["hits"]["description"] =
+        "Hit policy as text: '5' (stop on the 5th hit only), '>=5' (from the 5th on), '%5' (every 5th); every "
+        "matching access counts (hit_count). Same as hit_mode + hit_target";
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("always");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("equal");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("at_least");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("multiple");
+    schemas["AddBreakpointRequest"]["properties"]["hit_target"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["hit_target"]["description"] =
+        "The N of the hit policy (1 or more); alone it means hit_mode 'equal'";
     schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "object";
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("ram");
@@ -307,8 +333,8 @@
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["page"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
         "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
-        "accepted too). The breakpoint fires only while that page is mapped at the address; 400 for a page the "
-        "machine does not have";
+        "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
+        "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
@@ -325,6 +351,12 @@
     schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["page"]["type"] = "object";
     schemas["AddBreakpointResponse"]["properties"]["page"]["description"] = "The page condition, when one was given";
+    schemas["AddBreakpointResponse"]["properties"]["address_end"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["slot_only"]["type"] = "boolean";
+    schemas["AddBreakpointResponse"]["properties"]["port_mask"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";

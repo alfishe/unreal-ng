@@ -217,6 +217,28 @@ void VirtualNetwork::Connect(uint16_t id, const NetEndpoint& to)
         _host->TcpConnect(s->hostId, to);
 }
 
+void VirtualNetwork::ConnectTls(uint16_t id, const NetEndpoint& to, const std::string& serverName)
+{
+    Socket* s = Find(id);
+    if (!s || s->proto != NetProto::Tcp)
+        return;
+    s->remote = to;
+    s->connected = false;
+    if (IsInternal(to.addr) || to.addr == 0 || to.addr == kBroadcast)
+    {
+        Defer(id, NetEventType::ConnectFailed, NetEventStatus::Refused, to);
+        return;
+    }
+    Note(id, s->proto, "connect-tls", to);
+    if (!_host)
+    {
+        Defer(id, NetEventType::ConnectFailed, NetEventStatus::Unreachable, to);
+        return;
+    }
+    if (!IsReplaying())
+        _host->TcpConnectTls(s->hostId, to, serverName);
+}
+
 void VirtualNetwork::ConnectSerial(uint16_t id, const std::string& device, uint32_t baud)
 {
     Socket* s = Find(id);

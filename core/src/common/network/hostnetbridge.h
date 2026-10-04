@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "common/network/hostnet.h"
+#include "common/network/hosttls.h"
 #include "common/network/netsockets.h"
 
 class HostNetBridge : public IHostNet
@@ -45,6 +46,7 @@ public:
 
     // IHostNet
     void TcpConnect(uint16_t socket, const NetEndpoint& to) override;
+    void TcpConnectTls(uint16_t socket, const NetEndpoint& to, const std::string& serverName) override;
     void TcpSend(uint16_t socket, const uint8_t* data, uint32_t length) override;
     void TcpShutdownWrite(uint16_t socket) override;
     void TcpListen(uint16_t socket, uint16_t hostPort) override;
@@ -66,13 +68,13 @@ public:
     uint16_t ListenerHostPort(uint16_t socket) const;
 
 private:
-    enum class CommandType : uint8_t { Connect, Send, ShutdownWrite, Listen, UdpSend, Close, CloseAll };
+    enum class CommandType : uint8_t { Connect, Send, ShutdownWrite, Listen, UdpSend, Close, CloseAll, ConnectTls };
     struct Command
     {
         CommandType type = CommandType::Close;
         uint16_t socket = 0;
         NetEndpoint endpoint;
-        std::vector<uint8_t> data;
+        std::vector<uint8_t> data;   ///< Send / UdpSend: the bytes; ConnectTls: the server name
     };
 
     enum class State : uint8_t { Connecting, Connected, Listening, Udp };
@@ -84,6 +86,8 @@ private:
         bool shutdownPending = false;   ///< FIN after the queue drains
         bool readClosed = false;        ///< peer FIN seen
         uint64_t connectDeadlineMs = 0;
+        std::unique_ptr<HostTls> tls;   ///< a TLS connection: ciphertext on the socket, plaintext to the guest
+        bool tlsUp = false;             ///< the handshake is done (Connected was sent)
     };
 
     struct DnsJob
@@ -99,6 +103,8 @@ private:
     void Execute(Command& cmd);
     void Service(uint16_t id, HostSocket& s, const netsock::PollItem& item);
     void FlushSend(uint16_t id, HostSocket& s);
+    /// TLS: drive the handshake, move ciphertext to the socket and plaintext to the guest
+    void PumpTls(uint16_t id, HostSocket& s);
     void Drop(uint16_t id);
     void Emit(HostNetEvent ev);
     static uint64_t NowMs();
