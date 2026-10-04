@@ -21,6 +21,13 @@
             "reaches_cpu (yes with the IM 2 vector and the daisy-chain order, or why not). pio_port_b: the PIO port's "
             "mode, lines, inputs_latched, read, output, direction, mask, interrupt_control, vector, pending, "
             "under_service; irq_summary: the lines in one sentence. "
+            "The ZX-bus adapter (card zxbus, ISA phase I2; slot 1 by default) adds zx_bus: adapter (I/O cycles become "
+            "Spectrum IN / OUT at port A15-A0; no memory cycles, IRQ or WAIT), reset (ISA RESET DRV resets the card), "
+            "reset_held, reset_pulses, memory_cycles, cards[] (the General Sound / NeoGS behind it: card gs, personality "
+            "z80 / lw / ngs, device, firmware, ports #B3 / #BB / #33, cpu_addresses #C0B3 / #C0BB / #C033 with window 3 = "
+            "#D4, status, data_flag, command_flag, data_to_host, ready_for_commands, sound, zx_dma (NeoGS: unavailable), "
+            "machine_reset (GSReset), details: the GS's own report at /state/audio/gs) or empty (why nothing is behind "
+            "it). Every slot carries summary_line: its piece of summary. "
             "The ISA address of a window access is (#9FBD bits 5-0) << 14 | CPU A13-A0.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";

@@ -1174,7 +1174,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
-        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; per slot 'irq_line': the IRQ line's level, "
+        "fitted card - an NE2000's chip, base, MAC, registers; the ZX-bus adapter's 'zx_bus' object: the General Sound / "
+        "NeoGS behind it, its ports #B3 / #BB / #33 through ISA I/O #xxB3 / #xxBB / #xx33, its reset from ISA RESET DRV, "
+        "its mailbox status - and cycle counters; per slot 'irq_line': the IRQ line's level, "
         "who drives it, its route to the Z84C15 PIO port B (PB0 / PB1), the PIO's bit-mode setup, pending / under service, "
         "whether it reaches the CPU, and edge / request / acknowledge counters ('irq_summary' in one line); "
         "unavailable on other machines - run an "
@@ -2056,6 +2058,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << ", IRQ " << slot["resources"]["irq"].asString() << " (" << slot["resources"]["irq_route"].asString() << ")";
                                         if (slot["z80_access"].isMember("io"))
                                             out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
+                                        // The ZX-bus adapter: the card behind it, its ports and reset (ISA phase I2)
+                                        if (slot.isMember("zx_bus"))
+                                        {
+                                            out << "\n[isa]   " << slot["summary_line"].asString();
+                                            for (const Json::Value& card : slot["zx_bus"]["cards"])
+                                                out << "\n[isa]   " << card["device"].asString() << ": status "
+                                                    << card["status"].asString() << ", " << card["sound"].asString() << "; "
+                                                    << card["machine_reset"].asString();
+                                            if (slot["zx_bus"].isMember("empty"))
+                                                out << "\n[isa]   ZX-bus empty: " << slot["zx_bus"]["empty"].asString();
+                                        }
                                     }
                                     if (value.isMember("irq_summary"))
                                         out << "\n[isa] irq: " << value["irq_summary"].asString();

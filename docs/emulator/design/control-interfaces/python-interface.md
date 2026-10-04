@@ -271,8 +271,10 @@ class Emulator:
         (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
         2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters with the IRQ
         counters, irq_line: the slot's IRQ line - level, driver, route to PIO port B bit 0 / 1, the
-        PIO's bit-mode setup, pending / under service, reaches_cpu), pio_port_b, irq_summary.
-        available=False on other machines"""
+        PIO's bit-mode setup, pending / under service, reaches_cpu; summary_line; the ZX-bus
+        adapter's zx_bus: the General Sound / NeoGS behind it - cards[0] personality, ports,
+        cpu_addresses, status, machine_reset - its reset_held / reset_pulses), pio_port_b,
+        irq_summary. available=False on other machines"""
 
     def isa_io_read(self, slot: int, address) -> int:
         """One ISA I/O read cycle at a 20-bit ISA address (int or '#30A' text); an empty slot

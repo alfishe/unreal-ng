@@ -108,9 +108,13 @@ public:
     bool TtdEnginesSealed() const override { return true; }
     /// A session recorded with another ISA slot population is refused (blob 33's kinds against the fitted cards)
     bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const override;
-    /// No ZX-bus until the ISA ZX-bus adapter exists (2026-10-02-sprinter-isa/tdd.md §2, phase I2): the
-    /// General Sound / NeoGS of [SOUND] GSType is not fitted
-    bool ZxBusPresent() const override { return false; }
+    /// A ZX-bus only through an ISA ZX-bus adapter ([ISA] SlotN=ZXBUS; 2026-10-02-sprinter-isa/tdd.md §6, phase I2):
+    /// the General Sound / NeoGS of [SOUND] GSType is fitted only then. The adapter passes I/O cycles only, so
+    /// no ZX-bus card sees the Sprinter's memory cycles (the NeoGS ZX-DMA cannot install)
+    bool ZxBusPresent() const override { return _zxBusSlot >= 0; }
+    bool ZxBusMemoryCycles() const override { return false; }
+    /// The slot (0 / 1) whose ZX-bus adapter carries the General Sound; -1: no adapter
+    int ZxBusSlot() const { return _zxBusSlot; }
     /// No ZX-bus for network cards (ZXNETUSB / ZX-WiFi refused with the reason), no serial port of its own; the two
     /// ISA slots take the network cards of [ISA] (network tdd §5.2): NetworkManager builds them, the slot wrapper
     /// (IsaBusDeviceCard) reaches them
@@ -376,9 +380,12 @@ private:
     CovoxBlaster _cbl{_context};
     /// The ISA-8 slots and the #9FBD latch; the population comes from [ISA] at creation
     SprinterIsaBus _isaBus;
+    int _zxBusSlot = -1;           ///< the slot of the ZX-bus adapter with the GS (-1: none)
     uint8_t _instanceNumber = 0;   ///< among the live Sprinters (the automatic MAC)
     /// A card hung its ISA cycle (UM9003 reset port): the CPU waits for RESET - halted, interrupts off
     void StallCpuOnIsa(int slot);
+    /// The ZX-bus adapters of [ISA] (phase I2), fitted when the decoder is built (before SoundManager attaches the GS)
+    void FitZxBusAdapters();
     /// The slots' IRQ / DRQ lines into PIO port B (only a change reaches the PIO: its bit-mode edge), the journal
     /// and counters of the edges and the requests they cause; then the next deadline
     void PushIsaLines();

@@ -6,7 +6,7 @@
 ///
 /// ```ini
 /// [ISA]
-/// Slot1=NONE             ; ISA slot 1 (J6, page #D4 / #D0)
+/// Slot1=ZXBUS            ; ISA slot 1 (J6, page #D4 / #D0): the ZX-bus adapter, the GS / NeoGS of [SOUND] GSType on it
 /// Slot2=NE2000           ; ISA slot 2 (J7, page #D6 / #D2)
 /// Slot2Chip=RTL8019AS    ; NE2000: RTL8019AS | UM9003 | NE1000
 /// Slot2Base=0x300        ; NE2000: 0x200..0x3E0 in steps of 0x20 (in an INI '#' starts a comment: 0x300 or 300h)
@@ -74,8 +74,8 @@ struct IsaConfig
     SlotConfig slot[kSlots];   ///< not "slots": a Qt macro, and the GUI includes CONFIG
 };
 
-/// The owner's default population (2026-10-02): slot 1 = the ZX-bus adapter with the NeoGS once ISA phase I2 lands
-/// (empty until then), slot 2 = the NE2000 (RTL8019AS at #300, IRQ 3, automatic MAC)
+/// The owner's default population (2026-10-02): slot 1 = the ZX-bus adapter with the General Sound of [SOUND] GSType
+/// (the NeoGS in the Sprinter config; ISA phase I2), slot 2 = the NE2000 (RTL8019AS at #300, IRQ 3, automatic MAC)
 IsaConfig DefaultConfig();
 
 /// "NONE", "ZXBUS", "RAM", "NE2000", "EL3C509B", "SPRINTERESP", "MODEM", "DUAL16552"

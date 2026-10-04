@@ -330,6 +330,8 @@ private:
     void zxStall(int64_t units) override { _runner.stall(units); }
     int64_t zxStallUntil() const override { return _runner.stallUntil(); }
     bool zxInstall(bool installed) override;
+    bool zxHostMemoryBus() const override;
+    void onHostBusChanged() override { _zx.hostBusChanged(); }
     uint32_t zxFrame() const override { return currentFrameNumber(); }
     void zxReschedule() override { reschedule(); }
     void zxLateStart(int64_t units) override;

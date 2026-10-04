@@ -5,6 +5,7 @@
 #include "portdecoder_sprinter.h"
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
+#include "emulator/io/sprinter/isa/cards/isazxbusadapter.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 
 #include <array>
@@ -124,6 +125,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     // The ISA slots: the population of [ISA] (network cards are fitted into it by NetworkManager), ISA cycles
     // into the port trace while a capture runs
     _isaBus.Configure(_context->config.sprinter.isa);
+    FitZxBusAdapters();
     _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
         TraceIsaCycle(write, space, slot, address, value);
     });
@@ -1738,6 +1740,25 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
     return caps;
 }
 
+
+void PortDecoder_Sprinter::FitZxBusAdapters()
+{
+    // ISA phase I2: a ZX-bus adapter per configured slot. The General Sound / NeoGS ([SOUND] GSType, built by
+    // SoundManager because ZxBusPresent() now holds) sits on the first one; the machine has one GS, so a second
+    // adapter's ZX-bus is empty, with the reason in its report
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        if (static_cast<sprinterisa::CardKind>(_isaBus.Configured(n).kind) != sprinterisa::CardKind::ZxBus)
+            continue;
+        const bool carriesGs = _zxBusSlot < 0;
+        std::string why;
+        if (!carriesGs)
+            why = StringHelper::Format("one General Sound per machine: it sits on the adapter in slot %d", _zxBusSlot + 1);
+        _isaBus.Fit(n, std::make_unique<sprinterisa::IsaZxBusAdapter>(_context, this, carriesGs, why));
+        if (carriesGs)
+            _zxBusSlot = n;
+    }
+}
 
 uint8_t PortDecoder_Sprinter::NetworkInstanceIndex() const
 {

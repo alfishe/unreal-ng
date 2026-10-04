@@ -78,6 +78,8 @@ void CLIProcessor::HandleIsa(const ClientSession& session, const std::vector<std
         ss << "  isa latch <value>                - Write the #9FBD latch (A19-A14, AEN bit 6, RESET bit 7)" << NEWLINE;
         ss << "  isa irq                          - The IRQ lines: level, driver, PIO port B route, pending, counters" << NEWLINE;
         ss << "  isa journal [n | clear | on | off] - Who touched which card register, and the IRQ events" << NEWLINE;
+        ss << "  The ZX-bus adapter (slot 1 by default): 'isa' shows zx_bus - the General Sound / NeoGS behind it, its"
+           << NEWLINE << "  ports (isa io 1 #BB reads its status, #B3 its data), its reset; the card itself: state gs, gs" << NEWLINE;
         ss << "  Addresses: 20-bit ISA address, decimal, 0x.., #.. or ..h (the NE2000 at #300: isa io 2 #30A)" << NEWLINE;
         session.SendResponse(ss.str());
         return;

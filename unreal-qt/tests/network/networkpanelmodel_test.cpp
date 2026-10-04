@@ -247,6 +247,22 @@ TEST(NetworkPanelModel_Test, SlotRowsSayWhatIsPluggedAndWhatItUses)
     EXPECT_EQ(rows[0].line, "zxbus not fitted: not built yet");
     EXPECT_EQ(rows[1].line, "NE2000 RTL8019AS, I/O #300-#31F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway");
     EXPECT_TRUE(NetworkSlotRows(StateNode::Object()).empty()) << "machines without slots show no group";
+
+    // ISA I2: slot 1 holds the ZX-bus adapter (not a network card): with the ISA report the row is the adapter's line
+    StateNode isa = StateNode::Object();
+    StateNode isaSlots = StateNode::Array();
+    StateNode adapter = StateNode::Object();
+    adapter["card"] = "zxbus";
+    adapter["summary_line"] = "zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: #B3 / #BB / #33, RESET from ISA RESET DRV";
+    isaSlots.push(adapter);
+    StateNode isaNe = StateNode::Object();
+    isaNe["card"] = "ne2000";
+    isaSlots.push(isaNe);
+    isa["slots"] = isaSlots;
+    const std::vector<NetworkSlotRow> withIsa = NetworkSlotRows(network, &isa);
+    ASSERT_EQ(withIsa.size(), 2u);
+    EXPECT_EQ(withIsa[0].line, "zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: #B3 / #BB / #33, RESET from ISA RESET DRV");
+    EXPECT_EQ(withIsa[1].line.rfind("NE2000 RTL8019AS", 0), 0u);
 }
 
 // The SprinterESP in a slot: its UART line and the ESP's session in the row, its line editable (isaN_peer)

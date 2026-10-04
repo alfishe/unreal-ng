@@ -147,5 +147,6 @@ TEST(SprinterBiosOptions_Test, IsaSlotsAtCreate)
     config.sprinter.isa = sprinterisa::DefaultConfig();
     ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
     EXPECT_EQ(config.sprinter.isa.slot[1].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
-    EXPECT_EQ(config.sprinter.isa.slot[0].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
+    EXPECT_EQ(config.sprinter.isa.slot[0].kind, static_cast<uint8_t>(sprinterisa::CardKind::ZxBus))
+        << "slot 1 keeps the configured default: the ZX-bus adapter (ISA I2)";
 }

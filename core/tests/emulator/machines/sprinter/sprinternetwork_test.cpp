@@ -65,11 +65,12 @@ TEST_F(SprinterNetwork_Test, DefaultPopulation_Ne2000InSlot2)
     EXPECT_EQ(Network()->SlotCards()[0].slotId, "isa2");
     ASSERT_NE(_decoder->GetIsaBus().Card(1), nullptr);
     EXPECT_STREQ(_decoder->GetIsaBus().Card(1)->Kind(), "ne2000");
-    EXPECT_EQ(_decoder->GetIsaBus().Card(0), nullptr) << "slot 1 waits for the ZX-bus adapter (ISA I2)";
+    ASSERT_NE(_decoder->GetIsaBus().Card(0), nullptr);
+    EXPECT_STREQ(_decoder->GetIsaBus().Card(0)->Kind(), "zxbus") << "slot 1: the ZX-bus adapter (ISA I2)";
 
     EXPECT_EQ(IsaIo("io_read", 2, 0x30A), 0x50) << "RTL8019AS ID 'P' through the ISA bus";
     EXPECT_EQ(IsaIo("io_read", 2, 0x30B), 0x70);
-    EXPECT_EQ(IsaIo("io_read", 1, 0x30A), 0xFF) << "slot 1 is empty";
+    EXPECT_EQ(IsaIo("io_read", 1, 0x30A), 0xFF) << "slot 1: the GS decodes #33 / #B3 / #BB only";
     EXPECT_EQ(IsaIo("io_read", 2, 0x20A), 0xFF) << "nothing at #200";
 
     const Ne2000Board* card = Network()->EthernetCard("isa2.eth");
@@ -97,7 +98,7 @@ TEST_F(SprinterNetwork_Test, Reports_SlotRowsResourcesAndHowTheZ80ReachesThem)
     EXPECT_EQ(row.find("base")->s, "#300");
     ASSERT_NE(row.find("registers"), nullptr);
     EXPECT_EQ(slots->items[0].find("card")->s, "none");
-    EXPECT_FALSE(net.find("machine")->find("zx_bus")->b) << "no ZX-bus on the Sprinter (until the adapter)";
+    EXPECT_FALSE(net.find("machine")->find("zx_bus")->b) << "no ZX-bus for network cards (the adapter passes no memory cycles, Q7)";
 
     const StateNode isa = DeviceState::Isa(_context);
     const StateNode& slot2 = isa.find("slots")->items[1];
@@ -210,7 +211,7 @@ TEST_F(SprinterNetwork_Test, IrqLines_DefaultPopulationOnPioPortB)
     EXPECT_NE(slot2->find("driven")->s.find("ne2000"), std::string::npos);
     EXPECT_NE(slot2->find("cause")->s.find("IRQEN set"), std::string::npos) << slot2->find("cause")->s;
     EXPECT_EQ(slot2->find("reaches_cpu")->s.rfind("no:", 0), 0u) << slot2->find("reaches_cpu")->s;
-    EXPECT_EQ(isa.find("slots")->items[0].find("irq_line")->find("line")->s, "high") << "empty slot: the pull-up";
+    EXPECT_EQ(isa.find("slots")->items[0].find("irq_line")->find("line")->s, "high") << "the ZX-bus adapter drives no IRQ: the pull-up";
 
     // IRQEN cleared through page 3 (9346CR config mode): the pin floats, the pull-up wins
     IsaIo("io_write", 2, 0x300, 0xE1);   // page 3

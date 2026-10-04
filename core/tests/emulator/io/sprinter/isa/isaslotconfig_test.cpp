@@ -9,10 +9,11 @@
 
 using namespace sprinterisa;
 
-TEST(IsaSlotConfig_Test, Default_Slot1EmptySlot2Ne2000)
+TEST(IsaSlotConfig_Test, Default_Slot1ZxBusAdapterSlot2Ne2000)
 {
     const IsaConfig c = DefaultConfig();
-    EXPECT_EQ(static_cast<CardKind>(c.slot[0].kind), CardKind::None) << "slot 1: the ZX-bus adapter waits for ISA I2";
+    EXPECT_EQ(static_cast<CardKind>(c.slot[0].kind), CardKind::ZxBus) << "owner decision Q2: the adapter with the NeoGS";
+    EXPECT_TRUE(KindAvailable(CardKind::ZxBus)) << "ISA phase I2";
     EXPECT_EQ(static_cast<CardKind>(c.slot[1].kind), CardKind::Ne2000) << "owner decision 2026-10-02 (network Q1 = B)";
     EXPECT_EQ(static_cast<Ne2000Chip>(c.slot[1].chip), Ne2000Chip::Rtl8019as);
     EXPECT_EQ(c.slot[1].base, 0x300);
