@@ -45,6 +45,10 @@ way. This design does the same for every Spectrum-family machine and adds a comp
   +12 V, /RESET, /M1, /RFSH, /CSROM, /RDROM, /BUSRQ), the number of physical slots (informational; our limit is
   unlimited, owner rule), the **arbitration mode** (`CardWins`, `BoardWins`, `UlaOnly`, `None`; research-machines.md
   §1), the board ports hidden from the slots (`BoardWins`) and the read-conflict rule.
+- **R-BUS-1a. Models only from the menu.** The machine is always one of the menu models (each with its own photo);
+  the design never invents a board variant. A model whose board has no connector for a bus still accepts cards on a
+  **retrofitted** bus: no physical slots, the bus standard's rules, and every surface (slot report, Qt slot window,
+  automation replies) states in text that the cards are bolted on (example: the Pentagon 128).
 - **R-BUS-2.** Every machine declares its built-in devices with the functions they provide and the ports they answer,
   and whether a built-in function is switchable (by a machine setting) or fixed.
 - **R-BUS-3.** The machine declaration is the only place model knowledge lives. Shared code never tests a model id to

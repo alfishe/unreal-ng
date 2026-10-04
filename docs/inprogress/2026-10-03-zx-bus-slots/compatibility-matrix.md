@@ -5,7 +5,8 @@
 | **Date** | 2026-10-03 (rewritten after research SL-0) |
 | **Status** | Draft for owner review. This page is the readable form; the source of truth becomes the reference data collection in the code (`core/src/emulator/slots/refdata/`, [reference-data.md](reference-data.md)), from which these tables are generated and against which the plan engine is tested |
 | **Evidence** | [research-machines.md](research-machines.md) (buses, arbitration, built-ins), [research-cards.md](research-cards.md) (card decode, IORQGE, conflicts) |
-| **Rules** | [requirements.md](requirements.md) §3.3, [reference-data.md](reference-data.md) §5 (D1-D11), [open-questions.md](open-questions.md) Q1, Q2, Q5, Q7 |
+| **Rules** | [requirements.md](requirements.md) §3.3, [reference-data.md](reference-data.md) §5 (D1-D12), [open-questions.md](open-questions.md) Q1, Q2, Q5, Q7 |
+| **Generated** | The tables of §1-§4 are generated from the collection (`core/src/emulator/slots/slotmatrix.cpp`) and sit between `slots:generated` markers; `SlotMatrix_Test.MatrixMatchesDocs` fails when they differ. Do not edit them by hand: change the collection and regenerate (`UNREAL_SLOTS_MATRIX_UPDATE=1 tools/build/test.sh --gtest_filter='SlotMatrix_Test.MatrixMatchesDocs'`) |
 
 ## 0. How to read it
 
@@ -20,7 +21,9 @@
 | **X** | refused: a fixed built-in holds the function, or the card's ports are dead on this board | D4, §2 |
 | **R** | a socketed built-in chip is taken out (bus fight otherwise) | Q7 |
 | **P** | both stay; the later card is disabled for an accidental port clash | D7 |
-| **A** | needs an adapter (or the override, then `unrealistic`) | D8 |
+| **A** | needs an adapter (or the override, then `unrealistic`); "needs +12V" names a signal missing on a native bus | D8 |
+| replaces | a card put into an occupied slot replaces its content (socket boards) | - |
+| partly dead | allowed, but some of the card's ports are board ports hidden from the slots (`BoardWins`, `Iorq` card) | D4 |
 | `opt` | depends on the card's options | R-COMP-2 |
 
 **Arbitration modes** (per bus, research-machines.md §1): `CardWins` (a card's IORQGE hides the cycle from the board),
@@ -30,6 +33,10 @@
 
 ## 1. Functions
 
+One row per `Function` value of the vocabulary (`slotvocabulary.cpp`); the built-in-only functions (`palette`,
+`fdc.upd765`, `rtc`, ...) let the plan refuse a card that would need a fixed built-in's role.
+
+<!-- slots:generated:functions:begin -->
 | Function | Meaning | Ports involved |
 |---|---|---|
 | `ay-socket` | the AY role (AY, TurboSound, TSFM, or a bus card taking it over) | `#FFFD`, `#BFFD` (`#C002` decodes) |
@@ -41,29 +48,50 @@
 | `opl4` | OPL4 (MoonSound) | `#C4-#C7`, `#7E`, `#7F` |
 | `midi` | General MIDI synthesizer fed from the AY / YM I/O port | (AY register 14) |
 | `net.zxnetusb` | ZXNETUSB | `#AB` |
-| `serial.ef` / `serial.ee` | 16550 serial (ZX-WiFi) | `#xxEF` / `#xxEE` |
+| `serial.ef` | 16550 serial (ZX-WiFi, ZX-Evo COM, TS-Conf ZiFi) | `#xxEF` |
+| `serial.ee` | 16550 serial, ZX-WiFi `#EE` build | `#xxEE` |
 | `beta128` | TR-DOS disk interface | `#1F #3F #5F #7F #FF` (DOS) |
-| `ide.nemo`, `ide.smuc`, `ide.divide`, ... | IDE interfaces | per card |
-| `kempston-joystick`, `kempston-mouse` | input | `#1F`, `#FADF #FBDF #FFDF` |
+| `ide.nemo` | Nemo IDE | `#10-#F0`, `#11`, `#C8` |
+| `ide.smuc` | SMUC IDE (Scorpion) | `#xxBE` family (DOS) |
+| `ide.divide` | DivIDE | `#A3-#BF`, `#E3` |
+| `ide.atm` | ATM Turbo IDE | `#xxEF` (DOS) |
+| `ide.profi` | Profi v5 IDE | `#8B #AB #CB #EB` (extended map) |
+| `kempston-joystick` | Kempston joystick | `#1F` |
+| `kempston-mouse` | Kempston mouse | `#FADF #FBDF #FFDF` |
+| `sd.zc` | Z-Controller SD card | `#57`, `#77` |
+| `rtc` | real-time clock | per machine (ZX-Evo `#BFF7 #DFF7 #EFF7`) |
+| `palette` | Profi v5 palette | `#xx7E` |
+| `fdc.upd765` | +3 floppy controller | `#2FFD`, `#3FFD` |
+<!-- slots:generated:functions:end -->
 
 ## 2. Cards: first catalog
 
 The first migration set (cards the emulator has today, plus the ZX-MultiSound). Later cards are in §5.
 
+<!-- slots:generated:cards:begin -->
 | Card id | Card | Bus | Needs | Detection | Functions | Ports (mask / match) | IORQGE | Options |
 |---|---|---|---|---|---|---|---|---|
 | `ay` | machine's own AY (socket default) | ay-socket | - | - | `ay-socket` | host decode | host | - |
-| `ts` | TurboSound (NedoPC, 2 × AY) | ay-socket | - | - | `ay-socket` | host decode; chip select `#FC-#FF` | host | - |
+| `ts` | TurboSound (NedoPC, 2 x AY) | ay-socket | - | - | `ay-socket` | host decode; chip select `#FC-#FF` | host | - |
 | `tsfm` | TurboSound FM (NedoPC) | ay-socket | - | - | `ay-socket` | host decode; control `#F8-#FF` | host | - |
-| `gs` | General Sound (classic) | zxbus | IORQGE | Iorq | `gs` | `#FF/#B3`, `#FF/#BB` (**no `#33`**) | reads only | RAM 128 K-2 M, ROM 1.04 / 1.05 |
-| `gs-lw` | General Sound, lightweight player (emulator-only personality of `gs`) | zxbus | as `gs` | Iorq | `gs` | as `gs` | as `gs` | - |
-| `neogs` | NeoGS | zxbus | IORQGE, /CSROM, /RDROM, /WAIT (ZX-DMA) | Iorq | `gs` (+ ZX-DMA) | `#FF/#B3`, `#FF/#BB`, `#FF/#33` | address only | RAM 2 / 4 MB, firmware | 
-| `moonsound` | ZXM-MoonSound | zxbus | IORQGE (/IODOS optional) | Iorq | `opl4` | `#FC/#C4`, `#FE/#7E` | yes | JP1 (PentEvo) |
-| `covox-fb` | Covox `#FB` | zxbus | - | Iorq | `covox-fb` | `#FF/#FB` | no | port width (A2-only homebrew) |
-| `soundrive` | SounDrive 1.05 | zxbus | - | Iorq | mode 1: `soundrive`; mode 2: `soundrive` + `covox-fb` | mode 1 `#AF/#0F`; mode 2 `#F5/#F1` (emulator decode; Info Guide #4 gives a looser one, unconfirmed) | no | **S1 mode switch: 1 or 2** |
-| `multisound` | ZX-MultiSound rev.A2 | zxbus | IORQGE, +12 V | **RdWr** | `ym` -> `ay-socket` (takeover) + `midi`; `saa`; `gs`; `sd` -> `soundrive` | multisound hardware reference §3.1 | `#FFFD` family, `#BFFD`, `#B3`, `#BB` | DIP `ym,saa,gs,sd`, `gsRam`, `ctrlMask` |
-| `zxnetusb` | ZXNETUSB | zxbus | IORQGE, /CSROM | Iorq | `net.zxnetusb` | `#FF/#AB` | address only | - |
-| `zx-wifi` | ZX-WiFi (izzx) | zxbus | IORQGE (v1.2+) | Iorq | `serial.ef` (`serial.ee` build) | `#FF/#EF` (`#FF/#EE`) | v1.2+ | port build, board version |
+| `gs` | General Sound (classic) | zxbus | IORQGE | Iorq | `gs` | `#FF/#B3`, `#FF/#BB` | reads only | `ram` = `128k` / `256k` / `512k` / `1m` / `2m` (default `128k`); `rom` = `1.04` / `1.05` (default `1.05`) |
+| `gs-lw` | General Sound, lightweight player (emulator-only personality of `gs`) | zxbus | IORQGE | Iorq | `gs` | `#FF/#B3`, `#FF/#BB` | reads only | - |
+| `neogs` | NeoGS | zxbus | IORQGE, /WAIT, /CSROM, /RDROM | Iorq | `gs` | `#FF/#B3`, `#FF/#BB`, `#FF/#33` | yes | `ram` = `2m` / `4m` (default `2m`) |
+| `moonsound` | ZXM-MoonSound | zxbus | IORQGE | Iorq | `opl4` | `#FC/#C4` (JP1 open, non-DOS), `#FE/#7E` (JP1 open, non-DOS), `#FC/#C4` (JP1 fitted), `#FE/#7E` (JP1 fitted) | yes | `jp1` = `open` / `fitted` (default `open`) |
+| `covox-fb` | Covox `#FB` | zxbus | - | Iorq | `covox-fb` | `#FF/#FB` (full decode, write), `#04/#00` (A2-only decode, write) | no | `decode` = `full` / `a2` (default `full`) |
+| `soundrive` | SounDrive 1.05 | zxbus | - | Iorq | `soundrive`, `covox-fb` if mode 2 | `#AF/#0F` (mode 1, write), `#F5/#F1` (mode 2, write) | no | `mode` = `1` / `2` (default `1`) |
+| `multisound` | ZX-MultiSound rev.A2 | zxbus | IORQGE, +12V | RdWr | `ay-socket` (takeover) if `ym`, `midi` if `ym`, `saa` if `saa`, `gs` if `gs`, `soundrive` if `sd` | `#E00F/#E00D` (`ym`), `#E00F/#C00D` (`ym`), `#C00F/#800D` (`ym`, write), `#FF/#FF` (`saa`, write, ROM lock), `#FF/#B3` (`gs`), `#FF/#BB` (`gs`), `#AF/#0F` (`sd`, write, ROM lock) | `#FFFD`, `#BFFD`, `#B3`, `#BB` | `dip` = any of `ym`, `saa`, `gs`, `sd` (default all); `gsRam` = `1m` / `2m` (default `1m`); `ctrlMask` = `pro` / `classic` (default `pro`) |
+| `zxnetusb` | ZXNETUSB | zxbus | IORQGE, /CSROM | Iorq | `net.zxnetusb` | `#FF/#AB` | yes | - |
+| `zx-wifi` | ZX-WiFi (izzx) | zxbus | IORQGE | Iorq | `serial.ef` if `#EF` build, `serial.ee` if `#EE` build | `#FF/#EF` (`#EF` build), `#FF/#EE` (`#EE` build) | yes | `port` = `ef` / `ee` (default `ef`) |
+<!-- slots:generated:cards:end -->
+
+Notes on the generated table: `#FF/#B3` = mask / match; the conditions in brackets are the option values a claim or a
+function needs, `non-DOS` = gated off in DOS mode, `write` / `read` = one direction only. "yes" in the IORQGE column
+includes the address-only IORQGE of NeoGS and ZXNETUSB (formed without /M1); the plan does not need that
+distinction. SounDrive uses the emulator decode; Black_Cat's Info Guide #4 gives a looser one (mode 1: A0 = 1, A5 = 0;
+mode 2: A0 = 1, A2 = 0), unconfirmed, under which mode 2 would also hear the GS ports (`#B3`, `#BB`, `#33`). The
+ZX-WiFi is modeled as board v1.2+ (IORQGE); v1.0-1.1 boards lack it and fight the Scorpion Turbo+ `#FF` decode.
+Not modeled as options yet: NeoGS firmware, GS overclock.
 
 Facts that differ from today's emulator (each a follow-up row in [research-cards.md](research-cards.md) §2, not part of
 the slots work): the classic GS decodes no `#33`; SounDrive modes are alternatives; the TurboSound chip-select range is
@@ -72,55 +100,83 @@ the slots work): the classic GS decodes no `#33`; SounDrive modes are alternativ
 ## 3. Card × card (any machine)
 
 Row = card plugged in, column = card already installed. Socket cards (`ay`, `ts`, `tsfm`) share one socket, so plugging
-one replaces the other.
+one replaces the other. Computed by the plan engine on the PENTAGON declaration (a `CardWins` ZX-bus and an AY socket):
+the installed card in `zxbus.1` (or the socket), the new one into `zxbus.2`. A condition ("if `gs`", "if mode 2")
+names the option value of the row's or the column's card that produces the outcome; a card against its own kind is
+computed at its defaults.
 
-| new \ installed | ts / tsfm (socket) | gs | gs-lw | neogs | moonsound | covox-fb | soundrive | multisound | zxnetusb | zx-wifi |
-|---|---|---|---|---|---|---|---|---|---|---|
-| **ts / tsfm** | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` (the bus card would shadow the socket) | ✓ | ✓ |
-| **gs** | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ (mode 2 loose decode: **P**, unconfirmed) | **D** if `gs` | ✓ | ✓ |
-| **gs-lw** | ✓ | **D** | **D** | **D** | ✓ | ✓ | as `gs` | **D** if `gs` | ✓ | ✓ |
-| **neogs** | ✓ | **D** | **D** | **D** | ✓ | ✓ | as `gs` | **D** if `gs` | ✓ | ✓ |
-| **moonsound** | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **covox-fb** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** if mode 2 | ✓ | ✓ | ✓ |
-| **soundrive** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if mode 2 | **D** | **D** if `sd` | ✓ | ✓ |
-| **multisound** | **⊘** if `ym` | **D** if `gs` | **D** if `gs` | **D** if `gs` | ✓ | ✓ | **D** if `sd` | **D** | ✓ | ✓ |
-| **zxnetusb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ |
-| **zx-wifi** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** |
+<!-- slots:generated:card-x-card:begin -->
+| new \ installed | `ts` | `tsfm` | `gs` | `gs-lw` | `neogs` | `moonsound` | `covox-fb` | `soundrive` | `multisound` | `zxnetusb` | `zx-wifi` |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **ts** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ |
+| **tsfm** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ |
+| **gs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
+| **gs-lw** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
+| **neogs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
+| **moonsound** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **covox-fb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** if mode 2 | ✓ | ✓ | ✓ |
+| **soundrive** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if mode 2 | **D** | **D** if `sd` | ✓ | ✓ |
+| **multisound** | **⊘** if `ym` | **⊘** if `ym` | **D** if `gs` | **D** if `gs` | **D** if `gs` | ✓ | ✓ | **D** if `sd` | **D** | ✓ | ✓ |
+| **zxnetusb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ |
+| **zx-wifi** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** |
+<!-- slots:generated:card-x-card:end -->
 
 ## 4. Card × machine
 
 Bus and arbitration per machine (research-machines.md §3-15), then the outcome for each first-catalog card. Built-in
-outcomes use the codes of §0; "dead" = the card's ports are board ports hidden from the slots.
+outcomes use the codes of §0; "dead" = the card's ports are board ports hidden from the slots. One row per creatable
+model (`refdata/machines.cpp`), then the card × machine outcomes: the plan of plugging the card (default options; one row
+per value of a mode / port-build option) into an empty machine, in the slot the planner suggests; adjacent machines
+with identical columns are merged.
 
-| Machine (model) | Card bus | Arbitration | +12 V | Built-ins that matter |
-|---|---|---|---|---|
-| 48K | `sinclair-edge` | UlaOnly | yes | beeper / ULA `#FE` |
-| 128K, +2 | `sinclair-edge` | None (+2 IORQGE scope unconfirmed) | yes | AY (on the board) |
-| +2A, +3 | `sinclair-edge` (+3 variant: no /ROMCS, no IORQGE) | None | yes | AY, +3 FDC |
-| PENTAGON (1024SL class) | `zxbus` (3 slots) | CardWins | yes | AY socket, Beta-128, Kempston, all behind IORQG |
-| SCORPION, PROFSCORP | `zxbus` (Scorpion pinout) | CardWins | Turbo+ boards only | AY, Beta-128, SMUC |
-| ATM450, ATM710 | `atm-iobus`; `zxbus` only through the CPU-socket adapter | adapter: CardWins | adapter | AY, Beta-128, ATM IDE |
-| ATM3 (ZX-Evo Baseconf) | `zxbus` (2 slots) | BoardWins | jumper J4 | **socketed YM2149**; board ports: `#FE #F6 #FC`, every `#xxFD`, `#1F`, `#DF`, `#EF`, `#57 #77`, `#F7`, `#BF-#BD`, IDE; passes `#FB` (Covox written internally and passed on), `#B3 #BB`, `#FF` |
-| TSL (TS-Conf) | `zxbus` | BoardWins | jumper J4 | as Baseconf, but `#FB` and `#AF` hidden, `#F6 #FC #BF-#BD` passed |
-| PROFI, PROFI3 | `profi-bus` (64-pin, not ZX-bus) | BoardWins (`/OUTIORQ`) | ? | AY, palette `#7E` (port unconfirmed: `#xx7E` vs "0FEH") |
-| SPRINTER | `isa8`; `zxbus` through the ISA adapter | adapter | adapter | AY, Covox-Blaster |
+<!-- slots:generated:machines:begin -->
+| Model | Board | Buses (physical slots) | Arbitration | +12 V | Built-ins | Board ports hidden from the slots | Notes |
+|---|---|---|---|---|---|---|---|
+| 48K | Sinclair 16K / 48K | `edge` (sinclair-edge, 1) | UlaOnly | yes | `ula` | - | - |
+| 128K | Sinclair 128K (UK / Spanish) | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula` | - | - |
+| PLUS2 | Amstrad grey +2 | `ay-socket`, `edge` (sinclair-edge, 1) | UlaOnly | yes | `ay`, `ula` | - | `edge`: lower 13 is /IORQGE; its scope beyond the ULA is unconfirmed |
+| PLUS2A | Amstrad +2A | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula` | - | `edge`: no /ROMCS (/ROM1OE + /ROM2OE), no IORQGE |
+| PLUS3 | Amstrad +3 | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula`, `fdc` | - | `edge`: no /ROMCS (/ROM1OE + /ROM2OE), no IORQGE |
+| PENTAGON | Pentagon 128 (1991): no expansion connector, ZX-bus retrofitted | `ay-socket`, `zxbus` (retrofit, no physical slots) | CardWins | yes | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: no expansion connector on the Pentagon 128 board: the ZX-bus is retrofitted (NemoBus rules) |
+| SCORPION | Scorpion ZS-256 yellow board | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: +12 V only on the control port |
+| PROFSCORP | Scorpion ZS-256 Turbo+ with ProfROM | `ay-socket`, `zxbus` (2) | CardWins | yes | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: Turbo+ board: +12 V on B22 (B29 through J6) |
+| ATM450 | ATM Turbo 2 v4.50 | `ay-socket`, `iobus` (atm-iobus, 1), `cpu-socket` (1) | `iobus`: None; `cpu-socket`: None (adapter `atm-cpu-socket-zxbus`: CardWins) | `iobus`: yes; `cpu-socket`: no | `ay`, `beta128`, `covox`, `adc` | - | - |
+| ATM710 | ATM Turbo 2+ v7.10 | `ay-socket`, `iobus` (atm-iobus, 2), `cpu-socket` (1) | `iobus`: None; `cpu-socket`: None (adapter `atm-cpu-socket-zxbus`: CardWins) | `iobus`: yes; `cpu-socket`: no | `ay` (socketed AY-3-8912), `beta128`, `ide`, `covox`, `adc` | - | - |
+| ATM3 | ZX-Evolution rev C, Baseconf | `ay-socket`, `zxbus` (2) | BoardWins | yes | `ay` (socketed YM2149), `beta128`, `kempston-joystick`, `kempston-mouse`, `sd-zc`, `ide-nemo` (switchable), `rtc`, `covox`, `com` | `#FE` `#F6` `#FC` `#FD` `#DF` `#1F` `#F7` `#77` `#57` `#BF` `#BE` `#BD` `#EF` `#1F/#10` `#11` `#C8` `#FF` (DOS) | `zxbus`: +12 V only with jumper J4 |
+| TSL | ZX-Evolution rev C, TS-Conf (FREE_IORQ off) | `ay-socket`, `zxbus` (2) | BoardWins | yes | `ay` (socketed YM2149), `beta128`, `kempston-joystick`, `kempston-mouse`, `sd-zc`, `ide-nemo` (switchable), `ts-registers`, `covox`, `zifi` | `#FE` `#AF` `#FD` `#FB` `#F7` (non-DOS) `#1F/#10` `#11` `#C8` `#1F` `#3F` (DOS) `#5F` (DOS) `#7F` (DOS) `#FF` (DOS) `#DF` `#77` `#57` `#EF` | `zxbus`: +12 V only with jumper J4; the slots never see INTA |
+| PROFI | Profi v5 | `ay-socket`, `profi-bus` (1) | BoardWins | yes | `ay` (socketed AY-3-8912), `beta128`, `ppi8255`, `palette`, `rtc`, `ide` | `#9F/#1F` `#FF` (DOS) | `profi-bus`: /OUTIORQ masks the PROM-decoded ports; `#FE`, `#7FFD`, `#DFFD`, AY, palette not shown masked |
+| PROFI3 | Profi v3.2 | `ay-socket`, `profi-bus` (1) | BoardWins | yes | `ay` (socketed AY-3-8912), `beta128`, `ppi8255` | `#9F/#1F` `#FF` (DOS) | `profi-bus`: /OUTIORQ masks the PROM-decoded ports; `#FE`, `#7FFD`, `#DFFD`, AY, palette not shown masked |
+| SPRINTER | Peters Plus Sprinter Sp2000 | `ay-socket`, `isa` (isa8, 2) | None (adapter `sprinter-isa-zxbus`: None) | yes | `ay` (switchable), `covox-blaster` (switchable), `beta128` (switchable), `kempston-mouse` (switchable), `kempston-joystick` (switchable) | - | `ay-socket`: the AY is in the FPGA; the socket is the emulator's TurboSound place; `isa`: reached through a memory window; ISA cards never compete with a Z80 port |
+<!-- slots:generated:machines:end -->
 
-| Card \ machine | 48K | 128K / +2 | +2A / +3 | PENTAGON | SCORPION | ATM450 / 710 | ATM3 (Evo) | TSL | PROFI | SPRINTER |
+<!-- slots:generated:card-x-machine:begin -->
+| Card \ machine | 48K | 128K / PLUS2 / PLUS2A / PLUS3 | PENTAGON | SCORPION | PROFSCORP | ATM450 / ATM710 | ATM3 | TSL | PROFI | PROFI3 / SPRINTER |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **ts / tsfm** | X (no AY socket) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (into the YM2149 socket) | ✓ | ✓ | ✓ |
-| **gs, gs-lw** | A | A | A | ✓ | ✓ | A | ✓ (`#B3 #BB` passed) | ✓ | A (unconfirmed) | A (ISA adapter) |
-| **neogs** | A | A | A | ✓ | ✓ | A | ✓ | ✓ | A | A |
-| **moonsound** | A | A | A | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A |
-| **covox-fb** | A | A | A | ✓ (shadows nothing: Pentagon Covox is a card) | ✓ | A | ✓ both play (board passes `#FB`) | **X** (`#FB` hidden, board Covox) | A | A |
-| **soundrive** mode 1 | A | A | A | ✓ (`#1F` vs Beta: DOS-gated built-in) | ✓ | A | partly dead: channel `#1F` is a board port | partly dead (`#1F`) | A | A |
-| **soundrive** mode 2 | A | A | A | ✓ | ✓ | A | ✓ (`#FB` also to the board Covox) | partly dead (`#FB`) | A | A |
-| **multisound** | A | A | A | **S** (AY socket shadowed) | ✓ on Turbo+ (12 V), **S** | A | **R** (YM2149 out of its socket, Q7) | **R** | A | A |
-| **zxnetusb** | A | A | A | ✓ | ✓ | A | ✓ | ✓ | A | A (Sprinter network design) |
-| **zx-wifi** | A | A | A | ✓ | ✓ (board v1.2+: `#FF` conflict before) | A | **X** (`#EF` board COM; `#EE` build ✓) | **X** (`#EF` ZiFi; `#EE` build ✓) | A | A |
+| **ts** | **X** (no `ay-socket`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **tsfm** | **X** (no `ay-socket`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **gs** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **gs-lw** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **neogs** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **moonsound** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A |
+| **covox-fb** | A | A | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A |
+| **soundrive** mode 1 | A | A | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F` is a board port) | A | A |
+| **soundrive** mode 2 | A | A | ✓ | ✓ | ✓ | A | ✓ | partly dead (`#FB` is a board port) | A | A |
+| **multisound** | A | A | **S** (`ay`) | A (needs +12V) | **S** (`ay`) | A | **R** (`ay` YM2149 out of its socket) | **R** (`ay` YM2149 out of its socket) | A | A |
+| **zxnetusb** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **zx-wifi** `#EF` build | A | A | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A |
+| **zx-wifi** `#EE` build | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+<!-- slots:generated:card-x-machine:end -->
 
-**PENTAGON** in the emulator is one model for 128 / 512 / 1024 K; the slot declaration follows the 1024SL class (3
-slots, CardWins). The 1991 Pentagon 128 has no CPU bus connector at all (research-machines.md §8); if a "classic
-Pentagon 128" variant is ever modeled, it declares no `zxbus`.
+Notes the cells do not carry: the Pentagon has no Covox of its own (a Covox there is a card); a SounDrive mode-1 card
+on the Pentagon co-receives the Beta-128 writes to `#1F` / `#5F` in DOS (a write, no fight); on the ZX-Evo Baseconf a
+Covox card and the board Covox both play (the board writes `#FB` internally and passes it on); the ISA adapter of the
+Sprinter reaches ZX-bus cards through the ISA window, not as Spectrum ports (the Sprinter network design covers
+ZXNETUSB there); whether a GS works on the Profi bus through an adapter is unconfirmed.
+
+**PENTAGON** is the Pentagon 128 as chosen from the menu (models come only from the menu, each with its own photo).
+The 1991 board has no CPU bus connector (research-machines.md §8), so its ZX-bus is declared as **retrofitted**: no
+physical slots, NemoBus rules (card wins), and every report and the Qt slot window say in text that the cards are
+bolted on. Any other model without a physical connector for a bus gets the same treatment.
 
 ## 5. Later cards (catalog only, no slot code in the first migration)
 

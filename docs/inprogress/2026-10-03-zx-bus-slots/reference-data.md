@@ -40,18 +40,24 @@ The matrix grows with every card and every machine. If the rules are spread over
 
 ```
 core/src/emulator/slots/
-  slotvocabulary.h         enums: Function, BusSignal, BusKind, Arbitration, CycleDetection, ReadRule, Outcome
-  slottypes.h              aggregates: PortClaim, OptionDef, FunctionUse, CardDef, BusDef, BuiltInDef, MachineDef,
-                           AdapterDef, ExceptionDef, SourceRef
+  slotvocabulary.{h,cpp}   enums: Function, BusSignal, BusKind, Arbitration, CycleDetection, ReadRule, Iorqge, Gate,
+                           Role, BuiltInKind, Opt, OptionKind, Outcome; one id + description per value (the .cpp)
+  slottypes.h              aggregates: When, PortClaim, OptionValue, OptionDef, FunctionUse, CardDef, BusDef,
+                           BuiltInDef, MachineDef, AdapterDef, ExceptionDef, SourceRef (+ Src ids), Collection
   refdata/
     sources.cpp            bibliography: id -> title + URL (every entry below cites ids from here)
     cards.cpp              the card catalog (one CardDef per card)
     machines.cpp           one MachineDef per creatable model: buses, arbitration, board ports, built-ins
     adapters.cpp           bus adapters
     exceptions.cpp         documented pair rules
-    refdata.h              span accessors: Cards(), Machines(), Adapters(), Exceptions(), Sources()
-  slotplanner.{h,cpp}      the plan engine (pure functions over the collection + the current slot set)
+    refdata.{h,cpp}        span accessors: Cards(), Machines(), Adapters(), Exceptions(), Sources(); All() = Collection
+  slotplanner.{h,cpp}      the plan engine (pure functions over a Collection + the current slot set)
+  slotmatrix.{h,cpp}       renders compatibility-matrix.md §1-§4 from the collection and the plan engine
 ```
+
+As built in SL-1: the machine declarations live here, keyed by `MEM_MODEL`; the decoders get no `DescribeBuses()`
+(architecture.md §3.1). The planner takes a `Collection` (default `refdata::All()`), so tests run it over their own
+cards and machines.
 
 `refdata/` holds data only: no logic, no includes beyond the two headers. A reviewer reads one card as one block.
 
@@ -152,18 +158,22 @@ For a request "card A into slot S" (and for "options of A change"), the plan eng
 | D1 | A and card B share a function | B displaced | `removed` (+ B's full options) |
 | D2 | `CardWins` bus: A takes over `ay-socket` by IORQGE, B is the socket's default chip | B shadowed | `shadowed` |
 | D3 | `CardWins` bus: A takes over `ay-socket`, B is a TS / TSFM in the socket | B displaced, socket back to default, default shadowed | `removed` + `shadowed` |
-| D4 | A shares a function with a **fixed** built-in, or an `Iorq` card's claim is a hidden board port (`BoardWins`) | request refused (even with the flag) | `refused: <reason>` |
+| D4 | A shares a function with a **fixed** built-in, or **every** claim of an `Iorq` card is a hidden board port (`BoardWins`); when only some are, the card is allowed and those ports are reported | request refused (even with the flag); partly: allowed | `refused: <reason>`; `deadPorts` (`partly dead`) |
 | D5 | A shares a function with a **switchable** built-in | built-in switched off | `switchedOff` |
-| D6 | `CardWins` bus: A's IORQGE claims cover a built-in's claims (no shared function) | built-in shadowed on those ports | `shadowed` |
-| D7 | A's claims overlap card B's claims with no shared function and no IORQGE priority | A plugged in but disabled | `disabled: port clash with <slot>` |
+| D6 | `CardWins` bus: A's IORQGE claims cover a built-in's documented port (`PortClaim::port`; a mirror is not enough) | built-in shadowed on those ports | `shadowed` |
+| D7 | A's **read** claims overlap card B's read claims with no shared function and no IORQGE on either (a write both receive is co-reception, as on the real bus) | the later card by slot order plugged in but disabled | `disabled: port clash with <slot>` |
 | D8 | A needs a signal the bus lacks | adapter in the slot -> `fit: adapter`; else refused, or `fit: unrealistic` with the override | `fit` |
 | D9 | an exception matches | its outcome | `exception: <reason>` |
 | D10 | B displaced held functions A does not offer | nothing more | `lostFunctions` |
 | D11 | B displaced owns media | media follow the stranded-media rules | `media` |
-| D12 | `BoardWins` bus: an `RdWr` card's read claim is a board port served by a **socketed** chip | the chip is taken out of its socket (Q7) | `removedFromSocket` |
+| D12 | A's read claim covers a built-in's documented read port and nothing silences either side (`BoardWins` with an `RdWr` card, or `None` / `UlaOnly`) | a **socketed** chip is taken out of its socket (Q7); a socket board there is displaced as pointless; otherwise a bus fight (fit `unrealistic` with the override) | `removedFromSocket`, `busFights` |
 
 **Order and determinism.** The engine evaluates D9 first (exceptions), then D4 (refusals), D8 (fit), then D1-D3, D5-D7,
-D12 in slot order, and finally D10-D11. The result does not depend on the order in which cards were added.
+D12 in slot order, and finally D10-D11. The result does not depend on the order in which cards were added (the
+slot set is sorted by the machine's bus order and slot number first). As built (SL-1): the fit (D8) is computed
+before D4's board-port check, because an adapter decides which arbitration is in effect; the order only changes the
+order of the reasons, never the outcome. Without the fit, a card works "as if the bus carried every signal it needs"
+(Q5): on a `None` / `UlaOnly` bus an IORQGE card is planned as `CardWins`.
 
 **One step.** Displacement never chains: removing B never displaces anything else, and a plan only removes.
 
@@ -172,11 +182,13 @@ D12 in slot order, and finally D10-D11. The result does not depend on the order 
 
 ## 6. Generated views and tests
 
-- `slots matrix --markdown` (CLI, from `SlotControl`) prints [compatibility-matrix.md](compatibility-matrix.md) §1-§4
-  from the collection.
-- `SlotsRefData_Test.CollectionIsConsistent`: every enum value has a description, every entry has a source, no claim
-  outside 16 bits, every creatable machine model has exactly one `MachineDef`, option conditions name options the
-  card has.
-- `SlotsRefData_Test.MatrixMatchesDocs`: the plan engine, run over every card pair and every machine, reproduces the
+- `RenderMatrixTable()` (`slotmatrix.h`) renders [compatibility-matrix.md](compatibility-matrix.md) §1-§4 from the
+  collection; the document carries each table between `<!-- slots:generated:<name>:begin -->` / `end` markers.
+  `slots matrix --markdown` (CLI, from `SlotControl`) prints the same from SL-7.
+- `RefData_Test.CollectionIsConsistent`: every enum value has a description, every entry has a source (and every
+  source a link or an existing repository document), no claim outside 16 bits, every creatable machine model has
+  exactly one `MachineDef`, option conditions name options the card has, and no exception is already explained by
+  the claims.
+- `SlotMatrix_Test.MatrixMatchesDocs`: the plan engine, run over every card pair and every machine, reproduces the
   tables committed in the docs (the docs, the collection and the engine cannot drift apart).
-- `SlotsRefData_Test.WorkedPlans`: the worked plans of compatibility-matrix.md §6 as table-driven cases.
+- `SlotPlanner_Test.WorkedPlans`: the worked plans of compatibility-matrix.md §6 as table-driven cases.

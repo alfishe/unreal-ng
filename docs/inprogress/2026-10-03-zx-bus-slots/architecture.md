@@ -56,7 +56,7 @@ hot path does a `std::map::find` on every IN / OUT even with no card fitted.
 ```mermaid
 flowchart TB
     subgraph Machine["Machine (PortDecoder_X)"]
-        DECL["DescribeBuses():<br/>buses, signals, slots,<br/>built-in devices + functions"]
+        DECL["MachineDef (refdata, by model):<br/>buses, signals, slots,<br/>built-in devices + functions"]
         NATIVE["native decode<br/>(#FE, #7FFD, ...)"]
     end
     subgraph Slots["SlotManager (one per emulator)"]
@@ -97,6 +97,13 @@ flowchart TB
 
 ### 3.1 Machine side
 
+**As built (SL-1):** the declaration is a `MachineDef` in `core/src/emulator/slots/refdata/machines.cpp`, keyed by
+`MEM_MODEL` ([reference-data.md](reference-data.md) §3-4: `BusDef`, `BuiltInDef` with `Fixed` / `Switchable` /
+`Socketed`, board ports as `PortClaim`s). There is **no** `DescribeBuses()` virtual on the decoders: decoders are chosen
+by model as well, so a table keyed by model is the same single source without needing a decoder instance (a model
+switch plans the slot set against the target model before any decoder exists), and the docs are generated from it.
+The sketch below is the original idea, kept for the field list.
+
 ```cpp
 // core/src/emulator/slots/busdeclaration.h (sketch)
 enum class BusKind : uint8_t { AySocket, ZxBus, SinclairEdge, AtmIoBus, ProfiBus, Isa8 };   // Scorpion = ZxBus (research §11)
@@ -131,7 +138,7 @@ struct MachineBuses { std::vector<BusDeclaration> buses; std::vector<BuiltInDevi
 virtual MachineBuses DescribeBuses() const;
 ```
 
-`DescribeNetwork()`'s `expansionSlots` and `zxBus` become views derived from `DescribeBuses()` (one source). The
+`DescribeNetwork()`'s `expansionSlots` and `zxBus` become views derived from the machine's `MachineDef` (one source). The
 Sprinter answers its ISA slots and, through a fitted ZX-bus adapter, a `zxbus` bus.
 
 ### 3.2 Card side
@@ -291,6 +298,12 @@ public:
 };
 ```
 
+**As built (SL-1):** the pure part is `SlotPlanner::Plan(model, slotSet, request, context)`
+(`core/src/emulator/slots/slotplanner.h`), returning the `SlotPlan` above plus `removedFromSocket`, `disabled`,
+`deadPorts`, `busFights`, `exceptions` and `resultingSlots` (the slot set once applied). `SlotManager` (SL-6) keeps
+the slot set of a running emulator and calls it. Steps 7-8 below take their state from a `PlanContext` (dirty media;
+the TTD check arrives with SL-5).
+
 **Plan algorithm** (deterministic, R-OP-2):
 1. Resolve the target slot (`zxbus.next` = the first empty `zxbus` slot; a new one is created, unlimited).
 2. Compute the new card's functions from its options and its ports.
@@ -360,7 +373,7 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the fi
 | ZXNETUSB, ZX-WiFi | `NetworkManager::MakePlan` / `Refit` | cards `zxnetusb`, `zx-wifi`; `NetworkManager` keeps the virtual network and peers, `SlotManager` decides fitting |
 | ATM2IOESP | `IIoBusDevice` on the ATM INTERNAL connector | a slot on a machine-declared `atm-internal` bus (same model, one more bus kind) |
 | Sprinter ISA cards | `SprinterIsaBus` | unchanged; `isa1` / `isa2` appear in the slot report; the ZX-bus adapter hosts a `zxbus` |
-| Built-ins (Beta-128 on Pentagon, ZX-Evo TurboSound, board Covox, Kempston on Pentagon) | inline in decoders | declared in `DescribeBuses().builtIn` with functions and ports; behavior unchanged |
+| Built-ins (Beta-128 on Pentagon, ZX-Evo TurboSound, board Covox, Kempston on Pentagon) | inline in decoders | declared as `BuiltInDef`s of the machine's `MachineDef` with functions and ports; behavior unchanged |
 | Beta-128 / IDE / Kempston as *interfaces* on Sinclair machines | config flags | later cards (function `beta128`, `ide.*`, `kempston-*`); not in the first migration (tdd.md "later") |
 
 ## 8. TTD and snapshots

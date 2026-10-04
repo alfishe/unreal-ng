@@ -40,6 +40,7 @@ const std::vector<std::string> kRegistrationFiles = {
     "emulator/io/ide/idecontroller.cpp",   // [HDD] Scheme=SPRINTER fits MM_SPRINTER only (IdeController::SchemeFits, S3b)
     "debugger/ttd/ttdserializable.h",   // the PeripheralId Sprinter rows (serializers in debugger/ttd/sprinter/)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
+    "emulator/slots/refdata/machines.cpp",  // the per-model slot declaration (buses, built-ins; ZX-bus slots SL-1)
 };
 
 /// Identifiers no shared file may use

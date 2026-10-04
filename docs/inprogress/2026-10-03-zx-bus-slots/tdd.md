@@ -14,7 +14,7 @@
 | Phase | Content | Exit criterion | Size |
 |---|---|---|---|
 | **SL-0** | Research: bus kinds and signals per machine from schematics (IORQGE, /IODOS, +12 V, edge connector variants, Scorpion / Profi buses), read-conflict rule per bus, TTD registry key for two instances of one module (engine branch), the list of every place a card is chosen today | `research.md` with a sourced table per machine; open points listed in open-questions | M |
-| **SL-1** | Core types: `BusDeclaration`, `CardType`, `CardCatalog`, `ICard`, `PortClaim`, `SlotManager::Plan` (pure), `DescribeBuses()` on every decoder (data only, no behavior change) | plan tests §2.1 green; no production path uses it yet | M |
+| **SL-1** | Core types and the reference data collection ([reference-data.md](reference-data.md)): vocabulary, `CardDef` / `BusDef` / `BuiltInDef` / `MachineDef` / `AdapterDef` / `ExceptionDef`, the first card catalog, one `MachineDef` per creatable model, the pure plan engine `SlotPlanner::Plan`, the matrix generator (data only, no behavior change). **Done 2026-10-03**, see §5 | plan tests §2.1 green; no production path uses it yet | M |
 | **SL-2** | `PortClaimTable` with IORQGE and passive claims, shadowing, read-conflict rule, ROM-fetch lock; wired into the Z80 funnel behind the existing mechanisms (they register into it) | claim tests §2.2 green; all of `core-tests` green; A/B benchmark: no regression on the port hot path, the no-card case at least as fast | L |
 | **SL-3** | Rule migration: R6, `OverrideDecodeForFullDecodeClaim`, self-decoding dispatch, the exact port map's peripheral entries become claims; the three old mechanisms removed one at a time | each removal its own merge with the TTD corpus and machine boot tests green | L |
 | **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L |
@@ -31,6 +31,10 @@ migrated TSFM, GS and SounDrive) and SL-5 for its TTD step.
 All in `core-tests`, under 50 ms each, files named after the source file under test.
 
 ### 2.1 Plan (`slotmanager_test.cpp`)
+
+As built in SL-1 the pure plan lives in `slotplanner.{h,cpp}`, so its tests are `SlotPlanner_Test.*` in
+`core/tests/emulator/slots/slotplanner_test.cpp` (test file named after the file under test); the names below map
+one to one, except as noted in §5.
 
 | Test | Checks |
 |---|---|
@@ -98,3 +102,54 @@ check (`vm.loadavg` below 12, two runs), results in the folder TODO.
 
 Each phase updates [TODO.md](TODO.md), PLAN row #82, the machine folders' TODOs where a machine declaration lands,
 and the user doc and recipe from SL-7 on.
+
+## 5. SL-1 as built (2026-10-03)
+
+**Files** (no production code path includes them yet):
+
+| File | Content |
+|---|---|
+| `core/src/emulator/slots/slotvocabulary.{h,cpp}` | the enums and one id + description per value |
+| `core/src/emulator/slots/slottypes.h` | the aggregates, `Src` ids, `Collection` |
+| `core/src/emulator/slots/refdata/{sources,cards,machines,adapters,exceptions,refdata}.cpp`, `refdata.h` | the collection: 63 sources, 12 cards, 15 machines, 3 adapters, 1 exception |
+| `core/src/emulator/slots/slotplanner.{h,cpp}` | `SlotPlanner::Plan`, option parse / format helpers, `ToText` |
+| `core/src/emulator/slots/slotmatrix.{h,cpp}` | `RenderMatrixTable()`: compatibility-matrix.md §1-§4 |
+| `core/tests/emulator/slots/refdata/refdata_test.cpp` | `RefData_Test.CollectionIsConsistent` |
+| `core/tests/emulator/slots/slotplanner_test.cpp` | `SlotPlanner_Test.*`: `WorkedPlans` (matrix §6 A-H) and the §2.1 plan tests |
+| `core/tests/emulator/slots/slotmatrix_test.cpp` | `SlotMatrix_Test.MatrixMatchesDocs`, `EveryTableIsWellFormed` |
+| `sprinterisolation_test.cpp`, `tsconfisolation_test.cpp` | `refdata/machines.cpp` added to the model-id registration surface (it names `MM_SPRINTER` / `MM_TSL`) |
+
+**Tests of §2.1:** implemented `PlugIntoEmptySlot`, `FunctionClashRefusedByDefault`, `FunctionClashReplacedWithFlag`,
+`OneCardRemovesSeveral`, `OptionsAvoidClash`, `SetOptionsRunsSamePlan` (incl. the dirty `sd.ngs` refusal),
+`ReplacingWithLessReportsLostFunctions`, `BusFitNeedsAdapterOrOverride` (example G plus 48K adapter, ATM CPU-socket
+adapter, Scorpion without +12 V), `FixedBuiltInBlocksEvenWithFlag`, `SwitchableBuiltInSwitchedOff`,
+`AccidentalPortClashDisablesLater`, `DryRunChangesNothing`; `MatrixGeneratedFromDeclarations` is
+`SlotMatrix_Test.MatrixMatchesDocs` (all of §1-§4, not only §2). Added: `WorkedPlans`,
+`ResultDoesNotDependOnInsertionOrder`, `DisplacementIsOneStep`, `SocketBoardOnBoardWinsMachine`,
+`BoardPortsAreDeadForIorqCards`, `RemoveReleasesMedia`, `MalformedRequestsRefused`, `OptionsParseAndFormat`.
+**Skipped (later phases):** `RefusedWhileTtdRecords` (SL-5: the TTD session guard), `IniLoadUsesSamePlan` and
+`LegacyKeysTranslated` (SL-4: `[SLOTS]` and legacy key translation).
+
+**Deviations from the design, with the reason:**
+
+1. **No `DescribeBuses()` on the decoders**: machine declarations live in `refdata/machines.cpp` keyed by `MEM_MODEL`
+   (architecture.md §3.1 updated). One source, usable before a decoder exists (model switch), and the docs are
+   generated from it.
+2. **`SlotPlanner` instead of `SlotManager::Plan`**: the pure engine is its own class over a `Collection` (the real
+   one by default; tests pass their own cards and machines). `SlotManager` (SL-6) will own the running slot set and
+   call it. `ICard`, `CardType::Create` and the card catalog's code side come with the cards (SL-4); SL-1 is data only.
+3. **Rules made precise** (reference-data.md §5 updated): D4 refuses only when *every* claim of an `Iorq` card is a
+   hidden board port, otherwise the card is allowed and the dead ports are reported (`partly dead`, as the matrix §4
+   always showed for SounDrive on the ZX-Evo); D6 / D2 shadow a built-in only when a card's IORQGE claim covers the
+   built-in's documented port (`PortClaim::port`), so a mirror (MoonSound `#7E` vs the ULA's A0 decode) is not a
+   shadow; D7 counts only read overlaps (a write both receive is co-reception); D12 is generalized to every case where
+   nothing silences either side of a read (a socketed chip is taken out, a socket board is displaced as pointless,
+   otherwise a bus fight with fit `unrealistic`); D8 is computed before D4's board-port check because an adapter
+   decides the arbitration.
+4. **The Evo / TS-Conf board Covox and the Sprinter built-ins hold no exclusive function**: on the Baseconf a Covox
+   card and the board Covox both play; on TS-Conf the card's `#FB` is dead by the board-port rule (D4), which also
+   gives SounDrive mode 2 its `partly dead` instead of a refusal.
+5. **Machine declarations follow one real board per model**: `SCORPION` = the yellow ZS-256 (no +12 V on the slot),
+   `PROFSCORP` = Turbo+ (2 slots, +12 V); `PENTAGON` = the 1024SL v2.2 class; `PLUS2` = `UlaOnly` (research §1);
+   `PROFI3` has no palette.
+
