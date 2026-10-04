@@ -21,6 +21,7 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "3rdparty/message-center/messagecenter_fast.h"
 #include "3rdparty/message-center/eventqueue_emulator.h"
+#include "_helpers/testwaithelper.h"
 
 /// region <From messagecenter_disposal_test.cpp>
 
@@ -494,6 +495,30 @@ TEST(EventQueuePayloadOwnership_Test, ExplicitNoCleanupLeavesPayloadToTheCaller)
     EXPECT_EQ(destroyed, 0);
     delete retained;
     EXPECT_EQ(destroyed, 1);
+}
+
+TEST(MessageCenterPayloadOwnership_Test, DefaultPostsAreFreedThroughTheWorkerThread)
+{
+    // End to end: real worker thread, a registered observer, payloads posted with default arguments
+    MessageCenter::DisposeDefaultMessageCenter();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter(true);
+    const int kCount = 100;
+    int destroyed = 0;  // Only touched by the worker thread until the wait below succeeds
+    std::atomic<int> delivered{0};
+
+    mc.RegisterTopic("ownership_worker");
+    uint64_t id = mc.AddObserver("ownership_worker", [&](int, Message*) { delivered++; });
+
+    for (int i = 0; i < kCount; i++)
+    {
+        mc.Post("ownership_worker", new CountedPayload(&destroyed));
+    }
+
+    EXPECT_TRUE(TestWait::For([&] { return delivered.load() == kCount; }));
+    mc.RemoveObserverById("ownership_worker", id);  // Waits for in-flight dispatches to complete
+    MessageCenter::DisposeDefaultMessageCenter();   // Joins the worker; payloads queued past the wait are freed too
+
+    EXPECT_EQ(destroyed, kCount);
 }
 
 /// endregion </Payload ownership of Post()>
