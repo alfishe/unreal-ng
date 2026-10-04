@@ -261,6 +261,29 @@ TEST_F(Profi3Boot_Test, KlugCpmBootsFromKramisV03)
     EXPECT_GE(inkLines, 40u) << "the sign-on and the configuration report";
 }
 
+/// @brief The SP-DOS system disk (testdata/machines/profi/cpm/sp-dos) boots on the v3 from the Kramis menu's
+///        "Profi-DOS" entry to "SP-DOS Shell by Michael Markowsky" (hi-res, CPU at 3 MHz)
+TEST_F(Profi3Boot_Test, SpDosBootsToItsShell)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and SP-DOS boot from a floppy
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->RunNFrames(600, true);   // the Kramis menu, settled
+    ASSERT_TRUE(KramisMenuOnScreen(context));
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/profi/cpm/sp-dos/unicopy-sp-dos.td0"), 0,
+                                    &error))
+        << error;
+    TapKeys("ENT");   // the first entry: Profi-DOS
+    _emulator->RunNFrames(1500, true);
+
+    std::string ram;
+    for (uint32_t a = 0; a < 0x10000; a++)
+        ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
+    EXPECT_NE(ram.find("SP-DOS Shell by Michael Markowsky"), std::string::npos)
+        << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
+    EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
+}
+
 /// @brief Development probe (disabled): boot the Kramis BIOS and print what it leaves on the screen
 TEST_F(Profi3Boot_Test, DISABLED_ProbeKramisBios)
 {

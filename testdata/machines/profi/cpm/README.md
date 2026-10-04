@@ -1,12 +1,13 @@
 # Profi CP/M disk images
 
-CP/M floppies for the two Profi boards, collected 2026-10-03. Per-image details (source, hashes,
+CP/M floppies for the two Profi boards, collected 2026-10-03 (SP-DOS from KLUG's BBS archive). Per-image details (source, hashes,
 contents, how to boot) are in the README of each board folder:
 
 | Folder | Board | Images |
 |:--|:--|:--|
 | [`v5/`](v5/README.md) | Profi v5 (Kondor boards 5.0x, BIOS 1.x / 2.x by Micco) | the Kondor "Copy K" system disk, two user system disks |
 | [`v3/`](v3/README.md) | Profi v3.2 (Kramis BIOS V0.2 / V0.3) | Klug CP/M 2.3 |
+| [`sp-dos/`](sp-dos/README.md) | both (BIOS by V. Tereschenko on the disk) | the SP-DOS system disk (UniCopy) |
 
 ## The Profi CP/M floppy format
 

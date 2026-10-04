@@ -5,7 +5,7 @@
 | **Date** | 2026-10-03 |
 | **Status** | Draft for owner review |
 | **PLAN** | row #82 "Machine buses and slots, one model for every bus" |
-| **Decisions** | [open-questions.md](open-questions.md) Q1-Q6 (all decided 2026-10-03) |
+| **Decisions** | [open-questions.md](open-questions.md) Q1-Q7 (all decided 2026-10-03) |
 | **Design** | [architecture.md](architecture.md), [compatibility-matrix.md](compatibility-matrix.md), [tdd.md](tdd.md) |
 | **First new card** | [ZX-MultiSound](../2026-10-03-zx-multisound/requirements.md) |
 
@@ -42,8 +42,9 @@ way. This design does the same for every Spectrum-family machine and adds a comp
 ### 3.1 Machines declare buses
 
 - **R-BUS-1.** Every machine model declares its buses and, per bus, the signals present (IORQGE, /IODOS, /DOS, /WAIT,
-  +12 V, /RESET, /M1, /RFSH, /ROMCS) and the number of physical slots (informational; our limit is unlimited, owner
-  rule).
+  +12 V, /RESET, /M1, /RFSH, /CSROM, /RDROM, /BUSRQ), the number of physical slots (informational; our limit is
+  unlimited, owner rule), the **arbitration mode** (`CardWins`, `BoardWins`, `UlaOnly`, `None`; research-machines.md
+  §1), the board ports hidden from the slots (`BoardWins`) and the read-conflict rule.
 - **R-BUS-2.** Every machine declares its built-in devices with the functions they provide and the ports they answer,
   and whether a built-in function is switchable (by a machine setting) or fixed.
 - **R-BUS-3.** The machine declaration is the only place model knowledge lives. Shared code never tests a model id to
@@ -71,7 +72,9 @@ way. This design does the same for every Spectrum-family machine and adds a comp
   does not occupy `gs`. Changing an option goes through the same check as plugging a card in.
 - **R-COMP-3. Bus fit.** A card whose required signals are missing on the slot's bus does not fit (open-questions Q5).
   An adapter can make it fit. An override makes it work logically, marked `unrealistic`.
-- **R-COMP-4. Shadowing.** A card that drives IORQGE on the ports of a built-in device shadows that device (Q2). If the
+- **R-COMP-4. Shadowing.** On a `CardWins` bus, a card that drives IORQGE on the ports of a built-in device shadows
+  that device (Q2). On a `BoardWins` bus a card cannot shadow: its claims on board ports are dead for `Iorq` cards
+  (an incompatibility) and a read bus fight for `RdWr` cards, resolved by taking a socketed built-in chip out (Q7). If the
   slot that is shadowed holds a card (a TSFM in the AY socket), that combination is listed in the matrix as pointless
   and treated as incompatible.
 - **R-COMP-5. Built-in devices are never removed.** A request that would need a fixed built-in function removed is

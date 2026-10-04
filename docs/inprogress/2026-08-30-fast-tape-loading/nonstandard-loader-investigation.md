@@ -252,10 +252,14 @@ impact today; recorded for completeness.
 
 ### Open, not explained by B1–B4
 
-- **O1: KID__DR on Pentagon 128** ends on a solid red screen in every configuration, including
-  fast loading on. It works on 48K. The block-2 loader never polls the tape: the cursor stays at
-  2 while the machine derails. Suspect 128K paging or memory contents that the crack does not
-  expect.
+- **O1: KID__DR on Pentagon 128 - closed (2026-10-03): a ROM identity check (copy and clone protection), not an emulator defect.**
+  The loader requires byte `#20` at ROM `#006D` (the opcode of the `JR NZ` in the original 48K NMI
+  handler), at `#986B` and again in every interrupt (`#5ECA`). unreal-ng's Pentagon ROM set
+  (`[ROM.pentagon]`) uses `rom/48for128.rom`, which has `#28` there, so the loader wipes memory
+  with `#15` and derails (solid red screen, cursor stays at block 2). MAME's Pentagon has `#20`
+  and loads it. Annotated listing:
+  [`docs/disasm/games/dizzy-x-kid-dr-loader/`](../../disasm/games/dizzy-x-kid-dr-loader/README.md).
+  Decision (owner): no ROM change - the protection works as its authors intended.
 - **O2: TIMOFEY on 48K** returns to BASIC in every configuration. It works on Pentagon. Possibly
   a 128K-only release; check the loader before calling it a defect.
 - **O3: HACKER_SHURIK on Pentagon, fast loading off** hangs even with a 50-frame freeze. It works
