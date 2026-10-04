@@ -1181,12 +1181,17 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 > **Status**: ✅ Implemented (2026-09). Source: `core/automation/webapi/src/api/mouse_api.cpp`;
 > every range check lives in the core `DebugMouseManager`, so all interfaces answer the same.
 
-Drives the emulated Kempston Mouse. The mouse is **relative**: requests change its X/Y
-counters, and the running program moves its own cursor by how much the counters changed.
+Drives the machine's own mouse: the Kempston interface, the Sprinter board mouse (Microsoft serial
+mouse on SIO B + the PLD's Kempston view) or the ZX-Evo / TS-Conf PS/2 mouse on the AVR (table:
+[command-interface.md §11](./command-interface.md#11-mouse-input-injection); design:
+[2026-10-03-mouse-api-routing](../../../inprogress/2026-10-03-mouse-api-routing/design.md)). The mouse is
+**relative**: requests change its X/Y counters, and the running program moves its own cursor by how
+much the counters changed.
 Full command semantics, units and a worked example: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
 ```
 POST /api/v1/emulator/{id}/mouse/move         Move by dx/dy emulated pixels      {"dx":10,"dy":-5}
+POST /api/v1/emulator/{id}/mouse/glide        Long move in steps (one per frame) {"dx":-1000,"dy":1000}
 POST /api/v1/emulator/{id}/mouse/press        Press and hold a button            {"button":"left"}
 POST /api/v1/emulator/{id}/mouse/release      Release a button                   {"button":"left"}
 POST /api/v1/emulator/{id}/mouse/click        Press, hold N frames, release      {"button":"left","frames":2}
@@ -1194,13 +1199,13 @@ POST /api/v1/emulator/{id}/mouse/buttons      Set the exact pressed set         
 POST /api/v1/emulator/{id}/mouse/wheel        Scroll by notches                  {"steps":-1}
 POST /api/v1/emulator/{id}/mouse/release_all  Release all, cancel pending click  (no body)
 POST /api/v1/emulator/{id}/mouse/counters     Debug: write raw X/Y counters      {"x":31,"y":85}
-GET  /api/v1/emulator/{id}/mouse/status       Current mouse state
+GET  /api/v1/emulator/{id}/mouse/status       Current mouse state                ?device=sprinter (optional)
 GET  /api/v1/emulator/{id}/mouse/buttons      Valid button names and aliases
 ```
 
 | Field | Type | Range | Notes |
 |-------|------|-------|-------|
-| `dx` | integer | −127 … 127 | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
+| `dx` | integer | −127 … 127 (`glide`: −4096 … 4096) | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
 | `dy` | integer | −127 … 127 | + = **up** |
 | `button` | string | `left`, `right`, `middle`, `l`, `r`, `m` | case-insensitive |
 | `frames` | integer | 1 … 65535 | optional, default 2 |
@@ -1230,7 +1235,10 @@ Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
 }
 ```
 
-`GET /mouse/status` returns the same object as `state` plus `emulator_id`. Field meanings:
+`GET /mouse/status` returns the same object as `state` plus `emulator_id` (and `routing`). The
+top-level `x`, `y`, `present`, `wheel_enabled`, `button_mask`, `wheel` stay the Kempston interface's
+own (unchanged JSON); `ports` are what the machine's ports return; the machine's mouse is in
+`device`. Field meanings:
 
 | Field | Meaning |
 |-------|---------|
@@ -1241,11 +1249,21 @@ Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
 | `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
 | `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
+| `mouse_fitted` | Some mouse the machine's ports read is fitted. `false`: input is refused with 409. |
+| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`). |
+| `devices` | Every mouse device the machine's ports read, same objects (one per machine today). |
+| `queue` | `{"ops": n, "glide_remaining": {"dx":..,"dy":..}}`: input waiting behind a glide. |
 
-A successful response may carry a `"warning"` string: the mouse is not fitted
-(`mouse not present: guest reads floating bus on the mouse ports`), or a wheel step was sent
-with no wheel fitted (`no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter`).
-The change is still applied.
+**Glide.** `POST /mouse/glide` takes up to ±4096 per axis: the first step (at most 127) now, then
+one step per frame once the program has read the last one (at most 10 frames' wait). Input sent
+while a glide is in progress is queued behind it (the response says `"queued": true`) and applied
+in order, one item per frame; `release_all` drops the queue. Homing where the program clamps its
+pointer (Flex Navigator): `glide {"dx":-1000,"dy":1000}` puts the pointer in the top-left corner,
+then `glide {"dx":X,"dy":-Y}` reaches the picture's (X, Y).
+
+A successful response may carry a `"warning"` string when a wheel step was sent with no wheel
+fitted (`no wheel fitted ([INPUT] Wheel=NONE, or a mouse without one): the guest does not see the
+wheel`). The change is still applied.
 
 **Errors** use the usual `{"error": "...", "message": "..."}` body, with CORS headers:
 
@@ -1259,9 +1277,13 @@ The change is still applied.
 | Zero move or zero wheel | 400 | `move requires a non-zero dx or dy` |
 | Unknown button | 400 | `Unknown button 'foo'. Valid: left, right, middle (l, r, m)` |
 | TTD replay in progress | 409 | `TTD replay in progress; live mouse input refused` |
+| No mouse fitted on the machine | 409 | body `{"error":"Conflict","reason":"no_mouse","message":"no mouse fitted on this machine: ..."}` |
+| Unknown `?device=` | 400 | `Unknown mouse device 'ps2'. This machine has: sprinter` |
 
-409 is returned **only** during TTD replay. Writing counters while TTD records is allowed
-(the write is journalled).
+409 is returned during TTD replay and when the machine has no mouse a program can read
+(`[INPUT] Mouse=NONE` / feature `kempstonmouse` off on a Kempston or ZX-Evo / TS-Conf machine; the
+Sprinter's board mouse is always there). Until 2026-10-03 the second case succeeded with a
+warning. Writing counters while TTD records is allowed (the write is journalled).
 
 **Example: click an icon 32 px right and 16 px up of the cursor, reproducibly**
 
@@ -1277,9 +1299,9 @@ curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/wheel -H 'Content-Type: ap
 # 400 {"error":"Bad Request","message":"steps=-9 out of range -7..7"}
 ```
 
-MCP clients use the `mouse_input` tool (actions `move`, `press`, `release`, `click` with an
-optional `dx`/`dy` pre-move, `buttons`, `wheel`, `release_all`, `status`), which forwards to
-these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
+MCP clients use the `mouse_input` tool (actions `move`, `glide`, `press`, `release`, `click` with an
+optional `dx`/`dy` pre-move (a pre-move beyond ±127 glides), `buttons`, `wheel`, `release_all`,
+`status` with an optional `device`), which forwards to these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
 
 ## Tape Control
 

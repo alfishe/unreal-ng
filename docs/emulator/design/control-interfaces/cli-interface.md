@@ -277,25 +277,29 @@ frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
 
 ### Mouse Input Commands
 
-The `mouse` verb drives the Kempston Mouse of the selected emulator (source:
+The `mouse` verb drives the machine's own mouse of the selected emulator (Kempston interface,
+Sprinter serial mouse, ZX-Evo / TS-Conf PS/2 mouse; source:
 `core/automation/cli/src/commands/cli-processor-mouse.cpp`, output formatting in
 `cli-mouse-format.h`). Full semantics, units and limits: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
 | CLI Command | Alias | Description |
 | :--- | :--- | :--- |
 | `mouse move <dx> <dy>` | | Relative move in emulated pixels, +x right, **+y up**, −127…127 each |
+| `mouse glide <dx> <dy>` | | Long move, −4096…4096 each, one step (at most 127) per frame as the program reads; later commands queue behind it |
 | `mouse press <button>` / `mouse release <button>` | | `left`/`right`/`middle` or `l`/`r`/`m` |
 | `mouse click <button> [frames]` | | Hold for `frames` (default 2), then release on its own |
 | `mouse buttons <none\|b1,b2…>` | | Exact pressed set; `left,middle` and `left middle` both work |
 | `mouse wheel <steps>` | | −7…7, not 0 |
-| `mouse clear` | `mouse release_all` | Release all buttons, cancel a pending click |
-| `mouse status` | `mouse info` | Multi-line state block |
+| `mouse clear` | `mouse release_all` | Release all buttons, cancel a pending click and queued input |
+| `mouse status [device]` | `mouse info` | Multi-line state block: the Kempston interface, routing, then `Machine mouse:` (id, kind, fitted / in use, registers, the serial line or the PS/2 state) and the glide queue |
+| `mouse devices` | | The machine's mouse devices |
 | `mouse set <x> <y>` | | Debug: raw counters 0…255 |
 | `mouse help` | | Subcommand help |
 
 Arguments must be whole integers: `10px` or `1.5` gives `Error: Invalid dx '10px': expected an integer`.
 Every successful command prints one line with the resulting state; a second `Warning:` line
-appears when the change cannot reach the program.
+appears when part of the change cannot reach the program (a wheel step with no wheel fitted). On a
+machine with no mouse fitted every input command prints `Error: no mouse fitted on this machine: ...`.
 
 **Interactive session example** (Pentagon after reset, shipped config `Wheel=NONE`):
 
@@ -321,6 +325,21 @@ Kempston Mouse [present]
   Pending click: right, 3 frame(s) left
   TTD journal: supported
   Routing: decoded (standard Kempston address decode)
+Machine mouse: kempston (kempston) [fitted] - Kempston mouse interface
+  X=41 Y=80 mask 0xFC no wheel, 3 buttons
+  Ports: #FADF=0xFC #FBDF=0x29 #FFDF=0x50
+```
+
+On the Sprinter the `Machine mouse:` block shows the board mouse and its serial line, e.g. under
+DSS 1.71 after `mouse move 5 3`:
+
+```
+Machine mouse: sprinter (serial-microsoft) [fitted, in use] - Sprinter board mouse: Microsoft serial mouse on SIO B + the PLD's Kempston view (#58)
+  X=36 Y=88 mask 0xFF no wheel, 3 buttons
+  Ports: #FADF=0xFF #FBDF=0x24 #FFDF=0x58
+  Serial: line 1200 baud, receiver 1215.3 baud (in tune, enabled)
+  Packet: 4C 05 3D (3/3 sent), pending dx=+0 dy=+0
+  Line: 1 packets, 3 bytes received, 0 framing errors; receiver FIFO []
 ```
 
 How to read `#FADF`: bits 0–2 are the buttons (0 = pressed: `0xFC` = left and right down),

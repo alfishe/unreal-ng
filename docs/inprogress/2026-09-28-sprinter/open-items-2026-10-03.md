@@ -47,8 +47,9 @@ deleted. Take one only on the owner's request.
   on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, **done 2026-10-03**, branch `sprinter-esp-sn3`: `[ISA] Slot1=SPRINTERESP`, the ESP kit's `NETUP` / `PING` / `WGET` / `UNETESP.DLL` end to end
   on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line reaches PB0 since ISA I4), modem / SprinterSerial (SN4, ISA I4 built), 3C509B (SN5)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
-- Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
-  through the shared MouseManager.
+- Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback). ~~The mouse in the GUI
+  through the shared MouseManager~~ done (capture only while polled, automation on the board mouse:
+  [2026-10-03-mouse-api-routing](../2026-10-03-mouse-api-routing/design.md)).
 - P2: ATAPI CD on the Sprinter's IDE (media change, eject, ATAPI boot); the CompactFlash identity check;
   LDConf (reloading the PLD configuration at run time).
 - Lower: two Sega-style pads, serial mouse variants, tape input (`#FE` bit 6), Centronics printer, SIO B

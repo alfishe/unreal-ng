@@ -156,7 +156,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
-  3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
+  3. ~~Mouse in the GUI through the shared MouseManager~~ **done**: host mouse -> MouseManager -> board mouse
+     (2026-10-02, `s4-input-outcome.md`); capture only while a program polls SIO B or the `#58` view, and the
+     automation mouse on the board mouse (status `device.serial`, glide, FN drive icon clicked through the API)
+     2026-10-03, branch `mouse-api-routing` ([design](../2026-10-03-mouse-api-routing/design.md)). Then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
      decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet

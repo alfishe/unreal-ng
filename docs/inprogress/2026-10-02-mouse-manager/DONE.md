@@ -14,4 +14,6 @@ Design: [design.md](design.md). Branch `mouse-manager`.
 ## Closed 2026-10-03
 
 Done on master (2026-10-02; the branches `mouse-manager` and `sprinter-mouse` are merged): the core `MouseManager` with Kempston, Sprinter serial and ZX-Evo / TS-Conf AVR PS/2 sinks, Qt capture with the physical Ctrl+Esc release, capture only while a program polls the mouse, TTD blobs, tests and `.recipe/input/mouse.md` (`09abe11df`, `ecc3b5b79`, `a051d650f`). Left: the Sprinter board mouse counts as "in use" whenever it is fitted, not only while polled (tracked in PLAN #59).
+**Closed 2026-10-03** (branch `mouse-api-routing`, [design](../2026-10-03-mouse-api-routing/design.md) §6): the board
+mouse is in use only while a program polls SIO B or the PLD's `#58` view (`SprinterInput_Test.BoardMouseInUseOnlyWhilePolled`).
 
