@@ -77,6 +77,7 @@ private:
     void* _videoInput = nullptr;           // AVAssetWriterInput*
     void* _audioInput = nullptr;           // AVAssetWriterInput*
     void* _pixelBufferAdaptor = nullptr;   // AVAssetWriterInputPixelBufferAdaptor*
+    void* _pixelBufferPool = nullptr;      // CVPixelBufferPoolRef: the encoder's own (not the adaptor's), +1 until Stop
     void* _audioFormatDesc = nullptr;      // CMAudioFormatDescriptionRef
 
     // Configuration

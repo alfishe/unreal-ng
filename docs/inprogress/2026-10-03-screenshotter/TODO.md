@@ -60,5 +60,21 @@ fixed with a test; none was reproduced yet):
    an error). It was on master since `e7b6f60fd`; renamed to `PictureRect` everywhere, every touched translation unit of
    the screenshotter work compiles with MinGW.
 
+6. **TS-Conf mid-frame mode switches, recording sizes, TSU window: DONE 2026-10-04** (found with `zifi.spg`, whose
+   screen is a 256C header, a TXT list and a 256C status bar switched by line interrupts):
+   - A `V_CONFIG` mode change ran the full `Screen::SetVideoMode`: it cleared the framebuffer and the presented frames
+     and posted `NC_VIDEO_MODE_CHANGED` (the GUI re-attached its screen, twice a frame). Result: a black screenshot
+     with only the last segment, black recordings, a flickering window. Fixed twice: `ScreenTSConf::SetVideoMode`
+     keeps everything inside the TS family (`f40928ee0`, test `VID6`), and the generic `Screen::SetVideoMode` /
+     `AllocateFramebuffer` keep the frames and stay quiet for any same-size switch (AlCo via EFF7, ZX <-> 128K,
+     test `ScreenModeSwitch_Test`). A switch that changes the frame size (ATM 320/640 wide, P384) still reallocates
+     and notifies; a frame drawn mid-frame in another geometry cannot be kept.
+   - `RecordingManager` derived the picture size once and never again: the second recording on the same emulator
+     (screen after full, or the reverse) inherited the first size and its frames were dropped (`ae4582595`, test
+     `VideoSize_EachRecordingDerivesItsOwn`). Only a size given to `SetVideoResolution` is kept.
+   - `WorkingWindow()` of TS-Conf now is the whole 360x288 window when `T_CONFIG[0]`, a TSU layer (`T_CONFIG[7:5]`)
+     and not `NOTSU` make the TSU show over the border (test `GEOM2`).
+   Not checked on a running GUI after the fixes (the flicker was explained from the code, not seen on the fix).
+
 Possible follow-ups, not part of this work: the Qt "Take Screenshot" (clipboard) still crops to the window's
 viewport by design; `StoresHalfHeightLines` doubling in recordings of TS-Conf.

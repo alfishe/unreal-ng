@@ -742,7 +742,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list"})
+                               "bp_list", "bp_reset_hits"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -761,22 +761,36 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out";
+    schema["properties"]["address_end"]["type"] = "integer";
+    schema["properties"]["address_end"]["description"] = "Optional for bp_add: range end, inclusive (execution / read / write)";
+    schema["properties"]["slot_only"]["type"] = "boolean";
+    schema["properties"]["slot_only"]["description"] = "Optional for bp_add with page: only through the slot of address";
+    schema["properties"]["port_mask"]["type"] = "integer";
+    schema["properties"]["port_mask"]["description"] =
+        "Optional for bp_add of port_in / port_out: match (port & port_mask) == (address & port_mask); 255 catches #FE "
+        "on any high byte";
+    schema["properties"]["hits"]["type"] = "string";
+    schema["properties"]["hits"]["description"] =
+        "Optional for bp_add: stop on the Nth hit only ('5'), from the Nth on ('>=5') or every Nth ('%5'); every hit is "
+        "counted (bp_list shows hit_count)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - the breakpoint fires only while "
-        "that page is mapped at the address (e.g. code in RAM page 32 at #C000, not whatever else is paged in there)";
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - a physical breakpoint on that "
+        "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
+        "address)";
     schema["properties"]["note"]["type"] = "string";
     schema["properties"]["note"]["description"] = "Optional annotation for bp_add";
     schema["properties"]["group"]["type"] = "string";
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
-    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable";
+    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
     schema["required"].append("action");
 
     registry.Register(
         "control_execution",
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
-        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list). "
+        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
         "Stepping actions automatically include the new register snapshot.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -841,6 +855,15 @@ void RegisterControlExecution(ToolRegistry& registry)
                     ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "Breakpoints of " + id, done);
                     return;
                 }
+                if (action == "bp_reset_hits")
+                {
+                    Json::Value body(Json::objectValue);
+                    if (args.isMember("bp_id"))
+                        body["id"] = args["bp_id"];
+                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset"), &body, caller,
+                                args.isMember("bp_id") ? "Hit counter reset" : "All hit counters reset", done);
+                    return;
+                }
                 if (action == "bp_clear")
                 {
                     ForwardCall("DELETE", Endpoint(id, "/breakpoints"), nullptr, caller, "Cleared all breakpoints on " + id, done);
@@ -856,7 +879,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
-                    for (const char* key : {"page", "note", "group"})
+                    for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
+                                            "note", "group"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
@@ -1167,14 +1191,17 @@ void RegisterInspectState(ToolRegistry& registry)
         "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
         "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
-        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers) and the "
+        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers, the 3C509B with its ID port, window, FIFOs, EEPROM and link) and the "
         "Ethernet gateway (ethernet_gateway: leases, ARP, TCP / UDP, counters); its frame capture and frame injection go "
         "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
         "/api/v1/emulator/{id}/network/frame {link, hex}, "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
-        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; per slot 'irq_line': the IRQ line's level, "
+        "fitted card - an NE2000's chip, base, MAC, registers; a 3C509B's also resources.id_port (#100-#1F0, its isolation "
+        "state); the ZX-bus adapter's 'zx_bus' object: the General Sound / "
+        "NeoGS behind it, its ports #B3 / #BB / #33 through ISA I/O #xxB3 / #xxBB / #xx33, its reset from ISA RESET DRV, "
+        "its mailbox status - and cycle counters; per slot 'irq_line': the IRQ line's level, "
         "who drives it, its route to the Z84C15 PIO port B (PB0 / PB1), the PIO's bit-mode setup, pending / under service, "
         "whether it reaches the CPU, and edge / request / acknowledge counters ('irq_summary' in one line); "
         "unavailable on other machines - run an "
@@ -1188,7 +1215,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
         "dots per T) and framebuffer placement (works for ATM, Profi, AlCo modes too), 'video_text' = exact text of an ATM / "
         "ZX-Evo text mode (80x25 codes and attributes; unavailable in bitmap modes - use screen_ocr), 'mouse' = "
-        "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
+        "the machine's mouse (Kempston interface, Sprinter serial mouse, ZX-Evo PS/2: device, fitted, ports, serial line) incl. Kempston port routing, 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it). "
         "'tsconf' = the TS-Conf machine (memory map, video, TSU summary, interrupts, DMA, clock, SD), 'tsconf_tsu' = its TSU "
         "objects for debug views (tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells); both unavailable on "
@@ -1269,7 +1296,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
         "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
-        "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
+        "the machine's mouse device + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
         "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
         "sprinter_zx_mode, sprinter_pld_journal). "
@@ -1975,7 +2002,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
                                     const Json::Value& machineSerial = value["machine_serial"];
                                     if (machineSerial["fitted"].asBool())
-                                        out << "\n[com] keyboard controller " << machineSerial["kbc_firmware"].asString() << " RS-232, "
+                                        out << (machineSerial["flavor"].asString() == "usart8251"
+                                                    ? std::string("\n[com] 8251 COM port, ")
+                                                    : "\n[com] keyboard controller " + machineSerial["kbc_firmware"].asString() + " RS-232, ")
                                             << machineSerial["peer"].asString()
                                             << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
                                             << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()
@@ -2002,6 +2031,23 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
                                             << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
                                             << zifi["dropped"].asUInt64();
+                                    // A UART line at a glance: its peer, and a Hayes modem's mode, call and lines
+                                    auto uartLine = [](const Json::Value& ch, const std::string& name) {
+                                        std::string line = "; " + name + " " + ch["base"].asString() + ", UART " +
+                                                           std::to_string(ch["uart"]["baud"].asUInt64()) + " baud MCR " +
+                                                           ch["uart"]["mcr"].asString() + ", " + ch["peer"]["kind"].asString();
+                                        if (ch.isMember("modem"))
+                                        {
+                                            const Json::Value& m = ch["modem"];
+                                            line += " " + m["mode"].asString() + " " + m["call"]["dialed"].asString() + ", DCD " +
+                                                    (m["lines"]["dcd"].asBool() ? "on" : "off") +
+                                                    (m["lines"]["ri"].asBool() ? ", RINGING" : "") + ", last " +
+                                                    m["last_result"].asString();
+                                        }
+                                        else if (!ch["peer"]["target"].asString().empty())
+                                            line += " " + ch["peer"]["target"].asString();
+                                        return line;
+                                    };
                                     for (const Json::Value& slot : value["slots"])
                                         out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
                                             << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() +
@@ -2013,6 +2059,11 @@ void RegisterInspectState(ToolRegistry& registry)
                                                           slot["esp"]["state"].asString() + ", Wi-Fi " + slot["esp"]["wifi"].asString() + " " +
                                                           slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
                                                           " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
+                                                    : std::string())
+                                            << (slot.isMember("id_port") ? "; " + slot["summary"].asString() : std::string())
+                                            << (slot["card"].asString() == "modem" ? uartLine(slot, "line") : std::string())
+                                            << (slot["card"].asString() == "dual16552"
+                                                    ? uartLine(slot, "COM1") + uartLine(slot["channel_b"], "COM2")
                                                     : std::string());
                                     if (value.isMember("ethernet_gateway"))
                                     {
@@ -2056,6 +2107,21 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << ", IRQ " << slot["resources"]["irq"].asString() << " (" << slot["resources"]["irq_route"].asString() << ")";
                                         if (slot["z80_access"].isMember("io"))
                                             out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
+                                        if (slot["resources"].isMember("id_port"))
+                                            out << "\n[isa]   ID port " << slot["resources"]["id_port"]["io"].asString() << " ("
+                                                << slot["resources"]["id_port"]["z80"].asString() << "): "
+                                                << slot["resources"]["id_port"]["note"].asString();
+                                        // The ZX-bus adapter: the card behind it, its ports and reset (ISA phase I2)
+                                        if (slot.isMember("zx_bus"))
+                                        {
+                                            out << "\n[isa]   " << slot["summary_line"].asString();
+                                            for (const Json::Value& card : slot["zx_bus"]["cards"])
+                                                out << "\n[isa]   " << card["device"].asString() << ": status "
+                                                    << card["status"].asString() << ", " << card["sound"].asString() << "; "
+                                                    << card["machine_reset"].asString();
+                                            if (slot["zx_bus"].isMember("empty"))
+                                                out << "\n[isa]   ZX-bus empty: " << slot["zx_bus"]["empty"].asString();
+                                        }
                                     }
                                     if (value.isMember("irq_summary"))
                                         out << "\n[isa] irq: " << value["irq_summary"].asString();
@@ -2480,6 +2546,24 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[mouse] " << value["description"].asString();
+                                else if (value.isMember("device") && value["device"].isObject())
+                                {
+                                    // The machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2)
+                                    const Json::Value& device = value["device"];
+                                    out << "\n[mouse] " << device["id"].asString() << " (" << device["kind"].asString()
+                                        << ")" << (device["in_use"].asBool() ? ", in use" : "") << ", x "
+                                        << device["x"].asInt() << " y " << device["y"].asInt()
+                                        << (device["wheel"].asBool() ? ", wheel" : "");
+                                    if (device.isMember("serial"))
+                                        out << ", serial receiver " << device["serial"]["receiver_baud"].asDouble() << " baud"
+                                            << (device["serial"]["receiver_in_tune"].asBool() ? " (in tune)" : " (out of tune)")
+                                            << ", " << device["serial"]["packets_sent"].asUInt64() << " packets";
+                                    if (device["id"].asString() == "kempston" && value.isMember("routing"))
+                                        out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
+                                            << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                                else if (value.isMember("mouse_fitted") && !value["mouse_fitted"].asBool())
+                                    out << "\n[mouse] no mouse fitted (input refused)";
                                 else
                                 {
                                     out << "\n[mouse] " << (value["present"].asBool() ? "fitted" : "not fitted")
@@ -2784,23 +2868,30 @@ void RegisterMouseInput(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"move", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
+    for (const char* action : {"move", "glide", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Kempston mouse (relative device). 'move' shifts counters by dx/dy emulated pixels; 'click' presses a button for N "
-        "frames. Input is applied immediately; call control_execution run_frames to let the program react.";
+        "The machine's own mouse (relative device): Kempston interface, the Sprinter's serial mouse, the ZX-Evo / "
+        "TS-Conf PS/2 mouse; a machine without a mouse refuses with 409. 'move' shifts by dx/dy emulated pixels "
+        "(-127..127); 'glide' moves up to -4096..4096 in steps the program follows (one per frame; input sent "
+        "meanwhile queues behind it, so a click after a glide lands where it ended); 'click' presses a button for N "
+        "frames. Input is applied immediately; call control_execution run_frames to let the program react. 'status' "
+        "names the device and what it gives the guest (ports, serial line, PS/2).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["dx"]["type"] = "integer";
-    schema["properties"]["dx"]["minimum"] = -127;
-    schema["properties"]["dx"]["maximum"] = 127;
-    schema["properties"]["dx"]["description"] = "+ = right (move; optional pre-move for click)";
+    schema["properties"]["dx"]["minimum"] = -4096;
+    schema["properties"]["dx"]["maximum"] = 4096;
+    schema["properties"]["dx"]["description"] = "+ = right (move: -127..127; glide: -4096..4096; optional pre-move for click)";
     schema["properties"]["dy"]["type"] = "integer";
-    schema["properties"]["dy"]["minimum"] = -127;
-    schema["properties"]["dy"]["maximum"] = 127;
-    schema["properties"]["dy"]["description"] = "+ = UP (move; optional pre-move for click)";
+    schema["properties"]["dy"]["minimum"] = -4096;
+    schema["properties"]["dy"]["maximum"] = 4096;
+    schema["properties"]["dy"]["description"] = "+ = UP (move: -127..127; glide: -4096..4096; optional pre-move for click)";
+    schema["properties"]["device"]["type"] = "string";
+    schema["properties"]["device"]["description"] =
+        "status: report this device of the machine (kempston, sprinter, evo-ps2); default the first fitted one";
     Json::Value buttonEnum(Json::arrayValue);
     for (const char* button : {"left", "right", "middle"})
     {
@@ -2824,15 +2915,31 @@ void RegisterMouseInput(ToolRegistry& registry)
 
     registry.Register(
         "mouse_input",
-        "Send Kempston mouse input to the emulator: relative move (dx/dy), press/release/click buttons, set the exact "
-        "pressed set, wheel steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
+        "Send mouse input to the machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2): relative move (dx/dy), "
+        "glide (long moves the program can follow), press/release/click buttons, set the exact pressed set, wheel "
+        "steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/mouse/status", nullptr, caller, "Mouse status", done);
+                const std::string device = args.isMember("device") ? args["device"].asString() : std::string();
+                ResolveAndForward(args, "GET", device.empty() ? "/mouse/status" : "/mouse/status?device=" + device,
+                                  nullptr, caller, "Mouse status", done);
+                return;
+            }
+            if (action == "glide")
+            {
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    done(ToolResult::Error("glide requires 'dx' or 'dy'"));
+                    return;
+                }
+                Json::Value body;
+                body["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                body["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                ResolveAndForward(args, "POST", "/mouse/glide", &body, caller, "Mouse glide started", done);
                 return;
             }
             if (action == "release_all")
@@ -2908,13 +3015,16 @@ void RegisterMouseInput(ToolRegistry& registry)
                     return;
                 }
 
-                // Pre-move then click, in order; the click is skipped if the move fails
+                // Pre-move then click, in order; the click is skipped if the move fails. A pre-move beyond
+                // -127..127 glides: the click queues behind the glide and lands where it ended
                 Json::Value moveBody;
                 moveBody["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
                 moveBody["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                const auto beyondMove = [](const Json::Value& v) { return v.isInt() && (v.asInt() > 127 || v.asInt() < -127); };
+                const std::string moveSuffix = beyondMove(moveBody["dx"]) || beyondMove(moveBody["dy"]) ? "/mouse/glide" : "/mouse/move";
 
                 TargetResolver::ResolveFromArgs(
-                    args, caller, [&caller, moveBody, clickBody, okText, done](bool ok, const std::string& idOrError) {
+                    args, caller, [&caller, moveBody, moveSuffix, clickBody, okText, done](bool ok, const std::string& idOrError) {
                         if (!ok)
                         {
                             done(ToolResult::Error(idOrError));
@@ -2943,7 +3053,7 @@ void RegisterMouseInput(ToolRegistry& registry)
                         };
 
                         std::vector<SeriesStep> steps;
-                        steps.push_back(makeStep("move", "/mouse/move", moveBody));
+                        steps.push_back(makeStep("move", moveSuffix, moveBody));
                         steps.push_back(makeStep("click", "/mouse/click", clickBody));
 
                         RunSeries(std::move(steps), [done, okText, id](Json::Value acc) {

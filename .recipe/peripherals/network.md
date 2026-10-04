@@ -73,10 +73,12 @@ takes the same values for the card's side:
 | `ComPort=` / `ZxWifi=` | Peer |
 |:--|:--|
 | `NONE` | nothing on the line (the ZX-Evo's registers still answer) |
-| `LOOPBACK` | every byte the ZX sends comes back |
+| `LOOPBACK` | every byte the ZX sends comes back; CTS / DSR / DCD held active |
+| `PLUG` | an RS-232 loopback test plug: bytes come back, the UART's own RTS drives CTS and DTR drives DSR / DCD (only the inputs the card wires to its connector) |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
 | `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
 | `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |
+| `MODEM[,<guest port>]` | an emulated Hayes modem: `AT` commands, `ATDT <host>[:<port>]` (port 23 by default) or `ATDT <number>` from `[NETWORK] ModemPhonebook=5551234=bbs.example.org:23,...` dials through the virtual network; `CONNECT <rate>` / `BUSY` (refused) / `NO ANSWER` / `NO CARRIER`, DCD follows the call, `+++` (a second of silence around it) returns to command mode, `ATO` / `ATH`; with `<guest port>` a host client of that guest port (`Forward=`) rings it (`RING`, RI; `ATA` or `ATS0=n` answers). See [The Hayes modem](#the-hayes-modem) |
 | `SERIAL:<device>[,<baud>]` | a host serial device (`/dev/tty.usbserial-0001`, `/dev/ttyUSB0`, `COM3`); it follows the rate and format the ZX programs (`<baud>` until then, 115200 by default); `ComModemLines=1` passes RTS / DTR and reports CTS / DSR / RI / DCD (off by default: USB ESP boards wire RTS / DTR to reset / boot) |
 
 The ZX-Evo's UART behaves like the AVR firmware chosen by `[EVO] Avr=`
@@ -108,6 +110,11 @@ polling loop enough for the 8051's serial interrupt; with the `contention`
 feature off they are gone and received bytes are lost (`lost` in
 `machine_serial`; tdd-atm2-kbc.md §7.1). Details:
 [tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md).
+
+On the ZX Profi v5 (`PROFI`, `PROFI-PLUS`) the machine's serial port is the board's 8251 USART (`#D3` data, `#F3`
+control / status, clocked by an 8253 at `#8F..#EF`, extended port map only): `ComPort=` plugs into it, it is not on
+#xxEF, `inspect_state network` shows it as `machine_serial` (flavor `usart8251`). Details:
+[profi.md](../machines/profi.md#serial-port-com).
 
 The other real-world way on the ATM Turbo 2+ is the **ATM2IOESP** card
 (`Card=ATM2IOESP`, `Atm2IoEsp=AT|ESPNET|...`, `Atm2IoEspAddress=0xF0`, 0xF8
@@ -176,6 +183,27 @@ module disagree. Details: [reference-esp-modules.md](../../docs/inprogress/2026-
 NedoOS with an ESP module: boot `sd_bootesp.$C` for the kernel driver (ESPNET;
 `ini/network.ini currentNetwork=0`), or set `currentNetwork=1` (AT) / `2`
 (userland ESPNET) for the C apps (zxdb, gopher, girc, time2, ...).
+
+### The Hayes modem
+
+`MODEM` is a peer like the others: it fits on every serial port (ZX-Evo / TS-Conf COM port, ZX-WiFi, ATM2IOESP,
+the ATM Turbo 2+ controller's RS-232, the Sprinter's ISA modem card and SprinterSerial). There is no telephone
+network: a number is a host endpoint. A dialed string with letters, `.` or `:` is a host name or address
+(`ATDT bbs.example.org:2323`, `ATDT 192.168.1.20`); a string of digits (`-`, `(`, `)`, spaces and the pause
+modifiers ignored) is looked up in the phone book (`ModemPhonebook=`, runtime `modem_phonebook`); an unknown number
+gets `NO CARRIER`. Commands: `E Q V X` (results: verbose `CR LF text CR LF` or numeric), `Sn=v` / `Sn?` (S0 rings
+to answer, S2 escape character, S3 / S4 / S5 CR LF BS, S7 seconds to wait for the carrier, S12 escape guard in
+1/50 s), `I0-I4`, `Z`, `&F`, `&C` (DCD: 0 always on, 1 follows the call - default), `&D` (DTR dropping: 0 ignored,
+1 command mode, 2 hang up - default, 3 reset), `&S`, `A/`; init-string settings (`L M &K &Q &W \N %C +...`) are
+accepted. CTS is always on (the modem buffers), DSR on (`&S0`). Everything from the host is journaled: a TTD
+replay repeats a call byte for byte with no host. The network state shows it as `modem` (in `com`, or in the
+slot row): `mode` (command / dialing / online / online_command), `lines` (CTS, DSR, DCD, RI, the ZX's DTR),
+`call` (dialed, link phase, remote, ringing, held bytes), `last_result`, `settings`, `phonebook`, `counters` and a
+`journal` of commands and results.
+
+Worked example (a ZX-Evo, a telnet BBS on the host's port 2323): `network set com_port=modem
+modem_phonebook=1=127.0.0.1:2323`; in a terminal program at any rate: `ATZ` -> `OK`, `ATDT1` -> `CONNECT 115200`,
+the BBS's text; `+++` -> `OK`; `ATH` -> `OK`.
 
 A quick check without software: `com_port=loopback`, then from Z80 code
 `LCR=3` (`#FBEF`), `MCR=2` (RTS, `#FCEF`), a byte to `#F8EF`, wait for LSR

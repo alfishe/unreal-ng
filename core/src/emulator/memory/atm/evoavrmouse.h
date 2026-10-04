@@ -85,6 +85,12 @@ public:
     void OnMouseButtons(uint8_t activeLowMask) override;
     void OnMouseWheel(int steps) override;
     void OnMouseCounters(uint8_t x, uint8_t y) override;
+    /// The AVR's registers, connection and resolution
+    MouseDeviceStatus DescribeMouse() const override;
+    /// Moved (or set) since a program last read X or Y
+    bool HasUnreadMotion() const override { return _unreadMotion.load(std::memory_order_relaxed) != 0; }
+    /// 127 counts per read, divided by the counts per pixel of the resolution
+    int MotionStepLimit() const override { return 127 >> Resolution(); }
     /// endregion
 
     /// region <TTD>
@@ -105,4 +111,6 @@ private:
     static constexpr uint64_t kNeverPolled = ~uint64_t{0};
     std::function<uint64_t()> _frame;
     mutable std::atomic<uint64_t> _lastPollFrame{kNeverPolled};  // frame of the last program read
+    /// Bit 1: X moved since a program read it, bit 2: Y. Pacing for automation glides, not machine state
+    mutable std::atomic<uint8_t> _unreadMotion{0};
 };

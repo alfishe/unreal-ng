@@ -108,7 +108,9 @@ ffmpeg -v info -i scratch/run.mp4 -map 0:a -af astats=measure_perchannel=none -f
 ```
 
 - Video size = framebuffer x `scale` (Pentagon 352x288 -> 704x576 at 2x; Sprinter 736x288 is
-  stored at half height, so 1472x1152; TS-Conf 720x288 -> 1440x1152).
+  stored at half height, so 1472x1152; TS-Conf 720x288 -> 1440x1152). The ZX Profi (`PROFI`, `PROFI3`,
+  `PROFI-PLUS`) records its screen window, 352x288 x `scale` (704x576 at 2x), in both its Spectrum and its 608x288
+  hi-res mode, scaled the way the screen shows it; a switch between the modes keeps recording (full-frame region).
 - Frame count = emulated seconds / frame length (Pentagon 20.48 ms, 48.83 fps).
 - Audio: AAC 48 kHz stereo in the file (the core rate, 44.1 kHz by default, is converted).
 - `duration` of the audio and video streams agree within a millisecond or two; the sound starts

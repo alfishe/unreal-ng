@@ -15,6 +15,9 @@ TEST(ComPortSpec_Test, NoneLoopbackAndEmpty)
     EXPECT_TRUE(ComPortSpec::Parse("Loopback", s, error));
     EXPECT_EQ(s.kind, ComPortSpec::Kind::Loopback);
     EXPECT_EQ(s.ToString(), "LOOPBACK");
+    EXPECT_TRUE(ComPortSpec::Parse(" plug ", s, error));
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::Plug) << "the loopback test plug";
+    EXPECT_EQ(s.ToString(), "PLUG");
 }
 
 TEST(ComPortSpec_Test, TcpEndpoint)
@@ -74,7 +77,7 @@ TEST(ComPortSpec_Test, EspModules)
     EXPECT_EQ(s.baud, 0u) << "no rate: the port's default";
     ASSERT_TRUE(ComPortSpec::Parse("AT", s, error));
     EXPECT_EQ(s.kind, ComPortSpec::Kind::At);
-    EXPECT_FALSE(ComPortSpec::Parse("modem", s, error));
+    EXPECT_FALSE(ComPortSpec::Parse("hayes", s, error));
 }
 
 TEST(ComPortSpec_Test, EspModuleRates)

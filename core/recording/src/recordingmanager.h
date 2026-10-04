@@ -375,6 +375,7 @@ protected:
     uint32_t _videoBitrate = 0;
     uint32_t _videoWidth = 0;
     uint32_t _videoHeight = 0;
+    bool _videoSizeExplicit = false;  ///< SetVideoResolution gave a size; else each start derives its own
     float _videoFrameRate = 50.0f;  // ZX Spectrum native rate
 
     // Audio configuration

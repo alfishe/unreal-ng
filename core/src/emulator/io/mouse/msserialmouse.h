@@ -75,6 +75,11 @@ public:
     /// Power-on: no packet, the next sample is the reference (sends nothing)
     void Clear();
 
+    /// Motion the counters made that no packet carries yet (+ right, + up); 0 before the first sample
+    void PendingMotion(int& dx, int& up) const;
+    /// Statistics since power-on (not machine state: TTD does not save them)
+    uint64_t PacketsSent() const { return _packetsSent; }
+
     uint32_t CharacterTStates() const { return _charT; }
     const State& GetState() const { return _state; }
     void SetState(const State& state) { _state = state; }
@@ -82,6 +87,7 @@ public:
 private:
     State _state{};
     uint32_t _charT = 0;
+    uint64_t _packetsSent = 0;
     Sampler _sampler;
     ByteSink _sink;
 };

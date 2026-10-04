@@ -559,7 +559,7 @@ types:
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232: netstate::Com, the peer part only),
+          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
@@ -595,13 +595,34 @@ types:
           A, PSW, 256 bytes RAM of which the 8035 uses 64, port latches and pins, F1, memory bank, interrupt and timer
           state, T0 / T1 / INT), the XT keyboard's wire (queued set-1 bytes, the frame in flight, typematic key, held
           keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted),
-          45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000: u1 version 1,
-          u1 card count, per card u1 key length, the key ("isa2.eth"), then the board: u1 version 1, u1 variant
-          (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB packet RAM, 8 bytes
-          RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card),
+          45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000 / 3C509B: u1
+          version 2, u1 card count, per card u1 key length, the key ("isa2.eth"), u1 kind length, the kind ("ne2000" |
+          "el3c509b"), u4 state length, the state; then u4 length + the Ethernet gateway's tables. NE2000 state: u1
+          version 1, u1 variant (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB
+          packet RAM, 8 bytes RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address.
+          3C509B state (EtherLink3::SaveCardState): u1 version 1, u1 variant (0 TPO, 1 TP), the ASIC fields little-endian
+          in EL3_STATE_FIELDS order (ID sequence state, tag, ID port, EEPROM access, window 0 / 3 configuration, window,
+          byte latches, masks, interrupt flags, thresholds, enables, station address, media / net diagnostic bits,
+          link times, the transmitter, 31-entry TX status stack, statistics), the 64-word EEPROM, u2 TX packet count and
+          per packet u2 length, u1 flags, u2 bytes + bytes, u2 RX packet count and per packet u2 read position, u1
+          error, u2 bytes + bytes. Version 1 of the blob (NE2000 only: per card the key, then the NE2000 state) still
+          loads; only with such a card),
           46 SlotSerial1 (the UART card in expansion slot 1, the Sprinter's SprinterESP: netstate::SerialPort as id
           24 - the TL16C550C and its peer, an ESP module with its AT state, sockets and received bytes by journal
-          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2), 48 Saa1099 (a Philips
+          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2),
+          48 SlotSerial1B (the second UART of the card in expansion slot 1: SprinterSerial's COM2; the same
+          netstate::SerialPort; a Hayes modem peer keeps its command state in the record's ESP bytes, peer kind 6),
+          49 SlotSerial2B (the same for expansion slot 2),
+          50 Ppi8255 (an 8255 PPI, the ZX Profi's: Ppi8255::State - u1 mode word, u1 port A, B, C output latches),
+          51 Pit8253 (an 8253 PIT, the ZX Profi v5's COM baud timer: Pit8253::State - per counter u1 control, out,
+          gate, has count, counting, load pending, new count, fired, write MSB, read MSB, latched, LSB written, u2
+          count register, output latch, u4 reload, counting element, mode 3 pulses left; then u4 reserved, u8 last
+          clock, u8 fraction; 104 bytes; only on the v5 board),
+          52 Usart8251 (an 8251 USART, the ZX Profi v5's COM port: Usart8251::State - u1 mode, command, expect, sync
+          1, sync 2, errors, RX data, RX ready, TX buffer, TX full, TX shifter, TX busy, RX shifter, RX busy, the
+          board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
+          on the v5 board; its peer is MachineSerialPeer),
+          53 Saa1099 (a Philips
           SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
           generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
           divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated

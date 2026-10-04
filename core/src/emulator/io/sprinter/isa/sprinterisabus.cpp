@@ -167,10 +167,13 @@ void SprinterIsaBus::Configure(const sprinterisa::IsaConfig& config)
     }
 }
 
-void SprinterIsaBus::SetConfiguredPeer(int slot, const std::string& peer)
+void SprinterIsaBus::SetConfiguredPeer(int slot, int channel, const std::string& peer)
 {
     sprinterisa::SlotConfig& c = _slots[slot & 1].config;
-    std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+    if (channel == 0)
+        std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+    else
+        std::snprintf(c.peerB, sizeof(c.peerB), "%s", peer.c_str());
 }
 
 void SprinterIsaBus::Fit(int slot, std::unique_ptr<IIsaCard> card)
@@ -329,6 +332,19 @@ StateNode SprinterIsaBus::Describe() const
         }
         else
             resources["io"] = "none";
+        // Addresses beside the range (the 3C509B's ID port): each with its decode step and what the card does there
+        if (s.card)
+        {
+            for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
+            {
+                StateNode one = StateNode::Object();
+                one["io"] = Hex(aux.first, 3) + "-" + Hex(aux.last, 3) + (aux.step > 1 ? " step " + Hex(aux.step, 2) : std::string());
+                one["z80"] = "window 3 page " + Hex(SlotPage(Space::Io, n), 2) + ", #9FBD A15-A14 = 0: CPU " +
+                             Hex(0xC000 | (aux.first & 0x3FFF), 4) + "-" + Hex(0xC000 | (aux.last & 0x3FFF), 4);
+                one["note"] = aux.note;
+                resources[aux.name] = one;
+            }
+        }
         if (s.card && s.card->MemRange(first, last))
         {
             resources["memory"] = Hex(first, 5) + "-" + Hex(last, 5);
@@ -366,29 +382,34 @@ StateNode SprinterIsaBus::Describe() const
         slot["counters"] = counters;
         slots.push(slot);
     }
-    ret["slots"] = slots;
-    // One line per slot for a status bar / the Sprinter report
+    // One line per slot for a status bar / the Sprinter report (each slot also carries its own piece)
     std::string summary;
     for (int n = 0; n < kSlots; ++n)
     {
         const Slot& s = _slots[n];
-        if (n)
-            summary += "; ";
-        summary += "slot " + std::to_string(n + 1) + ": ";
+        std::string piece;
         uint32_t first = 0, last = 0;
         if (!s.card)
-            summary += s.config.kind && !s.refusal.empty() ? sprinterisa::KindKey(static_cast<CardKind>(s.config.kind)) +
-                                                                 " not fitted (" + s.refusal + ")"
-                                                           : std::string("empty");
+            piece = s.config.kind && !s.refusal.empty() ? sprinterisa::KindKey(static_cast<CardKind>(s.config.kind)) +
+                                                              " not fitted (" + s.refusal + ")"
+                                                        : std::string("empty");
         else
         {
-            summary += s.card->Kind();
+            piece = s.card->Kind();
             if (s.card->IoRange(first, last))
-                summary += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
+                piece += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
+            for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
+                piece += " " + aux.name + " " + Hex(aux.first, 3) + "-" + Hex(aux.last, 3);
             if (s.card->IrqLine() >= 0)
-                summary += " IRQ " + std::to_string(s.card->IrqLine());
+                piece += " IRQ " + std::to_string(s.card->IrqLine());
+            piece += s.card->SummaryNote();
         }
+        slots.items[static_cast<size_t>(n)]["summary_line"] = piece;
+        if (n)
+            summary += "; ";
+        summary += "slot " + std::to_string(n + 1) + ": " + piece;
     }
+    ret["slots"] = slots;
     ret["summary"] = summary;
     // The interrupt lines at a glance: level, who drives it, whether the PIO turns it into an interrupt, counters
     std::string irqSummary;
@@ -416,6 +437,12 @@ StateNode SprinterIsaBus::Describe() const
         if (_slots[n].card && _slots[n].card->IoRange(first, last) && last > 0x3FF)
             conflicts.push("slot " + std::to_string(n + 1) + ": I/O range " + Hex(first, 3) + "-" + Hex(last, 3) +
                            " passes #3FF: it wraps onto " + Hex(first & 0x3FF, 3));
+    }
+    for (int n = 0; n < kSlots; ++n)
+    {
+        const std::string warning = sprinterisa::SlotWarning(_slots[n].config, n);
+        if (!warning.empty())
+            conflicts.push(warning);
     }
     ret["conflicts"] = conflicts;
     ret["conflict_rule"] = "each slot has its own select (page bit 1): cards in different slots may use the same "

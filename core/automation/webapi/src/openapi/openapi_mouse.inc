@@ -1,12 +1,17 @@
-    // Kempston Mouse Injection endpoints (implementation: api/mouse_api.cpp)
-    // Design: docs/inprogress/2026-09-12-kempston-mouse/automation-interfaces.md §4.4
+    // Mouse Injection endpoints (implementation: api/mouse_api.cpp): the machine's own mouse
+    // Design: docs/inprogress/2026-09-12-kempston-mouse/automation-interfaces.md §4.4,
+    //         docs/inprogress/2026-10-03-mouse-api-routing/design.md
     {
         static const char* kMouseUnits =
             " Units: dx/dy in emulated pixels (+dx = right, +dy = up), wheel steps in notches "
-            "(+ = away from user), click hold time in emulated frames. Limits per call: dx/dy -127..127, "
-            "steps -7..7 (not 0), frames 1..65535 (default 2), counters 0..255. Out-of-range values are "
-            "rejected (400), never clamped. The change is applied before the response returns; the guest "
-            "reacts when it next reads the mouse ports, so run frames before checking the screen.";
+            "(+ = away from user), click hold time in emulated frames. Limits per call: dx/dy -127..127 "
+            "(glide: -4096..4096), steps -7..7 (not 0), frames 1..65535 (default 2), counters 0..255. "
+            "Out-of-range values are rejected (400), never clamped. The input goes to the machine's own mouse, "
+            "whatever it is (Kempston interface; Sprinter: serial mouse on SIO B + the PLD's Kempston view; "
+            "ZX-Evo / TS-Conf: PS/2 mouse on the AVR); a machine with no mouse fitted answers 409 "
+            "(reason no_mouse). The change is applied before the response returns; the guest reacts when it "
+            "next reads its mouse, so run frames before checking the screen. Input sent while a glide is in "
+            "progress is queued behind it (`queued`: true) and applied in order at frame ends.";
 
         auto addMouseIdParam = [](Json::Value& op) {
             op["parameters"][0]["name"] = "id";
@@ -25,7 +30,9 @@
                     "#/components/schemas/MouseInjectResponse";
                 op["responses"]["400"]["description"] =
                     "Missing field, wrong JSON type, unknown button name or value out of range";
-                op["responses"]["409"]["description"] = "TTD replay in progress; live mouse input refused";
+                op["responses"]["409"]["description"] =
+                    "TTD replay in progress (live mouse input refused), or no mouse fitted on this machine "
+                    "(`reason`: `no_mouse`)";
             }
             op["responses"]["404"]["description"] = "Emulator not found";
             op["responses"]["500"]["description"] = "Mouse manager not available";
@@ -61,6 +68,27 @@
             intProperty(schema, "dx", -127, 127, "Emulated pixels, + = right");
             intProperty(schema, "dy", -127, 127, "Emulated pixels, + = up");
             addMouseResponses(op, "Mouse moved; response includes the resulting state", true);
+        }
+
+        // POST /api/v1/emulator/{id}/mouse/glide
+        {
+            Json::Value& op = paths["/api/v1/emulator/{id}/mouse/glide"]["post"];
+            addMouseIdParam(op);
+            op["summary"] = "Move the mouse far, in steps the program can follow";
+            op["description"] =
+                std::string("A relative move of up to 4096 per axis: the first step now, then one step per frame "
+                            "once the program has read the last one (at most 10 frames' wait). A step is at most "
+                            "127 counts (an 8-bit counter cannot show more between two reads; less on a PS/2 "
+                            "mouse at a finer resolution). Input sent before the glide ends is queued behind it, "
+                            "so a click after a glide lands where it ended. Homing (moving far into a corner so "
+                            "the program clamps its pointer there) works only where the program clamps.") +
+                kMouseUnits;
+            op["requestBody"]["required"] = true;
+            Json::Value& schema = op["requestBody"]["content"]["application/json"]["schema"];
+            schema["type"] = "object";
+            intProperty(schema, "dx", -4096, 4096, "Emulated pixels, + = right");
+            intProperty(schema, "dy", -4096, 4096, "Emulated pixels, + = up");
+            addMouseResponses(op, "Glide started; `state.queue.glide_remaining` shows what is left", true);
         }
 
         // POST /api/v1/emulator/{id}/mouse/press
@@ -188,10 +216,19 @@
             Json::Value& op = paths["/api/v1/emulator/{id}/mouse/status"]["get"];
             addMouseIdParam(op);
             op["summary"] = "Get mouse state";
-            op["description"] = "Kempston mouse counters, buttons, wheel, the bytes the guest reads from ports "
-                                "#FADF/#FBDF/#FFDF, pending click and presence. `routing` answers design Q4: "
-                                "whether the decoder actually routes mouse port reads right now (TR-DOS session, "
+            op["description"] = "The machine's mouse: `device` (the first fitted device, or the one `?device=` "
+                                "names; null when none is fitted), `devices` (every device the machine's ports "
+                                "read), `mouse_fitted`, the glide `queue`. The top-level counters, `present` and "
+                                "`wheel_enabled` stay the Kempston interface's own; `ports` are the bytes the guest "
+                                "reads from #FADF/#FBDF/#FFDF on this machine. `routing` answers design Q4: "
+                                "whether the decoder actually routes Kempston port reads right now (TR-DOS session, "
                                 "registered peripheral claims and model gating can shadow a fitted mouse).";
+            op["parameters"][1]["name"] = "device";
+            op["parameters"][1]["in"] = "query";
+            op["parameters"][1]["required"] = false;
+            op["parameters"][1]["schema"]["type"] = "string";
+            op["parameters"][1]["description"] = "Device id to report (kempston, sprinter, evo-ps2); 400 when the "
+                                                 "machine has no such device";
             addMouseResponses(op, "Mouse state", false);
             op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
                 "#/components/schemas/MouseStatus";

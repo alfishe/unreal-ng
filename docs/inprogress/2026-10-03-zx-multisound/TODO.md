@@ -53,7 +53,7 @@ MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also 
   test under TTD, `Describe` on the automation surfaces
 - [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
   `tools/verification/saa1099/` (SAASound, MAME, MiSTer RTL under Verilator; consensus table in its README), the
-  module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 48; not registered in any machine
+  module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 53; not registered in any machine
 - [ ] SAA follow-ups: the MultiSound integration plugs it in (TTD inside the card's blob set, mixer row, `Describe` on
   the automation surfaces, its `[SAA1099]` ini section); audio-level check against the real-chip recordings in
   `rejunity/tt06-psg-saa1099`; captured SAM Coupe / VGM SAA streams in the corpus (tdd §6 item 1)

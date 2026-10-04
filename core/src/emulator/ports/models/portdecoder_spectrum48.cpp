@@ -247,19 +247,8 @@ bool PortDecoder_Spectrum48::IsPort_FE(uint16_t port)
 /// \param pc
 void PortDecoder_Spectrum48::Port_FE(uint16_t port, uint8_t value, uint16_t pc)
 {
-    uint8_t borderColor = value & 0b000'00111;
-    //bool beeperBit = value & 0b0001'0000;
-
-    _screen->SetBorderColor(borderColor);
-
-    // Treat all FE ports as one for logging purposes
-    if ((port & 0x00FE) == 0x00FE)
-        port = 0x00FE;
-
-    if (!key_exists(_loggingMutePorts, port))
-    {
-        MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
-    }
+    // Border, pFE, tape MIC out and the beeper
+    Default_Port_FE_Out(port, value, pc);
 }
 
 /// endregion </Port handlers>

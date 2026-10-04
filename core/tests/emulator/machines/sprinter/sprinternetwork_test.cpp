@@ -1,7 +1,7 @@
 // The Sprinter's network card in its ISA slot (network tdd §15 T-NET-7, the slot part of T-NET-14): the default
 // population (NE2000 RTL8019AS in slot 2 at #300), the card reached through the ISA bus, the slot rows of the network
 // report and the ISA report's resources, ZX-bus cards refused, another population, the network feature, the UM9003's
-// hanging reset port, the access journal
+// hanging reset port, the access journal; the 3C509B in slot 2 (network phase SN5)
 
 #include <gtest/gtest.h>
 
@@ -14,6 +14,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/network/ethernet/etherlink3.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/sprinter/isa/isaaccess.h"
 #include "emulator/io/sprinter/isa/sprinterisabus.h"
@@ -65,14 +66,15 @@ TEST_F(SprinterNetwork_Test, DefaultPopulation_Ne2000InSlot2)
     EXPECT_EQ(Network()->SlotCards()[0].slotId, "isa2");
     ASSERT_NE(_decoder->GetIsaBus().Card(1), nullptr);
     EXPECT_STREQ(_decoder->GetIsaBus().Card(1)->Kind(), "ne2000");
-    EXPECT_EQ(_decoder->GetIsaBus().Card(0), nullptr) << "slot 1 waits for the ZX-bus adapter (ISA I2)";
+    ASSERT_NE(_decoder->GetIsaBus().Card(0), nullptr);
+    EXPECT_STREQ(_decoder->GetIsaBus().Card(0)->Kind(), "zxbus") << "slot 1: the ZX-bus adapter (ISA I2)";
 
     EXPECT_EQ(IsaIo("io_read", 2, 0x30A), 0x50) << "RTL8019AS ID 'P' through the ISA bus";
     EXPECT_EQ(IsaIo("io_read", 2, 0x30B), 0x70);
-    EXPECT_EQ(IsaIo("io_read", 1, 0x30A), 0xFF) << "slot 1 is empty";
+    EXPECT_EQ(IsaIo("io_read", 1, 0x30A), 0xFF) << "slot 1: the GS decodes #33 / #B3 / #BB only";
     EXPECT_EQ(IsaIo("io_read", 2, 0x20A), 0xFF) << "nothing at #200";
 
-    const Ne2000Board* card = Network()->EthernetCard("isa2.eth");
+    const IEthernetCard* card = Network()->EthernetCard("isa2.eth");
     ASSERT_NE(card, nullptr);
     uint8_t mac[6];
     card->StationMac(mac);
@@ -97,7 +99,7 @@ TEST_F(SprinterNetwork_Test, Reports_SlotRowsResourcesAndHowTheZ80ReachesThem)
     EXPECT_EQ(row.find("base")->s, "#300");
     ASSERT_NE(row.find("registers"), nullptr);
     EXPECT_EQ(slots->items[0].find("card")->s, "none");
-    EXPECT_FALSE(net.find("machine")->find("zx_bus")->b) << "no ZX-bus on the Sprinter (until the adapter)";
+    EXPECT_FALSE(net.find("machine")->find("zx_bus")->b) << "no ZX-bus for network cards (the adapter passes no memory cycles, Q7)";
 
     const StateNode isa = DeviceState::Isa(_context);
     const StateNode& slot2 = isa.find("slots")->items[1];
@@ -167,6 +169,85 @@ TEST_F(SprinterNetwork_Test, OtherPopulations)
     EXPECT_EQ(isa.find("slots")->items[1].find("card")->s, "sprinteresp");
 }
 
+// Network phase SN5: the 3C509B in slot 2 ([ISA] Slot2=EL3C509B) - found through its ID port, activated at the
+// EEPROM's base, its window 0 seen through the ISA bus; the reports show the ID port beside the I/O range, the IRQ line
+// stays with the pull-up until a driver sets ENA and leaves window 0; the journal names the registers by window
+TEST_F(SprinterNetwork_Test, El3c509b_InSlot2_IsolationActivationAndReports)
+{
+    Create([](CONFIG& config) {
+        config.sprinter.isa.slot[1].kind = static_cast<uint8_t>(sprinterisa::CardKind::El3c509b);
+        config.sprinter.isa.slot[1].chip = static_cast<uint8_t>(sprinterisa::El3Chip::Tpo);
+    });
+    ASSERT_EQ(Network()->SlotCards().size(), 1u);
+    ASSERT_NE(_decoder->GetIsaBus().Card(1), nullptr);
+    EXPECT_STREQ(_decoder->GetIsaBus().Card(1)->Kind(), "el3c509b");
+    auto* card = dynamic_cast<EtherLink3*>(Network()->EthernetCard("isa2.eth"));
+    ASSERT_NE(card, nullptr);
+    ASSERT_NE(_context->pEthernetGateway, nullptr) << "a frame-level card: the gateway is its wire";
+    auto later = [&](uint64_t t) { _context->emulatorState.t_states += t; };
+    later(2000);   // past the EEPROM's autoload (310 us)
+
+    EXPECT_EQ(IsaIo("io_read", 2, 0x30E), 0xFF) << "not active yet: nothing at #300";
+    IsaIo("io_write", 2, 0x110, 0x00);
+    IsaIo("io_write", 2, 0x110, 0x00);
+    for (int i = 0; i < 255; ++i)
+        IsaIo("io_write", 2, 0x110, EtherLink3::IdSequenceByte(i));
+    IsaIo("io_write", 2, 0x110, 0xD0);
+    IsaIo("io_write", 2, 0x110, 0x87);
+    later(700);   // 162 us
+    uint16_t word = 0;
+    for (int i = 0; i < 16; ++i)
+        word = static_cast<uint16_t>((word << 1) | (IsaIo("io_read", 2, 0x110) & 1));
+    EXPECT_EQ(word, 0x6D50) << "the manufacturer ID, bit by bit through the ID port";
+    EXPECT_EQ(IsaIo("io_read", 1, 0x110), 0xFF) << "slot 1 is empty: its ID port is nobody's";
+    IsaIo("io_write", 2, 0x110, 0xFF);
+    EXPECT_EQ(IsaIo("io_read", 2, 0x300), 0x50);
+    EXPECT_EQ(IsaIo("io_read", 2, 0x301), 0x6D);
+    EXPECT_EQ(IsaIo("io_read", 2, 0x302), 0x50);
+    EXPECT_EQ(IsaIo("io_read", 2, 0x303), 0x95) << "3C509B-TPO";
+    EXPECT_EQ(IsaIo("io_read", 2, 0x700), 0xFF) << "A15-A0 decoded: no 1 KB mirror";
+
+    Network()->OnFrame();
+    const StateNode net = DeviceState::Network(_context);
+    const StateNode& row = net.find("slots")->items[1];
+    EXPECT_EQ(row.find("card")->s, "el3c509b");
+    EXPECT_EQ(row.find("chip")->s, "3C509B-TPO");
+    EXPECT_EQ(row.find("base")->s, "#300");
+    EXPECT_EQ(row.find("id_port")->s, "#110");
+    EXPECT_TRUE(row.find("activated")->b);
+    EXPECT_EQ(row.find("link")->s, "ethernet-gateway");
+
+    const StateNode isa = DeviceState::Isa(_context);
+    const StateNode& slot2 = isa.find("slots")->items[1];
+    EXPECT_EQ(slot2.find("resources")->find("io")->s, "#300-#30F");
+    const StateNode* id = slot2.find("resources")->find("id_port");
+    ASSERT_NE(id, nullptr);
+    EXPECT_EQ(id->find("io")->s, "#100-#1F0 step #10");
+    EXPECT_NE(id->find("z80")->s.find("#C100-#C1F0"), std::string::npos) << id->find("z80")->s;
+    EXPECT_NE(slot2.find("z80_access")->find("io")->s.find("#C300-#C30F"), std::string::npos);
+    EXPECT_NE(isa.find("summary")->s.find("slot 2: el3c509b I/O #300-#30F id_port #100-#1F0 IRQ 3"), std::string::npos)
+        << isa.find("summary")->s;
+
+    // The IRQ pin: ENA clear at power-up - the pull-up holds PB1 high; ENA set in window 1 - driven low (no cause)
+    EXPECT_EQ(_decoder->GetZ84().pio.GetPort(1).inputs & 0x02, 0x02);
+    IsaIo("io_write", 2, 0x304, 0x01);
+    IsaIo("io_write", 2, 0x305, 0x00);
+    IsaIo("io_write", 2, 0x30E, 0x01);
+    IsaIo("io_write", 2, 0x30F, 0x08);   // window 1
+    EXPECT_EQ(_decoder->GetZ84().pio.GetPort(1).inputs & 0x02, 0x00) << "the 3C509B drives IRQ 3 low";
+
+    _decoder->GetIsaBus().ClearJournal();
+    IsaIo("io_read", 2, 0x308);
+    IsaIo("io_write", 2, 0x300, 0x2A);
+    IsaIo("io_write", 2, 0x110, 0x00);
+    const StateNode journal = DeviceState::IsaJournal(_context, 0);
+    const StateNode* entries = journal.find("entries");
+    ASSERT_EQ(entries->items.size(), 3u);
+    EXPECT_EQ(entries->items[0].find("what")->s, "RX status");
+    EXPECT_EQ(entries->items[1].find("what")->s, "TX PIO data");
+    EXPECT_EQ(entries->items[2].find("what")->s, "ID port");
+}
+
 TEST_F(SprinterNetwork_Test, TheCardIsHardware_NetworkFeatureOffKeepsIt)
 {
     Create();
@@ -210,7 +291,7 @@ TEST_F(SprinterNetwork_Test, IrqLines_DefaultPopulationOnPioPortB)
     EXPECT_NE(slot2->find("driven")->s.find("ne2000"), std::string::npos);
     EXPECT_NE(slot2->find("cause")->s.find("IRQEN set"), std::string::npos) << slot2->find("cause")->s;
     EXPECT_EQ(slot2->find("reaches_cpu")->s.rfind("no:", 0), 0u) << slot2->find("reaches_cpu")->s;
-    EXPECT_EQ(isa.find("slots")->items[0].find("irq_line")->find("line")->s, "high") << "empty slot: the pull-up";
+    EXPECT_EQ(isa.find("slots")->items[0].find("irq_line")->find("line")->s, "high") << "the ZX-bus adapter drives no IRQ: the pull-up";
 
     // IRQEN cleared through page 3 (9346CR config mode): the pin floats, the pull-up wins
     IsaIo("io_write", 2, 0x300, 0xE1);   // page 3

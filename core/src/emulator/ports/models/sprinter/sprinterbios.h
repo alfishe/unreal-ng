@@ -18,7 +18,8 @@ class EmulatorContext;
 /// A name is a shipped file ("sp2k-3.06-hf2.rom"), its version alias ("3.04", "3.06", "3.07"),
 /// "rom/sprinter/<file>", or the path of any other 256 KB image.
 ///
-/// The shipped config's default is 3.07 BETA 1 (owner decision 2026-10-02); 3.04 and 3.06 stay selectable.
+/// The shipped config's default is 3.06 Hotfix 2 (owner decision 2026-10-03: back from 3.07 BETA 1 until the BIOS
+/// author publishes his fixed head); 3.04 and 3.07 stay selectable.
 ///
 /// Worked example: select {bios: "3.04", fast_start: 0, reset: true} on a running SPRINTER sets
 /// [ROM] SPRINTER = rom/sprinter/sp2k-3.04.rom and FastStart = 0 for this instance, reloads

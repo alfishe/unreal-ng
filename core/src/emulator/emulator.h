@@ -174,9 +174,10 @@ private:
 
     private:
         Emulator& _emulator;
-        /// The host audio hold this direct run takes (SoundManager::holdHostOutput): it is not paced to real
-        /// time, so its frames must not reach the speakers sped up
-        SoundManager* _heldSound = nullptr;
+        /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
+        /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
+        /// it unmarks it, so Resume's reconcile never sees this hold without its run
+        SoundManager::HostOutputHold _hostHold;
     };
 
     // Emulator state
@@ -207,6 +208,14 @@ private:
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
     uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    /// A step over that steps across a CALL resumes the machine to a temporary breakpoint: the machine then runs
+    /// paced to real time, but it is a debugger step and must be silent like every other step. The host output
+    /// hold (reason DirectRun) lasts from that resume to the stop: the breakpoint, a cancel or any pause
+    SoundManager::HostOutputHold _stepOverHostHold;
+    /// Id of the NC_EXECUTION_BREAKPOINT observer StepOver() registers; its handler captures this emulator and its
+    /// FeatureManager, so it must be unregistered before either goes away. Never from inside the handler (deadlock)
+    uint64_t _stepOverObserverId = 0;
+    void RemoveStepOverObserver();
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
 
     // Frame step target (persistent to prevent cumulative drift)
@@ -508,7 +517,7 @@ public:
     /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
     unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
-    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
+    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames (64-bit T-state budget: TStateRunBudget)
     void StepOver();                                              // Execute instruction, skip calls and subroutines
     void StepOut();                                               // Run until the current subroutine returns (SP-tracking)
 
@@ -516,7 +525,7 @@ public:
     void CancelPendingStepOver();
 
     // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
-    void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
+    void RunTStates(uint64_t tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
     void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
@@ -524,7 +533,7 @@ public:
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
     /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
-    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0,
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
                            bool notifyDebugger = true);
 
     /// Start the current frame again after machine state was replaced from
@@ -637,6 +646,11 @@ public:
     /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another
     /// thread. False while the thread runs, or between a pause request and its confirmation
     bool IsEmulationParked();
+    /// Run `work` on the caller's thread while the emulation stays parked: a confirmed pause and no direct run on any
+    /// thread. Resume() waits for it (the pause flag cannot flip meanwhile), so the caller is the only thread driving
+    /// the machine. Returns false, without running `work`, when the machine is not parked. `work` must not pause,
+    /// resume or step this emulator
+    bool RunWhileParked(const std::function<void()>& work);
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
 

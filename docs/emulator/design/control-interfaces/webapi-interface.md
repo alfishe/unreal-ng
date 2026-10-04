@@ -347,9 +347,27 @@ POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count":
 > host audio output (the speakers) gets nothing, on every machine and from every sound source (beeper, AY,
 > Covox / Sprinter Covox-Blaster, GS, FM, MoonSound, CD): the same as while paused. The machine computes exactly
 > the same samples as at normal speed (TTD stays deterministic), and audio captures (`/audio/capture`) and
-> recordings still get them. TTD seek / replay and turbo mode hold the host output the same way. `resume`
-> restores sound. `GET /audio/mixer` -> `host_output` shows it: `held`, `frames_delivered`, `frames_audible`,
-> `frames_held` (emulated frames since the instance was created).
+> recordings still get them. TTD seek / replay and turbo mode hold the host output the same way. The user's
+> master mute is never touched by any of them.
+>
+> Each hold belongs to the run that took it and ends with it - also when the run fails or throws - so after the
+> run, the seek or turbo the host output is free again. `resume` (WebAPI, MCP, CLI, GUI) also checks it: a hold
+> whose reason is not in effect at that moment (no direct run on any thread, no TTD replay, no turbo) is a leak
+> and is dropped and counted, so a resumed machine is always heard.
+>
+> `GET /audio/mixer` -> `host_output` shows it:
+>
+> | Field | Meaning |
+> |-------|---------|
+> | `held` | `true` while any hold is active |
+> | `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` (all `0` while the machine plays) |
+> | `holds_taken` | holds ever taken, by reason |
+> | `stale_holds_cleared` | leaked holds a `resume` dropped (should stay `0`; each one is also logged) |
+> | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames handed to the speakers / of those, not silent / withheld |
+>
+> Example: a Sprinter playing music, `POST /pause`, `POST /run_frames {"count":50}`, `POST /resume`. During
+> `run_frames`, `holders.direct_run` is `1` and `frames_held` grows by 50. After `resume`, `held` is `false`,
+> `holders` is all `0`, and `frames_delivered` / `frames_audible` grow by about 50 a second again.
 
 ### Debug Mode
 ```
@@ -390,7 +408,7 @@ GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binar
 GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
-GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
@@ -420,12 +438,12 @@ POST /api/v1/emulator/{id}/cdaudio/{verb}      CD audio control: status | play (
 GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map (+ fm_maps raw), video (mode, geometry, TSU, the engine's line with t0_gpage / t1_gpage), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs[72] = the register file as last written (404 on other machines)
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
-GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity); 404 without an adapter
+GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at|loopback|tcp:host:port|serial:dev[,baud]"} (zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's RS-232 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at|loopback|tcp:host:port|serial:dev[,baud]"} (zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
-GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, the card's own fields, irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
+GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, summary_line, the card's own fields (the ZX-bus adapter's zx_bus: the General Sound / NeoGS behind it - personality, ports #B3 / #BB / #33, cpu_addresses, status flags, machine_reset, reset_held / reset_pulses; or why its ZX-bus is empty), irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
 GET  /api/v1/emulator/{id}/state/isa/journal?last=N   The ISA access journal (512 entries): frame, t, pc, slot, access (read / write / stall), space, isa_address, cpu_address, what (the card's register name), value; event "irq" entries for the interrupt lines (edges, PIO requests, acknowledges, RETI), also in irq_events (their own 128-entry ring: a card that is polled does not flush them)
 GET  /api/v1/emulator/{id}/network/frames      The Ethernet gateway's frame capture (last 256, both ways): ?link=isa2.eth, last=N, format=json|pcap; JSON frames[] (index, frame, direction, port, length, summary, hex)
 POST /api/v1/emulator/{id}/network/frame       {"link": "isa2.eth", "hex": "..."} - a frame towards a card at the next frame boundary (a tool edit while TTD records)
@@ -639,25 +657,38 @@ DELETE /api/v1/emulator/{id}/breakpoints                   Clear all
 DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}           Remove specific
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
-GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info
+GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
+POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
 ```
 
 #### Add Breakpoint Request
 ```json
 {
-  "type": "execution|read|write|port_in|port_out",
+  "type": "execution|read|write|rw|port_in|port_out|port",
   "address": 32768,
+  "address_end": 33023,
   "page": {"kind": "ram", "page": 32},
+  "slot_only": false,
+  "port_mask": 255,
+  "hits": ">=5",
   "note": "optional annotation",
   "group": "optional group name"
 }
 ```
 
-`page` (optional, execution / read / write): `{kind: ram | rom | cache, page}` (debugger protocol; the text
-form `"ram32"` is accepted too). The breakpoint fires only
-while that page is mapped at the address - for example code in TS-Conf RAM page 32 at `#C000`, not
-whatever else is paged in there. 400 for a page the machine does not have. The list and
-`/breakpoints/status` (`last_triggered_page`) name it back the same way.
+Everything but `type` and `address` is optional (the debugger protocol's Breakpoint fields):
+
+| Field | Meaning |
+|:--|:--|
+| `address_end` | Range end, inclusive. A range costs the hot path what one address costs, however many there are. |
+| `page` | `{kind: ram \| rom \| cache, page}` (or the text `"ram32"`): a **physical** breakpoint on that page at offset `address & #3FFF`. It fires through whatever slot shows the page: TS-Conf code paged into `#C000` or `#8000`, the 128K's RAM 5 at `#4000` and `#C000`. With a range, the range stays inside the page. 400 for a page the machine does not have. |
+| `slot_only` | With `page`: only through the slot of `address` (the old "while page X is at this address"). |
+| `port_mask` | Ports: matches when `(port & port_mask) == (address & port_mask)`; `255` catches `#FE` on any high byte. |
+| `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
+
+Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
+page, a mask on a memory breakpoint, a hit policy without a target. The reply and the list carry
+`address_end`, `page` + `slot_only`, `port_mask`, `hit_mode`, `hit_target` and the live `hit_count`.
 
 `note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
 on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.
@@ -1181,12 +1212,17 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 > **Status**: ✅ Implemented (2026-09). Source: `core/automation/webapi/src/api/mouse_api.cpp`;
 > every range check lives in the core `DebugMouseManager`, so all interfaces answer the same.
 
-Drives the emulated Kempston Mouse. The mouse is **relative**: requests change its X/Y
-counters, and the running program moves its own cursor by how much the counters changed.
+Drives the machine's own mouse: the Kempston interface, the Sprinter board mouse (Microsoft serial
+mouse on SIO B + the PLD's Kempston view) or the ZX-Evo / TS-Conf PS/2 mouse on the AVR (table:
+[command-interface.md §11](./command-interface.md#11-mouse-input-injection); design:
+[2026-10-03-mouse-api-routing](../../../inprogress/2026-10-03-mouse-api-routing/design.md)). The mouse is
+**relative**: requests change its X/Y counters, and the running program moves its own cursor by how
+much the counters changed.
 Full command semantics, units and a worked example: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
 ```
 POST /api/v1/emulator/{id}/mouse/move         Move by dx/dy emulated pixels      {"dx":10,"dy":-5}
+POST /api/v1/emulator/{id}/mouse/glide        Long move in steps (one per frame) {"dx":-1000,"dy":1000}
 POST /api/v1/emulator/{id}/mouse/press        Press and hold a button            {"button":"left"}
 POST /api/v1/emulator/{id}/mouse/release      Release a button                   {"button":"left"}
 POST /api/v1/emulator/{id}/mouse/click        Press, hold N frames, release      {"button":"left","frames":2}
@@ -1194,13 +1230,13 @@ POST /api/v1/emulator/{id}/mouse/buttons      Set the exact pressed set         
 POST /api/v1/emulator/{id}/mouse/wheel        Scroll by notches                  {"steps":-1}
 POST /api/v1/emulator/{id}/mouse/release_all  Release all, cancel pending click  (no body)
 POST /api/v1/emulator/{id}/mouse/counters     Debug: write raw X/Y counters      {"x":31,"y":85}
-GET  /api/v1/emulator/{id}/mouse/status       Current mouse state
+GET  /api/v1/emulator/{id}/mouse/status       Current mouse state                ?device=sprinter (optional)
 GET  /api/v1/emulator/{id}/mouse/buttons      Valid button names and aliases
 ```
 
 | Field | Type | Range | Notes |
 |-------|------|-------|-------|
-| `dx` | integer | −127 … 127 | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
+| `dx` | integer | −127 … 127 (`glide`: −4096 … 4096) | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
 | `dy` | integer | −127 … 127 | + = **up** |
 | `button` | string | `left`, `right`, `middle`, `l`, `r`, `m` | case-insensitive |
 | `frames` | integer | 1 … 65535 | optional, default 2 |
@@ -1230,7 +1266,10 @@ Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
 }
 ```
 
-`GET /mouse/status` returns the same object as `state` plus `emulator_id`. Field meanings:
+`GET /mouse/status` returns the same object as `state` plus `emulator_id` (and `routing`). The
+top-level `x`, `y`, `present`, `wheel_enabled`, `button_mask`, `wheel` stay the Kempston interface's
+own (unchanged JSON); `ports` are what the machine's ports return; the machine's mouse is in
+`device`. Field meanings:
 
 | Field | Meaning |
 |-------|---------|
@@ -1241,11 +1280,21 @@ Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
 | `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
 | `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
+| `mouse_fitted` | Some mouse the machine's ports read is fitted. `false`: input is refused with 409. |
+| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`). |
+| `devices` | Every mouse device the machine's ports read, same objects (one per machine today). |
+| `queue` | `{"ops": n, "glide_remaining": {"dx":..,"dy":..}}`: input waiting behind a glide. |
 
-A successful response may carry a `"warning"` string: the mouse is not fitted
-(`mouse not present: guest reads floating bus on the mouse ports`), or a wheel step was sent
-with no wheel fitted (`no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter`).
-The change is still applied.
+**Glide.** `POST /mouse/glide` takes up to ±4096 per axis: the first step (at most 127) now, then
+one step per frame once the program has read the last one (at most 10 frames' wait). Input sent
+while a glide is in progress is queued behind it (the response says `"queued": true`) and applied
+in order, one item per frame; `release_all` drops the queue. Homing where the program clamps its
+pointer (Flex Navigator): `glide {"dx":-1000,"dy":1000}` puts the pointer in the top-left corner,
+then `glide {"dx":X,"dy":-Y}` reaches the picture's (X, Y).
+
+A successful response may carry a `"warning"` string when a wheel step was sent with no wheel
+fitted (`no wheel fitted ([INPUT] Wheel=NONE, or a mouse without one): the guest does not see the
+wheel`). The change is still applied.
 
 **Errors** use the usual `{"error": "...", "message": "..."}` body, with CORS headers:
 
@@ -1259,9 +1308,13 @@ The change is still applied.
 | Zero move or zero wheel | 400 | `move requires a non-zero dx or dy` |
 | Unknown button | 400 | `Unknown button 'foo'. Valid: left, right, middle (l, r, m)` |
 | TTD replay in progress | 409 | `TTD replay in progress; live mouse input refused` |
+| No mouse fitted on the machine | 409 | body `{"error":"Conflict","reason":"no_mouse","message":"no mouse fitted on this machine: ..."}` |
+| Unknown `?device=` | 400 | `Unknown mouse device 'ps2'. This machine has: sprinter` |
 
-409 is returned **only** during TTD replay. Writing counters while TTD records is allowed
-(the write is journalled).
+409 is returned during TTD replay and when the machine has no mouse a program can read
+(`[INPUT] Mouse=NONE` / feature `kempstonmouse` off on a Kempston or ZX-Evo / TS-Conf machine; the
+Sprinter's board mouse is always there). Until 2026-10-03 the second case succeeded with a
+warning. Writing counters while TTD records is allowed (the write is journalled).
 
 **Example: click an icon 32 px right and 16 px up of the cursor, reproducibly**
 
@@ -1277,9 +1330,9 @@ curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/wheel -H 'Content-Type: ap
 # 400 {"error":"Bad Request","message":"steps=-9 out of range -7..7"}
 ```
 
-MCP clients use the `mouse_input` tool (actions `move`, `press`, `release`, `click` with an
-optional `dx`/`dy` pre-move, `buttons`, `wheel`, `release_all`, `status`), which forwards to
-these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
+MCP clients use the `mouse_input` tool (actions `move`, `glide`, `press`, `release`, `click` with an
+optional `dx`/`dy` pre-move (a pre-move beyond ±127 glides), `buttons`, `wheel`, `release_all`,
+`status` with an optional `device`), which forwards to these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
 
 ## Tape Control
 

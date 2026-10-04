@@ -105,28 +105,28 @@ TEST(SprinterBiosReload_Test, ResetLoadsTheSelectedImage)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError, RamPowerOn::Zero);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    // The shipped config's default (owner decision 2026-10-02, bios-versions.md §6)
-    EXPECT_EQ(LoadedFile(DeviceState::SprinterBios(context)), "sp2k-3.07-beta1.rom");
-    // 3.07 BETA 1 carries its floppy-driver warning (bios-versions.md §5.2) in the report and the brief
-    const StateNode beta = DeviceState::SprinterBios(context);
-    ASSERT_EQ(Find(beta, "known_issues")->items.size(), 1u) << DeviceState::ToText(beta);
-    EXPECT_NE(Find(beta, "known_issues")->items[0].s.find("IY"), std::string::npos);
-    EXPECT_EQ(DeviceState::SprinterBiosKnownIssues(context).size(), 1u);
+    // The shipped config's default (owner decision 2026-10-03, bios-versions.md §6.1): 3.06 Hotfix 2, no known issue
+    StateNode report = DeviceState::SprinterBios(context);
+    EXPECT_EQ(LoadedFile(report), "sp2k-3.06-hf2.rom");
+    EXPECT_TRUE(Find(report, "known_issues")->items.empty()) << "3.06 Hotfix 2 has none";
+    EXPECT_TRUE(DeviceState::SprinterBiosKnownIssues(context).empty());
 
     SprinterBios::Options options;
     std::string error;
-    ASSERT_TRUE(SprinterBios::OptionsFromStrings("3.06", "1", "", "0", options, error));
-    StateNode report = DeviceState::SprinterBiosSelect(context, options);
+    ASSERT_TRUE(SprinterBios::OptionsFromStrings("3.07", "1", "", "0", options, error));
+    report = DeviceState::SprinterBiosSelect(context, options);
     ASSERT_TRUE(Find(report, "available")->b) << DeviceState::ToText(report);
     EXPECT_TRUE(Find(report, "reload_pending")->b) << "loads at the next reset";
-    EXPECT_EQ(LoadedFile(report), "sp2k-3.07-beta1.rom");
+    EXPECT_EQ(LoadedFile(report), "sp2k-3.06-hf2.rom");
 
     emulator->Reset();
+    // 3.07 BETA 1 carries its floppy-driver warning (bios-versions.md §5.2) in the report and the brief
     report = DeviceState::SprinterBios(context);
-    EXPECT_EQ(LoadedFile(report), "sp2k-3.06-hf2.rom");
+    EXPECT_EQ(LoadedFile(report), "sp2k-3.07-beta1.rom");
     EXPECT_FALSE(Find(report, "reload_pending")->b);
-    EXPECT_TRUE(Find(report, "known_issues")->items.empty()) << "3.06 Hotfix 2 has none";
-    EXPECT_TRUE(DeviceState::SprinterBiosKnownIssues(context).empty());
+    ASSERT_EQ(Find(report, "known_issues")->items.size(), 1u) << DeviceState::ToText(report);
+    EXPECT_NE(Find(report, "known_issues")->items[0].s.find("IY"), std::string::npos);
+    EXPECT_EQ(DeviceState::SprinterBiosKnownIssues(context).size(), 1u);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -147,5 +147,6 @@ TEST(SprinterBiosOptions_Test, IsaSlotsAtCreate)
     config.sprinter.isa = sprinterisa::DefaultConfig();
     ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
     EXPECT_EQ(config.sprinter.isa.slot[1].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
-    EXPECT_EQ(config.sprinter.isa.slot[0].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
+    EXPECT_EQ(config.sprinter.isa.slot[0].kind, static_cast<uint8_t>(sprinterisa::CardKind::ZxBus))
+        << "slot 1 keeps the configured default: the ZX-bus adapter (ISA I2)";
 }

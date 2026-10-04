@@ -364,6 +364,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::enableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/enable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
 
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
@@ -474,6 +475,7 @@ public:
 
     // region Mouse Injection (implementation: api/mouse_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::mouseMove, "/api/v1/emulator/{id}/mouse/move", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseGlide, "/api/v1/emulator/{id}/mouse/glide", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mousePress, "/api/v1/emulator/{id}/mouse/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseRelease, "/api/v1/emulator/{id}/mouse/release", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseClick, "/api/v1/emulator/{id}/mouse/click", drogon::Post);
@@ -1202,6 +1204,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void addBreakpoint(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/breakpoints/hits/reset - hit counters back to 0 ({"id": N}: one, else all)
+    void resetBreakpointHits(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void clearBreakpoints(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void removeBreakpoint(const drogon::HttpRequestPtr& req,
@@ -1463,6 +1468,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     // region Mouse Injection Methods (implementation: api/mouse_api.cpp)
     void mouseMove(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    void mouseGlide(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
     void mousePress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void mouseRelease(const drogon::HttpRequestPtr& req,

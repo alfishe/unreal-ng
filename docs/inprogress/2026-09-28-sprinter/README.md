@@ -27,7 +27,9 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 | [unreal-ng-mapping.md](unreal-ng-mapping.md) | reused as-is / extended / new; how it plugs into the media manager, IDE core, TSConf hooks, ZX-Evo E2b |
 | [roadmap-and-plan.md](roadmap-and-plan.md) | phases S0-S7, dependencies on PLAN rows, sizes, what can start now, review round 1 decisions |
 | [test-plan.md](test-plan.md) | tests by layer with IDs, firmware tests, test data, coverage matrix |
-| [pld-configurations.md](pld-configurations.md) | PLD configurations overview: how bitstreams load on the hardware, how MAME and unreal-ng model them as modules, the differences and why (read first) |
+| [atapi-cd-boot.md](atapi-cd-boot.md) | booting from an ATAPI CD: which BIOS can, the CMOS cells and checksum, the boot sector at sector 17, what a bootable CD needs, what is missing, verified on the emulator |
+| [estex-dss-build.md](estex-dss-build.md) | building Estex DSS (kernel, shell, installer, boot loader) from source with sjasmplus, the symbols for debugging, putting the build on a disk; the built 1.71.66 is in testdata |
+| [pld-configurations.md](pld-configurations.md) | PLD configurations overview: how bitstreams load on the hardware, how MAME and unreal-ng model them as modules, the differences and why (read first); §6 is the full account of the DooM and Video configurations (Sprinter 97 legacy, not planned) |
 | [game-configuration.md](game-configuration.md) | the "Game" PLD configuration (V10): the bitstream, what it changes, the grid-offset picture, the module, tests |
 
 ## Key findings

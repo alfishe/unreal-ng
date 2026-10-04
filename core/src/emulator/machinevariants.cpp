@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 #include "emulator/platform.h"
 
@@ -36,10 +37,36 @@ bool TsConfVdac2Supported(std::string* reason)
 #endif
 }
 
+/// ZX Profi+ ("Personal Computer PROFI Plus"): a v5 with Djoni's V0.03 port decoder PROM, which opens the extended
+/// ports to the SYS ROM, running Vadim's ROM BIOS Plus - the machine PQ-DOS and DOS Navigator are written for
+/// (docs/inprogress/2026-10-04-profi-plus/design.md)
+constexpr const char* kProfiPlusRom = "rom\\profi\\bios-plus-041h1.rom";
+
+void ApplyProfiPlus(CONFIG& config)
+{
+    std::snprintf(config.profi_rom_path, sizeof(config.profi_rom_path), "%s", kProfiPlusRom);
+    config.profi_ext_ports = 1;
+}
+
+bool IsProfiPlus(const CONFIG& config)
+{
+    return config.mem_model == MM_PROFI && config.profi_ext_ports == 1 &&
+           std::string(config.profi_rom_path).find("bios-plus") != std::string::npos;
+}
+
+bool ProfiPlusSupported(std::string* reason)
+{
+    (void)reason;
+    return true;
+}
+
 const std::vector<MachineVariant> kVariants = {
     {"TSL-VDAC2", "TS-Conf + VDAC2 (FT812)",
      "TS-Conf with the TS-Labs VDAC2 card: FT812 graphics on the IDE connector (no IDE)", "TSL", 4096,
      ApplyTsConfVdac2, IsTsConfVdac2, TsConfVdac2Supported},
+    {"PROFI-PLUS", "ZX Profi+ (BIOS Plus, PQ-DOS)",
+     "ZX Profi v5 with the V0.03 port decoder and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, IDE", "PROFI", 1024,
+     ApplyProfiPlus, IsProfiPlus, ProfiPlusSupported},
 };
 
 /// Other names a create request may use for a variant
@@ -50,6 +77,7 @@ struct Alias
 };
 const Alias kAliases[] = {
     {"TSCONF-VDAC2", "TSL-VDAC2"},
+    {"PROFIPLUS", "PROFI-PLUS"},
 };
 
 bool SameName(const std::string& a, const char* b)

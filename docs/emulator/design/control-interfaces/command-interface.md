@@ -449,9 +449,12 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 **Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
 audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
 The machine computes the same samples as at normal speed (TTD determinism; captures and recordings still get
-them). TTD seek / replay and turbo mode hold the output the same way; `resume` restores sound. The mixer
-(`mixer`, `GET /audio/mixer`) reports it under `host_output`: `held`, `frames_delivered`, `frames_audible`,
-`frames_held`.
+them). TTD seek / replay and turbo mode hold the output the same way; the user's master mute is never touched.
+Each hold ends with the run, seek or turbo span that took it (also when it fails), and `resume` drops any hold
+whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
+`GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
+`ttd_replay`, `turbo`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
+`frames_delivered`, `frames_audible`, `frames_held`.
 
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision
@@ -779,6 +782,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
 | ISA slots (report; Sprinter) | `state isa` / `isa` | `GET /state/isa` | `isa_state()` | `isa_state()` | `isa` |
+| ISA ZX-bus adapter + the GS behind it (Sprinter) | `isa` (`zx_bus`), `isa io 1 #BB`, `state audio gs` | `GET /state/isa` (`slots[].zx_bus`, `summary_line`), `POST /control/isa`, `GET /state/audio/gs` | `isa_state().slots[1].zx_bus`, `gs_state()` | `isa_state()['slots'][0]['zx_bus']`, `gs_state()` | `isa` (`[isa]` card line), `audio_gs` |
 | ISA IRQ lines (Sprinter) | `isa irq` | `GET /state/isa` (`irq_summary`, `pio_port_b`, `slots[].irq_line`) | `isa_state()` | `isa_state()` | `isa` (`[isa] irq:` line) |
 | ISA access journal | `isa journal [n\|clear\|on\|off]` | `GET /state/isa/journal` | `isa_journal(n)` | `isa_journal(last)` | `invoke_api` GET `/state/isa/journal` |
 | Ethernet frames (capture / inject) | `network frames [link] [file.pcap]`, `network frame <link> <hex>` | `GET /network/frames`, `POST /network/frame` | `network_frames(link, n)`, `network_inject_frame(link, hex)` | `network_frames(link, last)`, `network_frames_pcap()`, `network_inject_frame()` | `invoke_api` |
@@ -881,10 +885,11 @@ Advanced debugging features for the selected emulator instance. The emulator sup
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bp <addr>` | `break`, `breakpoint` | `<address> [--page ramN\|romN\|cacheN] [note]` | Set an execution breakpoint at `<address>`. Emulation pauses when PC reaches this address. Address can be hex (0x8000) or decimal (32768). With a page (`bp 0xC000 --page ram32`) it fires only while that page is mapped at the address. Returns breakpoint ID for future reference. |
-| `wp <addr> <type>` | `watchpoint` | `<address> <r\|w\|rw> [--page ramN\|romN\|cacheN] [note]` | Set a memory watchpoint at `<address>`:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>With a page it fires only while that page is mapped at the address. Useful for tracking when memory is accessed. |
-| `bport <port> <type>` | `portbreak` | `<port> <in\|out\|both>` | Set an I/O port breakpoint:<br/>• `in` - break on port IN operation<br/>• `out` - break on port OUT operation<br/>• `both` - break on either IN or OUT<br/>Essential for debugging I/O operations (keyboard, sound, disk, ports). |
-| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port<br/>• Active/Inactive<br/>• Group name<br/>• Optional annotation |
+| `bp <addr>` | `break`, `breakpoint` | `<address>[-<end>] [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set an execution breakpoint on an address or a range (`bp 0x8000-0x80FF`). Address can be hex (0x8000) or decimal (32768). `--page`: a physical breakpoint on that page at offset `address & #3FFF`, through any slot that shows the page (`--slot-only`: only through the slot of the address). `--hits` stops on the Nth hit only, from the Nth on (`>=N`) or every Nth (`%N`); every hit is counted. Returns the breakpoint id and its description. |
+| `wp <addr> <type>` | `watchpoint` | `<address>[-<end>] <r\|w\|rw> [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set a memory watchpoint on an address or a range:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>`wp 0x4000-0x57FF w` watches the screen bitmap; `--page` / `--slot-only` / `--hits` as for `bp`. |
+| `bport <port> <type>` | `portbreak` | `<port> <i\|o\|io> [--mask M] [--hits N\|>=N\|%N] [note]` | Set an I/O port breakpoint:<br/>• `i` - break on port IN operation<br/>• `o` - break on port OUT operation<br/>• `io` - break on either IN or OUT<br/>`--mask M` matches every port where `(port & M) == (<port> & M)`: `bport 0xFE i --mask 0x00FF` catches the keyboard read on any high byte. `--hits` as for `bp`. |
+| `bphits reset [id]` | | `reset [breakpoint-id]` | Set the hit counters back to 0, of one breakpoint or of all (`bplist` shows them as "(hit Nx)"). |
+| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port, a range end ("to 0x80FF"), the page ("in ram32", "(this slot only)"), a port mask<br/>• Active/Inactive<br/>• The hit policy ("hits >=5") and the hits so far ("(hit 12x)")<br/>• Optional annotation |
 | `bpclear [id\|all]` | `bc` | `[breakpoint-id \| all]` | Clear breakpoints:<br/>• No argument: clear ALL breakpoints and watchpoints<br/>• `<id>`: clear specific breakpoint by ID<br/>• `all`: explicitly clear all (same as no argument)<br/>**Warning**: This permanently deletes breakpoints. Use `bpoff` to temporarily disable instead. |
 
 #### 4.2 Breakpoint Group Management
@@ -2288,7 +2293,7 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state rtc` / `rtc` / `cmos` | | | Show the CMOS clock (MC146818 / DS12887; the ZX-Evo AVR's emulation of one) - the same report as WebAPI `/state/rtc`, Lua/Python `rtc_state()` and MCP `rtc` (`DeviceState::Rtc`):<br/>• Chip, the ports the machine wires it to, cell count, NVRAM file, the guest's address latch<br/>• Time base: `host` (host local time plus the offset the guest set), `emulated` (while TTD records), `fixed` (tests)<br/>• Time as the guest reads it now; registers A-D and the alarms decoded<br/>• Every cell as hex, peeked (register C keeps its flags)<br/>Machines: ATM3 (ZX-Evo), PROFI, SCORPION / PROFSCORP with `[HDD] Scheme=SMUC`; elsewhere the reason why not | ✅ Implemented |
 | `rtc read <start> [count]` | | `<start> [count]` | CMOS cells as the guest reads them, without side effects (`RtcAccess::Read`, same as WebAPI `GET /rtc/cells`). Numbers: decimal, `0x..`, `#..` or `..h` | ✅ Implemented |
 | `rtc write <start> <byte> [byte..]` | | `<start> <bytes>` | Write CMOS cells like the guest (`RtcAccess::Write`, same as WebAPI `POST /rtc/cells`): time registers set the clock, C and D are read-only, the address latch is not touched; marked as a debugger edit while TTD records | ✅ Implemented |
-| `state isa` / `isa` | | | Show the ISA slots (the Sprinter's two ISA-8 slots) - the same report as WebAPI `/state/isa`, Lua/Python `isa_state()` and MCP `isa` (`DeviceState::Isa`): the `#9FBD` latch (A19-A14, AEN, RESET), whether window 3 shows a slot now, and per slot the configured and fitted card, why a configured card is not fitted, the card's own fields and cycle counters. Other machines: "no ISA slots on this machine" | ✅ Implemented |
+| `state isa` / `isa` | | | Show the ISA slots (the Sprinter's two ISA-8 slots) - the same report as WebAPI `/state/isa`, Lua/Python `isa_state()` and MCP `isa` (`DeviceState::Isa`): the `#9FBD` latch (A19-A14, AEN, RESET), whether window 3 shows a slot now, and per slot the configured and fitted card, why a configured card is not fitted, the card's own fields and cycle counters (a 3C509B also its ID port under `resources.id_port`). Other machines: "no ISA slots on this machine". The ZX-bus adapter (slot 1 by default, ISA phase I2) adds `zx_bus`: the General Sound / NeoGS behind it, its ports `#B3` / `#BB` / `#33` (CPU `#C0B3` / `#C0BB` / `#C033` with window 3 = `#D4`), its reset from ISA RESET DRV, its mailbox status | ✅ Implemented |
 | `isa irq` | | | The ISA interrupt lines only (the same report, cut down): `irq_summary`, `pio_port_b` (mode, lines, latched inputs, read value, direction, mask, interrupt control, vector, pending, under service) and per slot `irq_line` (the card's IRQ, PB0 / PB1, who drives the line - a pin nobody drives reads high through the 3.9 kOhm pull-up - level, the card's request and cause, the PIO's bit-mode setup for that bit, and whether it reaches the CPU: IM 2 vector, table, daisy-chain order, or why not) | ✅ Implemented |
 | `isa journal [n\|clear\|on\|off]` | | | The ISA access journal (`IsaAccess::Journal`, same as WebAPI `GET /state/isa/journal`): the last n accesses with frame, T, PC, slot, read / write / stall, the ISA and CPU address, the card's register name and the value, the interrupt events, and `irq_events` (the interrupt events from their own ring, which polling does not flush); `clear`, `on`, `off` | ✅ Implemented |
 | `network frames [link] [file.pcap]` / `network frame <link> <hex>` | | | The Ethernet gateway's capture of the frame-level cards (`EthernetAccess`): one line per frame (index, frame, direction, port, length, summary), or the whole capture as a pcap file; `frame` queues a frame towards the card at the next frame boundary | ✅ Implemented |
@@ -3014,9 +3019,18 @@ tape import recording.wav --target tzx -o imported.tzx
 
 ### 11. Mouse Input Injection
 
-Drive the Kempston Mouse of the selected emulator from a script, a remote tool or an AI agent.
+Drive the mouse of the selected emulator from a script, a remote tool or an AI agent. The input goes
+to the **machine's own mouse**, whatever it is (design:
+[2026-10-03-mouse-api-routing](../../../inprogress/2026-10-03-mouse-api-routing/design.md)):
 
-**How the device works, in one paragraph.** The Kempston Mouse is a *relative* device: it
+| Machine | Mouse (`device` id) | What the program reads |
+| :--- | :--- | :--- |
+| 48K, 128K, +2, +2A, +3, Pentagon, Scorpion, Profi, ZX-Poly | Kempston interface (`kempston`) | `#FADF` buttons, `#FBDF` X, `#FFDF` Y |
+| ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
+| ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
+| Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+
+**How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
 the mouse adds to them, and they wrap around (255 + 1 = 0). The program running on the
 machine reads the counters, compares them with its previous reading and moves its own
@@ -3028,7 +3042,7 @@ emulated screen and do not depend on the host window size or monitor DPI.
 
 | Value | Meaning | Allowed per call |
 | :--- | :--- | :--- |
-| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero) |
+| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero); `mouse glide`: −4096 … 4096 |
 | `dy` | + = **up** (no flip: screen Y grows down, the counter grows up) | −127 … 127 |
 | `steps` (wheel) | + = away from you | −7 … 7, not 0 |
 | `button` | `left`, `right`, `middle` (or `l`, `r`, `m`), any case | — |
@@ -3041,6 +3055,14 @@ gives X = 231; the program computes 231 − 31 = 200, reads that as −56 and mo
 **left**. The error message tells you to split a long move into several moves with
 `run_frames` between them.
 
+**Long moves: `mouse glide`.** `glide <dx> <dy>` moves up to ±4096 per axis in steps the
+program can follow: the first step (at most 127) now, then one step per frame, each once the
+program has read the last one (at most 10 frames' wait; at once when no program reads the mouse).
+Commands sent while a glide is in progress queue behind it and are applied in order, one per
+frame, so a `click` after a glide lands where the glide ended. `mouse clear` drops the queue.
+Worked example (a program reading the mouse every frame): `glide 300 0` -> X + 127 now, + 127 at
+the end of the next frame, + 46 at the end of the frame after.
+
 **Timing.** Each command changes the device before it returns (a direct call on the
 caller's thread, not a queued message). The machine reacts only when its program next reads
 the ports. For reproducible results: `pause`, inject, then `run_frames N`. `click` presses
@@ -3050,23 +3072,29 @@ sees the button held for exactly N frames.
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `mouse move` | | `<dx> <dy>` | Add `dx`/`dy` to the X/Y counters (8-bit wrap). | ✅ Implemented |
+| `mouse glide` | | `<dx> <dy>` | Long move (±4096) in steps of at most 127, one per frame, paced by the program's reads; later commands queue behind it. | ✅ Implemented |
 | `mouse press` | | `<button>` | Press and hold a button. | ✅ Implemented |
 | `mouse release` | | `<button>` | Release a button. | ✅ Implemented |
 | `mouse click` | | `<button> [frames]` | Press, hold `frames` (default 2), release on its own at a frame end. A new click replaces a pending one. | ✅ Implemented |
 | `mouse buttons` | | `<none\|b1,b2…>` | Set the exact set of pressed buttons (`none` = all up). Cancels a pending click. | ✅ Implemented |
 | `mouse wheel` | | `<steps>` | Scroll by whole notches (4-bit counter, wraps at 16). | ✅ Implemented |
-| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click. | ✅ Implemented |
-| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support, and **port routing**: decoded or shadowed with the reason (mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor). | ✅ Implemented |
+| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click and the input queued behind a glide. | ✅ Implemented |
+| `mouse status` | `mouse info` | `[device]` | The Kempston interface's counters, buttons, wheel, fitting, the bytes the three ports return, pending click, TTD journal support and **port routing** (decoded or shadowed with the reason: mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor); then **the machine's mouse**: its id, kind, fitted / in use, counters, registers, and per kind the serial line (line and receiver baud, in tune, the packet in flight, packets sent, bytes received, framing errors, the receive FIFO) or the PS/2 state (connected, resolution); the glide queue. `device` names another device of the machine (an unknown id is an error listing the ids). | ✅ Implemented |
+| `mouse devices` | | — | The machine's mouse devices, each as in `status`. | ✅ Implemented |
 | `mouse set` | | `<x> <y>` | Debug: write the raw X/Y counters (0–255). Allowed while TTD records (journalled). | ✅ Implemented |
 | `mouse help` | | — | Subcommand help. | ✅ Implemented |
 
-**Warnings (the command still succeeds):**
-- *Mouse not fitted* (`[INPUT] Mouse=NONE`, or feature `kempstonmouse` off): the counters
-  change, but nothing answers on the mouse ports, so the program reads the floating bus.
-  Warning: `mouse not present: guest reads floating bus on the mouse ports`.
-- *No wheel fitted* (`[INPUT] Wheel=NONE`, the shipped default): `mouse wheel` changes the
-  wheel counter, but the program cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE):
-  the guest does not see the wheel counter`.
+**No mouse fitted: refused.** On a machine with no mouse a program could read (`[INPUT]
+Mouse=NONE` or feature `kempstonmouse` off on a Kempston or ZX-Evo / TS-Conf machine) every
+input command fails: `no mouse fitted on this machine: a program cannot read mouse input
+(...)` (WebAPI 409 with `"reason":"no_mouse"`). `mouse status` still answers and says so. The
+Sprinter's mouse is part of the board: it is never refused. (Until 2026-10-03 the command
+succeeded with the warning `mouse not present`.)
+
+**Warning (the command still succeeds):** *no wheel fitted* (`[INPUT] Wheel=NONE`, the shipped
+default, or the Sprinter's two-button serial mouse): `mouse wheel` is accepted, but the program
+cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE, or a mouse without one): the guest
+does not see the wheel`.
 
 **Worked example** (Pentagon after reset: X = 31, Y = 85, nothing pressed, shipped config `Wheel=NONE`):
 
@@ -3088,7 +3116,10 @@ script reads `0x0E`, `0x2E`, `0x2F`, `0x2D`.
 **Rejected on purpose: absolute "move the cursor to (x, y)".** The program keeps its own
 cursor position (and may clip or scale it), so the emulator cannot know where the cursor is.
 To reach a screen point, work in a closed loop: find the cursor (screenshot or a known RAM
-variable), `mouse move` by the difference, `run_frames 1`, check again.
+variable), `mouse move` by the difference, `run_frames 1`, check again. Where the program
+clamps its pointer at the screen edge and moves it one pixel per count (Flex Navigator in the
+Sprinter's 640-pixel mode), **home** first: `mouse glide -1000 1000` puts the pointer in the
+top-left corner, then `mouse glide <x> <-y>` reaches the point (x, y) of the picture.
 
 **TTD (time-travel debugging):**
 - While TTD **records**, every mouse change is written to the TTD input journal before it

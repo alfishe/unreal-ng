@@ -43,6 +43,7 @@ port table, the factory ROMs, and the board manuals and PROM dumps from
 | [tools/machines/profi/](../../../tools/machines/profi/README.md) | the sync-PROM decoder (`syncprom/`), the port decoder PROM tool (`profidecoder/`), the v5 wait model (`waitmodel/`), the v3 turbo model (`turbomodel/`) and the PROFI-XT 8035 simulator (`xtkbd/`) |
 | materials (not in the repository) | every file the analysis used: manuals, PROM and ROM dumps, articles, forum pages, other emulators' sources, working reports. Kept outside the repository by decision (2026-10-01), with its own index `materials/README.md`; every external file has its source URL there, and the public ones are linked from these documents |
 | [decoder-prom.md](decoder-prom.md) | both boards' port decoder PROMs: wiring, port map per mode, what they settle, and the check against unreal-ng (no difference) |
+| [software-zoo.md](software-zoo.md) | the BIOS families, boot conventions, port-decode variants (`ExtPorts`, `DffdDecode`) and which system boots with which: SP-DOS, Klug CP/M, Micco CP/M, PQ-DOS, ROM BIOS Plus; disks that fail by themselves |
 | [roms.md](roms.md) | the factory firmware (now in `data/rom/profi/`), which BIOS needs which board, our non-factory images |
 | [requirements.md](requirements.md) | goals, requirements per board with confidence, acceptance, open questions |
 | [design.md](design.md) | two models and one decoder with a board profile, ports, timing, turbo, TTD, automation, the phase plan |

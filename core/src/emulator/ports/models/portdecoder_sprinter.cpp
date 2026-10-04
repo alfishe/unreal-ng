@@ -5,6 +5,7 @@
 #include "portdecoder_sprinter.h"
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
+#include "emulator/io/sprinter/isa/cards/isazxbusadapter.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 
 #include <array>
@@ -124,6 +125,13 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     // The ISA slots: the population of [ISA] (network cards are fitted into it by NetworkManager), ISA cycles
     // into the port trace while a capture runs
     _isaBus.Configure(_context->config.sprinter.isa);
+    for (int n = 0; n < 2; ++n)
+    {
+        const std::string warning = sprinterisa::SlotWarning(_context->config.sprinter.isa.slot[n], n);
+        if (!warning.empty())
+            MLOGWARNING("PortDecoder_Sprinter: %s", warning.c_str());
+    }
+    FitZxBusAdapters();
     _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
         TraceIsaCycle(write, space, slot, address, value);
     });
@@ -1701,22 +1709,29 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
         slot.networkCard = kind == sprinterisa::CardKind::Ne2000 || kind == sprinterisa::CardKind::El3c509b ||
                            kind == sprinterisa::CardKind::SprinterEsp || kind == sprinterisa::CardKind::Modem ||
                            kind == sprinterisa::CardKind::Dual16552;
-        slot.chip = sprinterisa::ChipName(static_cast<sprinterisa::Ne2000Chip>(config.chip));
+        slot.chip = sprinterisa::SlotChipName(config);
         slot.base = config.base;
         slot.irq = config.irq;
         uint8_t mac[6];
         sprinterisa::EffectiveMac(config, n, NetworkInstanceIndex(), mac);
         std::copy(mac, mac + 6, slot.mac.begin());
-        slot.portKey = slot.id + (kind == sprinterisa::CardKind::SprinterEsp ? ".uart0" : ".eth");
+        const bool uartCard = kind == sprinterisa::CardKind::SprinterEsp || kind == sprinterisa::CardKind::Modem ||
+                              kind == sprinterisa::CardKind::Dual16552;
+        slot.portKey = slot.id + (uartCard ? ".uart0" : ".eth");
         slot.macAuto = config.macAuto != 0;
         slot.instance = NetworkInstanceIndex();
         slot.peer.assign(config.peer, strnlen(config.peer, sizeof(config.peer)));
+        slot.peerB.assign(config.peerB, strnlen(config.peerB, sizeof(config.peerB)));
+        slot.irqB = config.irqB;
+        slot.partialDecode = config.partialDecode != 0;
         if (kind == sprinterisa::CardKind::SprinterEsp)
         {
             // Fixed on the board (decoder and IRQ wiring): the config's Base / Irq do not apply
             slot.base = sprinterisa::kSprinterEspBase;
             slot.irq = sprinterisa::kSprinterEspIrq;
         }
+        if (kind == sprinterisa::CardKind::Dual16552)
+            slot.base = sprinterisa::kSerialCom1Base;   // COM1 #3F8 + COM2 #2F8, fixed by the decoder
         slot.fit = [this, n](IIoBusDevice* device, std::string& why) {
             (void)why;
             if (!device)
@@ -1728,16 +1743,38 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
             return true;
         };
         slot.notFitted = [this, n](const std::string& why) { _isaBus.SetRefusal(n, why); };
-        slot.setPeer = [this, n](const std::string& peer) {
-            _isaBus.SetConfiguredPeer(n, peer);
+        slot.setPeer = [this, n](int channel, const std::string& peer) {
+            _isaBus.SetConfiguredPeer(n, channel, peer);
             sprinterisa::SlotConfig& cfg = _context->config.sprinter.isa.slot[n];
-            std::snprintf(cfg.peer, sizeof(cfg.peer), "%s", peer.c_str());
+            if (channel == 0)
+                std::snprintf(cfg.peer, sizeof(cfg.peer), "%s", peer.c_str());
+            else
+                std::snprintf(cfg.peerB, sizeof(cfg.peerB), "%s", peer.c_str());
         };
         caps.expansionSlots.push_back(std::move(slot));
     }
     return caps;
 }
 
+
+void PortDecoder_Sprinter::FitZxBusAdapters()
+{
+    // ISA phase I2: a ZX-bus adapter per configured slot. The General Sound / NeoGS ([SOUND] GSType, built by
+    // SoundManager because ZxBusPresent() now holds) sits on the first one; the machine has one GS, so a second
+    // adapter's ZX-bus is empty, with the reason in its report
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        if (static_cast<sprinterisa::CardKind>(_isaBus.Configured(n).kind) != sprinterisa::CardKind::ZxBus)
+            continue;
+        const bool carriesGs = _zxBusSlot < 0;
+        std::string why;
+        if (!carriesGs)
+            why = StringHelper::Format("one General Sound per machine: it sits on the adapter in slot %d", _zxBusSlot + 1);
+        _isaBus.Fit(n, std::make_unique<sprinterisa::IsaZxBusAdapter>(_context, this, carriesGs, why));
+        if (carriesGs)
+            _zxBusSlot = n;
+    }
+}
 
 uint8_t PortDecoder_Sprinter::NetworkInstanceIndex() const
 {

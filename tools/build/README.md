@@ -24,8 +24,16 @@ tools/build/slot.sh --status         # who holds which slot right now
 
 `build.sh` / `test.sh` already apply the rules from `AGENTS.md`: half the logical cores
 for `-j`, lowered priority (`nice 10`), build directory `cmake-build-agent-release`
-(override with `BUILD_DIR`, cores with `UNREAL_JOBS`). They do not replace the manual steps
-in `AGENTS.md` for configuring a new build directory.
+(override with `BUILD_DIR`, cores with `UNREAL_JOBS`).
+
+`build.sh` also **re-runs the CMake configure step before every build**, and configures a
+missing build directory from scratch (`-G Ninja -DTESTS=ON`). Sources are globbed, so a file
+that arrived with a merge or rebase is invisible to ninja until CMake runs again - without
+this the link fails with undefined symbols for classes that "obviously exist". The
+configure output goes to `<build dir>/configure.log` and is shown only if it fails. Set
+`UNREAL_NO_CONFIGURE=1` to skip it. Why this matters and what the failure looks like without it:
+`AGENTS.md`, section "Why `build.sh` configures every time". Benchmarks (`-DBENCHMARKS=ON`) still need one manual
+configure, which later runs keep.
 
 ### How an agent should call them
 

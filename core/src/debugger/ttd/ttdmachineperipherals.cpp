@@ -151,16 +151,22 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             const std::string slot = "isa" + std::to_string(n + 1);
             if (!manager->SerialCard(slot))
                 continue;
-            const PeripheralId id = n == 0 ? PeripheralId::SlotSerial1 : PeripheralId::SlotSerial2;
-            auto serial = std::make_unique<TTDSerialPort>(
-                context,
-                [manager, slot]() {
-                    PcSerialCard* card = manager->SerialCard(slot);
-                    return card ? &card->Com() : nullptr;
-                },
-                id, n == 0 ? "SlotSerial1" : "SlotSerial2");
-            registry.Register(id, serial.get());
-            ownedSerializers.push_back(std::move(serial));
+            // One blob per UART: channel A under SlotSerial1 / 2, a second channel (SprinterSerial's COM2) under
+            // SlotSerial1B / 2B
+            for (int ch = 0; ch < manager->SerialCard(slot)->Channels(); ++ch)
+            {
+                const PeripheralId id = ch == 0 ? (n == 0 ? PeripheralId::SlotSerial1 : PeripheralId::SlotSerial2)
+                                                : (n == 0 ? PeripheralId::SlotSerial1B : PeripheralId::SlotSerial2B);
+                auto serial = std::make_unique<TTDSerialPort>(
+                    context,
+                    [manager, slot, ch]() {
+                        PcSerialCard* card = manager->SerialCard(slot);
+                        return card && ch < card->Channels() ? &card->Com(ch) : nullptr;
+                    },
+                    id, std::string(n == 0 ? "SlotSerial1" : "SlotSerial2") + (ch ? "B" : ""));
+                registry.Register(id, serial.get());
+                ownedSerializers.push_back(std::move(serial));
+            }
         }
     }
     if (context->pMachineSerialPeer)

@@ -245,8 +245,8 @@ class Emulator:
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
-        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: the SprinterESP card's 16550 line), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
-        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()),
+        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem 'modem', SprinterSerial COM1 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' on any machine), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
+        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state(); ZX Profi v5: the board's 8251, also machine_serial),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
         atm2ioesp in network_state()), zifi=<com_port values> (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP,
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
@@ -271,7 +271,13 @@ class Emulator:
         (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
         2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters with the IRQ
         counters, irq_line: the slot's IRQ line - level, driver, route to PIO port B bit 0 / 1, the
-        PIO's bit-mode setup, pending / under service, reaches_cpu), pio_port_b, irq_summary.
+        PIO's bit-mode setup, pending / under service, reaches_cpu; summary_line; the ZX-bus
+        adapter's zx_bus: the General Sound / NeoGS behind it - cards[0] personality, ports,
+        cpu_addresses, status, machine_reset - its reset_held / reset_pulses), pio_port_b,
+        irq_summary. A 3C509B
+        (card 'el3c509b') adds resources['id_port'] (its ID port range, how the Z80 reaches it, the
+        isolation state); network_state()['slots'][n] then shows its ID port, window, FIFOs, EEPROM,
+        statistics, link state, events and a one-line summary.
         available=False on other machines"""
 
     def isa_io_read(self, slot: int, address) -> int:
@@ -494,7 +500,8 @@ emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
 
 ### Mouse Input
 
-`Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands
+`Emulator` methods that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands
 and the WebAPI `/mouse/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
 Units, limits and the reasoning behind them: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
@@ -503,6 +510,9 @@ the program on the machine moves its own cursor by that much. `dy` positive = **
 
 ```python
 emu.mouse_move(dx, dy)                  # -127..127 each, not both 0
+emu.mouse_glide(dx, dy)                 # -4096..4096; one step per frame, later input queues behind it
+emu.mouse_busy()                        # True while a glide (and its queue) is in progress
+emu.mouse_devices()                     # the machine's mouse devices (list of device dicts)
 emu.mouse_press(button)                 # "left" | "right" | "middle" (or "l" | "r" | "m")
 emu.mouse_release(button)
 emu.mouse_click(button, frames=2)       # hold 1..65535 frames, then release on its own
@@ -510,7 +520,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status()                      # state dict (below)
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```
@@ -525,8 +535,9 @@ Every changing method returns the resulting **state dict**:
  'ports': {'FADF': 255, 'FBDF': 41, 'FFDF': 80},   # what IN returns now (integers, as in the WebAPI)
  'pending_click': None,       # or {'button': 'left', 'frames_left': 1}
  'ttd_journal': 'supported'}
-# plus 'warning': '...' when the change cannot reach the program
-# (mouse not fitted, or a wheel step with no wheel fitted)
+# plus the machine's mouse: 'mouse_fitted', 'device' (None when none is fitted; the WebAPI
+# device object: id, kind, fitted, in_use, ports, and 'serial' or 'ps2'), 'devices', 'queue'
+# plus 'warning': '...' when a wheel step was sent with no wheel fitted
 ```
 
 `mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
@@ -547,6 +558,8 @@ so a mistake is not silently ignored):
 |-------|-----------|
 | Out-of-range value, zero move/wheel, unknown button name | `ValueError` (message says which value and the allowed range) |
 | TTD replay in progress | `RuntimeError("TTD replay in progress; live mouse input refused")` |
+| No mouse fitted on the machine | `RuntimeError("no mouse fitted on this machine: ...")` |
+| `mouse_status(device=...)` names a device the machine does not have | `ValueError` (lists the ids it has) |
 | No mouse manager / device | `RuntimeError` |
 
 **Worked example** (paused, reproducible):
@@ -730,19 +743,23 @@ Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where
 [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```python
-id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 on failure)
-id = emu.bp(0xC000, page="ram32")   # only while RAM page 32 is mapped at #C000 ("rom3", "cache0"; -1: no such page)
-id = emu.bp_read(0x4000)            # memory read; page= as for bp
-id = emu.bp_write(0x5C00)           # memory write; page= as for bp
-id = emu.bp_port_in(0xFE)
-id = emu.bp_port_out(0xFE)
+id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 when refused)
+id = emu.bp(0x8000, to=0x80FF)      # a range #8000-#80FF (one check per access, however many ranges)
+id = emu.bp(0x0038, hits="50")      # stop on the 50th hit only; ">=50" from the 50th on, "%50" every 50th
+id = emu.bp(0xC000, page="ram32")   # physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = emu.bp(0xC000, page="ram32", slot_only=True)  # only through slot 3 (#C000)
+id = emu.bp_read(0x4000)            # memory read; the same keyword arguments
+id = emu.bp_write(0x4000, to=0x57FF)  # memory write: the screen bitmap
+id = emu.bp_port_in(0xFE, mask=0x00FF)  # port IN on #FE with any high byte; mask= and hits=
+id = emu.bp_port_out(0x7FFD)
+emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 emu.bp_count()
-print(emu.bp_list())                # the text table; a page breakpoint ends "in ram32"
-emu.bp_status()                     # the last hit, see below; 'page' = {'kind', 'page'} when it is bound to one
+print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
 ```
 
 ### DebugManager Class

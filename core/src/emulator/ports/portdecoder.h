@@ -670,6 +670,10 @@ public:
     /// PS/2 mouse, the Sprinter board mouse); no side effects. False: the
     /// Kempston device answers (Mouse::ReadRegister)
     virtual bool PeekMouseRegister([[maybe_unused]] uint8_t reg, [[maybe_unused]] uint8_t& value) const { return false; }
+    /// The machine's mouse ports read a mouse built into the machine (the ZX-Evo AVR's PS/2 mouse, the
+    /// Sprinter board mouse), never the Kempston interface (Mouse): that one is then not wired, and
+    /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
+    virtual bool HasMachineMouse() const { return false; }
 
 
     /// region <TTD model-specific state (parent TDD 6.4)>
@@ -860,6 +864,7 @@ public:
             EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
             ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
+            Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -869,14 +874,14 @@ public:
         /// ComPort= names none (ESPNET / AT without ,<baud>)
         uint32_t espBaud = 115200;
 
-        /// A port that is no 16550 on #xxEF (Atm2Kbc) takes its peer here; nullptr detaches
+        /// A port that is no 16550 on #xxEF (Atm2Kbc, Profi8251) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector
         std::function<void(IIoBusDevice* device, bool attach)> internalIo;
 
-        /// Atm2Kbc: the RS-232 line as the firmware set it (baud), and a refit
+        /// Atm2Kbc / Profi8251: the RS-232 line as the firmware / program set it (baud); Atm2Kbc: a refit
         /// of the firmware from the config ([ATM] Kbc=); false + reason
         std::function<uint32_t()> serialBaud;
         std::function<bool(std::string& error)> reloadFirmware;
@@ -911,14 +916,17 @@ public:
             std::string portKey;              ///< "isa2.eth" (a UART card: "isa1.uart0")
             bool macAuto = true;              ///< the MAC is the automatic one (a card picks its own family's form)
             uint8_t instance = 0;             ///< the emulator instance number in automatic MACs
-            std::string peer;                 ///< UART cards: ComPortSpec text of the line's other end ("" = AT)
+            std::string peer;                 ///< UART cards: ComPortSpec text of the (first) UART's line ("" = the card's default)
+            std::string peerB;                ///< two-UART cards (SprinterSerial): the second UART's line ("" = NONE)
+            uint8_t irqB = 0;                 ///< two-UART cards: the second UART's IRQ jumper (0 = open)
+            bool partialDecode = false;       ///< SprinterSerial: D3 not fitted (A15-A10 not decoded)
             /// Plug the device in (nullptr pulls it); false with the reason when the slot refuses it
             std::function<bool(IIoBusDevice* device, std::string& why)> fit;
             /// Why a configured card is not there (shown in the machine's own slot report)
             std::function<void(const std::string& why)> notFitted;
-            /// A runtime change of a UART card's line (automation's isaN_peer): the machine keeps it as the slot's
-            /// configured peer
-            std::function<void(const std::string& peer)> setPeer;
+            /// A runtime change of a UART card's line (automation's isaN_peer / isaN_peer_b): the machine keeps it as
+            /// the slot's configured peer of that UART (0 = the first)
+            std::function<void(int channel, const std::string& peer)> setPeer;
         };
         std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro, and the GUI includes this header
     };
@@ -926,10 +934,14 @@ public:
 
     /// Whether the machine has a ZX-bus that Spectrum peripheral cards (General Sound / NeoGS) plug into
     /// through the exact-match port map (RegisterPortHandler / PeripheralPortIn/Out). Every Spectrum-like
-    /// machine has; the Sprinter has none until its ISA ZX-bus adapter exists (Sprinter ISA design
-    /// 2026-10-02-sprinter-isa/tdd.md §2, phase I2): a card built there would run for nothing, unreachable
+    /// machine has; the Sprinter has one only while an ISA ZX-bus adapter is fitted (Sprinter ISA design
+    /// 2026-10-02-sprinter-isa/tdd.md §2 / §6, phase I2). Without it a card would run for nothing, unreachable
     /// by the software, and SoundManager does not fit it
     virtual bool ZxBusPresent() const { return true; }
+    /// Whether that ZX-bus carries the host's memory cycles (/MREQ, /CSROM), so a card that serves host memory
+    /// reads (the NeoGS ZX-DMA, neogs-zxdma-design.md) can reach the host. True on a machine's own ZX-bus; false
+    /// on the Sprinter, whose ISA ZX-bus adapter passes I/O cycles only (ISA open question Q7)
+    virtual bool ZxBusMemoryCycles() const { return ZxBusPresent(); }
 
     /// The machine's own configuration events (machineeventjournal.h: the Sprinter's PLD changes), null for
     /// machines that keep none. The video change log lists the events of its frames (/video/changes)

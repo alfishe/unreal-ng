@@ -1265,3 +1265,285 @@ TEST_F(BreakpointManager_test, ChangedIdsSinceLastReport)
     _brkManager->RemoveBreakpointByID(a);
     EXPECT_EQ(_brkManager->TakeChangedIds(), (std::vector<uint16_t>{a}));
 }
+
+/// region <Hot-path matching (hotpath-matching-design.md)>
+
+/// The manager with a memory model behind it (physical breakpoints read the page a slot shows) and a helper
+/// that asks what the hot path would answer
+class BreakpointMatching_Test : public ::testing::Test
+{
+protected:
+    EmulatorContext* _context = nullptr;
+    BreakpointManagerCUT* _bpm = nullptr;
+    Memory* _memory = nullptr;
+
+    void SetUp() override
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+        _context = new EmulatorContext(LoggerLevel::LogError);
+        _context->config.ramsize = 128;  // a 128K: RAM pages 0-7
+        _memory = new Memory(_context);
+        _context->pMemory = _memory;
+        _memory->Reset();
+        _bpm = new BreakpointManagerCUT(_context);
+    }
+    void TearDown() override
+    {
+        delete _bpm;
+        delete _memory;
+        _context->pMemory = nullptr;
+        delete _context;
+        MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    uint16_t Add(const BreakpointSpec& spec)
+    {
+        std::string error;
+        const uint16_t id = _bpm->AddBreakpoint(spec, error);
+        EXPECT_NE(id, BRK_INVALID) << error;
+        return id;
+    }
+    static BreakpointSpec Memory_(uint8_t access, uint16_t from, uint16_t to)
+    {
+        BreakpointSpec s;
+        s.access = access;
+        s.address = from;
+        s.hasEnd = to != from;
+        s.addressEnd = to;
+        return s;
+    }
+    const BreakpointDescriptor& Bp(uint16_t id) { return *_bpm->GetAllBreakpoints().at(id); }
+};
+
+TEST_F(BreakpointMatching_Test, RangeHitsItsEndsAndMissesOneOutside)
+{
+    const uint16_t w = Add(Memory_(BRK_MEM_WRITE, 0x5B00, 0x5BFF));
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x5AFF), BRK_INVALID);
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x5B00), w);
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x5B80), w);
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x5BFF), w);
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x5C00), BRK_INVALID);
+    EXPECT_EQ(_bpm->HandleMemoryRead(0x5B80), BRK_INVALID) << "a write range does not watch reads";
+    EXPECT_EQ(_bpm->HandlePCChange(0x5B80), BRK_INVALID);
+
+    const uint16_t x = Add(Memory_(BRK_MEM_EXECUTE, 0xFFF0, 0xFFFF));  // a range up to the top of memory
+    EXPECT_EQ(_bpm->HandlePCChange(0xFFFF), x);
+    EXPECT_EQ(_bpm->HandlePCChange(0x0000), BRK_INVALID);
+}
+
+TEST_F(BreakpointMatching_Test, PhysicalPageFiresThroughEverySlotThatShowsIt)
+{
+    BreakpointSpec spec = Memory_(BRK_MEM_WRITE, 0xC100, 0xC1FF);  // offsets #0100-#01FF
+    spec.hasPage = true;
+    spec.page = 5;
+    spec.pageType = BANK_RAM;
+    const uint16_t id = Add(spec);
+
+    // RAM 5 sits in slot 1 (#4000) on a 128K
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x4100), id) << "slot 1 shows RAM 5";
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x41FF), id);
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x4200), BRK_INVALID) << "past the offsets";
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0xC100), BRK_INVALID) << "slot 3 shows another page";
+
+    _memory->SetRAMPageToBank3(5);  // the same page in a second slot
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0xC100), id) << "through slot 3 too";
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0x4150), id);
+
+    _memory->SetRAMPageToBank3(1);  // paged away again
+    EXPECT_EQ(_bpm->HandleMemoryWrite(0xC100), BRK_INVALID);
+    EXPECT_EQ(Bp(id).hitCount, 4u);
+}
+
+TEST_F(BreakpointMatching_Test, SlotOnlyFiresOnlyInItsSlot)
+{
+    BreakpointSpec spec = Memory_(BRK_MEM_EXECUTE, 0xC000, 0xC000);
+    spec.hasPage = true;
+    spec.page = 3;
+    spec.slotOnly = true;
+    const uint16_t id = Add(spec);
+
+    _memory->SetRAMPageToBank3(3);
+    EXPECT_EQ(_bpm->HandlePCChange(0xC000), id);
+    _memory->SetRAMPageToBank3(4);
+    EXPECT_EQ(_bpm->HandlePCChange(0xC000), BRK_INVALID) << "another page in the slot";
+    _memory->SetRAMPageToBank1(3);  // the page in slot 1: not its slot
+    EXPECT_EQ(_bpm->HandlePCChange(0x4000), BRK_INVALID);
+
+    // Another breakpoint on #4000 makes the filter say "maybe" there: the resolve must still skip the slot-only
+    // one (its page is in slot 1, but it watches slot 3)
+    const uint16_t plain = Add(Memory_(BRK_MEM_EXECUTE, 0x4000, 0x4000));
+    EXPECT_EQ(_bpm->HandlePCChange(0x4000), plain);
+    EXPECT_EQ(Bp(id).hitCount, 1u) << "counted only for the slot-3 hit above";
+}
+
+TEST_F(BreakpointMatching_Test, MaskedPortFiresOnEveryMatchingPort)
+{
+    BreakpointSpec spec;
+    spec.type = BRK_IO;
+    spec.access = BRK_IO_IN;
+    spec.address = 0x00FE;
+    spec.portMask = 0x00FF;  // #FE on any high byte (the ULA decodes A0 only, but #xxFE is what code uses)
+    const uint16_t id = Add(spec);
+    for (uint16_t port : {0x00FE, 0x7FFE, 0xBFFE, 0xFEFE, 0xFFFE})
+        EXPECT_EQ(_bpm->HandlePortIn(port), id) << std::hex << port;
+    EXPECT_EQ(_bpm->HandlePortIn(0x00FF), BRK_INVALID);
+    EXPECT_EQ(_bpm->HandlePortOut(0x7FFE), BRK_INVALID) << "an IN breakpoint";
+}
+
+TEST_F(BreakpointMatching_Test, TwoBreakpointsOnOneAddressAreBothSeen)
+{
+    const uint16_t range = Add(Memory_(BRK_MEM_READ, 0x8000, 0x80FF));
+    const uint16_t point = Add(Memory_(BRK_MEM_READ, 0x8010, 0x8010));
+    EXPECT_EQ(_bpm->HandleMemoryRead(0x8010), range) << "the first in id order stops";
+    EXPECT_EQ(Bp(range).hitCount, 1u);
+    EXPECT_EQ(Bp(point).hitCount, 1u) << "both are counted";
+
+    // With the range waiting for its 3rd hit, the point decides
+    _bpm->RemoveBreakpointByID(range);
+    BreakpointSpec later = Memory_(BRK_MEM_READ, 0x8000, 0x80FF);
+    later.hitMode = BRK_HIT_EQUAL;
+    later.hitTarget = 3;
+    const uint16_t waiting = Add(later);
+    EXPECT_EQ(_bpm->HandleMemoryRead(0x8010), point);
+    EXPECT_EQ(_bpm->HandleMemoryRead(0x8020), BRK_INVALID) << "only the waiting range covers it";
+    EXPECT_EQ(_bpm->HandleMemoryRead(0x8030), waiting) << "its 3rd hit";
+}
+
+TEST_F(BreakpointMatching_Test, DisabledNeverFires)
+{
+    const uint16_t id = Add(Memory_(BRK_MEM_EXECUTE, 0x1234, 0x1234));
+    _bpm->DeactivateBreakpoint(id);
+    EXPECT_EQ(_bpm->HandlePCChange(0x1234), BRK_INVALID);
+    EXPECT_EQ(_bpm->GetHotState()->hasExec, 0) << "nothing active: the gate is closed";
+    _bpm->ActivateBreakpoint(id);
+    EXPECT_EQ(_bpm->HandlePCChange(0x1234), id);
+}
+
+TEST_F(BreakpointMatching_Test, HitPolicies)
+{
+    struct Case
+    {
+        BreakpointHitModeEnum mode;
+        uint32_t target;
+        std::vector<bool> stops;  // hits 1..6
+    };
+    const Case cases[] = {
+        {BRK_HIT_ALWAYS, 0, {true, true, true, true, true, true}},
+        {BRK_HIT_EQUAL, 3, {false, false, true, false, false, false}},
+        {BRK_HIT_AT_LEAST, 3, {false, false, true, true, true, true}},
+        {BRK_HIT_MULTIPLE, 2, {false, true, false, true, false, true}},
+    };
+    for (const Case& c : cases)
+    {
+        _bpm->ClearBreakpoints();
+        BreakpointSpec spec = Memory_(BRK_MEM_WRITE, 0x9000, 0x9000);
+        spec.hitMode = c.mode;
+        spec.hitTarget = c.target;
+        const uint16_t id = Add(spec);
+        for (size_t i = 0; i < c.stops.size(); i++)
+            EXPECT_EQ(_bpm->HandleMemoryWrite(0x9000) == id, c.stops[i])
+                << BreakpointManager::HitModeName(c.mode) << " " << c.target << ", hit " << i + 1;
+        EXPECT_EQ(Bp(id).hitCount, 6u);
+        EXPECT_TRUE(_bpm->ResetHitCount(id));
+        EXPECT_EQ(Bp(id).hitCount, 0u);
+    }
+}
+
+TEST_F(BreakpointMatching_Test, TtdReplayAndTheExecPassNeitherHitNorCount)
+{
+    const uint16_t id = Add(Memory_(BRK_MEM_EXECUTE, 0x0038, 0x0038));
+    _context->ttdReplayActive = true;
+    EXPECT_EQ(_bpm->HandlePCChange(0x0038), BRK_INVALID);
+    _context->ttdReplayActive = false;
+    EXPECT_EQ(Bp(id).hitCount, 0u) << "a replay re-executes history";
+
+    _bpm->ArmExecPass(0x0038);
+    EXPECT_EQ(_bpm->HandlePCChange(0x0038), BRK_INVALID) << "stepping on from where it stopped";
+    EXPECT_EQ(Bp(id).hitCount, 0u);
+    EXPECT_EQ(_bpm->HandlePCChange(0x0038), id) << "the pass is used up";
+    EXPECT_EQ(Bp(id).hitCount, 1u);
+}
+
+TEST_F(BreakpointMatching_Test, SpecValidation)
+{
+    std::string error;
+    BreakpointSpec backwards = Memory_(BRK_MEM_READ, 0x8000, 0x8000);
+    backwards.hasEnd = true;
+    backwards.addressEnd = 0x7FFF;
+    EXPECT_EQ(_bpm->AddBreakpoint(backwards, error), BRK_INVALID);
+    EXPECT_NE(error.find("ends before"), std::string::npos) << error;
+
+    BreakpointSpec acrossPages = Memory_(BRK_MEM_READ, 0x7F00, 0x80FF);
+    acrossPages.hasPage = true;
+    acrossPages.page = 2;
+    EXPECT_EQ(_bpm->AddBreakpoint(acrossPages, error), BRK_INVALID);
+    EXPECT_NE(error.find("one 16K page"), std::string::npos) << error;
+
+    BreakpointSpec noPage = Memory_(BRK_MEM_READ, 0x8000, 0x8000);
+    noPage.hasPage = true;
+    noPage.page = 8;  // a 128K has RAM 0-7
+    EXPECT_EQ(_bpm->AddBreakpoint(noPage, error), BRK_INVALID);
+    EXPECT_NE(error.find("no page"), std::string::npos) << error;
+
+    BreakpointSpec maskOnMemory = Memory_(BRK_MEM_READ, 0x8000, 0x8000);
+    maskOnMemory.portMask = 0x00FF;
+    EXPECT_EQ(_bpm->AddBreakpoint(maskOnMemory, error), BRK_INVALID);
+
+    BreakpointSpec zeroTarget = Memory_(BRK_MEM_READ, 0x8000, 0x8000);
+    zeroTarget.hitMode = BRK_HIT_EQUAL;
+    EXPECT_EQ(_bpm->AddBreakpoint(zeroTarget, error), BRK_INVALID);
+
+    BreakpointSpec slotWithoutPage = Memory_(BRK_MEM_READ, 0x8000, 0x8000);
+    slotWithoutPage.slotOnly = true;
+    EXPECT_EQ(_bpm->AddBreakpoint(slotWithoutPage, error), BRK_INVALID);
+    EXPECT_TRUE(_bpm->GetAllBreakpoints().empty()) << "nothing was added";
+}
+
+TEST_F(BreakpointMatching_Test, HitSpecTextForms)
+{
+    BreakpointHitModeEnum mode;
+    uint32_t target = 0;
+    std::string error;
+    EXPECT_TRUE(BreakpointManager::ParseHitSpec("5", mode, target, error));
+    EXPECT_EQ(mode, BRK_HIT_EQUAL);
+    EXPECT_EQ(target, 5u);
+    EXPECT_TRUE(BreakpointManager::ParseHitSpec(">=3", mode, target, error));
+    EXPECT_EQ(mode, BRK_HIT_AT_LEAST);
+    EXPECT_TRUE(BreakpointManager::ParseHitSpec("%4", mode, target, error));
+    EXPECT_EQ(mode, BRK_HIT_MULTIPLE);
+    EXPECT_TRUE(BreakpointManager::ParseHitSpec("", mode, target, error));
+    EXPECT_EQ(mode, BRK_HIT_ALWAYS);
+    for (const char* bad : {"0", ">=", "%0", "x", "5x"})
+        EXPECT_FALSE(BreakpointManager::ParseHitSpec(bad, mode, target, error)) << bad;
+}
+
+/// 10 000 overlapping ranges: the candidate sets are interned, so the tables stay small, and every address
+/// still finds its breakpoints
+TEST_F(BreakpointMatching_Test, ManyOverlappingRangesShareCandidateSets)
+{
+    {
+        BreakpointManager::Batch batch(*_bpm);  // one repaint for all of them
+        for (uint32_t i = 0; i < 10000; i++)
+        {
+            const uint16_t from = static_cast<uint16_t>((i * 37) & 0xEFFF);
+            Add(Memory_(BRK_MEM_WRITE, from, static_cast<uint16_t>(from + 255)));
+        }
+        EXPECT_EQ(_bpm->GetHotState()->hasWrite, 0) << "nothing painted inside the batch";
+    }
+    EXPECT_EQ(_bpm->GetHotState()->hasWrite, 1);
+    EXPECT_LE(_bpm->_candidateSets.size(), 2u * 10000u + 1u) << "a set per range boundary at most";
+    // Brute force against the hot path on a sample of addresses
+    for (uint32_t a = 0; a < 0x10000; a += 97)
+    {
+        uint16_t expect = BRK_INVALID;
+        for (const auto& [id, bp] : _bpm->GetAllBreakpoints())
+            if (a >= bp->z80address && a <= bp->EndAddress())
+            {
+                expect = id;
+                break;
+            }
+        EXPECT_EQ(_bpm->HandleMemoryWrite(static_cast<uint16_t>(a)), expect) << std::hex << a;
+    }
+}
+
+/// endregion </Hot-path matching>

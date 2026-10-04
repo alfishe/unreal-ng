@@ -594,6 +594,7 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
         static const char* kPending[] = {"none", "read", "write"};
         out.zxMode = kModes[static_cast<int>(_zx.mode())];
         out.zxOverlayInstalled = _zx.installed();
+        out.zxHostMemoryBus = zxHostMemoryBus();
         out.zxReadLatch = _zx.readLatch();
         out.zxPending = kPending[static_cast<int>(_zx.pending())];
         out.zxPendingAddress = _zx.pendingAddress();
@@ -775,6 +776,14 @@ void SoundChip_NeoGS::zxAddHostWait(uint32_t tStates)
 {
     if (_context && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->AddWaitStates(tStates);
+}
+
+bool SoundChip_NeoGS::zxHostMemoryBus() const
+{
+    // The Sprinter's ISA ZX-bus adapter passes I/O cycles only: the module never sees a host memory access (it stays
+    // selected or running, as on such a board). Before the machine's decoder exists: assume the machine's own ZX-bus;
+    // SoundManager re-checks once the card is attached (onHostBusChanged)
+    return !(_context && _context->pPortDecoder) || _context->pPortDecoder->ZxBusMemoryCycles();
 }
 
 bool SoundChip_NeoGS::zxInstall(bool installed)

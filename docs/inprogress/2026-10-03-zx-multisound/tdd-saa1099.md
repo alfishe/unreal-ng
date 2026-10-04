@@ -124,7 +124,7 @@ public:
 
 ## 5. TTD
 
-`PeripheralId::Saa1099` = **48** (taken on the `multisound` branch; ids are append-only, the first branch to master
+`PeripheralId::Saa1099` = **53** (taken on the `multisound` branch; ids are append-only, the first branch to master
 keeps the number). The blob is 149 bytes (layout in `saa1099.cpp`, documented in `ttd.ksy`). The blob is a fixed-size POD, layout version byte first. A
 card that contains an SAA (the MultiSound) saves it inside its own blob set (integration TDD §4) so the card is
 restored as one unit.
@@ -196,7 +196,7 @@ The harness follows the libopl4 template (`tools/poc/015-opl4-synthesis/cosim/`)
 **Files.** `core/src/emulator/sound/chips/saa1099/saa1099.{h,cpp}`; tests
 `core/tests/emulator/sound/chips/saa1099/saa1099_test.cpp` (14 tests) and `saa1099_golden_test.cpp` (26 digests);
 co-simulation `tools/verification/saa1099/` (fetch, drivers, corpus, compare, expectations, README with the full
-consensus table). `PeripheralId::Saa1099` = 48 with its row in `ttdfileinfo.cpp`, `ttd.ksy` and the id contract
+consensus table). `PeripheralId::Saa1099` = 53 with its row in `ttdfileinfo.cpp`, `ttd.ksy` and the id contract
 test. The unused `saa1099fq` / `saa1099_vol` fields are removed from `platform.h`; the `SUBMODULE_SOUND_SAA` logger
 id is used (debug: configuration, writes to unused registers; warning: a refused TTD blob).
 

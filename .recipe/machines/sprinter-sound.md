@@ -3,7 +3,9 @@
 The Sprinter Sp2000 has one AY-3-8910 (1.75 MHz, ABC stereo), the beeper, and one 16-bit stereo DAC that
 the PLD drives as a plain **Covox** (port `#FB`) or as the **Covox-Blaster** (CBL): a 256-sample ring the PLD
 plays at 7.8-109 kHz, refilled by the program on an interrupt every 128 samples. This recipe plays a WAV with
-DSS's own player `WAVPLAY.EXE` from a hard disk, reads the device state and records the sound.
+DSS's own player `WAVPLAY.EXE` from a hard disk, reads the device state and records the sound. MOD music goes to
+the General Sound / NeoGS behind the ISA ZX-bus adapter (ProPlay, `{"source":"gs"}` for its sound):
+[sprinter-isa.md](sprinter-isa.md#the-general-sound--neogs-behind-the-zx-bus-adapter-verified-2026-10-04).
 
 Ground truth: design [tdd-accel-sound-input.md](../../docs/inprogress/2026-09-28-sprinter/tdd-accel-sound-input.md)
 §2 / §2.1, results against MAME [s6-sound-outcome.md](../../docs/inprogress/2026-09-28-sprinter/s6-sound-outcome.md),
@@ -137,6 +139,6 @@ agree ([s6-sound-outcome.md](../../docs/inprogress/2026-09-28-sprinter/s6-sound-
 |---|---|
 | WAVPLAY sounds for half a second, then silence | `[SPRINTER] AccelIntSuspend=1`: the player refills the ring with accelerator copies in its INT handler; the default is 0 |
 | "Can't open file" | DSS starts in `C:\BIN`: give the player a full path (`c:\mission.wav`) |
-| No sound during `run_frames` | By design: a direct run goes at full host speed, so the host output is held for it (`GET /audio/mixer` -> `host_output.held`, `frames_held` grows); `resume` plays again. Captures (step 5) and recordings (step 6) are in emulated time and unaffected |
+| No sound during `run_frames` | By design: a direct run goes at full host speed, so the host output is held for it (`GET /audio/mixer` -> `host_output.held`, `holders.direct_run`, `frames_held` grows); `resume` plays again, and after it `host_output.holders` is all `0` and `frames_audible` grows. A non-zero holder or a growing `stale_holds_cleared` after `resume` is a bug: report it with the `host_output` block. Captures (step 5) and recordings (step 6) are in emulated time and unaffected |
 | `PROPLAY.EXE` finds no General Sound | MOD files go to a GS card on the ISA ZX-bus adapter: not emulated yet (phase S6b) |
 | A MAME CHD boots on the first run only | MAME keeps the guest's writes in `diff/<name>.dif`; the capture script removes it before each run |

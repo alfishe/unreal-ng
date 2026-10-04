@@ -106,6 +106,44 @@ void CLIProcessor::HandleMouse(const ClientSession& session, const std::vector<s
         }
         session.SendResponse(WithWarning(CliMouse::FormatMoveLine(dx, dy, mouse->GetState()), result));
     }
+    else if (subcommand == "glide")
+    {
+        int dx = 0;
+        int dy = 0;
+        if (args.size() < 3)
+        {
+            session.SendResponse(ErrorLine("Missing arguments. Usage: mouse glide <dx> <dy>"));
+            return;
+        }
+        if (!CliMouse::ParseIntArg(args[1], "dx", dx, error) || !CliMouse::ParseIntArg(args[2], "dy", dy, error))
+        {
+            session.SendResponse(ErrorLine(error));
+            return;
+        }
+        const MouseInjectResult result = mouse->Glide(dx, dy);
+        if (!result.ok())
+        {
+            session.SendResponse(ErrorLine(result.message));
+            return;
+        }
+        const MouseStateSnapshot state = mouse->GetState();
+        session.SendResponse(WithWarning("Glide: dx=" + CliMouse::SignedText(dx) + " dy=" + CliMouse::SignedText(dy) +
+                                             (state.queuedOps ? ", remaining dx=" + CliMouse::SignedText(state.glideRemainingDx) +
+                                                                    " dy=" + CliMouse::SignedText(state.glideRemainingDy) +
+                                                                    " (one step per frame)"
+                                                              : ""),
+                                         result));
+    }
+    else if (subcommand == "devices")
+    {
+        const MouseStateSnapshot state = mouse->GetState();
+        std::string text;
+        for (const MouseDeviceStatus& device : state.devices)
+            text += CliMouse::FormatDevice(device, NEWLINE);
+        if (text.empty())
+            text = "No mouse device on this machine" + std::string(NEWLINE);
+        session.SendResponse(text);
+    }
     else if (subcommand == "press" || subcommand == "release")
     {
         MouseButton button = MouseButton::Left;
@@ -200,7 +238,15 @@ void CLIProcessor::HandleMouse(const ClientSession& session, const std::vector<s
     }
     else if (subcommand == "status" || subcommand == "info")
     {
-        std::string text = CliMouse::FormatStatus(mouse->GetState(), NEWLINE);
+        // mouse status [device]: the machine's mouse, or the device named
+        const std::string deviceId = args.size() >= 2 ? args[1] : std::string();
+        if (const MouseInjectResult check = mouse->CheckDevice(deviceId); !check.ok())
+        {
+            session.SendResponse(ErrorLine(check.message));
+            return;
+        }
+        const MouseStateSnapshot state = mouse->GetState(deviceId);
+        std::string text = CliMouse::FormatStatus(state, NEWLINE);
         // Routing mirrors GET /mouse/status: whether the decoder actually answers
         // the mouse ports right now, and why not (mouse design Q4 / gap D-1)
         if (context && context->pPortDecoder)
@@ -210,6 +256,7 @@ void CLIProcessor::HandleMouse(const ClientSession& session, const std::vector<s
             context->pPortDecoder->GetMouseRoutingState(decoded, note);
             text += CliMouse::FormatRouting(decoded, note, NEWLINE);
         }
+        text += CliMouse::FormatMachineMouse(state, NEWLINE);
         session.SendResponse(text);
     }
     else if (subcommand == "set")
@@ -248,15 +295,20 @@ void CLIProcessor::ShowMouseHelp(const ClientSession& session)
     ss << NEWLINE;
     ss << "Subcommands:" << NEWLINE;
     ss << "  move <dx> <dy>          - Move by dx,dy emulated pixels (+x right, +y up; -127..127)" << NEWLINE;
+    ss << "  glide <dx> <dy>         - Long move (-4096..4096) in steps the program follows, one per frame;" << NEWLINE;
+    ss << "                            input sent meanwhile queues behind it" << NEWLINE;
     ss << "  press <button>          - Press and hold a button (left|right|middle, or l|r|m)" << NEWLINE;
     ss << "  release <button>        - Release a button" << NEWLINE;
     ss << "  click <button> [frames] - Press, hold for frames (default 2), release" << NEWLINE;
     ss << "  buttons <none|b1,b2..>  - Set exactly which buttons are pressed" << NEWLINE;
     ss << "  wheel <steps>           - Scroll wheel -7..7 (+ = away from you)" << NEWLINE;
-    ss << "  clear                   - Release all buttons, cancel pending click" << NEWLINE;
-    ss << "  status                  - Show counters, buttons, wheel, port values, routing" << NEWLINE;
+    ss << "  clear                   - Release all buttons, cancel pending click and queued input" << NEWLINE;
+    ss << "  status [device]         - Kempston counters, ports, routing; the machine's mouse device" << NEWLINE;
+    ss << "  devices                 - The machine's mouse devices (kempston, sprinter, evo-ps2)" << NEWLINE;
     ss << "  set <x> <y>             - Debug: write raw X/Y counters (0..255)" << NEWLINE;
     ss << NEWLINE;
+    ss << "Input goes to the machine's own mouse (Kempston interface, Sprinter serial mouse," << NEWLINE;
+    ss << "ZX-Evo PS/2 mouse); a machine without a mouse refuses it." << NEWLINE;
     ss << "The mouse is relative: programs track their own cursor from counter changes." << NEWLINE;
     ss << "For reproducible results: pause, inject, then 'run_frames N'." << NEWLINE;
     ss << NEWLINE;

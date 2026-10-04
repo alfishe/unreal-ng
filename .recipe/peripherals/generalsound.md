@@ -43,6 +43,11 @@ with 50% cross-feed. The coprocessor lazy-syncs to the ZX clock on every
 host port access and at frame boundaries; its 12 MHz clock is fixed — GS
 audio does not speed up with host turbo.
 
+**Sprinter Sp2000:** no Spectrum port path - the card sits on the ZX-bus adapter in ISA slot 1 (default) and a
+program reaches it through memory window 3 (page `#D4`): `#C0B3` data, `#C0BB` command / status, `#C033` control.
+ISA RESET DRV resets it; the NeoGS ZX-DMA cannot reach the Sprinter's memory. The card's report and controls here
+work unchanged; what is plugged where: [sprinter-isa.md](../machines/sprinter-isa.md#the-general-sound--neogs-behind-the-zx-bus-adapter-verified-2026-10-04).
+
 ## MCP (preferred)
 
 ```text

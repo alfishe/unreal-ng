@@ -54,17 +54,23 @@ a cracker who patches the ROM for his own tricks trips it.
 
 Failure reaction: stage 1 fills 15000 bytes of memory from `#4000` with `#15` (`DEC D`), which
 also erases stage 2; the CPU then runs through the filler and ends in a red or solid screen.
-The interrupt handler pushes `#0000` and jumps through ROM `#3D30`.
+The interrupt handler pushes `#0000` and jumps to ROM `#3D30`, which in the 48K ROM is the character
+set: the CPU executes the bitmap of an "&" as code and runs wild.
 
 ## Verdict
 
-This is a **copy and clone protection working as designed**, not an emulator defect. The project
-keeps the Pentagon ROM set as it is; the tape does not run on machines whose 48K ROM is not the
-original one, as on those real clones. Use a model with the original 48K ROM (the 48K model, verified) to play it.
+The tape does not run on any unreal-ng model, and none of it is an emulator defect to fix:
+- On the Pentagon ROM set it is a **copy and clone protection working as designed**: the patched 48K ROM there fails the
+  `#006D` check. The project keeps the ROM set as it is (owner decision).
+- On 48K and 128K with the original ROM the ROM check passes, but the loader never locks onto the pilot of block 2
+  (see below). MAME's `spectrum` behaves the same.
 
 ## Emulator consequences
 
-- **48K, 128K, ZX-Spectrum+ models with the original 48K ROM** pass the check.
+- **48K and 128K with the original 48K ROM** pass the ROM check but the tape still does not load: the loader never locks onto
+  the pilot of block 2 (at `#5DE1` it measures B = `#BF`, needs more than `#C6`) and waits for ever. Same in MAME's
+  `spectrum` with the original ROM. The pulse loop at `#5E47` (63 T per count) looks tuned for a machine without memory
+  contention, a Pentagon-class one (hypothesis, not verified).
 - **unreal-ng Pentagon** uses the ROM set `[ROM.pentagon]` whose 48K page is
   `rom/48for128.rom` (patched, `#28` at `#006D`) - the game derails right after the first
   decrypt; the cursor stays at block 2 of 6. The same tape loads on MAME's Pentagon, whose ROM
@@ -78,5 +84,10 @@ See also the investigation notes in
 
 Verified by running the tape in unreal-ng 48K and Pentagon (execution breakpoints, register and
 memory reads) and cross-checked in MAME (`spectrum`, original ROM): stage 2 and 3 code, the `#006D` check, the filler
-reaction. **Not traced**: the work of the helper at `#6009`, the routine at `#7022`,
-and the content of the encrypted game blocks. Those places are marked `NOT TRACED` in the listing.
+reaction. Also verified: the helper at `#6009` is a lone `RET`; the relocation routine at `#7022`
+finds its own address by `CALL #0052` (a `RET` in the 48K ROM), a further implicit ROM dependence;
+the Y/N answer Y sets the cheat flag `#5D80` to 0; the two `#C9` patches at `#5FFD`/`#5FE3` hit the
+routine at `#5FD2`. **Inferred** only: the `#FFFF` write/read-back looks like a test for RAM at the
+top of memory (16K vs 48K). **Not examined**: the content of the encrypted game blocks and the
+on-screen purpose of the routine at `#5FD2`. Those places are marked `INFERRED` or `NOT TRACED` in
+the listing.

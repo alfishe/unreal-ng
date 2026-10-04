@@ -1,0 +1,2 @@
+NETCFG -I
+IFUP

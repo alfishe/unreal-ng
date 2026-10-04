@@ -6,7 +6,7 @@ become ISA A13-A0 and the latch `#9FBD` (port-table code `#1B`) gives A19-A14, A
 
 | Slot | Connector | I/O page | Memory page | Default card |
 |:--|:--|:--|:--|:--|
-| 1 | J6 | `#D4` | `#D0` | none (the ZX-bus adapter + NeoGS once ISA phase I2 lands) |
+| 1 | J6 | `#D4` | `#D0` | ZX-bus adapter with the General Sound of `[SOUND] GSType` (NeoGS; owner decision Q2, ISA phase I2) |
 | 2 | J7 | `#D6` | `#D2` | NE2000 (RTL8019AS at `#300`; owner decision 2026-10-02) |
 
 Worked example: the RTL8019AS network kit reads the chip ID of the card in slot 2: `#1FFD` <- `#11`,
@@ -27,13 +27,20 @@ population refuses to load on another).
 
 - Machine config `configs/sprinter/unreal.ini`, section `[ISA]`: `Slot1=` / `Slot2=` with `NONE | ZXBUS | RAM |
   NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552`; a network card adds `Slot2Chip=RTL8019AS`, `Slot2Base=0x300`
-  (write `0x300` or `300h`: a `#` starts an INI comment), `Slot2Irq=3`, `Slot2Mac=auto`.
+  (write `0x300` or `300h`: a `#` starts an INI comment), `Slot2Irq=3`, `Slot2Mac=auto`. `EL3C509B` (the 3Com
+  3C509B, built: [sprinter-network.md](sprinter-network.md#3com-3c509b-with-the-sprinter-3c509b-network-kit)) takes
+  `Slot2Chip=TPO | TP` and a base in steps of `0x10`; its report adds `resources.id_port` (`#100-#1F0`).
   `SPRINTERESP` (the Wi-Fi card, built: `#3E8` and IRQ 3 fixed by the board) takes `SlotNPeer=AT` (its 16550's line)
   and `SlotNMac=`; it decodes A13-A3 without AEN, so `z80_access.io` reads "any #9FBD AEN" for it
   ([sprinter-network.md](sprinter-network.md#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit)).
+  `MODEM` (an ISA Hayes modem: 16550A, `SlotNBase=0x3F8|0x2F8|0x3E8|0x2E8`, `SlotNIrq=4`, `SlotNPeer=MODEM`) and
+  `DUAL16552` (SprinterSerial: COM1 `#3F8` + COM2 `#2F8`, `SlotNPeer=` / `SlotNPeerB=`, `SlotNIrq=3` / `SlotNIrqB=0`
+  for jumpers J5 / J6, `SlotNDecode=FULL|PARTIAL`): [sprinter-network.md](sprinter-network.md#isa-hayes-modem-and-sprinterserial).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
-- Built kinds: `NE2000`, `SPRINTERESP`. A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
+- Built kinds: `ZXBUS` (the adapter; the GS behind it is `[SOUND] GSType`: `NGS`, `Z80`, `LW` or `NONE`), `NE2000`,
+  `SPRINTERESP`, `MODEM`, `DUAL16552`. `Slot1=NONE` builds no GS at all (the machine has no ZX-bus then); a second
+  `ZXBUS` adapter has an empty ZX-bus (one GS per machine). A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
 ## WebAPI (verified)
 
@@ -153,6 +160,65 @@ line low -> PB0, interrupts the CPU, N acknowledged".
   "body": {"action": "io_read", "slot": 2, "address": "#30A"}}}
 ```
 
+## The General Sound / NeoGS behind the ZX-bus adapter (verified 2026-10-04)
+
+ISA I/O `#xxB3` / `#xxBB` / `#xx33` of slot 1 are the GS ports (data, command / status, control): a program maps
+page `#D4` into window 3 (`#1FFD` <- `#11`, `OUT (#E2),#D4`, `#9FBD` <- `#00`) and reads / writes `#C0B3` / `#C0BB` /
+`#C033`. ISA RESET DRV resets the card; the BIOS pulses it at POST. Play a MOD with ProPlay (the MAME pack's system
+disk, a test MOD from `tools/machines/sprinter/test-mod/make-test-mod.py` written over `DOCS\DISP.TXT` - same size,
+pad with zeros - and `fn` removed from `SYSTEM.BAT`, so DSS stops at its prompt):
+
+```bash
+B=http://localhost:8090/api/v1/emulator
+ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' -d '{"model":"SPRINTER","sprinter":{"fast_start":true}}' | jq -r .id)
+# Who is plugged where, at a glance
+curl -s $B/$ID/state/isa | jq -r .summary
+# slot 1: zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: #B3 / #BB / #33, RESET from ISA RESET DRV; slot 2: ne2000 I/O #300-#31F IRQ 3
+curl -s $B/$ID/state/isa | jq '.slots[0].zx_bus | {reset_held, reset_pulses, memory_cycles, gs: .cards[0] | {personality, device, firmware, cpu_addresses, status, ready_for_commands, sound, zx_dma, machine_reset}}'
+# gs.device "NeoGS (Z80 @ 10 MHz, 8 x 8-bit DAC, 2048 KB RAM)", firmware "NeoGS flash v1.11", status "#7E",
+# zx_dma "unavailable: the adapter passes no memory cycles ...", machine_reset "[SOUND] GSReset=0: ..."
+
+# The disk (session copy), boot to the DSS prompt, a TTD recording, then ProPlay
+curl -s -X POST $B/$ID/pause >/dev/null
+curl -s -X POST "$B/$ID/media/ide0.master/insert" -H 'Content-Type: application/json' \
+     -d "{\"path\":\"$PWD/scratch/sp-proplay.img\",\"access\":\"session\"}" | jq -c '{ok}'
+curl -s -X POST $B/$ID/reset >/dev/null; curl -s -X POST $B/$ID/pause >/dev/null
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"frames":450}' >/dev/null   # C:\>
+curl -s -X POST $B/$ID/ttd/start | jq -c '{state}'                                                     # recording
+curl -s -X POST $B/$ID/keyboard/type -H 'Content-Type: application/json' -d '{"text":"proplay.exe \\docs\\disp.txt"}' >/dev/null
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"frames":60}' >/dev/null
+curl -s -X POST $B/$ID/keyboard/tap -H 'Content-Type: application/json' -d '{"key":"enter","frames":3}' >/dev/null
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"frames":150}' >/dev/null
+curl -s $B/$ID/state/sprinter/text | jq -r '.lines[].text' | grep -v '^$' | tail -4
+# General Sound found at slot: 0 / Done. / C:\BIN>
+curl -s $B/$ID/state/isa | jq -c '.slots[0] | {io: .counters | {io_reads, io_writes}, gs: .zx_bus.cards[0] | {status, ready_for_commands, sound}}'
+# {"io":{"io_reads":17237,"io_writes":3330},"gs":{"status":"#FE","ready_for_commands":true,"sound":"playing (the mix changed in the last frame)"}}
+curl -s "$B/$ID/state/isa/journal?last=3" | jq -c '.entries[] | {what, cpu_address, value}'
+# {"what":"GS status (#BB)","cpu_address":"#C0BB","value":"#FE"}
+curl -s -X POST $B/$ID/control/isa -H 'Content-Type: application/json' -d '{"action":"io_peek","slot":1,"address":"#BB"}' | jq -c '{value}'
+# The card's own sound: 1 s of the GS row (the MOD's channel 1 is on the left)
+curl -s -X POST $B/$ID/audio/capture -H 'Content-Type: application/json' -d '{"action":"start","seconds":1,"source":"gs"}' >/dev/null
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"frames":60}' >/dev/null
+curl -s "$B/$ID/audio/capture/result" | jq -c '{duration_seconds, left: .left.rms, right: .right.rms, dominant_hz}'
+# {"duration_seconds":1.0,"left":0.1686,"right":0.0,"dominant_hz":268.5}   (zero-crossing estimate; C-3 is 258.5 Hz)
+```
+
+The card itself: `GET /state/audio/gs` (mailbox, DACs, the `neogs` object; `dma.zx.host_memory_bus` false here), the
+GS port trace `/state/audio/gs/porttrace` sees ProPlay's traffic like any host's. CLI: `isa` (the `zx_bus` block),
+`isa io 1 #BB` (`value: #FE`), `state audio gs`. Lua (verified): `isa_state().slots[1].summary_line`,
+`isa_state().slots[1].zx_bus.cards[1].personality` (`ngs`), `isa_io_write(1, 0xB3, 0x5A); isa_io_peek(1, 0xBB)`
+(`254`: the data flag). Python: the same names on `emu` (not built in the verifying build). MCP (verified):
+`inspect_state` aspect `isa` prints `[isa]   zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: ...` and the card's line
+(`NeoGS (...): status #7E, silent; [SOUND] GSReset=0: ...`); `audio_gs` for the card. Qt: Network window, slot 1's
+row is the adapter's line.
+
+- `[SOUND] GSType=Z80` puts the classic GS (`rom/gs105a.rom`) behind the adapter; a TTD recording then replays
+  exactly (its RAM is in its blob). The NeoGS replays the same music, not bit-exact (its RAM waits for TTD v2).
+- The NeoGS ZX-DMA cannot reach the Sprinter (the adapter passes no memory cycles); the TTD port journals record with
+  the NeoGS fitted.
+- The same on MAME: `-isa0 zxbus_adapter -isa0:zxbus_adapter:card neogs`; the comparison (pitch equal, waveform
+  correlation 0.9998): [i2-outcome.md](../../docs/inprogress/2026-10-02-sprinter-isa/i2-outcome.md).
+
 ## Trace the cycles
 
 ISA cycles are memory cycles, but the Sprinter's port trace shows them beside the port accesses while a capture
@@ -162,7 +228,7 @@ port is the ISA address's low 16 bits, the raw port the CPU address (`#C30A`). P
 ## Notes
 
 - A machine reset keeps `#9FBD` (the latch has no reset input); BIOS 3.07 pulses RESET DRV while it starts
-  (`reset_pulses` in the counters).
+  (`reset_pulses` in the counters; `#FF` at PC `#0399`, `#00` at `#03AB`) - which resets the GS behind the adapter.
 - While RESET DRV is held every cycle reads `#FF`; AEN = 1 makes an I/O card ignore the cycle.
 - Tools (debugger, memory viewer, `memory read`) see what the card shows without side effects.
 - The cards' lines are pushed to PIO port B on every change; a card's own timed events (a character arriving at the

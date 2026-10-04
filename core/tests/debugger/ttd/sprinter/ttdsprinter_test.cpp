@@ -372,7 +372,7 @@ protected:
         ASSERT_NE(_ttd, nullptr);
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
-        // Pinned to BIOS 3.04 (the shipped default is 3.07 BETA 1; its cold start is the corpus fixture
+        // Pinned to BIOS 3.04 (the shipped default is 3.06 Hotfix 2; its cold start is the corpus fixture
         // testdata/machines/sprinter/ttd/boot.ttd, TTD_Corpus_Test)
         ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // PowerOn resets
 
@@ -604,12 +604,12 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
 }
 
-/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; no NeoGS without a ZX-bus): a
+/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; with the NeoGS on the ISA ZX-bus adapter
+/// too: IsaZxBusAdapter_Test.NeoGsZxDmaCannotInstall_PortJournalRecords): a
 /// recording answers "who wrote this port" (/ttd/port-events) and the PLD journal's TTD source, and its replay
 /// feeds the recorded IN results with no divergence. Boot-bound: BIOS POST frames, replayed once
 TEST_F(TTDSprinterMachine_Test, PortJournal_RecordsAndAnswersPortEvents)
 {
-    EXPECT_EQ(_context->pSoundManager->getGeneralSound(), nullptr) << "no ZX-bus: [SOUND] GSType is not fitted";
     PowerOn(true);
     Skip(5);
     StartRecording();
@@ -932,6 +932,80 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidPs2ByteAndMidMousePacket)
     ExpectExactReplay(0, _ttd->GetCheckpointCount(), "the whole session");
     ExpectExactReplay(midPs2, 30, "from a PS/2 byte on the wire");
     ExpectExactReplay(midPacket, 30, "from the middle of a mouse packet");
+    _context->pMouse->SetPresent(true);
+}
+
+/// A glide through the automation (design 2026-10-03): the steps are applied at frame ends, paced by the serial
+/// mouse, and journaled like any mouse input; a click queued behind it follows. A replay from the start and from
+/// the middle of the glide is exact, and the program logged the glide's motion whole
+TEST_F(TTDSprinterMachine_Test, ExactRestore_GlideAndQueuedClickOnTheSerialMouse)
+{
+    PowerOn(true);
+    Skip(10);
+    _context->pMouse->SetPresent(false);  // the board mouse alone
+
+    // DI; log SIO B bytes at #9000 (the same polling loop as above, SIO B only)
+    static const uint8_t program[] = {
+        0xF3,                    // 8000 DI
+        0xDD, 0x21, 0x00, 0x90,  // 8001 LD IX,#9000
+        0xDB, 0x1B,              // 8005 loop: IN A,(#1B)  SIO B RR0
+        0x0F,                    // 8007 RRCA
+        0x30, 0xFB,              // 8008 JR NC,loop
+        0xDB, 0x1A,              // 800A IN A,(#1A)
+        0xDD, 0x77, 0x00,        // 800C LD (IX+0),A
+        0xDD, 0x23,              // 800F INC IX
+        0x18, 0xF2,              // 8011 JR loop
+    };
+    for (size_t i = 0; i < sizeof(program); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (uint16_t a = 0x9000; a < 0x9400; a++)
+        _context->pMemory->DirectWriteToZ80Memory(a, 0);
+    Z84Lib::Z84C15& chip = _decoder->GetZ84();
+    chip.Write(0x10, 0x55);
+    chip.Write(0x10, 45);
+    chip.Write(0x1B, 0x04);
+    chip.Write(0x1B, 0x44);
+    _z80->pc = 0x8000;
+    RunToBoundary();
+    Record(2);  // not recorded: the serial mouse takes its reference sample
+
+    StartRecording();
+    size_t midGlide = 0;
+    Record(1, [&](int) {
+        ASSERT_TRUE(MouseManager()->Glide(400, -200).ok());
+        ASSERT_TRUE(MouseManager()->Click(MouseButton::Left, 3).queued);
+    });
+    Record(40, {}, [&] {
+        if (!midGlide && MouseManager()->IsBusy() && MouseManager()->GetState().glideRemainingDx < 200)
+            midGlide = _ttd->GetCheckpointCount() - 1;
+    });
+    _ttd->StopRecording();
+    EXPECT_FALSE(MouseManager()->IsBusy());
+    ASSERT_GT(midGlide, 0u) << "no boundary in the middle of the glide";
+
+    // The program's log: Microsoft packets adding up to the glide, then the click
+    int dx = 0, dy = 0;
+    bool sawLeft = false, sawRelease = false;
+    for (uint16_t a = 0x9000; a + 2 < 0x9400; a += 3)
+    {
+        const uint8_t b0 = _context->pMemory->DirectReadFromZ80Memory(a);
+        if (b0 == 0)
+            break;
+        ASSERT_EQ(b0 & 0x40, 0x40) << "a packet starts at #" << std::hex << a;
+        const uint8_t b1 = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a + 1));
+        const uint8_t b2 = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a + 2));
+        dx += static_cast<int8_t>(static_cast<uint8_t>(((b0 & 0x03) << 6) | (b1 & 0x3F)));
+        dy += static_cast<int8_t>(static_cast<uint8_t>(((b0 & 0x0C) << 4) | (b2 & 0x3F)));
+        sawLeft |= (b0 & 0x20) != 0;
+        sawRelease |= sawLeft && (b0 & 0x30) == 0;
+    }
+    EXPECT_EQ(dx, 400);
+    EXPECT_EQ(dy, 200) << "200 down";
+    EXPECT_TRUE(sawLeft) << "the queued click reached the program";
+    EXPECT_TRUE(sawRelease);
+
+    ExpectExactReplay(0, _ttd->GetCheckpointCount(), "the whole glide");
+    ExpectExactReplay(midGlide, 20, "from the middle of the glide");
     _context->pMouse->SetPresent(true);
 }
 

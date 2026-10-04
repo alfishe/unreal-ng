@@ -48,7 +48,7 @@ The mouse files were still uncommitted, so lines can move again.
 | Q8 | Python errors | **Raise** (`ValueError` for bad arguments, `RuntimeError` for replay / no device). |
 | Q9 | MCP runs frames after a click | **No.** |
 | — | TTD journal support | **Supported.** `journalSupported = true`; status reports `"ttd_journal": "supported"`. |
-| — | HTTP 409 | **Only during TTD replay.** No other 409 case exists. |
+| — | HTTP 409 | During TTD replay, and (since 2026-10-03) when the machine has no mouse fitted (`"reason":"no_mouse"`; it used to succeed with a warning) — [mouse-api-routing](../2026-10-03-mouse-api-routing/design.md) §5. |
 | — | Warnings | Success results carry a `warning` when the change cannot reach the program: mouse not fitted (`mouse not present: guest reads floating bus on the mouse ports`), or a wheel step with no wheel fitted (`no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter`). |
 | — | Status adds `available` and `wheel_enabled` | `available` = a device exists; `wheel_enabled` = `[INPUT] Wheel=KEMPSTON`. |
 | — | Host input vs automation limits | Host calls (`ApplyHost*`) skip the ±127 / ±7 limits (a fast flick can exceed them in one event) but keep the replay guard and journal. |
@@ -83,7 +83,7 @@ The mouse files were still uncommitted, so lines can move again.
 | # | Question | State |
 |---|---|---|
 | Q4 | Report whether the current machine state actually routes the mouse ports (`ports_decoded`) | Open. Now narrower: every model decodes the mouse, but TR-DOS (`CF_DOSPORTS`) or a registered peripheral can still hide it, and status does not say so. |
-| Q5 | Built-in "glide" for moves over ±127 | Open; not implemented. |
+| Q5 | Built-in "glide" for moves over ±127 | **Done 2026-10-03**: `glide` on every surface, paced by the program's reads, later input queued behind it ([mouse-api-routing](../2026-10-03-mouse-api-routing/design.md) §4). |
 | Q7 | ±127 or ±63 per call | Kept ±127. Open only if real software shows otherwise. |
 | Q10 | Is `dy` + = up right for real software? | Confirmed for the Scorpion ProfROM service-monitor pointer (`scorpion_kempston_mouse_test.cpp`). Not yet checked on Art Studio or similar. |
 | — | `ports` as integers (WebAPI) vs hex strings (Python, Lua) | Decided: integers everywhere. |

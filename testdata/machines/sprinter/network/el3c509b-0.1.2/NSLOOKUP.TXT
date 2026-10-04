@@ -1,0 +1,48 @@
+NSLOOKUP.EXE
+
+NSLOOKUP resolves a DNS A record through the polling-only stack. It is the
+explicit DNS test; the other utilities resolve hostnames with the same
+resolver library.
+
+Usage
+
+NSLOOKUP name [dns-server]
+NSLOOKUP /?
+
+name is a bounded ASCII DNS name. Labels are 1..63 bytes, a final dot is
+accepted, and the complete wire name cannot exceed 255 bytes. An explicit
+dns-server must be dotted IPv4 and is then used alone.
+
+Behaviour
+
+Without an explicit server the resolver tries NET_DNS1, then NET_DNS2
+after a timeout, unreachable, malformed, no-A, or temporary server error.
+NXDOMAIN is final and is not retried against the second server.
+
+The resolver sends an A/IN query with RD set, its own transaction ID and local
+UDP port, and makes three 5000 ms attempts per server. Foreign endpoints,
+stale IDs, bad checksums, truncation, invalid counts and compression pointer
+loops are discarded without extending the current deadline. On success it
+prints the queried name, the DNS server actually used, the IPv4 address, and
+RESULT OK.
+
+Examples
+
+NSLOOKUP example.com
+NSLOOKUP example.com 8.8.8.8
+NSLOOKUP host.lan.
+
+Exit codes
+
+| Code | Meaning                                                    |
+|------|------------------------------------------------------------|
+| 0    | An A record was returned                                   |
+| 1    | Usage error, or a malformed name                           |
+| 2    | 3C509B not detected                                        |
+| 3    | Timeout, unreachable server, or malformed reply            |
+| 4    | NET_* environment missing or invalid; run NETCFG -i    |
+| 5    | Local failure                                              |
+| 6    | NXDOMAIN: the server says the name does not exist          |
+| 7    | Cancelled with Esc or Ctrl+C                               |
+
+Every run ends with RESULT OK or RESULT FAIL code=N.

@@ -232,7 +232,8 @@ local hex    = disk_read_sector_hex(0, 0, 1)      -- drive 0, track 0, sector 1
 > **Status**: ✅ Implemented (2026-09). Source: `core/automation/lua/src/emulator/lua_emulator.h`
 > (`mouse_*` functions; helpers `mouseIntArg`, `mouseStateTable`, `mouseResult`).
 
-Global functions that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands.
+Global functions that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands.
 Units, limits and reasoning: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 They act on the bound emulator, or on the selected one when the script is not bound to an
 instance (for example, a script started through the WebAPI interpreter).
@@ -242,6 +243,9 @@ The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right
 
 ```lua
 mouse_move(dx, dy)                 --> state | nil, err    (-127..127 each, not both 0)
+mouse_glide(dx, dy)                --> state | nil, err    (-4096..4096; one step per frame, later input queues)
+mouse_busy()                       --> true while a glide (and the input queued behind it) is in progress
+mouse_devices()                    --> { device, ... }      (the machine's mouse devices)
 mouse_press(button)                --> state | nil, err    ("left"/"right"/"middle" or "l"/"r"/"m")
 mouse_release(button)              --> state | nil, err
 mouse_click(button [, frames=2])   --> state | nil, err    (hold 1..65535 frames)
@@ -249,7 +253,7 @@ mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
 mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
 mouse_release_all()                --> state | nil, err
 mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
-mouse_status()                     --> state | nil, err
+mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2")
 mouse_click_pending()              --> true while a click is still holding its button
 mouse_button_names()               --> {"left","right","middle"}
 ```
@@ -257,9 +261,12 @@ mouse_button_names()               --> {"left","right","middle"}
 `state` is a table with the same key names as the WebAPI state object: `x`, `y`,
 `buttons = {left, right, middle}`, `button_mask` (active-low: 254 = left down), `wheel`,
 `wheel_enabled`, `present`, `ports = {FADF, FBDF, FFDF}`, `pending_click`
-(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`, plus
-`warning` when the change cannot reach the program (mouse not fitted, or a wheel step with no
-wheel fitted).
+(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`,
+`mouse_fitted`, `device` (the machine's mouse, absent when none is fitted: `id`, `name`, `kind`,
+`fitted`, `in_use`, `wheel`, `buttons`, `x`, `y`, `button_mask`, `ports`, and `serial` or `ps2` -
+the WebAPI `device` object), `devices`, `queue = {ops, glide_remaining = {dx, dy}}`, plus `warning`
+when a wheel step was sent with no wheel fitted. On a machine with no mouse fitted every changing
+function returns `nil, "no mouse fitted on this machine: ..."`.
 
 `mouse_status()` additionally carries `routing = {ports_decoded, note}` — the same live
 answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port read is decoded
@@ -417,11 +424,11 @@ rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, registe
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
-ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: the SprinterESP card's 16550 line; network_state().slots[n].esp shows the module, its AT session and exchanges)
+ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"modem[,guest port]"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: a UART card's line; network_state().slots[n].esp shows the SprinterESP's module, .modem the ISA modem's mode / call / lines / journal); isa1_peer_b / isa2_peer_b (SprinterSerial COM2, slots[n].channel_b); modem_phonebook="5551234=host:port,..." (the numbers a Hayes modem peer dials; com_port="modem" puts one on any machine's serial port)
 ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31); zifi="at" (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP, default "none"; network_state().zifi has the API registers and rings)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
-isa = isa_state()           -- ISA slots (Sprinter): latch, window, slots[] (configured, card, not_fitted, counters, irq_line = the IRQ line: level, driver, PIO port B bit, PIO setup, pending, reaches_cpu), pio_port_b, irq_summary; available=false elsewhere
+isa = isa_state()           -- ISA slots (Sprinter): latch, window, slots[] (configured, card, summary_line, not_fitted, counters, irq_line = the IRQ line: level, driver, PIO port B bit, PIO setup, pending, reaches_cpu; the ZX-bus adapter's zx_bus = the General Sound / NeoGS behind it: cards[1].personality, .status, .cpu_addresses, .machine_reset, reset_held), pio_port_b, irq_summary; a 3C509B adds resources.id_port (#100-#1F0, its isolation state) and network_state().slots[n] its ID port, window, FIFOs, EEPROM, link state, events, summary; available=false elsewhere
 v, err = isa_io_read(2, "#30A")      -- one ISA I/O cycle in slot 2 at ISA #30A (the RTL8019AS ID byte #50); isa_io_write(slot, addr, v), isa_io_peek(slot, addr)
 ok, err = isa_reset()                -- one RESET DRV pulse to both slots; isa_mem_read / isa_mem_write, isa_latch(v) as well
 j = isa_journal(16)                  -- the last 16 ISA accesses: entries[] (frame, t, pc, access, cpu_address, what = register name, value); event="irq" entries: line edges, PIO requests, INT acknowledged, RETI (also j.irq_events, a ring polling does not flush)
@@ -584,19 +591,23 @@ Global functions on the bound or selected emulator (breakpoints fire while debug
 stops where: [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```lua
-id = bp(0x8000)                -- execution breakpoint, returns its id (-1 on failure)
-id = bp(0xC000, "ram32")       -- only while RAM page 32 is mapped at #C000 ("rom3", "cache0")
-id = bp_read(0x4000)           -- memory read; bp_read(addr, "ram5") bound to a page
-id = bp_write(0x5C00)          -- memory write; bp_write(addr, page) the same
-id = bp_port_in(0xFE)
-id = bp_port_out(0xFE)
+id = bp(0x8000)                -- execution breakpoint, returns its id (-1 when refused)
+id = bp(0x8000, {to=0x80FF})   -- a range #8000-#80FF (one check per access, however many ranges)
+id = bp(0x0038, {hits=50})     -- stop on the 50th hit only; '>=50' from the 50th on, '%50' every 50th
+id = bp(0xC000, "ram32")       -- physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = bp(0xC000, {page="ram32", slot_only=true})  -- only through slot 3 (#C000)
+id = bp_read(0x4000)           -- memory read; the same options
+id = bp_write(0x4000, {to=0x57FF})  -- memory write: the screen bitmap
+id = bp_port_in(0xFE, {mask=0x00FF})  -- port IN on #FE with any high byte; options {mask=, hits=}
+id = bp_port_out(0x7FFD)
+bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
 n = bp_count()
-print(bp_list())               -- the text table; a page breakpoint ends "in ram32"
-st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, page = {kind, page}}
+print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}
 ```
 
 ### Analyzer Management

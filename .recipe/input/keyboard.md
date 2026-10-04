@@ -155,6 +155,11 @@ PC keys behind each ZX key, and `type` sends it the PC keys that type each chara
 
 ## Pitfalls
 
+- **Host keys on macOS (the Qt window, not automation).** The Mac's Control key is the machine's
+  Ctrl; Command is a host key and sends nothing (Cmd+Tab, Cmd+Q, Cmd+F included) unless Machine >
+  Host Keyboard > *Pass Command as Win Key* is on. Injected keys (`lctrl`, `lgui`) are not affected.
+  Details: [docs/features/keyboard.md](../../docs/features/keyboard.md#host-keys-on-macos).
+
 - **Frames do the typing.** A paused machine does not consume queued sequences, and a
   `type` of a long line outlasts a short `run_frames`. Poll `status.sequence_running`
   or run enough frames.

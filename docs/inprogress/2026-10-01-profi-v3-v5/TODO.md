@@ -99,3 +99,10 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   when the CPU runs faster than 3.5 MHz (v5 hi-res, turbo). Fixed: the Profi decoder sets the base-clock time base
   for the VG93 and the tape, as the Sprinter does ([design-hires.md](design-hires.md) section 4); they now boot on both
 - [x] SP-DOS system disk in testdata (`cpm/sp-dos/unicopy-sp-dos.td0`), `SpDosBootsToItsShell` on both boards
+- [x] PQ-DOS and ROM BIOS Plus (Vadim): both expect the extended port map while the SYS ROM runs, as Karabas Pro
+  decodes it; `[PROFI] ExtPorts=sys` adds that variant (default `cpm`, the 5.0 PROM, which BIOS 1.0 / 2.0 need).
+  With it, BIOS Plus 0.32 finds the FDC, both drives, the RTC and the AY, and PQ-DOS 2.1 boots to `A:\>`
+  ([software-zoo.md](software-zoo.md) sections 5, 6)
+- [ ] The extended-map 8255 (`#87..#E7`) and the COM port (`#8F..#EF`): not emulated, ROM BIOS Plus reports Fail
+- [ ] PQ-DOS on `PROFI3` (its ROM-BIOS emulator): loops after programming the 8255 (`#52B0..#52C1`)
+- [ ] What the 5.06 / Profi+ periphery CPLD decodes in the SYS ROM state (decides the `ExtPorts` default for those boards)

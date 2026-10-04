@@ -6,7 +6,8 @@
 ;
 ; Notation: "; NNNN" at the end of a line is the address of that instruction.
 ; Everything marked VERIFIED was seen executing in MAME and in unreal-ng 48K.
-; Everything marked NOT TRACED is inferred from the bytes only.
+; Everything marked INFERRED is a reading of the bytes, not an observed run.
+; Everything marked NOT TRACED was not examined.
 
 ; ======================================================================
 ; STAGE 1 - trampoline and the ROM identity checks     (#9802 - #9898)
@@ -159,18 +160,31 @@ l5d00:  ld   de,#1B00           ; 5D00  block length = screen
         xor  a                  ; 5D2C
         ld   (#8B9E),a          ; 5D2D  patch the game: infinite lives
 l5d30:  ld   a,#64              ; 5D30
-        ld   (#FFFF),a          ; 5D32  canary byte in the top RAM cell ...
-        ld   a,#11              ; 5D35
-        call #6009              ; 5D37  helper in the decrypted part
-        ld   a,(#FFFF)          ; 5D3A  read the canary back; the helper may change it - NOT TRACED
+        ld   (#FFFF),a          ; 5D32  write a test value into the very last RAM cell ...
+        ld   a,#11              ; 5D35  (the A values #11, #17, #10 passed to #6009 here and at
+        call #6009              ; 5D37  #5D51 / #5D64 are not used: VERIFIED #6009 is a lone RET,
+                                ;       the end of the routine that starts at #5FD2)
+        ld   a,(#FFFF)          ; 5D3A  ... and read it back
         cp   #64                ; 5D3D
-        jr   z,l5d76            ; 5D3F  see #5D76
+        jr   z,l5d76            ; 5D3F  equal: RAM is there -> #5D76.
+                                ;       INFERRED, not observed failing: where nothing answers at
+                                ;       #FFFF (a 16K Spectrum, whose top RAM is missing) the
+                                ;       read-back differs and the code falls into the alternative
+                                ;       load path below. The test value cannot be disturbed by the
+                                ;       CALL: SP is about #5BFB here (observed), nowhere near #FFFF.
         ; #5D41-#5D75 load two more blocks with the same routine (#C000 <- decrypt, #4000 <-
         ; screen), then fill the attributes with #47 and RET into #5F57. NOT TRACED in detail.
 
-l5d76:  ld   a,#C9              ; 5D76  put RET opcodes into #5FFD and #5FE3 (patches two
-        ld   (#5FFD),a          ; 5D78  routines of the decrypted game; purpose NOT TRACED
-        ld   (#5FE3),a          ; 5D7B
+l5d76:  ld   a,#C9              ; 5D76  write #C9 (the RET opcode) into two places of the routine
+        ld   (#5FFD),a          ; 5D78  at #5FD2 (VERIFIED bytes before the patch):
+        ld   (#5FE3),a          ; 5D7B    #5FFD = first byte of `inc iy` (FD 23) -> becomes RET: the
+                                ;         routine ends after its first cell instead of looping;
+                                ;         #5FE3 = low byte of the operand in `ld iy,#5FA0`
+                                ;         (FD 21 A0 5F) -> IY = #5FC9.
+                                ;       Effect: that routine (it fills a display buffer at #E678
+                                ;       from the table at #5FA0 and the font-like tables at
+                                ;       #604D...) is cut short on this path. Its on-screen purpose
+                                ;       was not identified.
         jr   #5D62          ; 5D7E
         db   #FF                ; 5D80  Y/N cheat flag
 
@@ -283,12 +297,22 @@ edge:   ld   a,#16              ; 5E41  LD-EDGE-1: count how long the EAR level 
 ; STAGE 3 - game start (#5E61)                                  VERIFIED
 ; ======================================================================
         di                      ; 5E61
-        call #7022              ; 5E62
+        call #7022              ; 5E62  relocation fix-ups. VERIFIED: the routine starts with
+                                ;       `di / call #0052 / dec sp / dec sp / pop bc` - #0052 is a RET
+                                ;       in the 48K ROM (byte #C9), so the CALL only pushes its own
+                                ;       return address, and the two DEC SP + POP BC read it back:
+                                ;       BC = the address of the next instruction. This is the
+                                ;       classic "where am I" trick; it then adds fixed offsets
+                                ;       (#97, #66, #7B, #89, #BE) to BC and stores the results into
+                                ;       itself. It needs byte #C9 at ROM #0052: a FOURTH implicit
+                                ;       ROM dependence, besides #33C5, #006D and the #3D30 path.
         ; clear #E678..#EA77, relocate the main program #78D8 -> #C000 (#1C28 bytes) ...
         ; build an IM 2 vector table at #FE00 (257 x #FD), JP at #FDFD to the handler at #5EC0
         ; set I=#FE, IM 2, EI
-        ; ask "infinite lives? Y/N" via keyboard rows #DF (Y) and #7F (N)
-        ;   N -> #5D80 := 0 (cheat flag), both paths JP #5CD5 (decrypted game start)
+        ; ask "infinite lives? Y/N" via keyboard rows #DF (bit 4 = Y) and #7F (bit 3 = N)
+        ;   Y -> #5D80 := 0 (cheat on, tested at #5D25: patches #8B9E), JP #5CD5
+        ;   N -> JP #5CD5 with #5D80 left at #FF
+        ; (VERIFIED in unreal-ng 48K: after pressing Y, #5D80 = 0 and the game start #5CD5 runs)
 
 ; ---- ROM CHECK #3: every interrupt re-verifies the ROM (VERIFIED) ---
 im2:    ex   af,af'             ; 5EC0  the handler runs 50 times per second
@@ -300,7 +324,12 @@ im2:    ex   af,af'             ; 5EC0  the handler runs 50 times per second
         cp   #20                ; 5ECD
         ld   hl,#0000           ; 5ECF
         push hl                 ; 5ED2  failure: "return" to #0000 ...
-        jp   nz,#3D30           ; 5ED3  ... through ROM #3D30 (NOT TRACED what the ROM does there)
+        jp   nz,#3D30           ; 5ED3  ... through ROM #3D30. VERIFIED: #3D00-#3FFF of the 48K
+                                ;       ROM is the character set, not code. #3D30 holds the glyph
+                                ;       bytes 00 10 28 10 2A 44 3A 00 (the "&" bitmap): the CPU
+                                ;       executes a letter shape as instructions (NOP, DJNZ ...) and
+                                ;       runs wild. The pushed #0000 is the "return to reset" if the
+                                ;       garbage ever executes a RET.
         pop  hl                 ; 5ED6  success: take the pushed zero away
         pop  ix                 ; 5ED7
         exx                     ; 5ED9

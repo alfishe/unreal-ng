@@ -278,7 +278,9 @@ it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a load
 3.5 MHz. The status line shows the clock. The v5 also has the CP/M switch (`"name":"cpm"`, CLI `switch cpm on`,
 `[PROFI] CpmSwitch`): while it is on, #DFFD is held at #00 and writes to it are lost. `[PROFI] DffdDecode=` picks
 the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
-`OUT (n),A`).
+`OUT (n),A`). `[PROFI] ExtPorts=` picks when the extended port map (VG93 #83.., RTC #BF/#DF, IDE) is decoded: `cpm`
+(CP/M and ROM14, the 5.0 PROM, default; BIOS 1.0 / 2.0) or `sys` (also from the SYS ROM, as Karabas Pro: ROM BIOS
+Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk).
 
 ## Keyboard (`[PROFI] Keyboard=`)
 | Value | Keyboard |
@@ -384,9 +386,9 @@ per 8 x 8 square from the mode table in video RAM), a block accelerator, an AY a
 `emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
 
 ## BIOS and start
-Images: 3.07 (`sp2k-3.07-beta1.rom`, the default), 3.06 (`sp2k-3.06-hf2.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
+Images: 3.06 (`sp2k-3.06-hf2.rom`, the default), 3.07 (`sp2k-3.07-beta1.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
 3.06+). At create: `emulator_manage action=create model=SPRINTER sprinter_bios=3.04 sprinter_fast_start=false`; on a running machine:
-`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.06","reset":true}` (the image loads at the reset).
+`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.07","reset":true}` (the image loads at the reset).
 `inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32), with its known issues
 ("KNOWN ISSUE:" lines; 3.07 BETA 1: DSS 1.71.57 cannot start programs from a floppy, use 3.06 or the DSS of the 3.07
 recovery disk). FastStart off (the

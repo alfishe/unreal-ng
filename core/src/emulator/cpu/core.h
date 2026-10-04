@@ -76,6 +76,11 @@ protected:
     DiskFastLoad* _diskFastLoad = nullptr;
     DiskAutostart* _diskAutostart = nullptr;
     SoundManager* _sound = nullptr;
+    /// The host audio hold of the current turbo span (reason Turbo): engaged by EnableTurboMode, released by
+    /// DisableTurboMode - one per span however often either is called, and given back before _sound goes
+    SoundManager::HostOutputHold _turboHostHold;
+    /// Turbo is switched from the UI / automation threads and by the tape turbo controller on the machine's own
+    std::mutex _turboHostHoldMutex;
 #ifdef ENABLE_RECORDING
     RecordingManager* _recordingManager = nullptr;
 #endif
@@ -122,7 +127,9 @@ public:
     /// machine runs on another thread)
     void ApplyNetworkConfiguration();
 
-    /// Frame boundary work of the network adapters (machine thread)
+    /// Frame boundary work of the network adapters (machine thread): the devices' own work before the TTD
+    /// checkpoint (OnNetworkFrameDevices), the host's journaled answers after it (OnNetworkFrame)
+    void OnNetworkFrameDevices();
     void OnNetworkFrame();
 
     NetworkManager* GetNetworkManager() { return _networkManager; }

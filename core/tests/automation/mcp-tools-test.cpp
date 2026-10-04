@@ -1283,12 +1283,50 @@ TEST_F(McpTools_Test, MouseInput_ClickWithPreMove_StopsOnMoveError)
     Json::Value args;
     args["action"] = "click";
     args["button"] = "left";
-    args["dx"] = 200;
+    args["dx"] = 100;
     mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
 
     EXPECT_TRUE(result.isError);
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/move"));
     EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/click"));
+}
+
+// A pre-move beyond -127..127 glides (design 2026-10-03 §4): the click queues behind the glide in the core
+TEST_F(McpTools_Test, MouseInput_ClickWithLongPreMove_Glides)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/glide"] = {200, Json::Value(Json::objectValue)};
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/click"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "click";
+    args["button"] = "left";
+    args["dx"] = 300;
+    args["dy"] = -40;
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    EXPECT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/glide"));
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/move"));
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/click"));
+}
+
+TEST_F(McpTools_Test, MouseInput_GlideAndStatusDevice)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/glide"] = {200, Json::Value(Json::objectValue)};
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status?device=sprinter"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "glide";
+    args["dx"] = -1000;
+    args["dy"] = 1000;
+    EXPECT_FALSE(RunTool(*_registry, "mouse_input", args, *_caller).isError);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/glide"));
+
+    Json::Value status;
+    status["action"] = "status";
+    status["device"] = "sprinter";
+    EXPECT_FALSE(RunTool(*_registry, "mouse_input", status, *_caller).isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/mouse/status?device=sprinter"));
 }
 
 TEST_F(McpTools_Test, MouseInput_Press_RequiresButton)
