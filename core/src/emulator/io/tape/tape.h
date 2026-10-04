@@ -51,6 +51,12 @@ constexpr uint32_t TAPE_BLOCK_HOLD_FRAMES = 50;
 // pilot lasts about 2 s (3220 pulses of 2168 T): 100 frames is still short enough that a loader that is really
 // gone gets its pilot from the start when it comes back.
 constexpr uint32_t TAPE_PILOT_HOLD_FRAMES = 100;
+// ... but a pilot can be shorter than that (DIZZY X KID__DR's data blocks: 3223 pulses, 1.94 s, 97 frames), and then
+// playback is paused too late: the pause lands in the sync pulses or the data, the tape freezes there, and the loader,
+// which wants a pilot first, waits for ever. Playback must be paused (and the pilot rewound) before the head leaves
+// the pilot. So in the last TAPE_PILOT_TAIL_TSTATES of a pilot the pause comes after TAPE_BLOCK_HOLD_FRAMES.
+// Two frames of margin: the pause is only decided at a frame end, and a frame covers up to ~70000 T of pulses.
+constexpr uint64_t TAPE_PILOT_TAIL_TSTATES = 150000;
 
 /// endregion </Constants>
 

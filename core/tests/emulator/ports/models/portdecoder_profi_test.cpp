@@ -4,6 +4,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/joystick/joystick.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/profifixture.h"
 #include "emulator/video/profi/profigeometry.h"
@@ -840,6 +841,114 @@ TEST_F(ProfiPortDecoder_Test, Ppi8255NormalAndExtendedAddresses)
     WritePort(0x04E7, 0x04);
     EXPECT_EQ(ReadPort(0x04C7) & 0x04, 0x00);
     EXPECT_EQ(&decoder->GetPpi(), &decoder->GetPpi());
+}
+
+/// docs/inprogress/2026-10-04-profi-plus/design.md section 2.1: the v5 COM port - the 8253 at #8F / #AF / #CF / #EF,
+/// the 8251 at #D3 / #F3, the control register at #93 / #B3 - answers in the extended map only
+TEST_F(ProfiPortDecoder_Test, ComPortAnswersOnlyInTheExtendedMap)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+
+    // The SYS ROM state with the default ExtPorts=cpm: no COM port
+    WritePort(0x76EF, 0x76);
+    EXPECT_EQ(decoder->GetPit().GetState().counter[1].control, 0) << "#EF is not the 8253 here";
+    WritePort(0x01B3, 0x01);
+    EXPECT_EQ(decoder->GetUsart().BoardLatch(), 0);
+    EXPECT_EQ(decoder->ComPortDevice(0x00F3), PortDecoder_Profi::ComDevice::None);
+
+    // CP/M + ROM14: the extended map
+    Out7FFD(0x10);
+    OutDFFD(0x20);
+    EXPECT_EQ(decoder->ComPortDevice(0x008F), PortDecoder_Profi::ComDevice::Pit);
+    EXPECT_EQ(decoder->ComPortDevice(0x00AF), PortDecoder_Profi::ComDevice::Pit);
+    EXPECT_EQ(decoder->ComPortDevice(0x00CF), PortDecoder_Profi::ComDevice::Pit);
+    EXPECT_EQ(decoder->ComPortDevice(0x00EF), PortDecoder_Profi::ComDevice::Pit);
+    EXPECT_EQ(decoder->ComPortDevice(0x00D3), PortDecoder_Profi::ComDevice::Usart);
+    EXPECT_EQ(decoder->ComPortDevice(0x00F3), PortDecoder_Profi::ComDevice::Usart);
+    EXPECT_EQ(decoder->ComPortDevice(0x00B3), PortDecoder_Profi::ComDevice::Control);
+    EXPECT_EQ(decoder->ComPortDevice(0x0093), PortDecoder_Profi::ComDevice::Control);
+    EXPECT_EQ(decoder->ComPortDevice(0x0083), PortDecoder_Profi::ComDevice::None) << "the VG93";
+    EXPECT_EQ(decoder->ComPortDevice(0x0087), PortDecoder_Profi::ComDevice::None) << "the 8255";
+    EXPECT_EQ(decoder->ComPortDevice(0x00EB), PortDecoder_Profi::ComDevice::None) << "the IDE";
+
+    // ROM BIOS Plus's board test: counter 1 mode 3, #0010, read back with two INs
+    WritePort(0x76EF, 0x76);
+    WritePort(0x10AF, 0x10);
+    WritePort(0x00AF, 0x00);
+    _context->emulatorState.t_states += 100;   // the load happens at the next CLK pulse
+    const uint8_t lo = ReadPort(0x10AF);
+    const uint8_t hi = ReadPort(0x00AF);
+    EXPECT_FALSE(lo == 0xFF && hi == 0xFF);
+    EXPECT_EQ(hi, 0x00);
+    EXPECT_EQ(Pit8253::ModeOf(decoder->GetPit().GetState().counter[1]), 3);
+
+    // Counter 0 mode 3 / 156: the 8251's clock; the 8251 resets (4 x #01, #40) and takes 8N1 x1
+    WritePort(0x36EF, 0x36);
+    WritePort(0x9C8F, 156);
+    WritePort(0x008F, 0);
+    for (uint8_t v : {0x01, 0x01, 0x01, 0x01, 0x40, 0x4D, 0x15})
+        WritePort(0x00F3, v);
+    EXPECT_EQ(decoder->GetUsart().Baud(), 9615u);
+    EXPECT_NE(ReadPort(0x00F3), 0xFF) << "the board test's check";
+    EXPECT_EQ(ReadPort(0x00F3) & 0x05, 0x05) << "TxRDY, TxEMPTY";
+
+    // #B3: D0 the interrupt enable latch; read D0 RI, D7 DCD - nothing on the connector
+    WritePort(0x01B3, 0x01);
+    EXPECT_EQ(decoder->GetUsart().BoardLatch(), 1);
+    EXPECT_EQ(ReadPort(0x00B3) & 0x81, 0x00);
+    EXPECT_EQ(ReadPort(0x0093) & 0x81, 0x00);
+}
+
+/// ExtPorts=sys (the Profi+ V0.03 decoder PROM): the COM port answers in the SYS ROM state too
+TEST_F(ProfiPortDecoder_Test, ComPortInTheSysRomWithExtPortsSys)
+{
+    _context->config.profi_ext_ports = 1;
+    EXPECT_EQ(Decoder()->ComPortDevice(0x00F3), PortDecoder_Profi::ComDevice::Usart);
+    EXPECT_EQ(ReadPort(0x00F3), Usart8251::kTxRdy | Usart8251::kTxEmpty);
+    _context->config.profi_ext_ports = 0;
+}
+
+/// The 8251 is the machine's own serial port: a peer plugs in through DescribeNetwork, and a byte goes out and
+/// comes back through a loopback plug at 9600 baud
+TEST_F(ProfiPortDecoder_Test, ComPortTakesAPeer)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    const PortDecoder::NetworkCapabilities caps = decoder->DescribeNetwork();
+    ASSERT_EQ(caps.serialPort, PortDecoder::NetworkCapabilities::SerialPort::Profi8251);
+    ASSERT_TRUE(caps.attachSerialPeer);
+
+    LoopbackPeer plug(true);
+    caps.attachSerialPeer(&plug);
+    Out7FFD(0x10);
+    OutDFFD(0x20);
+    WritePort(0x36EF, 0x36);
+    WritePort(0x9C8F, 156);
+    WritePort(0x008F, 0);
+    for (uint8_t v : {0x00, 0x00, 0x00, 0x40})   // the internal reset sequence
+        WritePort(0x00F3, v);
+    WritePort(0x00F3, 0x4D);
+    WritePort(0x00F3, 0x27);   // TxEN, DTR, RxE, RTS
+    EXPECT_NE(ReadPort(0x00F3) & Usart8251::kDsr, 0) << "the plug: DTR to DSR";
+    EXPECT_EQ(ReadPort(0x00B3) & 0x81, 0x81) << "the plug: DTR to DCD, RTS to RI";
+    EXPECT_EQ(caps.serialBaud(), 9615u);
+
+    WritePort(0x00D3, 0xC5);
+    _context->emulatorState.t_states += 2 * 3640;
+    EXPECT_NE(ReadPort(0x00F3) & Usart8251::kRxRdy, 0);
+    EXPECT_EQ(ReadPort(0x00D3), 0xC5);
+
+    caps.attachSerialPeer(nullptr);
+    EXPECT_EQ(ReadPort(0x00F3) & Usart8251::kDsr, 0) << "unplugged";
+}
+
+/// The v3 board has no COM port
+TEST_F(ProfiV3PortDecoder_Test, NoComPortOnV3)
+{
+    EXPECT_EQ(_context->pPortDecoder->DescribeNetwork().serialPort, PortDecoder::NetworkCapabilities::SerialPort::None);
+    Out7FFD(0x10);
+    OutDFFD(0x20);
+    EXPECT_EQ(Decoder()->ComPortDevice(0x00F3), PortDecoder_Profi::ComDevice::None);
 }
 
 TEST_F(ProfiPortDecoder_Test, CpmSwitchHoldsDffdCleared)

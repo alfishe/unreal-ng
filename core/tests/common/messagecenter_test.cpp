@@ -423,3 +423,77 @@ TEST(MessageCenterVariants_Test, FastCenter_ThroughputSanity)
 }
 
 /// endregion </From messagecenter_variants_test.cpp>
+
+/// region <Payload ownership of Post()>
+
+/// Regression: Post() used to default to autoCleanupPayload=false, so every payload posted with the
+/// default arguments (about a hundred call sites) was never deleted - one leaked object per message.
+/// The default now transfers ownership to the queue, matching Message's own default.
+
+namespace
+{
+struct CountedPayload : public MessagePayload
+{
+    explicit CountedPayload(int* destroyed) : _destroyed(destroyed) {}
+    ~CountedPayload() override { ++*_destroyed; }
+
+    int* _destroyed;
+};
+}  // namespace
+
+TEST(EventQueuePayloadOwnership_Test, DefaultPostDeletesPayloadAfterDelivery)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+    queue.RegisterTopic("ownership_default");
+
+    queue.Post("ownership_default", new CountedPayload(&destroyed));
+    EXPECT_EQ(destroyed, 0) << "payload must stay alive while the message is queued";
+
+    Message* message = queue.GetQueueMessage();
+    ASSERT_NE(message, nullptr);
+    queue.Dispatch(message->tid, message);  // Dispatch() owns and deletes the message
+
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(EventQueuePayloadOwnership_Test, DefaultPostDeletesPayloadOfUnregisteredTopic)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+
+    queue.Post("ownership_unregistered", new CountedPayload(&destroyed));
+
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(EventQueuePayloadOwnership_Test, DefaultPostDeletesPayloadOfInvalidTopicId)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+
+    queue.Post(-1, new CountedPayload(&destroyed));
+
+    EXPECT_EQ(destroyed, 1);
+}
+
+TEST(EventQueuePayloadOwnership_Test, ExplicitNoCleanupLeavesPayloadToTheCaller)
+{
+    EventQueueCUT queue;
+    int destroyed = 0;
+    queue.RegisterTopic("ownership_retained");
+
+    auto* retained = new CountedPayload(&destroyed);
+    queue.Post("ownership_retained", retained, false);
+    queue.Post("ownership_unregistered", retained, false);
+
+    Message* message = queue.GetQueueMessage();
+    ASSERT_NE(message, nullptr);
+    queue.Dispatch(message->tid, message);
+
+    EXPECT_EQ(destroyed, 0);
+    delete retained;
+    EXPECT_EQ(destroyed, 1);
+}
+
+/// endregion </Payload ownership of Post()>

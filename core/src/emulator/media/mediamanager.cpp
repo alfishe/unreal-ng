@@ -666,6 +666,27 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
     }
 }
 
+void MediaManager::GuestEject(const std::string& slotId)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return;
+    SlotState& state = it->second;
+    if (!state.attached || state.ejectRequested)
+        return;
+    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    if (ttd && ttd->IsReplayActive())
+        return;
+    if (state.attached->ChangedUnits() > 0)
+    {
+        LOGWARNING("MediaManager: the guest ejected '%s', which has unsaved writes: the medium stays in the slot", slotId.c_str());
+        return;
+    }
+    // The normal eject, applied at the frame boundary (never inside the peripheral's own command)
+    state.ejectRequested = true;
+}
+
 Medium* MediaManager::GetMedium(const std::string& slotId)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);

@@ -18,7 +18,7 @@ higher").
 | Parallel port | KR580VV55 (8255 PPI) | `#87` A, `#A7` B, `#C7` C, `#E7` control | mode `#90` (A in, B out, C out); bit set / reset PC2 and reads C bit 2 back; writes B = 2 and reads it back; printer strobe on PC0, busy on PC7 (`IN #C7`, RLA) |
 | Baud-rate timer | KR580VI53 (8253 PIT) | `#8F` counter 0, `#AF` counter 1, `#CF` counter 2, `#EF` control | counter 1 mode 3 (`#76`), loads `#0010`, reads it back (fails on `#FFFF`); counter 0 mode 3 (`#36`) = the serial baud divider |
 | Serial port | KR580VV51 (8251 USART) | `#D3` data, `#F3` command / status | reset sequence (3 x `#00`, `#40`), mode and command words; status not `#FF`; TxRDY (bit 0), RxRDY (bit 1) polled |
-| Control register | - | `#B3` | one bit from the serial setup (`OUT #B3,0/1`) |
+| Control register | - | `#B3` (`#93`) | `OUT #B3,0/1` from the serial setup: D0 = COM interrupt enable (section 2.1) |
 | FDC, RTC, IDE, AY | (existing) | `#83..`, `#BF/#DF`, `#xxCB/#xxEB`, `#FFFD` | already pass with `ExtPorts=sys` |
 
 The same 8255 is the Profi's ordinary 8255 (Kempston joystick on port A, Covox on B / C): the extended addresses
@@ -57,12 +57,25 @@ Each chip is its own class with a TTD blob, independent of the Profi (other mach
    both the normal (`#1F..#7F`) and the extended (`#87..#E7`) addresses to one instance; Kempston joystick = port A
    input, Covox = port B / C output (today's Covox behavior must stay bit-exact), printer = B data + C handshake to
    the existing printer / LPT sink if one exists, else a capture buffer.
-2. **`Pit8253`** (`core/src/emulator/io/timer/`): three counters, modes 0-5, binary / BCD, LSB / MSB / both, latch
-   command, read-back of the counting element; clocked from the board's timer clock (to settle: the Profi+ clock
-   input of the 8253, likely 2 MHz or the CPU clock / N - from the documentation or the BIOS's baud table).
-3. **`Usart8251`** (`core/src/emulator/io/serial/`): asynchronous mode (mode word, command word, internal reset,
-   status TxRDY / RxRDY / TxEMPTY / PE / OE / FE / DSR), bytes timed by the 8253 counter 0 output; connects to the
-   existing `ISerialPeer` (Hayes modem peer, network) like `ComPort` / `Uart16550`.
+2. **`Pit8253`** (`core/src/emulator/io/timer/pit8253.{h,cpp}`, done): three counters, modes 0-5, binary / BCD,
+   LSB / MSB / both, the counter latch command, reads of the counting element; the 8254 read-back command is
+   ignored, as on an 8253. **CLK = 1.5 MHz**: ROM BIOS Plus's baud table (SYS page `#2A3C`) gives divider x baud =
+   1 500 000 for every rate (156 for 9600) with the 8251 at baud factor x1, so counter 0's output is the bit clock.
+   Time: the emulator's base (3.5 MHz) T-states - `t_states` plus the in-frame CPU position scaled back from the CPU
+   clock (`EmulatorState::CpuToBaseT`, right under turbo and the hi-res clocks); the counters advance lazily at each
+   access by 3/7 of the elapsed base T (remainder kept), in closed form per mode - no per-instruction cost. The
+   chip has no RESET pin: a reset leaves it counting. What counters 1 and 2 drive on the board is not documented:
+   they are modeled as counters with nothing on their OUT (gates high). TTD blob `PeripheralId::Pit8253` (51).
+3. **`Usart8251`** (`core/src/emulator/io/serial/usart8251.{h,cpp}`, done): asynchronous mode (mode word, sync
+   characters after a synchronous mode word, command word, internal reset - the 3 x `#00`, `#40` sequence and
+   BIOS Plus's 4 x `#01`, `#40` both work), status TxRDY / RxRDY / TxEMPTY / PE / OE / FE / DSR; a character takes
+   (start + data + parity + stop) x the baud factor x counter 0's period. It connects to the existing `ISerialPeer`
+   as the machine's own serial port (`NetworkCapabilities::SerialPort::Profi8251`, like the ATM Turbo 2+
+   controller's RS-232): `[NETWORK] ComPort=` / `network set com_port=` picks loopback, a test plug, TCP, a host
+   serial device, the Hayes modem or an ESP module; no peer = nothing connected (CTS / DSR / DCD inactive). The
+   peer is saved in TTD as `MachineSerialPeer`, the chip as `PeripheralId::Usart8251` (52, with the `#B3` latch).
+   Not modeled: the synchronous mode (words taken, no bytes move), break (SBRK / break detect), PE / FE (the peer's
+   bytes are clean), the COM interrupt (below).
 4. **Profi+ board in `PortDecoder_Profi`**: `[PROFI] ControllerBoard=none|plus` adds the 8253, the 8251 and `#B3`
    on the extended map; the 8255 aliases are decoded on every Profi with the extended map (a 5.0 board has the same
    8255 at those addresses when CP/M + ROM14).
@@ -76,17 +89,23 @@ Each chip is its own class with a TTD blob, independent of the Profi (other mach
 |:--|:--|:--|
 | P0 | Decode Djoni's V0.03 PROM (`tools/machines/profi/profidecoder`) and compare with the `ExtPorts=sys` rule; fix the rule (or decode from the table) where they differ | the PROM's port map row by row |
 | P1 | `Ppi8255` + the Profi routing (normal and extended addresses), Covox and joystick through it | unit tests per mode-0 rule; existing Covox / joystick tests unchanged; BIOS Plus "Parallel interface: Ok" |
-| P2 | `Pit8253` | unit tests per mode, read-back, latch; BIOS Plus reads counter 1 back |
-| P3 | `Usart8251` on the PIT, `ISerialPeer` hookup, `#B3` | unit tests (reset sequence, async framing, flags); BIOS Plus "Serial interface: Ok"; a loopback peer round-trip |
-| P4 | `PROFI-PLUS` variant, ROM in `data/rom/profi/`, HDD with PQ-DOS | `ProfiPlusBoot_Test`: board test all Ok, PQ-DOS boots from floppy and from an HDD image |
-| P5 | TTD blobs of the three chips, automation (state reports for PPI / PIT / USART on all surfaces, the variant on every create path), recipe, docs | TTD round trip; parity checklist |
+| P2 | `Pit8253` (done 2026-10-04) | unit tests per mode, read-back, latch; BIOS Plus reads counter 1 back |
+| P3 | `Usart8251` on the PIT, `ISerialPeer` hookup, `#B3` (done 2026-10-04; the COM interrupt open, section 5) | unit tests (reset sequence, async framing, flags); BIOS Plus "Serial interface: Ok"; a loopback peer round-trip |
+| P4 | `PROFI-PLUS` variant, ROM in `data/rom/profi/`, HDD with PQ-DOS (variant done; board test done 2026-10-04) | `ProfiPlusBoot_Test`: board test all Ok (done: the BIOS result byte `(IY + 2)`, [software-zoo.md](../2026-10-01-profi-v3-v5/software-zoo.md) section 5), PQ-DOS boots from floppy and from an HDD image (open) |
+| P5 | TTD blobs of the three chips (done: ids 50 / 51 / 52), automation (state reports for PPI / PIT / USART on all surfaces, the variant on every create path), recipe, docs | TTD round trip; parity checklist |
 | P6 | DOS Navigator | needs BIOS Plus 0.40 or later (research); with it: DN starts |
 
 A/B: the decoder change adds work only on Profi port accesses; the other machines are not touched (no hot path).
 
 ## 5. Open questions
 
-- The 8253 clock and the 8251 clock on the Profi+ board.
-- The `#B3` register's other bits; `#93`.
+- Settled 2026-10-04: the 8253 CLK is 1.5 MHz (BIOS Plus's baud table, section 3); the 8251's TxC / RxC is counter
+  0's output.
+- The COM interrupt: `#B3` D0 enables an interrupt controller that puts RST `#20` (receive) / RST `#28` (transmit)
+  on the bus (PLUSDOC `comport.txt`, TESTCOM.COM). The Z80 model takes device INT lines with a `#FF` vector only
+  (IM 0 beyond RST `#38` is not modeled), and the 8251 has no time events between accesses: the latch is kept, no
+  INT is raised. BIOS Plus polls the 8251 from its frame interrupt instead (`#2853`), so it does not need it.
+- The polarity of `#B3`'s RI (D0) / DCD (D7) reads (modeled 1 = asserted); its other bits (read `#7E`, floating).
+- What the 8253's counters 1 and 2 drive on the board.
 - Settled: the stock 5.06 CPLD does not open the extended map in the SYS ROM state; Djoni's V0.03 PROM does
   (section 2.1). `PROFI-PLUS` = a v5 with the V0.03 PROM and BIOS Plus.

@@ -1025,6 +1025,68 @@ TEST_F(EmulatorHostAudioResume_Test, EveryPausePathThenResumePlaysAgain)
     EXPECT_FALSE(_sound->isHostOutputHeld());
 }
 
+/// A step over a CALL resumes the machine to a temporary breakpoint, so it runs paced to real time - but it is a
+/// debugger step, and every step is silent: the beeper a stepped-over subroutine plays must not reach the speakers.
+/// The hold ends with the step; a normal resume plays again. (~0.15 s: the subroutine is a real, paced run)
+TEST_F(EmulatorHostAudioResume_Test, StepOverASoundingSubroutineIsSilent)
+{
+    // DI; CALL #8010; JR $   ...   #8010: a short beeper square wave (the subroutine), then RET
+    const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};
+    const uint8_t subroutine[] = {0x11, 0x00, 0x02,                                // LD DE,#0200
+                                  0x3E, 0x10, 0xD3, 0xFE, 0x06, 0x20, 0x10, 0xFE,  // OUT (#FE),#10; delay
+                                  0xAF, 0xD3, 0xFE, 0x06, 0x20, 0x10, 0xFE,        // OUT (#FE),0; delay
+                                  0x1B, 0x7A, 0xB3, 0x20, 0xEB,                    // DEC DE; LD A,D; OR E; JR NZ
+                                  0xC9};
+    for (size_t i = 0; i < sizeof(program); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (size_t i = 0; i < sizeof(subroutine); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8010 + i), subroutine[i]);
+
+    _emulator->DebugOn();
+    _emulator->StartAsync();
+    _emulator->Pause();
+    Z80State* z80 = _emulator->GetZ80State();
+    z80->pc = 0x8001;  // the CALL
+    z80->sp = 0xFF00;
+
+    const uint64_t audibleBefore = _sink.audible.load();
+    _emulator->StepOver();
+    EXPECT_TRUE(_sound->isHostOutputHeld()) << "the stepped-over run is not held";
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->IsPaused() && z80->pc == 0x8004; }, std::chrono::seconds(5)))
+        << "the step over did not stop after the CALL, pc " << z80->pc;
+    EXPECT_EQ(_sink.audible.load(), audibleBefore) << "the subroutine's beeper reached the speakers during a step";
+    EXPECT_FALSE(_sound->isHostOutputHeld()) << "the hold outlived the step";
+    EXPECT_EQ(_sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
+}
+
+/// StepOver registers a handler on the shared BREAKPOINT topic that captures its emulator and FeatureManager. It must
+/// be gone with the emulator: a breakpoint event of another instance with a colliding id used to reach the dead
+/// handler, which locked the destroyed FeatureManager's mutex and aborted the process
+TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
+{
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    const size_t observersBefore = center.ObserverCount(NC_EXECUTION_BREAKPOINT);
+    {
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("stepover-observer", "PENTAGON",
+                                                                                LoggerLevel::LogError);
+        ASSERT_TRUE(emulator);
+        const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};  // DI; CALL #8010; JR $
+        for (size_t i = 0; i < sizeof(program); i++)
+            emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+        emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+        emulator->DebugOn();
+        emulator->StartAsync();
+        emulator->Pause();
+        emulator->GetZ80State()->pc = 0x8001;  // the CALL
+        emulator->GetZ80State()->sp = 0xFF00;
+        emulator->StepOver();  // registers the handler, resumes to the temporary breakpoint
+        EXPECT_GT(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "StepOver registered no handler: the test checks nothing";
+        emulator->Stop();
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+    }
+    EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step-over handler outlived its emulator";
+}
+
 TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
 {
     // A TTD seek replays from a checkpoint at host speed under the replay hold; afterwards nothing holds the

@@ -75,6 +75,9 @@ Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
 
+    // The step-over handler captures this emulator and its FeatureManager: unregister before they are destroyed
+    RemoveStepOverObserver();
+
     // Clean up FeatureManager BEFORE Release(), because Release() deletes _context.
     // Accessing _context->pFeatureManager after Release() is a use-after-free.
     if (_featureManager)
@@ -460,6 +463,10 @@ void Emulator::ReleaseNoGuard()
     // Guard against null context (shouldn't happen, but be safe)
     if (!_context)
         return;
+
+    // The step-over audio hold must not outlive the sound manager it points to
+    _stepOverHostHold.Release();
+    RemoveStepOverObserver();
 
     // Cleanup any pending step-over operation (orphan cleanup)
     if (_pendingStepOverBpId != 0 && _breakpointManager)
@@ -1281,6 +1288,7 @@ void Emulator::Pause(bool broadcast)
         std::lock_guard<std::mutex> lock(_pauseWaitMutex);
         _isPaused = true;
     }
+    _stepOverHostHold.Release();  // a stepped run that pauses is over (breakpoint, user pause, shutdown)
     // NOTE: Do NOT set _isRunning = false here!
     // The emulator thread is still active, just paused.
     // Setting _isRunning = false would cause Stop() to skip _asyncThread->join(),
@@ -1388,8 +1396,8 @@ void Emulator::Resume(bool broadcast)
     // now (no direct run on any thread, no TTD replay, no turbo) is a holder that leaked it - drop it, so no
     // pause / step / seek sequence on any surface can leave the speakers silent (SoundManager::HostOutputHold)
     if (_context && _context->pSoundManager)
-        _context->pSoundManager->reconcileHostOutputHolds(IsDirectStepping(), _context->ttdReplayActive,
-                                                          _context->config.turbo_mode);
+        _context->pSoundManager->reconcileHostOutputHolds(IsDirectStepping() || _stepOverHostHold.IsHeld(),
+                                                          _context->ttdReplayActive, _context->config.turbo_mode);
 
     {
         // Mirror Pause(): the flag flip must be mutex-protected so the parked
@@ -2374,6 +2382,15 @@ Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& pa
 
 // region Controlled flow
 
+void Emulator::RemoveStepOverObserver()
+{
+    if (_stepOverObserverId != 0)
+    {
+        MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _stepOverObserverId);
+        _stepOverObserverId = 0;
+    }
+}
+
 void Emulator::CancelPendingStepOver()
 {
     // Only relevant in debug mode — skip entirely during normal emulation
@@ -2394,6 +2411,7 @@ void Emulator::CancelPendingStepOver()
         _pendingStepOverBpId = 0;
         _stepOverDeactivatedBps.clear();
     }
+    _stepOverHostHold.Release();
 }
 
 bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind)
@@ -3001,6 +3019,9 @@ void Emulator::StepOver()
         return;
     }
 
+    // A handler left by an earlier step over has done its work: drop it before registering the next one
+    RemoveStepOverObserver();
+
     uint16_t currentPC = z80->pc;
 
     // Read instruction bytes to check if step-over is needed
@@ -3089,6 +3110,13 @@ void Emulator::StepOver()
         auto payload = static_cast<SimpleNumberPayload*>(message->obj);
         uint16_t triggeredBreakpointID = static_cast<uint16_t>(payload->_payloadNumber);
 
+        // The topic is shared by all emulator instances and breakpoint IDs are per instance: ignore other instances
+        if (auto tagged = dynamic_cast<BreakpointTriggeredPayload*>(payload))
+        {
+            if (!(tagged->emulatorId == unreal::UUID(GetId())))
+                return;
+        }
+
         if (triggeredBreakpointID == stepOverBreakpointID)
         {
             MLOGDEBUG("Emulator::StepOver() - cleanup for breakpoint ID %d", stepOverBreakpointID);
@@ -3109,6 +3137,7 @@ void Emulator::StepOver()
             // Clear tracking state
             _pendingStepOverBpId = 0;
             _stepOverDeactivatedBps.clear();
+            _stepOverHostHold.Release();  // the stepped run is over: audio follows the machine's pace again
 
             // Notify observers that step has completed
             MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);
@@ -3117,10 +3146,13 @@ void Emulator::StepOver()
         }
     };
 
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
+    _stepOverObserverId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
 
-    // Resume execution - returns immediately (non-blocking)
+    // Resume execution - returns immediately (non-blocking). The run to the temporary breakpoint is a step: its
+    // sound stays off (host output hold) until it stops; taken before Resume so its reconcile sees the hold's run
     MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit breakpoint at 0x%04X", nextInstructionAddress);
+    if (_context && _context->pSoundManager)
+        _stepOverHostHold = SoundManager::HostOutputHold(_context->pSoundManager, SoundManager::HostHoldReason::DirectRun);
     Resume();
     
     // No blocking wait - UI stays responsive

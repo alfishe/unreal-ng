@@ -1,7 +1,8 @@
 # TODO - Sprinter network adapters (Ethernet, Wi-Fi, 3C509B, modem)
 
-**Status:** research and design drafted 2026-10-02 (branch `sprinter-network-design`), waiting for owner review.
-Nothing built. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/TODO.md), PLAN row #59,
+**Status (2026-10-04):** SN0-SN5 built and on master (NE2000 + the Ethernet gateway, SprinterESP, the Hayes modem
+and SprinterSerial, 3Com 3C509B; each card runs its Sprinter kit end to end with a TTD replay without the host).
+Open: SN6 (the host-LAN bridge, wanted by the owner - Q2) and the follow-ups below. Design drafted 2026-10-02. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/TODO.md), PLAN row #59,
 roadmap row **S6c**); builds on the ISA design ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/TODO.md)); its
 shared pieces (`IIoBusDevice`, slot list in `DescribeNetwork()`, guest registry) are early parts of PLAN row #82.
 
@@ -26,7 +27,8 @@ interrupts. SN5 (branch
 
 ## Remaining
 
-- [ ] Owner review; Q9 (gateway implementation) before SN2, Q7 (order) and Q1 (default card) before SN1
+- [x] Owner review: Q1 = B (NE2000 fitted by default), Q2 = the host-LAN bridge wanted, Q7 settled by the owner's order
+  (the network before ISA RAM), Q9 = A (our own gateway), Q12 / Q13 decided 2026-10-04 ([open-questions.md](open-questions.md))
 - [x] SN0 (2026-10-03): kit releases as fixtures (`testdata/machines/sprinter/network/`: RTL8019AS kit 0.3.8, ESP kit
   0.2.1, byte for byte, `.gitattributes` `-text`), the scripted host server `core/tests/_helpers/scriptedhostnet.h`
   (HTTP, echo, Gopher, banner, UDP echo, NTP, DNS names, ping, host clients for forwards) with its own test
@@ -68,6 +70,8 @@ interrupts. SN5 (branch
   TTD replay without the host); recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
 - [ ] SN5 follow-ups: `UNET509B.DLL` through `UNETTEST` (assemble from the kit's tag with sjasmplus); run `FTP`, `NTP`,
   `TFTP`, `TELNET`; ISA Plug and Play isolation (not used by the kit; the boards ship "contention only")
-- [ ] SN6 optional bridge to the host LAN (M), only on request (Q2)
+- [ ] SN6 bridge to the host LAN (M): **wanted** (owner, Q2, 2026-10-02: "the bridge right away", NAT stays the
+  no-admin default and the bridge is the second host path for the same card); priority P2 (owner, 2026-10-04: after the
+  ATAPI CD)
 - [ ] When the hardware facts are final: move them to `docs/hardware/` with the Sprinter S7 docs move
   (the "Sprinter RTL8019" line of the NedoOS network catalog is already corrected in this branch)

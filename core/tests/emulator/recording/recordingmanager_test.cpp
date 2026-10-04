@@ -319,3 +319,66 @@ TEST(RecordingManager_Test, ProfiFramesKeepTheScreensWindowInBothModes)
     rm->SetScaleFactor(1);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+namespace
+{
+/// Width and height from the GIF header (logical screen descriptor, little endian)
+bool GifSize(const std::string& path, uint32_t& width, uint32_t& height)
+{
+    FILE* f = FileHelper::OpenFile(path, "rb");
+    if (!f)
+        return false;
+    uint8_t header[10] = {};
+    const size_t got = std::fread(header, 1, sizeof(header), f);
+    FileHelper::CloseFile(f);
+    if (got != sizeof(header))
+        return false;
+    width = header[6] | (header[7] << 8);
+    height = header[8] | (header[9] << 8);
+    return true;
+}
+}  // namespace
+
+/// The picture size of a recording follows its own capture region: a second recording on the same emulator
+/// must not inherit the size of the first (it did: the frames of the new size were dropped, an empty or
+/// black file). Only a size the caller sets explicitly is kept
+TEST(RecordingManager_Test, VideoSize_EachRecordingDerivesItsOwn)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    context->pFeatureManager->setFeature(Features::kRecording, true);
+    emulator->RunNFrames(2);
+
+    const PictureGeometry g = context->pScreen->DescribeCurrentFrame();
+    ASSERT_NE(g.screenWindow.width, g.width) << "the Pentagon window is smaller than its frame";
+
+    auto record = [&](VideoCaptureRegion region, const char* name, uint32_t& w, uint32_t& h) {
+        rm->SetCaptureRegion(region);
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name) + ".gif";
+        ASSERT_TRUE(rm->StartRecording(path, "gif"));
+        rm->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+        rm->StopRecording();
+        ASSERT_TRUE(GifSize(path, w, h)) << path;
+        std::remove(path.c_str());
+    };
+
+    uint32_t w = 0, h = 0;
+    record(VideoCaptureRegion::MainScreen, "rm-size-screen", w, h);
+    EXPECT_EQ(w, g.screenWindow.width);
+    EXPECT_EQ(h, g.screenWindow.height);
+
+    record(VideoCaptureRegion::FullFrame, "rm-size-full", w, h);
+    EXPECT_EQ(w, g.width) << "the second recording takes the full frame, not the first one's size";
+    EXPECT_EQ(h, g.height);
+
+    // An explicit size stays until it is cleared
+    rm->SetVideoResolution(100, 80);
+    record(VideoCaptureRegion::MainScreen, "rm-size-explicit", w, h);
+    EXPECT_EQ(w, 100u);
+    EXPECT_EQ(h, 80u);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
