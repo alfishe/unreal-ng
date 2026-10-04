@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "emulator/state/statenode.h"
 
@@ -92,6 +93,14 @@ public:
         return false;
     }
     virtual int IrqLine() const { return -1; }
+    /// Further I/O addresses the card decodes (the 3C509B's ID port at #100-#1F0): name, range, step, what it does
+    struct AuxIoRange
+    {
+        std::string name;
+        uint32_t first = 0, last = 0, step = 1;
+        std::string note;
+    };
+    virtual std::vector<AuxIoRange> AuxIoRanges() const { return {}; }
     /// The card answers I/O cycles with AEN = 1 (its decoder ignores AEN), and how it decodes in words (the slot
     /// report; empty: "A9-A0, mirrored every #400")
     virtual bool IgnoresAen() const { return false; }

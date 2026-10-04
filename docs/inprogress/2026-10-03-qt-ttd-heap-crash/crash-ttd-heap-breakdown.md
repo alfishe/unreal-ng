@@ -146,5 +146,15 @@ VideoToolboxEncoder::OnVideoFrame                core-tests
 
 `EXC_BAD_ACCESS` at `0x605126858750`: the encoder asks a pixel buffer pool that is already gone
 (likely after the writer failed on the non-growing timestamps under load). Video recording, not
-TTD; the shard passed three times on its own and the rerun of the whole suite was green. Left for
-the recording owner.
+TTD; the shard passed three times on its own and the rerun of the whole suite was green.
+
+**Followed up 2026-10-03 (branch `sprinter-small-fixes`).** Reproduced as a sibling failure: the two
+`VideoToolboxEncoder_Test` tests looped 2 x 25 times in parallel (`MallocScribble=1 MallocPreScribble=1`; no ASan
+configuration exists in the project) failed once: `CVPixelBufferPoolCreatePixelBuffer` returned `kCVReturnError`
+(-6660) on the adaptor's pool, the same call that crashed. Cause: the encoder took its buffers from
+`AVAssetWriterInputPixelBufferAdaptor.pixelBufferPool`, an AVFoundation-owned pool that is not retained for the
+caller and that AVFoundation may invalidate or replace on its own queues while the emulation thread uses it (the
+crash: a released pool's attachments dictionary in `setDefaultAttachments`). Fix: the encoder creates its own
+`CVPixelBufferPool` in `Start` (32BGRA, the output size, IOSurface-backed, as the adaptor's) and releases it in
+`Stop` after the writer finished; `appendPixelBuffer` takes any pixel buffer. After the fix: 2 x 50 loops under the
+same load and malloc settings, 0 failures.

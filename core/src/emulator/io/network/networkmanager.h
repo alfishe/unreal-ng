@@ -26,6 +26,8 @@
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
+#include "emulator/io/network/ethernet/etherlink3.h"
+#include "emulator/io/network/ethernet/ethernetcard.h"
 #include "emulator/io/network/ethernet/ne2000board.h"
 #include "emulator/io/network/pcserialcard.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
@@ -74,7 +76,9 @@ public:
         std::optional<std::string> atm2IoEsp;  ///< Atm2IoEsp= value (ComPortSpec): the ATM2IOESP card's ESP
         std::optional<uint8_t> atm2IoEspAddress;   ///< Atm2IoEspAddress=: its bus address (#F0 / #F8)
         std::optional<std::string> zifi;       ///< ZiFi= value (ComPortSpec): the TS AVR's ZiFi UART
-        /// isa1_peer / isa2_peer ([ISA] SlotNPeer, ComPortSpec): what a UART card in that expansion slot is wired to
+        std::optional<std::string> modemPhonebook;   ///< ModemPhonebook=: "<number>=<host>[:<port>],..." (every MODEM peer)
+        /// isa1_peer / isa2_peer ([ISA] SlotNPeer, ComPortSpec): what a UART card in that expansion slot is wired to;
+        /// isa1_peer_b / isa2_peer_b ([ISA] SlotNPeerB): a two-UART card's second line. Keys "isa1", "isa1.b"
         std::vector<std::pair<std::string, std::string>> slotPeers;
     };
     bool RequestChange(const Change& change, std::string& error);
@@ -92,13 +96,18 @@ public:
     /// 16550 is wired to, default at), atm2ioesp_address (its bus address, a
     /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0), zifi (ComPortSpec:
     /// what the TS AVR firmware's ZiFi UART is wired to, default none; at =
-    /// the original ZiFi board's ESP-01).
+    /// the original ZiFi board's ESP-01), modem_phonebook (the Hayes modem's numbers:
+    /// "<number>=<host>[:<port>],...").
     /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
 
-    /// Frame boundary on the machine thread: pending refit, then the network pump
+    /// Frame boundary on the machine thread: OnFrameDevices, then OnFrameHost
     void OnFrame();
+    /// The devices' own frame work (pending refit, cards, gateway, serial peers): before the TTD checkpoint
+    void OnFrameDevices();
+    /// The host's answers (the network pump: journaled inputs) and the status copy: after the checkpoint
+    void OnFrameHost();
 
     VirtualNetwork* Network() const { return _network.get(); }
     ZxNetUsb* Card() const { return _card.get(); }
@@ -110,14 +119,16 @@ public:
     struct SlotCard
     {
         std::string slotId;                 ///< "isa2"
-        std::unique_ptr<Ne2000Board> ne2000;
-        std::unique_ptr<PcSerialCard> serial;   ///< a UART card (the SprinterESP)
+        std::unique_ptr<IEthernetCard> ethernet;   ///< a frame-level card (NE2000, 3C509B)
+        std::unique_ptr<PcSerialCard> serial;   ///< a UART card (SprinterESP, ISA modem, SprinterSerial)
     };
     /// The UART card in this slot ("isa1"), or null
     PcSerialCard* SerialCard(const std::string& slotId) const;
     const std::vector<SlotCard>& SlotCards() const { return _slotCards; }
     /// The frame card with this port key ("isa2.eth"), or null
-    Ne2000Board* EthernetCard(const std::string& portKey) const;
+    IEthernetCard* EthernetCard(const std::string& portKey) const;
+    /// Whether a slot card kind is a frame-level Ethernet card ("ne2000", "el3c509b") - the gateway's kinds
+    static bool IsFrameCardKind(const std::string& kind) { return kind == "ne2000" || kind == "el3c509b"; }
     /// The switch + router of the frame-level cards (null without one, or with the network off)
     EthernetGateway* Gateway() const { return _gateway.get(); }
 
@@ -148,6 +159,7 @@ public:
             std::string atm2IoEsp;        ///< ComPortSpec text, AT when empty
             unsigned atm2IoEspAddress = 0xF0;
             std::string zifi;             ///< ComPortSpec text, NONE when empty
+            std::string modemPhonebook;   ///< ModemPhonebook=
             std::string dnsMode;          ///< HOST | PASS
             std::string hosts;
             std::string forwards;
@@ -190,7 +202,8 @@ public:
             uint64_t bytesIn = 0, bytesOut = 0, lost = 0;
             size_t pending = 0;           ///< bytes the peer holds for the ZX
             uint32_t peerBaud = 0;        ///< ESP module: its firmware's rate (0: not an ESP module)
-            std::vector<std::pair<std::string, std::string>> exchanges;   ///< ESP module: recent requests / replies
+            std::vector<std::pair<std::string, std::string>> exchanges;   ///< ESP module: recent requests / replies (modem: commands / results)
+            StateNode modem;              ///< a Hayes modem peer: HayesModemPeer::Describe (null otherwise)
             uint64_t requests = 0;
         } com;
 
@@ -238,19 +251,23 @@ private:
         uint8_t atm2IoEspAddress = 0xF0;  ///< its bus address
         bool zifi = false;                ///< the AVR firmware's ZiFi block (with the EvoAvr port)
         std::string zifiPeer;             ///< ComPortSpec of its UART's peer
-        /// Network cards for expansion slots (the NE2000 so far)
+        /// Network cards for expansion slots (NE2000, 3C509B, SprinterESP)
         struct SlotCard
         {
             std::string slotId, kind, chip, portKey;
             uint16_t base = 0;
             uint8_t irq = 0;
             std::array<uint8_t, 6> mac{};
-            std::string peer;             ///< UART cards: ComPortSpec of the line ("" = nothing on it)
+            std::string peer;             ///< UART cards: ComPortSpec of the (first) line ("" = nothing on it)
+            std::string peerB;            ///< two-UART cards: the second line
+            uint8_t irqB = 0;             ///< two-UART cards: the second UART's jumper (0 = open)
+            bool partialDecode = false;   ///< SprinterSerial without D3
             uint8_t espFirmware = 0;      ///< UART cards with an ESP: EspModule::Firmware
             bool operator==(const SlotCard& o) const
             {
                 return slotId == o.slotId && kind == o.kind && chip == o.chip && portKey == o.portKey && base == o.base &&
-                       irq == o.irq && mac == o.mac && peer == o.peer && espFirmware == o.espFirmware;
+                       irq == o.irq && mac == o.mac && peer == o.peer && peerB == o.peerB && irqB == o.irqB &&
+                       partialDecode == o.partialDecode && espFirmware == o.espFirmware;
             }
         };
         std::vector<SlotCard> slotCards;
@@ -300,7 +317,8 @@ private:
     std::unique_ptr<Atm2IoEsp> _atm2IoEsp;       ///< the card on the ATM Turbo 2+ INTERNAL I/O connector
     std::unique_ptr<ZiFi> _zifi;                 ///< the TS AVR firmware's ZiFi block (on `_com`'s #xxEF)
     std::vector<SlotCard> _slotCards;            ///< network cards in expansion slots (they outlive a network-off refit)
-    /// UART cards' 16550 registers across a refit (the chip stays; its line's peer is rebuilt with the network)
+    /// UART cards' 16550 registers across a refit by port key (the chip stays; its line's peer is rebuilt with the
+    /// network)
     std::vector<std::pair<std::string, Uart16550::State>> _serialKeep;
     std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
     Plan _plan;                           ///< what is fitted

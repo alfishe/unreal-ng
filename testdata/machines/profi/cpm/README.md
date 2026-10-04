@@ -1,17 +1,17 @@
 # Profi CP/M disk images
 
-CP/M floppies for the two Profi boards, collected 2026-10-03 (SP-DOS from KLUG's BBS archive). Per-image details (source, hashes,
+CP/M floppies for the two Profi boards, one per boot check (collected 2026-10-03; SP-DOS from KLUG's BBS
+archive). More Profi CP/M disks (Klug CP/M 2.3, the other Micco / Kondor disks) are kept outside the repository. Per-image details (source, hashes,
 contents, how to boot) are in the README of each board folder:
 
 | Folder | Board | Images |
 |:--|:--|:--|
-| [`v5/`](v5/README.md) | Profi v5 (Kondor boards 5.0x, BIOS 1.x / 2.x by Micco) | the Kondor "Copy K" system disk, two user system disks |
-| [`v3/`](v3/README.md) | Profi v3.2 (Kramis BIOS V0.2 / V0.3) | Klug CP/M 2.3 |
+| [`v5/`](v5/README.md) | Profi v5 (Kondor boards 5.0x, BIOS 1.x / 2.x by Micco) | the Kondor "Copy K" system disk |
 | [`sp-dos/`](sp-dos/README.md) | both (BIOS by V. Tereschenko on the disk) | the SP-DOS system disk (UniCopy) |
 
 ## The Profi CP/M floppy format
 
-All images here use the native Profi CP/M format: 5.25" (or 3.5" DD), 80 cylinders (Klug: 82), two
+All images here use the native Profi CP/M format: 5.25" (or 3.5" DD), 80 cylinders (Klug CP/M: 82), two
 sides, 5 sectors of 1024 bytes per track (800 KB), logical track = cylinder * 2 + side, sectors
 R = 1..5 in order. On cylinder 0 / side 0 the fifth sector carries ID **R = 9**: it is the boot
 sector. CP/M uses 2 KB blocks with 16-bit block numbers and a 4 KB (128-entry) directory. Micco /
@@ -34,13 +34,13 @@ word at offset `#102` of that sector:
 So a disk whose start word points inside the first 288 bytes boots on both families; one whose
 word points further in only boots from a v5 BIOS. The Micco / Kondor boot sectors start at `#5FB7`
 (`CPM.UDI`) or `#5FC4` (all other v5 images): offset `#292` / `#29F`, outside the Kramis copy, so they
-are **v5 images**. Klug CP/M starts at `#5D25` (offset 0) and boots from either.
+are **v5 images**. SP-DOS and Klug CP/M start at `#5D25` (offset 0) and boot from either.
 
 The Kramis menu entry for the disk boot: the V0.2 menu offers "Sinclair 128", "Profi-DOS",
 "Sinclair", "TR-DOS" and "TEST" (the ROM survey in the Profi analysis materials, `profi-roms.md`,
 kept outside the repository); "Profi-DOS" is the CP/M entry (the v3 front-panel switch is labeled
 "ON/OFF SP-DOS", SP-DOS being Sinclair Profi MicroDOS). That this entry runs the routine above was
-read from the ROM, not run in the emulator.
+read from the ROM and confirmed on the emulator with the SP-DOS disk (`Profi3Boot_Test.SpDosBootsToItsShell`).
 
 ## `../CPM.UDI` (the older image next to this folder)
 

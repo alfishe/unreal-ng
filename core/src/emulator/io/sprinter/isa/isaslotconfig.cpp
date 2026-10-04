@@ -112,7 +112,98 @@ bool ParseChip(const std::string& text, Ne2000Chip& chip)
     return true;
 }
 
-bool ParseNe2000Base(const std::string& text, uint16_t& base)
+const char* El3ChipName(El3Chip chip)
+{
+    return chip == El3Chip::Tp ? "3C509B-TP" : "3C509B-TPO";
+}
+
+bool ParseEl3Chip(const std::string& text, El3Chip& chip)
+{
+    std::string upper = Upper(text);
+    for (const char* prefix : {"3C509B-", "3C509B", "EL3-"})
+    {
+        const size_t n = std::strlen(prefix);
+        if (upper.compare(0, n, prefix) == 0 && upper.size() > n)
+        {
+            upper.erase(0, n);
+            break;
+        }
+    }
+    if (upper == "TPO")
+        chip = El3Chip::Tpo;
+    else if (upper == "TP")
+        chip = El3Chip::Tp;
+    else
+        return false;
+    return true;
+}
+
+std::string SlotChipName(const SlotConfig& slot)
+{
+    switch (static_cast<CardKind>(slot.kind))
+    {
+        case CardKind::Ne2000: return ChipName(static_cast<Ne2000Chip>(slot.chip));
+        case CardKind::El3c509b: return El3ChipName(static_cast<El3Chip>(slot.chip));
+        default: return {};
+    }
+}
+
+namespace
+{
+bool ParseNumber(const std::string& text, unsigned long& value)
+{
+    std::string t;
+    for (char c : text)
+    {
+        if (c != ' ' && c != '\t')
+            t.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    int radix = 10;
+    if (!t.empty() && (t[0] == '#' || t[0] == '$'))
+    {
+        t.erase(0, 1);
+        radix = 16;
+    }
+    else if (t.size() > 2 && t[0] == '0' && t[1] == 'X')
+    {
+        t.erase(0, 2);
+        radix = 16;
+    }
+    else if (!t.empty() && t.back() == 'H')
+    {
+        t.pop_back();
+        radix = 16;
+    }
+    if (t.empty())
+        return false;
+    char* end = nullptr;
+    value = std::strtoul(t.c_str(), &end, radix);
+    return end && *end == '\0';
+}
+}  // namespace
+
+bool ParseModemBase(const std::string& text, uint16_t& base)
+{
+    unsigned long value = 0;
+    if (!ParseNumber(text, value) || (value != 0x3F8 && value != 0x2F8 && value != 0x3E8 && value != 0x2E8))
+        return false;
+    base = static_cast<uint16_t>(value);
+    return true;
+}
+
+bool ValidModemIrq(uint8_t irq)
+{
+    return irq == 2 || irq == 3 || irq == 4 || irq == 5 || irq == 7;
+}
+
+bool ValidSerialJumper(int channel, uint8_t irq)
+{
+    return irq == 0 || irq == 2 || irq == (channel == 0 ? 3 : 4);
+}
+
+namespace
+{
+bool ParseIoBase(const std::string& text, unsigned step, uint16_t& base)
 {
     std::string t = Upper(text);
     int radix = 10;
@@ -135,10 +226,21 @@ bool ParseNe2000Base(const std::string& text, uint16_t& base)
         return false;
     char* end = nullptr;
     const unsigned long value = std::strtoul(t.c_str(), &end, radix);
-    if (!end || *end != '\0' || value < 0x200 || value > 0x3E0 || (value & 0x1F) != 0)
+    if (!end || *end != '\0' || value < 0x200 || value > 0x3E0 || (value & (step - 1)) != 0)
         return false;
     base = static_cast<uint16_t>(value);
     return true;
+}
+}  // namespace
+
+bool ParseNe2000Base(const std::string& text, uint16_t& base)
+{
+    return ParseIoBase(text, 0x20, base);
+}
+
+bool ParseSlotBase(const std::string& text, CardKind kind, uint16_t& base)
+{
+    return ParseIoBase(text, kind == CardKind::El3c509b ? 0x10 : 0x20, base);
 }
 
 bool ParseMac(const std::string& text, SlotConfig& slot)
@@ -207,14 +309,12 @@ bool KindAvailable(CardKind kind, std::string* why)
         case CardKind::Ne2000:
             break;   // network phase SN1: NetworkManager builds the board, the Sprinter fits it
         case CardKind::El3c509b:
-            reason = "the 3C509B card is network phase SN5, not built yet";
-            break;
+            break;   // network phase SN5: NetworkManager builds the EtherLink3, the Sprinter fits it
         case CardKind::SprinterEsp:
             break;   // network phase SN3: NetworkManager builds the PcSerialCard, the Sprinter fits it
         case CardKind::Modem:
         case CardKind::Dual16552:
-            reason = "the ISA modem and SprinterSerial cards are network phase SN4, not built yet";
-            break;
+            break;   // network phase SN4: NetworkManager builds the PcSerialCard, the Sprinter fits it
     }
     if (why && reason)
         *why = reason;

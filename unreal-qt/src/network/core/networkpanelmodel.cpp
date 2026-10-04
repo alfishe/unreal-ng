@@ -68,10 +68,17 @@ NetworkForm NetworkFormFromState(const StateNode& network)
         {
             const std::string id = Text(slot.find("id"));
             const int n = id == "isa1" ? 0 : id == "isa2" ? 1 : -1;
-            if (n < 0 || Text(slot.find("card")) != "sprinteresp")
+            const std::string card = Text(slot.find("card"));
+            if (n < 0 || (card != "sprinteresp" && card != "modem" && card != "dual16552"))
                 continue;
             form.slotUart[n] = true;
-            form.slotPeer[n] = Peer(Text(slot.find("peer_spec")), "AT");
+            form.slotCard[n] = card;
+            form.slotPeer[n] = Peer(Text(slot.find("peer_spec")), card == "sprinteresp" ? "AT" : card == "modem" ? "MODEM" : "NONE");
+            if (const StateNode* b = slot.find("channel_b"))
+            {
+                form.slotUartB[n] = true;
+                form.slotPeerB[n] = Peer(Text(b->find("peer_spec")), "NONE");
+            }
         }
     }
     const StateNode* set = network.find("settings");
@@ -96,6 +103,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
     form.hostAccess = Flag(set->find("host_access"), true);
     form.dnsMode = Upper(Text(set->find("dns_mode"), "HOST"));
     form.hosts = Text(set->find("hosts"));
+    form.modemPhonebook = Text(set->find("modem_phonebook"));
     form.forwards = Text(set->find("forwards"));
     if (const StateNode* timeout = set->find("connect_timeout_ms"); timeout && timeout->kind == StateNode::Kind::Int)
         form.connectTimeoutMs = static_cast<unsigned>(timeout->i);
@@ -121,7 +129,11 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
     {
         if (after.slotUart[n] && before.slotPeer[n].ToString() != after.slotPeer[n].ToString())
             out.emplace_back(n == 0 ? "isa1_peer" : "isa2_peer", after.slotPeer[n].ToString());
+        if (after.slotUartB[n] && before.slotPeerB[n].ToString() != after.slotPeerB[n].ToString())
+            out.emplace_back(n == 0 ? "isa1_peer_b" : "isa2_peer_b", after.slotPeerB[n].ToString());
     }
+    if (before.modemPhonebook != after.modemPhonebook)
+        out.emplace_back("modem_phonebook", after.modemPhonebook);
     if (before.comPort.ToString() != after.comPort.ToString())
         out.emplace_back("com_port", after.comPort.ToString());
     if (before.zxWifiPeer.ToString() != after.zxWifiPeer.ToString())
@@ -235,6 +247,11 @@ bool NetworkPeerIsEsp(const ComPortSpec& peer)
     return peer.kind == ComPortSpec::Kind::Espnet || peer.kind == ComPortSpec::Kind::At;
 }
 
+bool NetworkPeerIsModem(const ComPortSpec& peer)
+{
+    return peer.kind == ComPortSpec::Kind::Modem;
+}
+
 std::vector<std::pair<std::string, std::string>> NetworkAvrFirmwareChoices()
 {
     using F = Uart16550::AvrFirmware;
@@ -321,12 +338,14 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const Stat
             const std::string chip = text(slot, "chip");
             if (!chip.empty())
                 row.line += " " + chip;
+            const bool uartCard = card == "sprinteresp" || card == "modem" || card == "dual16552";
             const std::string base = text(slot, "base");
             if (!base.empty() && base.size() > 1)
             {
                 const unsigned first = static_cast<unsigned>(std::strtoul(base.c_str() + 1, nullptr, 16));
                 char range[32];
-                const unsigned size = card == "sprinteresp" ? 0x07 : 0x1F;   // a 16550's 8 registers / the NE2000's 32
+                // a 16550's 8 registers / the 3C509B's 16 / the NE2000's 32
+                const unsigned size = uartCard ? 0x07 : card == "el3c509b" ? 0x0F : 0x1F;
                 std::snprintf(range, sizeof(range), ", I/O #%03X-#%03X", first, first + size);
                 row.line += range;
             }
@@ -354,6 +373,63 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const Stat
                         row.line += ", " + std::to_string(links->items.size()) + " link(s)";
                 }
                 row.line += ", MAC " + text(*esp, "mac");
+            }
+            if (card == "el3c509b")
+            {
+                // The 3C509B at a glance: its ID port and isolation state, the window, both FIFOs, the link
+                row.line += ", ID port " + text(slot, "id_port") + " (" + text(slot, "ids") + ")";
+                const StateNode* activated = slot.find("activated");
+                row.line += activated && activated->kind == StateNode::Kind::Bool && activated->b ? ", active" : ", not active";
+                row.line += ", window " + text(slot, "window");
+                if (const StateNode* fifo = slot.find("fifo"))
+                    row.line += ", TX FIFO " + text(*fifo, "tx_packets") + " pkt / " + text(*fifo, "tx_free") + " free, RX FIFO " +
+                                text(*fifo, "rx_packets") + " pkt / " + text(*fifo, "rx_free") + " free";
+                row.line += ", " + text(slot, "link_state");
+            }
+            // A UART card's line(s) at a glance: what is on it and, for a modem, the call
+            auto lineSummary = [&](const StateNode& channel, const char* name) {
+                std::string out = std::string("; ") + name + ": ";
+                if (const StateNode* uart = channel.find("uart"))
+                    out += text(*uart, "baud") + " baud, MCR " + text(*uart, "mcr") + ", ";
+                const StateNode* peer = channel.find("peer");
+                const std::string kind = peer ? text(*peer, "kind") : std::string();
+                out += kind.empty() ? std::string("none") : kind;
+                if (const StateNode* modem = channel.find("modem"))
+                {
+                    out += " " + text(*modem, "mode");
+                    if (const StateNode* call = modem->find("call"))
+                    {
+                        const std::string dialed = text(*call, "dialed");
+                        if (!dialed.empty())
+                            out += " " + dialed;
+                    }
+                    if (const StateNode* lines = modem->find("lines"))
+                    {
+                        const StateNode* dcd = lines->find("dcd");
+                        const StateNode* ri = lines->find("ri");
+                        out += std::string(", DCD ") + (dcd && dcd->kind == StateNode::Kind::Bool && dcd->b ? "on" : "off");
+                        if (ri && ri->kind == StateNode::Kind::Bool && ri->b)
+                            out += ", RINGING";
+                    }
+                    const std::string last = text(*modem, "last_result");
+                    if (!last.empty())
+                        out += ", last " + last;
+                }
+                else if (peer)
+                {
+                    const std::string target = text(*peer, "target");
+                    if (!target.empty())
+                        out += " " + target;
+                }
+                return out;
+            };
+            if (card == "modem")
+                row.line += lineSummary(slot, "line");
+            if (card == "dual16552")
+            {
+                row.line += lineSummary(slot, "COM1");
+                if (const StateNode* b = slot.find("channel_b"))
+                    row.line += lineSummary(*b, "COM2 #2F8");
             }
             if (!text(slot, "stalled").empty())
                 row.line += " - STALLED (the ISA cycle hangs until RESET)";

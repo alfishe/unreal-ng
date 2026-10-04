@@ -61,6 +61,13 @@ public:
     std::string IrqCause() const override { return _device.IrqCause(); }
     bool IoRange(uint32_t& first, uint32_t& last) const override { return _device.IoRange(first, last); }
     int IrqLine() const override { return _device.IrqLine(); }
+    std::vector<AuxIoRange> AuxIoRanges() const override
+    {
+        std::vector<AuxIoRange> out;
+        for (const IIoBusDevice::AuxIoRange& r : _device.AuxIoRanges())
+            out.push_back({r.name, r.first, r.last, r.step, r.note});
+        return out;
+    }
     bool IgnoresAen() const override { return _device.IgnoresAen(); }
     std::string DecodeNote() const override { return _device.DecodeNote(); }
     const char* RegisterName(bool io, uint32_t address, bool write) const override
