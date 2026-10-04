@@ -93,7 +93,7 @@ written justification; **MAY** = allowed, not required.
   never restored silently. The mechanism (checksum coverage, granularity,
   eager vs lazy, failure behaviour) is **open**:
   [integrity-and-versioning.md](integrity-and-versioning.md) §1.
-- **FR-13 (MUST)** Crash safety in disk mode: after a crash or power loss the
+- **FR-13 (MUST)** Crash safety of the session's files: after a crash or power loss the
   file opens up to the last complete unit of data (mechanism: same
   investigation, I-5).
 - **FR-14 (SHOULD)** Loading a session into a different configuration opens it
@@ -102,9 +102,12 @@ written justification; **MAY** = allowed, not required.
 
 ### 2.4 Resource control
 
-- **FR-15 (MUST)** A configurable memory budget bounds TTD's process memory.
-  Reaching it either spills to disk (disk mode) or releases the oldest history
-  (memory mode); the earliest reachable position is reported.
+- **FR-15 (MUST)** The history a recording keeps in memory is chosen at its
+  start (D41, owner decision 2026-10-04): a ring of the last N minutes (default
+  5), a longer ring, or a list that grows for the whole session. The ring
+  releases its oldest segment from memory; the session's files keep every
+  segment. The earliest seekable position is reported. Nothing is written
+  anywhere until a recording is asked for.
 - **FR-16 (MUST)** Reported memory use is the real total (page and region
   pieces, device blobs, journals, coverage, caches), within ±5%.
 - **FR-17 (MUST)** Turning TTD, debug mode or the write journal on or off
@@ -202,9 +205,11 @@ Release build), reference workloads of §5.3.
   better**; results are always reported, not only pass/fail.
 - **PR-6 (SHOULD)** Seek p50 ≤ 1 ms; frame-aligned restore (no replay) p99 ≤ 2 ms.
 - **PR-7 (MUST)** Seek time does not grow with session length (flat from 1 to
-  60 minutes within measurement noise), in memory mode, and in disk mode for
-  positions already in memory.
-- **PR-8 (SHOULD)** Disk mode, position evicted to disk: p99 ≤ 20 ms on an SSD.
+  60 minutes within measurement noise), for the ring and for the growable list.
+- **PR-8 (SHOULD)** Loading a range of a long session from its files (the
+  default: the last 5 minutes) takes ≤ 1 s on an SSD. *(Replaces "a seek into
+  history evicted to disk, p99 ≤ 20 ms": with D41 memory holds every seekable
+  frame and nothing is read back during a seek.)*
 - Design implication: a seek to a T-state offset replays up to one frame. On
   configurations where one frame of emulation alone approaches the budget
   (turbo models, heavy device sets) PR-5 may require checkpoints inside a frame.
@@ -340,7 +345,7 @@ folder's `DONE.md`:
    (*tightened by D33*: no regression in bytes or capture work at all; seek
    time within PR-5).
 5. **Robustness**: the fuzz test (QR-4) passes; ASan/UBSan clean (QR-1); a
-   kill-during-recording test in disk mode passes (FR-13).
+   kill-during-recording test passes (FR-13).
 6. **Persistence**: a file written by the first v2 release still loads in the
    accepted version (FR-11); cross-platform check (QR-2) done.
 7. **Surfaces**: degraded-restore reporting visible on WebAPI, MCP, CLI,
@@ -376,7 +381,7 @@ a phase to requirements no phase covered before ([engine-decisions.md §D](engin
 | Phase 3, Step 7 — Write journal as a derived index | FR-10 (write journal); its default retention feeds PR-11 |
 | Phase 4, Step 1 — Integrity and versioning decided | FR-11, FR-12; I-4 failure model of a partially damaged session; I-6 decided (keep or drop the in-memory CRC) *(assigned 2026-10-02)* |
 | Phase 4, Step 2 — Written as it records | FR-13, FR-23, QR-2, QR-3 *(assigned 2026-10-02: deterministic file contents)*, PR-11 *(assigned 2026-10-02: measured on the file)* |
-| Phase 4, Step 3 — Memory as a cache of the file | FR-15, FR-16, PR-7 in disk mode *(assigned 2026-10-02)*, PR-8 |
+| Phase 4, Step 3 — Segments: the ring and the growable list (D41) | FR-15, FR-16, PR-7 for the ring and the growable list *(assigned 2026-10-02, reworded 2026-10-04)*, PR-8 |
 | Phase 4, Steps 5–6 — v1 files, format description and analyzer | PR-12, QR-4 (new format), QR-5 |
 | Phase 5, Step 1 — The emulator runs on the engine | QR-8, FR-17; FR-8 through every surface *(assigned 2026-10-02)*; PR-1 / PR-2 met with v1 out of the frame *(assigned 2026-10-02)*; FR-7 and a partially damaged session (I-4) shown on every surface *(assigned 2026-10-02)* |
 | Phase 5, Step 2 — History never cut short | FR-24; FR-9 on the engine: resume from here starts an exact branch *(assigned 2026-10-02)* |
