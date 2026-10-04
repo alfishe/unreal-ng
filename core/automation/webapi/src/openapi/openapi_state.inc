@@ -210,7 +210,10 @@
         paths[kState]["get"]["tags"].append("Machine State");
         paths[kState]["get"]["description"] =
             "The Peters Plus Sprinter Sp2000 (model SPRINTER): pld (configuration state unconfigured / loading / "
-            "configured, the active configuration module, bitstream writes and hashes - full FNV-1a and MAME's head "
+            "configured, the active configuration module - Standard or Game - and why: selected_by full_hash / head_hash "
+            "/ unknown_bitstream / watchdog with a sentence in why, cell_EE (RET_PORT: the Game bitstream sets #41, the BIOS "
+            "returns to the program that loaded it), game (the Game module's grid-offset register: active, grid_offset_x / "
+            "_y, frame_start_offset, beam_t), bitstream writes and hashes - full FNV-1a and MAME's head "
             "hash, fast_start, whether the BIOS opened the port decoder), decoder (CNF map 0-3, clean rules, DOS, PN5, "
             "#7FFD / #1FFD after the clean rules), windows[] (per 16K window: kind ROM / loader ROM / fast RAM / vROM "
             "/ RAM / graphics / ISA / port table, the physical page, writable, the cell that names it), registers "
@@ -387,8 +390,9 @@
             "has), loaded_crc32, identified (pages 8 / 0 / 12 by signature), images[] (file, alias, version, crc32, "
             "present, loaded, selected, known_issues), known_issues (what a user should know about the loaded image, e.g. "
             "3.07 BETA 1's floppy driver changes IY so DSS 1.71.57 cannot start programs from a floppy; empty when "
-            "none), reload_pending (a selection waits for the next reset), options (fast_start, accel_int_suspend) and "
-            "how to select. 404 on other machines.";
+            "none), reload_pending (a selection waits for the next reset), options (fast_start, accel_int_suspend), pld (the "
+            "PLD configuration the BIOS runs on: module, selected_by, why, the hashes, cell_EE) and how to select. 404 on "
+            "other machines.";
         paths[kBios]["get"]["parameters"][0]["name"] = "id";
         paths[kBios]["get"]["parameters"][0]["in"] = "path";
         paths[kBios]["get"]["parameters"][0]["required"] = true;
@@ -422,7 +426,8 @@
         paths[kZx]["get"]["description"] =
             "Which Spectrum mode the Sprinter runs and how (core DeviceState::SprinterZxMode; also the zx_mode section of "
             "/state/sprinter; CLI `state sprinter zx`, Lua / Python sprinter_zx_mode(), MCP inspect_state aspect "
-            "sprinter_zx_mode). Fields: active and active_rule (vROM in window 0, ALL_MODE bit 0 = 0), picture, summary (the "
+            "sprinter_zx_mode). Fields: active and active_rule (vROM in window 0, ALL_MODE bit 0 = 0), pld (the PLD "
+            "configuration module, selected_by, why, the hashes, cell_EE: the ZX mode needs Standard), picture, summary (the "
             "status bar line, e.g. \"ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)\"), config (options[]: /turbo, /sprinter, "
             "/7FFD, /1FFD, /mem512, /lines312, /origin, /int-sc each with on and the hardware evidence - CNF bits, map, "
             "ALL_MODE, the frame latch, the INT position; option_line; return /ret-fn | /ret-zx; best_match: file, name, "

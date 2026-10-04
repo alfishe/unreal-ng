@@ -149,7 +149,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
        ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference. **Pass done 2026-10-03:
-     [demo-status.md](demo-status.md)** (open: BUYAN/20X20; the Game PLD configuration for GAME_00 / LDConf START.BAT).
+     [demo-status.md](demo-status.md)** (open: BUYAN/20X20). ~~The Game PLD configuration for GAME_00 / LDConf
+     START.BAT~~ **done 2026-10-03** (branch `sprinter-pld-game`, [game-configuration.md](game-configuration.md)): the
+     Game module (selected by the bitstream's full hash `#C0FA3055`, cell `#EE` = `#41`, the per-square grid-offset
+     picture), all five automation surfaces + the status bar, recipe, MAME captures, env-gated HDD tests.
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
@@ -358,8 +361,11 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   source address once per square, invalidated by video RAM writes into the mode table or the
   square's source) and measure with the same benchmark.
 - Hook 3, second half: a configuration module's own INT source (with the first module that needs
-  it, e.g. Game).
+  it; Game does not: its INT is Standard's, the program waits with EI / HALT on the mode table's INT).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
-- After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams
-  against MAME.
+- After v1: DooM and Video PLD configuration modules, after analyzing their bitstreams
+  against MAME (Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
+  Mode0 bits 5-4, whether `/RESET` clears the grid offset).
+- LDConf's `STREAM.300` / `.303` / `.305` (other Standard core builds?) run as Standard with "unknown bitstream";
+  name them once their source is known.

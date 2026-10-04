@@ -24,6 +24,7 @@
 class ScreenSprinter;
 class SprinterMemory;
 class SprinterVideoRenderer;
+class SprinterBeamVideo;
 namespace ttd
 {
 class TTDSprinterPld;
@@ -179,6 +180,14 @@ public:
     SprinterAccelerator* GetAccelerator() const { return _activeAccelerator; }
     /// The picture of the active module (hook 3), Standard's when it brings none
     const SprinterVideoRenderer& VideoRenderer() const;
+    /// The active module's beam-ordered picture (hook 3: the Game module's grid offset); null for a
+    /// stateless picture (Standard) and while the PLD is not configured. ScreenSprinter runs it on every
+    /// catch-up and closes its frame at every frame start
+    SprinterBeamVideo* BeamVideo() const { return _beamVideo; }
+    /// Why the active module runs (reports, the journal): `key` = "full_hash" (the bitstream is the module's),
+    /// "head_hash" (only MAME's first-4 096-writes hash matches), "unknown_bitstream" (no module knows it:
+    /// Standard), "watchdog" (the load never ended: Standard), "loading" or "not_configured"; `why` = a sentence
+    void ModuleSelection(std::string& key, std::string& why) const;
 
     /// Port table index and code (§3.1)
     uint16_t LookupIndex(uint16_t port, bool isRead) const;
@@ -302,6 +311,11 @@ private:
     /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
     void NoteVideoLatches();
     void LoadFastRamImage();
+    /// A load ended: the cells get the configuration's initial contents (hook 5, Standard's by default)
+    void ApplyInitialCells();
+    /// A load begins: remember the module that ran (SprinterPldState::moduleBeforeLoad)
+    void NoteModuleBeforeLoad();
+    static constexpr uint8_t kNoModule = 0xFF;
 
     /// The journal is on and the machine runs live (a TTD replay re-executes history: nothing is noted)
     bool JournalOn() const { return _journal.Enabled() && !_context->ttdReplayActive; }
@@ -332,6 +346,8 @@ private:
     /// The standard accelerator and the one in use (hook 4)
     SprinterAccelerator _accelerator{_context, _pld};
     SprinterAccelerator* _activeAccelerator = nullptr;
+    /// The active module's beam-ordered picture (hook 3), refreshed with the accelerator
+    SprinterBeamVideo* _beamVideo = nullptr;
     Z84Lib::Z84C15 _z84;
     /// The keyboard (SIO A) and the serial mouse (SIO B)
     SprinterInput _input{_context, _z84, _intSource, _pld};
