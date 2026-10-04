@@ -3,7 +3,7 @@
 // debug_code actions and their WebAPI mappings:
 //   disassemble → GET  /disasm?address=&count=
 //   assemble    → POST /assemble {code, address?, write}
-//   find_bytes  → POST /memory/find {pattern_hex, start?, end?, max?, alignment?}
+//   find_bytes  → POST /memory/find {pattern_hex, space?, mask_hex?, start?, end?, max?, alignment?}
 //   trace       → POST /profiler/calltrace/start → run_frames → stop (finalizes hot→cold) → GET entries
 //
 // analyze_performance actions:
@@ -59,7 +59,15 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["properties"]["write"]["default"] = true;
     schema["properties"]["write"]["description"] = "Write assembled bytes into emulator memory at 'address'";
     schema["properties"]["pattern_hex"]["type"] = "string";
-    schema["properties"]["pattern_hex"]["description"] = "Hex byte pattern for find_bytes, e.g. \"CD 16 00\" or \"AF\" (alias: pattern)";
+    schema["properties"]["pattern_hex"]["description"] =
+        "Hex byte pattern for find_bytes, e.g. \"CD 16 00\"; \"??\" = any byte, \"A?\" = any low nibble (alias: pattern)";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["description"] =
+        "find_bytes address space: \"cpu\" (default, what is paged in now), \"ram\" (every RAM page; matches as page + "
+        "offset) or one page (\"ram5\", \"rom2\", \"cache0\"; start / end are offsets in it)";
+    schema["properties"]["mask_hex"]["type"] = "string";
+    schema["properties"]["mask_hex"]["description"] =
+        "find_bytes mask as hex bytes, as long as the pattern: 1 bits must match (replaces the ?? wildcards)";
     schema["properties"]["start"]["type"] = "string";
     schema["properties"]["start"]["description"] = "find_bytes window start (integer or hex string; default 0)";
     schema["properties"]["end"]["type"] = "string";
@@ -173,6 +181,11 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                     }
                     auto body = std::make_shared<Json::Value>();
                     (*body)["pattern_hex"] = pattern;
+                    for (const char* field : {"space", "mask_hex"})
+                    {
+                        if (args.isMember(field) && args[field].isString())
+                            (*body)[field] = args[field];
+                    }
                     for (const char* field : {"start", "end", "max", "alignment"})
                     {
                         if (args.isMember(field))
@@ -206,7 +219,13 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                         {
                             for (Json::ArrayIndex i = 0; i < matches.size() && i < 8; ++i)
                             {
-                                out << (i == 0 ? ": " : ", ") << matches[i].get("address", Json::Value("")).asString();
+                                const Json::Value& m = matches[i];
+                                out << (i == 0 ? ": " : ", ");
+                                if (m.isMember("page"))
+                                    out << m["page"].get("kind", "").asString() << m["page"].get("page", 0).asUInt() << ":"
+                                        << m.get("offset", "").asString();
+                                else
+                                    out << m.get("address", Json::Value("")).asString();
                             }
                             if (matches.size() > 8)
                             {

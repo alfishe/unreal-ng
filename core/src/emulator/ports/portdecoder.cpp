@@ -601,17 +601,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     // two extra address bits (PortDecoder_Scorpion256::IsPort_FE) - mirrored here.
     if (scorpion)
         entries.push_back({0x00FE, 0x0023, 0x0022, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
-                           Tags(PortTag::Keyboard)});
+                           Tags(PortTag::Keyboard), PagingLatch::PFE});
     else if (evo)
     {
         entries.push_back({0x00FE, 0x00FF, 0x00FE, "Keyboard / Beeper / Border 0-7 / MIC+EAR", nullptr,
-                           Tags(PortTag::Keyboard)});
+                           Tags(PortTag::Keyboard), PagingLatch::PFE});
         entries.push_back({0x00F6, 0x00FF, 0x00F6, "Keyboard / Border 8-15 (no beeper)", nullptr,
                            Tags(PortTag::Keyboard) | PortTag::Screen});
     }
     else
         entries.push_back({0x00FE, 0x0001, 0x0000, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
-                           Tags(PortTag::Keyboard)});
+                           Tags(PortTag::Keyboard), PagingLatch::PFE});
 
     // AY register select / data: A15/A14/A1 qualification, mirrors resolve to the
     // canonical ports (PortDecoder_Spectrum48::DecodePortIn and every other model)
@@ -966,6 +966,7 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::PFFF7Window1: return state.pFFF7[1];
         case PagingLatch::PFFF7Window2: return state.pFFF7[2];
         case PagingLatch::PFFF7Window3: return state.pFFF7[3];
+        case PagingLatch::PFE:    return state.pFE;
         case PagingLatch::None:
         default:
             return 0;
@@ -1056,6 +1057,7 @@ const char* PagingLatchToString(PagingLatch latch)
         case PagingLatch::PFFF7Window1: return "pFFF7_w1";
         case PagingLatch::PFFF7Window2: return "pFFF7_w2";
         case PagingLatch::PFFF7Window3: return "pFFF7_w3";
+        case PagingLatch::PFE:    return "pFE";
         case PagingLatch::None:
         default:
             return nullptr;
@@ -1084,6 +1086,12 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
 
     switch (latch)
     {
+        case PagingLatch::PFE:
+            // The ULA port as the CPU last wrote it (the keyboard is the read side, not latched)
+            intField("border", static_cast<int>(value & 0x07));
+            boolField("mic", (value & 0x08) != 0);
+            boolField("ear", (value & 0x10) != 0);  // the beeper
+            break;
         case PagingLatch::P7FFD:
         {
             // Pentagon 512K is the only master decoder folding bits [6:7] into

@@ -2,6 +2,7 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include <pybind11/pybind11.h>
@@ -4339,103 +4340,33 @@ namespace PythonBindings
            py::arg("pc"), py::arg("max_tstates") = 0)
 
         .def("mem_find",
-             [](Emulator& self, py::object patternValue, unsigned start, unsigned end, unsigned alignment,
-                unsigned max) -> py::dict {
-            py::dict d;
-            Memory* memory = self.GetMemory();
-            if (!memory) { d["error"] = "memory not available"; return d; }
-
-            std::vector<uint8_t> pattern;
-            if (py::isinstance<std::string>(patternValue))
-            {
-                std::string digits;
-                for (char c : patternValue.cast<std::string>())
-                {
-                    if (c == ' ' || c == ':')
-                        continue;
-                    if (!std::isxdigit(static_cast<unsigned char>(c)))
-                    {
-                        d["error"] = "invalid hex pattern";
-                        return d;
-                    }
-                    digits += static_cast<char>(std::toupper(c));
-                }
-                if (digits.empty() || digits.size() % 2 != 0)
-                {
-                    d["error"] = "invalid hex pattern";
-                    return d;
-                }
-                for (size_t i = 0; i < digits.size(); i += 2)
-                    pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
-            }
-            else if (py::isinstance<py::sequence>(patternValue))
-            {
+             [](Emulator& self, py::object patternValue, uint32_t start, py::object endValue, unsigned alignment,
+                unsigned max, const std::string& space, const std::string& mask) -> py::object {
+            std::vector<uint8_t> bytes;
+            const bool number = py::isinstance<py::int_>(patternValue);
+            const bool text = number || py::isinstance<py::str>(patternValue);
+            if (!text)
                 for (auto item : patternValue)
-                    pattern.push_back(static_cast<uint8_t>(item.cast<int>() & 0xFF));
-            }
-
-            if (pattern.empty() || pattern.size() > 64)
+                    bytes.push_back(static_cast<uint8_t>(item.cast<int>() & 0xFF));
+            MemorySearchRequest request;
+            std::string message;
+            const uint32_t end = endValue.is_none() ? 0xFFFFFFFFu : endValue.cast<uint32_t>();
+            const std::string pattern = number ? MemorySearch::NumberPattern(patternValue.cast<uint64_t>())
+                                        : text ? patternValue.cast<std::string>() : std::string();
+            if (!MemorySearch::BuildRequest(pattern, text ? nullptr : &bytes,
+                                            mask, space, start, end, max, alignment, request, message))
             {
-                d["error"] = "pattern must be 1..64 bytes";
-                return d;
+                py::dict d;
+                d["error"] = message;
+                return std::move(d);
             }
-            if (start > end || end > 0xFFFF || (alignment != 1 && alignment != 2))
-            {
-                d["error"] = "invalid range or alignment";
-                return d;
-            }
-
-            py::list matches;
-            size_t found = 0;
-            bool truncated = false;
-            const size_t searchLimit = static_cast<size_t>(end) - pattern.size() + 1;
-
-            for (size_t position = start; position <= searchLimit; position += alignment)
-            {
-                if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-                    continue;
-
-                bool matched = true;
-                for (size_t i = 1; i < pattern.size(); i++)
-                {
-                    if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
-                    {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (!matched)
-                    continue;
-
-                if (found >= max)
-                {
-                    truncated = true;
-                    break;
-                }
-
-                py::dict match;
-                match["address"] = static_cast<unsigned>(position);
-                py::list contextBytes;
-                const size_t contextStart = position > 4 ? position - 4 : 0;
-                for (size_t i = 0; i < pattern.size() + 4; i++)
-                {
-                    const size_t address = contextStart + i;
-                    if (address > 0xFFFF)
-                        break;
-                    contextBytes.append(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address)));
-                }
-                match["context"] = contextBytes;
-                matches.append(match);
-                found++;
-            }
-
-            d["matches"] = matches;
-            d["count"] = found;
-            d["truncated"] = truncated;
-            return d;
-        }, "Search Z80 memory for a byte pattern (hex string or byte sequence)",
-           py::arg("pattern"), py::arg("start") = 0, py::arg("end") = 0xFFFF, py::arg("alignment") = 1,
-           py::arg("max") = 64)
+            return StateNodeToPy(MemorySearch::ToState(request, MemorySearch::Search(self.GetContext(), request)));
+        }, "Search memory for a byte pattern (MemorySearch): hex text with ?? / A? wildcards or a byte sequence; "
+           "space 'cpu' (default), 'ram' (every RAM page) or a page ('ram5', 'rom2', 'cache0'); mask = hex bytes, "
+           "1 bits must match. Matches: address (cpu) or page {kind, page} + offset, context_start, context "
+           "(4 bytes before, the match, 4 after)",
+           py::arg("pattern"), py::arg("start") = 0, py::arg("end") = py::none(), py::arg("alignment") = 1,
+           py::arg("max") = 64, py::arg("space") = "", py::arg("mask") = "")
 
         .def("screen_digest",
              [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder,
@@ -4554,6 +4485,22 @@ namespace PythonBindings
                 item["tags"] = tagNames;  // empty list = untagged row
                 const char* latchName = PagingLatchToString(entry.latch);
                 item["latch"] = latchName ? py::object(py::str(latchName)) : py::object(py::none());
+                if (latchName)
+                {
+                    // The latch's value now, and decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+                    const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, context->emulatorState);
+                    item["latch_value"] = value;
+                    py::dict fields;
+                    for (const DecodedLatchField& field :
+                         DecodePagingLatch(entry.latch, value, context->config.mem_model, context->config.ramsize))
+                    {
+                        if (field.isBool)
+                            fields[py::str(field.key)] = field.boolValue;
+                        else
+                            fields[py::str(field.key)] = field.intValue;
+                    }
+                    item["latch_fields"] = fields;
+                }
 
                 entries.append(item);
             }

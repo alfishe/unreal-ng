@@ -391,12 +391,12 @@ GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
-POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
+POST /api/v1/emulator/{id}/memory/find        Search memory for a byte pattern (body: {"pattern_hex": "CD ?? 00" (?? any byte, A? any nibble) | "pattern": [..], "mask_hex": "FF 00 FF", "space": "cpu|ram|ram5|rom2|cache0", "start", "end", "max", "alignment"}); matches: address or page {kind, page} + offset, context_start, context (4 before, the match, 4 after)
 GET  /api/v1/emulator/{id}/state/screen        Screen state: video mode, resolution, border, shadow screen, active screen + RAM pages, contention, flash (?verbose=true adds per-screen RAM page + Z80 mapping and decoded #7FFD)
 GET  /api/v1/emulator/{id}/state/screen/mode   Video mode: picture format, memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77
 GET  /api/v1/emulator/{id}/state/screen/flash  FLASH phase and timing
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
-GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
+GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…), the `latch` live-value binding (p7FFD, p1FFD, pEFF7, pFE = the ULA port, … or null), and for a latched row `latch_value` (last written) with `latch_fields` (decoded: border / mic / ear for #FE, ram_bank / … for #7FFD)
 GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
 GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone; layers[] = the layer pixel under the beam (id, x, x_end, y)
 GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, beam window, dots per T) and framebuffer placement (mapped, family)
@@ -422,8 +422,8 @@ POST /api/v1/emulator/{id}/sprinter/bios          {"bios": "3.04|3.06|3.07|<file
 GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, applicable, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
 PUT  /api/v1/emulator/{id}/video/temporal     {"algorithm": "mod-tpgwafsd"} switches it on, "" or "off" switches it off (POST too); answers the new status; 400 {error, message, algorithms[]} on an unknown name or a bad body
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
-GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
-GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
+GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report), active_chip (the one the ports talk to), each chip's latched_register
+GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded, latched_register (+ name), selected
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
 GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)

@@ -590,20 +590,22 @@ Filled 768 bytes with 0x38 in RAM page 5 at offset 0x1800
 
 **`find <pattern>`**
 
-Search the Z80 virtual address space for a byte pattern. The pattern is a hex
-string (with optional spaces) or a hex list: `find "AF 3C"`, `find AF3C`.
-Pattern length is limited to 64 bytes.
+Search memory for a byte pattern. The pattern is hex bytes, spaced or not:
+`find AF 3C`, `find AF3C`; `??` matches any byte and `A?` / `?5` any value of the
+wildcard nibble (`find CD ?? 00`). At most 64 bytes. The same search answers the
+WebAPI `POST /memory/find`, Lua / Python `mem_find` and MCP `find_bytes`.
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--from <addr>` | 0x0000 | Search range start |
-| `--to <addr>` | 0xFFFF | Search range end |
+| `--space <s>` | `cpu` | `cpu`: what the CPU sees now (0x0000-0xFFFF); `ram`: every RAM page, matches as page + offset; a page `ram5` / `rom2` / `cache0`: its offsets 0x0000-0x3FFF, mapped or not |
+| `--mask <hex>` | none | As long as the pattern: 1 bits must match (replaces the wildcards) |
+| `--from <addr>` | start of the space | Search range start (`ram`: a linear offset over all pages) |
+| `--to <addr>` | end of the space | Search range end, inclusive |
 | `--align <1\|2>` | 1 | Require matches at 1- or 2-byte alignment |
 | `--max <N>` | 64 | Maximum number of matches |
 
-Each match prints the address and a context dump (bytes around the match).
-Useful for locating strings, code signatures and data structures across the
-whole 64K regardless of the current bank mapping.
+Each match prints its address (`ram5:$1234` for a page) and the bytes around
+it: 4 before, the match in brackets, 4 after.
 
 **`memory info`**
 
@@ -717,7 +719,7 @@ interfaces (CLI, WebAPI, Lua, Python).
 | :--- | :--- | :--- |
 | `beam` | | Show the current raster position: frame, scanline, t-state within the frame, and the beam zone (`vsync`, `vblank`, `top_border`, `screen`, `bottom_border`, plus `hblank`/`left_border`/`paper`/`right_border` within the active area). Computed from the same raster descriptors the renderer uses. |
 | `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. `digest --active` (P1-3) hashes the RAM pages the **current video mode actually displays** (on the Sprinter, default and active both hash its 256 KB video RAM with the mode page, HOLD and frame height: `Mode: ..., surface: vram`) — ATM hardware modes follow the 7FFD-selected bit-plane pair `{videoPage-4, videoPage}`, ZX modes keep pages 5/7 — instead of the model-dependent defaults, and the answer reports the derived `active_surface` (video mode + pages); flipping FF77 between ZX and 16c surfaces flips the digest even with constant underlying pages. Explicit range/banks still override. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
-| `ports` | | Static port map with live routing flags (P1-5 + P1-2 tagged registry): one row per decoded port family — address, mask, match, device, the gating condition that flips the row on/off, the semantic **Tags** (keyboard, memory, rom, screen, storage, mouse, joystick, system, sound members like `sound_ay`/`sound_covox`/`sound_sounddrive`) and the **Latch** live-value binding (`p7FFD`, `p1FFD`, `pDFFD`, …) — derived from the machine's port decoder, plus the live state right now: TR-DOS active, Kempston mouse routing (`decoded` / `shadowed` with the reason), Scorpion Shadow Monitor latch. The entry point for "which device answers this port on this machine?" triage. Same source as the WebAPI `GET /ports` / Lua & Python `ports_map()` / MCP `inspect_state` aspect `ports`. |
+| `ports` | | Static port map with live routing flags (P1-5 + P1-2 tagged registry): one row per decoded port family — address, mask, match, device, the gating condition that flips the row on/off, the semantic **Tags** (keyboard, memory, rom, screen, storage, mouse, joystick, system, sound members like `sound_ay`/`sound_covox`/`sound_sounddrive`) and the **Latch** live-value binding (`p7FFD`, `p1FFD`, `pDFFD`, `pEFF7`, `pFE` = the ULA port, …) — derived from the machine's port decoder, then a **Latches** section with each latch's value now and its fields decoded (`pFE 0x07  border 7, mic 0, ear 0`), plus the live state right now: TR-DOS active, Kempston mouse routing (`decoded` / `shadowed` with the reason), Scorpion Shadow Monitor latch. The entry point for "which device answers this port on this machine?" triage. Same source as the WebAPI `GET /ports` / Lua & Python `ports_map()` / MCP `inspect_state` aspect `ports`. |
 | `paging` | | Tagged paging latches + bank table (P1-2 design): shows all Memory-tagged latch rows (port, value, decoded bits) from the machine's port decoder and the current 4-bank mapping (type RAM/ROM, page, ROM name/role/signature when applicable), plus `paging_locked` and `trdos_active` flags. The entry point for "what is the paging state?" triage. Same source as the WebAPI `GET /state/paging` / Lua & Python `paging_state()` / MCP `inspect_state` aspect `paging`. |
 | `frame_cost` | | Show per-frame cost accounting: t-states spent halted vs running in the last frame and cumulatively, effective CPU frequency (frame budget × frequency multiplier), and the number of frames in the sample. Use it to quantify HALT-heavy main loops. |
 
@@ -732,8 +734,8 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 | Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
-| AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
+| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res, `active_chip`, each chip's `latched_register`) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG chip N (registers decoded, `latched_register`, `selected`) | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
 | General Sound / NeoGS | `state audio gs` | `GET /state/audio/gs` (`?ram=1`: #4000-#7FFF window) | `gs_state()` | `gs_state()` | `audio_gs` |

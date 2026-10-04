@@ -133,6 +133,9 @@ public:
     /// AY (SSG) half of chip `chip` for monitoring; nullptr if absent
     virtual SoundChip_AY8910* getChip(int chip) const = 0;
     virtual int getChipCount() const = 0;
+    /// The chip the ports #FFFD / #BFFD talk to now (TurboSound: #FF / #FE written to #FFFD; TSFM: the CPLD's
+    /// chip bit)
+    virtual int getSelectedChip() const = 0;
     /// Native-rate (pre-decimation) recording tap of the AY/SSG mix
     virtual std::shared_ptr<NativeAudioTap> getNativeTap() const = 0;
     /// Native-rate FM-only tap of chip `chip` (TSFM); nullptr without FM

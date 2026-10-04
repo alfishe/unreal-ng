@@ -194,6 +194,30 @@ TEST_F(DeviceState_Test, AyReportDecodesRegisters)
     EXPECT_FALSE(At(DeviceState::AyChip(_context, 7), "available").b);
 }
 
+/// What a debugger shows of the port side: the register #FFFD last selected on each chip, and which chip the
+/// ports talk to (TSFM: the CPLD's chip bit, #FF / #FE on #FFFD)
+TEST_F(DeviceState_Test, AyReportShowsLatchedRegisterAndSelectedChip)
+{
+    ITurboSoundDevice* ts = _context->pSoundManager->getTurboSound();
+    ASSERT_NE(ts, nullptr);
+    SetT(1000);
+    ts->portDeviceOutMethod(PORT_FFFD, 0xFE);  // chip 0
+    ts->portDeviceOutMethod(PORT_FFFD, 8);
+    EXPECT_EQ(At(DeviceState::AyChip(_context, 0), "latched_register").i, 8);
+    EXPECT_EQ(At(DeviceState::AyChip(_context, 0), "latched_register_name").s, SoundChip_AY8910::AYRegisterNames[8]);
+    EXPECT_TRUE(At(DeviceState::AyChip(_context, 0), "selected").b);
+    EXPECT_FALSE(At(DeviceState::AyChip(_context, 1), "selected").b);
+    EXPECT_EQ(At(DeviceState::Ay(_context), "active_chip").i, 0);
+
+    ts->portDeviceOutMethod(PORT_FFFD, 0xFF);  // chip 1
+    ts->portDeviceOutMethod(PORT_FFFD, 13);
+    EXPECT_EQ(At(DeviceState::Ay(_context), "active_chip").i, 1);
+    EXPECT_TRUE(At(DeviceState::AyChip(_context, 1), "selected").b);
+    EXPECT_EQ(At(DeviceState::AyChip(_context, 1), "latched_register").i, 13);
+    EXPECT_EQ(At(DeviceState::AyChip(_context, 0), "latched_register").i, 8) << "each chip keeps its own latch";
+    EXPECT_EQ(At(At(DeviceState::Ay(_context), "chips").items[1], "latched_register").i, 13);
+}
+
 TEST_F(DeviceState_Test, FdcReportListsControllerAndDrives)
 {
     const StateNode fdc = DeviceState::Fdc(_context);

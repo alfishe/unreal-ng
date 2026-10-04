@@ -426,6 +426,8 @@ public:
         return nullptr;
     }
 
+    int getSelectedChip() const override { return _board.chip; }
+
     SoundChip_AY8910* getChip(int index) const override
     {
         TsfmChip* c = chip(index);

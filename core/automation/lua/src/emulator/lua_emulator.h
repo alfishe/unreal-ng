@@ -9,6 +9,7 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -4594,111 +4595,41 @@ public:
         });
 
         // Search the CPU view of memory for a byte pattern (hex string or byte table)
+        // mem_find(pattern [, start, end, alignment, max, space, mask]) - MemorySearch: hex text with ?? / A?
+        // wildcards or a byte table; space "cpu" (default), "ram" (every RAM page) or a page ("ram5", "rom2")
         lua.set_function("mem_find",
-                         [this](sol::object patternValue, sol::optional<unsigned> startOpt,
-                                sol::optional<unsigned> endOpt, sol::optional<unsigned> alignOpt,
-                                sol::optional<unsigned> maxOpt) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
+                         [this](sol::this_state s, sol::object patternValue, sol::optional<uint32_t> startOpt,
+                                sol::optional<uint32_t> endOpt, sol::optional<unsigned> alignOpt,
+                                sol::optional<unsigned> maxOpt, sol::optional<std::string> spaceOpt,
+                                sol::optional<std::string> maskOpt) -> sol::object {
+            StateNode error = StateNode::Object();
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            Memory* memory = emulator->GetMemory();
-            if (!memory) { result["error"] = "memory not available"; return result; }
-
-            std::vector<uint8_t> pattern;
-            if (patternValue.is<std::string>())
+            if (!emulator)
             {
-                std::string digits;
-                for (char c : patternValue.as<std::string>())
-                {
-                    if (c == ' ' || c == ':')
-                        continue;
-                    if (!std::isxdigit(static_cast<unsigned char>(c)))
-                    {
-                        result["error"] = "invalid hex pattern";
-                        return result;
-                    }
-                    digits += static_cast<char>(std::toupper(c));
-                }
-                if (digits.empty() || digits.size() % 2 != 0)
-                {
-                    result["error"] = "invalid hex pattern";
-                    return result;
-                }
-                for (size_t i = 0; i < digits.size(); i += 2)
-                    pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
+                error["error"] = "no emulator";
+                return StateNodeToLua(s, error);
             }
-            else if (patternValue.is<sol::table>())
-            {
+            std::vector<uint8_t> bytes;
+            const bool table = patternValue.is<sol::table>();
+            if (table)
                 for (auto& pair : patternValue.as<sol::table>())
-                    pattern.push_back(static_cast<uint8_t>(pair.second.as<int>() & 0xFF));
-            }
-
-            if (pattern.empty() || pattern.size() > 64)
+                    bytes.push_back(static_cast<uint8_t>(pair.second.as<int>() & 0xFF));
+            MemorySearchRequest request;
+            std::string message;
+            std::string text;
+            if (patternValue.get_type() == sol::type::number)
+                text = MemorySearch::NumberPattern(static_cast<uint64_t>(patternValue.as<int64_t>()));
+            else if (patternValue.is<std::string>())
+                text = patternValue.as<std::string>();
+            if (!MemorySearch::BuildRequest(text, table ? &bytes : nullptr,
+                                            maskOpt.value_or(""), spaceOpt.value_or(""), startOpt.value_or(0),
+                                            endOpt.value_or(0xFFFFFFFFu), maxOpt.value_or(64), alignOpt.value_or(1),
+                                            request, message))
             {
-                result["error"] = "pattern must be 1..64 bytes";
-                return result;
+                error["error"] = message;
+                return StateNodeToLua(s, error);
             }
-
-            const size_t start = startOpt.value_or(0);
-            const size_t end = std::min<size_t>(endOpt.value_or(0xFFFF), 0xFFFF);
-            const unsigned alignment = alignOpt.value_or(1);
-            const unsigned max = maxOpt.value_or(64);
-            if (start > end || (alignment != 1 && alignment != 2))
-            {
-                result["error"] = "invalid range or alignment";
-                return result;
-            }
-
-            sol::table matches = lua_view.create_table();
-            size_t found = 0;
-            bool truncated = false;
-            const size_t searchLimit = end - pattern.size() + 1;
-
-            for (size_t position = start; position <= searchLimit; position += alignment)
-            {
-                if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-                    continue;
-
-                bool matched = true;
-                for (size_t i = 1; i < pattern.size(); i++)
-                {
-                    if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
-                    {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (!matched)
-                    continue;
-
-                if (found >= max)
-                {
-                    truncated = true;
-                    break;
-                }
-
-                sol::table match = lua_view.create_table();
-                match["address"] = static_cast<unsigned>(position);
-                sol::table context = lua_view.create_table();
-                const size_t contextStart = position > 4 ? position - 4 : 0;
-                for (size_t i = 0; i < pattern.size() + 4; i++)
-                {
-                    const size_t address = contextStart + i;
-                    if (address > 0xFFFF)
-                        break;
-                    context[i + 1] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address));
-                }
-                match["context"] = context;
-                matches[found + 1] = match;
-                found++;
-            }
-
-            result["matches"] = matches;
-            result["count"] = found;
-            result["truncated"] = truncated;
-            return result;
+            return StateNodeToLua(s, MemorySearch::ToState(request, MemorySearch::Search(emulator->GetContext(), request)));
         });
 
         // Screen-area FNV-1a-64 digest — change detection without pixel transfer.
@@ -4840,7 +4771,22 @@ public:
                 item["tags"] = tagNames;  // empty table = untagged row
                 const char* latchName = PagingLatchToString(entry.latch);
                 if (latchName)  // absent key = no live-value binding
+                {
                     item["latch"] = latchName;
+                    // The latch's value now, and decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+                    const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, context->emulatorState);
+                    item["latch_value"] = value;
+                    sol::table fields = lua.create_table();
+                    for (const DecodedLatchField& field :
+                         DecodePagingLatch(entry.latch, value, context->config.mem_model, context->config.ramsize))
+                    {
+                        if (field.isBool)
+                            fields[field.key] = field.boolValue;
+                        else
+                            fields[field.key] = field.intValue;
+                    }
+                    item["latch_fields"] = fields;
+                }
 
                 entries.add(item);
             }
