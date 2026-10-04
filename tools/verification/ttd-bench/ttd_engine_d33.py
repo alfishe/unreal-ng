@@ -22,6 +22,8 @@ three deterministic conditions of decision 33 and the timings:
 - counted capture work per frame: bytes walked (scanned), copied (delta base,
   device state) and compressed, the engine's work on memory v1 does not record
   left out.
+- the session file per frame (Phase 4): v1's saved session against the
+  engine's session file (bm7_file_bpf), when the run has both.
 
 A condition fails when the engine is larger than v1 (memory: by more than 2%,
 the allocator tolerance). With --timings the two time limits are judged too
@@ -85,6 +87,9 @@ def check(v, x):
         "restore_ok": g(x, "bm6_restore_memory_us_p99") <= RESTORE_P99_LIMIT_US,
         "bytes": (bytes_v1, bytes_engine, bytes_engine <= bytes_v1 * 1.0005),
         "memory": (mem_v1, mem_engine, mem_engine <= mem_v1 * 1.02),
+        # Phase 4: the session file; absent from runs before it
+        "file": (g(v, "bm7_file_bpf"), g(x, "bm7_file_bpf"),
+                 not g(x, "bm7_file_bpf") or g(x, "bm7_file_bpf") <= g(v, "bm7_file_bpf")),
         "work": (work(v, 0.0), work(x, g(x, "bm2_work_scanned_v1_lacks_bpf")), None),
         "fixed": (g(x, "bm4_heap_delta_base_bpf"), g(x, "bm4_heap_arena_slack_bpf")),
     }
@@ -99,7 +104,7 @@ def main():
     rows = load(args.run)
     failed = 0
     header = (f"{'configuration':28s} {'bytes/frame v1 -> engine':>26s} {'memory/frame':>18s} "
-              f"{'work/frame':>22s} {'fixed: base, slack':>20s}")
+              f"{'work/frame':>22s} {'fixed: base, slack':>20s} {'file/frame':>18s}")
     if args.timings:
         header += f" {'capture p50 us':>16s} {'p99':>6s} {'restore p50 us':>16s} {'p99':>6s}"
     print(header)
@@ -112,13 +117,15 @@ def main():
         mv, me, mok = c["memory"]
         wv, we, _ = c["work"]
         wok = we <= wv
-        ok = bok and mok and wok
+        fv, fe, fok = c["file"]
+        ok = bok and mok and wok and fok
         if args.timings:
             ok = ok and c["capture_ok"] and c["restore_ok"]
         failed += 0 if ok else 1
         mark = lambda good: "" if good else " X"
         line = (f"{cfg:28s} {bv:11.0f} -> {be:8.0f}{mark(bok):2s} {mv:7.0f} -> {me:6.0f}{mark(mok):2s} "
-                f"{wv:9.0f} -> {we:8.0f}{mark(wok):2s} {c['fixed'][0]:9.0f} {c['fixed'][1]:6.0f}")
+                f"{wv:9.0f} -> {we:8.0f}{mark(wok):2s} {c['fixed'][0]:9.0f} {c['fixed'][1]:6.0f}"
+                f" {fv:8.0f} -> {fe:6.0f}{mark(fok):2s}")
         if args.timings:
             line += (f" {g(v, 'bm2_capture_us_p50'):7.1f} -> {g(x, 'bm2_capture_us_p50'):5.1f} "
                      f"{g(x, 'bm2_capture_us_p99'):6.1f}{mark(c['capture_ok'])} {g(v, 'bm6_restore_memory_us_p50'):7.0f} -> "

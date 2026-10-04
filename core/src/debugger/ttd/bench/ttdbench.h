@@ -230,6 +230,7 @@ public:
         bool seek = true;          ///< BM-5 / BM-6
         bool seekMemory = false;   ///< without full seeks: BM-6 memory restore alone (frame-aligned)
         bool saveLoad = true;      ///< BM-7
+        bool save = false;         ///< BM-7 file size alone (a file it cannot load back into a machine yet)
     };
 
     virtual ~Engine() = default;

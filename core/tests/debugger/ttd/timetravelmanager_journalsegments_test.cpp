@@ -466,6 +466,7 @@ TEST(TimeTravelManager_JournalSegments_Test, ABuildReportsProgressAndStopsFromAn
     EXPECT_FALSE(m.ttd->GetJournalBuildState().active);
 
     std::atomic<bool> sawProgress{false};
+    std::atomic<bool> asked{false};
     std::thread observer([&] {
         // A surface polls the state and asks to stop (WebAPI .../build/cancel)
         TestWait::For([&] {
@@ -475,9 +476,14 @@ TEST(TimeTravelManager_JournalSegments_Test, ABuildReportsProgressAndStopsFromAn
         const auto state = m.ttd->GetJournalBuildState();
         sawProgress = state.active && state.total > state.done;
         m.ttd->CancelJournalBuild();
+        asked = true;
     });
-    const ttd::TTDJournalBuildResult r = m.ttd->BuildWriteJournalFrames(0, UINT64_MAX, [](uint64_t, uint64_t) {
-        std::this_thread::yield();   // the observer gets its turn between frames
+    // The build waits at its third frame until the observer has seen it and
+    // asked to stop: the two threads meet there whatever the scheduler does
+    // (yielding alone let the build finish first on a loaded host)
+    const ttd::TTDJournalBuildResult r = m.ttd->BuildWriteJournalFrames(0, UINT64_MAX, [&](uint64_t done, uint64_t) {
+        if (done == 3)
+            TestWait::For([&] { return asked.load(); }, std::chrono::seconds(10));
         return true;
     });
     observer.join();

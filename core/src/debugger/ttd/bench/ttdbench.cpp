@@ -14,6 +14,7 @@
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
+#include "debugger/ttd/engine/ttdsessionfile.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/config.h"
@@ -486,6 +487,7 @@ public:
         c.seek = false;
         c.seekMemory = true;
         c.saveLoad = false;
+        c.save = true;   // the session file (Phase 4); loading into a machine comes with Phase 5
         return c;
     }
 
@@ -604,10 +606,20 @@ public:
         out.piecesDecoded = static_cast<double>(stats.piecesDecoded);
         return ok;
     }
-    bool Save(const std::string&, uint64_t&, std::string& error) override
+    bool Save(const std::string& path, uint64_t& bytes, std::string& error) override
     {
-        error = "the engine has no file before Phase 4";
-        return false;
+        std::error_code ec;
+        std::filesystem::remove(FileHelper::ToFsPath(path), ec);
+        TTDFileSink sink(path);
+        if (!sink.Valid())
+        {
+            error = sink.Error();
+            return false;
+        }
+        if (!TTDSessionFile::Save(_engine, sink, error))
+            return false;
+        bytes = sink.Size();
+        return true;
     }
     bool Load(Emulator&, const std::string&, std::string& error) override
     {
@@ -1100,6 +1112,19 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         }
 
         // BM-7: save, then load into a fresh machine and seek once
+        if (options.saveLoad && caps.save && !caps.saveLoad)
+        {
+            const std::string file = ScratchFile(options, engine.Name() + "-" + c.Name());
+            uint64_t bytes = 0;
+            const Clock::time_point saveStart = Clock::now();
+            if (!engine.Save(file, bytes, r.error))
+                return r;
+            const double saveS = ElapsedUs(saveStart, Clock::now()) / 1e6;
+            m["bm7_file_bytes"] = static_cast<double>(bytes);
+            m["bm7_file_bpf"] = static_cast<double>(bytes) / n;
+            m["bm7_save_s_per_gb"] = bytes ? saveS / (static_cast<double>(bytes) / 1e9) : 0.0;
+            KeepOrRemove(options, file);
+        }
         if (options.saveLoad && caps.saveLoad && caps.seek)
         {
             const std::string file = ScratchFile(options, engine.Name() + "-" + c.Name());
