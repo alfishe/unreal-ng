@@ -256,6 +256,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     Bad Apple and dontBlink (both wait for the 48.83 Hz CTC 3 tick, vector #06) play with sound
     (`SprinterCtcDemo_Test`, env `UNREAL_SPRINTER_HDD`); TTD blob 29 v2; `state sprinter` z84c15.ctc shows the
     inputs, live counts and ZC/TO rates.
+  - ATAPI CD (2026-10-04): BIOS detection, CDX 2025 `LIST` / `COPY` / `OPEN`, the guest's eject emptying the slot,
+    media change, and the BIOS boot from CD verified ([atapi-cd-boot.md](atapi-cd-boot.md)); open: a DSS loader for
+    a CD, the DSS CD file system (`beta_cdfs`), an automated boot test.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
     media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
