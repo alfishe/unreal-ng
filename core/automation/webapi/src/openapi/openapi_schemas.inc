@@ -270,7 +270,8 @@
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
-    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] = "Optional group name";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] =
+        "Optional group name (created on use; default 'default'). Groups are switched on and off together";
 
     // Add Breakpoint Response
     schemas["AddBreakpointResponse"]["type"] = "object";
@@ -282,6 +283,8 @@
     schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["page"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["page"]["description"] = "The page condition, when one was given";
+    schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
 
     // Memory State schemas

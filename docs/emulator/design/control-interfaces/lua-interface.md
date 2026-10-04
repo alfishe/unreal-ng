@@ -590,6 +590,8 @@ id = bp_port_in(0xFE)
 id = bp_port_out(0xFE)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
+bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
+bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
 n = bp_count()
 print(bp_list())               -- the text table; a page breakpoint ends "in ram:32"
 st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, page}

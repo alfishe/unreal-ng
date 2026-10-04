@@ -285,6 +285,8 @@ public:
     // Breakpoint group management
     uint16_t AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName);
     bool SetBreakpointGroup(uint16_t breakpointID, const std::string& groupName);
+    /// The breakpoint's annotation (empty clears it); false for an unknown id
+    bool SetBreakpointNote(uint16_t breakpointID, const std::string& note);
     std::vector<std::string> GetBreakpointGroups() const;
     std::vector<uint16_t> GetBreakpointsByGroup(const std::string& groupName) const;
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
@@ -318,6 +320,8 @@ protected:
     /// Rebuild hot-path filter state from current breakpoint set.
     /// Called after every mutation (add/remove/activate/deactivate).
     void RebuildFilters();
+    /// NC_BREAKPOINTS_CHANGED for this emulator (WebAPI event breakpoints_changed)
+    void NotifyBreakpointsChanged();
 
     // endregion </Helper methods>
 };

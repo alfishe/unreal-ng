@@ -732,6 +732,8 @@ id = emu.bp_port_in(0xFE)
 id = emu.bp_port_out(0xFE)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
+emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
+emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 emu.bp_count()
 print(emu.bp_list())                # the text table; a page breakpoint ends "in ram:32"
 emu.bp_status()                     # the last hit, see below; 'page' when it is bound to one

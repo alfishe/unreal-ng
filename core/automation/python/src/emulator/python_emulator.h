@@ -1541,6 +1541,19 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->DeactivateBreakpoint(id) : false;
             }, "Disable breakpoint", py::arg("id"))
+            .def("bp_note", [](Emulator& self, uint16_t id, const std::string& note) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                return bpm ? bpm->SetBreakpointNote(id, note) : false;
+            }, "Set a breakpoint's note (empty clears it); False for an unknown id", py::arg("id"), py::arg("note"))
+            .def("bp_group", [](Emulator& self, uint16_t id, const std::string& group) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                return bpm ? bpm->SetBreakpointGroup(id, group) : false;
+            }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name",
+               py::arg("id"), py::arg("group"))
             .def("bp_count", [](Emulator& self) -> size_t {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return 0;

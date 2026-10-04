@@ -100,12 +100,7 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
             note += args[i];
         }
 
-        // Set the note for this breakpoint
-        auto& breakpoints = bpManager->GetAllBreakpoints();
-        if (breakpoints.find(bpId) != breakpoints.end())
-        {
-            breakpoints.at(bpId)->note = note;
-        }
+        bpManager->SetBreakpointNote(bpId, note);
     }
 
     std::ostringstream oss;
@@ -239,12 +234,7 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
             note += args[i];
         }
 
-        // Set the note for this breakpoint
-        auto& breakpoints = bpManager->GetAllBreakpoints();
-        if (breakpoints.find(bpId) != breakpoints.end())
-        {
-            breakpoints.at(bpId)->note = note;
-        }
+        bpManager->SetBreakpointNote(bpId, note);
     }
 
     std::ostringstream oss;
@@ -339,12 +329,7 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
             note += args[i];
         }
 
-        // Set the note for this breakpoint
-        auto& breakpoints = bpManager->GetAllBreakpoints();
-        if (breakpoints.find(bpId) != breakpoints.end())
-        {
-            breakpoints.at(bpId)->note = note;
-        }
+        bpManager->SetBreakpointNote(bpId, note);
     }
 
     std::ostringstream oss;

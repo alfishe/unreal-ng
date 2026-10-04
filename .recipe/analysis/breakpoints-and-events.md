@@ -29,6 +29,10 @@ curl -s -X POST $BASE/emulator/$EMU/breakpoints -H 'Content-Type: application/js
 CLI `bp 0xC000 ram:32`, `wp 0x4000 w ram:5`; Lua `bp(0xC000, "ram:32")`; Python
 `emu.bp(0xC000, page="ram:32")`; MCP `control_execution action=bp_add address=49152 page=ram:32`.
 
+**Notes and groups.** `POST /breakpoints` takes `note` and `group` (MCP `bp_add` too); the CLI takes the
+note after the address (and page), `bpgroup` manages groups; Lua / Python set them with `bp_note(id, text)`
+and `bp_group(id, name)`. A group is switched on and off as one.
+
 ## WebAPI
 
 ```bash

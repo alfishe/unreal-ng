@@ -940,7 +940,17 @@ bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::str
 
     BreakpointDescriptor* breakpoint = _breakpointMapByID[breakpointID];
     breakpoint->group = groupName;
+    NotifyBreakpointsChanged();
 
+    return true;
+}
+
+bool BreakpointManager::SetBreakpointNote(uint16_t breakpointID, const std::string& note)
+{
+    if (!key_exists(_breakpointMapByID, breakpointID))
+        return false;
+    _breakpointMapByID[breakpointID]->note = note;
+    NotifyBreakpointsChanged();
     return true;
 }
 
@@ -1684,8 +1694,13 @@ void BreakpointManager::RebuildFilters()
         }
     }
 
-    // Every mutation ends here: tell the surfaces (WebAPI events breakpoints_changed). A manager without
-    // an emulator (unit tests) has nobody to tell
+    // Every mutation of the set ends here: tell the surfaces
+    NotifyBreakpointsChanged();
+}
+
+void BreakpointManager::NotifyBreakpointsChanged()
+{
+    // A manager without an emulator (unit tests) has nobody to tell
     if (_context && _context->pEmulator)
         MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED,
                                                    new BreakpointsChangedPayload(_context->pEmulator->GetId()), true);

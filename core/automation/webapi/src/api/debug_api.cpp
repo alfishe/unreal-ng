@@ -1062,13 +1062,34 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    if (bpId == BRK_INVALID || !bpm->GetAllBreakpoints().count(bpId))
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Breakpoint not added";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Optional annotation and group (a group the request names is created with the breakpoint)
+    if (body.isMember("note") && body["note"].isString())
+        bpm->SetBreakpointNote(bpId, body["note"].asString());
+    if (body.isMember("group") && body["group"].isString() && !body["group"].asString().empty())
+        bpm->SetBreakpointGroup(bpId, body["group"].asString());
+
     Json::Value ret;
     ret["status"] = "success";
     ret["id"] = bpId;
     ret["type"] = type;
     ret["address"] = address;
+    const BreakpointDescriptor* added = bpm->GetAllBreakpoints().at(bpId);
     if (inPage)
-        ret["page"] = BreakpointManager::PageSpecName(*bpm->GetAllBreakpoints().at(bpId));
+        ret["page"] = BreakpointManager::PageSpecName(*added);
+    ret["note"] = added->note;
+    ret["group"] = added->group;
     ret["message"] = "Breakpoint added";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
