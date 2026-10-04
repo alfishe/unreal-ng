@@ -134,7 +134,11 @@ byte for byte, `OPEN` ejects (the media slot empties), a new disc is read after 
 open CDX prints `Can't find CDROM device N`: it asks the BIOS (`DRV_DETECT`) and treats every error except UNIT
 ATTENTION as "no device"; the drive answers NOT READY, medium not present (`02/3A/02`), as a real drive does.
 
+Automated since 2026-10-04: `SprinterBoot_Test.Bios306_BootsFromAnAtapiCd`
+(`core/tests/emulator/machines/sprinter/sprinter_boot_test.cpp`) builds a 32-sector ISO with the section 4 boot sector, puts it on the primary slave, writes
+the CMOS cells of section 2 and checks the entry state above (`#8800` = `#AA`, A = `#C1`, PC = `#8014`, SP = `#8000`,
+IM 1, interrupts off, the sector at `#8000`).
+
 ## 7. Open
 
 - A CD boot loader that starts DSS from the CD (section 5), and a bootable system CD built with it.
-- An automated emulator test of the boot path (the section 6 run as a test with a generated image).
