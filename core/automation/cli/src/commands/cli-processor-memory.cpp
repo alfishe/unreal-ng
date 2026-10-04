@@ -5,6 +5,7 @@
 #include "cli-memory-region.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 
 #include <common/dumphelper.h>
@@ -1894,3 +1895,116 @@ void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<st
     session.SendResponse(ss.str() + NEWLINE);
 }
 
+
+// HandleDebugSnapshot - one coherent debugger snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot) as text
+void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    DebugSnapshot::Options options;
+    options.rawBytes = true;
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        const bool value = i + 1 < args.size();
+        try
+        {
+            if (args[i] == "--disasm" && value)
+                options.disasm = std::min<unsigned>(static_cast<unsigned>(std::stoul(args[++i], nullptr, 0)), 100u);
+            else if (args[i] == "--stack" && value)
+                options.stack = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
+            else if (args[i] == "--memory" && value)
+                options.memory.push_back(args[++i]);
+            else
+            {
+                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]..." + std::string(NEWLINE));
+                return;
+            }
+        }
+        catch (...)
+        {
+            session.SendResponse("Invalid number for " + args[i - 1] + NEWLINE);
+            return;
+        }
+    }
+    const DebugSnapshot::Result result = DebugSnapshot::Build(emulator.get(), options);
+    if (!result.error.empty())
+    {
+        session.SendResponse("debug-snapshot: " + result.error + NEWLINE);
+        return;
+    }
+    const StateNode& s = result.snapshot;
+    auto num = [](const StateNode* node, const char* key) -> int64_t {
+        const StateNode* v = node ? node->find(key) : nullptr;
+        return v ? v->i : 0;
+    };
+    auto text = [](const StateNode* node, const char* key) -> std::string {
+        const StateNode* v = node ? node->find(key) : nullptr;
+        return v ? v->s : std::string();
+    };
+    std::ostringstream o;
+    o << std::uppercase << std::hex << std::setfill('0');
+    const StateNode* pause = s.find("pause");
+    o << "Snapshot seq " << std::dec << num(&s, "seq") << ", " << text(&s, "state") << " (read " << text(&s, "consistency")
+      << "), last stop: " << text(pause, "reason");
+    if (text(pause, "reason") == "breakpoint")
+        o << " #" << num(pause, "breakpoint_id") << " at $" << std::hex << std::setw(4) << num(pause, "address");
+    o << NEWLINE;
+    const StateNode* regs = s.find("regs");
+    const StateNode* main = regs ? regs->find("main") : nullptr;
+    const StateNode* alt = regs ? regs->find("alternate") : nullptr;
+    const StateNode* index = regs ? regs->find("index") : nullptr;
+    const StateNode* special = regs ? regs->find("special") : nullptr;
+    const StateNode* interrupt = regs ? regs->find("interrupt") : nullptr;
+    o << std::hex << "AF=" << std::setw(4) << num(main, "af") << " BC=" << std::setw(4) << num(main, "bc") << " DE=" << std::setw(4)
+      << num(main, "de") << " HL=" << std::setw(4) << num(main, "hl") << " IX=" << std::setw(4) << num(index, "ix") << " IY="
+      << std::setw(4) << num(index, "iy") << " SP=" << std::setw(4) << num(special, "sp") << " PC=" << std::setw(4)
+      << num(special, "pc") << NEWLINE;
+    o << "AF'=" << std::setw(4) << num(alt, "af_") << " BC'=" << std::setw(4) << num(alt, "bc_") << " DE'=" << std::setw(4)
+      << num(alt, "de_") << " HL'=" << std::setw(4) << num(alt, "hl_") << " I=" << std::setw(2) << num(special, "i") << " R="
+      << std::setw(2) << num(special, "r") << std::dec << " IM " << num(interrupt, "im") << " IFF1=" << num(interrupt, "iff1")
+      << " IFF2=" << num(interrupt, "iff2") << NEWLINE;
+    o << "Pages:";
+    if (const StateNode* pages = s.find("pages"))
+        for (const StateNode& p : pages->items)
+            o << " " << num(&p, "window") << ":" << text(&p, "kind") << num(&p, "page");
+    o << NEWLINE;
+    const StateNode* time = s.find("time");
+    o << "Time: frame " << num(time, "frame") << ", t " << num(time, "t") << "/" << num(time, "frame_t") << ", line "
+      << num(time, "line") << " dot " << num(time, "dot") << NEWLINE;
+    if (const StateNode* stack = s.find("stack"))
+    {
+        o << "Stack $" << std::hex << std::setw(4) << num(stack, "sp") << ":";
+        if (const StateNode* words = stack->find("words"))
+            for (const StateNode& w : words->items)
+                o << " " << std::setw(4) << w.i;
+        o << NEWLINE;
+    }
+    if (const StateNode* code = s.find("disasm"))
+        for (const StateNode& line : code->items)
+            o << "  $" << std::hex << std::setw(4) << num(&line, "address") << "  " << std::left << std::setfill(' ') << std::setw(10)
+              << text(&line, "bytes") << std::right << std::setfill('0') << text(&line, "mnemonic") << NEWLINE;
+    if (const StateNode* windows = s.find("memory"))
+        for (const StateNode& w : windows->items)
+        {
+            o << "Memory " << text(&w, "space") << " $" << std::hex << std::setw(4) << num(&w, "address");
+            if (w.find("error"))
+            {
+                o << ": " << text(&w, "error") << NEWLINE;
+                continue;
+            }
+            const std::string bytes = text(&w, "bytes");
+            o << std::dec << " (" << bytes.size() << " bytes)" << NEWLINE << std::hex;
+            for (size_t i = 0; i < bytes.size(); i += 16)
+            {
+                o << "  " << std::setw(4) << (num(&w, "address") + static_cast<int64_t>(i)) << ":";
+                for (size_t j = i; j < std::min(bytes.size(), i + 16); ++j)
+                    o << " " << std::setw(2) << static_cast<int>(static_cast<uint8_t>(bytes[j]));
+                o << NEWLINE;
+            }
+        }
+    session.SendResponse(o.str());
+}

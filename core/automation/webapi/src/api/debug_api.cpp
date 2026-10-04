@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <vector>
 #include <drogon/HttpResponse.h>
+#include <drogon/utils/Utilities.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/cpu/z80.h>
@@ -2543,6 +2544,68 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
 /// @brief GET /api/v1/emulator/{id}/disasm
 /// @brief Disassemble Z80 code
 /// @brief Query params: address (default: PC), count (default: 10, max: 100)
+/// @brief GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end
+/// @brief Query: disasm (lines from PC, default 0, max 100), stack (words from SP, default 8, max 128),
+/// @brief memory (<space>:<addr>:<len>, repeatable or comma-separated, at most 8 windows)
+void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    DebugSnapshot::Options options;
+    auto number = [&](const char* key, unsigned& out) {
+        const std::string text = req->getParameter(key);
+        if (text.empty())
+            return true;
+        uint64_t value = 0;
+        if (!StringHelper::TryParseUInt64(text, value) || value > 0xFFFF)
+            return false;
+        out = static_cast<unsigned>(value);
+        return true;
+    };
+    if (!number("disasm", options.disasm) || !number("stack", options.stack))
+        return reply(HttpStatusCode::k400BadRequest, "disasm and stack are unsigned numbers");
+    // memory may repeat (memory=a&memory=b) and take a comma list: read the raw query, not the parameter map
+    const std::string& query = req->query();
+    size_t at = 0;
+    while (at <= query.size())
+    {
+        const size_t end = std::min(query.find('&', at), query.size());
+        const std::string pair = query.substr(at, end - at);
+        if (pair.rfind("memory=", 0) == 0)
+        {
+            const std::string value = drogon::utils::urlDecode(pair.substr(7));
+            size_t from = 0;
+            while (from <= value.size())
+            {
+                const size_t comma = std::min(value.find(',', from), value.size());
+                if (comma > from)
+                    options.memory.push_back(value.substr(from, comma - from));
+                from = comma + 1;
+            }
+        }
+        at = end + 1;
+    }
+    options.disasm = std::min(options.disasm, 100u);   // as GET /disasm clamps its count
+
+    const DebugSnapshot::Result result = DebugSnapshot::Build(emulator.get(), options);
+    if (!result.error.empty())
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.snapshot));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {

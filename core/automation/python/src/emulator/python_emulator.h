@@ -3,6 +3,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
@@ -951,6 +952,43 @@ namespace PythonBindings
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
             }, "Write 16-bit word to memory")
+            .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory) -> py::object {
+                DebugSnapshot::Options options;
+                options.disasm = std::min(disasm, 100u);
+                options.stack = stack;
+                options.memory = memory;
+                options.rawBytes = true;
+                DebugSnapshot::Result result = DebugSnapshot::Build(&self, options);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                // The raw bytes are no text: take them out before the dict conversion, put them back as bytes
+                std::vector<std::string> raw;
+                if (StateNode* windows = const_cast<StateNode*>(result.snapshot.find("memory")))
+                    for (StateNode& window : windows->items)
+                        for (auto it = window.members.begin(); it != window.members.end(); ++it)
+                            if (it->first == "bytes")
+                            {
+                                raw.push_back(std::move(it->second.s));
+                                window.members.erase(it);
+                                break;
+                            }
+                py::object dict = StateNodeToPy(result.snapshot);
+                if (!raw.empty())
+                {
+                    py::list windows = dict["memory"];
+                    size_t next = 0;
+                    for (auto item : windows)
+                    {
+                        py::dict window = item.cast<py::dict>();
+                        if (!window.contains("error") && next < raw.size())
+                            window["bytes"] = py::bytes(raw[next++]);
+                    }
+                }
+                return dict;
+            }, "One coherent debugger snapshot (core DebugSnapshot, GET /debug/snapshot): seq, state, pause, consistency, "
+               "regs, prev_regs, pages, stack, time, disasm, memory windows ('cpu:0x8000:256', 'ram5:0:6912') with their "
+               "bytes; ValueError when refused",
+               py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>())
             .def("mem_read_bytes", [](Emulator& self, uint32_t addr, uint32_t len, const std::string& space) -> py::bytes {
                 const MemoryRead::Result read = MemoryRead::Bytes(self.GetContext(), space, addr, len);
                 if (!read.error.empty())

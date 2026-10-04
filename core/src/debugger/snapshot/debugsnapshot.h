@@ -33,6 +33,7 @@ struct Options
     unsigned disasm = 0;               ///< lines from PC (0 = none, at most 100)
     unsigned stack = 8;                ///< words from SP (0 = none, at most 128)
     std::vector<std::string> memory;   ///< windows "<space>:<address>:<length>", at most 8, each at most 65536
+    bool rawBytes = false;             ///< memory windows carry "bytes" (the raw bytes as a string) instead of "base64"
 };
 constexpr unsigned kMaxStackWords = 128;
 constexpr size_t kMaxWindows = 8;

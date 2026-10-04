@@ -321,7 +321,10 @@ StateNode Capture(Emulator* emulator, const Options& options, const char* consis
             else
             {
                 window["length"] = static_cast<uint64_t>(read.bytes.size());
-                window["base64"] = Base64(read.bytes);
+                if (options.rawBytes)
+                    window["bytes"] = std::string(read.bytes.begin(), read.bytes.end());
+                else
+                    window["base64"] = Base64(read.bytes);
             }
             windows.push(window);
         }

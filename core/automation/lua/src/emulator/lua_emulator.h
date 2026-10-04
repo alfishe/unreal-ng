@@ -10,6 +10,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
@@ -832,6 +833,30 @@ public:
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
+        });
+
+        // debug_snapshot{disasm = 21, stack = 8, memory = {"cpu:0x8000:256", "ram5:0:6912"}} - one coherent debugger
+        // snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot): memory windows carry their bytes as Lua strings
+        // (field bytes); nil, error when refused
+        lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            DebugSnapshot::Options options;
+            options.rawBytes = true;
+            if (opts)
+            {
+                options.disasm = std::min<unsigned>(opts->get_or("disasm", 0u), 100u);
+                options.stack = opts->get_or("stack", 8u);
+                if (sol::optional<sol::table> windows = opts->get<sol::optional<sol::table>>("memory"))
+                    for (auto& pair : *windows)
+                        if (pair.second.is<std::string>())
+                            options.memory.push_back(pair.second.as<std::string>());
+            }
+            const DebugSnapshot::Result result = DebugSnapshot::Build(emulator, options);
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {StateNodeToLua(s, result.snapshot), sol::make_object(s, sol::lua_nil)};
         });
 
         // mem_read_bytes(addr, len [, space]) -> the bytes as a Lua string (MemoryRead): the CPU view (wraps at #FFFF,
