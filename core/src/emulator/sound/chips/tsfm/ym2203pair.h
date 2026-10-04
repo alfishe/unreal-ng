@@ -151,6 +151,10 @@ class Ym2203Pair
 public:
     /// Constant lag of the render cursor behind the newest timed event (see kTurboSoundRenderLagT)
     static constexpr int64_t kRenderLag = kTurboSoundRenderLagT;
+    /// Per-channel outputs: how far the render cursor may trail the synced master clock before renderChannels
+    /// treats the timeline as lost - three quarters of the FM word queue (one word per 72 clocks at /6, ~3 Pentagon
+    /// frames), so a board that syncs and renders whole frames keeps every word
+    static constexpr int64_t kMaxRenderBehind = static_cast<int64_t>(FmWordQueue::kCapacity) * 72 * 3 / 4;
 
     /// TTD sizes. The per-chip payload and the timeline tail are the TSFM blob's (§8.2), byte for byte:
     /// per chip: address(1) + fmClockPhase(4) + timer[2](8) + busy(4) + ymfmSize(2) + ymfm(494) + SSG(73)
@@ -420,9 +424,10 @@ public:
     /// the stereo output stage is not used then
     void configureChannelOutputs(size_t rate, FilterDecimator::Quality quality = FilterDecimator::Quality::Reference);
 
-    /// Render `frames` output samples of the per-channel streams into `block`. The cursor follows the master-clock
-    /// axis (kRenderLag behind the synced position; re-anchored when the owner lost the timeline). Returns the
-    /// samples written (0 before configureChannelOutputs)
+    /// Render `frames` output samples of the per-channel streams into `block`, from where the previous render
+    /// stopped. The cursor follows the master-clock axis (it ends a render about kRenderLag behind the synced
+    /// position when the owner synced the time it renders; re-anchored only when it is ahead of the chips or more
+    /// than kMaxRenderBehind behind). Returns the samples written (0 before configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
     /// endregion </Per-channel outputs>
 

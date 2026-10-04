@@ -17,9 +17,10 @@ General MIDI synthesizer. Every part behaves like the real card's current firmwa
 replays it bit-exactly, and every automation surface can configure and inspect it.
 
 **Worked example.** A program plays a tune that uses the TSFM and the SAA at once:
-1. `OUT (#FFFD),#F7`: on this card the byte `1111 0111` is a control byte (the mask is four bits): chip 1 selected,
-   register mode, FM on, **SAA clock on** (bit 3 = 0). The byte also reaches the selected YM2203 as an address write.
-2. `OUT (#FFFD),#07` / `OUT (#BFFD),#38`: AY register 7 of YM chip 1 (mixer).
+1. `OUT (#FFFD),#F7`: on this card the byte `1111 0111` is a control byte (the mask is four bits): chip select 1
+   (U10, the second YM2203; bit 0 = 1), register read mode (bit 1 = 1), FM muted (bit 2 = 1), **SAA clock on**
+   (bit 3 = 0). The byte also reaches the selected YM2203 as an address write. (A tune that wants FM too writes `#F3`.)
+2. `OUT (#FFFD),#07` / `OUT (#BFFD),#38`: AY register 7 of that YM2203 (mixer).
 3. `OUT (#1FF),#1C` / `OUT (#FF),#01`: SAA register `#1C` (sound enable).
 4. The card's mixer sums YM FM, the YM SSG channels, the SAA, the GS / SounDrive DACs and the MIDI synthesizer into
    the stereo output, with the levels of the real board's analog mixer.

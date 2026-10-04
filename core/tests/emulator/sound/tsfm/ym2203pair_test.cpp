@@ -244,6 +244,41 @@ TEST_F(Ym2203Pair_Test, PerChipAndChannelOutputs)
     EXPECT_GT(Peak(ssg[1][1]), 0.5f);
 }
 
+TEST_F(Ym2203Pair_Test, PerChannelOutputsRenderAWholeSyncedFrameAtOnce)
+{
+    // A board that syncs a whole frame and then renders it (the MultiSound's FrameEnd) leaves the cursor a frame
+    // behind the chips with that frame's words queued: the render must take every word, not re-anchor to the end.
+    // A steady carrier then has the same swing in every frame, on both host rates
+    for (const uint32_t host : {kMasterHz, kHost128Hz})
+    {
+        Ym2203PairConfig config = RatioConfig();
+        config.hostTickRate = host;
+        Ym2203Pair pair(_context, config);
+        pair.configureChannelOutputs(44100);
+        pair.syncTo(0);
+        ProgramFmNote(pair, 0);
+
+        const uint64_t frameTicks = host == kMasterHz ? 71680 : 70908;
+        std::vector<float> fm(2000);
+        uint64_t samplesAcc = 0;
+        for (int frame = 0; frame < 8; frame++)
+        {
+            pair.syncTo(pair.syncedT() + frameTicks);
+            samplesAcc += frameTicks * 44100;
+            const size_t frames = static_cast<size_t>(samplesAcc / host);
+            samplesAcc %= host;
+            Ym2203ChannelBlock block;
+            block.fm[0] = fm.data();
+            ASSERT_EQ(pair.renderChannels(frames, block, true), frames);
+            if (frame < 2)
+                continue;  // attack and decimator warm-up
+            const auto [lo, hi] = std::minmax_element(fm.begin(), fm.begin() + static_cast<std::ptrdiff_t>(frames));
+            // One carrier at TL 0: the DAC word swings +-8168 (the TSFM output tests' reference note)
+            EXPECT_NEAR(*hi - *lo, 2.0f * 8168.0f / 32768.0f, 0.005f) << "host " << host << " frame " << frame;
+        }
+    }
+}
+
 TEST_F(Ym2203Pair_Test, SsgIoPortListenerOnChip1)
 {
     // The MultiSound's MIDI line hangs on YM chip 1 IOA2: the pair's SSG reports pin changes of chip 1 with the

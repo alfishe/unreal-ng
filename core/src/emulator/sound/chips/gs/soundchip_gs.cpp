@@ -31,7 +31,7 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
     , _audio(static_cast<double>(profile.UnitsPerSecond()), sampleRate)
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
-    _unitsPerZxTact = GSHostClock::unitsPerZxTact(_context, _unitsPerSecond);
+    _unitsPerZxTact = hostUnitsPerTact();
 
     // Mailbox overflow drops land in this card's activity counters
     _mb.counters = &_activityCounters;
@@ -246,13 +246,39 @@ int64_t SoundChip_GeneralSound::frameGsLength() const
     // One ZX frame is config.frame * hostMultiplier multiplied tacts; the GS
     // card clocks 12 MHz against the ZX base clock, so the multiplier cancels
     // and the GS frame length is turbo-invariant (design §2.4)
+    if (const IGSHostClock* clock = _profile.hostClock)
+        return static_cast<int64_t>(std::llround(static_cast<double>(clock->GsHostFrameTacts()) * hostUnitsPerTact()));
     return GSHostClock::frameUnits(_context, _unitsPerSecond);
+}
+
+double SoundChip_GeneralSound::hostUnitsPerTact() const
+{
+    // A board clock fixes the host rate; otherwise the machine's frame geometry and host multiplier decide
+    if (const IGSHostClock* clock = _profile.hostClock)
+        return _unitsPerSecond / static_cast<double>(clock->GsHostTickRate());
+    return GSHostClock::unitsPerZxTact(_context, _unitsPerSecond);
+}
+
+uint64_t SoundChip_GeneralSound::hostTactsNow(uint64_t fallback) const
+{
+    if (const IGSHostClock* clock = _profile.hostClock)
+        return clock->GsHostTacts();
+    return GSHostClock::currentZxTacts(_context, fallback);
 }
 
 void SoundChip_GeneralSound::flush()
 {
     int64_t target = 0;
-    if (!GSHostClock::targetUnits(_context, _unitsPerSecond, _frameStartZxTacts, _frameStartGsCycles, target))
+    if (const IGSHostClock* clock = _profile.hostClock)
+    {
+        // The board's axis (a pointer test per host port access, never per instruction)
+        const uint64_t now = clock->GsHostTacts();
+        if (now < _frameStartZxTacts)
+            return;
+        target = _frameStartGsCycles +
+                 static_cast<int64_t>(std::llround(static_cast<double>(now - _frameStartZxTacts) * _unitsPerZxTact));
+    }
+    else if (!GSHostClock::targetUnits(_context, _unitsPerSecond, _frameStartZxTacts, _frameStartGsCycles, target))
         return; // ZX reset rewound the clock; wait for the next frame base
     runTo(target);
 }
@@ -341,11 +367,12 @@ void SoundChip_GeneralSound::handleFrameStart()
     // timeline, not the card's actual time: the CPU ends a frame up to one
     // instruction past it, and that overshoot must not pile up frame after
     // frame. Taken against the previous ZX anchor, so before the anchor moves
-    _unitsPerZxTact = GSHostClock::unitsPerZxTact(_context, _unitsPerSecond);
-    _frameStartGsCycles = GSHostClock::nextFrameBase(_frameStartGsCycles, _frameGsCycles, totalGsCycles(),
-                                                     GSHostClock::zxElapsedSince(_context, _frameStartZxTacts),
+    _unitsPerZxTact = hostUnitsPerTact();
+    const uint64_t hostNow = hostTactsNow(_frameStartZxTacts);
+    const int64_t zxElapsed = hostNow < _frameStartZxTacts ? -1 : static_cast<int64_t>(hostNow - _frameStartZxTacts);
+    _frameStartGsCycles = GSHostClock::nextFrameBase(_frameStartGsCycles, _frameGsCycles, totalGsCycles(), zxElapsed,
                                                      _unitsPerZxTact);
-    _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
+    _frameStartZxTacts = hostNow;
     _frameGsCycles = frameGsLength();
 }
 
@@ -424,6 +451,26 @@ void SoundChip_GeneralSound::sinkSample(int channel, uint8_t value)
         _frameHadActivity = true;
     _channelData[channel] = value;
     _profile.dacSink->GsSample(hostTimeNow(), channel, value);
+}
+
+void SoundChip_GeneralSound::resetAtHostNow()
+{
+    flush();
+    const uint64_t now = hostTactsNow(_frameStartZxTacts);
+    const int64_t elapsed =
+        now > _frameStartZxTacts
+            ? static_cast<int64_t>(std::llround(static_cast<double>(now - _frameStartZxTacts) * _unitsPerZxTact))
+            : 0;
+    const int64_t remaining = std::max<int64_t>(0, _frameGsCycles - elapsed);
+    reset();
+    _frameStartZxTacts = now;
+    _frameGsCycles = remaining;
+}
+
+void SoundChip_GeneralSound::sharedVolumeWrite(int channel, uint8_t volume)
+{
+    flush();
+    _channelVol[channel & 3] = volume & 0x3F;
 }
 
 void SoundChip_GeneralSound::sinkVolume(int channel, uint8_t volume)
@@ -1111,7 +1158,7 @@ void SoundChip_GeneralSound::finishLoad(const uint8_t* src)
     // Card units per host tact (DAC sink times until the next frame start):
     // configuration, rebuilt here so a restore does not depend on the
     // frames the card ran before it
-    _unitsPerZxTact = GSHostClock::unitsPerZxTact(_context, _unitsPerSecond);
+    _unitsPerZxTact = hostUnitsPerTact();
 }
 
 uint64_t SoundChip_GeneralSound::TTDHashState() const

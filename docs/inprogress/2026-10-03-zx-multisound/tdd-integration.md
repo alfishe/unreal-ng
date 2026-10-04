@@ -21,8 +21,8 @@ real software verified as a user runs it.
 |---|---|---|
 | MS-1 | `Ym2203Pair` extracted from `SoundChip_TurboSoundFM` with `masterClockHz` + ratio accumulator and the I/O port listener; TSFM bit-identical (golden digests before / after, A/B benchmark). **Done 2026-10-04** (not committed): [architecture.md](architecture.md) §4.1 "As built"; `TsfmGolden_Test` digests identical before / after, TSFM suite + TTD corpus (`tsfm_tech_support` included) green, `Ym2203Pair_Test`. A/B `BM_TurboSoundFrame_*` (4 interleaved rounds x 3 repetitions, CPU-time medians, load average 85-125): Idle 2595 / 2621 us, PlayerLoad 2460 / 2473 us, PlayerLoad_Turbo 1195 / 1201 us before / after (+0.5-1.0 %, inside the 5 % round-to-round spread) | - |
 | MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical. **Done 2026-10-04** (not committed): `GSProfile` ([architecture.md](architecture.md) §4.2 "As built"), `SoundChip_GeneralSound_Profile_Test`, GS 1.05b in `data/rom/` | - |
-| MS-3 | `MultiSoundCard` (`ICard`, `CardType` entry `multisound`), `MultiSoundLogic` wired to `Ym2203Pair`, `Saa1099`, GS, `MultiSoundDacs`, `MidiLine`, `sam2695::Synth` | slots SL-4, card logic CL-1, SAA-1, SAM-1, ML-2 |
-| MS-4 | `MultiSoundMixer` (board weights) and the five `SoundManager` rows, HUD sources | MS-3 |
+| MS-3 | `MultiSoundCard`, `MultiSoundLogic` wired to `Ym2203Pair`, `Saa1099`, GS, `MultiSoundDacs`, `MidiLine`, `sam2695::Synth`, `MultiSoundMixer`. **Done 2026-10-04** (not committed), without the slots framework: a self-contained class with an explicit port / time / audio API ([architecture.md](architecture.md) §1 "As built"); the `ICard` adapter and the `CardType` entry move to MS-4 (§3.1). `MultiSoundCard_Test` (13 tests: the requirements §1 worked example, FM muted after reset until bit 2 clears, `#FF` stops the SAA, `#DFFD`, ROM lock, DIP / `ctrlMask` options, the board weights per row, hard-panned SounDrive, GS / SounDrive on one DAC with the GS `#0B` bit, GS 1.05b boot + sample upload and playback, a bit-banged MIDI note on U4 and none from U10, "no bank", the TFM player trace); `Ym2203Pair_Test.PerChannelOutputsRenderAWholeSyncedFrameAtOnce` (the render cursor fix) | card logic CL-1, SAA-1, SAM-1, ML-2 |
+| MS-4 | Slot adapter (`ICard` + `CardType` entry `multisound`, §3.1) once slots SL-4 lands; the five `SoundManager` rows from `MultiSoundCard::Row`, HUD sources (`MultiSoundMixer` is in the card since MS-3) | MS-3, slots SL-4 |
 | MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests | MS-3, slots SL-5 |
 | MS-6 | Automation (card options through the slot surfaces; card state report `multisound` on every surface), OpenAPI, Qt card panel, recipe | MS-3, slots SL-6 |
 | MS-7 | Real-software verification (§6) with TTD recording on | MS-4, MS-5 |
@@ -43,6 +43,48 @@ real software verified as a user runs it.
 | mixer rows | `MS FM`, `MS SSG`, `MS SAA`, `MS DAC`, `MS MIDI` |
 | ROM | `data/rom/gs105b.rom` (next to `gs104.rom` / `gs105a.rom`) (GS 1.05b, from the card repository's `rom/`; checksum in the ROM README) |
 | bank | `[MIDI] Bank=` (default `data/midi/generaluser-gs.sf2`, Q4) |
+
+### 3.1 Slot adapter shape (MS-4)
+
+The slots `ICard` ([slots architecture](../2026-10-03-zx-bus-slots/architecture.md) §3.2) wraps `MultiSoundCard`
+one call to one call; the adapter owns the only state the card does not: the absolute time base.
+
+```cpp
+class MultiSoundSlotCard : public ICard
+{
+public:
+    MultiSoundSlotCard(CardContext& ctx, const CardOptions& o)      // options -> MultiSoundCardConfig (dip, gsRam,
+        : _card(ctx.emulator, ConfigFrom(ctx, o)) {}                //   ctrlMask, [MIDI] Bank, the host's AudioTstate
+                                                                    //   rate, the SoundManager's output rate)
+    const CardType& Type() const override;                          // the refdata entry "multisound"
+    uint8_t In(uint16_t port, uint64_t t, bool& drives) override  { return _card.In(port, Abs(t), drives); }
+    void Out(uint16_t port, uint8_t v, uint64_t t) override       { _card.Out(port, v, Abs(t)); }
+    uint8_t Peek(uint16_t port) const override                     { return _card.Peek(port); }
+    void BusReset(uint64_t t) override                             { _card.BusReset(Abs(t)); }
+    void FrameStart() override  { _card.FrameStart(_base + Now(), FrameTicks()); }
+    void FrameEnd() override    { _card.FrameEnd(_base + FrameTicks(), _soundManagerSamples);
+                                  _base += FrameTicks(); }          // the machine rebases its t by the frame
+    void RegisterMixerRows(SoundManager&) override;                 // five rows reading _card.Row(...)
+    void CollectTtdSerializers(std::vector<ttd::TTDSerializable*>&) override;   // MS-5
+    void Describe(CardReport& out) const override;                  // MultiSoundCardReport -> CardReport
+    // M1: the claim table calls _card.M1(pc) for lockedOnRomFetch claims (slots §4.3 "ROM-fetch lock")
+
+private:
+    uint64_t Abs(uint64_t frameRelativeT) const { return _base + frameRelativeT; }  // t = AudioTstate(z80->t)
+    MultiSoundCard _card;
+    uint64_t _base = 0;         // absolute card time of the current frame's t = 0
+};
+```
+
+- **Time:** the machine's `t` is frame-relative (`AudioTstate(z80->t)`, rebased by the frame length at every frame
+  end); the card wants absolute, monotonic ticks. The adapter keeps `_base` and adds it; `_base` is TTD state of the
+  adapter (MS-5: it goes into the card's blob set with the pair's ratio phase).
+- **Rates:** `hostTickRate` = the machine's audio T-state rate (frame / frame duration: 3.5 MHz Pentagon, 3.5469 MHz
+  128K); turbo is already removed by `AudioTstate`. A configuration change that alters it restarts the machine (slots
+  Q6), so the card never sees a rate change.
+- **Ports:** the claims of architecture §3 come from the refdata entry; the adapter forwards every claimed cycle, and
+  `Iorqge(port)` answers the claim table where the arbitration needs the card's view (the claims already carry it).
+- **Rows:** `RowFrames()` frames per `FrameEnd`, the count `SoundManager` asked for.
 
 ## 4. TTD
 

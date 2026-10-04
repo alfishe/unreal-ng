@@ -45,6 +45,52 @@ flowchart LR
 | `MidiLine` | new: line level timeline from IOA2 to the synthesizer | `core/src/emulator/sound/midi/midiline.{h,cpp}` |
 | `sam2695::Synth` | new vendored library | `core/src/3rdparty/sam2695/` |
 
+**As built (MS-3, 2026-10-04).** `MultiSoundCard` (`.../multisound/multisoundcard.{h,cpp}`) is self-contained: no slot
+framework, no `SoundManager`, no machine (the slots core is built in parallel on `zx-bus-slots`). A thin `ICard`
+adapter wraps it in MS-4 ([tdd-integration.md](tdd-integration.md) §3.1). Tests:
+`core/tests/emulator/slots/cards/multisound/multisoundcard_test.cpp` (`MultiSoundCard_Test`).
+
+| Item | As built |
+|---|---|
+| Owns | `MultiSoundLogic`, `Ym2203Pair` (3.5 MHz master clock, `hostTickRate` = the card axis), `Saa1099` (8 MHz, the clock gate follows the control byte), `SoundChip_GeneralSound` (`GSProfile::MultiSound(ram, sink = MultiSoundDacs via the card, clock = the card)`, ROM `rom/gs105b.rom`), `MultiSoundDacs`, `MidiLine` (U4 IOA2), `sam2695::Synth`, `MultiSoundMixer` |
+| Configuration | `MultiSoundCardConfig`: `options` (DIP `ym` / `saa` / `gs` / `sd`, `gsRam`, `ctrlMask`), `hostTickRate`, `outputRate`, `renderMode`, `gsRomPath`, `midiBankPath` (`[MIDI] Bank=`, default `midi/generaluser-gs.sf2`, resolved like a ROM: working dir, executable dir, resources), `midiBank` (a bank object; tests use a synthetic one). `SetOptions` switches DIP and `ctrlMask` live (the CPLD reads its DIP inputs continuously); `gsRam` sizes the GS RAM and is construction-only |
+| Bus | `Iorqge(port)`, `M1(address)` (ROM lock), `Out(port, value, t)`, `In(port, t, drives&)`, `Peek(port[, drives&])` (no side effects), `BusReset(t)` (CPLD, both YM2203, SAA, GS, DACs, MIDI line and SAM2695: they share the board reset) |
+| Frames | `FrameStart(t, frameTicks)`, `FrameEnd(t, frames = 0)` (`frames = 0`: the card counts output samples from the time, remainder carried), `Row(MultiSoundRow::Fm / Ssg / Saa / Dac / Midi)`, `RowFrames()` |
+| Report | `Describe(MultiSoundCardReport&)`: options, CPLD latches (GS fields from the GS), per YM address / status / SSG registers / key-on mirror, ratio phase, `Saa1099Report`, GS (ROM, RAM, page, mailbox, firmware ready, counters), DAC channels + pending / late events, `MidiLineReport`, MIDI (bank status `loaded` / `no bank`, name, source, error, UART counters, voices); `DescribeSynth(sam2695::SynthReport&)` |
+| Time | absolute, monotonic host ticks on the card axis (`hostTickRate`, the emulator's AudioTstate rate). The YM pair runs without `rebaseFrame` (its 64-bit axes take absolute time); the GS reads the axis through `IGSHostClock` frame-relative to the last `FrameStart`, as it reads the machine's Z80 otherwise, and its DAC sink times are turned back into absolute ones by adding the frame base |
+| Control byte | `Control` action: SAA clock gate at `t`; an FM mute change is recorded with its time and `FrameEnd` renders the FM streams in parts split at those times (output-sample granularity). The `YmAddress` action that follows is the address write the control byte also is (`addressWriteOnControlByte` is this board logic) |
+| MIDI | the pair's chip 0 (U4, selected by control bit 0 = 0) SSG listener is the `MidiLine`; the pair reports pin changes at the write's host tick, which is already the card axis, so the line feeds `Synth::WriteLine` unchanged. The synthesizer is configured with `resetDelay` (the chip's 50 ms boot window) and its effects path. A missing or unreadable bank leaves it silent; `Describe` says `no bank` and why |
+| Rows | `FrameEnd`: the GS to its frame end (its own buffer stays silent), the pair synced and rendered per channel (`renderChannels`), `Saa1099::EndFrame`, `MultiSoundDacs::EndFrame`, `Synth::Run` + `Render` (a short first frame holds the last level, the backlog covers later ones), then `MultiSoundMixer::Mix` into the five rows (int16 stereo, at most `MAX_SAMPLES_PER_FRAME` frames) |
+
+MS-2 open items, resolved:
+
+- **One owner of the GS mailbox: `SoundChip_GeneralSound`.** `MultiSoundLogic` decides whether a host cycle is a GS
+  cycle (decode, DIP, IORQGE); the card then calls the GS's `portDeviceOutMethod` / `portDeviceInMethod`, whose latches
+  and flags the GS CPU's own port accesses also change. The logic's GS-side latches (data, command, page, output,
+  flags and its DAC copy) are not used by the card: only the GS sees both sides, and its TTD blob already carries them.
+  `Describe` reports the GS's values in the latch fields.
+- **SounDrive and the GS volume register.** A SounDrive write calls `SoundChip_GeneralSound::sharedVolumeWrite(ch, 63)`
+  (new: runs the GS to the host's now, then sets the shared volume without telling the sink) and submits the DAC event
+  to `MultiSoundDacs`. GS port `#0B` therefore reads volume 3 bit 5 = 1 after a SounDrive write to channel 3
+  (`SoundriveAndGsShareTheDacsTheLaterStrobeWins`).
+- **Event times.** A host DAC event ends at its `Out` time (`kHostStrobeEndOffset` = 0: the emulator's port access
+  time); a GS event at its instruction's start in host ticks (truncated, the GS reports per instruction). The GS is run
+  to `t` before a host event at `t` is submitted, so the DACs only ever see both timelines at or past an event's time
+  (no late events in any test).
+
+Module changes made for MS-3 (each a configuration of a shared module, none forked):
+
+| Module | Change | Classic / TSFM cost |
+|---|---|---|
+| `GSProfile` | `IGSHostClock` (host tacts now, tick rate, frame length on the board's axis) and `GSProfile::hostClock`; `MultiSound(ram, sink, clock)` | none: null = the machine's Z80 through `GSHostClock`, one pointer test per host port access (never per instruction) |
+| `SoundChip_GeneralSound` | `hostUnitsPerTact` / `hostTactsNow` behind the clock; `sharedVolumeWrite`; `resetAtHostNow` (bus /RESET anchored at the host's now: card time 0 = now, the frame end runs the rest of the host frame; `reset()` alone keeps the frame base and replays the elapsed frame, the `#33` semantics) | none |
+| `Ym2203Pair::renderChannels` | the cursor may trail the chips by up to `kMaxRenderBehind` (three quarters of the FM word queue, ~3 frames) before it is re-anchored; it was 4 x `kRenderLag`, so a board that syncs a whole frame and renders it lost every word but the last per render (aliased, beating FM). Pinned by `Ym2203Pair_Test.PerChannelOutputsRenderAWholeSyncedFrameAtOnce` | none: the TSFM does not use the per-channel outputs |
+
+Known limits (for MS-4 / MS-5): the pair's SSG write queue holds 64 writes per chip; a frame with more (a MIDI stream
+bit-banged on R14) applies the oldest early to the generators, which R14 does not affect, and the pins (the MIDI line)
+change at their write time regardless. One emulated frame of the card costs about 1 ms on the dev machine (all five
+paths rendered; not profiled yet).
+
 ## 2. Time
 
 - The card's time axis is the emulator's audio time `AudioTstate(z80->t)` (turbo removed), the same axis as GS, Covox
@@ -207,7 +253,8 @@ LW stays a GS-card option).
   field for the board's GS RAM (the classic card's is `sound.gs_ram_kb`; the board's comes from the slot options).
 - **For MS-3:** the GS keeps its own host mailbox (`#B3` / `#BB`) like the classic card; `MultiSoundLogic` latches the
   same registers. The card picks one owner. A SounDrive write sets volume 3 to 63 on the board, which `#0B` reads: the
-  card must pass those writes to the GS's volume register as well as to `MultiSoundDacs`.
+  card must pass those writes to the GS's volume register as well as to `MultiSoundDacs`. **Resolved in MS-3** (§1 "As
+  built"): the GS owns the mailbox; SounDrive writes reach `sharedVolumeWrite`.
 
 ### 4.3 AY / SSG I/O port output
 
