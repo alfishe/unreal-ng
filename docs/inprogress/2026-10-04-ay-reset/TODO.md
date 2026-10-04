@@ -270,26 +270,49 @@ changes must be recorded by TTD. Nothing drives them yet, so the TTD format is u
   The TTD CI gate (`testdata/ttd/bench/v1-ci-gate.txt`) is unchanged, because no gate case is a 128K-family machine
   and nothing-connected reads are identical anyway.
 - MinGW `-fsyntax-only -Werror` is clean on the changed core files.
-- Zero cost: `BM_PortIn` gained a `#FFFD` case (R14 selected, port A an input; both models boot with the shipped
-  TSFM slot).
-  - The before / after runs were interleaved and each started only below load 12. The shared machine stayed at a
-    load of 40-110, so only 2 of the planned 2x4 rounds ran (2026-10-04).
-  - Every case stayed within +-4 %, and the ports the change cannot reach (`#00FF`, `#40FF`, `#00FE`) moved by the
-    same amount. This is layout / noise level, not a cost:
+- Zero cost: `BM_PortIn` gained a `#FFFD` case: R14 selected, port A an input, both models on the shipped TSFM slot.
+  - A/B complete: 8 interleaved rounds (2026-10-04). Before is `core-benchmarks-before` (80aee3741 plus the benchmark
+    case); after is this change. The order per round ran A B A B B A B A in pairs: rounds 1-2 before-first, 3-4
+    after-first, 5-6 before-first, 7-8 after-first.
+  - **The rounds ran under load.** Rounds 1-2 started at load 11.6-12.0 (the end of each round was not sampled). The
+    load never dropped below 12 again, so on the owner's decision rounds 3-8 ran at once, at 1-minute loads of 55-87.
+    The numbers are only relative: both binaries ran in the same conditions, alternating.
 
-| Case | before median us | after median us | after/before |
-|---|--:|--:|--:|
-| 128k IN #00FF | 56.58 | 54.83 | -3.1 % |
-| 128k IN #40FF | 59.53 | 58.56 | -1.6 % |
-| 128k IN #00FE | 57.42 | 55.29 | -3.7 % |
-| 128k IN #FFFD (R14, wired) | 43.31 | 43.18 | -0.3 % |
-| PENTAGON IN #00FF | 49.23 | 49.90 | +1.4 % |
-| PENTAGON IN #40FF | 49.22 | 51.23 | +4.1 % |
-| PENTAGON IN #00FE | 45.81 | 44.88 | -2.0 % |
-| PENTAGON IN #FFFD (R14, unwired) | 37.32 | 38.46 | +3.0 % |
+| Round | Order | 1-min load (start -> end) |
+|---|---|---|
+| 1 | before, after | 11.75 -> 11.56 |
+| 2 | before, after | 11.97 -> 11.83 |
+| 3 | after, before | 55.74 -> 59.68 |
+| 4 | after, before | 59.68 -> 57.37 |
+| 5 | before, after | 57.37 -> 74.33 |
+| 6 | before, after | 74.33 -> 87.21 |
+| 7 | after, before | 87.21 -> 76.35 |
+| 8 | after, before | 76.35 -> 70.04 |
+
+  Medians over the 8 rounds (CPU time per 1000 `IN`). "Paired" is the median of the 8 per-round after/before ratios:
+
+| Case | before median us | after median us | after/before (medians) | paired median | change reaches it |
+|---|--:|--:|--:|--:|---|
+| 128k IN #00FF | 58.87 | 57.23 | -2.8 % | -2.5 % | no |
+| 128k IN #40FF | 61.57 | 60.81 | -1.2 % | -1.5 % | no |
+| 128k IN #00FE | 60.37 | 57.40 | -4.9 % | -4.4 % | no |
+| 128k IN #FFFD (R14, wired) | 45.13 | 45.05 | -0.2 % | +0.6 % | yes: the board AND |
+| PENTAGON IN #00FF | 51.73 | 51.77 | +0.1 % | +0.7 % | no |
+| PENTAGON IN #40FF | 51.45 | 52.51 | +2.1 % | +3.4 % | no |
+| PENTAGON IN #00FE | 48.11 | 47.15 | -2.0 % | -1.9 % | no |
+| PENTAGON IN #FFFD (R14, unwired) | 39.04 | 39.99 | +2.4 % | +2.8 % | yes: one null test |
+
+- **Reading.**
+  - On the Pentagon, `IN #FFFD` is +2.8 % paired. `IN #40FF` is +3.4 %, and that is a path the change cannot reach (no
+    AY on it). The two shifts are the same size and sign, so the #FFFD shift is the binary's layout, not the pointer
+    test.
+  - On the 128K, the wired read, which runs more code, is +0.6 %.
+  - The unreachable 128K paths moved -1.5 % to -4.4 %, the other way.
+  - No case shows a cost above the layout noise of paths that do not run the changed code. Under this load a
+    difference below about 3 % cannot be resolved.
 
   Structural argument: on a machine without wiring, the only new code is one predicted-not-taken pointer test. It runs
   only when a read of R14 / R15 reaches the chip. Registers R0-R13 now return before the port-direction test (one
-  compare fewer than before). Writes, `applyRegister` and the render loop are untouched. The remaining rounds can be
-  re-run on a quiet machine with `core-benchmarks-before` (kept in `cmake-build-agent-release/bin`) against
-  `core-benchmarks`, filter `BM_PortIn/[12]/`.
+  compare fewer than before). Writes, `applyRegister` and the render loop are untouched. For a quieter rerun, compare
+  `core-benchmarks-before` (kept in `cmake-build-agent-release/bin`) against `core-benchmarks` with the filter
+  `BM_PortIn/[12]/`.
