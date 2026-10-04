@@ -301,7 +301,7 @@ Findings and deviations from the design (applied in the documents named):
   first" (tdd-video §3, hardware-reference §6.3; T-VID-2 checks the high nibble).
 - **Blank square = pen `#400`** (text paper colour 0, the PLD's `DCOL` clear; MAME the same), not a
   forced black (tdd-video §3).
-- **HOLD after power-on = `#77`** (no shift): the S1 decoder had 0, which is a 14-pixel / 7-line offset;
+- **HOLD after power-on = `#77`** (no shift): the S1 decoder had 0, which is a 14-pixel / 14-line offset (the vertical step is 2 lines per unit, fixed 2026-10-03);
   MAME starts with no offset and the BIOS sets HOLD from CMOS `#1F`.
 - **Hook 3 is the renderer only**: `SprinterPldConfiguration::VideoRenderer()`; the INT source stays
   Standard's until a module needs another rule (tdd-video §1).
