@@ -13,7 +13,15 @@ Design: [tdd.md](tdd.md) §6.
 | Z3b HTTPS for the S3's HTTP GET and redirects to HTTPS | done 2026-10-04 ([tdd.md](tdd.md) §7.5 "HTTPS"): host-side TLS (`hosttls.*`, OpenSSL, optional `UNREAL_HOST_TLS`), plaintext journaled; tests `HostTls_Test` (3, loopback TLS server), `ZiFiNativeModule_Test` (HTTPS, redirect, downgrade) |
 | Z3b weather (S3 `WEATHER_GET`), the ESP-01S WebDAV server, the ESP-01S NTPTIME first boot | done 2026-10-04 (branch zifi-plugins): `zifiweather.*`, `zifiwebdavserver.*`, `native_session.weather` / `.webdav` on every surface, recipe; tests `ZiFiWeather_Test` (7), `ZiFiNativeModuleWeather_Test` (4), `ZiFiWebDavServer_Test` (10); real plugins WEATHER.WMF, NTPTIME.WMF, ZIFIWDAV.WMF (rows below) |
 | Z3b WC Update (S3 `WCU_START` / `APPLY` / `STOP` / `SYNC`) | done 2026-10-04 ([tdd.md](tdd.md) §7.5 "WC Update"): `ZiFiWcUpdater` (the firmware's updater as a C++20 coroutine, TTD by a primitive log), `ZiFiHttpFetch` (its HTTPS GET on its own socket and resolver), `zifigit.*` (git SHA-1, the GitHub JSON), `file_bridge.wc_update` on every surface; tests `ZiFiWcUpdater_Test` (9, fake GitHub + fake plugin); real `WCUPDATE.WMF` v1.0 against GitHub byte-exact |
-| Z3b SMB (S3), the online update | open (they answer "not emulated") |
+| Z3b SMB (S3), the online update | designed 2026-10-04 ([tdd-smb-online-update.md](tdd-smb-online-update.md)), PLAN #92; phases below (they answer "not emulated" until then) |
+| U1 online update check: `ZiFiOnlineUpdater` (manifest over HTTPS, version compare, events `65`), status, surfaces, recipe | open (S) |
+| U2 online update install: download, header + SHA-256, SAME = real reinstall + restart, else `update:flash not emulated` | open (S; after U1) |
+| B0 `Forward=udp:<host>:<guest>` in the virtual network (every surface, TTD) | open (S) |
+| B1 SMB core: own SMB 3.0.2 server, NTLMv2, signing, sessions, trees, srvsvc, `SMB_START` / `SMB_STOP`, events 62 / 63 | open (M) |
+| B2 SMB files: the file commands, credits, compounds, PENDING, the VFS mapping incl. `44 FAT_WINDOW`, caches, event 64 | open (L; after B1) |
+| B3 SMB TTD (bridge section v3), `file_bridge.smb` on every surface + Qt, recipe | open (M; after B2) |
+| B4 SMB conformance (smbclient, impacket, libsmb2 scenarios, Finder, Windows 24H2) and the real `ZIFISMB.WMF` under WC with TTD | open (M; after B3) |
+| B5 discovery: NBNS, LLMNR, WS-Discovery + HTTP 5357 in the virtual network | open (S; after B1, B0) |
 | Z4 ESP-AT 2.2.x dialect | done 2026-10-04 ([tdd.md](tdd.md) §7.1): `atdialect.*`, per-module firmware `AT,<firmware>`, the ESP-01's ESP8266 1 MB default; tests `AtDialect_Test`, `ComPortSpec_Test` (+2) |
 | Z4 open: the kit's "2.2.1" vs Espressif's v2.2.1.0 | ask the kit's author ([tdd.md](tdd.md) §7.4) |
 | Z5 end-to-end with the real programs | done 2026-10-04 with the programs as a user runs them, real internet ([Z5 results](#z5-results-2026-10-04)); the file-bridge plugins (FTP / SMB / WebDAV / WC Update) fail until Z3b; automated tests open |
