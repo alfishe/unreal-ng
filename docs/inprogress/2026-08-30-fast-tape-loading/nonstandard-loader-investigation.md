@@ -258,7 +258,7 @@ impact today; recorded for completeness.
   (`[ROM.pentagon]`) uses `rom/48for128.rom`, which has `#28` there, so the loader wipes memory
   with `#15` and derails (solid red screen, cursor stays at block 2). MAME's Pentagon has `#20`
   and loads it. Annotated listing:
-  [`docs/disasm/software/dizzy-x-kid-dr-loader/`](../../disasm/software/dizzy-x-kid-dr-loader/README.md).
+  [`docs/disasm/games/dizzy-x-kid-dr-loader/`](../../disasm/games/dizzy-x-kid-dr-loader/README.md).
   Decision (owner): no ROM change - the protection works as its authors intended.
 - **O2: TIMOFEY on 48K** returns to BASIC in every configuration. It works on Pentagon. Possibly
   a 128K-only release; check the loader before calling it a defect.
