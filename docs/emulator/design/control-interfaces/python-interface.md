@@ -258,6 +258,12 @@ class Emulator:
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
         alarm, dump (hex lines). Peeked: never clears register C. available=False without a clock"""
 
+    def profi_state(self) -> dict:
+        """ZX Profi board chips: board (v3 / v5), port_map (ext_ports cpm / sys / v003, dos_latch, cpm,
+        rom14, hires, extended_map, long_ports_beside_vg93), ppi8255 (control, port directions and
+        latches), pit8253 (counters[]: mode, count, out, gate; v5), usart8251 (mode, command, baud,
+        status flags, byte counters, com_interrupt_enable = #B3 D0; v5). available=False elsewhere"""
+
     def rtc_read(self, start: int, count: int = 1) -> bytes:
         """CMOS cells as the guest reads them, without side effects. ValueError without a
         clock or for a range outside the chip"""

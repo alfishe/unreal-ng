@@ -261,6 +261,30 @@ CLI `network set com_port=plug`, Lua `network_configure{com_port="tcp:127.0.0.1:
 `machine.serial_port = "profi-8251"` and `machine_serial` (flavor `usart8251`, the peer, `baud`, `frame_bits`,
 `rts`, `dtr`, `bytes_in`, `bytes_out`, `lost` = overruns). The 8253, the 8251 and the peer are recorded in TTD.
 
+### Board chip report (`profi`)
+
+One report for the whole board. Checked live through the WebAPI and the CLI on `PROFI-PLUS` (BIOS Plus programs the 8253
+counters and the 8251 at start-up), on `PROFI3` (no COM port: `pit8253` and `usart8251` are absent) and on `48K` (not a
+Profi: 404); the MCP, Lua and Python calls are the same report and are built, not yet driven live:
+
+| Surface | Call |
+|:--|:--|
+| CLI | `state profi` |
+| WebAPI | `GET /api/v1/emulator/{id}/state/profi` (404 with the reason on a machine that is not a Profi) |
+| MCP | `inspect_state` with `aspects: ["profi"]` |
+| Lua / Python | `profi_state()` / `emu.profi_state()` |
+
+```json
+{"tool": "inspect_state", "arguments": {"aspects": ["profi"]}}
+```
+
+The answer has `board` (`v5` / `v3`), `port_map` (`ext_ports` = `cpm` / `sys` / `v003`, `dos_latch`, `cpm`, `rom14`,
+`hires`, `extended_map` = the long port map answers now, `long_ports_beside_vg93` = V0.03 only: TR-DOS with ROM14 = 1),
+`ppi8255` (control word and the direction / output latch of A, B, C upper, C lower), `pit8253` (`counters[]`: `mode`,
+`count_register`, `count`, `out`, `gate`, `counting`, `output_period_clk`) and `usart8251` (`mode_word`, `command_word`,
+`baud`, `data_bits`, `status` flags, `bytes_in`, `bytes_out`, `overruns`, `com_interrupt_enable` = the `#B3` latch D0).
+It only reads: nothing is cleared or advanced, so it is safe in the middle of a TTD replay.
+
 ## Pitfalls
 
 - **Many ports depend on the mode.** EXT mode = `#DFFD.5` (CPM) and
