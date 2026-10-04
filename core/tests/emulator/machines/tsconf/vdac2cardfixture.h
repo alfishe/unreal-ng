@@ -98,6 +98,7 @@ protected:
             tacts -= room;
             _z80->t = TsConfEngine::kFrameTacts * multiplier;
             _decoder->CatchUpEngine();
+            _z80->t = 0;  // Core rebases Z80::t first (AdjustFrameCounters), then calls the hook: nothing is left over
             _decoder->GetEngine().OnMachineFrameRollover(TsConfEngine::kFrameTacts * multiplier);
             _position = 0;
         }

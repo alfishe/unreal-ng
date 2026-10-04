@@ -77,6 +77,32 @@ TEST_F(TsConfDeviceState_Test, DBG1_RawRegistersAndProgrammedDma)
     EXPECT_EQ(regs->items[TsConfReg::DmaCtrl].i, 0xF9);
 }
 
+/// DBG-4b: a descriptor behind the third LEAP is not processed by the TSU: its layer is "ended" and neither of
+/// the two counts (the TSU view and the video summary) includes it - they agree
+TEST_F(TsConfDeviceState_Test, DBG4b_DescriptorsBehindTheThirdLeapAreEnded)
+{
+    TsConfState& ts = _decoder->GetState();
+    std::memset(ts.sfile, 0, sizeof(ts.sfile));
+    ts.sfile[0] = 0x4000;           // LEAP: ends S0
+    ts.sfile[3] = 0x4000;           // LEAP: ends S1
+    ts.sfile[6] = 0x2000;           // active, S2
+    ts.sfile[9] = 0x4000;           // the third LEAP: ends S2 and the sprites
+    ts.sfile[12] = 0x2000;          // active, never processed
+    ts.sfile[84 * 3] = 0x2000;      // nor this one
+
+    const StateNode tsu = DeviceState::TsConfTsu(_context);
+    const StateNode* sprites = tsu.find("sprites");
+    ASSERT_NE(sprites, nullptr);
+    EXPECT_EQ(sprites->items[2].find("layer")->s, "s2");
+    EXPECT_EQ(sprites->items[3].find("layer")->s, "s2") << "the LEAP descriptor is in the layer it ends";
+    EXPECT_EQ(sprites->items[4].find("layer")->s, "ended");
+    EXPECT_EQ(sprites->items[84].find("layer")->s, "ended");
+    EXPECT_EQ(tsu.find("active_sprites")->i, 1);
+
+    const StateNode state = DeviceState::TsConf(_context);
+    EXPECT_EQ(state.find("video")->find("tsu")->find("active_sprites")->i, 1) << "the summary counts the same";
+}
+
 TEST(TsConfDeviceStateOther_Test, DBG1_UnavailableOnOtherMachines)
 {
     EmulatorContext context(LoggerLevel::LogError);
