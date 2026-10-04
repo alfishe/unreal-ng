@@ -15,7 +15,7 @@ machines here
 | Frame (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
 
 **`PROFI-PLUS`** (alias `PROFIPLUS`, a machine variant, Machine menu in unreal-qt): a `PROFI` with Djoni's V0.03
-port decoder PROM (`[PROFI] ExtPorts=sys`: the extended ports also from the SYS ROM) running Vadim's ROM BIOS Plus
+port decoder PROM (`[PROFI] ExtPorts=v003`: the extended ports also from the SYS ROM, and the RTC / long ports in TR-DOS) running Vadim's ROM BIOS Plus
 0.41h1 (`rom/profi/bios-plus-041h1.rom`). It boots PQ-DOS from a floppy or an IDE disk (`ide0.master`) and runs DOS
 Navigator. Its start-up board test passes the FDC, drives, parallel port (8255), serial port (8253 + 8251, see
 [Serial port](#serial-port-com)), RTC and AY. PQ-DOS disks and a 2 GB HDD image: see
@@ -187,7 +187,7 @@ curl -s -X POST "$BASE/emulator/$ID/switches" -H 'Content-Type: application/json
 
 CLI: `switch turbo on`; Lua / Python: `set_switch("turbo", true)`, `get_switch("turbo")`; Qt: Machine > TURBO
 Switch; `[PROFI] Turbo=1` turns it on at power-on. The v5 CP/M switch works the same way (`"cpm"`, Machine > CP/M
-Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. `[PROFI] ExtPorts=sys` decodes the extended ports (VG93 `#83..`, RTC, IDE) from the SYS ROM too, as Karabas Pro: ROM BIOS Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk (default `cpm`; `docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md`). In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
+Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. `[PROFI] ExtPorts=sys` decodes the extended ports (VG93 `#83..`, RTC, IDE) from the SYS ROM too, as Karabas Pro: ROM BIOS Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk (default `cpm`; `docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md`). `ExtPorts=v003` is Djoni's V0.03 PROM of `PROFI-PLUS`: `sys` with CP/M off, and with TR-DOS on and ROM14 = 1 the RTC (`#9F #BF #DF`), 8255, IDE and VG93 `#83 #A3 #C3` answer beside the VG93 at `#1F..#7F` (`#E3 #E7 #EB #EF #F3 #F7 #FB #FF` stay the system register). In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
 its DRAM slot), code in ROM 2x.
 
 ## WebAPI
@@ -232,7 +232,7 @@ TTD on Profi follows the standard recipes —
 
 The v5 board (`PROFI`, `PROFI-PLUS`) has an RS-232 port: a KR580VV51A (8251 USART) whose clock is counter 0 of a
 KR580VI53 (8253 timer) running at 1.5 MHz. It answers only in the extended port map (CP/M + ROM14; with
-`[PROFI] ExtPorts=sys`, as on `PROFI-PLUS`, also in the SYS ROM). The v3 board has none.
+`[PROFI] ExtPorts=sys`, or `v003` as on `PROFI-PLUS`, also in the SYS ROM). The v3 board has none.
 
 | Port (low byte) | Device |
 |:--|:--|

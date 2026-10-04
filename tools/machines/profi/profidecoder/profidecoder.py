@@ -22,12 +22,18 @@ Outputs (active low) and what they select, from the consumers on the same schema
 Each bit order is the only one under which the table makes sense: the other one puts the system register on
 #1F..#7F.
 
-usage: profidecoder.py <v3.2 PROM .bin> <v4/v5 PROM .bin>
+Djoni's replacement PROM "V0.03" (Profi+ / PROFI-PLUS, optional third argument) is "coded": the data bits are stored in
+the wiring order, the reverse of the v5 printed table (bit0 = system register, 1 = VG93, 2 = extended group, 3 = 8255).
+Only that order keeps the TR-DOS VG93 on #1F..#7F, as Djoni's port description (profi-ports-v0.03.pdf) lists. It is
+compared with unreal-ng's `[PROFI] ExtPorts=sys` rule (the extended map also while the SYS ROM runs).
+
+usage: profidecoder.py <v3.2 PROM .bin> <v4/v5 PROM .bin> [<V0.03 PROM .bin>]
 """
 import sys
 
 V5_BITS = {3: 'SYS', 2: 'FDC', 1: 'EXT', 0: '8255'}
 V3_BITS = {0: 'SYS', 1: 'FDC', 2: 'BUF7FFD', 3: '8255'}
+V003_BITS = {0: 'SYS', 1: 'FDC', 2: 'EXT', 3: '8255'}
 EXT_P = {0: 'FDC', 1: '8255', 2: 'IDE', 3: 'COM', 4: 'P4', 5: 'P5', 6: 'P6', 7: 'RTC'}
 
 
@@ -46,12 +52,12 @@ def prom_devices(prom, bits, port, dos, cpm, a3):
     return sorted(devs)
 
 
-def unrealng_devices(port, dos, cpm, rom14):
+def unrealng_devices(port, dos, cpm, rom14, ext_sys=False):
     """unreal-ng today (PortDecoder_Profi, one board): FDC / system port / 8255-Covox / extended devices."""
     p1 = port & 0xFF
     devs = []
     dosports = dos or cpm                      # CF_DOSPORTS = DOS latch or CP/M
-    ext = cpm and rom14                        # IsExtMode()
+    ext = (cpm and rom14) or (ext_sys and dos and not rom14)    # IsExtMode(); ExtPorts=sys adds the SYS ROM state
     if ext and (p1 & 0x9F) == 0x9F:
         devs.append('RTC')
     elif dosports:
@@ -96,20 +102,32 @@ def port_map(prom, bits, board):
     return '\n'.join(out)
 
 
-def compare(prom):
+def compare(prom, bits=V5_BITS, ext_sys=False):
     diffs = []
     for cpm, dos, rom14 in modes('v5'):
         for p in range(256):
-            a = prom_devices(prom, V5_BITS, p, dos, cpm, rom14)
+            a = prom_devices(prom, bits, p, dos, cpm, rom14)
             a = [x for x in a if x in ('FDC', 'SYS', '8255', 'RTC', 'IDE')]
-            b = unrealng_devices(p, dos, cpm, rom14)
+            b = unrealng_devices(p, dos, cpm, rom14, ext_sys)
             if (p & 3) == 3 and a != b:
                 diffs.append((cpm, dos, rom14, p, a, b))
     return diffs
 
 
+def print_compare(title, prom, bits, ext_sys):
+    print(title)
+    groups = {}
+    for cpm, dos, rom14, p, a, b in compare(prom, bits, ext_sys):
+        groups.setdefault((cpm, dos, rom14, tuple(a), tuple(b)), []).append(p)
+    if not groups:
+        print('  no differences')
+    for (cpm, dos, rom14, a, b), ps in sorted(groups.items()):
+        print(f'  CP/M={cpm} DOS={dos} ROM14={rom14}: PROM {list(a) or "nothing"} vs unreal-ng {list(b) or "nothing"} at '
+              + ' '.join(f'#{p:02X}' for p in ps))
+
+
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
     v3 = open(sys.argv[1], 'rb').read()
     v5 = open(sys.argv[2], 'rb').read()
@@ -117,15 +135,13 @@ def main():
     print(port_map(v3, V3_BITS, 'v3'))
     print('=== v4 / v5 port decoder PROM (ports with A1 A0 = 11)')
     print(port_map(v5, V5_BITS, 'v5'))
-    print('=== v5 PROM vs unreal-ng today (low byte, A1 A0 = 11; COM and the control register are not modeled)')
-    groups = {}
-    for cpm, dos, rom14, p, a, b in compare(v5):
-        groups.setdefault((cpm, dos, rom14, tuple(a), tuple(b)), []).append(p)
-    if not groups:
-        print('  no differences')
-    for (cpm, dos, rom14, a, b), ps in sorted(groups.items()):
-        print(f'  CP/M={cpm} DOS={dos} ROM14={rom14}: PROM {list(a) or "nothing"} vs unreal-ng {list(b) or "nothing"} at '
-              + ' '.join(f'#{p:02X}' for p in ps))
+    print_compare('=== v5 PROM vs unreal-ng today (low byte, A1 A0 = 11; COM and the control register are not modeled)',
+                  v5, V5_BITS, False)
+    if len(sys.argv) == 4:
+        v003 = open(sys.argv[3], 'rb').read()
+        print('=== Djoni V0.03 PROM (ports with A1 A0 = 11)')
+        print(port_map(v003, V003_BITS, 'v5'))
+        print_compare('=== V0.03 PROM vs unreal-ng with [PROFI] ExtPorts=sys (low byte, A1 A0 = 11)', v003, V003_BITS, True)
 
 
 if __name__ == '__main__':

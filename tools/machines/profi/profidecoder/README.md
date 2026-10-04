@@ -13,6 +13,12 @@ python3 profidecoder.py ../../../../testdata/machines/profi/decoder/556rt4-v3.2.
                         ../../../../testdata/machines/profi/decoder/556rt4-v4-v5.bin
 ```
 
+A third argument, Djoni's V0.03 PROM of the Profi+ (`556rt4-port-decoder-v0.03-djoni-coded.bin`, in the owner's
+collection under `profi/port-decoder/`), adds its port map and compares it with unreal-ng under `[PROFI] ExtPorts=sys`.
+The file is "coded": its data bits run in the wiring order, the reverse of the v5 printed table (bit0 = system
+register, 1 = VG93, 2 = extended group, 3 = 8255); that is the only order that keeps the TR-DOS VG93 at `#1F..#7F`,
+as Djoni's port description lists. `ExtPorts=v003` follows this table.
+
 The two tables are in [testdata/machines/profi/decoder/](../../../../testdata/machines/profi/decoder/README.md):
 - the v3.2 PROM is a dump, made by MDESK in 2009;
 - the v4/v5 PROM is transcribed from the two manuals.

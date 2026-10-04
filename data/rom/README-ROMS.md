@@ -68,7 +68,7 @@ that the emulator works out of the box, on the following basis:
   | `bios10-kondor504.rom` | v5 | as `bios10.rom`, read off a Kondor 5.04 board; the 48K page's NMI test at `#006D` is `JR Z` (`#28`), not `JR NZ` | `10DA289A` | `f4ab0dd91cd7d207879767d4fe5bf30e` | xpeccy-plus `profi-bios10.rom` |
   | `bios20.rom` | v5 | ROM Bios 2.0 of 17.04.94, TR-DOS 5.04T | `36F5F7BD` | `02877e403f22d10d12ef0296ccb96f60` | xpeccy-plus `profi-bios20.rom`, ZXMAK2 `PROF-M.ROM` |
   | `bios20-font.rom` | v5 | as `bios20.rom` with one glyph of the 48K font changed (`#3D99`-`#3D9A`) | `DA81DED7` | `2f7549cd9fff863f68867f7d944de2a1` | - |
-  | `bios-plus-041h1.rom` | v5 + V0.03 decoder (`PROFI-PLUS`) | not factory: ROM-BIOS PLUS 0.41h1 by Vadim (C) 1998-2025, "with patched RTC", for PQ-DOS; needs the extended ports in the SYS ROM (`[PROFI] ExtPorts=sys`). From [Karabas-Pro](https://github.com/andykarpov/karabas-pro) `firmware/src/fpga/profi/rom/bios_pqdos.rom` (commit `0c1bd2f`, 2026-02-15) | `594E10FA` | `1246daf2605704131b5abb239c6115bb` | pico-spec `src/roms/profi/` |
+  | `bios-plus-041h1.rom` | v5 + V0.03 decoder (`PROFI-PLUS`) | not factory: ROM-BIOS PLUS 0.41h1 by Vadim (C) 1998-2025, "with patched RTC", for PQ-DOS; needs the extended ports in the SYS ROM (`[PROFI] ExtPorts=v003`; `sys` works too). From [Karabas-Pro](https://github.com/andykarpov/karabas-pro) `firmware/src/fpga/profi/rom/bios_pqdos.rom` (commit `0c1bd2f`, 2026-02-15) | `594E10FA` | `1246daf2605704131b5abb239c6115bb` | pico-spec `src/roms/profi/` |
 
 * **ZX Profi PROFI-XT keyboard controller** (`profixt/profi-xt-v1.27.rom`): firmware "JV KRAMIS (C) 28.10.1992
   vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever
