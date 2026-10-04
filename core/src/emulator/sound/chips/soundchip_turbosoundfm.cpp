@@ -542,6 +542,9 @@ constexpr size_t kTsfmStateSize =
 static_assert(kTsfmStateSize == 2008,
               "TSFM state size must match design §8.2 + render-phase fixes + v4 timeline + v5 frame progress (2008 bytes)");
 
+static_assert(1 + 1 + kRenderPhaseStateSize == SoundChip_TurboSoundFM::kTsfmStateHeaderSize,
+              "the engine descriptor's time fields follow the blob header (TTDDescribe)");
+
 constexpr uint8_t kTsfmStateVersion = 5;
 
 uint8_t EncodeBoardByte(const TsfmBoard& b)

@@ -46,8 +46,15 @@ real software verified as a user runs it.
 
 ## 4. TTD
 
-- Blobs: `MultiSoundCard` (logic latches, DACs, YM pair, MIDI line), `Saa1099`, `Sam2695`, GS (id 5). New ids are taken
-  in landing order from the next free ones (48+ on master today; the ttd-engine branch's registry rules apply).
+- Blobs: `MultiSoundCard` (logic latches, DACs, YM pair, MIDI line), `Saa1099`, `Sam2695`, the board's GS. New ids are
+  taken in landing order from the next free ones (58+ on master today, 2026-10-04); the time-travel engine binds
+  devices by `PeripheralId` and regions by `TTDRegionId`, so the board's GS gets its own peripheral id and RAM region id
+  (17+) next to a classic GS card (architecture §4.2).
+- Engine contract (TTD v2): every device's `TTDDescribe` matches its blob (`CheckDeviceTable`) and the card joins
+  `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` once registered. Ready on the branch: the
+  YM pair's time fields (`Ym2203Pair::TTDTimeFields`) and sync check (`Ym2203Pair::TTDSyncedTime`), the GS profile's
+  descriptor and RAM region (architecture §4.1, §4.2). The card's blob places the pair's chips at a known offset and
+  passes it to `TTDTimeFields`; `runsBehindCpu` because the pair and the GS run behind the CPU.
 - The card's options and the bank SHA-256 are part of the session's configuration fingerprint; a session recorded with
   another bank or other options is refused with the difference (slots §8).
 - Tests (`core/tests/debugger/ttd/ttdmultisound_test.cpp`):
@@ -90,6 +97,6 @@ Each run as a user would run it, TTD recording on (rolling limit), results in th
 | Risk | Mitigation |
 |---|---|
 | `Ym2203Pair` extraction changes TSFM output | golden digests and the TSFM test suite unchanged before / after; one merge for the extraction alone |
-| GS RAM 1-2 MB in every TTD checkpoint | TTD v2 per-device dedup; GS RAM as a memory region is PLAN #45 |
+| GS RAM 1-2 MB in every TTD checkpoint | resolved by the time-travel engine: the GS RAM is a memory region of 4 KB pieces, only written pieces are stored |
 | MIDI bit-bang timing sensitive to contention and turbo | the line follows emulated time only; tests at several CPU speeds; a mismatch is a CPU timing bug, investigated as such |
 | Unknown absolute levels of SSG / SAA / SAM | calibrate per chip module from datasheets; owner measurement if available; weights between sources from the schematic are exact |

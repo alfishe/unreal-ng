@@ -131,6 +131,22 @@ Proof of no change:
   (`ttdcorpus_test.cpp`, the `tsfm_tech_support` fixture included): the TSFM blob is byte-identical.
 - A/B of `BM_TurboSoundFrame_*` (Pentagon, TSFM): see the MS-1 row of [tdd-integration.md](tdd-integration.md).
 
+**After the time-travel engine (TTD v2) landed on master (2026-10-04).** The engine gave the TSFM a device descriptor
+(`TTDDescribe`: four time fields, `runsBehindCpu`) and a sync check (`TTDSyncedTime`), written against the fields MS-1
+had moved into the pair. Both now live in the pair, the TSFM only places them:
+
+| Engine piece | In the pair | In the TSFM |
+|---|---|---|
+| Time fields (ymfm's envelope counter u32 at payload +5, clock count u8 at +15, per chip) | `Ym2203Pair::TTDTimeFields(out, chipsOffset)`; `kChipYmfmOffset` (19) and `kStateChipsOffset` (17, the pair's own blob) | `TTDDescribe` passes `kTsfmStateHeaderSize` (50, `static_assert`ed against the blob's header); offsets 74 / 84 / 660 / 670 as on master |
+| Sync check | `Ym2203Pair::TTDSyncedTime(now, offset)`: synced to `now`, or the next sync adopts it (after a reset or restore) | `TTDSyncedTime` asks the pair with `nowT()` |
+
+The pair's own blob (the MultiSound's, ratio phase included) meets the same contract: with
+`TTDTimeFields(kStateChipsOffset)` it passes the engine's `CheckDeviceTable` (`Ym2203Pair_Test.PairBlobMatchesItsDescriptorAndItsTimeFieldsAdvance`).
+The ratio phase is a remainder, not a counter, so it is not a time field. Equality with master: `TsfmGolden_Test` (digests
+captured on `dd93445d8`, before the engine) passes unchanged on master's own binary (`6de37a50c`) and on the branch, so
+the engine did not change TSFM output and the branch matches it; `Ym2203Pair_Test.TsfmDescriptorTimeFieldsAreMastersThroughThePair`
+pins master's descriptor values.
+
 ### 4.2 GS profile
 
 | Parameter | Classic (default) | MultiSound |
@@ -177,6 +193,18 @@ LW stays a GS-card option).
   rounds; to repeat on a quiet machine).
 - **TTD:** the blob layout is unchanged (same fixed part; timing fields in profile units; RAM image 1-2 MB). The
   profile is configuration, not state.
+- **Time-travel engine (TTD v2, landed on master 2026-10-04):** the profile meets the engine's contracts with no
+  change to them. The descriptor size follows `TTDStateSize()` (95 + 1-2 MB), `firmwareFingerprint` is the loaded
+  ROM's (GS 1.05b for the board), the RAM is one engine region of 4 KB pieces (`TTDRegions`; 256 / 512 pieces at
+  1 / 2 MB) and the engine's blob is the 95-byte fixed part; every RAM write goes through `writeMem`, whose armed
+  tracker marks the piece through the CPLD map as through the classic one; `TTDSyncedTime` works in profile units.
+  `finishLoad` also rebuilds the card-units-per-host-tact factor (DAC sink times), so a restore does not depend on the
+  frames run before it (classic: unused until the next frame start recomputes it). Tests:
+  `MultiSound_MatchesTheEngineDescriptorWithItsRamAsRegion`, `MultiSound_RegionTrackingMarksEveryChipAndRestoresWithoutTheBlobRam`.
+  **Left for MS-5** (registration): the engine binds regions by `TTDRegionId` and devices by `PeripheralId`, so the
+  board's GS, next to a classic GS card, needs its own ids (next free in each table when it lands: region 17+,
+  peripheral 58+), an instance / region name of its own (today both say `generalsound` / `gs.ram`) and a fingerprint
+  field for the board's GS RAM (the classic card's is `sound.gs_ram_kb`; the board's comes from the slot options).
 - **For MS-3:** the GS keeps its own host mailbox (`#B3` / `#BB`) like the classic card; `MultiSoundLogic` latches the
   same registers. The card picks one owner. A SounDrive write sets volume 3 to 63 on the board, which `#0B` reads: the
   card must pass those writes to the GS's volume register as well as to `MultiSoundDacs`.
@@ -257,7 +285,7 @@ dependent): `ym` -> `ay-socket` role (shadowing) and `midi`; `saa`; `gs`; `sound
 | `MultiSoundCard` | new id (next free when it lands; 48-50 free on master today, shared with SAA1099 / SAM2695 below) | logic latches (chip select, read mode, FM mute, SAA clock, ROM lock flag), DAC channels, the YM pair (both chips, ratio phase), the MIDI line state |
 | `Saa1099` | new id | chip state (tdd-saa1099 §5), saved through the card |
 | `Sam2695` | new id | synthesizer state incl. bank SHA-256 (tdd-libsam2695 §4) |
-| General Sound | 5 (existing) | unchanged layout; RAM 1-2 MB (the GS RAM as a TTD v2 memory region is PLAN #45; until then the blob is large, which the TTD v2 engine's per-device dedup handles) |
+| General Sound | 5 (existing; the board's GS needs its own id and region id, §4.2) | unchanged layout; RAM 1-2 MB, recorded by the time-travel engine as a memory region of 4 KB pieces (the engine's blob is the 95-byte fixed part) |
 
 The MIDI line itself is driven by YM register 14 writes, which the port journal records; replay re-executes them.
 

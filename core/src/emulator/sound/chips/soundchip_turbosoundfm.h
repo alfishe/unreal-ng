@@ -409,34 +409,24 @@ public:
         return ttd::PeripheralId::TSFM;
     }
 
-    /// ymfm's counters that advance with the FM clock: the envelope counter
-    /// (+4 per 3 FM clocks) and the clock count (u8), per chip. Offsets in
-    /// TTDSaveState: 50 bytes of header, then per chip 586 bytes (address,
-    /// fmClockPhase, two timers, busy, the ymfm payload's size, the payload,
-    /// the AY); in the ymfm payload the envelope counter is at +5, the clock
-    /// count at +15 (fm_engine_base::save_restore). The engine stores each as
-    /// its residual from a line
+    /// ymfm's counters that advance with the FM clock, per chip (the pair's
+    /// Ym2203Pair::TTDTimeFields): the blob's chips follow its 50-byte header
+    /// (version, board byte, sample phase, five decimator phases). The engine
+    /// stores each as its residual from a line
+    static constexpr uint16_t kTsfmStateHeaderSize = 1 + 1 + 8 + 8 + 4 * 8;
     ttd::TTDDeviceDescriptor TTDDescribe() const override
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.runsBehindCpu = true;
-        constexpr uint16_t kHeader = 50, kChip = 586, kYmfm = 1 + 4 + 4 + 4 + 4 + 2;
-        for (uint16_t chip = 0; chip < 2; ++chip)
-        {
-            const uint16_t ymfm = kHeader + chip * kChip + kYmfm;
-            d.timeFields.push_back({static_cast<uint16_t>(ymfm + 5), 4});    // m_env_counter
-            d.timeFields.push_back({static_cast<uint16_t>(ymfm + 15), 1});   // m_total_clocks
-        }
+        Ym2203Pair::TTDTimeFields(d.timeFields, kTsfmStateHeaderSize);
         return d;
     }
 
-    /// Synced: the core has been advanced to the CPU's T-state (the frame end
-    /// syncs it, the next frame's start moves it to the new frame's axis), or
-    /// it adopts the CPU's position at its next sync (after a reset or restore)
+    /// Synced: the pair has been advanced to the CPU's T-state, or adopts the
+    /// CPU's position at its next sync (after a reset or restore)
     bool TTDSyncedTime(int64_t& offset) const override
     {
-        offset = static_cast<int64_t>(_syncedT);
-        return _adoptCpuClock || _syncedT == nowT();
+        return _pair.TTDSyncedTime(nowT(), offset);
     }
 
     std::string TTDDeviceName() const override

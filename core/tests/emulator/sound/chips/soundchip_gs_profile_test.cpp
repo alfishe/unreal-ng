@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/slots/cards/multisound/multisounddacs.h"
 #include "emulator/slots/cards/multisound/multisoundlogic.h"
@@ -422,6 +424,105 @@ TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_TtdRoundTripContinuesIden
     runFrames(*a, 2);
     runFrames(*b, 2);
     EXPECT_EQ(save(*b), save(*a)) << "a restored card continues bit for bit";
+}
+
+TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_MatchesTheEngineDescriptorWithItsRamAsRegion)
+{
+    // The time-travel engine's contract for the MultiSound GS (registered by the
+    // board, MS-5): the descriptor's size is the blob's, the firmware is
+    // fingerprinted, the 1-2 MB RAM is one region of 4 KB pieces outside the
+    // engine's blob, and the card is synced to its frame base after a frame
+    const std::string rom = writeRom("gs-profile-engine.rom", {0xF3, 0x76});  // DI : HALT
+    for (size_t ramKB : {size_t{1024}, size_t{2048}})
+    {
+        SCOPED_TRACE(ramKB);
+        auto card = makeCard(GSProfile::MultiSound(ramKB), ramKB);
+        card->loadROM(rom);
+
+        const ttd::TTDDeviceDescriptor d = card->TTDDescribe();
+        EXPECT_EQ(d.stateSize, kFixed + ramKB * 1024);
+        EXPECT_TRUE(d.runsBehindCpu);
+        std::vector<uint8_t> image(SoundChip_GeneralSound::ROM_SIZE, 0x00);
+        image[0] = 0xF3;
+        image[1] = 0x76;
+        EXPECT_EQ(d.firmwareFingerprint, ttd::FirmwareFingerprint(image.data(), image.size()));
+
+        ttd::TTDPeripheralRegistry registry;
+        registry.Register(ttd::PeripheralId::GeneralSound, card.get());
+        std::string error;
+        EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+
+        std::vector<ttd::TTDDeviceRegion> regions;
+        card->TTDRegions(regions);
+        ASSERT_EQ(regions.size(), 1u);
+        EXPECT_EQ(regions[0].desc.bytes, ramKB * 1024);
+        EXPECT_EQ(regions[0].desc.pieces, ramKB * 1024 / ttd::kTTDPieceSize);
+
+        uint8_t id = 0;
+        std::vector<uint8_t> state;
+        ASSERT_TRUE(card->TTDStateWithoutRegions(id, state));
+        EXPECT_EQ(state.size(), kFixed);
+
+        runFrames(*card, 1);
+        card->handleFrameStart();
+        int64_t offset = -1;
+        EXPECT_TRUE(card->TTDSyncedTime(offset)) << "offset " << offset;
+        card->handleFrameEnd(SAMPLES_PER_FRAME);
+    }
+}
+
+TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_RegionTrackingMarksEveryChipAndRestoresWithoutTheBlobRam)
+{
+    // Writes through the CPLD map land in all four 512 KB chips (2 MB): the
+    // armed tracker marks the piece of each; a restore of the fixed state plus
+    // the region memory (the engine's path) continues like a whole-blob restore
+    std::vector<uint8_t> p = {0x31, 0x00, 0x60};  // LD SP,#6000
+    for (uint8_t page : {uint8_t{0x01}, uint8_t{0x11}, uint8_t{0x21}, uint8_t{0x31}})
+        storeInPage(p, page, page);
+    const uint8_t loop[] = {0x3E, 0x05, 0xD3, 0x00, 0x21, 0x00, 0x80, 0x34, 0x18, 0xFD};  // MPAG 5 : INC (#8000) loop
+    p.insert(p.end(), std::begin(loop), std::end(loop));
+    const std::string rom = writeRom("gs-profile-regions.rom", p);
+
+    auto a = makeCard(GSProfile::MultiSound(2048), 2048);
+    a->loadROM(rom);
+    std::vector<ttd::TTDDeviceRegion> regions;
+    a->TTDRegions(regions);
+    ASSERT_EQ(regions.size(), 1u);
+    ttd::TTDRegionTracker* tracker = regions[0].tracker;
+    ASSERT_NE(tracker, nullptr);
+    a->TTDArmRegions(true);
+    runFrames(*a, 1);
+    std::vector<uint32_t> dirty;
+    tracker->CollectAndClear(dirty);
+    std::vector<bool> chipWritten(4, false);
+    for (uint32_t piece : dirty)
+        chipWritten[size_t(piece) * ttd::kTTDPieceSize / (512 * 1024)] = true;
+    for (size_t chip = 0; chip < 4; chip++)
+        EXPECT_TRUE(chipWritten[chip]) << "RAM chip " << chip + 1;
+    for (uint32_t piece : dirty)
+        EXPECT_NE(std::memcmp(regions[0].desc.memory + size_t(piece) * ttd::kTTDPieceSize,
+                              std::vector<uint8_t>(ttd::kTTDPieceSize, 0).data(), ttd::kTTDPieceSize),
+                  0)
+            << "a marked piece holds a write (piece " << piece << ")";
+
+    uint8_t id = 0;
+    std::vector<uint8_t> fixed;
+    ASSERT_TRUE(a->TTDStateWithoutRegions(id, fixed));
+    const std::vector<uint8_t> ram(regions[0].desc.memory, regions[0].desc.memory + regions[0].desc.bytes);
+    const std::vector<uint8_t> whole = save(*a);
+    a->TTDArmRegions(false);
+
+    auto b = makeCard(GSProfile::MultiSound(2048), 2048);
+    b->loadROM(rom);
+    std::vector<ttd::TTDDeviceRegion> regionsB;
+    b->TTDRegions(regionsB);
+    std::memcpy(regionsB[0].desc.memory, ram.data(), ram.size());
+    ASSERT_TRUE(b->TTDLoadStateWithoutRegions(fixed.data(), fixed.size()));
+    EXPECT_EQ(save(*b), whole);
+
+    runFrames(*a, 2);
+    runFrames(*b, 2);
+    EXPECT_EQ(save(*b), save(*a)) << "the region restore continues bit for bit";
 }
 
 /// endregion </TTD>

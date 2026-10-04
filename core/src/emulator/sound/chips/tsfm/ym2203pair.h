@@ -8,6 +8,7 @@
 
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filterdcblocker.h"
+#include "debugger/ttd/ttdserializable.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/ayioport.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -161,6 +162,10 @@ public:
     /// master decimator phase(8) + 2 chips + timeline
     static constexpr uint8_t kStateVersion = 1;
     static constexpr size_t kStateSize = 1 + 8 + 8 + 2 * kChipStateSize + kTimelineStateSize;
+    /// Offset of the ymfm payload in a chip's payload (address, fmClockPhase, two timers, busy, payload size)
+    static constexpr uint16_t kChipYmfmOffset = 1 + 4 + 4 + 4 + 4 + 2;
+    /// Offset of chip 0's payload in the pair's own blob (version, ratio phase, channel-render phase)
+    static constexpr uint16_t kStateChipsOffset = 1 + 8 + 8;
 
     Ym2203Pair(EmulatorContext* context, const Ym2203PairConfig& config = Ym2203PairConfig{});
 
@@ -441,6 +446,30 @@ public:
     }
     void TTDSaveState(uint8_t* dst) const;
     void TTDLoadState(const uint8_t* src, uint64_t base);
+
+    /// Time-travel engine descriptor pieces (TTDDeviceDescriptor::timeFields): ymfm's counters that advance with
+    /// the FM clock - per chip the envelope counter (+4 per 3 FM clocks, ymfm payload +5) and the clock count (u8,
+    /// payload +15; fm_engine_base::save_restore). `chipsOffset` is where chip 0's payload sits in the owner's
+    /// blob (the TSFM: after its 50-byte header; the pair's own blob: kStateChipsOffset). The ratio phase is a
+    /// remainder, not a counter: no time field
+    static void TTDTimeFields(std::vector<ttd::TTDTimeField>& out, uint16_t chipsOffset)
+    {
+        for (uint16_t chip = 0; chip < 2; ++chip)
+        {
+            const uint16_t ymfm = static_cast<uint16_t>(chipsOffset + chip * kChipStateSize + kChipYmfmOffset);
+            out.push_back({static_cast<uint16_t>(ymfm + 5), 4});    // m_env_counter
+            out.push_back({static_cast<uint16_t>(ymfm + 15), 1});   // m_total_clocks
+        }
+    }
+
+    /// Engine sync check (TTDSerializable::TTDSyncedTime) against the owner's host position `now`: the chips have
+    /// been advanced to it (the frame end syncs them, the next frame's start rebases the axis), or the next sync
+    /// adopts it (after a reset or restore). offset: the synced host tick
+    bool TTDSyncedTime(uint64_t now, int64_t& offset) const
+    {
+        offset = static_cast<int64_t>(_syncedT);
+        return _adoptCpuClock || _syncedT == now;
+    }
     /// endregion </TTD>
 
 private:

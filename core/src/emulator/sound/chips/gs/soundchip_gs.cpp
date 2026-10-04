@@ -1108,6 +1108,10 @@ void SoundChip_GeneralSound::finishLoad(const uint8_t* src)
     _frameStartGsCycles = totalGsCycles() - static_cast<int64_t>(gsTtdRead32(&src[77]));
     _frameStartZxTacts = gsTtdRead32(&src[81]);
     _frameGsCycles = static_cast<int64_t>(gsTtdRead32(&src[85]));
+    // Card units per host tact (DAC sink times until the next frame start):
+    // configuration, rebuilt here so a restore does not depend on the
+    // frames the card ran before it
+    _unitsPerZxTact = GSHostClock::unitsPerZxTact(_context, _unitsPerSecond);
 }
 
 uint64_t SoundChip_GeneralSound::TTDHashState() const

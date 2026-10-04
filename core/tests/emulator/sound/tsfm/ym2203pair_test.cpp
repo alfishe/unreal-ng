@@ -12,8 +12,10 @@
 #include <memory>
 #include <vector>
 
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/ayioport.h"
+#include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/chips/tsfm/ym2203pair.h"
 
 namespace
@@ -327,3 +329,127 @@ TEST_F(Ym2203Pair_Test, TtdRoundTripKeepsRatioPhase)
     b.TTDSaveState(blobB.data());
     EXPECT_EQ(blobA, blobB);
 }
+
+/// region <Time-travel engine descriptor>
+
+namespace
+{
+uint32_t ReadU32(const std::vector<uint8_t>& blob, size_t offset)
+{
+    uint32_t v = 0;
+    std::memcpy(&v, blob.data() + offset, 4);
+    return v;
+}
+
+/// The pair's own blob as a device of the engine's table (how a board carrying the pair whole registers it, MS-5)
+struct PairDevice : ttd::TTDSerializable
+{
+    Ym2203Pair& pair;
+    explicit PairDevice(Ym2203Pair& p) : pair(p) {}
+    size_t TTDStateSize() const override { return pair.TTDStateSize(); }
+    void TTDSaveState(uint8_t* dst) const override { pair.TTDSaveState(dst); }
+    void TTDLoadState(const uint8_t* src) override { pair.TTDLoadState(src, pair.syncedT()); }
+    std::string TTDDeviceName() const override { return "Ym2203Pair"; }
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::TSFM; }
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.runsBehindCpu = true;
+        Ym2203Pair::TTDTimeFields(d.timeFields, Ym2203Pair::kStateChipsOffset);
+        return d;
+    }
+    bool TTDSyncedTime(int64_t& offset) const override { return pair.TTDSyncedTime(pair.syncedT(), offset); }
+};
+}  // namespace
+
+TEST_F(Ym2203Pair_Test, TsfmDescriptorTimeFieldsAreMastersThroughThePair)
+{
+    // The TSFM's engine descriptor keeps master's offsets (50-byte header, 586 bytes per chip, ymfm payload at +19,
+    // envelope counter +5 u32, clock count +15 u8) now that the pair supplies them
+    SoundChip_TurboSoundFM tsfm(_context);
+    const ttd::TTDDeviceDescriptor d = tsfm.TTDDescribe();
+    ASSERT_EQ(d.timeFields.size(), 4u);
+    const uint16_t offsets[] = {74, 84, 660, 670};
+    const uint8_t widths[] = {4, 1, 4, 1};
+    for (size_t i = 0; i < 4; i++)
+    {
+        EXPECT_EQ(d.timeFields[i].offset, offsets[i]) << i;
+        EXPECT_EQ(d.timeFields[i].width, widths[i]) << i;
+    }
+    EXPECT_TRUE(d.runsBehindCpu);
+    EXPECT_EQ(d.stateSize, 2008u);
+
+    ttd::TTDPeripheralRegistry registry;
+    registry.Register(ttd::PeripheralId::TSFM, &tsfm);
+    std::string error;
+    EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+}
+
+TEST_F(Ym2203Pair_Test, TsfmBlobCarriesThePairChipPayloadsAfterItsHeader)
+{
+    // The chips in the TSFM blob are the pair's chip payloads byte for byte, at the header offset the descriptor
+    // names; in the pair's own blob they sit at kStateChipsOffset. The ymfm payload size (u16) precedes the payload
+    SoundChip_TurboSoundFM tsfm(_context);
+    Ym2203Pair& pair = tsfm.pair();
+    pair.syncTo(0);
+    ProgramFmNote(pair, 0);
+    ProgramFmNote(pair, 1);
+    pair.syncTo(20000);
+
+    std::vector<uint8_t> tsfmBlob(tsfm.TTDStateSize()), pairBlob(pair.TTDStateSize());
+    tsfm.TTDSaveState(tsfmBlob.data());
+    pair.TTDSaveState(pairBlob.data());
+    const size_t chips = 2 * Ym2203Pair::kChipStateSize;
+    EXPECT_TRUE(std::equal(tsfmBlob.begin() + SoundChip_TurboSoundFM::kTsfmStateHeaderSize,
+                           tsfmBlob.begin() + SoundChip_TurboSoundFM::kTsfmStateHeaderSize + chips,
+                           pairBlob.begin() + Ym2203Pair::kStateChipsOffset));
+    for (int chip = 0; chip < 2; chip++)
+    {
+        const size_t size = Ym2203Pair::kStateChipsOffset + chip * Ym2203Pair::kChipStateSize +
+                            Ym2203Pair::kChipYmfmOffset - 2;
+        EXPECT_EQ(pairBlob[size] | (pairBlob[size + 1] << 8), int(Ym2203Pair::kYmfmStateSize)) << chip;
+    }
+}
+
+TEST_F(Ym2203Pair_Test, PairBlobMatchesItsDescriptorAndItsTimeFieldsAdvance)
+{
+    // The pair's own blob (the MultiSound's, ratio phase included) satisfies the engine's descriptor contract, and
+    // the time fields are the counters that run with the FM clock: the envelope counters move on with the chips
+    Ym2203Pair pair(_context, RatioConfig());
+    PairDevice device(pair);
+    ttd::TTDPeripheralRegistry registry;
+    registry.Register(ttd::PeripheralId::TSFM, &device);
+    std::string error;
+    EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+
+    const ttd::TTDDeviceDescriptor d = device.TTDDescribe();
+    ASSERT_EQ(d.timeFields.size(), 4u);
+    EXPECT_EQ(d.stateSize, Ym2203Pair::kStateSize);
+
+    pair.syncTo(0);
+    ProgramFmNote(pair, 0);
+    std::vector<uint8_t> before(pair.TTDStateSize()), after(pair.TTDStateSize());
+    pair.TTDSaveState(before.data());
+    pair.syncTo(30000);
+    pair.TTDSaveState(after.data());
+    for (int chip = 0; chip < 2; chip++)
+    {
+        const size_t env = d.timeFields[size_t(chip) * 2].offset;
+        EXPECT_GT(ReadU32(after, env), ReadU32(before, env)) << "chip " << chip << ": envelope counter";
+    }
+}
+
+TEST_F(Ym2203Pair_Test, SyncedTimeAdoptsAfterResetAndFollowsTheHost)
+{
+    Ym2203Pair pair(_context);
+    int64_t offset = -1;
+    EXPECT_TRUE(pair.TTDSyncedTime(5000, offset)) << "after reset the next sync adopts the host's position";
+    pair.syncTo(1000);
+    EXPECT_TRUE(pair.TTDSyncedTime(1000, offset));
+    EXPECT_EQ(offset, 1000);
+    EXPECT_FALSE(pair.TTDSyncedTime(1001, offset)) << "behind the host";
+    pair.reset();
+    EXPECT_TRUE(pair.TTDSyncedTime(1001, offset));
+}
+
+/// endregion </Time-travel engine descriptor>
