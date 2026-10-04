@@ -115,6 +115,21 @@ void ZiFiWebDavServer::Stop()
     _running = false;
 }
 
+void ZiFiWebDavServer::Forget()
+{
+    _running = false;
+    _port = kDefaultPort;
+    _clientActive = false;
+    _acceptedAt = 0;
+    _header.clear();
+    _job = Job();
+    _result = ZiFiVfsBridge::Result();
+    _uploadSlots.clear();
+    _uploadActive = _uploadEof = _uploadError = false;
+    _uploadReadBytes = _uploadWantedBytes = 0;
+    _uploadLastProgress = 0;
+}
+
 void ZiFiWebDavServer::CloseClient()
 {
     _host.BridgeStack().Close(kClientSlot);
@@ -466,9 +481,8 @@ void ZiFiWebDavServer::ProcessRequest(const std::string& header)
         _job.kind = Job::Discard;
         _job.remaining = contentLength;
         _job.idleSince = Now();
-        _job.after = method == "OPTIONS" ? Job::Kind(200) : kind;
-        if (method != "OPTIONS" && kind == Job::None)
-            _job.after = Job::Kind(201);
+        _job.after = kind;
+        _job.afterStatus = method == "OPTIONS" ? 200 : kind == Job::None ? 405 : 0;
         return RunJob();
     }
     if (method == "OPTIONS")
@@ -489,8 +503,9 @@ void ZiFiWebDavServer::ProcessRequest(const std::string& header)
     StartJob(kind, path);
 }
 
-void ZiFiWebDavServer::StartJob(Job::Kind kind, const std::string& path)
+void ZiFiWebDavServer::StartJob(Job::Kind kind, const std::string& requestPath)
 {
+    const std::string path = requestPath;   // it may be the job's own field, cleared below
     const std::string depth = _job.depth;
     const uint32_t contentLength = _job.contentLength;
     _job = Job();
@@ -557,13 +572,12 @@ bool ZiFiWebDavServer::StepDiscard(Job& j)
         }
         return false;
     }
-    const int after = static_cast<int>(j.after);
-    if (after == 200)
+    if (j.afterStatus == 200)
     {
         SendStatus(200, "OK", std::string(kAllow) + "DAV: 1\r\n");
         return true;
     }
-    if (after == 201)
+    if (j.afterStatus == 405)
     {
         SendStatus(405, "Method Not Allowed", kAllow);
         return true;
@@ -986,6 +1000,7 @@ void ZiFiWebDavServer::Save(ZiFiStateWriter& w) const
     w.Str(_header);
     const Job& j = _job;
     w.U8(j.kind), w.U8(j.after), w.U8(j.step);
+    w.U16(j.afterStatus);
     w.Str(j.path), w.Str(j.depth);
     w.U32(j.contentLength), w.U32(j.remaining);
     w.U64(j.idleSince);
@@ -1018,7 +1033,11 @@ bool ZiFiWebDavServer::Load(ZiFiStateReader& r)
     _acceptedAt = r.U64();
     _header = r.Str(kHeaderSize + 1);
     Job& j = _job;
-    j.kind = static_cast<Job::Kind>(r.U8()), j.after = static_cast<Job::Kind>(r.U8()), j.step = r.U8();
+    const uint8_t kind = r.U8(), after = r.U8();
+    j.kind = kind <= Job::Mkcol ? static_cast<Job::Kind>(kind) : Job::None;
+    j.after = after <= Job::Mkcol ? static_cast<Job::Kind>(after) : Job::None;
+    j.step = r.U8();
+    j.afterStatus = r.U16();
     j.path = r.Str(512), j.depth = r.Str(256);
     j.contentLength = r.U32(), j.remaining = r.U32();
     j.idleSince = r.U64();

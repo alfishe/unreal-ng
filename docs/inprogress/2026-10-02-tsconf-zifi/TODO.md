@@ -9,7 +9,7 @@ Design: [tdd.md](tdd.md) §6.
 | Z1 the `#xxEF` device, ZiFi API, line, INT, TTD, surfaces | done 2026-10-02: `ZiFi` (`core/src/emulator/io/network/zifi.*`), the TS-Conf decode, the TS AVR's 16550 on TS-Conf, `[NETWORK] ZiFi=`, TTD blobs 39 / 40, guest 5, status `zifi` on every surface, Qt Network window, recipe; tests `ZiFi_Test` (16), `NetworkPanelModel_Test` |
 | Z2 DMA device 7; the ZITOR timeout at its exact time (now: at the next access, received byte or frame boundary, up to a frame late) | open |
 | Z3 `ZIFI-NATIVE` | done 2026-10-04 ([tdd.md](tdd.md) §7.2): `ZiFiNativeModule` (S3 `s3-native-0.6.94`, ESP-01S `native-0.2.2`), `ZiFi=ZIFI-NATIVE[,S3\|ESP01S]`, `esp` status on every surface, Qt, recipe; tests `ZiFiNativeModule_Test`, `ZiFi_Test` (+3) |
-| Z3b the VFS file bridge (FTP / SMB / WebDAV via the WC plugins), OTA, weather, HTTPS | open (they answer "not emulated") |
+| Z3b the VFS file bridge (FTP / SMB / WebDAV via the WC plugins), OTA, weather, HTTPS | in progress: the VFS bridge, FTP, SMB, TLS, WC Update on branch zifi-z3b; weather (S3), WebDAV (ESP-01S) and the ESP-01S NTPTIME first boot done on branch zifi-plugins (2026-10-04, real plugins: rows below) |
 | Z4 ESP-AT 2.2.x dialect | done 2026-10-04 ([tdd.md](tdd.md) §7.1): `atdialect.*`, per-module firmware `AT,<firmware>`, the ESP-01's ESP8266 1 MB default; tests `AtDialect_Test`, `ComPortSpec_Test` (+2) |
 | Z4 open: the kit's "2.2.1" vs Espressif's v2.2.1.0 | ask the kit's author ([tdd.md](tdd.md) §7.4) |
 | Z5 end-to-end with the real programs | done 2026-10-04 with the programs as a user runs them, real internet ([Z5 results](#z5-results-2026-10-04)); the file-bridge plugins (FTP / SMB / WebDAV / WC Update) fail until Z3b; automated tests open |
@@ -39,14 +39,14 @@ WMF plugins, `tools/esp_info.sna`),
 | ESP-01S `zifi.spg` (new) | `ZIFI-NATIVE,ESP01S` | works | startup with SYS_INFO "... FW:native-0.2.2"; Hype list; zxart picture "Phantis by MAC"; "Cauldron 1, 2" downloaded to `CAUL12TG.SCL` (98615 bytes, byte-identical to a host fetch; the file's own SCL checksum is wrong at the source) |
 | ESP-01S `zifi.spg` | `ZIFI-NATIVE,S3` | works | startup, Hype list |
 | `NTPTIME.WMF` (S3) | `ZIFI-NATIVE,S3` | works | runs after WC starts: PING, WIFI_INI, NET_NTP `A2` 14 digits; the WC clock goes from host time to UTC+3 (20:44 at 17:44 UTC) |
-| `NTPTIME.WMF` (ESP-01S) | `ZIFI-NATIVE,ESP01S` | works, not on the first boot | later boots: NET_NTP `A2`. First boot after the module is fitted: the plugin waits ~12000 polls for `83`, the fresh module joins in 1.5 s, the plugin gives up silently (follow-up 4) |
-| `WEATHER.WMF` (S3) | `ZIFI-NATIVE,S3` | fails (Z3b: weather) | clock / calendar from NTP shown, "Нет данных о погоде / not emulated" (`EE "weather:not emulated"`) |
+| `NTPTIME.WMF` (ESP-01S) | `ZIFI-NATIVE,ESP01S` | works (first boot too since 2026-10-04, branch zifi-plugins) | the first boot after the module is fitted: PING, `03 WIFI_INI` -> `83` at once (the module is on the virtual AP from the box and takes the first password as its own), `22` -> `A2`; the WC clock UTC+3 (21:51 at 18:51 UTC). Before: the 1.5 s rejoin outlasted the plugin's ~12000 polls (follow-up 4) |
+| `WEATHER.WMF` (S3) | `ZIFI-NATIVE,S3` | works (2026-10-04, branch zifi-plugins) | F10, "ZiFi Weather Saver": `03 WIFI_INI` (`city: Rome`, `country: IT`), `24 WEATHER_GET` -> `A4` 90 bytes over the real internet (geocoding-api.open-meteo.com, then api.open-meteo.com); the saver shows "Rome", the clock, 22 C clear, sunset 18:46, wind, pressure, five days and the month; `native_session.weather` place Rome 41.8919 / 12.5113 |
 | `ZIFIFTP.WMF` v0.15 (S3) | `ZIFI-NATIVE,S3` | fails (Z3b file bridge) | `FTP_START` -> `EE "ftp:not emulated"`, the plugin's status line |
 | `ZIFISMB.WMF` v0.5.10 (S3) | `ZIFI-NATIVE,S3` | fails (Z3b file bridge) | `SMB_START` -> `EE "smb:not emulated"` |
 | `WCUPDATE.WMF` (S3) | `ZIFI-NATIVE,S3` | fails (Z3b file bridge + HTTPS) | `WCU_START` -> `EE "wcu:not emulated"`; on the ESP-01S `unknown cmd 25`, as the real firmware |
 | `ZIFIUPD.WMF` (S3) | `ZIFI-NATIVE,S3` | fails (Z3b: online update) | `ONLINE_UPDATE_CHECK` -> `EE "update-check:not emulated"` |
 | `ZIFIFTP.WMF` v0.11 (ESP-01S) | `ZIFI-NATIVE,ESP01S` | fails (Z3b file bridge) | `FTP_START` -> `EE "ftp/webdav:not emulated"` |
-| `ZIFIWDAV.WMF` (ESP-01S) | `ZIFI-NATIVE,ESP01S` | fails (Z3b file bridge) | `FTP_START` -> `EE "ftp/webdav:not emulated"` (the ESP-01S opens WebDAV with FTP) |
+| `ZIFIWDAV.WMF` (ESP-01S) | `ZIFI-NATIVE,ESP01S` | works (2026-10-04, branch zifi-plugins on the zifi-z3b bridge) | F10, "ZiFi WebDAV Server": `06 FTP_START` -> `86`, "Status: Listening"; host curl through `Forward=tcp:8080:80`: PROPFIND Depth 1 of `/` and `/zifi`, GET `zifi/e01.spg` byte-identical (44032 bytes), PUT 20000 bytes -> 201 and back identical, MKCOL 201, HEAD Content-Length, DELETE 204 then 404; Esc -> `07` -> `87`, both servers stop |
 | `esp_info.sna` (S3 tools) | both native | works | the SYS_INFO fields: S3 `s3-native-0.6.94`, PSRAM, cores, proxy OFF; ESP-01S `native-0.2.2`, the S3-only fields `n/a` |
 | Karabas Pro net-tools, NedoOS | - | not applicable | Karabas: Profi CP/M programs, not TS-Conf; NedoOS has no ZiFi driver (reference-zifi.md §4) |
 
@@ -73,7 +73,9 @@ Evidence (not committed): `scratch/z5/` in the worktree - `ttd/*.ttd` per run, `
    check the renderer's per-line mode latching.
 3. `zifi.spg` sends empty lines (`\r\n`) between commands; the AT module answers `ERROR` to each (NonOS does the
    same as far as known; harmless, the program ignores it).
-4. The ESP-01S `NTPTIME.WMF` skips the clock on the first WC boot after the module is fitted: a fresh module joins
+4. **Done 2026-10-04 (zifi-plugins):** the module, on the virtual AP from the box, takes the first password for it as
+   its own (`_passwordKnown`), so `83` comes at once. Was: the ESP-01S `NTPTIME.WMF` skips the clock on the first WC
+   boot after the module is fitted: a fresh module joins
    in 1.5 s and the plugin waits only ~12000 port polls for `83`. A real module rejoins from its saved `zifi.ini`
    at power-on before WC starts. Candidate: keep the module's saved `zifi.ini` (its flash) across emulator starts
    and join at power-on.
