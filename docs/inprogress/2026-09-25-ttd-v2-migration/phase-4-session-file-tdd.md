@@ -248,6 +248,7 @@ A recovered file opens **read-only**. "Repair" is an explicit action that trunca
 - **Cleanup (owner decision 2026-10-04).** A `CleanupManager` in `core/src/common/` runs registered cleanup steps asynchronously at startup, on a background thread, so start-up never waits for it. TTD's step is the first one; other subsystems add theirs.
   - Every step catches its own errors and exceptions. A file that cannot be deleted (in use, permissions) is logged and skipped; the next run tries again.
   - The manager records its last run per step, and runs each step at least once a week.
+  - Automation cleans up after itself: invalidating a session deletes its folder, and the recipes say so (`.recipe/analysis/ttd-recording.md`, Pitfalls). The startup step is only the safety net.
   - TTD's step deletes the folders of crashed recordings (no footer, no live owner: a lock file with the writing process's id) once they are older than 7 days. Until then they are listed and can be opened or repaired.
 - **Save** = finalize, then rename to the chosen path. The writer closes its handle and every mapped view first, so the rename works on every platform; the read-only view is reopened at the new path. A rename across disks (`std::errc::cross_device_link`) falls back to a copy in the background with progress, then deletes the source. "Save" during a recording records the target name; the rename happens when the recording stops.
 - **Delete**: discarding a session closes and deletes its file.

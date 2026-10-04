@@ -230,6 +230,16 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
 
 ## Pitfalls
 
+- **Clean up after every scenario.** A TTD session holds its history until
+  it is dropped: `POST /ttd/invalidate` (MCP `time_travel` action
+  `invalidate`) when you no longer need it, and delete the `.ttd` files you
+  dumped once you have read them (keep dumps under `scratch/`). From the
+  session file onwards (TTD v2, Phase 4) every recording also writes a
+  folder under `~/.unreal-ng/ttd/` (Windows `%USERPROFILE%\.unreal-ng\ttd\`)
+  while it lives: invalidate removes it, a saved recording stays as a file
+  there until you delete it. Startup cleanup only removes crashed leftovers
+  after 7 days; a script that forgets to clean fills the disk (about 2 GB
+  per hour of heavy content).
 - **409 on scrub** → you're still recording; `POST /ttd/stop` first.
 - **`seek` beyond `current_end_frame`** → `halt_reason: "out_of_range"`,
   machine stays where it was.
