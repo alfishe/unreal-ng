@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "debugger/ttd/engine/ttdregiontracker.h"
 #include "emulator/io/rtc/ds12887.h"
 
 /// The SMUC board's battery-backed parts: the clock (the shared Ds12887 chip,
@@ -9,7 +10,7 @@
 /// deterministic: the ProfROM menu clock drives boot-timeline code paths
 /// (profrom-service-monitor-turbo.md)
 
-class SMUCNvram
+class SMUCNvram : public ttd::ITTDRegionSource
 {
 // Clock
 protected:
@@ -18,6 +19,7 @@ protected:
 // Serial-link EEPROM fields (SMUC #FFBA)
 protected:
 	uint8_t _nvram[0x800];
+	ttd::TTDRegionTracker _eepromTracker;
 
 	// LC16-style 3-wire serial EEPROM behind the SMUC system port. Behavioral
 	// port of Xpeccy nvram.c - the model the ProfROM SMUC driver (page-7 helpers
@@ -58,6 +60,29 @@ public:
 
 	/// Re-arm the power-on line/shift state; battery-backed contents survive
 	void ResetSerialLinkState();
+
+	/// The serial link's state between two #FFBA writes (TTD: TTDSmuc). Fixed
+	/// layout, no padding; the EEPROM contents are not part of it
+	struct LinkState
+	{
+		uint8_t mode;              ///< EEPROMMode
+		uint8_t flags;             ///< bit 0 stable, 1 tx, 2 rx, 3 ack
+		uint8_t bitCount;
+		uint8_t data;
+		uint8_t addressLow;
+		uint8_t addressHigh;
+		uint8_t writePos;
+		uint8_t sda;               ///< 0 / 1
+		uint8_t scl;               ///< 0 / 1
+		uint8_t writeBuffer[16];
+	};
+	LinkState GetLinkState() const;
+	void SetLinkState(const LinkState& state);
+
+	/// The 2 KB EEPROM: the time-travel engine's region SmucEeprom (compared at
+	/// each capture: one write path, 2 KB). v1 does not record it
+	void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+	void TTDArmRegions(bool) override {}
 
 // Clock
 public:

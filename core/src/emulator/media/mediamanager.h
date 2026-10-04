@@ -17,6 +17,7 @@
 /// machine (dirty, changed units) is a per-frame snapshot taken in
 /// ApplyPending, so automation never reads a medium the guest is writing.
 
+#include "emulator/media/mediahistory.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -121,7 +122,8 @@ struct SlotInfo
     bool writeProtect = false;
 };
 
-class MediaManager
+class IMediaReadJournal;
+class MediaManager : public IMediaHistory
 {
 public:
     explicit MediaManager(EmulatorContext* context);
@@ -198,11 +200,37 @@ public:
     /// while the emulator is not running)
     void ApplyPending();
 
+    /// Time travel replays history (FR-20): hold every write-through medium's
+    /// host writes in memory (true), then release them to their files (false,
+    /// the state of that moment). Floppy write-through waits while held.
+    /// Emulation thread
+    void HoldHostWrites(bool hold);
+
+    /// Time travel's media read journal (null = none): every block medium's
+    /// sector reads are recorded into it, or played back from it. Emulation thread
+    void SetReadJournal(IMediaReadJournal* journal) { _readJournal = journal; }
+    IMediaReadJournal* GetReadJournal() const { return _readJournal; }
+    bool HoldingHostWrites() const { return _holdHostWrites; }
+
     /// A slot's peripheral reports a guest write to its medium (emulation
     /// thread). While TTD records, the first write of each frame is a replay
     /// barrier: the medium changed, a seek must not cross it silently.
     /// `detail` (the controller's command) goes into the marker's text
     void NoteWrite(const std::string& slotId, const char* detail = nullptr);
+
+    /// IMediaHistory (TTD Phase 3, Step 4). No change layer yet: a version is
+    /// the count of frames that wrote the medium, and no slot goes back
+    uint64_t VersionStamp() const override { return _revision.load() + _writeStamp.load(); }
+    void CurrentVersions(std::vector<MediaVersionInfo>& out) const override;
+    bool SetHead(const std::string& slotId, uint64_t version) override;
+    /// A slot's peripheral reports that the GUEST took its medium out (a CD drive's START STOP UNIT
+    /// eject; emulation thread, inside the command). The normal eject runs at the next frame
+    /// boundary (ApplyPending: Detach, NC_MEDIA_EJECTED, revision): the slot is empty for every
+    /// surface as after a user's eject. It is a consequence of guest I/O, not an outside input: no
+    /// recording guard, no session invalidation. During TTD replay (sealed: the live run already
+    /// emptied the slot) nothing on the host side changes. A medium with unsaved writes stays (no
+    /// disposition without a user to ask; a CD has none)
+    void GuestEject(const std::string& slotId);
 
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running
@@ -226,6 +254,7 @@ private:
         std::string changes;               ///< per-frame snapshot of attached->DescribeChanges()
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
         bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
+        uint64_t writtenFrames = 0;           ///< frames that wrote the medium (its version, IMediaHistory)
     };
 
     bool CanApplyNow() const;
@@ -257,8 +286,11 @@ private:
     std::function<bool()> _applyNowProbe;
     mutable std::recursive_mutex _mutex;
     std::map<std::string, SlotState> _slots;
+    bool _holdHostWrites = false;
+    IMediaReadJournal* _readJournal = nullptr;   ///< the taps read it through its address
     std::map<std::string, std::unique_ptr<Medium>> _parked;
     std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran
+    std::atomic<uint64_t> _writeStamp{0};        ///< moves with every writtenFrames
     mutable std::atomic<uint64_t> _revision{0};  // also moved by Post (const)
     std::condition_variable_any _applied;  ///< signalled after every ApplyPending
 };

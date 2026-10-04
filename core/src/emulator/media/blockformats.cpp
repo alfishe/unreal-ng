@@ -11,6 +11,8 @@
 #include "emulator/io/storage/chd/chdimage.h"
 #include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/hddimageformats.h"
+#include "emulator/io/storage/hostwritehold.h"
+#include "emulator/io/storage/mediareadtap.h"
 #include "emulator/io/storage/readonlyguard.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/medium.h"
@@ -142,6 +144,10 @@ ChdImage* BlockFormats::FindChd(IBlockDevice* device)
             device = &session->Base();
         else if (auto* guard = dynamic_cast<ReadOnlyGuard*>(device))
             device = &guard->Base();
+        else if (auto* tap = dynamic_cast<MediaReadTap*>(device))
+            device = &tap->Base();
+        else if (auto* hold = dynamic_cast<HostWriteHold*>(device))
+            device = &hold->Base();
         else
             return nullptr;
     }

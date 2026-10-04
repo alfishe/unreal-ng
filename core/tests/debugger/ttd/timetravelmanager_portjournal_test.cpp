@@ -857,9 +857,11 @@ protected:
     void TearDown() override { _m.Destroy(); }
 };
 
-/// NeoGS serves host memory reads through ZX-DMA without an IN: a journal of
-/// IN results would not isolate the replay, so none is recorded and the
-/// session says why. With the classic card in the slot the journal is back
+/// NeoGS serves host memory reads through ZX-DMA without an IN: v1's replay
+/// does not play the journal there, and the session says why (nor does the
+/// file carry it). The journal is still recorded - the engine's bus data
+/// (Phase 3), whose replay also has the card's SD reads (media journal). With
+/// the classic card in the slot v1 plays it again
 TEST_F(TimeTravelManager_PortReadJournalNeoGS_Test, NeoGSSessionsRecordNoJournalAndSayWhy)
 {
     GeneralSoundCard* card = _m.context->pSoundManager->getGeneralSound();
@@ -868,7 +870,7 @@ TEST_F(TimeTravelManager_PortReadJournalNeoGS_Test, NeoGSSessionsRecordNoJournal
 
     ASSERT_TRUE(_m.ttd->StartRecording());
     _m.emulator->RunNFrames(2);
-    EXPECT_EQ(_m.context->ttdPortReads, nullptr) << "the CPU hook stays off";
+    EXPECT_NE(_m.context->ttdPortReads, nullptr) << "recorded for the engine (Phase 3)";
     _m.ttd->StopRecording();
     const auto info = _m.ttd->GetSessionInfo();
     EXPECT_FALSE(info.portJournalActive);

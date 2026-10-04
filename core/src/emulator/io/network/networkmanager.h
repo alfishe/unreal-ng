@@ -204,6 +204,7 @@ public:
             uint32_t peerBaud = 0;        ///< ESP module: its firmware's rate (0: not an ESP module)
             std::vector<std::pair<std::string, std::string>> exchanges;   ///< ESP module: recent requests / replies (modem: commands / results)
             StateNode modem;              ///< a Hayes modem peer: HayesModemPeer::Describe (null otherwise)
+            StateNode esp;                ///< an ESP module peer: espdescribe::Describe (firmware, session; null otherwise)
             uint64_t requests = 0;
         } com;
 

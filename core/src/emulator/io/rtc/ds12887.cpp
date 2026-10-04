@@ -128,6 +128,14 @@ Ds12887::CivilTime Ds12887::FromMicros(int64_t micros)
 
 /// region <Time base>
 
+int64_t Ds12887::HostCivilMicrosNow()
+{
+    const auto now = std::chrono::system_clock::now();
+    const int64_t unixMicros = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+    const int64_t unixSeconds = FloorDiv(unixMicros, kMicrosPerSecond);
+    return LocalCivilMicros(static_cast<std::time_t>(unixSeconds), unixMicros - unixSeconds * kMicrosPerSecond);
+}
+
 int64_t Ds12887::ReferenceMicros() const
 {
     switch (_mode)
@@ -141,13 +149,7 @@ int64_t Ds12887::ReferenceMicros() const
         }
         case TimeMode::Host:
         default:
-        {
-            const auto now = std::chrono::system_clock::now();
-            const int64_t unixMicros =
-                std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
-            const int64_t unixSeconds = FloorDiv(unixMicros, kMicrosPerSecond);
-            return LocalCivilMicros(static_cast<std::time_t>(unixSeconds), unixMicros - unixSeconds * kMicrosPerSecond);
-        }
+            return HostCivilMicrosNow();
     }
 }
 
@@ -215,7 +217,10 @@ void Ds12887::EnterEmulatedTime()
     if (_mode != TimeMode::Host)
         return;  // already emulated, or fixed (a frozen clock is deterministic as it is)
 
-    _anchorMicros = ReferenceMicros();
+    // One time base per session: the wall time taken once when the session
+    // started, so every clock of the machine anchors at the same instant
+    const int64_t sessionWall = _sessionWall ? _sessionWall() : kNoSessionWall;
+    _anchorMicros = sessionWall != kNoSessionWall ? sessionWall : ReferenceMicros();
     _anchorEmulated = _emulatedClock ? _emulatedClock() : 0;
     _mode = TimeMode::Emulated;
 }

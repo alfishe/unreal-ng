@@ -695,18 +695,22 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     const Options& o = request.options;
 
     // An IDE unit can change its drive first: device=cdrom puts a CD-ROM drive
-    // there, device=disk a hard disk (the unit must be empty)
+    // there, device=disk a hard disk, device=cf a CompactFlash card on an IDE
+    // adapter (the unit must be empty)
     if (auto it = o.find("device"); it != o.end())
     {
         const std::string device = Lower(Trim(it->second));
-        if (device != "disk" && device != "cdrom")
-            return Fail(MediaError::BadRequest, "device '" + it->second + "': expected disk or cdrom");
+        if (device != "disk" && device != "cdrom" && device != "cf")
+            return Fail(MediaError::BadRequest, "device '" + it->second + "': expected disk, cdrom or cf");
         const int unit = IdeController::UnitForSlot(reply.slot);
         if (unit < 0 || !_context || !_context->pIdeController)
             return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave; ide1.* on the Sprinter) changes its drive");
         std::string error;
         ParkedEmulator parked(_context);
-        if (!_context->pIdeController->SetUnitKind(unit, device == "cdrom", &error))
+        const IdeController::UnitKind kind = device == "cdrom" ? IdeController::UnitKind::Cdrom
+                                             : device == "cf"  ? IdeController::UnitKind::CompactFlash
+                                                               : IdeController::UnitKind::Disk;
+        if (!_context->pIdeController->SetUnitKind(unit, kind, &error))
             return Fail(MediaError::BadRequest, error);
     }
 

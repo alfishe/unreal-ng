@@ -946,8 +946,10 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
         {
             _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
             generateBitstreamForStandardBlock(*_currentTapeBlock);
-            _currentOffsetWithinPulse = 0;
-            _currentPulseIdxInBlock = 0;
+            // The position inside the block stays: zero for a block just
+            // reached, the restored one after a TTD restore into a block whose
+            // edges are not generated (freed when the deck moved on, or
+            // freshly installed from the medium)
         }
 
         TapeBlock& block = *_currentTapeBlock;
@@ -1208,6 +1210,15 @@ void Tape::TTDSaveState(uint8_t* dst) const
 
 void Tape::TTDLoadState(const uint8_t* src)
 {
+    // The blocks are installed from the attached medium lazily, when a loader
+    // first reads the tape; a restored state with a block in flight needs them
+    // now (installing resets the cursor, so before the restored one is set
+    // below). A state with none in flight stays as lazy as the recorded deck
+    uint64_t restoredBlock = 0;
+    std::memcpy(&restoredBlock, src + 10, sizeof(restoredBlock));   // _currentTapeBlockIndex (layout above)
+    if (_tapeBlocks.empty() && restoredBlock != UINT64_MAX)
+        EnsureImageLoaded();
+
     const uint8_t* cur = src;
     _tapeStarted              = (get_u8(cur) != 0);
     _playbackFrozen           = (get_u8(cur) != 0);

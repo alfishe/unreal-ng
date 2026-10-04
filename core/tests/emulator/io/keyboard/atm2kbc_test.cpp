@@ -9,6 +9,7 @@
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "debugger/ttd/network/ttdmachineserialpeer.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
@@ -508,4 +509,24 @@ TEST_F(Atm2KbcSerial_Test, AnEspModuleAnswersThroughTheController)
     EXPECT_NE(reply.find("OK"), std::string::npos) << "reply: " << reply;
     EXPECT_EQ(Kbc()->GetSerialLine().lost, 0u) << "reply: " << reply;
     EXPECT_EQ(Kbc()->GetSerialLine().bytesOut, 4u);
+}
+
+/// TTD: the firmware image is configuration, not state; the controller's
+/// descriptor carries its fingerprint, so a restore on another image is
+/// reported (FirmwareDiffers) rather than silently replaying differently
+TEST_F(Atm2Kbc_Test, TheDescriptorCarriesTheFirmwareFingerprint)
+{
+    Create("ATM710", 1024);
+    ASSERT_NE(Kbc(), nullptr);
+    ttd::TTDAtm2Kbc device(*Kbc());
+    const uint64_t v41 = device.TTDDescribe().firmwareFingerprint;
+    EXPECT_NE(v41, 0u);
+
+    std::string error;
+    ASSERT_TRUE(Kbc()->Load(Atm2Kbc::Firmware::V40, "", error)) << error;
+    ttd::TTDAtm2Kbc v40Device(*Kbc());
+    EXPECT_NE(v40Device.TTDDescribe().firmwareFingerprint, v41) << "another image, another fingerprint";
+    ASSERT_TRUE(Kbc()->Load(Atm2Kbc::Firmware::V41, "", error)) << error;
+    ttd::TTDAtm2Kbc again(*Kbc());
+    EXPECT_EQ(again.TTDDescribe().firmwareFingerprint, v41) << "the same image, the same fingerprint";
 }

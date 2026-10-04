@@ -10,6 +10,10 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
+
+#include "widgets/journalspanslider.h"
+#include <utility>
+#include <vector>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -18,6 +22,7 @@
 
 class Emulator;
 class MainWindow;
+
 
 /**
  * @brief TtdWidget - Time Travel Debugging control panel & timeline scrubber.
@@ -65,6 +70,8 @@ public slots:
     void onResumeFromHere();
     void onSliderValueChanged(int value);
     void onSliderMoved(int value);
+    /// The "Journal" button: switch the write journal at any moment
+    void onJournalToggled(bool on);
 
 
 private:
@@ -72,6 +79,9 @@ private:
     /// The history combo's limit onto the active emulator's TTD (a new one, or a change)
     void applyHistoryLimit();
     void performSeekToFrame(uint64_t targetFrame);
+    /// Build the write journal for frames from..to by replay on a worker thread,
+    /// with a progress dialog that can cancel it
+    void buildJournal(uint64_t fromFrame, uint64_t toFrame);
 
     MainWindow* _mainWindow = nullptr;
     std::shared_ptr<Emulator> _activeEmulator = nullptr;
@@ -80,6 +90,7 @@ private:
     bool _visibleByUser = false;
     bool _isInternalSliderUpdate = false;
     bool _lastIsRecording = false;
+    bool _journalBuildRunning = false;   ///< a build runs on a worker thread: leave the session alone
 
     // Control Row (Top)
     QWidget* _controlContainer = nullptr;
@@ -87,6 +98,7 @@ private:
     QPushButton* _loadBtn = nullptr;
     QPushButton* _exportBtn = nullptr;
     QPushButton* _clearBtn = nullptr;
+    QPushButton* _journalBtn = nullptr;   // write journal on / off (D40)
     QComboBox* _historyCombo = nullptr;  // history limit (bytes, 0 = all); saved in the settings
     QLabel* _statusLabel = nullptr;
     QToolButton* _closeBtn = nullptr;
@@ -95,7 +107,8 @@ private:
     QWidget* _scrubberContainer = nullptr;
     QPushButton* _jumpStartBtn = nullptr;
     QPushButton* _stepBackBtn = nullptr;
-    QSlider* _timelineSlider = nullptr;
+    JournalSpanSlider* _timelineSlider = nullptr;
+    QPushButton* _buildJournalBtn = nullptr;   // build the write journal by replay (menu: whole / to here / from here)
     QPushButton* _stepForwardBtn = nullptr;
     QPushButton* _jumpEndBtn = nullptr;
     QPushButton* _resumeFromHereBtn = nullptr;

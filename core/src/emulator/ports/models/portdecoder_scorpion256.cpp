@@ -5,6 +5,7 @@
 #include "portdecoder_scorpion256.h"
 
 #include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
+#include "debugger/ttd/scorpion/ttdsmuc.h"
 #include "debugger/ttd/ttdds12887.h"
 
 #include "common/collectionhelper.h"
@@ -64,6 +65,7 @@ PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : Por
 {
     _savedP7FFDValid = false;
     _smucNvram.GetRtc().SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _smucNvram.GetRtc().SetSessionWall([this]() { return SessionWallMicros(); });
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
@@ -818,7 +820,8 @@ std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() co
     // in the same blob; on the plain Scorpion it is simply zero. The SMUC
     // clock is captured even with the board absent: 336 bytes, and a test
     // that fits the board records it like any other
-    return {ttd::PeripheralId::ScorpionProfROM, ttd::PeripheralId::Ds12887};
+    // The SMUC latches and serial link likewise, board fitted or not (36 bytes)
+    return {ttd::PeripheralId::ScorpionProfROM, ttd::PeripheralId::Ds12887, ttd::PeripheralId::Smuc};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const
@@ -826,6 +829,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::Crea
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<SMUCNvram&>(_smucNvram).GetRtc()));
+    serializers.push_back(std::make_unique<ttd::TTDSmuc>(const_cast<PortDecoder_Scorpion256&>(*this), *_context));
     return serializers;
 }
 

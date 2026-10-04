@@ -174,6 +174,11 @@ void MediaPanelWindow::buildUi()
     _protect = add(tr("Protect"), tr("The slot's write-protect switch"), &MediaPanelWindow::onProtect);
     _protect->setCheckable(true);
     _create = add(tr("Create Blank..."), tr("A blank disk or card in the selected slot"), &MediaPanelWindow::onCreate);
+    _compactFlash = add(tr("CF Card"),
+                        tr("An empty IDE unit: the next disk image goes in as a CompactFlash card on an IDE adapter (a "
+                           "disk that identifies itself as CFA) instead of a hard disk"),
+                        &MediaPanelWindow::onCompactFlash);
+    _compactFlash->setCheckable(true);
     buttons->addStretch(1);
     layout->addLayout(buttons);
 
@@ -306,6 +311,7 @@ void MediaPanelWindow::updateButtons()
         _discard->setEnabled(false);
         _protect->setEnabled(false);
         _create->setEnabled(false);
+        _compactFlash->setEnabled(false);
         return;
     }
 
@@ -320,6 +326,25 @@ void MediaPanelWindow::updateButtons()
     _protect->setEnabled(slot);
     _protect->setChecked(slot && row->writeProtect);
     _create->setEnabled(slot && (row->kind == "floppy" || row->kind == "block"));
+    // The drive of an IDE unit changes only while it is empty; a CD-ROM drive stays one (an ISO picks it)
+    const bool ideDisk = slot && row->ideUnit && row->kind != "optical";
+    _compactFlash->setEnabled(ideDisk && !row->present);
+    _compactFlash->setChecked(ideDisk && (row->present ? row->compactFlash : WantsCompactFlash(*row)));
+}
+
+bool MediaPanelWindow::WantsCompactFlash(const MediaPanelRow& row) const
+{
+    // The user's choice for the next insert, else the unit's drive as it is
+    const auto it = _cfChoice.find(row.slot);
+    return it != _cfChoice.end() ? it->second : row.compactFlash;
+}
+
+void MediaPanelWindow::onCompactFlash()
+{
+    const MediaPanelRow* row = selectedRow();
+    if (!row)
+        return;
+    _cfChoice[row->slot] = _compactFlash->isChecked();
 }
 
 StateNode MediaPanelWindow::run(const std::string& verb, const std::string& slot, const std::string& path,
@@ -400,10 +425,13 @@ void MediaPanelWindow::insertInto(const std::string& slot, const QString& path)
                 question = tr("%1 is a CD-ROM drive. Make it a hard disk unit for this image?");
             const QMessageBox::StandardButton answer = QMessageBox::question(this, tr("Insert"), question.arg(Q(slot)));
             if (answer == QMessageBox::Yes)
-                options["device"] = cdMedium ? "cdrom" : "disk";
+                options["device"] = cdMedium ? "cdrom" : (WantsCompactFlash(*row) ? "cf" : "disk");
             else if (!(cdMedium && file.folder))
                 return;
         }
+        // A disk image into an empty IDE disk unit: a hard disk or, with "CF Card" on, a CompactFlash card
+        else if (!cdMedium && WantsCompactFlash(*row) != row->compactFlash)
+            options["device"] = WantsCompactFlash(*row) ? "cf" : "disk";
     }
 
     // BUGS.md #3: a folder's scan + volume build can take seconds (a large

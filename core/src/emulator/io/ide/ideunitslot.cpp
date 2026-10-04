@@ -30,6 +30,12 @@ IdeUnitSlot::IdeUnitSlot(EmulatorContext* context, std::string id, AtaDevice& de
         if (context && context->pMediaManager)
             context->pMediaManager->NoteWrite(slotId, "IDE write");
     });
+    // A CD drive's guest eject empties the slot through the manager's normal eject
+    if (cd)
+        static_cast<AtapiCdrom&>(_device).SetEjectListener([context, slotId] {
+            if (context && context->pMediaManager)
+                context->pMediaManager->GuestEject(slotId);
+        });
 }
 
 std::string IdeUnitSlot::IdFor(int channel, int unit)

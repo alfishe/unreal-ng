@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "emulator/io/ide/ata/atachannel.h"
@@ -343,6 +344,92 @@ TEST_F(AtaDisk_Test, OtherCommands)
     _channel.WriteRegister(StatusCommand, Command::FormatTrack);
     WriteBlock(0);
     EXPECT_EQ(Status(), Status::DRDY | Status::DSC);
+}
+
+/// A CompactFlash card on an IDE adapter (CFA): the same command set as a disk, IDENTIFY word 0 = #848A (removable,
+/// not magnetic), the CFA feature set in words 83 / 86 bit 2, the model "UNREAL-NG CF" (MAME's ata_cf answers the same
+/// word 0, machine/atastorage.cpp cf_device_base)
+TEST_F(AtaDisk_Test, CompactFlashIdentifiesAsCfa)
+{
+    DriveConfig config;
+    config.compactFlash = true;
+    Attach(2048, config);
+    _channel.WriteRegister(StatusCommand, Command::Identify);
+    const std::vector<uint8_t> id = ReadBlock();
+    auto word = [&id](size_t w) { return static_cast<uint16_t>(id[w * 2] | (id[w * 2 + 1] << 8)); };
+
+    EXPECT_EQ(word(0), 0x848A);
+    EXPECT_EQ(word(83) & 0x0004, 0x0004) << "CFA feature set supported";
+    EXPECT_EQ(word(86) & 0x0004, 0x0004) << "CFA feature set enabled";
+    std::string model;
+    for (size_t w = 27; w < 47; w++)
+    {
+        model.push_back(static_cast<char>(word(w) >> 8));
+        model.push_back(static_cast<char>(word(w) & 0xFF));
+    }
+    EXPECT_EQ(model.substr(0, 12), "UNREAL-NG CF");
+    EXPECT_EQ(word(60) | (word(61) << 16), 2048);
+    uint8_t sum = 0;
+    for (uint8_t b : id)
+        sum = static_cast<uint8_t>(sum + b);
+    EXPECT_EQ(sum, 0) << "word 255 checksum";
+
+    // The same data path as a disk
+    SelectLba(7, 1);
+    _channel.WriteRegister(StatusCommand, Command::ReadSectors);
+    EXPECT_EQ(ReadBlock(), Expected(7));
+}
+
+/// CFA 8-bit data transfer: SET FEATURES #01 moves one byte per data register access on D0-D7 (the upper lines read
+/// high), #81 goes back to 16 bits, and any reset restores the 16-bit default. A hard disk ignores both codes
+TEST_F(AtaDisk_Test, CompactFlashEightBitTransfer)
+{
+    DriveConfig config;
+    config.compactFlash = true;
+    Attach(64, config);
+    _channel.WriteRegister(ErrorFeatures, 0x01);
+    _channel.WriteRegister(StatusCommand, Command::SetFeatures);
+    EXPECT_EQ(Status(), Status::DRDY | Status::DSC);
+
+    SelectLba(3, 1);
+    _channel.WriteRegister(StatusCommand, Command::ReadSectors);
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 512; i++)
+    {
+        const uint16_t word = _channel.ReadData();
+        EXPECT_EQ(word >> 8, 0xFF) << i;
+        data.push_back(static_cast<uint8_t>(word));
+    }
+    EXPECT_EQ(data, Expected(3));
+    EXPECT_FALSE(Status() & Status::DRQ) << "512 byte accesses move the sector";
+
+    SelectLba(9, 1);
+    _channel.WriteRegister(StatusCommand, Command::WriteSectors);
+    for (int i = 0; i < 512; i++)
+        _channel.WriteData(static_cast<uint16_t>(0xEE00 | (i & 0xFF)));
+    EXPECT_EQ(Status(), Status::DRDY | Status::DSC);
+    for (int i = 0; i < 512; i++)
+        ASSERT_EQ(_medium->Data()[9 * 512 + i], static_cast<uint8_t>(i)) << "D0-D7 only, " << i;
+
+    _channel.WriteRegister(ErrorFeatures, 0x81);
+    _channel.WriteRegister(StatusCommand, Command::SetFeatures);
+    SelectLba(3, 1);
+    _channel.WriteRegister(StatusCommand, Command::ReadSectors);
+    EXPECT_EQ(ReadBlock(), Expected(3)) << "16-bit again";
+
+    _channel.WriteRegister(ErrorFeatures, 0x01);
+    _channel.WriteRegister(StatusCommand, Command::SetFeatures);
+    _disk->HardReset();
+    SelectLba(3, 1);
+    _channel.WriteRegister(StatusCommand, Command::ReadSectors);
+    EXPECT_EQ(ReadBlock(), Expected(3)) << "a reset restores 16 bits";
+
+    Attach(64);  // a hard disk
+    _channel.WriteRegister(ErrorFeatures, 0x01);
+    _channel.WriteRegister(StatusCommand, Command::SetFeatures);
+    SelectLba(3, 1);
+    _channel.WriteRegister(StatusCommand, Command::ReadSectors);
+    EXPECT_EQ(ReadBlock(), Expected(3)) << "a disk keeps 16 bits";
 }
 
 /// The unit's state is plain data: a copy taken in the middle of a transfer

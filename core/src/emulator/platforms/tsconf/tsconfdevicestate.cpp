@@ -291,7 +291,7 @@ StateNode TsConfTsu(EmulatorContext* context)
         sp["index"] = int(d);
         sp["active"] = (w0 & 0x2000) != 0;
         sp["leap"] = (w0 & 0x4000) != 0;
-        sp["layer"] = layer == 0 ? "s0" : (layer == 1 ? "s1" : "s2");
+        sp["layer"] = layer == 0 ? "s0" : (layer == 1 ? "s1" : (layer == 2 ? "s2" : "ended"));  // "ended": behind the third LEAP, never processed
         sp["x"] = int(w1 & 0x1FF);
         sp["y"] = int(w0 & 0x1FF);
         sp["width"] = int((((w1 >> 9) & 0x07) + 1) * 8);
@@ -307,9 +307,9 @@ StateNode TsConfTsu(EmulatorContext* context)
             words.items.push_back(StateNode(hex(w, 4)));
         sp["words"] = words;
         sprites.items.push_back(sp);
-        active += (w0 & 0x2000) ? 1 : 0;
-        if ((w0 & 0x4000) && layer < 2)
-            layer++;  // LEAP: the next descriptor starts the next sprite layer
+        active += (w0 & 0x2000) && layer < 3 ? 1 : 0;
+        if ((w0 & 0x4000) && layer < 3)
+            layer++;  // LEAP: the next descriptor starts the next sprite layer (the third ends them)
     }
     ret["active_sprites"] = active;
     ret["sprites"] = sprites;

@@ -717,6 +717,76 @@ TEST(MediaManager_Test, FloppyWriteThroughSavesAtTheFrameBoundary)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+/// FR-20: while time travel replays history no medium writes its host file.
+/// A write-through image keeps the guest's sectors in memory (the guest reads
+/// them back) and gets them when the hold is released; a medium inserted
+/// while held is held too
+TEST(MediaManager_Test, WriteThroughImagesAreHeldWhileReplaying)
+{
+    MediaManager manager(nullptr);
+    FakeBlockSlot slot("sd.test");
+    manager.RegisterSlot(slot);
+    const std::string path = MakeImageFile("media-hold.img", 8);
+    MediaSource source;
+    source.path = path;
+    InsertOptions writeThrough;
+    writeThrough.access = AccessMode::WriteThrough;
+    ASSERT_TRUE(manager.Insert("sd.test", source, writeThrough).Ok());
+    ASSERT_NE(slot.attached, nullptr);
+    auto firstByte = [&](std::streamoff at) {
+        std::ifstream file(path, std::ios::binary);
+        file.seekg(at);
+        return file.get();
+    };
+
+    manager.HoldHostWrites(true);
+    const std::vector<uint8_t> data(512, 0x11);
+    ASSERT_TRUE(slot.attached->Block()->WriteSector(2, data.data()));
+    EXPECT_EQ(firstByte(1024), 0x42) << "held: the file is untouched";
+    uint8_t sector[512];
+    ASSERT_TRUE(slot.attached->Block()->ReadSector(2, sector));
+    EXPECT_EQ(sector[0], 0x11) << "the guest reads its write";
+    manager.HoldHostWrites(false);
+    EXPECT_EQ(firstByte(1024), 0x11) << "released: the file has the write";
+
+    manager.HoldHostWrites(true);
+    ASSERT_TRUE(manager.Insert("sd.test", source, writeThrough).Ok());
+    ASSERT_TRUE(slot.attached->Block()->WriteSector(3, data.data()));
+    EXPECT_EQ(firstByte(1536), 0x42) << "a medium inserted while held is held";
+    manager.HoldHostWrites(false);
+    EXPECT_EQ(firstByte(1536), 0x11);
+    manager.UnregisterSlot("sd.test");
+    std::remove(path.c_str());
+}
+
+/// FR-20 for floppies: a write-through floppy is saved at a frame boundary,
+/// but not while held; the next frame after the hold writes it
+TEST(MediaManager_Test, FloppyWriteThroughWaitsWhileReplaying)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    MediaManager& manager = *emulator->GetContext()->pMediaManager;
+    ScratchFolder folder("floppy-hold");
+    const auto file = folder.File("game.trd", Slurp(FileHelper::ToFsPath(FloppyFixture("testdata/loaders/trd/EyeAche.trd"))));
+    const std::string before = Slurp(file);
+    MediaSource source;
+    source.path = Utf8Path(file);
+    InsertOptions options;
+    options.access = AccessMode::WriteThrough;
+    ASSERT_TRUE(manager.Insert("fdd.a", source, options).Ok());
+
+    manager.HoldHostWrites(true);
+    GuestWrite(*manager.GetMedium("fdd.a")->Floppy(), 0x77);
+    manager.ApplyPending();
+    EXPECT_EQ(Slurp(file), before) << "held: the file is untouched";
+    EXPECT_TRUE(manager.Info("fdd.a")->dirty);
+    manager.HoldHostWrites(false);
+    manager.ApplyPending();
+    EXPECT_NE(Slurp(file), before) << "the next live frame writes it";
+    EXPECT_FALSE(manager.Info("fdd.a")->dirty);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// A folder in a floppy drive is a TR-DOS disk built from it; it is never written back
 TEST(MediaManager_Test, FolderInAFloppyDriveIsATrdosDisk)
 {

@@ -18,6 +18,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
+#include <emulator/io/ide/idecontroller.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
@@ -790,6 +791,131 @@ TEST_F(SprinterBoot_Test, Bios306_DssUsesBothChannels)
     EXPECT_FALSE(RootHasDirectory(ReadAll(system), "IDE1       "));
     std::remove(system.c_str());
     std::remove(data.c_str());
+}
+
+// The BIOS boot from an ATAPI CD (atapi-cd-boot.md): BIOS 3.06 Hotfix 2 with CMOS #10 = #03 (the system disk on the
+// primary slave) finds a CD unit there and goes to CDSTART: sector 1 has no signature, so it reads sector 17 with
+// 2048-byte sectors, finds "Starting..." + #00, copies the sector to #8000 and jumps to #800C with A = the drive code
+// (#C1, ATAPI on the primary slave), SP = #8000, interrupts off, IM 1. The disc is built here: an ISO 9660 primary
+// volume descriptor at sector 16, the boot sector at 17 (where a Joliet image keeps its descriptor), a terminator at 18.
+// Its loader stores A at #8802 and a marker at #8800, then loops at #8014.
+// Boot-bound (BIOS POST, SETUP, the IDE scan of four units), the turbo mode on
+TEST_F(SprinterBoot_Test, Bios306_BootsFromAnAtapiCd)
+{
+    constexpr size_t kSector = 2048;
+    std::vector<uint8_t> iso(32 * kSector, 0);
+    uint8_t* pvd = &iso[16 * kSector];
+    pvd[0] = 0x01;
+    std::memcpy(pvd + 1, "CD001", 5);
+    pvd[6] = 0x01;
+    pvd[80] = 32;  // volume space size, both-endian 32-bit
+    pvd[87] = 32;
+    pvd[128] = 0x00;  // logical block size 2048, both-endian 16-bit
+    pvd[129] = 0x08;
+    pvd[130] = 0x08;
+    uint8_t* boot = &iso[17 * kSector];
+    std::memcpy(boot, "Starting...", 12);  // the BIOS's SYSID, its zero byte included
+    const uint8_t loader[] = {0x32, 0x02, 0x88,  // LD (#8802),A   the drive code
+                              0x3E, 0xAA,        // LD A,#AA
+                              0x32, 0x00, 0x88,  // LD (#8800),A   the marker
+                              0x18, 0xFE};       // JR $           at #8014
+    std::memcpy(boot + 12, loader, sizeof(loader));
+    uint8_t* terminator = &iso[18 * kSector];
+    terminator[0] = 0xFF;
+    std::memcpy(terminator + 1, "CD001", 5);
+    terminator[6] = 0x01;
+    const std::string isoPath = TestPathHelper::GetUniqueTestScratchPath("sprinter-cdboot.iso");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(isoPath, iso.data(), iso.size()));
+
+    _context->config.ide[1].cd = 1;
+    _context->pCore->RefitIde();
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    MediaSource source;
+    source.path = isoPath;
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = _context->pMediaManager->Insert("ide0.slave", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+
+    // SETUP's defaults (cells #0E-#20) with the system disk on the primary slave; the checksum over the 19 cells
+    // (SETTINGS.asm CHEKSUM: H = #DE, H = RLC(H - v) - v) goes to #3F, so SETUP keeps them
+    const uint8_t cells[] = {0x4A, 0x07, 0x03, 0x00, 0x00, 0x10, 0x10, 0x20, 0x00, 0x00,
+                             0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x77, 0x00};
+    Ds12887& rtc = _decoder->GetRtc();
+    uint8_t h = 0xDE;
+    for (size_t i = 0; i < sizeof(cells); i++)
+    {
+        rtc.SetCell(static_cast<uint8_t>(0x0E + i), cells[i]);
+        uint8_t a = static_cast<uint8_t>(h - cells[i]);
+        a = static_cast<uint8_t>((a << 1) | (a >> 7));
+        h = static_cast<uint8_t>(a - cells[i]);
+    }
+    ASSERT_EQ(h, 0xF2) << "atapi-cd-boot.md section 2, the worked example";
+    rtc.SetCell(0x3F, h);
+
+    Memory* memory = _context->pMemory;
+    Z80* z80 = _context->pCore->GetZ80();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return memory->DirectReadFromZ80Memory(0x8800) == 0xAA; }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("Primary Slave     ... UNREAL-NG CD-ROM")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("Boot from CD-ROM Primary IDE Slave OK")) << ScreenText();
+    ASSERT_EQ(memory->DirectReadFromZ80Memory(0x8800), 0xAA) << "the CD's loader ran\n" << ScreenText();
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8802), 0xC1) << "A = the drive code: ATAPI, the primary slave";
+    EXPECT_EQ(z80->pc, 0x8014);
+    EXPECT_EQ(z80->sp, 0x8000);
+    EXPECT_EQ(z80->iff1, 0);
+    EXPECT_EQ(z80->im, 1);
+    for (size_t i = 0; i < 12 + sizeof(loader); i++)
+        EXPECT_EQ(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(0x8000 + i)), boot[i]) << "#8000 + " << i;
+
+    DestroyEmulator();
+    std::remove(isoPath.c_str());
+}
+
+// A CompactFlash card on an IDE adapter, the usual system disk of a Sprinter today (peripherals-survey §8 item 5): the
+// card answers IDENTIFY with the CFA signature #848A and the model "UNREAL-NG CF"; BIOS 3.06 Hotfix 2 lists it as a
+// disk and boots DSS 1.71 from it. The disk is built here from the DSS 1.71.66 build in testdata, laid out as its
+// BOOT.EXE installs it (estex-dss-build.md section 4): DSSloader.bin's first 1443 bytes at LBA 1-3, its last 276
+// (ZERO_SECTOR_OF_BPB, which the loader copies back from sector 0) in the MBR right before the partition table;
+// SYSTEM.DOS, SYSTEM.EXE and a SYSTEM.BAT running `ver` on a FAT16 partition. The card's IDENTIFY sets "removable" (word 0 bit 7), which BIOS
+// 3.06 hands to DSS (AUTOIDE PARSE_IdentifyDevice -> MediaParameters bit 0): DSS takes the removable path, which
+// needs that sector-0 part (a disk image without it boots as a hard disk and crashes as a CF card).
+// Boot-bound (BIOS POST, SETUP, the IDE scan, DSS 1.71 from the card), the turbo mode on
+TEST_F(SprinterBoot_Test, Bios306_Dss171BootsFromACompactFlashCard)
+{
+    const std::string dss = TestPathHelper::GetTestDataPath("machines/sprinter/dss/1.71.66/");
+    const std::vector<uint8_t> loader = ReadAll(dss + "DSSloader.bin");
+    const std::vector<uint8_t> kernel = ReadAll(dss + "system.dos");
+    const std::vector<uint8_t> shell = ReadAll(dss + "system.exe");
+    if (loader.empty() || kernel.empty() || shell.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss/1.71.66 is missing";
+    constexpr size_t kSectors13 = 1443;  // "SECTORS 1..3 DATA ENDS" of the ae08ad9 build (DSSBOOT.ASM)
+    ASSERT_EQ(loader.size(), kSectors13 + 276) << "the testdata loader is the ae08ad9 build";
+    const std::vector<uint8_t> sectors13(loader.begin(), loader.begin() + kSectors13);
+    const std::vector<uint8_t> sector0(loader.begin() + kSectors13, loader.end());
+    const std::string bat = "ver\r\n";  // the shell runs SYSTEM.BAT: the version line
+    std::vector<uint8_t> disk = BuildDssHdd(sectors13,
+                                            {{"SYSTEM  DOS", kernel},
+                                             {"SYSTEM  EXE", shell},
+                                             {"SYSTEM  BAT", std::vector<uint8_t>(bat.begin(), bat.end())}},
+                                            sector0);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("dss171-cf.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(image, disk.data(), disk.size()));
+
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    std::string error;
+    ASSERT_TRUE(_context->pIdeController->SetUnitKind(0, IdeController::UnitKind::CompactFlash, &error)) << error;
+    InsertHdd(image, "ide0.master");
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->descriptor.label, "IDE primary master (CompactFlash)");
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1500, 5);
+    EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG CF")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("Estex DSS version 1.71.66. Shell version 1.2.523.")) << ScreenText();
+
+    DestroyEmulator();
+    std::remove(image.c_str());
 }
 
 // Empty channels (tdd-storage §3.4): the Sprinter's AT board pulls DD7 down as the ATA standard asks, so a channel

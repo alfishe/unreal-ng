@@ -114,6 +114,11 @@ Checked with the disk `pqdos1.fdi` (PQ-DOS 2.1, collection `profi/dos/pq-dos/`):
 | `PROFI3` (Kramis V0.3, "Profi-DOS") | "ROM-BIOS emulator installed [OK]", "PQ-DOS Loading...", reads the system, programs the 8255 (`OUT #7F,#90`), then loops at `#52B0..#52C1` (not investigated) |
 | `PROFI` (BIOS 2.0, CP/M entry) | the boot returns to the BIOS menu |
 
+Compatibility with Profi CP/M (2026-10-04, [analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
+of the 116 programs on the PQ-DOS 2023 HDD image most start; FLINES, WERT#, PINGVIN# fail because BDOS function 98
+(parse filename) is not implemented, MAT prints nothing because BDOS function 9 stops at a NUL byte; JAZZY and COLUMNS
+are open. Run such programs from a Micco CP/M floppy.
+
 ## 7. Disks that fail by themselves
 
 - `testdata/machines/profi/CPM.UDI` (vtrd.in "Profi CP/M by Micco Software'92", a user's disk): its `CONFIG.SYS`

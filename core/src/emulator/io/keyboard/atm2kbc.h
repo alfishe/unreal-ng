@@ -79,6 +79,8 @@ public:
     bool Load(Firmware firmware, const std::string& romPath, std::string& error);
     bool Present() const { return _firmware != Firmware::None && _cpu != nullptr; }
     Firmware GetFirmware() const { return _firmware; }
+    /// ttd::FirmwareFingerprint of the loaded firmware image (0: none fitted)
+    uint64_t FirmwareHash() const { return _firmwareHash; }
     uint32_t CrystalHz() const { return _crystalHz; }
 
     /// The native port D45 for a port address (matrix AND, tape, ...): the decoder's plain #FE read
@@ -207,6 +209,7 @@ private:
     EmulatorContext* _context = nullptr;
     std::unique_ptr<mcs51::Mcs51> _cpu;
     Firmware _firmware = Firmware::None;
+    uint64_t _firmwareHash = 0;
     uint32_t _crystalHz = 0;
     std::function<uint8_t(uint16_t)> _native;
 

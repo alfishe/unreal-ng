@@ -437,11 +437,13 @@ TEST_F(Config_Test, HddSectionSetsTheBoardAndItsUnits)
 
     {
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
-        file << "[HDD]\nScheme=WILD\nCD1=1\n";
+        file << "[HDD]\nScheme=WILD\nCD1=1\nCF0=1\nCF1=1\n";
     }
     ASSERT_TRUE(config.LoadConfigFile(path));
     EXPECT_EQ(_context->config.ide_scheme, IDE_NONE) << "an unknown board: no IDE";
     EXPECT_EQ(_context->config.ide[1].cd, 1);
+    EXPECT_EQ(_context->config.ide[0].cf, 1) << "CF0=1: a CompactFlash card on the master";
+    EXPECT_EQ(_context->config.ide[1].cf, 0) << "a CD unit is no CF card";
     std::remove(path.c_str());
 }
 

@@ -49,6 +49,7 @@ public:
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const override;
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
@@ -90,6 +91,15 @@ public:
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;
+    /// ExtPorts=v003 only: TR-DOS running with ROM14 = 1 (CP/M off). The V0.03 PROM answers the long ports there as
+    /// well, beside the VG93 at #1F..#7F - except the ones whose A6 A5 A1 A0 = 1111 (#E3 #E7 #EB #EF #F3 #F7 #FB
+    /// #FF), which stay the system register. Not IsExtMode(): the short VG93 map stays
+    bool IsLongBesideShort() const;
+    /// Whether a long (extended-map) port answers now: the whole map in IsExtMode(), the V0.03 subset in
+    /// IsLongBesideShort()
+    bool LongPortOpen(uint16_t port) const;
+    /// The IDE ports #8B / #AB / #CB / #EB: #EB loses to the system register in IsLongBesideShort()
+    bool IdeShadowedBySysRegister(uint16_t port) const;
     /// The 8255 register an address selects in the current port map, or #FF
     uint8_t PpiRegister(uint16_t port, bool dosPorts) const;
     /// The COM port device an address selects in the extended map (v5 only), or ComDevice::None

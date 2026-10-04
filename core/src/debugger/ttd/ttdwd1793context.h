@@ -9,10 +9,9 @@
 /// nor where the transfer pointers point: a restore inside a command (an ID
 /// search, a sector half read) used to end the command with Not Ready. This
 /// blob carries them as tags and disk positions, so the command continues on
-/// the same byte. Separate from the BetaDisk blob because that layout is in
-/// every Beta machine's recordings (the fixture corpus): a machine declares this
-/// id when it needs it (the Sprinter, since phase S7); the others take it when
-/// their fixtures are re-recorded.
+/// the same byte. Separate from the BetaDisk blob, whose layout older
+/// recordings keep. Registered with the BetaDisk on every Beta machine
+/// (ttdmachineperipherals.cpp; the Sprinter first, since phase S7).
 ///
 /// Restored after the BetaDisk blob (the registry restores in ascending id
 /// order), whose load empties the queue and the pointers.
@@ -39,6 +38,8 @@ public:
     std::string TTDDeviceName() const override { return "Wd1793Context"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::Wd1793Context; }
     uint64_t TTDHashState() const override;
+    /// Restored after the controller's own blob, whose load empties the queue and the pointers
+    TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
     WD1793& _fdc;

@@ -6,7 +6,12 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
   (8255), serial (8253 + 8251) not emulated; HDD needs an image
 - [x] Research: BIOS Plus 0.241-0.41h1 found (0.40+ for DN), port list and chips documented, the V0.03 decoder
   PROM and the 5.06 CPLD sources found, PQ-DOS HDD image with DN 2.0.16 (design.md section 2.1)
-- [ ] P0 decode the V0.03 PROM, compare with `ExtPorts=sys`
+- [x] P0 decode the V0.03 PROM, compare with `ExtPorts=sys` (2026-10-04): the file is "coded" = the reverse bit order of the v5
+  printed table (only that order keeps the TR-DOS VG93 at `#1F..#7F`, as Djoni's `profi-ports-v0.03.pdf` lists);
+  `profidecoder.py` takes it as a third argument and compares with the `sys` rule. Differences found and fixed as
+  `ExtPorts=v003` (`PROFI-PLUS` uses it): in TR-DOS with ROM14 = 1 the long ports (RTC `#9F #BF #DF`, 8255, IDE
+  `#8B #AB #CB`, VG93 `#83 #A3 #C3`) answer beside the short VG93, `#E3..#FF` stay the system register (so IDE `#EB` is
+  the system register there); in CP/M mode a left-on DOS latch no longer opens the long map in the SYS ROM state
 - [x] The 8253 / 8251 clock on the board: 1.5 MHz, from BIOS Plus's baud table (divider x baud = 1 500 000; the
   8251 at x1); the 5.06 album's COM schematic would confirm it
 - [x] P1 `Ppi8255` + Profi routing (normal #1F..#7F and extended #87..#E7; Covox keeps following every B / C write;
@@ -31,3 +36,8 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
   PROFI-PLUS in DOS Navigator: 704x576 at scale 2
 - [ ] P5 TTD, automation, recipe, docs
 - [x] P6 DOS Navigator: 2.0.16 runs from the PQ-DOS 2023 HDD image on PROFI-PLUS (BIOS Plus 0.41h1)
+- [x] Triage of the 116 programs on the PQ-DOS HDD image ([analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
+  SP.COM logo = program bug ([sp-demo](../../disasm/machines/profi-plus/sp-demo/README.md)); FLINES / WERT# / PINGVIN# need
+  BDOS 98, MAT hits BDOS 9 + NUL (both PQ-DOS behavior)
+- [ ] JAZZY (runs data as code under PQ-DOS) and COLUMNS (open of a missing file returns "found") root causes; `S_MIN'.COM`
+  by hand; confirm PQ-DOS findings with a second source

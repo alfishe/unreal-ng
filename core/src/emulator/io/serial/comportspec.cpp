@@ -3,6 +3,9 @@
 #include <cctype>
 #include <cstdlib>
 
+#include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/esp/zifinativemodule.h"
+
 namespace
 {
 std::string Trim(const std::string& s)
@@ -100,19 +103,54 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Plug;
         return true;
     }
-    // ESPNET / AT, optionally with the module's rate: ESPNET,38400
+    // ESPNET / AT / ZIFI-NATIVE, optionally with the module's rate (ESPNET,38400); AT and ZIFI-NATIVE also take the
+    // module's firmware, before or after the rate (AT,ESP8266-AT222 / ZIFI-NATIVE,ESP01S,115200)
     {
         const size_t comma = upper.find(',');
         const std::string head = Trim(upper.substr(0, comma));
-        if (head == "ESPNET" || head == "AT")
+        if (head == "ESPNET" || head == "AT" || head == "ZIFI-NATIVE")
         {
-            out.kind = head == "ESPNET" ? Kind::Espnet : Kind::At;
+            out.kind = head == "ESPNET" ? Kind::Espnet : head == "AT" ? Kind::At : Kind::ZiFiNative;
             out.baud = 0;
-            if (comma != std::string::npos &&
-                (!ParseUnsigned(Trim(upper.substr(comma + 1)), 4000000, out.baud) || out.baud == 0))
+            const std::string usage = head == "ESPNET" ? "expected ESPNET[,<baud>]"
+                                      : head == "AT"   ? "expected AT[,<firmware>][,<baud>] (firmware: ESP32 | ESP8266 | "
+                                                         "ESP8266-AT221 | ESP8266-AT222)"
+                                                       : "expected ZIFI-NATIVE[,<variant>][,<baud>] (variant: S3 | ESP01S)";
+            size_t at = comma;
+            while (at != std::string::npos)
             {
-                error = "expected " + head + "[,<baud>]";
-                return false;
+                const size_t next = upper.find(',', at + 1);
+                const std::string field = Trim(upper.substr(at + 1, next == std::string::npos ? std::string::npos : next - at - 1));
+                at = next;
+                uint32_t baud = 0;
+                if (!field.empty() && std::isdigit(static_cast<unsigned char>(field[0])) && field.find('.') == std::string::npos)
+                {
+                    if (out.baud || !ParseUnsigned(field, 4000000, baud) || baud == 0)
+                    {
+                        error = usage;
+                        return false;
+                    }
+                    out.baud = baud;
+                    continue;
+                }
+                bool known = false;
+                if (out.kind == Kind::At)
+                {
+                    EspModule::Firmware firmware = EspModule::Firmware::Esp32At220;
+                    known = EspModule::ParseFirmware(field, firmware);
+                    out.firmware = static_cast<uint8_t>(firmware);
+                }
+                else if (out.kind == Kind::ZiFiNative)
+                {
+                    ZiFiNativeModule::Variant variant = ZiFiNativeModule::Variant::S3;
+                    known = ZiFiNativeModule::ParseVariant(field, variant);
+                    out.firmware = static_cast<uint8_t>(variant);
+                }
+                if (!known || field.empty())
+                {
+                    error = usage;
+                    return false;
+                }
             }
             return true;
         }
@@ -184,8 +222,8 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Serial;
         return true;
     }
-    error = "unknown value (NONE | LOOPBACK | PLUG | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | AT[,<baud>] | "
-            "MODEM[,<guest port>])";
+    error = "unknown value (NONE | LOOPBACK | PLUG | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | "
+            "AT[,<firmware>][,<baud>] | ZIFI-NATIVE[,<variant>][,<baud>] | MODEM[,<guest port>])";
     return false;
 }
 
@@ -199,7 +237,20 @@ std::string ComPortSpec::ToString() const
             return "TCP:" + host + ":" + std::to_string(port);
         case Kind::Serial: return "SERIAL:" + device + "," + std::to_string(baud);
         case Kind::Espnet: return baud ? "ESPNET," + std::to_string(baud) : std::string("ESPNET");
-        case Kind::At: return baud ? "AT," + std::to_string(baud) : std::string("AT");
+        case Kind::At:
+        {
+            std::string text = "AT";
+            if (firmware != kDefaultFirmware)
+                text += std::string(",") + EspModule::FirmwareName(static_cast<EspModule::Firmware>(firmware));
+            return baud ? text + "," + std::to_string(baud) : text;
+        }
+        case Kind::ZiFiNative:
+        {
+            std::string text = "ZIFI-NATIVE";
+            if (firmware != kDefaultFirmware)
+                text += std::string(",") + ZiFiNativeModule::VariantName(static_cast<ZiFiNativeModule::Variant>(firmware));
+            return baud ? text + "," + std::to_string(baud) : text;
+        }
         case Kind::Modem: return port ? "MODEM," + std::to_string(port) : std::string("MODEM");
         default: return "NONE";
     }

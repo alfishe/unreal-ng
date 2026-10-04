@@ -1,0 +1,14 @@
+# The CPLD's GS bus controller (1 MB build): ROM at #0000-#3FFF and page 0, RAM chips by page bit 4
+gmr 0000 00
+gmr 4000 00
+gmr 8000 00     # page 0: ROM
+gout 0000 01
+gmr 8000 00     # page 1: RAM 1, gma 1
+gmr C000 00
+gout 0000 1F    # page #1F: RAM 2, gma F
+gmr 8000 00
+gmr 4000 00     # #4000-#7FFF: always RAM 1, gma 1
+gout 0000 20    # page #20: bit 5 ignored with 1 MB -> RAM 1, gma 0
+gmr 8000 00
+gout 0000 80    # bit 7 is outside gs_page: page 0 -> ROM
+gmr 8000 00

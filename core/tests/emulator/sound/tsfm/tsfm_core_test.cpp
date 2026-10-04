@@ -304,6 +304,40 @@ TEST_F(TsfmPort_Test, ResetState)
     EXPECT_EQ(_device->syncedT(), 0);
 }
 
+/// The SSG halves reset to the datasheet state (YM2203 /IC: "All the content of register array become 0";
+/// the SSG is the same SoundChip_AY8910 reset as the plain AY): every register 0, so both I/O ports are inputs and
+/// a read of R14 / R15 gives the pulled-up pins (#FF). An output port reads its latch. Sources:
+/// docs/inprogress/2026-10-04-ay-reset/TODO.md
+TEST_F(TsfmPort_Test, ResetStateSsgIsTheDatasheetState)
+{
+    for (uint8_t chipSelect : {uint8_t(0xFE), uint8_t(0xFF)})
+    {
+        Out(PORT_FFFD, chipSelect);
+        Out(PORT_FFFD, AY_MIXER_CONTROL);
+        Out(PORT_BFFD, 0xFF);
+        Out(PORT_FFFD, AY_PORTA);
+        Out(PORT_BFFD, 0x5A);
+        ASSERT_EQ(In(PORT_FFFD), 0x5A) << "output port reads its latch";
+    }
+
+    _device->reset();
+
+    for (int i = 0; i < 2; i++)
+    {
+        SCOPED_TRACE(testing::Message() << "chip " << i);
+        const uint8_t* regs = _device->chip(i)->ssg.getRegisters();
+        for (int reg = 0; reg < 16; reg++)
+            EXPECT_EQ(regs[reg], 0) << "R" << reg;
+
+        Out(PORT_FFFD, i == 0 ? 0xFE : 0xFF);
+        Out(PORT_FFFD, AY_PORTA);
+        EXPECT_EQ(In(PORT_FFFD), 0xFF) << "R14 in input mode reads the pins";
+        Out(PORT_FFFD, AY_PORTB);
+        EXPECT_EQ(In(PORT_FFFD), 0xFF) << "R15 in input mode reads the pins";
+        EXPECT_EQ(_device->chip(i)->fm.read_data(), 0xFF) << "ymfm's SSG data read sees the same pins";
+    }
+}
+
 TEST_F(TsfmPort_Test, AddressLatchedWhileMuted)
 {
     Out(PORT_FFFD, 0xFE);  // chip 0, register read, FM muted
@@ -346,10 +380,17 @@ TEST_F(TsfmPort_Test, ReadWithFmAddress)
     EXPECT_EQ(In(PORT_BFFD), 0xFF);
 
     // SSG address latched: the register path answers (legacy parity — IN
-    // #BFFD writes through to the selected register)
+    // #BFFD writes through to the selected register). R14 reads its latch
+    // only while port A is an output (R7 bit 6); after reset it is an input
+    // and reads its pulled-up pins (#FF) - the test relied on the old reset
+    // value R7 = #FF until the datasheet reset state (all registers 0)
     Out(PORT_FFFD, 0x0E);
     Out(PORT_BFFD, 0x20);
-    EXPECT_EQ(In(PORT_BFFD), 0x20);
+    EXPECT_EQ(In(PORT_BFFD), 0xFF) << "port A input: the pins";
+    Out(PORT_FFFD, 0x07);
+    Out(PORT_BFFD, 0x40);  // port A output
+    Out(PORT_FFFD, 0x0E);
+    EXPECT_EQ(In(PORT_BFFD), 0x20) << "port A output: the latch";
 }
 
 /// endregion

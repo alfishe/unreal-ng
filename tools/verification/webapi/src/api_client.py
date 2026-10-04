@@ -533,20 +533,39 @@ class UnrealApiClient:
         resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/ttd/status"))
         return self._handle_response(resp)
 
-    def ttd_start(self, emulator_id, enable_write_journal: bool = True):
+    def ttd_start(self, emulator_id, journal: bool = False):
         """POST /api/v1/emulator/{id}/ttd/start
 
         Args:
             emulator_id: Emulator instance ID.
-            enable_write_journal: If True (default), enables the 256MB write
-                journal for reverse-search (FindLast). Set to False for lighter
-                memory footprint during gaming/demo playback.
+            journal: also record the write journal (default False): "who wrote
+                this address last" then answers at once instead of replaying
+                one frame. It can also be switched later (ttd_journal) or
+                built by replay (ttd_journal_build).
         """
-        data = {"enable_write_journal": enable_write_journal}
         resp = self.session.post(
             self._url(f"/api/v1/emulator/{emulator_id}/ttd/start"),
-            json=data
+            json={"journal": journal}
         )
+        return self._handle_response(resp)
+
+    def ttd_journal(self, emulator_id, enabled=None):
+        """GET (enabled=None) or POST /api/v1/emulator/{id}/ttd/journal: the write
+        journal's state and spans, or switch it at any moment (also while recording)"""
+        url = self._url(f"/api/v1/emulator/{emulator_id}/ttd/journal")
+        resp = self.session.get(url) if enabled is None else self.session.post(url, json={"enabled": bool(enabled)})
+        return self._handle_response(resp)
+
+    def ttd_journal_build(self, emulator_id, from_frame=None, to_frame=None, timeout=3600):
+        """POST /api/v1/emulator/{id}/ttd/journal/build: build the write journal for
+        frames from..to (default: the whole session) by replaying them"""
+        data = {}
+        if from_frame is not None:
+            data["from_frame"] = from_frame
+        if to_frame is not None:
+            data["to_frame"] = to_frame
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/journal/build"),
+                                 json=data, timeout=timeout)
         return self._handle_response(resp)
 
     def ttd_stop(self, emulator_id):

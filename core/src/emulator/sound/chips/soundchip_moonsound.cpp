@@ -153,14 +153,7 @@ void SoundChip_Moonsound::loadWaveRom()
     // the Tier A blob - restore warns when the loaded image differs from
     // the recorded one (7.3). Hashing the region (not just the loaded
     // prefix) keeps short images distinguishable from full ones.
-    const uint8_t* romRegion = _waveMemory.RomData();
-    uint64_t hash = 0xcbf29ce484222325ULL;
-    for (uint32_t i = 0; i < romSize; i++)
-    {
-        hash ^= static_cast<uint64_t>(romRegion[i]);
-        hash *= 0x100000001b3ULL;
-    }
-    _romHash = hash;
+    _romHash = ttd::FirmwareFingerprint(_waveMemory.RomData(), romSize);
     if (loaded < romSize)
     {
         MLOGWARNING("MoonSound wave ROM image is short: %u of %u bytes - the tail stays zero-filled",
@@ -603,3 +596,49 @@ uint64_t SoundChip_Moonsound::chipTimeNow()
 /// endregion </Time base>
 
 #endif  // UNREALNG_HAVE_OPL4
+
+/// region <Time-travel engine region>
+
+void SoundChip_Moonsound::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+    const uint32_t ramStart = _waveMemory.RomEnd();
+    const uint32_t ramBytes = _waveMemory.RamEnd() - ramStart;
+    if (ramBytes == 0)
+        return;
+    _ramTracker.Bind(_waveMemory.RomData() + ramStart, ramBytes);
+
+    ttd::TTDDeviceRegion ram;
+    ram.desc.id = ttd::TTDRegionId::MoonSoundWaveMemory;
+    ram.desc.name = "moonsound.wave";
+    ram.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::MoonSound);
+    ram.desc.memory = _waveMemory.RomData() + ramStart;
+    ram.desc.bytes = ramBytes;
+    ram.desc.pieces = _ramTracker.Pieces();
+    ram.tracker = &_ramTracker;
+    out.push_back(ram);
+}
+
+void SoundChip_Moonsound::TTDArmRegions(bool on)
+{
+    // The wave memory marks every write itself; arming only starts listening
+    if (on)
+        _waveMemory.ClearDirty();
+    _regionsArmed = on;
+}
+
+void SoundChip_Moonsound::TTDBeforeCapture()
+{
+    if (!_regionsArmed)
+        return;
+    // The bitmap has one byte per 4 KB page over the whole 22-bit space; the
+    // RAM starts after the ROM (both 4 KB aligned)
+    const uint8_t* dirty = _waveMemory.DirtyBitmap();
+    const uint32_t firstPage = _waveMemory.RomEnd() / ttd::kTTDPieceSize;
+    const uint32_t lastPage = (_waveMemory.RamEnd() + ttd::kTTDPieceSize - 1) / ttd::kTTDPieceSize;
+    for (uint32_t page = firstPage; page < lastPage && page < opl4::WaveMemory::kMaxDirtyPages; ++page)
+        if (dirty[page])
+            _ramTracker.Mark(size_t(page - firstPage) * ttd::kTTDPieceSize);
+    _waveMemory.ClearDirty();
+}
+
+/// endregion </Time-travel engine region>

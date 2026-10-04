@@ -395,6 +395,7 @@ struct IDE_CONFIG
 {
 	unsigned c = 0, h = 0, s = 0;	// geometry; 0/0/0: from the image header, else from its size
 	uint8_t cd = 0;					// 1: the unit is an ATAPI CD-ROM drive (auto for an .iso image)
+	uint8_t cf = 0;					// 1: a disk unit is a CompactFlash card on an IDE adapter (CFA IDENTIFY, 8-bit mode)
 };
 
 enum RSM_MODE
@@ -628,7 +629,7 @@ struct CONFIG
 
 	struct
 	{
-		unsigned fq, ayfq, saa1099fq;
+		unsigned fq, ayfq;
 
 		/// Core audio rate from [SOUND] CoreRate (multirate plan phase 6):
 		/// one of 44100/48000/88200/96000/176400/192000, or 0 = auto.
@@ -673,7 +674,7 @@ struct CONFIG
 		FilterVoicing::Preset ayVoicing = FilterVoicing::DEFAULT_PRESET;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
-		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
+		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
 		VOID_FUNC do_sound;
@@ -887,7 +888,9 @@ struct CONFIG
 	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
 	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)
 	uint8_t profi_ext_ports;              // [PROFI] ExtPorts: 0 cpm (the extended port map with CP/M and ROM14, the 5.0
-	                                      // decoder PROM), 1 sys (also with the DOS latch on and ROM14 = 0, as Karabas Pro)
+	                                      // decoder PROM), 1 sys (also with the DOS latch on and ROM14 = 0, as Karabas Pro),
+	                                      // 2 v003 (Djoni's V0.03 PROM, the Profi+: the SYS ROM state, and the long ports
+	                                      // beside the VG93 at #1F.. while TR-DOS runs with ROM14 = 1)
 	uint8_t profi_keyboard;               // [PROFI] Keyboard: a ProfiKeyboard (ports/models/profiboard.h), 0 = the board's own
 	char profi_xt_rom_path[FILENAME_MAX]; // [ROM] PROFIXT: the PROFI-XT controller firmware instead of rom/profixt/profi-xt-v1.27.rom
 	char kay_rom_path[FILENAME_MAX];

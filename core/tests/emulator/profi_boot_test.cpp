@@ -27,6 +27,7 @@
 #include "emulator/video/profi/profigeometry.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/video/screen.h"
 
@@ -467,6 +468,16 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         ASSERT_TRUE(_emulator->LoadROM(rom)) << rom;
         _emulator->Reset(true);
     }
+    if (const char* hdd = std::getenv("PROFI_HDD"))
+    {
+        // A hard-disk image on ide0.master (the image is written to: pass a copy)
+        MediaSource source;
+        source.path = hdd;
+        InsertOptions options;
+        options.immediate = true;
+        ASSERT_TRUE(context->pMediaManager->Insert("ide0.master", source, options).Ok()) << hdd;
+        _emulator->Reset(true);
+    }
     // PROFI_PORTTRACE=<file>: every IN / OUT from here on, written at the end (development aid)
     const char* portTraceFile = std::getenv("PROFI_PORTTRACE");
     PortDiagnosticRecorder* portTrace = nullptr;
@@ -508,7 +519,11 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         TapKeys("ENT,J,SP,SP,ENT");   // leave the copyright screen / the 128 menu (Tape Loader), then LOAD ""
     }
     else
-        _emulator->RunNFrames(600, true);   // the BIOS menu
+    {
+        // The BIOS menu (PROFI_BOOT_FRAMES: another count, e.g. to stop a hard-disk boot before its program starts)
+        const char* bootFramesEnv = std::getenv("PROFI_BOOT_FRAMES");
+        _emulator->RunNFrames(bootFramesEnv ? std::atoi(bootFramesEnv) : 600, true);
+    }
     const bool disk = path.size() > 4 && (path.substr(path.size() - 4) == ".trd" || path.substr(path.size() - 4) == ".TRD");
     const bool bootDisk = path.size() > 4 && (path.substr(path.size() - 4) == ".udi" || path.substr(path.size() - 4) == ".UDI" ||
                                               path.substr(path.size() - 4) == ".fdi" || path.substr(path.size() - 4) == ".FDI" ||
@@ -622,6 +637,75 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         const std::string file = "scratch/profi/" + name + "-" + std::to_string(f) + ".png";
         lodepng_encode32_file(file.c_str(), fb.memoryBuffer, fb.width, fb.height);
     }
+    if (const char* bdosEnv = std::getenv("PROFI_BDOSLOG"))
+    {
+        // Steps after the frames: every CP/M BDOS entry (PC = 5): function, DE, the caller and the A / HL / DE the
+        // call returns with, one line per call, at most 400 lines (development aid)
+        Z80* z = context->pCore->GetZ80();
+        const long steps = std::atol(bdosEnv);
+        int lines = 0;
+        // The log starts at the PROFI_BDOSLOG_ENTRY-th entry (default 1) of a .COM program (PC = #100; a DOS shell
+        // enters #100 for itself first)
+        const char* entryEnv = std::getenv("PROFI_BDOSLOG_ENTRY");
+        int entries = entryEnv ? std::atoi(entryEnv) : 1;
+        bool armed = false;
+        for (long i = 0; i < steps && lines < 400; i++)
+        {
+            if (!armed && z->pc == 0x100)
+            {
+                // PROFI_BDOSLOG_MATCH=<hex bytes>: only the entry whose #100 holds these bytes (the program's first
+                // bytes, as xxd prints them); else the PROFI_BDOSLOG_ENTRY-th entry
+                bool match = true;
+                if (const char* hex = std::getenv("PROFI_BDOSLOG_MATCH"))
+                {
+                    for (size_t k = 0; hex[2 * k] && hex[2 * k + 1] && match; k++)
+                    {
+                        const char pair[3] = {hex[2 * k], hex[2 * k + 1], 0};
+                        match = z->DirectRead(static_cast<uint16_t>(0x100 + k)) == std::strtoul(pair, nullptr, 16);
+                    }
+                    if (match)
+                        armed = true;
+                }
+                else if (--entries <= 0)
+                    armed = true;
+            }
+            if (armed && z->pc == 5)
+            {
+                const uint16_t sp = z->sp;
+                const uint16_t ret = static_cast<uint16_t>(z->DirectRead(sp) | (z->DirectRead(static_cast<uint16_t>(sp + 1)) << 8));
+                const uint8_t function = z->c;
+                const uint16_t de = z->de;
+                for (long k = 0; k < 2000000 && z->pc != ret; k++)
+                    _emulator->RunSingleCPUCycle(true);
+                if (function == 0x48 && ret == 0x89B1)
+                    continue;   // the PQ-DOS shell's idle poll
+                std::cout << std::hex << "BDOS c=" << int(function) << " de=" << de << " from=" << ret << " -> a=" << int(z->a)
+                          << " hl=" << z->hl << " de=" << z->de << std::dec << "\n";
+                lines++;
+                continue;
+            }
+            _emulator->RunSingleCPUCycle(true);
+        }
+    }
+    if (const char* untilEnv = std::getenv("PROFI_UNTIL_PC"))
+    {
+        // Steps after the frames until PC = PROFI_UNTIL_PC (hex) for the PROFI_UNTIL_HIT-th time (default 1), at most
+        // 50 million steps; the dumps below then show that moment (development aid)
+        Z80* z = context->pCore->GetZ80();
+        const uint16_t target = static_cast<uint16_t>(std::strtoul(untilEnv, nullptr, 16));
+        const char* hitEnv = std::getenv("PROFI_UNTIL_HIT");
+        int hits = hitEnv ? std::atoi(hitEnv) : 1;
+        long steps = 0;
+        for (; steps < 50000000L; steps++)
+        {
+            if (z->pc == target && --hits <= 0)
+                break;
+            _emulator->RunSingleCPUCycle(true);
+        }
+        std::cout << std::hex << "UNTIL pc=" << z->pc << " af=" << z->af << " bc=" << z->bc << " de=" << z->de
+                  << " hl=" << z->hl << " 7ffd=" << int(context->emulatorState.p7FFD)
+                  << " dffd=" << int(context->emulatorState.pDFFD) << std::dec << " steps=" << steps << "\n";
+    }
     if (const char* traceEnv = std::getenv("PROFI_TRACE"))
     {
         // Instruction trace after the frames (development aid): PC, the two paging latches and SP per step, until
@@ -635,6 +719,60 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
             if (z->halted && !z->iff1)
                 break;
             _emulator->RunSingleCPUCycle(true);
+        }
+    }
+    if (const char* watchEnv = std::getenv("PROFI_WATCH"))
+    {
+        // Steps after the frames until a byte of the hi-res cell rectangle PROFI_WATCH_RECT ("col,row,w,h" in 8x8
+        // cells) changes in the bitmap or attribute page; prints PC and registers per change (development aid)
+        int col = 21, row = 3, w = 22, h = 4;
+        if (const char* rect = std::getenv("PROFI_WATCH_RECT"))
+            std::sscanf(rect, "%d,%d,%d,%d", &col, &row, &w, &h);
+        Z80* z = context->pCore->GetZ80();
+        Memory* memory = context->pMemory;
+        std::vector<uint16_t> watchPages = {6, 0x3A};   // PROFI_WATCH_PAGES: another hex list, e.g. "4,38"
+        if (const char* pagesEnv = std::getenv("PROFI_WATCH_PAGES"))
+        {
+            watchPages.clear();
+            std::stringstream list(pagesEnv);
+            std::string token;
+            while (std::getline(list, token, ','))
+                watchPages.push_back(static_cast<uint16_t>(std::strtoul(token.c_str(), nullptr, 16)));
+        }
+        std::vector<uint16_t> offsets;
+        for (int v = row * 8; v < (row + h) * 8; v++)
+            for (int c = col; c < col + w; c++)
+                offsets.push_back(ProfiGeometry::ByteOffset(static_cast<uint32_t>(v), static_cast<uint32_t>(c)));
+        auto snapshot = [&](std::vector<uint8_t>& out) {
+            out.clear();
+            for (uint16_t page : watchPages)
+                for (uint16_t o : offsets)
+                    out.push_back(memory->RAMPageAddress(page)[o]);
+        };
+        std::vector<uint8_t> before;
+        std::vector<uint8_t> now;
+        snapshot(before);
+        const long steps = std::atol(watchEnv);
+        int reported = 0;
+        for (long i = 0; i < steps && reported < 40; i++)
+        {
+            const uint16_t pc = z->pc;
+            _emulator->RunSingleCPUCycle(true);
+            snapshot(now);
+            if (now == before)
+                continue;
+            for (size_t k = 0; k < now.size(); k++)
+                if (now[k] != before[k])
+                {
+                    std::cout << std::hex << "W step=" << std::dec << i << std::hex << " pc=" << pc
+                              << " page=" << watchPages[k / offsets.size()] << " off=" << offsets[k % offsets.size()]
+                              << " " << int(before[k]) << "->" << int(now[k]) << " hl=" << z->hl << " de=" << z->de
+                              << " bc=" << z->bc << " 7ffd=" << int(context->emulatorState.p7FFD)
+                              << " dffd=" << int(context->emulatorState.pDFFD) << std::dec << "\n";
+                    break;
+                }
+            before = now;
+            reported++;
         }
     }
     if (std::getenv("PROFI_DUMP"))
@@ -663,6 +801,29 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
                 std::fprintf(f, "F%u pc=%04X %s %04X %02X decoded=%04X %s dev=%u\n", e.frameNumber, e.pc,
                              e.isOut() ? "OUT" : "IN ", e.rawPort, e.value, e.decodedPort,
                              e.wasDecoded() ? "hit" : "miss", static_cast<unsigned>(e.deviceId));
+            std::fclose(f);
+        }
+    }
+    if (const char* pagesPrefix = std::getenv("PROFI_DUMP_PAGES"))
+    {
+        // The hi-res screen pages at the end (development aid): <prefix>-<page>.bin for 4, 6, 0x38, 0x3A
+        for (uint16_t page : {uint16_t(4), uint16_t(6), uint16_t(0x38), uint16_t(0x3A)})
+        {
+            const std::string file = std::string(pagesPrefix) + "-" + std::to_string(page) + ".bin";
+            if (FILE* f = std::fopen(file.c_str(), "wb"))
+            {
+                std::fwrite(context->pMemory->RAMPageAddress(page), 1, 0x4000, f);
+                std::fclose(f);
+            }
+        }
+    }
+    if (const char* ramFile = std::getenv("PROFI_DUMP_RAM"))
+    {
+        // All RAM pages in page order at the end (development aid)
+        if (FILE* f = std::fopen(ramFile, "wb"))
+        {
+            for (uint16_t page = 0; page <= context->pMemory->GetRamMask(); page++)
+                std::fwrite(context->pMemory->RAMPageAddress(page), 1, 0x4000, f);
             std::fclose(f);
         }
     }

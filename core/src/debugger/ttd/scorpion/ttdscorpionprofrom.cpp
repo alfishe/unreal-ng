@@ -48,6 +48,7 @@ ScorpionProfROMState TTDScorpionProfROM::Snapshot() const
     blob.p7EFD = state.p7EFD;
     blob.p1FFD = state.p1FFD;
     blob.scorpionDosTrigger = state.scorpionDosTrigger;
+    blob.scorpionTurbo = state.scorpion_turbo ? 1 : 0;
 
     return blob;
 }
@@ -75,8 +76,10 @@ void TTDScorpionProfROM::TTDLoadState(const uint8_t* src)
     state.p7EFD = blob.p7EFD;
     state.p1FFD = blob.p1FFD;
     state.scorpionDosTrigger = blob.scorpionDosTrigger;
+    state.scorpion_turbo = blob.scorpionTurbo ? 1 : 0;
 
-    // The turbo clock came back with the chipset state (a field copy): the turbo wait overlay follows it
+    // The turbo clock came back with the chipset state (a field copy), the latch above: the wait overlay and the
+    // /INT-pulse step hook follow the latch
     if (auto* scorpion = dynamic_cast<PortDecoder_Scorpion256*>(_context->pPortDecoder))
         scorpion->SyncTurboWaits();
 

@@ -33,7 +33,12 @@ Verified 2026-10-02 on macOS GUI builds: WebAPI, MCP, CLI, Lua and Python (`tool
 - **Bitrates** (optional, kbps, 0 = encoder default): `video_bitrate` 100..200000,
   `audio_bitrate` 32..512 (needs `audio`).
 - **Picture**: `scale` 1..4 (integer upscale; 2 keeps color detail through H.264 chroma
-  subsampling), `region` `full` (with border) or `screen`, `fps` 1..100.
+  subsampling), `region` `full` (the default: the whole frame with its border) or `screen` (the
+  working picture), `fps` 1..100. `screen` gives the file the size of the working window at the
+  start; when the window changes later (a TS-Conf program switching its `V_CONFIG` window, the
+  Pentagon overscan toggle) the new window is scaled into that size with its aspect kept and
+  black bars, never cut. A `full` recording of a TS-Conf machine is always 720x576 (720x288
+  with every line doubled to square pixels).
 
 Timestamps are emulated time: a recording made in turbo mode plays at normal speed, and the
 sound track has exactly the frames' length.
@@ -83,7 +88,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/video/record -H 'Content-Type: applicatio
 ## CLI, Lua, Python
 
 ```text
-videorecord start h264 scratch/run.mp4 --scale 2 --audio aac [--audio-bitrate 192] [--video-bitrate 8000]
+videorecord start h264 scratch/run.mp4 --scale 2 --audio aac [--audio-bitrate 192] [--video-bitrate 8000] [--region full|screen]
 videorecord status          # ... Audio: aac, 44100 Hz, 2 ch / Audio samples: N (S s)
 videorecord stop
 ```

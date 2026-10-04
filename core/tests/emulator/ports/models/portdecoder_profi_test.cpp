@@ -815,6 +815,66 @@ TEST_F(ProfiPortDecoder_Test, ExtPortsInTheSysRomVariant)
     _context->config.profi_ext_ports = 0;
 }
 
+/// ExtPorts=v003 (Djoni's V0.03 decoder PROM, read with tools/machines/profi/profidecoder): the SYS ROM state as
+/// ExtPorts=sys but only with CP/M off; TR-DOS with ROM14 = 1 answers the long ports beside the stock VG93
+TEST_F(ProfiPortDecoder_Test, ExtPortsV003FollowsTheDjoniPromTable)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+    _context->config.profi_ext_ports = 2;
+
+    // SYS ROM (ROM14 = 0, CP/M off, DOS latch on): the long map only, the system register at #3F
+    Out7FFD(0x00);
+    OutDFFD(0x80);
+    State().flags |= CF_TRDOS | CF_DOSPORTS;
+    EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x1F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x003F), 0xFF);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x00) << "no short VG93 in the SYS ROM state";
+    EXPECT_TRUE(decoder->LongPortOpen(0x00FF)) << "the RTC address port";
+
+    // CP/M on, the DOS latch left on, ROM14 = 0: the PROM forces A2 = 1, so this is the stock CP/M map, not the long one
+    OutDFFD(0xA0);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x1F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x00);
+    EXPECT_FALSE(decoder->LongPortOpen(0x009F));
+
+    // TR-DOS with the 48 ROM page (ROM14 = 1, CP/M off): the stock VG93 stays, the long ports join it
+    OutDFFD(0x80);
+    Out7FFD(0x10);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x1F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x005F), 0x5F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x1F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x00A3), 0x3F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x00C3), 0x5F);
+    EXPECT_EQ(decoder->DecodeFDCPort(0x00E3), 0xFF) << "#E3 is the system register";
+    EXPECT_EQ(decoder->DecodeFDCPort(0x00FF), 0xFF);
+    for (const uint8_t port : {0x9F, 0xBF, 0xDF})
+        EXPECT_TRUE(decoder->LongPortOpen(port)) << "RTC #" << std::hex << int(port);
+    EXPECT_FALSE(decoder->LongPortOpen(0x00FF)) << "#FF stays the system register, not the RTC";
+    EXPECT_EQ(decoder->PpiRegister(0x00A7, true), 1);
+    EXPECT_EQ(decoder->PpiRegister(0x00E7, true), 0xFF);
+    EXPECT_EQ(decoder->ComPortDevice(0x00D3), PortDecoder_Profi::ComDevice::Usart);
+    EXPECT_EQ(decoder->ComPortDevice(0x00F3), PortDecoder_Profi::ComDevice::None);
+    EXPECT_EQ(decoder->ComPortDevice(0x00AF), PortDecoder_Profi::ComDevice::Pit);
+    EXPECT_EQ(decoder->ComPortDevice(0x00EF), PortDecoder_Profi::ComDevice::None);
+    EXPECT_FALSE(decoder->IdeShadowedBySysRegister(0x00CB));
+    EXPECT_TRUE(decoder->IdeShadowedBySysRegister(0x00EB)) << "#EB is the system register's alias here";
+
+    // The SYS ROM state keeps all of the IDE
+    Out7FFD(0x00);
+    EXPECT_FALSE(decoder->IdeShadowedBySysRegister(0x00EB));
+
+    // The default (cpm) PROM and ExtPorts=sys never open the long ports in the TR-DOS + ROM14 = 1 state
+    Out7FFD(0x10);
+    for (const uint8_t mode : {0, 1})
+    {
+        _context->config.profi_ext_ports = mode;
+        EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x00);
+        EXPECT_FALSE(decoder->LongPortOpen(0x009F));
+    }
+    _context->config.profi_ext_ports = 0;
+}
+
 /// docs/inprogress/2026-10-04-profi-plus/design.md: the 8255 answers at #3F / #5F / #7F outside the DOS / CP/M
 /// port set and at #87 / #A7 / #C7 / #E7 in the extended map - ROM BIOS Plus's parallel-port test reads PC2 and B back
 TEST_F(ProfiPortDecoder_Test, Ppi8255NormalAndExtendedAddresses)

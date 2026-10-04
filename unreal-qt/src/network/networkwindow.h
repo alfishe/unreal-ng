@@ -61,6 +61,8 @@ private:
     QWidget* _tcpRow = nullptr;
     QWidget* _serialRow = nullptr;
     QComboBox* _espBaud = nullptr;
+    QComboBox* _espFirmware = nullptr;   ///< AT: the build (default: EspChip / the board's); ZIFI-NATIVE: S3 / ESP-01S
+    int _firmwareKind = -1;              ///< the peer kind _espFirmware's items are for
     QWidget* _espRow = nullptr;
     QWidget* _modemRow = nullptr;      ///< MODEM: the guest port it answers calls on
     QSpinBox* _modemPort = nullptr;

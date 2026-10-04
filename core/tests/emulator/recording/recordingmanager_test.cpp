@@ -319,3 +319,119 @@ TEST(RecordingManager_Test, ProfiFramesKeepTheScreensWindowInBothModes)
     rm->SetScaleFactor(1);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+namespace
+{
+/// Width and height from the GIF header (logical screen descriptor, little endian)
+bool GifSize(const std::string& path, uint32_t& width, uint32_t& height)
+{
+    FILE* f = FileHelper::OpenFile(path, "rb");
+    if (!f)
+        return false;
+    uint8_t header[10] = {};
+    const size_t got = std::fread(header, 1, sizeof(header), f);
+    FileHelper::CloseFile(f);
+    if (got != sizeof(header))
+        return false;
+    width = header[6] | (header[7] << 8);
+    height = header[8] | (header[9] << 8);
+    return true;
+}
+}  // namespace
+
+/// The picture size of a recording follows its own capture region: a second recording on the same emulator
+/// must not inherit the size of the first (it did: the frames of the new size were dropped, an empty or
+/// black file). Only a size the caller sets explicitly is kept
+TEST(RecordingManager_Test, VideoSize_EachRecordingDerivesItsOwn)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    context->pFeatureManager->setFeature(Features::kRecording, true);
+    emulator->RunNFrames(2);
+
+    const PictureGeometry g = context->pScreen->DescribeCurrentFrame();
+    ASSERT_NE(g.screenWindow.width, g.width) << "the Pentagon window is smaller than its frame";
+
+    auto record = [&](VideoCaptureRegion region, const char* name, uint32_t& w, uint32_t& h) {
+        rm->SetCaptureRegion(region);
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name) + ".gif";
+        ASSERT_TRUE(rm->StartRecording(path, "gif"));
+        rm->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+        rm->StopRecording();
+        ASSERT_TRUE(GifSize(path, w, h)) << path;
+        std::remove(path.c_str());
+    };
+
+    uint32_t w = 0, h = 0;
+    record(VideoCaptureRegion::MainScreen, "rm-size-screen", w, h);
+    EXPECT_EQ(w, g.screenWindow.width);
+    EXPECT_EQ(h, g.screenWindow.height);
+
+    record(VideoCaptureRegion::FullFrame, "rm-size-full", w, h);
+    EXPECT_EQ(w, g.width) << "the second recording takes the full frame, not the first one's size";
+    EXPECT_EQ(h, g.height);
+
+    // An explicit size stays until it is cleared
+    rm->SetVideoResolution(100, 80);
+    record(VideoCaptureRegion::MainScreen, "rm-size-explicit", w, h);
+    EXPECT_EQ(w, 100u);
+    EXPECT_EQ(h, 80u);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+uint32_t PixelOf(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t x, uint32_t y)
+{
+    const uint8_t* p = rgba.data() + (static_cast<size_t>(y) * width + x) * 4;
+    return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+}  // namespace
+
+/// FitPicture: the largest picture of the source's aspect, centered, nearest pixel, opaque black bars
+TEST(RecordingManager_Test, FitPicture_SameSizeIsACopy)
+{
+    std::vector<uint8_t> src(4 * 3 * 4);
+    for (size_t i = 0; i < src.size(); i++)
+        src[i] = static_cast<uint8_t>(i * 7 + 1);
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 4, 3, 4, 3, out);
+    EXPECT_EQ(out, src);
+}
+
+TEST(RecordingManager_Test, FitPicture_NarrowSourceGetsBarsLeftAndRight)
+{
+    // 2x2 into 6x4: by height 4x4, one bar column each side
+    std::vector<uint8_t> src = {1, 0, 0, 0xFF, 2, 0, 0, 0xFF, 3, 0, 0, 0xFF, 4, 0, 0, 0xFF};
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 2, 2, 6, 4, out);
+    ASSERT_EQ(out.size(), static_cast<size_t>(6 * 4 * 4));
+    EXPECT_EQ(PixelOf(out, 6, 0, 1), 0xFF000000u) << "left bar";
+    EXPECT_EQ(PixelOf(out, 6, 5, 1), 0xFF000000u) << "right bar";
+    EXPECT_EQ(PixelOf(out, 6, 1, 0) & 0xFF, 1u);
+    EXPECT_EQ(PixelOf(out, 6, 2, 0) & 0xFF, 1u) << "each source pixel covers 2x2";
+    EXPECT_EQ(PixelOf(out, 6, 3, 0) & 0xFF, 2u);
+    EXPECT_EQ(PixelOf(out, 6, 1, 3) & 0xFF, 3u);
+    EXPECT_EQ(PixelOf(out, 6, 4, 3) & 0xFF, 4u);
+}
+
+TEST(RecordingManager_Test, FitPicture_WideSourceGetsBarsAboveAndBelow)
+{
+    // 4x2 into 4x4: by width 4x2, one bar line each side
+    std::vector<uint8_t> src(4 * 2 * 4, 0);
+    for (size_t i = 0; i < 8; i++)
+    {
+        src[i * 4] = static_cast<uint8_t>(10 + i);
+        src[i * 4 + 3] = 0xFF;
+    }
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 4, 2, 4, 4, out);
+    EXPECT_EQ(PixelOf(out, 4, 2, 0), 0xFF000000u) << "top bar";
+    EXPECT_EQ(PixelOf(out, 4, 2, 3), 0xFF000000u) << "bottom bar";
+    EXPECT_EQ(PixelOf(out, 4, 0, 1) & 0xFF, 10u);
+    EXPECT_EQ(PixelOf(out, 4, 3, 2) & 0xFF, 17u);
+}

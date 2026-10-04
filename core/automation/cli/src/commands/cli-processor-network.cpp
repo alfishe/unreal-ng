@@ -115,7 +115,8 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     {
         session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
                              "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n "
-                             "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,baud]|modem[,guest port] (the machine's serial port; "
+                             "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's serial port; "
+                             "an AT module's firmware esp32|esp8266|esp8266-at221|esp8266-at222 overrides esp_chip for it alone; "
                              "an ESP module's baud defaults to the port's: 38400 on the ATM Turbo 2+ controller, 115200 elsewhere) "
                              "zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266|esp8266-at221|esp8266-at222 "
                              "(the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222) "
@@ -125,7 +126,9 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
                              "avr_firmware=baseconf|base2010|base2011-04|base2011-05|base2011-09|base2013|base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) "
                              "kbc_firmware=none|v22-7|v22-11|v22-12|v31-7|v31-11|v32-7|v32-11|v40|v41 (ATM Turbo 2+ keyboard controller) "
                              "atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) "
-                             "zifi=none|at|loopback|tcp:host:port|serial:device[,baud] (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP)" +
+                             "zifi=none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:device[,baud] (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; "
+                             "at = the original ESP-01, NonOS AT 1.7.4 unless esp_chip or the firmware names an ESP8266 build; zifi-native = the 2026 firmware, "
+                             "s3 = ESP32-S3-Zero s3-native-0.6.94 (default), esp01s = ESP-01S native-0.2.2)" +
                              std::string(NEWLINE));
         return;
     }

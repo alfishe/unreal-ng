@@ -171,9 +171,12 @@ struct EspModuleState
 {
     uint8_t present, chip, wifi, lineMismatch;
     uint8_t mac[6], flowControl;
+    uint8_t zxLineFormat;   ///< the line the ZX side set: bit 7 valid, bits 0-1 data bits - 5, bits 2-4 parity
+                            ///< (0 N, 1 O, 2 E, 3 M, 4 S), bit 5 two stop bits. 0 in recordings made before it
     uint8_t pins;           ///< bit 0 RST held, bit 1 GPIO0 low, bit 2 the ROM's download mode (0 in older blobs)
     char ssid[36];
     uint32_t ip, baud, pendingBaud, rxLength, outLength;
+    uint32_t zxLineBaud;    ///< with zxLineFormat
     uint32_t factoryBaud;   ///< the rate a hardware reset returns to (0 in older blobs: keep the module's)
     uint64_t wifiAt, pendingBaudAt, outReadyAt, requests;
     uint8_t rx[kEspRxBytes];

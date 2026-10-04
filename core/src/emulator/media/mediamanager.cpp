@@ -9,6 +9,10 @@
 #include <system_error>
 
 #include "common/logger.h"
+#include "emulator/io/storage/hostwritehold.h"
+#include "emulator/io/storage/cd/cdimage.h"
+#include "emulator/io/storage/mediareadtap.h"
+#include "emulator/media/mediawritegate.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -371,6 +375,12 @@ MediaTransferReport MediaManager::AdoptMediaSet(MediaTransfer transfer)
             state.emptyFramesLeft = 0;
             state.attached = std::move(entry.medium);
             state.writeProtect = entry.writeProtect;
+            if (HostWriteHold* hold = state.attached->Hold())
+                hold->SetHolding(_holdHostWrites);
+            if (MediaReadTap* tap = state.attached->ReadTap())
+                tap->Bind(&_readJournal, entry.slotId);
+            if (CdImage* cd = state.attached->Cd())
+                cd->BindReadJournal(&_readJournal, entry.slotId);
             state.slot->Attach(*state.attached);
             state.slot->SetWriteProtectSwitch(state.writeProtect);
             state.changedUnits = state.attached->ChangedUnits();
@@ -655,6 +665,8 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
     if (it == _slots.end() || it->second.writeMarkedThisFrame)
         return;
     it->second.writeMarkedThisFrame = true;
+    ++it->second.writtenFrames;
+    ++_writeStamp;
 
     ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
     if (ttd && ttd->IsRecording())
@@ -664,6 +676,54 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
             reason += std::string(": ") + detail;
         ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, reason.c_str());
     }
+}
+
+void MediaManager::CurrentVersions(std::vector<MediaVersionInfo>& out) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    out.clear();
+    for (const auto& [id, state] : _slots)
+    {
+        MediaVersionInfo info;
+        info.slot = id;
+        if (state.attached)
+        {
+            info.format = state.attached->Format();
+            info.contentId = state.attached->ContentId();
+        }
+        info.version = state.writtenFrames;
+        out.push_back(std::move(info));
+    }
+}
+
+bool MediaManager::SetHead(const std::string& slotId, uint64_t version)
+{
+    // No change layer yet (storage manager H1 / H5): only the version the
+    // medium holds now can be "set"
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    return it != _slots.end() && it->second.writtenFrames == version;
+}
+
+void MediaManager::GuestEject(const std::string& slotId)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return;
+    SlotState& state = it->second;
+    if (!state.attached || state.ejectRequested)
+        return;
+    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    if (ttd && ttd->IsReplayActive())
+        return;
+    if (state.attached->ChangedUnits() > 0)
+    {
+        LOGWARNING("MediaManager: the guest ejected '%s', which has unsaved writes: the medium stays in the slot", slotId.c_str());
+        return;
+    }
+    // The normal eject, applied at the frame boundary (never inside the peripheral's own command)
+    state.ejectRequested = true;
 }
 
 Medium* MediaManager::GetMedium(const std::string& slotId)
@@ -701,6 +761,12 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (state.slot->IsBusy())
             return;
         state.attached = std::move(state.incoming);
+        if (HostWriteHold* hold = state.attached->Hold())
+            hold->SetHolding(_holdHostWrites);
+        if (MediaReadTap* tap = state.attached->ReadTap())
+            tap->Bind(&_readJournal, slotId);
+        if (CdImage* cd = state.attached->Cd())
+            cd->BindReadJournal(&_readJournal, slotId);
         state.slot->Attach(*state.attached);
         state.slot->SetWriteProtectSwitch(state.writeProtect);
         state.changedUnits = state.attached->ChangedUnits();
@@ -714,7 +780,10 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         state.discardRequested = false;
     }
 
-    if (state.attached && state.attached->Floppy() && state.attached->Access() == AccessMode::WriteThrough)
+    // While a replay runs nothing reaches the host (FR-20): the disk stays
+    // dirty and the next live frame writes it
+    if (state.attached && state.attached->Floppy() && state.attached->Access() == AccessMode::WriteThrough &&
+        !_holdHostWrites && (!_context || MediaWriteGate::HostWritesAllowed(*_context)))
         WriteThroughFloppy(slotId, state);
 
     // Per-frame snapshot for readers on other threads
@@ -1003,6 +1072,17 @@ uint32_t MediaManager::DelayFrames(uint32_t swapDelayMs) const
         return 0;
     const uint64_t frameUs = (_context && _context->config.frame_duration_us) ? _context->config.frame_duration_us : 20000;
     return static_cast<uint32_t>((static_cast<uint64_t>(swapDelayMs) * 1000 + frameUs - 1) / frameUs);
+}
+
+void MediaManager::HoldHostWrites(bool hold)
+{
+    _holdHostWrites = hold;
+    for (auto& [slotId, state] : _slots)
+        if (state.attached)
+            if (HostWriteHold* h = state.attached->Hold())
+                if (!h->SetHolding(hold))
+                    LOGWARNING("MediaManager: %s: a sector written during a replay could not be written to its file",
+                               slotId.c_str());
 }
 
 void MediaManager::WriteThroughFloppy(const std::string& slotId, SlotState& state)

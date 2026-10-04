@@ -476,6 +476,9 @@ class Z80 : public Z80State
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
+    /// The port field of an interrupt vector's record in TTD's vector journal
+    static constexpr uint16_t kTtdVectorPort = 0xFFFF;
+
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_Z80;
     const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_GENERIC;
     ModuleLogger* _logger;
@@ -814,6 +817,10 @@ public:
     /// with the line released, keeps the plain step
     void SetDeviceIntLine(uint32_t line, bool asserted);
     uint32_t GetDeviceIntLines() const { return _deviceIntLines; }
+
+    /// An NMI requested and not taken yet (TTD: TTDCpuState::nmi_pending)
+    bool IsNmiPending() const { return _nmi_pending_count > 0; }
+    void SetNmiPending(bool pending) { _nmi_pending_count = pending ? 1 : 0; }
 
     /// Drop pending NMI / local INT requests (a board-level CPU reset)
     void ClearInterruptRequests()

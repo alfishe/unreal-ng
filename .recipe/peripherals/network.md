@@ -77,7 +77,8 @@ takes the same values for the card's side:
 | `PLUG` | an RS-232 loopback test plug: bytes come back, the UART's own RTS drives CTS and DTR drives DSR / DCD (only the inputs the card wires to its connector) |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
 | `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
-| `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |
+| `AT[,<firmware>][,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET`; `<firmware>` (`ESP32`, `ESP8266` = NonOS 1.7.4, `ESP8266-AT221`, `ESP8266-AT222`) picks the build for this module alone, else `[NETWORK] EspChip=` |
+| `ZIFI-NATIVE[,<variant>][,<baud>]` | the 2026 ZiFi firmware (binary frames, not AT): `S3` = ESP32-S3-Zero `s3-native-0.6.94` (default), `ESP01S` = ESP-01S `native-0.2.2`; see ZiFi below |
 | `MODEM[,<guest port>]` | an emulated Hayes modem: `AT` commands, `ATDT <host>[:<port>]` (port 23 by default) or `ATDT <number>` from `[NETWORK] ModemPhonebook=5551234=bbs.example.org:23,...` dials through the virtual network; `CONNECT <rate>` / `BUSY` (refused) / `NO ANSWER` / `NO CARRIER`, DCD follows the call, `+++` (a second of silence around it) returns to command mode, `ATO` / `ATH`; with `<guest port>` a host client of that guest port (`Forward=`) rings it (`RING`, RI; `ATA` or `ATS0=n` answers). See [The Hayes modem](#the-hayes-modem) |
 | `SERIAL:<device>[,<baud>]` | a host serial device (`/dev/tty.usbserial-0001`, `/dev/ttyUSB0`, `COM3`); it follows the rate and format the ZX programs (`<baud>` until then, 115200 by default); `ComModemLines=1` passes RTS / DTR and reports CTS / DSR / RI / DCD (off by default: USB ESP boards wire RTS / DTR to reset / boot) |
 
@@ -129,10 +130,18 @@ COM port can. `inspect_state network` shows it as `atm2ioesp`. Details:
 **ZiFi** (TS-Conf; a ZX-Evo with `[EVO] Avr=TS2016-02` / `TS2016-04`): the
 TS-Labs AVR firmware passes bytes between the Z80 and an ESP module on its own
 UART (115200, no flow control) through two rings, 511 bytes in and 255 out.
-`ZiFi=` says what is on that UART: `NONE` (default: no ZiFi board), `AT` (the
-original board: an ESP-01 with Espressif's AT firmware, HackerVBI's
-`zifi.spg`), or any `ComPort=` value (`LOOPBACK`, `TCP:...`, `SERIAL:...` for
-a real ESP on USB). The Z80 sees the same `#xxEF` range as the COM port:
+`ZiFi=` says what is on that UART:
+
+| `ZiFi=` | The board |
+|:--|:--|
+| `NONE` (default) | no ZiFi board |
+| `AT` | the original board: an ESP-01 (ESP8266, 1 MB) with Espressif's AT firmware - NonOS AT 1.7.4 (HackerVBI's `zifi.spg` sends `AT+CWMODE_DEF`, `AT+CWJAP_CUR`), or the ESP8266 build `[NETWORK] EspChip=` names |
+| `AT,ESP8266-AT222` | the same ESP-01 reflashed with ESP-AT 2.2.2 (1 MB build: no OTA). Espressif's dialect: no `_CUR` / `_DEF` forms (they answer `ERROR`), `+CWJAP:<code>` + `ERROR`, `AT+CWSTATE?`, `AT+CIPSTATE?`, quoted `+CIPDOMAIN:`, one passive `+IPD` per read, `ERR CODE:0x...` before `ERROR` after `AT+SYSLOG=1`. What a ZiFi port of the Sprinter ESP Network Kit needs (passive receive: the AVR has no flow control) |
+| `AT,ESP8266-AT221` | the kit's "2.2.1" (its `_CUR` tokens, no `SYSSTORE`, no passive receive) |
+| `ZIFI-NATIVE` / `ZIFI-NATIVE,ESP01S` | the 2026 "new ZiFi": an ESP32-S3-Zero (`s3-native-0.6.94`) or an ESP-01S (`native-0.2.2`) with the binary protocol of the new `zifi.spg` and the Wild Commander plugins |
+| `LOOPBACK`, `TCP:...`, `SERIAL:...` | as for `ComPort=` (`SERIAL:` = a real ESP on a USB adapter) |
+
+The Z80 sees the same `#xxEF` range as the COM port:
 
 | Port | What |
 |:--|:--|
@@ -147,9 +156,117 @@ a real ESP on USB). The Z80 sees the same `#xxEF` range as the COM port:
 Until `#F1` goes to `#C7EF` every ZiFi register reads `#FF`. Every access
 holds the Z80 while the AVR answers. `inspect_state network` shows it as
 `zifi` (API, which ring the data register reaches, IMR / ISR, ring fill, the
-line's peer, `dropped` = bytes the full ring lost); at runtime
-`network set zifi=at`. Details:
+line's peer, `dropped` = bytes the full ring lost) and, for an ESP module, `esp`
+(the firmware, Wi-Fi, the `at_session` or `native_session`, the last 32
+exchanges); at runtime `network set zifi=at` / `zifi=at,esp8266-at222` /
+`zifi=zifi-native`. Details:
 [2026-10-02-tsconf-zifi](../../docs/inprogress/2026-10-02-tsconf-zifi/README.md).
+
+**The native ZiFi protocol** (`ZIFI-NATIVE`): frames `5A CMD LEN_L LEN_H DATA
+XOR` both ways (XOR of CMD, LEN and DATA, not the `5A`; at most 1024 bytes).
+The module answers `FE` (ACK) at once and the result later (`90` NET_OPEN,
+`92` NET_RECV - no ACK, `94` HTTP GET `[ok][code LE16][length LE32]`, `A2` NTP
+`YYYYMMDDhhmmss`, `83` WIFI_INI `[ok][IPv4]`, `F0` for PING); a failure sends
+`EE <text>` first, and `GET_STEP` (`05`) returns the last command and that
+text. The Wi-Fi is the virtual access point: `zifi.ini` must say `ssid:
+UnrealNG` (any password); another SSID ends in `EE "wifi timeout"` after
+10 s. The FTP server runs (`FTP_START`, the Wild Commander plugin `ZIFIFTP.WMF`;
+[demo below](#demo-the-zifi-ftp-server-host-client-to-the-zx-sd-card)): the ESP
+listens on the virtual network and turns every file command into VFS request
+frames to the Z80 (`40..5E`), which the plugin answers from the SD card. Not
+emulated (they answer as when the service cannot start, `EE "smb:not
+emulated"` etc.): SMB, OTA, the online update, the WC updater; HTTPS (`get:tls
+connect failed`). `native_session.activity` shows the command waiting for the
+network, `native_session.file_bridge` the FTP sessions and the VFS traffic.
+
+The module comes up already on that access point (as a module that booted from its saved `zifi.ini`):
+the first password it is given is taken as its own, so the plugins that send `WIFI_INI` and wait only briefly (the
+ESP-01S `NTPTIME.WMF`) get `83` at once.
+
+**Weather** (`WEATHER_GET` `24`, S3 only; the Wild Commander screen savers
+`WEATHER.WMF` / `WEATHER2.WMF`): the place comes from the `zifi.ini` the plugin
+sent with `WIFI_INI` - `city:` (any spelling the Open-Meteo geocoder knows,
+Cyrillic in UTF-8 / CP866 / CP1251) and optional `country:` (ISO code), or
+`country:` + `zip:` (api.zippopotam.us). The module fetches the place, then the
+forecast from api.open-meteo.com over plain HTTP (through the `zifi.ini` proxy
+when set), each request up to three times (1 s, 2 s apart, none after 30 s);
+the answer `A4` is the 90-byte record (place in CP866, current weather, sunrise
+/ sunset, six days), or `[0][1]` after `EE "weather:city: not found"`,
+`"weather:no city in ini"`, `"weather:meteo: http 503"`, ... The place is kept
+until `city:` / `country:` / `zip:` change: `native_session.weather`
+(`location`, `place`, `latitude`, `longitude`; `unknown` = not asked again).
+
+**WebDAV** (ESP-01S only; `ZIFIWDAV.WMF`): `FTP_START` (`06`) also starts a
+WebDAV server on guest port 80 (`FTP_STOP` stops both): one client at a time,
+one request per connection, `OPTIONS PROPFIND GET HEAD PUT DELETE MKCOL`
+(PROPFIND lists one level; PUT needs `Content-Length`), no authentication. The
+files are the Z80's: every request becomes VFS requests the plugin answers
+through the Wild Commander file API. From the host it needs a forward
+(`[NETWORK] Forward=tcp:8080:80`), then e.g.
+`curl -X PROPFIND -H "Depth: 1" http://127.0.0.1:8080/` or
+`curl -T file.txt http://127.0.0.1:8080/file.txt`. State:
+`native_session.webdav` (`running`, `client`, `request`, `last_request`,
+`last_status`, byte counts).
+
+Check by hand (the API on, PING, SYS_INFO):
+
+```text
+network set zifi=zifi-native
+out #C7EF,#F1 ; in #C1EF            -- API on, ZiFi selected for #00EF..#BFEF
+out #BFEF: 5A 04 00 00 04           -- PING
+in  #C0EF -> 5 ; INIR from #BFEF: 5A F0 00 00 F0
+```
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"zifi": "zifi-native,s3"}}}
+{"tool": "inspect_state", "arguments": {"target": "auto", "aspects": ["network"]}}
+```
+
+The `[zifi]` line then ends `[ZIFI-NATIVE S3 (s3-native-0.6.94), idle]`.
+
+#### Demo: the ZiFi browser on the real internet
+
+The new `zifi.spg` (a catalog browser: vtrd.in, zxart.ee, hype) fetches a ZX picture and a game from the
+internet and saves the game to the SD card. Results of every program and firmware:
+[TODO.md, Z5 results](../../docs/inprogress/2026-10-02-tsconf-zifi/TODO.md#z5-results-2026-10-04).
+
+1. An SD folder: Wild Commander (`boot.$C`, `WC/` from
+   `testdata/machines/tsconf/wildcommander/wc-improved-v1.11i/`), and a folder `zifi/` with
+   [`zifi.spg`](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/ZiFi%20SPG/build/zifi.spg)
+   and `zifi.ini`:
+
+   ```text
+   SSID: UnrealNG
+   password: zx
+   time: +3
+   ```
+
+2. Machine TS-Conf (`TSL`), `network set zifi=zifi-native,s3` (`[NETWORK] ZiFi=ZIFI-NATIVE,S3`), the folder
+   into `sd.zc`, reset: Wild Commander comes up. (HackerVBI's original
+   [`zifi.spg`](https://github.com/HackerVBI/ZiFi/tree/master/_Current_version_executable) does the same with
+   `zifi=at`.)
+3. Start a TTD recording with a history limit (`POST /ttd/start`, then `/ttd/history-limit {"frames":3000}`).
+4. In WC: cursor to `zifi`, Enter, cursor to `zifi.spg`, Enter. The console (bottom) says "HTTP test OK, server
+   code 200", "Clock set from NTP", "Startup finished, menu active".
+5. The program is driven by the mouse (in unreal-qt: capture the mouse in the window). The menu is the top bar
+   (320 x 240 pointer space): DOWNLOADS (x 88-167, y 0-15), GRAPHICS (x 88-167, y 16-31), MUSIC / PRESS
+   (x 184-231, y 0-15 / 16-31). List items are 16 pixels high from y = 32.
+   - GRAPHICS, then "Most popular" (second item): the zxart.ee list; click an entry: the picture (for example
+     "Baking Soda by Grongy") fills the screen. A key returns.
+   - DOWNLOADS, "Games: vtrd.in", the second entry: the game is downloaded through `zifi.vtrd.in` and saved as
+     `zifi/downloads/<date>/<name>.scl`.
+   - PRESS, "Hype": the newest hype.retroscene.org articles.
+6. Evidence: `inspect_state network` (`zifi.esp.exchanges`: `14` HTTP GET -> `94`, `12` NET_RECV -> `92`;
+   `virtual_network.recent_activity`: `connect` / `connected` to the site), `POST /ttd/dump`, and
+   `POST /media/sd.zc/export {"path":"card.img"}` for the saved file (a folder is never written:
+   `mdir -i card.img ::/zifi/downloads`).
+
+Scripted (WebAPI): the pointer is the program's own position, so move it with small `mouse/glide` steps and wait
+until a glide is done before the next one (the browser keeps the position in its variables; `memory/find`
+`01 DF FB ED 78` finds its mouse routine, the position follows it). The main screen switches video modes per
+line: if a screenshot shows only the bottom bar, read the text page instead (`GET /memory/ram/216/0?len=16384`,
+256 bytes per row, characters in the first 128, cp866).
 
 ```json
 {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
@@ -183,6 +300,56 @@ module disagree. Details: [reference-esp-modules.md](../../docs/inprogress/2026-
 NedoOS with an ESP module: boot `sd_bootesp.$C` for the kernel driver (ESPNET;
 `ini/network.ini currentNetwork=0`), or set `currentNetwork=1` (AT) / `2`
 (userland ESPNET) for the C apps (zxdb, gopher, girc, time2, ...).
+
+#### Demo: the ZiFi FTP server (host client to the ZX SD card)
+
+The ESP is the server: a PC's FTP client logs in, and the plugin in Wild Commander serves the SD card through
+the ESP's VFS requests. Both firmwares: S3 (`s3-native-0.6.94`, plugin `ZIFIFTP.WMF` v0.15: three sessions,
+passive ports 2122-2124, `PORT` / `EPRT`, `MLSD` / `MDTM` / `MFMT`, 16 KiB VFS windows) and ESP-01S
+(`native-0.2.2`, plugin v0.11: one session, passive port 2122, 512-byte VFS blocks). Plugins:
+[ZiFi-ESP32-S3-Zero `FTP Server/`](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/tree/main/FTP%20Server)
+and [ZiFi-ESP-01S-Native-C-Project `FTP Server/`](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/tree/main/FTP%20Server).
+
+1. The SD folder of the browser demo (Wild Commander, `zifi/zifi.ini`) with the firmware's `ZIFIFTP.WMF` in `WC/`
+   (listed under `[PLUGINS]` in `WC/wc.ini`), and a file to download, for example `TEST.BIN`.
+2. TS-Conf, the ZiFi module and a host port for the guest's port 21 (ports from 1024 up, like the passive
+   2122-2124, are reachable on the same host port without a rule):
+
+   ```json
+   {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+     "body": {"zifi": "zifi-native,s3", "forward": "tcp:2121:21", "host_access": true}}}
+   ```
+
+   (`zifi-native,esp01s` for the ESP-01S and its v0.11 plugin.) Insert the folder into `sd.zc`, reset: WC.
+3. TTD with a history limit: `POST /ttd/start`, `POST /ttd/history-limit {"frames":3000}`.
+4. In WC: F10 (RUN PLUGIN), cursor to "ZiFi FTP Server v0.15" (the tenth line), Enter. The plugin's window says
+   `Status : Wi-Fi [################] 100%` (S3) or `Listening` (ESP-01S), `IP : 10.0.2.15`, `Port : 21`.
+   `inspect_state network`: `zifi.esp.native_session.file_bridge.ftp` `running: true`, `host_port: 2121`
+   (`host_port_note` says when a rule is missing).
+5. From the host, user `zx`, password `zx` (the plugin's defaults):
+
+   ```bash
+   python3 - <<'PY'
+   import ftplib, io
+   ftp = ftplib.FTP(); ftp.connect("127.0.0.1", 2121); ftp.login("zx", "zx")
+   ftp.retrlines("LIST")                      # the SD card's root through VFS READDIR
+   buf = io.BytesIO(); ftp.retrbinary("RETR TEST.BIN", buf.write)    # download
+   ftp.storbinary("STOR UP.BIN", io.BytesIO(open("upload.bin", "rb").read()))   # upload
+   ftp.set_pasv(False); ftp.retrlines("LIST")   # active mode: the ESP connects back to 127.0.0.1
+   ftp.quit()
+   PY
+   ```
+
+   Python's ftplib takes the passive data address from the control connection (the 227 reply names the guest's
+   10.0.2.15); curl needs `--ftp-skip-pasv-ip`, or use EPSV.
+6. Esc in the plugin stops the server (`FTP_STOP`); WC re-reads its panels and shows the uploaded file. Check it on
+   the card: `POST /media/sd.zc/export {"path":"card.img"}`, then `mcopy -i card.img ::/UP.BIN .` (a folder is
+   never written).
+
+Measured (2026-10-04, real time with TTD on): S3 RETR 100 000 bytes 8.8 KB/s, STOR 70 000 bytes 9.2 KB/s;
+ESP-01S RETR 6.0 KB/s, STOR 2.6 KB/s; byte-exact both ways, passive and active, the ZiFi ring never overflowed.
+While the ESP waits for the Z80's VFS answer the UART serves only PING and SYS_RESET (other commands are lost, as
+on the firmware: `file_bridge.vfs.dropped_while_waiting`).
 
 ### The Hayes modem
 

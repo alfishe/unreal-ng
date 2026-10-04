@@ -514,6 +514,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    // D40 - the write journal on demand: switch it, build it by replay
+    ADD_METHOD_TO(EmulatorAPI::journalTTD, "/api/v1/emulator/{id}/ttd/journal", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::buildJournalTTD, "/api/v1/emulator/{id}/ttd/journal/build", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::cancelJournalBuildTTD, "/api/v1/emulator/{id}/ttd/journal/build/cancel", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::portEventsTTD, "/api/v1/emulator/{id}/ttd/port-events", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
@@ -1537,6 +1541,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void findLastTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void journalTTD(const drogon::HttpRequestPtr& req,
+                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void buildJournalTTD(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void cancelJournalBuildTTD(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
     void portEventsTTD(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepInstructionTTD(const drogon::HttpRequestPtr& req,

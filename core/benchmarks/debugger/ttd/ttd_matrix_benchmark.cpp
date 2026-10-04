@@ -15,6 +15,12 @@
 ///   UNREAL_TTD_BENCH_DIRTY        1 adds BM-8 (capture vs dirty 4 KB pieces)
 ///   UNREAL_TTD_BENCH_KEEP_SESSIONS <dir>: keep each case's saved .ttd session there
 ///                                 (input data for tools/poc/011-ttd-v2-capture-analysis/experiments)
+///   UNREAL_TTD_BENCH_JOURNAL_MB   v1's write journal ring in MB (default 64); large enough
+///                                 not to wrap keeps a session's whole write history (E7)
+///   UNREAL_TTD_E7_DIR             <dir>: also register TTDE7/<case> for every session kept
+///                                 there (ttd-bench-v1-<case>.ttd): experiment E7's measured
+///                                 costs (tools/poc/011-ttd-v2-capture-analysis/experiments/
+///                                 e7-write-journal-retention)
 ///
 /// Results: add --benchmark_format=json --benchmark_out=<file>; the JSON context
 /// carries the engine set, git commit and build type. Compare runs with
@@ -66,6 +72,7 @@ ttd::bench::Options MakeOptions(const std::string& set)
     std::filesystem::create_directories(scratch, ec);
     o.scratchDir = scratch.string();
     o.keepSessionDir = Env("UNREAL_TTD_BENCH_KEEP_SESSIONS", "");
+    o.journalBytes = static_cast<size_t>(std::atoll(Env("UNREAL_TTD_BENCH_JOURNAL_MB", "0").c_str())) * 1024 * 1024;
     return o;
 }
 
@@ -129,4 +136,41 @@ struct MatrixRegistrar
 };
 
 const MatrixRegistrar g_registrar;
+
+/// Experiment E7: the sessions in UNREAL_TTD_E7_DIR, one benchmark each
+struct E7Registrar
+{
+    E7Registrar()
+    {
+        const std::string dir = Env("UNREAL_TTD_E7_DIR", "");
+        if (dir.empty())
+            return;
+        for (const ttd::bench::Case& c : ttd::bench::Matrix("full"))
+        {
+            std::string safe = c.Name();
+            for (char& ch : safe)
+                if (ch == '/' || ch == '+' || ch == ' ')
+                    ch = '_';
+            const std::filesystem::path file = std::filesystem::path(dir) / ("ttd-bench-v1-" + safe + ".ttd");
+            if (!std::filesystem::exists(file))
+                continue;
+            benchmark::RegisterBenchmark("TTDE7/" + c.Name(), [c, file](benchmark::State& state) {
+                ttd::bench::Result result;
+                for (auto _ : state)
+                    result = ttd::bench::RunE7(c, file.string());
+                if (!result.ok)
+                {
+                    state.SkipWithError(result.error.c_str());
+                    return;
+                }
+                for (const auto& [metric, value] : result.metrics)
+                    state.counters[metric] = benchmark::Counter(value);
+            })
+                ->Iterations(1)
+                ->Unit(benchmark::kMillisecond);
+        }
+    }
+};
+
+const E7Registrar g_e7Registrar;
 }  // namespace

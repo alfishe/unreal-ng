@@ -217,6 +217,29 @@ int EspStack::Accept(int listenSlot)
     return target;
 }
 
+int EspStack::AcceptInto(int listenSlot, int target)
+{
+    Slot& l = _slots[static_cast<size_t>(listenSlot)];
+    if (l.pending.empty() || target < 0 || target >= SlotCount() || _slots[static_cast<size_t>(target)].state != State::Free)
+        return -1;
+    Pending client = std::move(l.pending.front());
+    l.pending.pop_front();
+    Slot& s = _slots[static_cast<size_t>(target)];
+    s = Slot();
+    s.state = State::Tcp;
+    s.vnetId = client.vnetId;
+    s.remote = client.peer;
+    s.finSeen = client.finSeen;
+    s.rx = std::move(client.rx);
+    _rearm.push_back(listenSlot);
+    return target;
+}
+
+bool EspStack::RearmQueued(int slot) const
+{
+    return std::find(_rearm.begin(), _rearm.end(), slot) != _rearm.end();
+}
+
 void EspStack::Send(int slot, const uint8_t* data, uint32_t length)
 {
     Slot& s = _slots[static_cast<size_t>(slot)];
@@ -580,7 +603,10 @@ bool EspStack::SaveState(netstate::EspStackState& out) const
         out.closeLater[c] = _closeLater[static_cast<size_t>(c)];
     out.rearmMask = 0;
     for (int slot : _rearm)
-        out.rearmMask = static_cast<uint8_t>(out.rearmMask | (1u << (slot & 7)));
+    {
+        if (slot < netstate::kEspSlots)   // the slots beyond are their firmware's to save
+            out.rearmMask = static_cast<uint8_t>(out.rearmMask | (1u << slot));
+    }
     return complete;
 }
 

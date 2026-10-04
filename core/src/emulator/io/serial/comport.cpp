@@ -219,7 +219,8 @@ bool ComPort::SavePeer(const ISerialPeer* peer, netstate::Com& out)
     }
     else if (const auto* esp = dynamic_cast<const EspModule*>(peer))
     {
-        out.peerKind = std::strcmp(esp->Kind(), "espnet") == 0 ? 4 : 5;
+        // 4 ESPNET, 5 AT, 7 the ZiFi native firmware (netstate::Com::peerKind)
+        out.peerKind = std::strcmp(esp->Kind(), "espnet") == 0 ? 4 : std::strcmp(esp->Kind(), "zifi-native") == 0 ? 7 : 5;
         complete = esp->SaveState(out.esp) && complete;
     }
     else if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
@@ -247,7 +248,7 @@ bool ComPort::LoadPeer(ISerialPeer* peer, const netstate::Com& in, const ByteSou
     }
     else if (auto* esp = dynamic_cast<EspModule*>(peer))
     {
-        if (in.esp.present && (in.peerKind == 4 || in.peerKind == 5))
+        if (in.esp.present && (in.peerKind == 4 || in.peerKind == 5 || in.peerKind == 7))
             complete = esp->LoadState(in.esp, bytes) && complete;
     }
     else if (auto* stream = dynamic_cast<StreamPeer*>(peer))

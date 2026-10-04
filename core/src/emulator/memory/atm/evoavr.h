@@ -12,6 +12,7 @@
 #include <functional>
 #include <string>
 
+#include "debugger/ttd/engine/ttdregiontracker.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/atm/evoavrmouse.h"
@@ -50,7 +51,7 @@
 /// type 2 (0 = empty, #FF = overflow, which then resets the log). Register D
 /// carries the modifier keys the parser saw. The bytes come from IPs2KeySink:
 /// a physical key event, encoded as PS/2 set 2 (pckey.h).
-class EvoAvr : public Ds12887, public IPs2KeySink
+class EvoAvr : public Ds12887, public IPs2KeySink, public ttd::ITTDRegionSource
 {
 public:
     /// Extension types selected through cells 0xF0-0xFF (AVR main.h)
@@ -164,6 +165,12 @@ public:
     void SetVolatileState(uint8_t extType, uint8_t eepromPage, uint8_t flags);
     const Ps2State& GetPs2State() const { return _ps2; }
     void SetPs2State(const Ps2State& state) { _ps2 = state; }
+    /// The 4 KiB EEPROM, battery-backed: the time-travel engine's region
+    /// EvoAvrEeprom (compared at each capture: one write path, 4 KiB). v1 does
+    /// not record it
+    const uint8_t* EepromData() const { return _eeprom.data(); }
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool) override {}
     /// endregion </TTD>
 
 protected:
@@ -175,6 +182,7 @@ protected:
     void AppendPs2Log(uint8_t byte);
 
     std::array<uint8_t, kEepromSize> _eeprom{};
+    ttd::TTDRegionTracker _eepromTracker;
     uint8_t _extType = kExtFirmwareVersion;
     uint8_t _eepromPage = 0;
     bool _eepromMode = false;

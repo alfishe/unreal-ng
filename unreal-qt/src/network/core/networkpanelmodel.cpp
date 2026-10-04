@@ -245,7 +245,8 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
 
 bool NetworkPeerIsEsp(const ComPortSpec& peer)
 {
-    return peer.kind == ComPortSpec::Kind::Espnet || peer.kind == ComPortSpec::Kind::At;
+    return peer.kind == ComPortSpec::Kind::Espnet || peer.kind == ComPortSpec::Kind::At ||
+           peer.kind == ComPortSpec::Kind::ZiFiNative;
 }
 
 bool NetworkPeerIsModem(const ComPortSpec& peer)

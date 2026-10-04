@@ -30,6 +30,8 @@ public:
 
     /// std::filesystem::path for a UTF-8 string (wide on Windows, as-is on POSIX). Separators are left untouched.
     static std::filesystem::path ToFsPath(const std::string& utf8Path);
+    /// The UTF-8 string of a std::filesystem::path (the inverse of ToFsPath; the separators are the path's own)
+    static std::string FromFsPath(const std::filesystem::path& path);
 
     static std::string GetExecutablePath();
     static std::string GetResourcesPath();
@@ -37,6 +39,24 @@ public:
 
     static void SetResourcesPathOverride(const std::string& readOnlyRoot);
     static void SetWritablePathOverride(const std::string& writableRoot);
+
+    /// The user's home folder: HOME on POSIX; on Windows USERPROFILE, else HOMEDRIVE + HOMEPATH (read through
+    /// the wide API, so a non-ASCII user name survives). No trailing separator; empty when unknown
+    static std::string GetHomePath();
+    /// The emulator's per-user folder on every system: <home>/.unreal-ng (Windows %USERPROFILE%\.unreal-ng).
+    /// Recordings, caches and other per-user data live under it. Not created here; empty when the home is unknown
+    static std::string GetUserDataPath();
+    /// A folder under the per-user folder ("ttd", "ttd/2026-10-04-153012-pentagon"), created with its parents
+    /// when missing. Empty when it cannot be created
+    static std::string GetUserDataFolder(const std::string& relative);
+    /// Tests: put the per-user folder somewhere else (empty: back to <home>/.unreal-ng)
+    static void SetUserDataPathOverride(const std::string& root);
+
+    /// Create a folder and its missing parents; true when it exists as a folder afterwards. Never throws
+    static bool CreateFolders(const std::string& path);
+    /// Delete a folder and everything in it; true when it is gone (or never existed). Never throws: what stays
+    /// (a file in use, no permission) is named in @p error
+    static bool DeleteFolder(const std::string& path, std::string* error = nullptr);
 
     /// Expand a leading "~" ("~", "~/x", "~\x") to the user's home directory. Everything else is returned untouched.
     static std::string ExpandPath(const std::string& path);

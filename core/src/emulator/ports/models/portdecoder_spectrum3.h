@@ -4,6 +4,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/ports/models/spectrum128ayioport.h"
 #include "emulator/video/screen.h"
 
 ///
@@ -21,6 +22,8 @@ class PortDecoder_Spectrum3 : public PortDecoder
 {
     /// region <Fields>
 protected:
+    /// The board wiring on AY port A (keypad / AUX and RS-232 lines), attached to the socket AY
+    Spectrum128AyIoPort _ayIoPort;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -39,6 +42,12 @@ public:
     void SetRAMPage(uint8_t oage) override;
     void SetROMPage(uint8_t page) override;
     /// endregion </Interface methods>
+
+    /// The board wiring on AY port A (devices on the keypad / AUX and RS-232 sockets set its receiver levels)
+    Spectrum128AyIoPort& AyIoPort()
+    {
+        return _ayIoPort;
+    }
 
     /// region <Helper methods>
 public:
