@@ -244,6 +244,7 @@ A recovered file opens **read-only**. "Repair" is an explicit action that trunca
   - finalized (saved) recordings are files in `ttd/` itself, `ttd/<date-time>-<name>.ttd`, unless the user picks another path (the UI part is Phase 5, Step 3).
 
   Recording folders keep the disk tidy: everything one session wrote is in one place and goes with it.
+  The folders come from new cross-platform `FileHelper` methods (owner decision 2026-10-04): the user's home (`HOME`; Windows `USERPROFILE`, through the wide API), the per-user `.unreal-ng` folder and its subfolders, created on demand; UTF-8 paths in and out, as every `FileHelper` path.
 - **Cleanup (owner decision 2026-10-04).** A `CleanupManager` in `core/src/common/` runs registered cleanup steps asynchronously at startup, on a background thread, so start-up never waits for it. TTD's step is the first one; other subsystems add theirs.
   - Every step catches its own errors and exceptions. A file that cannot be deleted (in use, permissions) is logged and skipped; the next run tries again.
   - The manager records its last run per step, and runs each step at least once a week.
@@ -489,7 +490,7 @@ Each item is a working state that passes the full gate (build with zero warnings
 | 2 | Default memory budget (512 MB proposed) and the black box's default window | measure the one-hour ZX-Evo run; propose numbers with it | **yes** |
 | 3 | Black box on disk: rolling segment files (proposed) or MemoryOnly with a time window and a file only on save | **decided 2026-10-04: rolling segment files**, in a folder of their own per recording under `~/.unreal-ng/ttd/` (§5.2.7) | decided |
 | 4 | The TTD folder grows: one folder per recording, crashed leftovers, about 2 GB per hour of heavy content | **decided 2026-10-04**: per-recording folders under `~/.unreal-ng/ttd/`, saved recordings as files there; an asynchronous `CleanupManager` at startup (steps from any subsystem, errors caught per step, each step at least weekly) removes crashed recordings older than 7 days (§5.2.7) | decided |
-| 5 | Whether automation-started recordings are FileBacked like UI ones (they write files under `scratch/ttd/`) or MemoryOnly by default | proposal: FileBacked everywhere (D28), MemoryOnly as an explicit option for tests | **yes** |
+| 5 | Whether automation-started recordings are FileBacked like UI ones or MemoryOnly by default | **decided 2026-10-04: FileBacked everywhere** (D28), MemoryOnly as an explicit start option; tests use it or write under `scratch/` | decided |
 | 6 | Cold seeks touch many parts: a piece's chain can reach parts from long ago | read-ahead of the dependency list; `bm5_cold_us_*` against PR-8; if it fails, the writer re-anchors pieces whose base is many parts back (stores them Full), at a byte cost D33 must allow | no |
 | 7 | Windows: mapping a growing file, rename with open handles, other processes holding the file | 64 MB windows mapped only when durable; all handles closed before rename; retries; tested on Windows in CI, not only under Wine | no |
 | 8 | `fsync` per part costs frame time on slow disks | it runs on the writer thread; BM-1 in FileBacked mode shows it; a setting can lower it to "on finalize only" for power-loss tolerance traded away | no |
