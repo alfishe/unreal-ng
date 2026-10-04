@@ -350,8 +350,18 @@ void BreakpointDialog::populateBreakpointTable()
 
         // Address column
         QString addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
-        if (bp->matchType == BRK_MATCH_BANK_ADDR)  // fires only while that page is mapped there
-            addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp));
+        if (bp->isRange)
+            addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
+        if (bp->matchType == BRK_MATCH_BANK_ADDR)  // physical: that page in any slot (or one slot)
+            addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp)) + (bp->slotOnly ? " (slot)" : "");
+        if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
+            addrStr += QString(" &$%1").arg(bp->portMask, 4, 16, QChar('0')).toUpper();
+        if (bp->hitMode != BRK_HIT_ALWAYS || bp->hitCount)
+            addrStr += QString(" [%1%2]")
+                           .arg(bp->hitCount)
+                           .arg(bp->hitMode != BRK_HIT_ALWAYS
+                                    ? QString(" / ") + QString::fromStdString(BreakpointManager::HitSpecName(*bp))
+                                    : QString());
         QTableWidgetItem* addrItem = new QTableWidgetItem(addrStr);
         addrItem->setTextAlignment(Qt::AlignCenter);
         _breakpointTable->setItem(row, 2, addrItem);

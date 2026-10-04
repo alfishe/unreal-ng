@@ -639,25 +639,38 @@ DELETE /api/v1/emulator/{id}/breakpoints                   Clear all
 DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}           Remove specific
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
-GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info
+GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
+POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
 ```
 
 #### Add Breakpoint Request
 ```json
 {
-  "type": "execution|read|write|port_in|port_out",
+  "type": "execution|read|write|rw|port_in|port_out|port",
   "address": 32768,
+  "address_end": 33023,
   "page": {"kind": "ram", "page": 32},
+  "slot_only": false,
+  "port_mask": 255,
+  "hits": ">=5",
   "note": "optional annotation",
   "group": "optional group name"
 }
 ```
 
-`page` (optional, execution / read / write): `{kind: ram | rom | cache, page}` (debugger protocol; the text
-form `"ram32"` is accepted too). The breakpoint fires only
-while that page is mapped at the address - for example code in TS-Conf RAM page 32 at `#C000`, not
-whatever else is paged in there. 400 for a page the machine does not have. The list and
-`/breakpoints/status` (`last_triggered_page`) name it back the same way.
+Everything but `type` and `address` is optional (the debugger protocol's Breakpoint fields):
+
+| Field | Meaning |
+|:--|:--|
+| `address_end` | Range end, inclusive. A range costs the hot path what one address costs, however many there are. |
+| `page` | `{kind: ram \| rom \| cache, page}` (or the text `"ram32"`): a **physical** breakpoint on that page at offset `address & #3FFF`. It fires through whatever slot shows the page: TS-Conf code paged into `#C000` or `#8000`, the 128K's RAM 5 at `#4000` and `#C000`. With a range, the range stays inside the page. 400 for a page the machine does not have. |
+| `slot_only` | With `page`: only through the slot of `address` (the old "while page X is at this address"). |
+| `port_mask` | Ports: matches when `(port & port_mask) == (address & port_mask)`; `255` catches `#FE` on any high byte. |
+| `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
+
+Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
+page, a mask on a memory breakpoint, a hit policy without a target. The reply and the list carry
+`address_end`, `page` + `slot_only`, `port_mask`, `hit_mode`, `hit_target` and the live `hit_count`.
 
 `note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
 on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.

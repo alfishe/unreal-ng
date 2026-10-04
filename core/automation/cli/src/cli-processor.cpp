@@ -119,6 +119,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
                         {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
                         {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
+                        {"bphits", &CLIProcessor::HandleBPHits},          // Breakpoint hit counters (reset)
                         {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
                         {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
                         {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints

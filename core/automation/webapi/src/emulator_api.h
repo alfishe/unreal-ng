@@ -364,6 +364,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::enableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/enable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
 
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
@@ -1202,6 +1203,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void addBreakpoint(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/breakpoints/hits/reset - hit counters back to 0 ({"id": N}: one, else all)
+    void resetBreakpointHits(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void clearBreakpoints(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void removeBreakpoint(const drogon::HttpRequestPtr& req,

@@ -736,19 +736,23 @@ Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where
 [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```python
-id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 on failure)
-id = emu.bp(0xC000, page="ram32")   # only while RAM page 32 is mapped at #C000 ("rom3", "cache0"; -1: no such page)
-id = emu.bp_read(0x4000)            # memory read; page= as for bp
-id = emu.bp_write(0x5C00)           # memory write; page= as for bp
-id = emu.bp_port_in(0xFE)
-id = emu.bp_port_out(0xFE)
+id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 when refused)
+id = emu.bp(0x8000, to=0x80FF)      # a range #8000-#80FF (one check per access, however many ranges)
+id = emu.bp(0x0038, hits="50")      # stop on the 50th hit only; ">=50" from the 50th on, "%50" every 50th
+id = emu.bp(0xC000, page="ram32")   # physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = emu.bp(0xC000, page="ram32", slot_only=True)  # only through slot 3 (#C000)
+id = emu.bp_read(0x4000)            # memory read; the same keyword arguments
+id = emu.bp_write(0x4000, to=0x57FF)  # memory write: the screen bitmap
+id = emu.bp_port_in(0xFE, mask=0x00FF)  # port IN on #FE with any high byte; mask= and hits=
+id = emu.bp_port_out(0x7FFD)
+emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 emu.bp_count()
-print(emu.bp_list())                # the text table; a page breakpoint ends "in ram32"
-emu.bp_status()                     # the last hit, see below; 'page' = {'kind', 'page'} when it is bound to one
+print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
 ```
 
 ### DebugManager Class

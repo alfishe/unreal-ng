@@ -2444,6 +2444,8 @@ Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted
     _stoppedAtExecBreakpoint = false;
     Z80::StepResult result = z80.StepInstruction(skipBreakpoints);
     _passExecBreakpointArmed = false;
+    if (BreakpointManager* brk = GetBreakpointManager())
+        brk->DisarmExecPass();
 
     const bool completed = z80.IsFrameComplete();
     if (completed)
@@ -2505,6 +2507,15 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
         const uint16_t pc = _emulator._core ? _emulator._core->GetZ80()->pc : 0;
         _emulator._passExecBreakpointArmed = _emulator._stoppedAtExecBreakpoint && pc == _emulator._stoppedAtExecPc;
         _emulator._passExecBreakpointPc = pc;
+        // The manager skips that one check entirely: no hit and no count (a hit-count policy sees the
+        // breakpoint once, not again on stepping on from it)
+        if (BreakpointManager* brk = _emulator.GetBreakpointManager())
+        {
+            if (_emulator._passExecBreakpointArmed)
+                brk->ArmExecPass(pc);
+            else
+                brk->DisarmExecPass();
+        }
     }
 }
 

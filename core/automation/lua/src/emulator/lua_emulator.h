@@ -211,6 +211,42 @@ protected:
     };
     /// endregion </Fields>
 
+    /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
+    /// a table {page=, to=, slot_only=, mask=, hits=}. The breakpoint id, or -1 when refused
+    int AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access, uint16_t address, const sol::optional<sol::object>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = access;
+        spec.address = address;
+        std::string page, hits;
+        int32_t to = -1, mask = -1;
+        bool slotOnly = false;
+        if (options && options->is<std::string>())
+            page = options->as<std::string>();
+        else if (options && options->is<sol::table>())
+        {
+            sol::table t = options->as<sol::table>();
+            page = t.get<sol::optional<std::string>>("page").value_or("");
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
+            mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);  // hits=5: the 5th hit
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
     /// region <Kempston Mouse helpers (automation-interfaces §4.7)>
 protected:
     DebugMouseManager* mouseManager() const
@@ -2170,56 +2206,32 @@ public:
         });
 
         // Breakpoint management
-        // Optional page ("ram32", "rom3", "cache0"): only while that page is mapped at the address
-        lua.set_function("bp", [this](uint16_t addr, sol::optional<std::string> page) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (!bpm) return -1;
-            std::string error;
-            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_EXECUTE, page.value_or(""), error);
-            return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_EXECUTE, addr, options);
         });
 
-        // Optional page ("ram32", "rom3", "cache0"): only while that page is mapped at the address
-        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<std::string> page) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (!bpm) return -1;
-            std::string error;
-            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_READ, page.value_or(""), error);
-            return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_READ, addr, options);
         });
 
-        // Optional page ("ram32", "rom3", "cache0"): only while that page is mapped at the address
-        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<std::string> page) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (!bpm) return -1;
-            std::string error;
-            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_WRITE, page.value_or(""), error);
-            return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
+        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_WRITE, addr, options);
         });
 
-        lua.set_function("bp_port_in", [this](uint16_t port) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddPortInBreakpoint(port)) : -1;
+        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_in", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_IO, BRK_IO_IN, port, options);
         });
 
-        lua.set_function("bp_port_out", [this](uint16_t port) -> int {
-            if (!effectiveEmulator()) return -1;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return -1;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddPortOutBreakpoint(port)) : -1;
+        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+            return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
         });
 
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
@@ -2270,6 +2282,16 @@ public:
             return bpm ? bpm->SetBreakpointGroup(id, group) : false;
         });
 
+        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
+            if (!effectiveEmulator()) return false;
+            BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
+            if (!bpm) return false;
+            if (id)
+                return bpm->ResetHitCount(*id);
+            bpm->ResetAllHitCounts();
+            return true;
+        });
+
         lua.set_function("bp_count", [this]() -> size_t {
             if (!effectiveEmulator()) return 0;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2315,6 +2337,7 @@ public:
                 result["group"] = info.group;
                 if (!info.pageKind.empty())
                     result["page"] = lua_view.create_table_with("kind", info.pageKind, "page", info.pageNumber);
+                result["hit_count"] = info.hitCount;
             }
             return result;
         });
