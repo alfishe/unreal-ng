@@ -85,3 +85,30 @@ TEST(CliVideoRecordOptions_Test, BadValuesAreRefused)
     EXPECT_FALSE(CliVideoRecord::Validate(options, error));
     EXPECT_NE(error.find(".webm"), std::string::npos) << error;
 }
+
+TEST(CliVideoRecordOptions_Test, RegionDefaultsToFullAndTakesScreen)
+{
+    CliVideoRecord::StartOptions options;
+    std::string error;
+    ASSERT_TRUE(CliVideoRecord::ParseStart({"start"}, options, error)) << error;
+    EXPECT_FALSE(options.screenRegion) << "the whole frame is the default";
+
+    ASSERT_TRUE(CliVideoRecord::ParseStart({"start", "gif", "out.gif", "--region", "screen"}, options, error)) << error;
+    EXPECT_TRUE(options.screenRegion);
+    EXPECT_EQ(options.filename, "out.gif") << "the option does not disturb the positionals";
+
+    ASSERT_TRUE(CliVideoRecord::ParseStart({"start", "--region", "main"}, options, error)) << error;
+    EXPECT_TRUE(options.screenRegion) << "main is the alias of screen (as in the WebAPI, Lua, Python and MCP)";
+
+    ASSERT_TRUE(CliVideoRecord::ParseStart({"start", "--region", "FULL"}, options, error)) << error;
+    EXPECT_FALSE(options.screenRegion);
+}
+
+TEST(CliVideoRecordOptions_Test, UnknownRegionIsRefused)
+{
+    CliVideoRecord::StartOptions options;
+    std::string error;
+    EXPECT_FALSE(CliVideoRecord::ParseStart({"start", "--region", "border"}, options, error));
+    EXPECT_NE(error.find("region"), std::string::npos) << error;
+    EXPECT_FALSE(CliVideoRecord::ParseStart({"start", "--region"}, options, error)) << "no value";
+}
