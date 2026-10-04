@@ -17,6 +17,9 @@ add_library(sam2695 STATIC
     src/bank/generators.cpp
     src/bank/sf2bank.cpp
     src/bank/sha256.cpp
+    src/fx/chorus.cpp
+    src/fx/effects.cpp
+    src/fx/reverb.cpp
     src/render/resampler.cpp
     src/voice/interpolator.cpp
     src/voice/voice.cpp
@@ -35,6 +38,8 @@ add_executable(sam2695tests EXCLUDE_FROM_ALL
     tests/banktests.cpp      # SF2 loader, SHA-256
     tests/voicetests.cpp     # envelopes, LFO, filter, interpolation, loops, modulators
     tests/synthtests.cpp     # allocation, exclusive classes, state, render, chart rows, golden digests
+    tests/charttests.cpp     # the MIDI implementation chart rows of SAM-3 (GS / GM / Dream SysEx, NRPN, pedals)
+    tests/fxtests.cpp        # the effects block, routing, output stage, effects state (SAM-4)
 )
 target_include_directories(sam2695tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(sam2695tests PRIVATE sam2695)

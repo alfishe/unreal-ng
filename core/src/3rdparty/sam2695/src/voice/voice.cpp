@@ -47,7 +47,36 @@ inline float ReadFrame(const int16_t* d16, const uint8_t* d24, uint32_t i)
     return static_cast<float>(v) * static_cast<float>(SampleValueScale());
 }
 
+// The SF2 default modulators the chip replaces by its GS controller matrix (40 2p xx, datasheet
+// p.26-29): channel pressure to vibrato (8.4.3; the chip's CAF destinations default to no effect) and the
+// modulation wheel to vibrato (8.4.4; the chip's "Mod LFO1 pitch depth" default 0Ah = 47 cents)
+bool ReplacedByPartControls(int defaultIndex)
+{
+    return defaultIndex == 2 || defaultIndex == 3;
+}
+
+// Relative timecents for the GS envelope / delay NRPNs: a lengthening starts from at least 2^-5 s, so
+// "attack slower" is audible on a sound whose attack is instantaneous (README "GS part NRPNs")
+constexpr float kNrpnTimecentsPerStep = 75.0f;
+constexpr float kNrpnTimecentsFloor = -6000.0f;
+
+float RelativeTimecents(float current, int delta)
+{
+    const float d = static_cast<float>(delta) * kNrpnTimecentsPerStep;
+    if (d <= 0.0f)
+        return d;
+    return std::fmax(current, kNrpnTimecentsFloor) - current + d;
+}
+
 } // namespace
+
+float PortamentoCentsPerSample(uint8_t time)
+{
+    // CC 5 = v: one octave takes 5 ms x 2^(v / 14): 5 ms at 0, 120 ms at 64, 2.7 s at 127 (the
+    // datasheet gives no curve; the glide is linear in pitch at a constant rate, as on GS synthesizers)
+    const double octaveSeconds = 0.005 * std::exp2(static_cast<double>(time) / 14.0);
+    return static_cast<float>(1200.0 / (octaveSeconds * kInternalRate));
+}
 
 float Voice::G(Gen g) const
 {
@@ -126,7 +155,7 @@ float Voice::Source(uint16_t src, const Channel& ch) const
     return static_cast<float>(y);
 }
 
-void Voice::UpdateModulators(const Channel& ch)
+void Voice::UpdateModulators(const Channel& ch, const VoiceContext& ctx)
 {
     modSum.fill(0.0f);
     for (uint8_t i = 0; i < modCount; i++)
@@ -142,7 +171,102 @@ void Voice::UpdateModulators(const Channel& ch)
         if (m.dest < kGenCount)
             modSum[m.dest] += v;
     }
+    PartControls(ch, ctx);
     modVersion = ch.modulationVersion;
+}
+
+void Voice::PartControls(const Channel& ch, const VoiceContext& ctx)
+{
+    auto add = [this](Gen g, float v) { modSum[static_cast<int>(g)] += v; };
+    auto current = [this](Gen g) { return static_cast<float>(base[static_cast<int>(g)]) + modSum[static_cast<int>(g)]; };
+
+    // GS controller destinations (40 2p xx): five sources x seven destinations. Bend's pitch control is
+    // the bend range (RPN 0), played by the SF2 pitch-wheel modulator above.
+    const float bend = (static_cast<float>(ch.pitchBend) - 8192.0f) / 8192.0f;
+    const float x[kCtrlSources] = {ch.cc[1] / 127.0f, bend, ch.channelPressure / 127.0f,
+                                   ch.cc[ch.cc1Number & 0x7F] / 127.0f, ch.cc[ch.cc2Number & 0x7F] / 127.0f};
+    float pitch = 0.0f, cutoff = 0.0f, amplitude = 0.0f, rate = 0.0f, lfoPitch = 0.0f, lfoCutoff = 0.0f, lfoAmp = 0.0f;
+    for (int s = 0; s < kCtrlSources; s++)
+    {
+        const CtrlSource src = static_cast<CtrlSource>(s);
+        const float v = x[s];
+        if (v == 0.0f)
+            continue;
+        const float mag = std::fabs(v);
+        if (src != CtrlSource::Bend)
+            pitch += v * 100.0f * static_cast<float>(std::clamp(ch.Ctrl(src, CtrlDest::Pitch) - 0x40, -24, 24));
+        cutoff += v * 150.0f * static_cast<float>(ch.Ctrl(src, CtrlDest::Cutoff) - 0x40);
+        amplitude += v * static_cast<float>(ch.Ctrl(src, CtrlDest::Amplitude) - 0x40) / 64.0f;
+        rate += mag * 10.0f * static_cast<float>(ch.Ctrl(src, CtrlDest::LfoRate) - 0x40) / 64.0f;
+        lfoPitch += mag * 600.0f * ch.Ctrl(src, CtrlDest::LfoPitch) / 127.0f;
+        lfoCutoff += mag * 2400.0f * ch.Ctrl(src, CtrlDest::LfoCutoff) / 127.0f;
+        lfoAmp += mag * ch.Ctrl(src, CtrlDest::LfoAmp) / 127.0f;
+    }
+    add(Gen::Pitch, pitch);
+    add(Gen::InitialFilterFc, cutoff);
+    if (amplitude != 0.0f)
+    {
+        const float g = std::fmax(1.0f + amplitude, 0.0f);
+        add(Gen::InitialAttenuation, g > 0.0f ? -200.0f * std::log10(g) : 1440.0f);
+    }
+    add(Gen::VibLfoToPitch, lfoPitch);
+    vibRateHz = rate;
+    vibToFc = lfoCutoff;
+    vibToAmp = std::fmin(lfoAmp, 1.0f);
+
+    // GS part NRPNs 01xxh, relative to the sound (40h = no change; README "GS part NRPNs")
+    add(Gen::FreqVibLfo, 20.0f * static_cast<float>(ch.PartNrpnDelta(PartNrpn::VibratoRate)));
+    add(Gen::VibLfoToPitch, static_cast<float>(ch.PartNrpnDelta(PartNrpn::VibratoDepth)));
+    add(Gen::DelayVibLfo, RelativeTimecents(current(Gen::DelayVibLfo), ch.PartNrpnDelta(PartNrpn::VibratoDelay)));
+    add(Gen::InitialFilterFc, 60.0f * static_cast<float>(ch.PartNrpnDelta(PartNrpn::Cutoff)));
+    add(Gen::InitialFilterQ, 3.0f * static_cast<float>(ch.PartNrpnDelta(PartNrpn::Resonance)));
+    for (Gen g : {Gen::AttackVolEnv, Gen::AttackModEnv})
+        add(g, RelativeTimecents(current(g), ch.PartNrpnDelta(PartNrpn::Attack)));
+    for (Gen g : {Gen::DecayVolEnv, Gen::DecayModEnv})
+        add(g, RelativeTimecents(current(g), ch.PartNrpnDelta(PartNrpn::Decay)));
+    for (Gen g : {Gen::ReleaseVolEnv, Gen::ReleaseModEnv})
+        add(g, RelativeTimecents(current(g), ch.PartNrpnDelta(PartNrpn::Release)));
+
+    // soft pedal (CC 67), latched at note on: -3 dB and one octave darker (README "Pedals")
+    if (soft)
+    {
+        add(Gen::InitialAttenuation, 30.0f);
+        add(Gen::InitialFilterFc, -1200.0f);
+    }
+
+    float reverbDepth = 1.0f, chorusDepth = 1.0f;
+    if (rhythm && ctx.drums != nullptr)
+    {
+        // drum instrument edits (NRPN 18rr-1Err) of this key
+        const DrumNote& d = (*ctx.drums)[midiKey & 0x7F];
+        add(Gen::Pitch, 100.0f * static_cast<float>(d.pitch - 0x40));
+        if (d.level < 0x7F)
+            add(Gen::InitialAttenuation,
+                d.level == 0 ? 1440.0f : static_cast<float>(-400.0 * std::log10(d.level / 127.0)));
+        if (d.pan <= 0x7F)
+        {
+            const float want = std::clamp((static_cast<float>(d.pan) - 64.0f) / 64.0f * 500.0f, -500.0f, 500.0f);
+            add(Gen::Pan, want - static_cast<float>(base[static_cast<int>(Gen::Pan)]));
+        }
+        reverbDepth = d.reverb / 127.0f;
+        chorusDepth = d.chorus / 127.0f;
+    }
+    else if (!rhythm)
+    {
+        // GS scale tuning (40 1p 40-4B): cents by the note name; no effect on a rhythm part
+        add(Gen::Pitch, static_cast<float>(ch.scaleTuning[midiKey % 12] - 0x40));
+    }
+
+    // effect sends: the SF2 send generators (CC 91 / 93 through the default modulators, 0.1 % units),
+    // scaled by NRPN 3715h / 3716h and the drum note's own send depth
+    reverbSend = std::clamp(G(Gen::ReverbEffectsSend) / 1000.0f * ctx.reverbScale * reverbDepth, 0.0f, 2.0f);
+    chorusSend = std::clamp(G(Gen::ChorusEffectsSend) / 1000.0f * ctx.chorusScale * chorusDepth, 0.0f, 2.0f);
+}
+
+uint32_t Voice::VibLfoIncrement() const
+{
+    const double hz = std::fmax(AbsCentsToHz(G(Gen::FreqVibLfo)) + vibRateHz, 0.0);
+    return static_cast<uint32_t>(std::fmin(hz, 100.0) * (4294967296.0 / kInternalRate));
 }
 
 void Voice::ComputeEnvTimes(EnvTimes& vol, EnvTimes& mod) const
@@ -169,7 +293,8 @@ void Voice::ComputeEnvTimes(EnvTimes& vol, EnvTimes& mod) const
 }
 
 bool Voice::Start(const BankModel& bank, const VoiceZones& zones, int32_t sampleIndex, const Channel& ch,
-                  uint8_t channelIndex, uint8_t noteKey, uint8_t noteVelocity, uint64_t id)
+                  const VoiceContext& ctx, uint8_t channelIndex, uint8_t noteKey, uint8_t noteMidiKey,
+                  uint8_t noteVelocity, uint64_t id)
 {
     if (sampleIndex < 0 || static_cast<size_t>(sampleIndex) >= bank.samples.size())
         return false;
@@ -199,7 +324,8 @@ bool Voice::Start(const BankModel& bank, const VoiceZones& zones, int32_t sample
     // level's own list (global superseded by local) is added on top (SF2 9.5.1)
     modCount = 0;
     for (int i = 0; i < kDefaultModulatorCount; i++)
-        mods[modCount++] = DefaultModulators()[i];
+        if (!ReplacedByPartControls(i))
+            mods[modCount++] = DefaultModulators()[i];
     MergeZoneModulators(bank, zones.instGlobal, mods, modCount, 0);
     MergeZoneModulators(bank, zones.instZone, mods, modCount, 0);
     const uint8_t presetFrom = modCount;
@@ -208,8 +334,11 @@ bool Voice::Start(const BankModel& bank, const VoiceZones& zones, int32_t sample
 
     channel = channelIndex;
     key = noteKey;
+    midiKey = noteMidiKey;
     velocity = noteVelocity;
     rhythm = ch.rhythm;
+    sostenuto = false;
+    soft = ch.Soft();
     noteId = id;
     sample = sampleIndex;
     exclusiveClass = static_cast<uint8_t>(std::clamp(base[static_cast<int>(Gen::ExclusiveClass)], 0, 127));
@@ -239,7 +368,7 @@ bool Voice::Start(const BankModel& bank, const VoiceZones& zones, int32_t sample
     phase = static_cast<uint64_t>(start) << 32;
 
     state = VoiceState::On;
-    UpdateModulators(ch);
+    UpdateModulators(ch, ctx);
     EnvTimes vt, mt;
     ComputeEnvTimes(vt, mt);
     volEnv.Start(vt, true);
@@ -247,10 +376,12 @@ bool Voice::Start(const BankModel& bank, const VoiceZones& zones, int32_t sample
     const double lfoScale = 4294967296.0 / kInternalRate;
     modLfo.Start(SecondsToSamples(TimecentsToSeconds(G(Gen::DelayModLfo)), kInternalRate),
                  static_cast<uint32_t>(AbsCentsToHz(G(Gen::FreqModLfo)) * lfoScale));
-    vibLfo.Start(SecondsToSamples(TimecentsToSeconds(G(Gen::DelayVibLfo)), kInternalRate),
-                 static_cast<uint32_t>(AbsCentsToHz(G(Gen::FreqVibLfo)) * lfoScale));
+    vibLfo.Start(SecondsToSamples(TimecentsToSeconds(G(Gen::DelayVibLfo)), kInternalRate), VibLfoIncrement());
     filter = VoiceFilter{};
+    portaCents = 0.0f;
+    portaRate = 0.0f;
     staticL = staticR = staticStepL = staticStepR = 0.0f;
+    staticRev = staticCho = staticStepRev = staticStepCho = 0.0f;
     staticRampLeft = 0;
     fade = 1.0f;
     fadeLeft = 0;
@@ -288,7 +419,7 @@ void Voice::Kill()
     fadeLeft = kFadeSamples;
 }
 
-void Voice::Control(const BankModel& bank, const Channel& ch, const PitchContext& pc, uint32_t n, bool first)
+void Voice::Control(const BankModel& bank, const Channel& ch, const VoiceContext& ctx, uint32_t n, bool first)
 {
     if (state == VoiceState::Off)
         return;
@@ -297,11 +428,12 @@ void Voice::Control(const BankModel& bank, const Channel& ch, const PitchContext
 
     if (modVersion != ch.modulationVersion)
     {
-        UpdateModulators(ch);
+        UpdateModulators(ch, ctx);
         EnvTimes vt, mt;
         ComputeEnvTimes(vt, mt);
         volEnv.Retime(vt);
         modEnv.Retime(mt);
+        vibLfo.increment = VibLfoIncrement();
     }
     const SampleInfo& s = bank.samples[sample];
     const float modLfoValue = modLfo.Value();
@@ -314,15 +446,15 @@ void Voice::Control(const BankModel& bank, const Channel& ch, const PitchContext
     const int32_t rootOverride = base[static_cast<int>(Gen::OverridingRootKey)];
     const float root = static_cast<float>(rootOverride >= 0 ? rootOverride : s.originalPitch);
     const double cents = G(Gen::ScaleTuning) * (keyForPitch - root) + 100.0 * G(Gen::CoarseTune) + G(Gen::FineTune) +
-                         s.pitchCorrection + G(Gen::Pitch) + pc.channelCents + modLfoValue * G(Gen::ModLfoToPitch) +
+                         s.pitchCorrection + G(Gen::Pitch) + ctx.tuneCents + portaCents + modLfoValue * G(Gen::ModLfoToPitch) +
                          vibLfoValue * G(Gen::VibLfoToPitch) + modEnvValue * G(Gen::ModEnvToPitch);
     const double ratio = std::exp2(cents / 1200.0) * static_cast<double>(s.sampleRate) / kInternalRate;
     const double inc = std::fmin(ratio, 1024.0) * 4294967296.0;
     increment = inc < 1.0 ? 1u : static_cast<uint64_t>(inc);
 
     // Filter
-    const double fcCents =
-        G(Gen::InitialFilterFc) + modLfoValue * G(Gen::ModLfoToFilterFc) + modEnvValue * G(Gen::ModEnvToFilterFc);
+    const double fcCents = G(Gen::InitialFilterFc) + modLfoValue * G(Gen::ModLfoToFilterFc) +
+                           modEnvValue * G(Gen::ModEnvToFilterFc) + vibLfoValue * vibToFc;
     bool bypass = false;
     const BiquadCoeffs coeffs = LowPassCoeffs(AbsCentsToHz(fcCents), G(Gen::InitialFilterQ), kInternalRate, bypass);
     filter.Target(coeffs, bypass, n, first);
@@ -332,27 +464,35 @@ void Voice::Control(const BankModel& bank, const Channel& ch, const PitchContext
     const float attenuation =
         std::clamp(kStaticAttenuationScale * static_cast<float>(base[attIndex]) + modSum[attIndex], 0.0f, 1440.0f) -
         modLfoValue * G(Gen::ModLfoToVolume);
-    const float staticGain = static_cast<float>(CentibelsToGain(attenuation));
+    // GS LFO1 TVA depth: the amplitude dips by up to vibToAmp at the LFO's negative peak
+    const float lfoAmp = 1.0f - vibToAmp * (0.5f - 0.5f * vibLfoValue);
+    const float staticGain = static_cast<float>(CentibelsToGain(attenuation)) * lfoAmp;
     const double angle = (G(Gen::Pan) + 500.0) / 1000.0 * (kPi / 2.0);
     const float targetL = staticGain * static_cast<float>(std::cos(angle));
     const float targetR = staticGain * static_cast<float>(std::sin(angle));
+    const float targetRev = staticGain * reverbSend;
+    const float targetCho = staticGain * chorusSend;
     if (first || n == 0)
     {
         staticL = targetL;
         staticR = targetR;
-        staticStepL = staticStepR = 0.0f;
+        staticRev = targetRev;
+        staticCho = targetCho;
+        staticStepL = staticStepR = staticStepRev = staticStepCho = 0.0f;
         staticRampLeft = 0;
         return;
     }
     const float inv = 1.0f / static_cast<float>(n);
     staticStepL = (targetL - staticL) * inv;
     staticStepR = (targetR - staticR) * inv;
+    staticStepRev = (targetRev - staticRev) * inv;
+    staticStepCho = (targetCho - staticCho) * inv;
     staticRampLeft = n;
 }
 
 template <Interpolation M>
-uint32_t Voice::RenderLoop(const BankModel& bank, float* left, float* right, uint32_t n, bool mute,
-                           const Envelope::Span& env)
+uint32_t Voice::RenderLoop(const BankModel& bank, float* left, float* right, float* reverb, float* chorus, uint32_t n,
+                           bool mute, const Envelope::Span& env)
 {
     const int16_t* d16 = bank.data16.data();
     const uint8_t* d24 = bank.data24.empty() ? nullptr : bank.data24.data();
@@ -406,14 +546,19 @@ uint32_t Voice::RenderLoop(const BankModel& bank, float* left, float* right, uin
         const float g = envGain * fade;
         if (!mute)
         {
-            left[i] += v * g * staticL;
-            right[i] += v * g * staticR;
+            const float vg = v * g;
+            left[i] += vg * staticL;
+            right[i] += vg * staticR;
+            reverb[i] += vg * staticRev;
+            chorus[i] += vg * staticCho;
         }
         envGain = env.geometric ? envGain * env.step : envGain + env.step;
         if (staticRampLeft > 0)
         {
             staticL += staticStepL;
             staticR += staticStepR;
+            staticRev += staticStepRev;
+            staticCho += staticStepCho;
             staticRampLeft--;
         }
         if (state == VoiceState::Dying)
@@ -430,7 +575,8 @@ uint32_t Voice::RenderLoop(const BankModel& bank, float* left, float* right, uin
     return i;
 }
 
-void Voice::Render(const BankModel& bank, Interpolation mode, float* left, float* right, uint32_t n, bool mute)
+void Voice::Render(const BankModel& bank, Interpolation mode, float* left, float* right, float* reverb, float* chorus,
+                   uint32_t n, bool mute)
 {
     if (state == VoiceState::Off || n == 0)
         return;
@@ -453,13 +599,16 @@ void Voice::Render(const BankModel& bank, Interpolation mode, float* left, float
         switch (mode)
         {
             case Interpolation::Linear:
-                got = RenderLoop<Interpolation::Linear>(bank, left + done, right + done, want, mute, env);
+                got = RenderLoop<Interpolation::Linear>(bank, left + done, right + done, reverb + done, chorus + done, want,
+                                                  mute, env);
                 break;
             case Interpolation::Cubic:
-                got = RenderLoop<Interpolation::Cubic>(bank, left + done, right + done, want, mute, env);
+                got = RenderLoop<Interpolation::Cubic>(bank, left + done, right + done, reverb + done, chorus + done, want,
+                                                  mute, env);
                 break;
             case Interpolation::Sinc:
-                got = RenderLoop<Interpolation::Sinc>(bank, left + done, right + done, want, mute, env);
+                got = RenderLoop<Interpolation::Sinc>(bank, left + done, right + done, reverb + done, chorus + done, want,
+                                                  mute, env);
                 break;
         }
         volEnv.Advance(got);
@@ -468,6 +617,12 @@ void Voice::Render(const BankModel& bank, Interpolation mode, float* left, float
             ended = true;
     }
     filter.FlushDenormals();
+    if (portaCents != 0.0f)
+    {
+        // portamento glides toward the note's own pitch at a constant rate
+        const float step = portaRate * static_cast<float>(n);
+        portaCents = std::fabs(portaCents) <= step ? 0.0f : portaCents - std::copysign(step, portaCents);
+    }
     modEnv.Advance(n);
     modLfo.Advance(n);
     vibLfo.Advance(n);

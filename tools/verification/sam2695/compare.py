@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """FluidSynth reference comparison for libsam2695 (SF2 semantics).
 
-Writes a synthetic SF2 bank and a MIDI scenario, renders both with FluidSynth and with sam2695render at the
-chip's internal rate (37 500 Hz, effects off, no polyphony limit), and compares per note: onset time, pitch,
-levels (velocity curve, attenuation, pan, filter), the envelope shape (attack, hold, decay and release slopes,
-sustain level), the LFOs (tremolo depth, vibrato swing), the modulation envelope on pitch, loop-until-release
-and key-scaled decay. Every check has a tolerance; known model differences are expected deviations with an id
-from README.md (D1..D3). Exit status 0 when every check passes.
+Writes a synthetic SF2 bank and two MIDI scenarios, renders them with FluidSynth and with sam2695render at the
+chip's internal rate (37 500 Hz, no polyphony limit).
+
+The voice scenario (sam2695render's dry mode, FluidSynth's reverb and chorus off) compares per note: onset time,
+pitch, levels (velocity curve, attenuation, pan, filter), the envelope shape (attack, hold, decay and release
+slopes, sustain level), the LFOs (tremolo depth, vibrato swing), the modulation envelope on pitch, loop-until-
+release and key-scaled decay.
+
+The effects scenario (both synthesizers' reverb and chorus on; the chip's equalizer and spatial effect off by
+NRPN 375Fh = 30h) plays a noise burst at CC 91 / CC 93 = 127, 64 and 0 and checks that the sends behave the
+same: linear in the controller (the SF2 default modulators 8.4.8 / 8.4.9), nothing at 0. The reverb and chorus
+algorithms differ (README "Effects"), so their decay times and wet levels are reported, not compared.
+
+Every check has a tolerance; known model differences are expected deviations with an id from README.md
+(D1..D5). Exit status 0 when every check passes.
 
     ./compare.py [--render PATH] [--out DIR] [-v]
 """
@@ -43,6 +52,12 @@ def BuildBank(path):
         tail.append(amp * math.sin(2 * math.pi * i / 100))
     looptail = Sample('looptail', tail, 44000, 69, 0, (3400, 4400))
     lfo = lambda hz: int(round(1200 * math.log2(hz / 8.176)))
+    state = 12345
+    noise = []
+    for _ in range(8192):
+        state = (state * 1664525 + 1013904223) & 0xFFFFFFFF
+        noise.append(((state >> 16) - 32768) / 2)
+    noiseSample = Sample('noise', noise, 37500, 69, 0, (0, 8192))
     presets = [
         ('Sine', {GEN['sampleModes']: 1}),
         ('Adsr', {GEN['sampleModes']: 1, GEN['attackVolEnv']: -1200, GEN['holdVolEnv']: -3600,
@@ -56,10 +71,12 @@ def BuildBank(path):
         ('KeyDecay', {GEN['sampleModes']: 1, GEN['decayVolEnv']: -1200, GEN['sustainVolEnv']: 900,
                       GEN['keynumToVolEnvDecay']: 50}),
         ('ModEnvPitch', {GEN['sampleModes']: 1, GEN['modEnvToPitch']: 1200, GEN['attackModEnv']: -1200}),
+        ('Noise', {GEN['sampleModes']: 1}),
     ]
-    WriteSf2(path, [sine, looptail],
+    sampleOf = {'LoopTail': 'looptail', 'Noise': 'noise'}
+    WriteSf2(path, [sine, looptail, noiseSample],
              [{'name': n, 'bank': 0, 'program': i,
-               'zones': [{'sample': 'looptail' if n == 'LoopTail' else 'sine', 'gens': g}]}
+               'zones': [{'sample': sampleOf.get(n, 'sine'), 'gens': g}]}
               for i, (n, g) in enumerate(presets)])
     return {n: i for i, (n, _) in enumerate(presets)}
 
@@ -95,6 +112,86 @@ def BuildScenario(path, programs):
     Note('modenv', 'ModEnvPitch', 57, 127, 0.8, 0.1)
     WriteSmf(path, events, TPQ, TEMPO)
     return notes
+
+
+EFFECT_LEVELS = (127, 64, 0)
+
+
+def BuildEffectsScenario(path, programs):
+    """Noise bursts on channel 0 at three reverb, then three chorus send levels; returns the note times"""
+    events = [(0.0, Cc(0, 7, 127)), (0.0, Cc(0, 11, 127)), (0.0, Program(0, programs['Noise'])),
+              # the chip: reverb + chorus only (NRPN 375Fh = 30h); FluidSynth ignores the NRPN
+              (0.0, Cc(0, 99, 0x37)), (0.0, Cc(0, 98, 0x5F)), (0.0, Cc(0, 6, 0x30))]
+    reverb, chorus = [], []
+    t = Grid(0.1)
+    for v in EFFECT_LEVELS:
+        events += [(t - BLOCK, Cc(0, 91, v)), (t - BLOCK, Cc(0, 93, 0)), (t, NoteOn(0, 69, 127)),
+                   (Grid(t + 0.1), NoteOff(0, 69))]
+        reverb.append((v, t, Grid(t + 0.1)))
+        t = Grid(t + 3.5)
+    for v in EFFECT_LEVELS:
+        events += [(t - BLOCK, Cc(0, 91, 0)), (t - BLOCK, Cc(0, 93, v)), (t, NoteOn(0, 69, 127)),
+                   (Grid(t + 0.4), NoteOff(0, 69))]
+        chorus.append((v, t, Grid(t + 0.4)))
+        t = Grid(t + 1.0)
+    WriteSmf(path, events, TPQ, TEMPO)
+    return reverb, chorus
+
+
+def Rt60(x, a, b):
+    """Reverberation time from the Schroeder integral of x[a:b], T20 (-5 .. -25 dB) x 3"""
+    e = np.cumsum((x[a:b] ** 2)[::-1])[::-1]
+    d = 10 * np.log10(e / e[0] + 1e-30)
+    i5, i25 = int(np.argmax(d <= -5)), int(np.argmax(d <= -25))
+    return 3.0 * (i25 - i5) / RATE if i25 > i5 else float('nan')
+
+
+def AnalyzeEffects(ours, oursDry, ref, refDry, reverb, chorus, rep):
+    """`ours` / `ref` with the effects on, `*Dry` the same file with them off: their difference is the wet"""
+    rms = lambda sig, a, b: math.sqrt(float(np.mean(sig[a:b] ** 2)))
+    # the send ratios assume a linear chip path: the render must stay below the soft-clip knee (0.75)
+    rep.CheckBelow('effects render: peak below the soft-clip knee', float(np.max(np.abs(ours))),
+                   float(np.max(np.abs(ours))), 0.75)
+    wetOurs, wetRef = ours - oursDry, ref - refDry
+    # reverb: the tail after each burst
+    tails = {}
+    for which, wet in (('ours', wetOurs), ('ref', wetRef)):
+        for v, on, off in reverb:
+            a = int(round(off * RATE)) + int(0.03 * RATE)
+            tails[(which, v)] = rms(wet, a, a + int(0.5 * RATE))
+    rep.Check('reverb send CC 91 127 vs 64', Db(tails[('ours', 127)]) - Db(tails[('ours', 64)]),
+              Db(tails[('ref', 127)]) - Db(tails[('ref', 64)]), 0.1, unit='dB')
+    rep.Check('reverb send CC 91 127 vs 64 = 20 log(127/64)', Db(tails[('ours', 127)]) - Db(tails[('ours', 64)]),
+              20 * math.log10(127 / 64), 0.1, unit='dB')
+    # CC 91 = 0: the library sends nothing (what remains is the previous burst's tail, 3.5 s on); FluidSynth
+    # leaks a little at the voice start (D5)
+    rep.CheckBelow('reverb send CC 91 = 0: tail vs CC 91 = 127 (D5)', Db(tails[('ours', 0)]) - Db(tails[('ours', 127)]),
+                   -80.0, -80.0 + 1e-9, unit='dB')
+    rep.Info('  FluidSynth: tail at CC 91 = 0 vs 127 (D5)', Db(tails[('ours', 0)]) - Db(tails[('ours', 127)]),
+             Db(tails[('ref', 0)]) - Db(tails[('ref', 127)]), 'dB')
+    mono = lambda sig: sig[:, 0] + sig[:, 1]
+    v, on, off = reverb[0]
+    a = int(round(off * RATE)) + int(0.01 * RATE)
+    burst = lambda sig: rms(sig, int(round(on * RATE)) + 400, int(round(off * RATE)))
+    rep.Info('reverb RT60 (T20), CC 91 = 127 (D5)', Rt60(mono(wetOurs), a, a + 3 * RATE),
+             Rt60(mono(wetRef), a, a + 3 * RATE), 's')
+    rep.Info('reverb tail (first 0.5 s) vs the dry burst (D5)', Db(tails[('ours', 127)]) - Db(burst(oursDry)),
+             Db(tails[('ref', 127)]) - Db(burst(refDry)), 'dB')
+    # chorus: the wet signal during each burst
+    wets = {}
+    for which, wet, dry in (('ours', wetOurs, oursDry), ('ref', wetRef, refDry)):
+        for v, on, off in chorus:
+            a, b = int(round(on * RATE)) + int(0.05 * RATE), int(round(off * RATE))
+            wets[(which, v)] = rms(wet, a, b)
+            wets[(which, 'dry')] = rms(dry, a, b)
+    rep.Check('chorus send CC 93 127 vs 64', Db(wets[('ours', 127)]) - Db(wets[('ours', 64)]),
+              Db(wets[('ref', 127)]) - Db(wets[('ref', 64)]), 0.15, unit='dB')
+    rep.Check('chorus send CC 93 127 vs 64 = 20 log(127/64)', Db(wets[('ours', 127)]) - Db(wets[('ours', 64)]),
+              20 * math.log10(127 / 64), 0.15, unit='dB')
+    rep.CheckBelow('chorus send CC 93 = 0: wet vs CC 93 = 127', Db(wets[('ours', 0)]) - Db(wets[('ours', 127)]),
+                   Db(wets[('ref', 0)]) - Db(wets[('ref', 127)]), -80.0, unit='dB')
+    rep.Info('chorus wet vs dry, CC 93 = 127 (D5)', Db(wets[('ours', 127)]) - Db(wets[('ours', 'dry')]),
+             Db(wets[('ref', 127)]) - Db(wets[('ref', 'dry')]), 'dB')
 
 
 def Rms(x, a, b):
@@ -154,6 +251,16 @@ class Report:
         ok = abs(ours - target) <= tol
         self.failed += 0 if ok else 1
         self.rows.append((name, ours, ref, target, tol, unit, ok, expected is not None))
+
+    def CheckBelow(self, name, ours, ref, limit, unit=''):
+        """Both values must stay below `limit`"""
+        ok = ours < limit and ref < limit
+        self.failed += 0 if ok else 1
+        self.rows.append((name, ours, ref, limit, 0.0, unit, ok, False))
+
+    def Info(self, name, ours, ref, unit=''):
+        """Reported, not checked: the two synthesizers differ by design here"""
+        self.rows.append((name, ours, ref, float('nan'), float('nan'), unit, None, False))
 
 
 def Analyze(ours, ref, notes, rep):
@@ -282,23 +389,38 @@ def main():
     bank, midi = out / 'harness.sf2', out / 'harness.mid'
     programs = BuildBank(str(bank))
     notes = BuildScenario(str(midi), programs)
-    refWav, oursWav = out / 'fluidsynth.wav', out / 'sam2695.wav'
-    subprocess.run(['fluidsynth', '-ni', '-q', '-R', '0', '-C', '0', '-g', '1', '-r', str(RATE), '-O', 'float',
-                    '-T', 'wav', '-F', str(refWav), str(bank), str(midi)], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run([args.render, '--bank', str(bank), '--midi', str(midi), '--out', str(oursWav), '--rate', str(RATE),
-                    '--gain', '1', '--polyphony', '64', '--no-reset-delay', '--tail', '1'], check=True,
-                   stderr=subprocess.DEVNULL)
-    ours, _ = soundfile.read(str(oursWav))
-    ref, _ = soundfile.read(str(refWav))
-    n = min(len(ours), len(ref))
-    ours, ref = ours[:n], ref[:n]
+    effectsMidi = out / 'effects.mid'
+    reverbNotes, chorusNotes = BuildEffectsScenario(str(effectsMidi), programs)
+
+    def Render(midiPath, tag, effects):
+        refWav, oursWav = out / ('fluidsynth%s.wav' % tag), out / ('sam2695%s.wav' % tag)
+        fx = '1' if effects else '0'
+        subprocess.run(['fluidsynth', '-ni', '-q', '-R', fx, '-C', fx, '-g', '1', '-r', str(RATE), '-O', 'float',
+                        '-T', 'wav', '-F', str(refWav), str(bank), str(midiPath)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([args.render, '--bank', str(bank), '--midi', str(midiPath), '--out', str(oursWav),
+                        '--rate', str(RATE), '--gain', '1', '--polyphony', '64', '--no-reset-delay', '--tail', '1']
+                       + ([] if effects else ['--dry']), check=True, stderr=subprocess.DEVNULL)
+        o, _ = soundfile.read(str(oursWav))
+        r, _ = soundfile.read(str(refWav))
+        n = min(len(o), len(r))
+        return o[:n], r[:n]
+
     rep = Report(args.v)
+    ours, ref = Render(midi, '', False)
     Analyze(ours, ref, notes, rep)
-    print('%-42s %12s %12s %12s %8s  %s' % ('check', 'libsam2695', 'FluidSynth', 'expected', 'tol', ''))
+    ours, ref = Render(effectsMidi, '-effects', True)
+    oursDry, refDry = Render(effectsMidi, '-effects-dry', False)
+    n = min(len(ours), len(oursDry), len(ref), len(refDry))
+    AnalyzeEffects(ours[:n], oursDry[:n], ref[:n], refDry[:n], reverbNotes, chorusNotes, rep)
+    print('%-58s %12s %12s %12s %8s  %s' % ('check', 'libsam2695', 'FluidSynth', 'expected', 'tol', ''))
     for name, ov, rv, target, tol, unit, ok, dev in rep.rows:
-        print('%-42s %12.4f %12.4f %12.4f %8.3g  %s %s' % (name, ov, rv, target, tol, 'ok' if ok else 'FAIL', unit))
-    print('\n%d checks, %d failed (FluidSynth %s)' % (len(rep.rows), rep.failed,
+        if ok is None:
+            print('%-58s %12.4f %12.4f %12s %8s  %s %s' % (name, ov, rv, '', '', 'info', unit))
+        else:
+            print('%-58s %12.4f %12.4f %12.4f %8.3g  %s %s' % (name, ov, rv, target, tol, 'ok' if ok else 'FAIL',
+                                                               unit))
+    print('\n%d checks, %d failed (FluidSynth %s)' % (sum(1 for r in rep.rows if r[6] is not None), rep.failed,
           subprocess.run(['fluidsynth', '--version'], capture_output=True, text=True).stdout.split('\n')[0]))
     return 0 if rep.failed == 0 else 1
 

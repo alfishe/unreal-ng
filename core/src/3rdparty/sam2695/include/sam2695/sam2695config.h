@@ -59,11 +59,15 @@ struct SynthConfig
     uint32_t outputRate = 44100;      // Render() rate; 8000 .. 192000
     uint32_t polyphony = 0;           // 0 = the chip's own accounting (NRPN 375Fh); else a fixed limit 1..64
     Interpolation interpolation = Interpolation::Sinc;
-    bool effects = true;              // reverb / chorus / EQ rendering (SAM-4); accounting is unaffected
+    // Render mode. true: the chip's whole output path (reverb, chorus, spatial effect, equalizer, soft /
+    // hard clipping). false: the dry mode - the voice mix with every gain (GM / master volume, codec)
+    // but no effect and no clipping, a linear signal for analysis. The polyphony accounting of NRPN
+    // 375Fh is the chip's in both modes.
+    bool effects = true;
     bool resetDelay = true;           // ignore MIDI for 50 ms after a reset, as the chip does
     uint32_t eventCapacity = 4096;    // queued MIDI bytes not yet rendered
     uint32_t streamFrames = 37500;    // internal-rate frames kept for Render() (1 s)
-    float outputGain = 0.25f;         // -12 dB headroom for the voice sum
+    float outputGain = 0.25f;         // the mixer's headroom: -12 dB for the voice sum, before clipping
 };
 
 // The chip's polyphony for an NRPN 375Fh value (datasheet §5, p.34-35).

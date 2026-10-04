@@ -19,7 +19,7 @@ namespace
 {
 
 constexpr uint32_t kStateMagic = 0x324D4153; // "SAM2"
-constexpr uint32_t kStateVersion = 1;
+constexpr uint32_t kStateVersion = 2; // 2: SAM-3 part parameters, SAM-4 effects
 constexpr uint64_t kBusySamples = static_cast<uint64_t>(kInternalRate) * kResetBusyMs / 1000; // 1875
 constexpr uint32_t kMinOutputRate = 8000;
 constexpr uint32_t kMaxOutputRate = 192000;
@@ -140,8 +140,8 @@ struct Synth::Impl
                 overruns++;
             }
             const size_t w = (streamHead + streamCount) % cap;
-            // the mix bus flushes anything below -600 dB to zero: no denormal reaches the host
-            const float l = left[i] * cfg.outputGain, r = right[i] * cfg.outputGain;
+            // the output flushes anything below -600 dB to zero: no denormal reaches the host
+            const float l = left[i], r = right[i];
             stream[w * 2] = std::fabs(l) < 1e-30f ? 0.0f : l;
             stream[w * 2 + 1] = std::fabs(r) < 1e-30f ? 0.0f : r;
             streamCount++;
@@ -150,8 +150,7 @@ struct Synth::Impl
 
     void RenderBlock()
     {
-        float left[kControlBlock] = {};
-        float right[kControlBlock] = {};
+        FxBuses buses{};
         core.BeginBlock();
         uint32_t cur = 0;
         while (queueCount > 0 && queue[queueHead].sample < pos + kControlBlock)
@@ -162,12 +161,14 @@ struct Synth::Impl
             const uint32_t offset = e.sample > pos ? static_cast<uint32_t>(e.sample - pos) : 0;
             if (offset > cur)
             {
-                core.RenderSegment(cur, offset, left, right);
+                core.RenderSegment(cur, offset, buses);
                 cur = offset;
             }
             Apply(e, offset);
         }
-        core.RenderSegment(cur, kControlBlock, left, right);
+        core.RenderSegment(cur, kControlBlock, buses);
+        float left[kControlBlock], right[kControlBlock];
+        core.FinishBlock(buses, left, right);
         PushStream(left, right, kControlBlock);
         pos += kControlBlock;
     }

@@ -27,8 +27,8 @@ full decode sweep. Depends on the
 
 ## Order while the slots core is paused (owner decision 2026-10-04)
 
-The slots core (SL-3 and later) waits for `ttd-engine` to land. Meanwhile: libsam2695 SAM-3 / SAM-4 and the MIDI line
-ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also wait: `ttd-engine` changes the same modules.
+The slots core (SL-3 and later) waits for `ttd-engine` to land. Meanwhile: libsam2695 SAM-3 / SAM-4 (done) and the
+MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also wait: `ttd-engine` changes the same modules.
 
 ## Remaining
 
@@ -36,9 +36,14 @@ ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also wait: `ttd
 - [x] SAM-0..SAM-2 libsam2695 ([tdd-libsam2695.md](tdd-libsam2695.md) §10 "As built"): `core/src/3rdparty/sam2695/`
   (UART, parser, SF2 loader, voice model, allocation, state; conformance table in its README), FluidSynth harness and
   bank corpus check in `tools/verification/sam2695/`; linked into core (`UNREALNG_HAVE_SAM2695`), used by nothing yet
-- [ ] SAM-3 the rest of the MIDI chart (GS SysEx, NRPN 01xx / 18-1Exx / 37xx, sostenuto, soft pedal, portamento,
-  part assignment, voice reserve, assignable controllers), SAM-4 effects (reverb, chorus, spatial, EQ, clipping,
-  codec gain) and render modes, SAM-5 verification consolidation (Dream-board recordings, `data/midi/` bank pinned)
+- [x] SAM-3 / SAM-4 libsam2695 ([tdd-libsam2695.md](tdd-libsam2695.md) §10.5-10.7, 2026-10-04, not committed): every
+  chart row done or reasoned in the README conformance table (GS parts and SysEx, GM System On, device ID, NRPN
+  01xx / 18-1Exx / 37xx, sostenuto, soft pedal, portamento, voice reserve, controller matrix); effects in `src/fx/`
+  (Dattorro-plate reverb with 8 programs, 8-program chorus, spatial, 4- / 2-band EQ, routing, soft / hard clipping,
+  codec gain), dry render mode, effects state in the blob (`Fx.ReverbTailAcrossState`); 108 library tests,
+  FluidSynth comparison 47 / 47 incl. effect sends, bank corpus rerun
+- [ ] SAM-5 verification consolidation: Dream-board recordings (the curves chosen in tdd §10.6 first),
+  `data/midi/` bank pinned, corpus + FluidSynth report as one command; owner review of tdd §10.4 / §10.6
 - [x] ML-0..2 MIDI line ([tdd-midi-line.md](tdd-midi-line.md) §2.0, §5 "As built", 2026-10-04, not committed):
   datasheet facts of the I/O port stage (input = `#FF`, push-pull output, reset = inputs), `IAyIoPortListener` on
   `SoundChip_AY8910` (pins, called on change only, one pointer test per register latch without a listener),

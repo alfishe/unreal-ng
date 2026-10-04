@@ -286,12 +286,12 @@ TEST(Voice, PhaseFixedPoint)
     on.data2 = 100;
     core.BeginBlock();
     core.Message(on, 0);
-    float l[kControlBlock], r[kControlBlock];
-    core.RenderSegment(0, kControlBlock, l, r);
+    FxBuses buses{};
+    core.RenderSegment(0, kControlBlock, buses);
     for (int b = 1; b < 1000; b++)
     {
         core.BeginBlock();
-        core.RenderSegment(0, kControlBlock, l, r);
+        core.RenderSegment(0, kControlBlock, buses);
     }
     const Voice& v = core.VoiceAt(0);
     CHECK(v.state == VoiceState::On);

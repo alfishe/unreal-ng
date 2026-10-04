@@ -1,14 +1,15 @@
 // sam2695render - render a Standard MIDI File through libsam2695, or check a bank.
 //
 //   sam2695render --bank B.sf2 --midi M.mid --out O.wav [--rate 37500] [--interp sinc|cubic|linear]
-//                 [--gain 0.25] [--tail 2] [--line] [--polyphony N] [--no-reset-delay]
+//                 [--gain 0.25] [--tail 2] [--line] [--polyphony N] [--no-reset-delay] [--dry]
 //   sam2695render --bank B.sf2 --info                  presets and loader warnings
 //   sam2695render --bank B.sf2 --midi M.mid --check    one JSON line: load result, NaN / denormal /
 //                                                      peak of the render (bank corpus check)
 //
 // --line sends every byte through the serial line model (31 250 baud 8N1 frames on WriteLine), so
 // bytes queue behind each other as on a real MIDI cable; without it bytes arrive at their file time.
-// The output is a 32-bit float stereo WAV.
+// --dry renders the dry mode (voices and gains only: no reverb, chorus, spatial effect, equalizer or
+// clipping). The output is a 32-bit float stereo WAV.
 #include "sam2695/sam2695.h"
 #include "smfreader.h"
 
@@ -82,7 +83,7 @@ struct Options
     Interpolation interp = Interpolation::Sinc;
     float gain = 0.25f;
     double tail = 2.0;
-    bool line = false, info = false, check = false, resetDelay = true;
+    bool line = false, info = false, check = false, resetDelay = true, dry = false;
     uint32_t polyphony = 0;
 };
 
@@ -119,6 +120,8 @@ bool Parse(int argc, char** argv, Options& o)
             o.check = true;
         else if (a == "--no-reset-delay")
             o.resetDelay = false;
+        else if (a == "--dry")
+            o.dry = true;
         else
         {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
@@ -154,7 +157,7 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr, "usage: sam2695render --bank B.sf2 (--info | --midi M.mid (--out O.wav | --check)) "
                              "[--rate R] [--interp sinc|cubic|linear] [--gain G] [--tail S] [--line] [--polyphony N] "
-                             "[--no-reset-delay]\n");
+                             "[--no-reset-delay] [--dry]\n");
         return 2;
     }
     const auto t0 = std::chrono::steady_clock::now();
@@ -198,6 +201,7 @@ int main(int argc, char** argv)
     cfg.outputGain = o.gain;
     cfg.polyphony = o.polyphony;
     cfg.resetDelay = o.resetDelay;
+    cfg.effects = !o.dry;
     cfg.eventCapacity = 65536;
     Synth synth;
     if (!synth.Configure(cfg))

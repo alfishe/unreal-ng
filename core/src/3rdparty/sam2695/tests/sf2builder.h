@@ -316,6 +316,22 @@ inline BSample DcSample(const std::string& name, int frames = 400, int level = 1
     return s;
 }
 
+// Deterministic white noise (a 32-bit LCG), looped
+inline BSample NoiseSample(const std::string& name, int frames = 8192, int amplitude = 16384)
+{
+    BSample s;
+    s.name = name;
+    uint32_t x = 12345;
+    for (int i = 0; i < frames; i++)
+    {
+        x = x * 1664525u + 1013904223u;
+        s.frames.push_back(static_cast<int32_t>((static_cast<int64_t>(x >> 16) - 32768) * amplitude / 32768));
+    }
+    s.loopStart = 0;
+    s.loopEnd = static_cast<uint32_t>(frames);
+    return s;
+}
+
 // A simple instrument: one zone over the whole keyboard playing `sample`.
 inline BPreset SimplePreset(const std::string& name, uint16_t bank, uint16_t program, int sample,
                             std::map<int, int> gens = {})

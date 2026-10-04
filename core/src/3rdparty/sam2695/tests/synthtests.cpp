@@ -1,5 +1,5 @@
 // libsam2695 tests - the chip level: voice allocation, exclusive classes, timing, state, render, the
-// MIDI implementation chart rows built so far (SAM-1 / SAM-2), golden fingerprints.
+// MIDI implementation chart rows of SAM-1 / SAM-2 (SAM-3 rows: charttests.cpp), golden fingerprints.
 #include "common/conv.h"
 #include "synthhelper.h"
 #include "testfw.h"
@@ -410,11 +410,11 @@ TEST(Chart, ProgramChangeAndDrums)
     SynthReport r = Report(ts);
     CHECK_EQ_I(r.channels[0].preset, 1);  // 0:1 "Dc"
     CHECK(r.channels[9].rhythm);
-    CHECK_EQ_I(r.channels[9].preset, 3);  // 128:0 "Kit"
+    CHECK_EQ_I(r.channels[9].preset, 4);  // 128:0 "Kit" (presets sort by bank, program)
     // channel 10 bank select does nothing; a program without a kit falls back to kit 0
     ts.Send(32, {0xB9, 0, 5, 0xC9, 16});
     ts.RunTo(64);
-    CHECK_EQ_I(Report(ts).channels[9].preset, 3);
+    CHECK_EQ_I(Report(ts).channels[9].preset, 4);
     // a missing program on a melodic channel is silent, not another sound
     ts.Send(64, {0xC2, 50});
     ts.RunTo(96);
@@ -554,10 +554,14 @@ TEST(Chart, RpnTuning)
 
 TEST(Chart, ModulationWheelAndAftertouch)
 {
-    // CC 1 and channel pressure drive the vibrato LFO (default modulators: 50 cents each at full)
+    // The chip's GS controller matrix replaces the SF2 default modulators 8.4.3 / 8.4.4: the wheel drives
+    // LFO1 (the vibrato LFO) by "Mod LFO1 pitch depth" 0Ah = 47.2 cents; channel aftertouch does nothing
+    // until 40 2p 2x gives it a destination (datasheet p.26, p.29)
     std::shared_ptr<const ISoundBank> bank = BasicBank();
-    auto swing = [&bank](std::initializer_list<int> setup) {
+    auto swing = [&bank](std::initializer_list<int> setup, bool cafDepth = false) {
         TestSynth ts(bank);
+        if (cafDepth)
+            ts.Gs(0, 0x40, 0x21, 0x24, {0x0A}); // CAF LFO1 pitch depth = the wheel's default
         ts.Send(0, setup);
         ts.Send(0, {0x90, 69, 100});
         ts.RunTo(37500 / 2);
@@ -572,9 +576,9 @@ TEST(Chart, ModulationWheelAndAftertouch)
     };
     CHECK(swing({}) < 1.0);
     const double wheel = swing({0xB0, 1, 127});
-    CHECK(wheel > 60.0 && wheel < 100.0);   // +-50 cents x 127/128, sampled per 400 frames
-    const double pressure = swing({0xD0, 127});
-    CHECK_NEAR(pressure, wheel, 2.0);
+    CHECK(wheel > 80.0 && wheel < 95.0);   // +-47.2 cents, sampled per 400 frames
+    CHECK(swing({0xD0, 127}) < 1.0);       // aftertouch: no default destination
+    CHECK_NEAR(swing({0xD0, 127}, true), wheel, 2.0);
 }
 
 // ---- golden fingerprints (synthetic bank, exact repeatability within a build) ----
@@ -648,4 +652,29 @@ TEST(Golden, ModulatedVoice)
     CheckGolden("ModulatedVoice", ts,
                 {-20.61, -28.87, -33.17, -38.43, -42.42, -41.49, -37.90, -37.90,
                  -39.23, -49.80, -77.37, -84.89, -96.01, -109.85, -113.64, -135.12});
+}
+
+TEST(Golden, EffectsChain)
+{
+    // the chip's whole output path at power-up (effects word 3Bh: reverb hall2, chorus3, spatial at
+    // volume 0, the 4-band EQ with +6 dB shelves, soft clipping): notes with reverb and chorus sends, a
+    // noise burst, a drum, a program change of both effects mid-way; bit-exact repeat
+    std::shared_ptr<const ISoundBank> bank = BasicBank();
+    auto render = [&bank]() {
+        auto ts = std::make_unique<TestSynth>(bank, SynthConfig{}, true);
+        ts->Send(0, {0xB0, 91, 100, 0xB0, 93, 90, 0xB1, 91, 127, 0xC1, 3, 0xB0, 10, 20, 0xB1, 10, 108});
+        ts->Send(1000, {0x90, 64, 100, 0x91, 69, 90});
+        ts->Send(3000, {0x81, 69, 0, 0x99, 36, 110});
+        ts->Send(6000, {0x80, 64, 0, 0x89, 36, 0});
+        ts->Send(8000, {0xB0, 80, 5, 0xB0, 81, 5, 0x90, 57, 100});
+        ts->Send(11000, {0x80, 57, 0});
+        ts->RunTo(16384);
+        return ts;
+    };
+    auto a = render();
+    auto b = render();
+    CHECK(a->out == b->out);
+    CheckGolden("EffectsChain", *a,
+                {-200.00, -14.77, -14.47, -10.95, -11.05, -11.49, -35.98, -23.60,
+                 -15.17, -15.32, -16.57, -34.15, -33.72, -34.52, -34.16, -32.27});
 }

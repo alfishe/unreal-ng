@@ -36,12 +36,25 @@ struct SynthReport
         uint16_t pitchBend = 0x2000;
         uint8_t activeVoices = 0;
         bool muted = false;
+        uint8_t rxChannel = 0;         // MIDI channel the part receives (16 = none)
+        uint8_t voiceReserve = 0;      // GS voice reserve
     };
-    std::array<ChannelView, 16> channels{};
+    std::array<ChannelView, 16> channels{}; // the 16 GS parts (part i receives channel i at power-up)
     uint32_t polyphonyLimit = 0;
     uint32_t activeVoices = 0;         // voices that count against the limit
     uint32_t fadingVoices = 0;         // stolen / exclusive-class fades in the extra slots
     uint8_t effectsWord = 0;           // NRPN 375Fh
+    // effects and output (README "Effects")
+    uint8_t reverbProgram = 0, reverbCharacter = 0, chorusProgram = 0;
+    double reverbDecaySeconds = 0.0;   // tail to -60 dB of the reverb program (0 for the delay programs)
+    uint8_t masterVolume = 0;          // NRPN 3707h
+    uint8_t gmVolume = 0, gmPan = 0;   // NRPN 3722h / 3723h (GM / GS master volume and pan)
+    float masterTuneCents = 0.0f;      // GS master tune
+    int8_t keyShift = 0;               // GS master key shift, semitones
+    uint8_t deviceId = 0;              // NRPN 3757h (20h = all)
+    bool softClip = true;              // NRPN 3713h
+    double codecGainDb = 0.0;          // codec port 12h OUTG
+    bool codecMuted = false;
     // UART and parser counters since the last Reset
     uint64_t bytesReceived = 0;
     uint64_t framingErrors = 0;

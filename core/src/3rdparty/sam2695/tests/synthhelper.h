@@ -6,6 +6,7 @@
 #include "sam2695/sam2695.h"
 #include "sf2builder.h"
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 #include <vector>
@@ -21,12 +22,15 @@ struct TestSynth
     SynthConfig cfg;
     std::vector<float> out; // everything rendered so far, interleaved stereo
 
-    explicit TestSynth(std::shared_ptr<const ISoundBank> bank, SynthConfig c = SynthConfig{})
+    // The dry render mode by default (a linear voice mix: the voice-model tests read amplitudes);
+    // `chip` = true renders the chip's whole output path (effects, equalizer, clipping).
+    explicit TestSynth(std::shared_ptr<const ISoundBank> bank, SynthConfig c = SynthConfig{}, bool chip = false)
     {
         cfg = c;
         cfg.hostTickRate = kInternalRate;
         cfg.outputRate = kInternalRate;
         cfg.outputGain = 1.0f;
+        cfg.effects = chip;
         synth.Configure(cfg);
         synth.LoadBank(std::move(bank));
     }
@@ -37,18 +41,45 @@ struct TestSynth
             synth.WriteByte(t, static_cast<uint8_t>(b));
     }
 
-    // Synthesize up to sample `until` (whole blocks) and append what Render() returns.
+    // Synthesize up to sample `until` (whole blocks) and append what Render() returns. Runs in steps
+    // well inside the 1 s stream buffer, so a long span never overruns it.
     void RunTo(uint64_t until)
     {
-        synth.Run(until);
         float buf[512 * 2];
-        for (;;)
+        for (uint64_t at = synth.InternalPosition();;)
         {
-            const size_t n = synth.Render(buf, 512);
-            out.insert(out.end(), buf, buf + n * 2);
-            if (n < 512)
+            const uint64_t step = std::min<uint64_t>(until, at + 8192);
+            synth.Run(step);
+            for (;;)
+            {
+                const size_t n = synth.Render(buf, 512);
+                out.insert(out.end(), buf, buf + n * 2);
+                if (n < 512)
+                    break;
+            }
+            if (step >= until)
                 break;
+            at = step;
         }
+    }
+
+    // NRPN on a MIDI channel: CC 99 msb, CC 98 lsb, CC 6 value
+    void Nrpn(uint64_t t, int channel, int msb, int lsb, int value)
+    {
+        Send(t, {0xB0 | channel, 99, msb, 0xB0 | channel, 98, lsb, 0xB0 | channel, 6, value});
+    }
+
+    // Roland GS data set F0 41 dev 42 12 a1 a2 a3 data checksum F7, with a correct checksum
+    void Gs(uint64_t t, int a1, int a2, int a3, std::initializer_list<int> data, int device = 0x10)
+    {
+        int sum = a1 + a2 + a3;
+        Send(t, {0xF0, 0x41, device, 0x42, 0x12, a1, a2, a3});
+        for (int d : data)
+        {
+            Send(t, {d});
+            sum += d;
+        }
+        Send(t, {(128 - (sum & 0x7F)) & 0x7F, 0xF7});
     }
 
     size_t Frames() const { return out.size() / 2; }
@@ -69,6 +100,14 @@ struct TestSynth
         for (size_t i = from; i < to && i < Frames(); i++)
             p = std::fmax(p, std::fabs(R(i)));
         return p;
+    }
+    double RmsR(size_t from, size_t to) const
+    {
+        double s = 0.0;
+        size_t n = 0;
+        for (size_t i = from; i < to && i < Frames(); i++, n++)
+            s += static_cast<double>(R(i)) * R(i);
+        return n ? std::sqrt(s / n) : 0.0;
     }
     double RmsL(size_t from, size_t to) const
     {
@@ -98,7 +137,8 @@ struct TestSynth
 };
 
 // Bank with: 0:0 looped sine (period 100 -> 375 Hz at key 69), 0:1 looped DC with the shortest attack
-// (1 ms, SF2's minimum), 0:2 the same with a 1 s release, 128:0 drum kit (key 42 closed hi-hat / 46 open hi-hat in exclusive class 1, 36 kick).
+// (1 ms, SF2's minimum), 0:2 the same with a 1 s release, 128:0 drum kit (key 42 closed hi-hat / 46 open
+// hi-hat in exclusive class 1, 36 kick), 0:3 looped white noise (broadband: what a reverb is measured with).
 inline std::shared_ptr<const Sf2Bank> BasicBank()
 {
     Sf2Builder b;
@@ -124,6 +164,8 @@ inline std::shared_ptr<const Sf2Bank> BasicBank()
         kit.zones.push_back(z);
     }
     b.presets.push_back(kit);
+    const int noise = b.AddSample(NoiseSample("noise"));
+    b.presets.push_back(SimplePreset("Noise", 0, 3, noise, {{G(Gen::SampleModes), 1}}));
     return b.Load();
 }
 
