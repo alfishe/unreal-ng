@@ -7,6 +7,7 @@
 
 #include "_helpers/romeditortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include <set>
 #include "base/featuremanager.h"
 #include "debugger/analyzers/basic-lang/commandtyper.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -25,7 +26,9 @@
 /// It asserts only the hard signal: for EMELYANOV and SAN-SAN with fast loading off (48K and Pentagon, the
 /// key after 1 s, 10 s and 60 s) and for the control tape, the ROM loader is not left waiting for a
 /// signal. Whether a program really runs cannot be told from outside: a game answers other keys than a
-/// menu, and a still screen is not a dead machine. So "dead" / "ROM" in the report are hints, and the
+/// menu, and a still screen is not a dead machine. "Alive" is a screen that changes by itself ("anim") or
+/// after one of a few keys ("key"), each judged against the screen just before it; the report says which
+/// (`alive=`). So "dead" / "ROM" in the report are hints, and the
 /// final screen of every case goes to scratch/tape-sweep-screens/ for a contact sheet
 /// (tape-sweep.sh renders it), the way the investigation judged its runs.
 namespace
@@ -212,14 +215,30 @@ TEST_P(TapeLoadingSweep_Test, LoadsAndRuns)
     // A ROM loader still waiting for a signal is a hang, whether the tape ran out or stands parked
     const bool loaderWaiting = InRomLoader();
 
-    // Liveness: the screen reacts to keys a program or a menu would take
-    const uint32_t before = HashScreen();
+    // Liveness: the screen changes by itself, or reacts to a key a program or a menu would take. Each key is
+    // judged against the screen just before it: a menu that toggles can end the whole key series on the screen it
+    // started from (the Dizzy trainer menus did: six "dead" verdicts of a machine polling its keyboard), so the
+    // start and the end of the series are not compared
+    std::string aliveBy;
+    {
+        std::set<uint32_t> seen;
+        for (int i = 0; i < 20; i++)
+        {
+            seen.insert(HashScreen());
+            RunFrames(25);
+        }
+        if (seen.size() > 1)
+            aliveBy = "anim";
+    }
     for (ZXKeysEnum key : { ZXKEY_0, ZXKEY_1, ZXKEY_ENTER, ZXKEY_SPACE, ZXKEY_N })
     {
+        const uint32_t beforeKey = HashScreen();
         Press(key, 10);
         RunFrames(100);
+        if (HashScreen() != beforeKey)
+            aliveBy += (aliveBy.empty() ? "key" : "+key");
     }
-    const bool reacts = HashScreen() != before;
+    const bool reacts = !aliveBy.empty();
 
     Verdict verdict = Verdict::Ok;
     if (Needs128K(c))
@@ -230,10 +249,10 @@ TEST_P(TapeLoadingSweep_Test, LoadsAndRuns)
         verdict = InRom() ? Verdict::Rom : Verdict::Dead;
 
     char line[256];
-    snprintf(line, sizeof(line), "%-44s %-8s %-6s key%-4d %-5s tape=%-9s cursor=%zu/%zu frames=%d\n",
+    snprintf(line, sizeof(line), "%-44s %-8s %-6s key%-4d %-5s tape=%-9s cursor=%zu/%zu frames=%d alive=%s\n",
              c.tape.c_str(), c.model.c_str(), c.fastTape ? "fast" : "signal", c.keyPeriodFrames,
              VerdictName(verdict), tape->GetPlaybackState() == TapePlaybackState::Ended ? "ended" : "not-ended",
-             tape->GetConsumptionCursor(), tape->GetBlocks().size(), frame);
+             tape->GetConsumptionCursor(), tape->GetBlocks().size(), frame, aliveBy.empty() ? "-" : aliveBy.c_str());
     if (FILE* report = fopen(TestPathHelper::GetTestScratchPath("tape-sweep-report.txt").c_str(), "a"))
     {
         fputs(line, report);
