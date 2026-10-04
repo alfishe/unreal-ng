@@ -220,6 +220,25 @@ StateNode DeviceState::IsaJournal(EmulatorContext* context, unsigned last)
         entries.push(std::move(n));
     }
     ret["entries"] = entries;
+    // The interrupt events on their own (a polled card floods the access journal)
+    const auto& irqs = bus->IrqJournal();
+    const size_t irqCount = last == 0 || last > irqs.size() ? irqs.size() : last;
+    StateNode irqEntries = StateNode::Array();
+    for (size_t i = irqs.size() - irqCount; i < irqs.size(); ++i)
+    {
+        const SprinterIsaBus::JournalEntry& e = irqs[i];
+        StateNode n = StateNode::Object();
+        n["frame"] = e.frame;
+        n["t"] = static_cast<uint64_t>(e.t);
+        n["pc"] = Hex(e.pc, 4);
+        n["event"] = "irq";
+        if (e.slot >= 0)
+            n["slot"] = e.slot + 1;
+        n["value"] = Hex(e.value, 2);
+        n["what"] = e.what;
+        irqEntries.push(std::move(n));
+    }
+    ret["irq_events"] = irqEntries;
     return ret;
 }
 

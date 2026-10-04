@@ -504,11 +504,8 @@ protected:
     std::string IrqJournal()
     {
         std::string out;
-        for (const SprinterIsaBus::JournalEntry& e : _decoder->GetIsaBus().Journal())
-        {
-            if (e.irq)
-                out += std::to_string(e.frame) + ":" + std::to_string(e.t) + " " + e.what + "\n";
-        }
+        for (const SprinterIsaBus::JournalEntry& e : _decoder->GetIsaBus().IrqJournal())
+            out += std::to_string(e.frame) + ":" + std::to_string(e.t) + " " + e.what + "\n";
         return out;
     }
 
@@ -606,5 +603,7 @@ TEST_F(SprinterBcTerm_Test, ReceivesTheEspsAnswerThroughTheIsaInterrupt)
     }
     // The replay took the interrupts again (the counters are observation: they count on)
     EXPECT_GT(c.acknowledged, acksLive) << "the replay's interrupts";
+    EXPECT_NE(IrqJournal().find("INT acknowledged: PIO port B, IM 2 vector #00 -> table #B500"), std::string::npos)
+        << "the replay journals them (the interrupt ring keeps them while BC-Term polls MSR)\n" << IrqJournal();
     EXPECT_EQ(c.acknowledged - acksLive, c.serviceEnds - servicesLive);
 }

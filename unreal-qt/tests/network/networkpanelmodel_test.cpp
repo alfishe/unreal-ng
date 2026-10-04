@@ -285,6 +285,24 @@ TEST(NetworkPanelModel_Test, SprinterEspRowAndItsLine)
     EXPECT_EQ(rows[0].line, "SPRINTERESP TL16C550C, I/O #3E8-#3EF, IRQ 3, UART 115200 baud, MCR #22; ESP ESP8266-AT222 "
                             "(running), Wi-Fi got_ip 10.0.2.15, 0 link(s), MAC 5C:CF:7F:5A:00:01");
 
+    // With the ISA report the row ends with the slot's IRQ line (ISA I4): level, PIO port B bit, whether it interrupts
+    StateNode isa = StateNode::Object();
+    StateNode isaSlots = StateNode::Array();
+    StateNode isaSlot = StateNode::Object();
+    StateNode irqLine = StateNode::Object();
+    irqLine["line"] = "low";
+    irqLine["pio_bit"] = "PB0";
+    irqLine["reaches_cpu"] = "yes: the line going high makes the PIO request IM 2 vector #00 ...";
+    isaSlot["irq_line"] = irqLine;
+    StateNode counters = StateNode::Object();
+    counters["irq_acknowledged"] = static_cast<uint64_t>(6);
+    isaSlot["counters"] = counters;
+    isaSlots.push(isaSlot);
+    isa["slots"] = isaSlots;
+    const std::vector<NetworkSlotRow> withIrq = NetworkSlotRows(network, &isa);
+    ASSERT_EQ(withIrq.size(), 1u);
+    EXPECT_EQ(withIrq[0].line, rows[0].line + "; IRQ line low -> PB0, interrupts the CPU, 6 acknowledged");
+
     const NetworkForm before = NetworkFormFromState(network);
     EXPECT_TRUE(before.slotUart[0]);
     EXPECT_FALSE(before.slotUart[1]);

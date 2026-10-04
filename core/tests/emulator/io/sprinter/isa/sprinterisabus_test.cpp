@@ -380,6 +380,12 @@ TEST(SprinterIsaBus_Test, IrqEvents_JournalAndReport)
     ASSERT_EQ(bus.Journal().size(), 1u);
     EXPECT_TRUE(bus.Journal().back().irq);
     EXPECT_EQ(bus.Journal().back().slot, 0);
+    // Polling floods the access journal; the interrupt ring keeps the event
+    for (size_t i = 0; i < SprinterIsaBus::kJournalLength; ++i)
+        bus.ReadAt(SprinterIsaBus::Space::Io, 0, 0x3EE);
+    EXPECT_FALSE(bus.Journal().front().irq);
+    ASSERT_EQ(bus.IrqJournal().size(), 1u);
+    EXPECT_EQ(bus.IrqJournal().back().what, "IRQ line high -> PB0");
 
     bus.SetPioView([]() {
         SprinterIsaBus::PioView v;

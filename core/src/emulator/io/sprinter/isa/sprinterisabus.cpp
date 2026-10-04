@@ -240,6 +240,9 @@ void SprinterIsaBus::NoteIrq(int slot, uint8_t value, std::string what)
         return;
     Note(slot, true, false, 0, value, std::move(what));
     _journal.back().irq = true;
+    _irqJournal.push_back(_journal.back());
+    while (_irqJournal.size() > kIrqJournalLength)
+        _irqJournal.pop_front();
 }
 
 void SprinterIsaBus::FrameEnd()

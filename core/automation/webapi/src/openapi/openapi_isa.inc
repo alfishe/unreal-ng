@@ -79,7 +79,8 @@
             "(read / write), address (20-bit ISA), cpu_address (window 3), value, what (the card's register: CR, ISR, "
             "data port, ...; or RESET DRV, a stall). Interrupt events carry event = irq (with slot for a line edge): "
             "IRQ line high / low with the card's cause, PIO port B requests (vector), INT acknowledged (IM, vector, "
-            "table), RETI. Recorded live and while a TTD recording replays; control/isa "
+            "table), RETI; irq_events repeats the last `last` of them from their own ring (128), which polling does not "
+            "flush. Recorded live and while a TTD recording replays; control/isa "
             "journal_clear / journal_on / journal_off.";
         paths[kJournal]["get"]["parameters"][0]["name"] = "id";
         paths[kJournal]["get"]["parameters"][0]["in"] = "path";

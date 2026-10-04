@@ -197,7 +197,7 @@ TEST_F(SprinterNetwork_Test, Um9003ResetPortHangsTheCpu)
 
 // The default population: the RTL8019AS in slot 2 drives its IRQ pin (CONFIG1.IRQEN set at power-up) low, slot 1 is
 // empty (pulled up): PIO port B reads PB1 = 0, PB0 = 1. The report says where each line goes and why it does not
-// interrupt (the BIOS leaves PIO port B in its reset mode, input)
+// interrupt (no PB bit is monitored: the BIOS programs port B for the printer bits only)
 TEST_F(SprinterNetwork_Test, IrqLines_DefaultPopulationOnPioPortB)
 {
     Create();

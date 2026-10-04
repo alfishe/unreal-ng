@@ -205,12 +205,20 @@ public:
         std::string what;        ///< the card's register name, or the event ("reset asserted", "stall")
         bool irq = false;        ///< an interrupt event (line edge, PIO request, acknowledge, RETI): `what` says which
     };
-    /// An interrupt event of a slot (-1: the PIO port B as a whole) into the journal
+    /// An interrupt event of a slot (-1: the PIO port B as a whole) into the journal, and into the interrupt ring below
     void NoteIrq(int slot, uint8_t value, std::string what);
+    /// The interrupt events alone (line edges, PIO requests, acknowledges, RETI), newest last: a program that polls
+    /// a card (BC-Term reads MSR thousands of times a frame) pushes them out of the access journal in a few frames
+    static constexpr size_t kIrqJournalLength = 128;
+    const std::deque<JournalEntry>& IrqJournal() const { return _irqJournal; }
     static constexpr size_t kJournalLength = 512;
     /// Who touched which card register, newest last (every cycle while the machine runs or replays a recording)
     const std::deque<JournalEntry>& Journal() const { return _journal; }
-    void ClearJournal() { _journal.clear(); }
+    void ClearJournal()
+    {
+        _journal.clear();
+        _irqJournal.clear();
+    }
     void SetJournalEnabled(bool on) { _journalOn = on; }
     bool JournalEnabled() const { return _journalOn; }
     /// Where the time comes from (the decoder: frame counter, base T, the PC of the access)
@@ -257,4 +265,5 @@ private:
     StallHandler _stall;
     bool _journalOn = true;
     std::deque<JournalEntry> _journal;
+    std::deque<JournalEntry> _irqJournal;
 };

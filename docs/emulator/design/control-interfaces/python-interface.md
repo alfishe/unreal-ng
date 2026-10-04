@@ -280,7 +280,8 @@ class Emulator:
     def isa_journal(self, last: int = 64) -> dict:
         """The ISA access journal: entries[] (frame, t, pc, slot, access, space, isa_address,
         cpu_address, what = the card's register name, value); interrupt events have event='irq'
-        (IRQ line edges with the card's cause, PIO port B requests, INT acknowledged, RETI)"""
+        (IRQ line edges with the card's cause, PIO port B requests, INT acknowledged, RETI), also
+        in irq_events (their own 128-entry ring, which a polled card does not flush)"""
 
     def network_frames(self, link: str = "", last: int = 32) -> dict:
         """The Ethernet gateway's frame capture (frame-level cards such as the Sprinter's NE2000):

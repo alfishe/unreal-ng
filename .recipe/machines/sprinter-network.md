@@ -197,6 +197,9 @@ curl -s -X POST $B/$ID/network/config -H 'Content-Type: application/json' -d '{"
 # refused while recording ("a TTD recording is running ..."); afterwards the card is fitted again (UART registers kept)
 ```
 
+Interrupts: the card's INTR reaches PIO port B bit 0 / 1 (ISA I4); BC-Term 1.11 receives the ESP through IM 2 -
+[sprinter-isa.md](sprinter-isa.md#interrupt-lines-verified-2026-10-03).
+
 CLI: `network` (slot rows), `network set esp_chip=esp8266-at221 isa1_peer=loopback`, `isa`, `isa journal 8`. Lua /
 Python: `network_state().slots[1].esp` / `network_state()["slots"][0]["esp"]`, `network_configure{isa1_peer="at"}` /
 `network_configure(isa1_peer="at")`. MCP: `inspect_state` aspect `network` prints one line per slot (UART baud, MCR,
