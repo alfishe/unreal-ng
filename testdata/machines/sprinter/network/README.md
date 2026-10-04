@@ -10,11 +10,14 @@ a lease, a received file - never screen text).
 | [rtl8019a-0.3.8/](rtl8019a-0.3.8/) | Sprinter RTL8019AS Network Kit, Dmitry Mikhalchenkov | [0.3.8](https://github.com/witchcraft2001/sprinter-rtl8019a/releases/tag/0.3.8) (2026-09-13) | `sprinter-rtl8019a.zip` `eab2a428...b6d5c` | NE2000-class Ethernet (`[ISA] SlotN=NE2000`) | none stated in the repository (test material) |
 | [sprinter-esp-0.2.1/](sprinter-esp-0.2.1/) | Sprinter ESP Network Kit, Mikhalchenkov on Roman Boykov's code | [0.2.1](https://github.com/witchcraft2001/sprinter_wifi/releases/tag/0.2.1) (2026-09-02) | `sprinter-esp_v.0.2.1.zip` `3347e1ee...1fbd96d73e` | SprinterESP Wi-Fi (network phase SN3) | BSD-3-Clause (`LICENSE` in the folder) |
 | [sprinter-esp-0.2.1-unet/](sprinter-esp-0.2.1-unet/) | `UNETESP.DLL` as committed at the kit's tag [0.2.1](https://github.com/witchcraft2001/sprinter_wifi/tree/0.2.1) (`9b08bd4`; the release archive does not ship it) and `UNETTEST.EXE` assembled from that tag's `src/apps/unettest.asm` (sjasmplus 1.23.1, `--raw`, `-I src/include -I src/lib`, the kit's `tools/build.sh` options) | tag 0.2.1 | (hashes below) | SprinterESP: the UNET DLL interface (`UNETTEST host port`: NETINIT, resolve, ping, connect, send, receive, close) | BSD-3-Clause (`LICENSE`) |
+| [el3c509b-0.1.2/](el3c509b-0.1.2/) | Sprinter 3C509B Network Kit, Dmitry Mikhalchenkov | [0.1.2](https://github.com/witchcraft2001/sprinter-3C509B/releases/tag/0.1.2) (2026-09-15) | `sprinter-3c509b_0.1.2.zip` `8a791fbb...e670075` | 3Com EtherLink III 3C509B (`[ISA] SlotN=EL3C509B`, network phase SN5) | BSD-3-Clause (`LICENSE.TXT` in the folder) |
 
 Full hashes: `eab2a42812654dfbeec4c387aded60dc776ccdd315354f26b0f18eef5f9b6d5c` (RTL 0.3.8),
 `3347e1ee28dd3243f685baf77e28d36d033d9392ceae6825e622bd0d7ac41fbd` (ESP 0.2.1); `UNETESP.DLL`
 `f03352df4f4af42683d1fde4a8260d0bd3a55f51b1366f10b5467b38566e9abc`, `UNETTEST.EXE`
-`46f170d4d5e3aa039b9b956fb7e366380d3cb330034de587c7e1a2382bce810e` (sprinter-esp-0.2.1-unet).
+`46f170d4d5e3aa039b9b956fb7e366380d3cb330034de587c7e1a2382bce810e` (sprinter-esp-0.2.1-unet);
+`8a791fbbc5f7a18b9ea0b6530660ce2d2bddbfbc1f3f52afcd2c34acee670075` (3C509B kit 0.1.2, the latest release when
+SN5 started; the repository head `b70ed55`, 2026-09-25, has unreleased 0.1.3 changes).
 
 ## RTL8019AS kit: what the tests run
 
@@ -39,3 +42,12 @@ with `AT+SYSSTORE?` (ERROR = 2.2.1 profile, OK = 2.2.2), sets `AT+UART_CUR=11520
 publishes `NET_*`; then `PING <host>` (`AT+PING`, the ESP resolves the name), `WGET <url> -o <file> -y`. The card sits
 in ISA slot 1 (`[ISA] Slot1=SPRINTERESP`); the kit finds it by probing both slots at `#3E8`. `UNETTEST [-d DLL] host
 port` (from the `-unet` folder, with `UNETESP.DLL` beside it) loads the DLL through libman and walks its calls.
+
+## 3C509B kit: what the tests run
+
+`NETCFG -i` reads `NET.CFG` (template `NETSMPL.CFG`: `NET=509B`, `HW=AUTO` or `0/#300` / `1/#300`, `IDPORT=#110`,
+`IP=DHCP`) into the DSS environment; `IFUP` finds the card through the ID port (the ID sequence, EEPROM words read
+bit by bit, the IDs, a unicast MAC and both EEPROM checksums checked), activates it, enables the 10BASE-T link beat
+and waits for the link, then DHCP; `PING`, `NSLOOKUP`, `NTP`, `TFTP`, `WGET`, `FTP`, `TELNET` follow. `EL3INFO` is
+the read-only discovery report. The kit numbers the slots 0 / 1 like the RTL kit (the emulator's slot 2 = the kit's
+1); `HW=AUTO` probes both. The kit polls: it never programs an IRQ. Every file stays exactly as released (CRLF text).
