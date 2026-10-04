@@ -7,6 +7,8 @@
 #include <cstring>
 
 #include "emulator/io/network/virtualnetwork.h"
+#include "emulator/io/serial/esp/zififtpserver.h"
+#include "emulator/io/serial/esp/zifistate.h"
 
 // Every behavior here is the firmware's (file:line in the two repositories named in the header):
 //  S3  = ZiFi-ESP32-S3-Zero 2e5ba83: src/main.cpp, src/net_client.cpp, src/ntp_client.cpp, src/config.cpp
@@ -29,6 +31,13 @@ constexpr size_t kPathMax = 384;                  // char path[384]
 constexpr uint32_t kNtpUnixOffset = 2208988800u;
 constexpr size_t kIniLine = 160;                  // IniConfig::parse: char line[160]
 constexpr size_t kIniEntries = 16, kIniKey = 24, kIniValue = 96;   // config.hpp
+constexpr size_t kEventQueue = 8;                 // S3 eventQueue_ = xQueueCreate(8, ...)
+constexpr uint64_t kWifiSignalIntervalUs = 2000000;   // S3 kWifiSignalIntervalMs
+constexpr size_t kTxLimit = 4096;                 // reply bytes queued for the UART before the rest waits
+constexpr uint64_t kSntpRetryUs = 15000000;       // lwIP SNTP_RETRY_TIMEOUT
+constexpr uint64_t kSntpUpdateUs = 3600000000ull; // CONFIG_LWIP_SNTP_UPDATE_DELAY
+constexpr uint64_t kSntpReplyUs = 3000000;        // [inferred] how long one SNTP exchange may take
+constexpr uint64_t kNoDeadlineUs = 1000000000000ull;
 
 bool Ipv4(const std::string& s, uint32_t& out)
 {
@@ -184,11 +193,19 @@ std::vector<uint8_t> ZiFiNativeModule::Frame(uint8_t cmd, const uint8_t* data, s
 }
 
 ZiFiNativeModule::ZiFiNativeModule(VirtualNetwork* network, Variant variant, const std::array<uint8_t, 6>* mac)
-    : EspModule(network, variant == Variant::Esp01s ? Chip::Esp8266 : Chip::Esp32, 2, mac), _variant(variant)
+    : EspModule(network, variant == Variant::Esp01s ? Chip::Esp8266 : Chip::Esp32, kSlots, mac), _variant(variant),
+      _vfs(variant == Variant::S3)
 {
+    _vfs.now = [this]() { return Now(); };
+    _vfs.micros = [this](uint64_t us) { return MicrosToT(us); };
+    _vfs.sendFrame = [this](uint8_t cmd, const std::vector<uint8_t>& data) { SendFrame(cmd, data); };
+    ZiFiBridgeHost& host = *this;
+    _ftp = std::make_unique<ZiFiFtpServer>(host, variant == Variant::S3);
     // Silent at power-up: UART first, no boot text on the protocol line (S3 begin(), E01 begin()); the saved
     // zifi.ini joins the access point on its own
 }
+
+ZiFiNativeModule::~ZiFiNativeModule() = default;
 
 bool ZiFiNativeModule::ClientOpen() const
 {
@@ -197,7 +214,8 @@ bool ZiFiNativeModule::ClientOpen() const
 
 std::string ZiFiNativeModule::Activity() const
 {
-    static const char* const kOps[] = {"idle", "wifi join", "net_open", "net_http_get", "net_ping", "net_ntp", "restart"};
+    static const char* const kOps[] = {"idle", "wifi join", "net_open", "net_http_get", "net_ping", "net_ntp", "restart",
+                                       "deferred (an FTP command runs)"};
     static const char* const kPhases[] = {"", " resolving", " connecting", " reading the header", " waiting for the AP",
                                           " probing the proxy", " waiting for the answer"};
     std::string text = kOps[static_cast<int>(_op)];
@@ -210,8 +228,12 @@ std::string ZiFiNativeModule::Activity() const
 
 void ZiFiNativeModule::SendFrame(uint8_t cmd, const uint8_t* data, size_t length)
 {
-    const std::vector<uint8_t> f = Frame(cmd, data, length);
-    Send(f);
+    std::vector<uint8_t> f = Frame(cmd, data, length);
+    // The UART driver's buffer: a 16 KiB write window waits here, not all at once in the output
+    if (!_txBacklog.empty() || Pending() + f.size() > kTxLimit)
+        _txBacklog.push_back(std::move(f));
+    else
+        Send(f);
     if (cmd != kAck)
     {
         std::string text = Hex2(cmd);
@@ -260,6 +282,8 @@ void ZiFiNativeModule::Process()
         }
         if (Busy() && _variant == Variant::Esp01s)
             return;   // one loop: the command waits for the network, later bytes wait in the UART
+        if (_variant == Variant::Esp01s && _ftp->JobActive() && !_vfs.Waiting())
+            return;   // one loop: inside an FTP command the UART is read only by its VFS waits
         const size_t pos = _held;
         while (_rx.size() > pos && _rx[pos] != kSync)
             _rx.erase(_rx.begin() + static_cast<std::ptrdiff_t>(pos));   // kWaitSync
@@ -289,6 +313,27 @@ void ZiFiNativeModule::Process()
         const uint8_t cmd = _rx[pos + 1];
         const std::vector<uint8_t> payload(_rx.begin() + static_cast<std::ptrdiff_t>(pos + 4),
                                            _rx.begin() + static_cast<std::ptrdiff_t>(pos + 4 + length));
+        if (_vfs.Waiting())
+        {
+            // waitFor: the awaited answer; PING and SYS_RESET stay served (handleUnexpected); the rest is lost
+            _rx.erase(_rx.begin() + static_cast<std::ptrdiff_t>(pos), _rx.begin() + static_cast<std::ptrdiff_t>(pos + frameLength));
+            if (cmd == _vfs.AwaitedCommand())
+            {
+                _vfs.OnResponse(payload);
+                if (!_vfs.Waiting())
+                    BridgePoll();
+            }
+            else if (cmd == kPing)
+                SendFrame(kReady);
+            else if (cmd == kSysReset)
+            {
+                Ack();
+                SystemReset();
+            }
+            else
+                ++_droppedWhileWaiting;
+            continue;
+        }
         Handle(cmd, payload, frameLength);
     }
 }
@@ -334,18 +379,7 @@ void ZiFiNativeModule::Handle(uint8_t cmd, const std::vector<uint8_t>& payload, 
         case kSysReset:
             drop();
             Ack();
-            // The ACK leaves, then ESP.restart(): the links, the Wi-Fi association and the session go
-            Stack().Close(-1);
-            Leave();
-            _bodyActive = false;
-            _rx.clear();   // a request the network core held goes with the restart
-            _held = 0;
-            _request.clear();
-            _op = Op::Boot;
-            _phase = Phase::None;
-            _opStart = Now();
-            _opDeadline = Now() + MicrosToT(kResetUs + kBootUs);
-            return;
+            return SystemReset();
         default: break;
     }
 
@@ -364,13 +398,30 @@ void ZiFiNativeModule::Handle(uint8_t cmd, const std::vector<uint8_t>& payload, 
     Network(cmd, payload, frameLength);
 }
 
+void ZiFiNativeModule::SystemReset()
+{
+    // The ACK leaves, then ESP.restart(): the links, the Wi-Fi association, the servers and the session go
+    Stack().Close(-1);
+    Leave();
+    _bodyActive = false;
+    _rx.clear();   // a request the network core held goes with the restart
+    _held = 0;
+    _request.clear();
+    ForgetBridge();
+    _op = Op::Boot;
+    _phase = Phase::None;
+    _opStart = Now();
+    _opDeadline = Now() + MicrosToT(kResetUs + kBootUs);
+}
+
 void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload, size_t frameLength)
 {
     const auto drop = [this, frameLength]() {
         _rx.erase(_rx.begin() + _held, _rx.begin() + static_cast<std::ptrdiff_t>(_held + frameLength));
     };
-    // ACK as soon as the command is in; NET_RECV answers directly (the historical contract)
-    if (cmd != kNetRecv)
+    // ACK as soon as the command is in; NET_RECV answers directly (the historical contract); a deferred command
+    // had its ACK when it came
+    if (cmd != kNetRecv && !_deferredRun)
         Ack();
     if (Busy())
     {
@@ -379,6 +430,12 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
         ReportError("network busy");
         SendFailure(cmd);
         return;
+    }
+    if (_variant == Variant::S3 && _ftp->JobActive())
+    {
+        // The network core is inside the FTP server: the request waits in its queue until the command is done
+        _request = payload;
+        return Start(Op::Deferred, Phase::None, kNoDeadlineUs, frameLength);
     }
     const bool wifi = GetWifi() == Wifi::GotIp;
     // An answer that needs no network
@@ -420,8 +477,9 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             const std::string host = HostOf(payload, next);
             if (host.empty())
                 return reply(0x90, {0}, "open:no host");
-            Stack().Close(kClientSlot);   // NetClient::open: close() first; S3 also stops the FTP server
+            Stack().Close(kClientSlot);   // NetClient::open: close() first; both firmwares stop the FTP server
             _bodyActive = false;
+            StopFileServers();
             if (!wifi)
                 return reply(0x90, {0}, "open:no wifi");
             _request = payload;
@@ -447,6 +505,7 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
                 valid = CopyString(payload, next + 2, kPathMax, path, after, false);
             if (!valid)
                 return reply(0x94, std::vector<uint8_t>(7, 0), "get:bad payload");
+            StopFileServers();   // processHttpGet / handleHttpGet
             if (!wifi)
             {
                 Stack().Close(kClientSlot);
@@ -464,6 +523,7 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             const std::string host = HostOf(payload, next);
             if (host.empty())
                 return reply(0xA1, {0, 0, 0}, "ping:no host");
+            StopFileServers();   // processNetProbe / handleNetProbe
             if (!wifi)
                 return reply(0xA1, {0, 0, 0}, {});   // a negative probe is no error
             _request = payload;
@@ -498,14 +558,17 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             }
             return reply(0xA3, r, {});
         }
-        // The services the emulation leaves out: the firmware's own answer when they cannot start
+        // The file bridge
         case kFtpStart:
-            Stack().Close(kClientSlot);
-            _bodyActive = false;
-            return reply(0x86, {0, 0, 0}, s3 ? "ftp:not emulated" : "ftp/webdav:not emulated");
-        case kFtpStop: return reply(0x87, {1}, {});
-        case kFtpRamStats: return reply(0x8A, {}, {});
+            drop();
+            return StartFtp(payload);
+        case kFtpStop:
+            StopFileServers();
+            return reply(0x87, {1}, {});
+        case kFtpRamStats: return reply(0x8A, _ftp->RamStats(), {});
+        // The services the emulation leaves out: the firmware's own answer when they cannot start
         case kUpdateStart:
+            StopFileServers();
             if (!wifi)
                 return reply(0x88, std::vector<uint8_t>(7, 0), s3 ? "ota:no wifi config" : "update:no wifi");
             return reply(0x88, std::vector<uint8_t>(7, 0), s3 ? "ota:not emulated" : "update:not emulated");
@@ -513,14 +576,18 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
         case kSmbStart:
             Stack().Close(kClientSlot);
             _bodyActive = false;
+            StopFileServers();
             return reply(0x8B, {0, 0, 0, 0}, "smb:not emulated");
         case kSmbStop: return reply(0x8C, {1}, {});
         case kOnlineUpdateCheck:
             return reply(0x8E, {0}, wifi ? "update-check:not emulated" : "update-check:no wifi");
         case kOnlineUpdate:
+            StopFileServers();
             return reply(0x8D, {0}, wifi ? "update:not emulated" : "update:no wifi");
         case kWeatherGet: return reply(0xA4, {0, 1}, "weather:not emulated");
-        case kWcuStart: return reply(0xA5, {0}, wifi ? "wcu:not emulated" : "wcu:no wifi");
+        case kWcuStart:
+            StopFileServers();
+            return reply(0xA5, {0}, wifi ? "wcu:not emulated" : "wcu:no wifi");
         case kWcuApply: return reply(0xA6, {0}, {});
         case kWcuStop: return reply(0xA7, {1}, {});
         case kWcuSync: return reply(0xA8, {0}, {});
@@ -566,6 +633,12 @@ void ZiFiNativeModule::SendFailure(uint8_t cmd)
 void ZiFiNativeModule::Start(Op op, Phase phase, uint64_t timeoutUs, size_t frameLength)
 {
     // The request stays at the head of the buffer (nothing precedes it: one command at a time) until Finish
+    if (_sntpPhase)
+    {
+        // The command takes the resolver / query socket: the background SNTP tries again later
+        _sntpPhase = 0;
+        _sntpNextAt = Now() + MicrosToT(kSntpRetryUs);
+    }
     _op = op;
     _phase = phase;
     _opCmd = _rx.size() > 1 ? _rx[1] : 0;
@@ -756,7 +829,14 @@ void ZiFiNativeModule::StartJoin(const std::string& ssid, const std::string& pas
     if (GetWifi() == Wifi::GotIp && ssid == Ssid() && Fnv1a(password) == _passwordHash)
         return JoinDone(true);
     _passwordHash = Fnv1a(password);
-    Stack().Close(-1);   // the association drops (ESP01S: stopAllNetworkServices first)
+    // The association drops: ESP01S stopAllNetworkServices (the FTP server stops); S3 WiFi.disconnect (the FTP
+    // server keeps listening, its connections end)
+    if (_variant == Variant::Esp01s)
+        StopFileServers();
+    const bool ftpListening = _ftp->Running();
+    Stack().Close(-1);
+    if (ftpListening)
+        _ftp->LinkLost();
     _bodyActive = false;
     Leave();
     Join(ssid);
@@ -765,6 +845,8 @@ void ZiFiNativeModule::StartJoin(const std::string& ssid, const std::string& pas
 void ZiFiNativeModule::JoinDone(bool connected)
 {
     const uint8_t resp = _iniJoin ? kRespWifiIni : kRespWifiConnect;
+    if (connected && _variant == Variant::S3 && _phase != Phase::Proxy)
+        _sntpNextAt = Now();   // connectWifi: configTime starts SNTP
     if (connected && _variant == Variant::S3 && _phase != Phase::Proxy)
     {
         // updateProxyState: a configured proxy is probed (3 s) before the answer
@@ -1150,7 +1232,46 @@ void ZiFiNativeModule::SysInfo()
 
 void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
 {
-    if (_op == Op::None)
+    if (_sntpPhase && (_op == Op::None || _op == Op::Deferred))
+    {
+        // The background SNTP (S3)
+        if (done.kind == EspStack::Done::Kind::Resolve && _sntpPhase == 1)
+        {
+            if (!done.addr)
+            {
+                _sntpPhase = 0;
+                _sntpNextAt = Now() + MicrosToT(kSntpRetryUs);
+                return;
+            }
+            std::vector<uint8_t> request(48, 0);
+            request[0] = 0x23;   // lwIP sntp: LI 0, version 4, client
+            Stack().Query(NetEndpoint{done.addr, 123}, request);
+            _sntpPhase = 2;
+            _sntpDeadline = Now() + MicrosToT(kSntpReplyUs);
+            return;
+        }
+        if (done.kind == EspStack::Done::Kind::Query && _sntpPhase == 2)
+        {
+            const std::vector<uint8_t>& r = done.data;
+            _sntpPhase = 0;
+            const bool valid = r.size() >= 48 && (r[0] >> 6) != 3 && (r[0] & 7) == 4 && r[1] != 0;
+            if (!valid)
+            {
+                _sntpNextAt = Now() + MicrosToT(kSntpRetryUs);
+                return;
+            }
+            uint64_t ntp = (static_cast<uint32_t>(r[40]) << 24) | (static_cast<uint32_t>(r[41]) << 16) |
+                           (static_cast<uint32_t>(r[42]) << 8) | r[43];
+            if (ntp < kNtpUnixOffset)
+                ntp += 1ull << 32;
+            _clockUnix = static_cast<int64_t>(ntp - kNtpUnixOffset);
+            _clockAt = Now();
+            _clockValid = true;
+            _sntpNextAt = Now() + MicrosToT(kSntpUpdateUs);
+            return;
+        }
+    }
+    if (_op == Op::None || _op == Op::Deferred)
         return;
     const std::vector<uint8_t> none7(7, 0);
     if (done.kind == EspStack::Done::Kind::Resolve)
@@ -1238,6 +1359,11 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
 
 void ZiFiNativeModule::OnStackData(int slot)
 {
+    if (slot >= ZiFiFtpServer::kListenSlot)
+    {
+        _bridgePoll = true;   // the file servers read it at the frame boundary (never inside the delivery)
+        return;
+    }
     if (slot != kClientSlot || _op != Op::HttpGet)
         return;
     HttpHeader();
@@ -1282,6 +1408,7 @@ void ZiFiNativeModule::Timeout()
             if (!Ssid().empty())
                 Join(Ssid());   // the saved zifi.ini joins again (WiFi.begin at setup)
             return;
+        case Op::Deferred:
         case Op::None: return;
     }
 }
@@ -1295,6 +1422,27 @@ void ZiFiNativeModule::OnFrame()
         JoinDone(true);
     if (_op != Op::None && Now() >= _opDeadline)
         Timeout();
+    _vfs.Tick();
+    if (!_vfs.Waiting())
+        BridgePoll();
+    SntpTick();
+    if (_variant == Variant::S3 && _ftp->Running() && Now() >= _nextSignalAt)
+    {
+        // The Wi-Fi signal bar while FTP runs (formatWifiSignal; the virtual AP's RSSI)
+        const int rssi = GetWifi() == Wifi::GotIp ? kVirtualRssi : -127;
+        const int percent = GetWifi() != Wifi::GotIp ? 0 : rssi <= -90 ? 0 : rssi >= -50 ? 100 : (rssi + 90) * 100 / 40;
+        const int filled = (percent * 16 + 50) / 100;
+        std::string bar = "Wi-Fi [";
+        for (int i = 0; i < 16; ++i)
+            bar.push_back(i < filled ? '#' : '.');
+        char tail[16];
+        std::snprintf(tail, sizeof(tail), "] %3d%%", percent);
+        bar += tail;
+        BridgeEvent(kEventWifiSignal, std::vector<uint8_t>(bar.begin(), bar.end()));
+        _nextSignalAt = Now() + MicrosToT(kWifiSignalIntervalUs);
+    }
+    FlushEvents();
+    DrainTx();
     Process();
     // A partial frame left for 500 ms is dropped (checkTimeout)
     if (!(Busy() && _variant == Variant::Esp01s) && _op != Op::Boot && _rx.size() > _held &&
@@ -1308,6 +1456,7 @@ void ZiFiNativeModule::OnFrame()
 
 void ZiFiNativeModule::OnHardwareReset()
 {
+    ForgetBridge();
     _op = Op::None;
     _phase = Phase::None;
     _held = 0;
@@ -1325,6 +1474,153 @@ void ZiFiNativeModule::OnHardwareBoot()
     _op = Op::Boot;
     _opStart = Now();
     _opDeadline = Now() + MicrosToT(kBootUs);
+}
+
+// --- The file bridge (Z3b) --------------------------------------------------------------------------------------
+
+uint8_t ZiFiNativeModule::TakeByte()
+{
+    const uint8_t b = EspModule::TakeByte();
+    DrainTx();
+    return b;
+}
+
+void ZiFiNativeModule::DrainTx()
+{
+    while (!_txBacklog.empty() && Pending() + _txBacklog.front().size() <= kTxLimit)
+    {
+        Send(_txBacklog.front());
+        _txBacklog.pop_front();
+    }
+}
+
+void ZiFiNativeModule::BridgeEvent(uint8_t cmd, const std::vector<uint8_t>& data)
+{
+    // S3: events cross from the network core through an 8-deep queue (a full queue drops the event: they only
+    // indicate); E01: transport_.send at once
+    std::vector<uint8_t> f = {cmd};
+    f.insert(f.end(), data.begin(), data.end());
+    if (_variant == Variant::S3)
+    {
+        if (_events.size() < kEventQueue)
+            _events.push_back(std::move(f));
+        FlushEvents();
+        return;
+    }
+    SendFrame(cmd, data);
+}
+
+void ZiFiNativeModule::FlushEvents()
+{
+    // pollNetworkEvent runs between UART polls: not while the VFS client is inside waitFor
+    while (!_events.empty() && !_vfs.Waiting() && _op != Op::Boot)
+    {
+        const std::vector<uint8_t> f = std::move(_events.front());
+        _events.pop_front();
+        SendFrame(f[0], f.data() + 1, f.size() - 1);
+    }
+}
+
+bool ZiFiNativeModule::BridgeClock(int64_t& unixNow) const
+{
+    if (!_clockValid)
+        return false;
+    unixNow = _clockUnix + static_cast<int64_t>((Now() - _clockAt) / std::max<uint64_t>(1, MicrosToT(1000000)));
+    return true;
+}
+
+void ZiFiNativeModule::SntpTick()
+{
+    if (_variant != Variant::S3 || GetWifi() != Wifi::GotIp || _op != Op::None)
+        return;
+    if (_sntpPhase && Now() >= _sntpDeadline)
+    {
+        _sntpPhase = 0;
+        _sntpNextAt = Now() + MicrosToT(kSntpRetryUs);
+    }
+    if (_sntpPhase || _sntpNextAt == 0 || Now() < _sntpNextAt)
+        return;
+    _sntpPhase = 1;
+    _sntpDeadline = Now() + MicrosToT(kSntpReplyUs);
+    Stack().Resolve("pool.ntp.org");
+}
+
+uint16_t ZiFiNativeModule::HostPortFor(uint16_t guestPort) const
+{
+    const VirtualNetwork* network = Stack().Network();
+    return network ? network->HostPortFor(guestPort) : 0;
+}
+
+void ZiFiNativeModule::BridgePoll()
+{
+    _bridgePoll = false;
+    // S3: the network core runs the servers between its requests (a request in progress holds them); E01: the
+    // loop is inside a blocking command
+    if (_op != Op::None && _op != Op::Deferred)
+        return;
+    if (_ftp->Running())
+        _ftp->Poll();
+    FlushEvents();
+    if (_op == Op::Deferred && !_ftp->JobActive())
+        RunDeferred();
+}
+
+void ZiFiNativeModule::RunDeferred()
+{
+    // The network core takes the queued request: the frame is at the head of the buffer, its ACK went out
+    if (_held < 5 || _rx.size() < _held)
+    {
+        _op = Op::None;
+        _held = 0;
+        return;
+    }
+    const uint8_t cmd = _rx[1];
+    const std::vector<uint8_t> payload(_rx.begin() + 4, _rx.begin() + (_held - 1));
+    const size_t frameLength = _held;
+    _op = Op::None;
+    _phase = Phase::None;
+    _held = 0;
+    _deferredRun = true;
+    Network(cmd, payload, frameLength);
+    _deferredRun = false;
+    _rxSeen = std::min(_rxSeen, _rx.size());
+}
+
+void ZiFiNativeModule::StartFtp(const std::vector<uint8_t>& payload)
+{
+    // processFtpStart (S3) / handleFtpStart (E01): the TCP client closes, the file services restart
+    Stack().Close(kClientSlot);
+    _bodyActive = false;
+    StopFileServers();
+    uint16_t port = 0;
+    std::string error;
+    if (!_ftp->Start(payload, port, error))
+    {
+        ReportError((_variant == Variant::S3 ? "ftp:" : "ftp/webdav:") + error);
+        return SendFrame(0x86, {0, 0, 0});
+    }
+    // ESP01S: the WebDAV server on port 80 starts with FTP here (webdav_.start; the zifi-plugins work)
+    _nextSignalAt = Now();
+    ClearError();
+    SendFrame(0x86, {1, static_cast<uint8_t>(port), static_cast<uint8_t>(port >> 8)});
+}
+
+void ZiFiNativeModule::StopFileServers()
+{
+    if (_ftp->Running())
+        _ftp->Stop();
+    // ESP01S stopStorageServices: the WebDAV server stops here too (the zifi-plugins work)
+}
+
+void ZiFiNativeModule::ForgetBridge()
+{
+    _ftp->Forget();
+    _vfs.Reset();
+    _events.clear();
+    _txBacklog.clear();
+    _bridgePoll = false;
+    _sntpPhase = 0;
+    _sntpNextAt = 0;
 }
 
 // --- TTD --------------------------------------------------------------------------------------------------------
@@ -1386,6 +1682,7 @@ void ZiFiNativeModule::LoadFirmware(const netstate::EspModuleState& in)
     auto get16 = [&]() { const uint16_t v = static_cast<uint16_t>(f[p] | (f[p + 1] << 8)); p += 2; return v; };
     auto get32 = [&]() { const uint32_t lo = get16(); return lo | (static_cast<uint32_t>(get16()) << 16); };
     auto get64 = [&]() { const uint64_t lo = get32(); return lo | (static_cast<uint64_t>(get32()) << 32); };
+    ForgetBridge();   // the ZiFi blob (id 40, loaded next) brings the file bridge back
     if (get8() != kStateVersion)
         return;
     _op = static_cast<Op>(get8());
@@ -1429,4 +1726,175 @@ void ZiFiNativeModule::ReloadRequest()
     if (_held < 5 || _rx.size() < _held)
         return;
     _request.assign(_rx.begin() + 4, _rx.begin() + (_held - 1));
+}
+
+// --- TTD: the file bridge (the ZiFi blob's variable part) ---------------------------------------------------------
+
+namespace
+{
+constexpr uint8_t kBridgeVersion = 1;
+
+/// Received bytes by run: a journal reference (kind 1) or, for bytes that never came through the journal (tests),
+/// the bytes themselves (kind 0)
+void SaveRx(ZiFiStateWriter& w, const std::deque<EspStack::RxByte>& rx)
+{
+    std::vector<std::pair<size_t, size_t>> runs;   // [begin, end)
+    for (size_t i = 0; i < rx.size();)
+    {
+        size_t e = i + 1;
+        while (e < rx.size() && rx[e].source == rx[i].source &&
+               (rx[i].source == 0 || rx[e].offset == rx[e - 1].offset + 1))
+            ++e;
+        runs.emplace_back(i, e);
+        i = e;
+    }
+    w.U32(static_cast<uint32_t>(runs.size()));
+    for (const auto& [b, e] : runs)
+    {
+        if (rx[b].source == 0)
+        {
+            w.U8(0);
+            std::vector<uint8_t> bytes;
+            for (size_t i = b; i < e; ++i)
+                bytes.push_back(rx[i].value);
+            w.Bytes(bytes);
+        }
+        else
+        {
+            w.U8(1);
+            w.U32(rx[b].source);
+            w.U32(rx[b].offset);
+            w.U32(static_cast<uint32_t>(e - b));
+        }
+    }
+}
+
+bool LoadRx(ZiFiStateReader& r, const EspStack::ByteSource& bytes, std::deque<EspStack::RxByte>& rx)
+{
+    bool complete = true;
+    const uint32_t runs = r.U32();
+    for (uint32_t i = 0; i < runs && r.Ok(); ++i)
+    {
+        if (r.U8() == 0)
+        {
+            for (uint8_t b : r.Bytes())
+                rx.push_back({b, 0, 0});
+            continue;
+        }
+        const uint32_t source = r.U32(), offset = r.U32(), length = r.U32();
+        std::vector<uint8_t> chunk;
+        if (!bytes || !bytes(source, offset, length, chunk) || chunk.size() != length)
+        {
+            complete = false;
+            continue;
+        }
+        for (uint32_t k = 0; k < length; ++k)
+            rx.push_back({chunk[k], source, offset + k});
+    }
+    return complete;
+}
+}  // namespace
+
+void ZiFiNativeModule::SaveBridge(std::vector<uint8_t>& out) const
+{
+    ZiFiStateWriter w(out);
+    w.U8(kBridgeVersion);
+    _vfs.Save(w);
+    _ftp->Save(w);
+    w.U32(static_cast<uint32_t>(_events.size()));
+    for (const std::vector<uint8_t>& e : _events)
+        w.Bytes(e);
+    w.U32(static_cast<uint32_t>(_txBacklog.size()));
+    for (const std::vector<uint8_t>& f : _txBacklog)
+        w.Bytes(f);
+    w.Bool(_bridgePoll);
+    w.U32(_droppedWhileWaiting);
+    w.U64(_nextSignalAt);
+    w.Bool(_clockValid);
+    w.I64(_clockUnix);
+    w.U64(_clockAt);
+    w.U8(_sntpPhase);
+    w.U64(_sntpNextAt);
+    w.U64(_sntpDeadline);
+    // The socket slots beyond the eight of netstate::EspStackState
+    const EspStack& stack = Stack();
+    const int first = netstate::kEspSlots;
+    w.U8(static_cast<uint8_t>(std::max(0, stack.SlotCount() - first)));
+    for (int i = first; i < stack.SlotCount(); ++i)
+    {
+        const EspStack::Slot& s = stack.GetSlot(i);
+        w.U8(static_cast<uint8_t>(s.state));
+        w.Bool(s.connecting), w.Bool(s.finSeen);
+        w.U16(s.vnetId), w.U16(s.localPort), w.U16(s.waitingId);
+        w.U32(s.remote.addr), w.U16(s.remote.port);
+        SaveRx(w, s.rx);
+        w.U32(static_cast<uint32_t>(s.pending.size()));
+        for (const EspStack::Pending& p : s.pending)
+        {
+            w.U16(p.vnetId);
+            w.U32(p.peer.addr), w.U16(p.peer.port);
+            w.Bool(p.finSeen);
+            SaveRx(w, p.rx);
+        }
+        w.Bool(stack.RearmQueued(i));
+    }
+}
+
+bool ZiFiNativeModule::LoadBridge(const uint8_t* data, size_t length, const EspStack::ByteSource& bytes)
+{
+    ForgetBridge();
+    if (!data || !length)
+        return true;
+    ZiFiStateReader r(data, length);
+    if (r.U8() != kBridgeVersion)
+        return false;
+    bool ok = _vfs.Load(r) && _ftp->Load(r);
+    const uint32_t events = r.U32();
+    for (uint32_t i = 0; i < events && i < kEventQueue && r.Ok(); ++i)
+        _events.push_back(r.Bytes(64));
+    const uint32_t tx = r.U32();
+    for (uint32_t i = 0; i < tx && i < 256 && r.Ok(); ++i)
+        _txBacklog.push_back(r.Bytes(kMaxPayload + 5));
+    _bridgePoll = r.Bool();
+    _droppedWhileWaiting = r.U32();
+    _nextSignalAt = r.U64();
+    _clockValid = r.Bool();
+    _clockUnix = r.I64();
+    _clockAt = r.U64();
+    _sntpPhase = r.U8();
+    _sntpNextAt = r.U64();
+    _sntpDeadline = r.U64();
+    EspStack& stack = Stack();
+    const int extra = r.U8();
+    for (int k = 0; k < extra && r.Ok(); ++k)
+    {
+        const int i = netstate::kEspSlots + k;
+        EspStack::Slot s;
+        const uint8_t state = r.U8();
+        s.state = state <= static_cast<uint8_t>(EspStack::State::Listen) ? static_cast<EspStack::State>(state)
+                                                                         : EspStack::State::Free;
+        s.connecting = r.Bool(), s.finSeen = r.Bool();
+        s.vnetId = r.U16(), s.localPort = r.U16(), s.waitingId = r.U16();
+        s.remote.addr = r.U32(), s.remote.port = r.U16();
+        ok = LoadRx(r, bytes, s.rx) && ok;
+        const uint32_t pending = r.U32();
+        for (uint32_t p = 0; p < pending && p < 64 && r.Ok(); ++p)
+        {
+            EspStack::Pending pd;
+            pd.vnetId = r.U16();
+            pd.peer.addr = r.U32(), pd.peer.port = r.U16();
+            pd.finSeen = r.Bool();
+            ok = LoadRx(r, bytes, pd.rx) && ok;
+            s.pending.push_back(std::move(pd));
+        }
+        const bool rearm = r.Bool();
+        if (i < stack.SlotCount())
+        {
+            stack.RestoreSlot(i, std::move(s));
+            if (rearm)
+                stack.QueueRearm(i);
+        }
+    }
+    RebindSockets();
+    return ok && r.Ok();
 }

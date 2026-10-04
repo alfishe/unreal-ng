@@ -516,15 +516,17 @@ TEST_F(ZiFiNativeModule_Test, Ip_ConfigAndProxyStatus)
 
 // --- What the emulation leaves out --------------------------------------------------------------------------------
 
-TEST_F(ZiFiNativeModule_Test, Services_AnswerAsWhenTheyCannotStart)
+TEST_F(ZiFiNativeModule_Test, Services_FtpStartsTheOthersAnswerAsWhenTheyCannotStart)
 {
+    // FTP runs since Z3b (zififtpserver_test.cpp): the defaults are port 21 and zx / zx
     Send(ZiFiNativeModule::kFtpStart);
     std::vector<Reply> r = Read();
-    ASSERT_EQ(Cmds(r), "FE EE 86");
-    EXPECT_EQ(r[1].Text(), "ftp:not emulated");
-    EXPECT_EQ(r[2].data, Bytes(3, 0));
+    ASSERT_EQ(Cmds(r).substr(0, 5), "FE 86");
+    EXPECT_EQ(r[1].data, Bytes({1, 21, 0}));
     Send(ZiFiNativeModule::kFtpStop);
-    EXPECT_EQ(Read()[1].data, Bytes({1}));
+    r = Read();
+    ASSERT_EQ(Cmds(r), "FE 87");
+    EXPECT_EQ(r[1].data, Bytes({1}));
     Send(ZiFiNativeModule::kWeatherGet);
     r = Read();
     ASSERT_EQ(Cmds(r), "FE EE A4");

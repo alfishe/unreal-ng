@@ -21,9 +21,17 @@
 ///    src/main.cpp): one loop - a command that waits for the network holds every later byte in the UART until
 ///    it is done. Plain HTTP only, no redirects, no proxy; FTP / OTA commands, no SMB / weather / GitHub update
 ///
-/// What the emulation leaves out (they answer as the firmware does when the service cannot start): the file
-/// servers (FTP, SMB, WebDAV) that call back into the Z80 (VFS requests 40..5E), the OTA listener, the online
-/// update, the Wild Commander updater and the weather service.
+/// The file bridge (Z3b): FTP_START runs the firmware's FTP server (zififtpserver.h) on the virtual network; every
+/// file command becomes VFS request frames to the Z80 (zifivfsbridge.h, 40..5E) that the Wild Commander plugin
+/// answers, with the FTP events 60 / 61 and (S3) the Wi-Fi signal 66 every 2 s. While the client waits for the
+/// Z80's answer the UART serves only PING and SYS_RESET (every other frame is dropped, as the firmware's waitFor);
+/// S3: a network command that arrives while an FTP command runs is acknowledged and done after it (the network
+/// core is inside the FTP server); ESP01S: one loop - while an FTP command runs the UART is read only for the
+/// VFS answers. The FTP server's state, the VFS client and the sockets beyond the eighth are saved in the ZiFi blob
+/// (SaveBridge / LoadBridge).
+///
+/// What the emulation leaves out (they answer as the firmware does when the service cannot start): SMB, the OTA
+/// listener, the online update, the Wild Commander updater and the weather service.
 ///
 /// The Wi-Fi is the virtual network's access point (SSID UnrealNG, as for every ESP module); a zifi.ini naming
 /// another network does not connect (EE "wifi timeout" after 10 s, like a real module out of range).
@@ -36,9 +44,17 @@
 #include <string>
 #include <vector>
 
-#include "emulator/io/serial/esp/espmodule.h"
+#include <deque>
+#include <functional>
+#include <memory>
 
-class ZiFiNativeModule final : public EspModule
+#include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/esp/zifibridgehost.h"
+#include "emulator/io/serial/esp/zifivfsbridge.h"
+
+class ZiFiFtpServer;
+
+class ZiFiNativeModule final : public EspModule, private ZiFiBridgeHost
 {
 public:
     /// The firmware (ZiFi=ZIFI-NATIVE,<variant>; the numbers are ComPortSpec values: never renumber)
@@ -72,9 +88,31 @@ public:
                              kRespNetRecv = 0x92, kRespNetNtp = 0xA2, kReady = 0xF0, kError = 0xEE, kAck = 0xFE;
 
     ZiFiNativeModule(VirtualNetwork* network, Variant variant, const std::array<uint8_t, 6>* mac = nullptr);
+    ~ZiFiNativeModule() override;
+
+    /// Socket slots: 0 the TCP client, 1 the probe, 2.. the file servers (zififtpserver.h)
+    static constexpr int kSlots = 16;
+    /// Event frames to the Z80
+    static constexpr uint8_t kEventFtpClient = 0x60, kEventFtpCommand = 0x61, kEventWifiSignal = 0x66;
 
     const char* Kind() const override { return "zifi-native"; }
     void OnFrame() override;
+    uint8_t TakeByte() override;
+
+    // --- The file bridge (Z3b) ---------------------------------------------------------------------------------
+
+    const ZiFiVfsBridge& Vfs() const { return _vfs; }
+    const ZiFiFtpServer& Ftp() const { return *_ftp; }
+    /// The host port a guest port of this module is reachable on (0: none; ports below 1024 need a Forward= rule)
+    uint16_t HostPortFor(uint16_t guestPort) const;
+    /// The ESP's own time of day (S3: SNTP after the join; status)
+    bool ClockSet() const { return _clockValid; }
+    /// Frames from the Z80 the UART dropped while the VFS client waited (status)
+    uint32_t DroppedWhileWaiting() const { return _droppedWhileWaiting; }
+
+    /// TTD: the file bridge's state (the ZiFi blob's variable part); `bytes` resolves journal references
+    void SaveBridge(std::vector<uint8_t>& out) const;
+    bool LoadBridge(const uint8_t* data, size_t length, const EspStack::ByteSource& bytes);
 
     Variant GetVariant() const { return _variant; }
     /// GET_STEP: the last command (8 after a SYS_INFO) and the last error text
@@ -119,6 +157,7 @@ private:
         Probe,      ///< NET_PING: a TCP connect to port 80
         Ntp,        ///< NET_NTP
         Boot,       ///< SYS_RESET: the module restarts
+        Deferred,   ///< S3: a network command waits for the FTP command in progress (the network core is in it)
     };
     enum class Phase : uint8_t
     {
@@ -166,6 +205,33 @@ private:
     void ReloadRequest();
     std::string HostOf(const std::vector<uint8_t>& payload, size_t& next) const;
 
+    // The file bridge
+    EspStack& BridgeStack() override { return Stack(); }
+    ZiFiVfsBridge& BridgeVfs() override { return _vfs; }
+    uint64_t BridgeNow() const override { return Now(); }
+    uint64_t BridgeMicros(uint64_t us) const override { return MicrosToT(us); }
+    void BridgeEvent(uint8_t cmd, const std::vector<uint8_t>& data) override;
+    bool BridgeWifiUp() const override { return GetWifi() == Wifi::GotIp; }
+    uint32_t BridgeIp() const override { return Ip(); }
+    bool BridgeClock(int64_t& unixNow) const override;
+    int8_t BridgeTimeZone() const override { return _timeZone; }
+    /// Run the file servers (accept, control lines, the command in progress), then what waited for them
+    void BridgePoll();
+    /// The UART while the VFS client waits: the awaited answer, PING, SYS_RESET; everything else is dropped
+    void ProcessWhileWaiting();
+    void StartFtp(const std::vector<uint8_t>& payload);
+    /// FTP (and, on the ESP-01S, the services started with it) stop: NET_OPEN, HTTP GET, ping, OTA, FTP_STOP
+    void StopFileServers();
+    /// The module restarted: the servers, the client and the queues are gone (no socket is touched: the stack
+    /// was reset or reloaded)
+    void ForgetBridge();
+    void FlushEvents();
+    void DrainTx();
+    /// S3: SNTP in the background after a join (configTime); the answer sets the ESP's clock
+    void SntpTick();
+    void RunDeferred();
+    void SystemReset();
+
     Variant _variant = Variant::S3;
 
     // Session (zifi.ini lives in the module's flash: it survives SYS_RESET)
@@ -200,6 +266,23 @@ private:
     bool _iniJoin = false;          ///< Join came from WIFI_INI (reply 83, then the proxy)
     std::vector<uint8_t> _request;  ///< the held request's payload (rebuilt from the buffer after a load)
     bool _softRestart = false;      ///< the last start was SYS_RESET (SYS_INFO "RST:")
+
+    // The file bridge
+    ZiFiVfsBridge _vfs;
+    std::unique_ptr<ZiFiFtpServer> _ftp;
+    std::deque<std::vector<uint8_t>> _events;   ///< S3: the 8-deep inter-core event queue
+    std::deque<std::vector<uint8_t>> _txBacklog;   ///< frames waiting for room in the UART output
+    bool _bridgePoll = false;
+    bool _deferredRun = false;       ///< Network() runs a deferred command (its ACK went out already)
+    uint32_t _droppedWhileWaiting = 0;
+    uint64_t _nextSignalAt = 0;
+    // The ESP's clock (S3 SNTP)
+    bool _clockValid = false;
+    int64_t _clockUnix = 0;          ///< UTC seconds at _clockAt
+    uint64_t _clockAt = 0;
+    uint8_t _sntpPhase = 0;          ///< 0 idle, 1 resolving, 2 waiting for the answer
+    uint64_t _sntpNextAt = 0;        ///< 0: not scheduled
+    uint64_t _sntpDeadline = 0;
 
     // The parser
     size_t _rxSeen = 0;
