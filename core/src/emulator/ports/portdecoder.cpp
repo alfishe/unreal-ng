@@ -112,7 +112,8 @@ bool PortDecoder::TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc)
 
 PortDecoder::~PortDecoder()
 {
-    _portDevices.clear();
+    _peripheralClaims.Clear();
+    _peripheralClaims.Build();
     _fullDecodeClaims.Clear();
     _fullDecodeClaims.Build();
 }
@@ -521,7 +522,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     if (disp.wasFullDecodeClaimed)
         event.deviceId = PortDeviceId::FullDecodeClaim;
 
-    bool hadHandler = (disp.decodedPort != 0x0000) && key_exists(_portDevices, disp.decodedPort);
+    bool hadHandler = (disp.decodedPort != 0x0000) && _peripheralClaims.IsClaimed(disp.decodedPort);
 
     uint8_t flags = 0;
     if (isOut)
@@ -881,13 +882,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     }
 
     // Explicitly registered peripheral devices (RegisterPortHandler) not already
-    // covered by a static row's address qualification above
-    for (const auto& handler : _portDevices)
+    // covered by a static row's address qualification above, in port order
+    std::vector<uint16_t> handlerPorts;
+    for (const slots::ClaimEntry& claim : _peripheralClaims.Entries())
+        handlerPorts.push_back(claim.match);
+    std::sort(handlerPorts.begin(), handlerPorts.end());
+    for (const uint16_t handlerPort : handlerPorts)
     {
         bool covered = false;
         for (const PortMapEntry& entry : entries)
         {
-            if ((handler.first & entry.mask) == entry.match)
+            if ((handlerPort & entry.mask) == entry.match)
             {
                 covered = true;
                 break;
@@ -896,10 +901,10 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
         if (!covered)
         {
             PortTagSet handlerTags = 0;
-            auto stored = _portDeviceTags.find(handler.first);
+            auto stored = _portDeviceTags.find(handlerPort);
             if (stored != _portDeviceTags.end())
                 handlerTags = stored->second;
-            entries.push_back({handler.first, 0xFFFF, handler.first, "Registered peripheral device", nullptr,
+            entries.push_back({handlerPort, 0xFFFF, handlerPort, "Registered peripheral device", nullptr,
                               handlerTags});
         }
     }
@@ -1194,7 +1199,7 @@ void PortDecoder::GetMouseRoutingState(bool& decoded, std::string& note) const
     // Canonical buttons port; ownership by an explicitly registered peripheral
     // keeps the address away from the mouse (Default_IsPort_KempstonMouse)
     static const uint16_t probePort = 0xFADF;
-    if (key_exists(_portDevices, probePort))
+    if (_peripheralClaims.IsClaimed(probePort))
     {
         note = StringHelper::Format("port #%04X claimed by a registered peripheral", probePort);
         return;
@@ -1304,7 +1309,7 @@ bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegist
         return false;
     if (_state && (_state->flags & CF_DOSPORTS))
         return false;
-    if (key_exists(_portDevices, port))
+    if (_peripheralClaims.IsClaimed(port))
         return false;
     return Standard_IsPort_KempstonMouse(port, outRegister);
 }
@@ -1450,9 +1455,15 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device, PortTag
 
     if (device)
     {
-        if (!key_exists(_portDevices, port))
+        if (!_peripheralClaims.IsClaimed(port))
         {
-            _portDevices.insert({port, device});
+            // Control path: one exact claim on the decoded port
+            slots::ClaimEntry entry;
+            entry.mask = kPeripheralMask;
+            entry.match = port;
+            entry.owner = device;
+            _peripheralClaims.Add(entry);
+            _peripheralClaims.Build();
             _portDeviceTags.insert_or_assign(port, tags);
             result = true;  // Fix: return true on successful registration
         }
@@ -1467,9 +1478,10 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device, PortTag
 
 void PortDecoder::UnregisterPortHandler(uint16_t port)
 {
-    if (key_exists(_portDevices, port))
+    if (PortDevice* device = PeripheralDevice(port))
     {
-        _portDevices.erase(port);
+        _peripheralClaims.Remove(kPeripheralMask, port, device);
+        _peripheralClaims.Build();
         _portDeviceTags.erase(port);
     }
 }
@@ -1914,15 +1926,11 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
 {
     uint8_t result = 0xFF;
 
-    if (auto it = _portDevices.find(port); it != _portDevices.end())
+    if (PortDevice* device = PeripheralDevice(port))
     {
         // Peripheral registered to handle port event found
-        PortDevice* device = it->second;
-        if (device)
-        {
-            result = device->portDeviceInMethod(port);
-            _lastPortDecoded = true;
-        }
+        result = device->portDeviceInMethod(port);
+        _lastPortDecoded = true;
     }
     else
     {
@@ -1944,14 +1952,10 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
 /// \param value Value to output into specified port
 void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 {
-    if (auto it = _portDevices.find(port); it != _portDevices.end())
+    if (PortDevice* device = PeripheralDevice(port))
     {
         // Peripheral registered to handle port event found
-        PortDevice* device = it->second;
-        if (device)
-        {
-            device->portDeviceOutMethod(port, value);
-        }
+        device->portDeviceOutMethod(port, value);
     }
     else
     {

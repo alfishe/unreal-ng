@@ -426,7 +426,26 @@ protected:
     bool _lastPortDecoded = false;
 
     // Registered port handlers from external peripheral devices
-    std::map<uint16_t, PortDevice*> _portDevices;
+    // (RegisterPortHandler), keyed by the DECODED port the model decoders hand
+    // to PeripheralPortIn/Out. They live in a claim table of their own (ZX-bus
+    // slots SL-3): exact claims (mask #FFFF) on the decoded-port space, which
+    // is not the raw bus address the observers' table is keyed by. A decoded
+    // port no device claims costs one bit test, a claimed one a scan of its
+    // low byte's bucket (a few entries)
+#pragma push_macro("slots")
+#undef slots
+    slots::PortClaimTable _peripheralClaims;
+#pragma pop_macro("slots")
+    static constexpr uint16_t kPeripheralMask = 0xFFFF;
+
+    /// The device registered for this decoded port; nullptr when none
+    PortDevice* PeripheralDevice(uint16_t decodedPort) const
+    {
+        if (!_peripheralClaims.IsClaimed(decodedPort)) [[unlikely]]
+            return nullptr;
+        const auto* entry = _peripheralClaims.FirstMatch(decodedPort);   // auto: Qt units define `slots`
+        return entry ? entry->owner : nullptr;
+    }
 
     // The machine's IDE board ([HDD] Scheme): its latches; the channel is IdeController's
     IdeAdapter _ide;
@@ -435,7 +454,7 @@ protected:
     // (e.g. ZXM-MoonSound) decode the whole 16-bit address and observe every
     // cycle on their ports, but the model decode rules map those raw addresses
     // onto other devices (ULA #FE family, AY #FFFD, Beta-128 FDC registers).
-    // Registering such a card in the exclusive _portDevices map would steal
+    // Registering such a card in the exclusive peripheral port map would steal
     // the port from the original device (observed: MoonSound taking #7F killed
     // TR-DOS reads). Observers are therefore tapped at the Z80 I/O funnel with
     // the RAW port before the model decode runs - both devices see the cycle,
@@ -1052,10 +1071,10 @@ public:
         return _fullDecodeClaims.IsClaimed(rawPort) && LowByteObserver(rawPort) != nullptr;
     }
 
-    /// Observer bus value cached by the Z80 funnel tap (NotifyFullDecodeIn)
-    /// for the given port - the value the claiming card drove onto the bus.
-    /// 0xFF when the tap has not serviced this port (direct DecodePortIn
-    /// calls outside Z80::in, e.g. unit tests)
+    /// Observer bus value cached by the claimed read cycle (ReadCycle, or the
+    /// split-phase NotifyFullDecodeIn) for the given port - the value the
+    /// claiming card drove onto the bus. 0xFF when no claimed cycle serviced
+    /// this port (direct DecodePortIn calls outside a bus cycle, e.g. tests)
     uint8_t GetCachedFullDecodeInValue(uint16_t rawPort) const
     {
         return (rawPort == _lastFullDecodeInPort) ? _lastFullDecodeInValue : 0xFF;

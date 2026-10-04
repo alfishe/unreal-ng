@@ -1,6 +1,6 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) built 2026-10-04, uncommitted. PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04, uncommitted. PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -15,11 +15,10 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
 - [open-questions.md](open-questions.md): owner decisions Q1-Q7
 
-## Pause (owner decision 2026-10-04)
+## Pause (owner decision 2026-10-04) - lifted
 
-SL-3 and later wait until the `ttd-engine` branch lands on master: it rewrites the same port decoders, `z80.cpp`,
-`ttdmachineperipherals.cpp` and the GS / NeoGS / MoonSound / TSFM modules that SL-3 / SL-4 migrate. Then rebase
-`zx-bus-slots` on master and continue with SL-3 (including the claimed-port benchmark residue from SL-2).
+SL-3 and later waited until the `ttd-engine` branch landed on master. Done 2026-10-04: `zx-bus-slots` merged with
+master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) §7), SL-3 continued.
 
 ## Remaining
 
@@ -49,12 +48,21 @@ SL-3 and later wait until the `ttd-engine` branch lands on master: it rewrites t
   tap's lookup is memoized for the decoder's override). A/B vs SL-1, 8 interleaved rounds with the load below 12 for
   each whole round: unclaimed ports 3-14 % faster; a claimed card port still +3.7 to +5.3 % (1.2-1.9 ns per
   access). Table, loads and the variants tried: [tdd.md](tdd.md) §6
-  - [ ] claimed-port residue (+3.7 to +5.3 % on the MoonSound's own port, 1.2-1.9 ns per access; < 0.05 % of a frame):
-    not from the counter or the second lookup (both removed, no change); the profile puts it in the decoders'
-    and `Z80::inFromBus`'s own code around the inline taps, and variants move it about as much as its size. To be
-    removed with SL-3's single resolution pass (tap + R6 + override in one), re-measured with `BM_PortCard`
-  - [ ] `Write` / `Read` (the full resolution) unused in production until SL-3
-- [ ] SL-3 migrate the old dispatch rules, remove the three mechanisms one by one
+  - [x] claimed-port residue: closed by SL-3's single resolution pass (MoonSound `#C4` rows -7.0 to +0.6 % vs SL-1,
+    [tdd.md](tdd.md) §7)
+  - [ ] `Write` / `Read` (the full resolution) still unused in production: the legacy observers' semantics (R6, the
+    dynamic read claim, the Beta-128 exception) move onto it with the card declarations in SL-4
+- [x] SL-3 migrate the old dispatch rules, remove the three mechanisms one by one (2026-10-04, working tree of
+  `zx-bus-slots`, not committed; [tdd.md](tdd.md) §7): (1) the card tap and R6 out of the Z80 funnel into
+  `PortDecoder::ReadCycle` / `WriteCycle`; (2) the claim override's decision made once per cycle by the resolution
+  (SL-2 memo removed); (3) the self-decoding devices as declared claims (`PortDevice::selfDecodingClaims`, Covox per
+  fitment) in a claim table (the vector removed); (4) the exact peripheral port map as exact claims on the decoded
+  port (the `std::map` removed). Each step a full green `core-tests` run; new `PortDecoder_Test.*` (4); A/B vs SL-1
+  under heavy load (24-72): unclaimed ports faster on every row but the border write (parity), the card's own port
+  -7.0 to +0.6 %
+  - [ ] owner review: three role tables (`_fullDecodeClaims` raw / bus side, `_selfDecodingClaims` raw / after the
+    board, `_peripheralClaims` decoded port) instead of one; collapse into one table as SL-4 moves the cards
+  - [ ] quiet-machine rerun of the SL-3 A/B (load below 12) before the SL-4 card measurements
 - [ ] SL-4 migrate cards one by one; `[SLOTS]` + legacy key translation; `data/configs` converted
 - [ ] SL-5 TTD fingerprint and session guard
 - [ ] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it

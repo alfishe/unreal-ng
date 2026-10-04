@@ -269,6 +269,13 @@ card and the machine's `#DFFD` paging, as on the real board.
 the Beta-128 exception becomes a declared built-in property; "IDE decodes first" stays a machine rule. Each move is a
 separate tested step (tdd.md SL-3).
 
+**As built (SL-3,** [tdd.md](tdd.md) §7**):** the Z80 runs one bus cycle, `PortDecoder::ReadCycle` / `WriteCycle`: a
+port no card claims is one bit test and the board's decode; a claimed port is resolved in one out-of-line pass (one
+lookup, the card's access, the board's stand-down decided once, the board decode, R6). The self-decoding devices and
+the exact peripheral port map are claim tables too, but three role instances rather than one (raw address before the
+board, raw address after the board, decoded port): the board decode is not yet expressed as claims, so the single
+table and `Read` / `Write` arrive with the card declarations of SL-4. The Beta-128 exception stays in the override.
+
 ## 5. SlotManager: plan and apply
 
 ```cpp

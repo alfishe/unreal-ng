@@ -10,9 +10,10 @@
 /// access path: a port no device claims costs one bit test (IsClaimed), a claimed port one scan of the bucket of its
 /// low byte. Nothing on the access path allocates.
 ///
-/// SL-2 serves the existing full-decode observers (PortDecoder::RegisterFullDecodePort / ...LowBytePort) from it
-/// through the legacy lookups FirstMatch / FindByMask; the full cycle resolution (Write / Read) is used by machines
-/// from SL-3 on, when the old dispatch rules move into it.
+/// PortDecoder keeps three role instances (SL-3): the full-decode observers (raw port, before the board decode), the
+/// self-decoding devices (raw port, after it) and the exact peripheral port map (decoded port), served through the
+/// lookups FirstMatch / FindByMask / ForEachMatch; the full cycle resolution (Write / Read) is used by machines from
+/// SL-4 on, when the cards declare their claims.
 
 // Qt defines `slots` and `signals` as macros; this header reaches Qt translation units through portdecoder.h
 #pragma push_macro("slots")
