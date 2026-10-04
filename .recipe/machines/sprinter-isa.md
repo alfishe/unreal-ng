@@ -27,7 +27,9 @@ population refuses to load on another).
 
 - Machine config `configs/sprinter/unreal.ini`, section `[ISA]`: `Slot1=` / `Slot2=` with `NONE | ZXBUS | RAM |
   NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552`; a network card adds `Slot2Chip=RTL8019AS`, `Slot2Base=0x300`
-  (write `0x300` or `300h`: a `#` starts an INI comment), `Slot2Irq=3`, `Slot2Mac=auto`.
+  (write `0x300` or `300h`: a `#` starts an INI comment), `Slot2Irq=3`, `Slot2Mac=auto`. `EL3C509B` (the 3Com
+  3C509B, built: [sprinter-network.md](sprinter-network.md#3com-3c509b-with-the-sprinter-3c509b-network-kit)) takes
+  `Slot2Chip=TPO | TP` and a base in steps of `0x10`; its report adds `resources.id_port` (`#100-#1F0`).
   `SPRINTERESP` (the Wi-Fi card, built: `#3E8` and IRQ 3 fixed by the board) takes `SlotNPeer=AT` (its 16550's line)
   and `SlotNMac=`; it decodes A13-A3 without AEN, so `z80_access.io` reads "any #9FBD AEN" for it
   ([sprinter-network.md](sprinter-network.md#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit)).

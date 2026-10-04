@@ -111,7 +111,45 @@ bool ParseChip(const std::string& text, Ne2000Chip& chip)
     return true;
 }
 
-bool ParseNe2000Base(const std::string& text, uint16_t& base)
+const char* El3ChipName(El3Chip chip)
+{
+    return chip == El3Chip::Tp ? "3C509B-TP" : "3C509B-TPO";
+}
+
+bool ParseEl3Chip(const std::string& text, El3Chip& chip)
+{
+    std::string upper = Upper(text);
+    for (const char* prefix : {"3C509B-", "3C509B", "EL3-"})
+    {
+        const size_t n = std::strlen(prefix);
+        if (upper.compare(0, n, prefix) == 0 && upper.size() > n)
+        {
+            upper.erase(0, n);
+            break;
+        }
+    }
+    if (upper == "TPO")
+        chip = El3Chip::Tpo;
+    else if (upper == "TP")
+        chip = El3Chip::Tp;
+    else
+        return false;
+    return true;
+}
+
+std::string SlotChipName(const SlotConfig& slot)
+{
+    switch (static_cast<CardKind>(slot.kind))
+    {
+        case CardKind::Ne2000: return ChipName(static_cast<Ne2000Chip>(slot.chip));
+        case CardKind::El3c509b: return El3ChipName(static_cast<El3Chip>(slot.chip));
+        default: return {};
+    }
+}
+
+namespace
+{
+bool ParseIoBase(const std::string& text, unsigned step, uint16_t& base)
 {
     std::string t = Upper(text);
     int radix = 10;
@@ -134,10 +172,21 @@ bool ParseNe2000Base(const std::string& text, uint16_t& base)
         return false;
     char* end = nullptr;
     const unsigned long value = std::strtoul(t.c_str(), &end, radix);
-    if (!end || *end != '\0' || value < 0x200 || value > 0x3E0 || (value & 0x1F) != 0)
+    if (!end || *end != '\0' || value < 0x200 || value > 0x3E0 || (value & (step - 1)) != 0)
         return false;
     base = static_cast<uint16_t>(value);
     return true;
+}
+}  // namespace
+
+bool ParseNe2000Base(const std::string& text, uint16_t& base)
+{
+    return ParseIoBase(text, 0x20, base);
+}
+
+bool ParseSlotBase(const std::string& text, CardKind kind, uint16_t& base)
+{
+    return ParseIoBase(text, kind == CardKind::El3c509b ? 0x10 : 0x20, base);
 }
 
 bool ParseMac(const std::string& text, SlotConfig& slot)
@@ -207,8 +256,7 @@ bool KindAvailable(CardKind kind, std::string* why)
         case CardKind::Ne2000:
             break;   // network phase SN1: NetworkManager builds the board, the Sprinter fits it
         case CardKind::El3c509b:
-            reason = "the 3C509B card is network phase SN5, not built yet";
-            break;
+            break;   // network phase SN5: NetworkManager builds the EtherLink3, the Sprinter fits it
         case CardKind::SprinterEsp:
             break;   // network phase SN3: NetworkManager builds the PcSerialCard, the Sprinter fits it
         case CardKind::Modem:

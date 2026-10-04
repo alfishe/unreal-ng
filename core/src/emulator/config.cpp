@@ -404,21 +404,36 @@ bool Config::ParseConfig(IniFile& inimanager)
 				MLOGWARNING("Config: unknown [ISA] %s=%s (NONE | ZXBUS | RAM | NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552), %s kept",
 				            prefix.c_str(), v, sprinterisa::KindName(static_cast<sprinterisa::CardKind>(slot.kind)));
 		}
+		const auto slotKind = static_cast<sprinterisa::CardKind>(slot.kind);
+		if (slotKind == sprinterisa::CardKind::El3c509b)
+			slot.chip = static_cast<uint8_t>(sprinterisa::El3Chip::Tpo);   // the NE2000 default's number means nothing here
 		if (const char* v = inimanager.GetValue("ISA", (prefix + "Chip").c_str(), nullptr))
 		{
-			sprinterisa::Ne2000Chip chip;
-			if (sprinterisa::ParseChip(v, chip))
-				slot.chip = static_cast<uint8_t>(chip);
+			if (slotKind == sprinterisa::CardKind::El3c509b)
+			{
+				sprinterisa::El3Chip chip;
+				if (sprinterisa::ParseEl3Chip(v, chip))
+					slot.chip = static_cast<uint8_t>(chip);
+				else
+					MLOGWARNING("Config: unknown [ISA] %sChip=%s (EL3C509B: TPO | TP), TPO used", prefix.c_str(), v);
+			}
 			else
-				MLOGWARNING("Config: unknown [ISA] %sChip=%s (RTL8019AS | UM9003 | NE1000), RTL8019AS used", prefix.c_str(), v);
+			{
+				sprinterisa::Ne2000Chip chip;
+				if (sprinterisa::ParseChip(v, chip))
+					slot.chip = static_cast<uint8_t>(chip);
+				else
+					MLOGWARNING("Config: unknown [ISA] %sChip=%s (RTL8019AS | UM9003 | NE1000), RTL8019AS used", prefix.c_str(), v);
+			}
 		}
 		if (const char* v = inimanager.GetValue("ISA", (prefix + "Base").c_str(), nullptr))
 		{
 			uint16_t base = 0;
-			if (sprinterisa::ParseNe2000Base(v, base))
+			if (sprinterisa::ParseSlotBase(v, slotKind, base))
 				slot.base = base;
 			else
-				MLOGWARNING("Config: [ISA] %sBase=%s: #200..#3E0 in steps of #20, #%03X kept", prefix.c_str(), v, slot.base);
+				MLOGWARNING("Config: [ISA] %sBase=%s: #200..#3E0 in steps of #%02X, #%03X kept", prefix.c_str(), v,
+				            slotKind == sprinterisa::CardKind::El3c509b ? 0x10 : 0x20, slot.base);
 		}
 		slot.irq = static_cast<uint8_t>(inimanager.GetLongValue("ISA", (prefix + "Irq").c_str(), slot.irq) & 0x0F);
 		if (const char* v = inimanager.GetValue("ISA", (prefix + "Mac").c_str(), nullptr))

@@ -45,7 +45,7 @@ deleted. Take one only on the owner's request.
   the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
   zero-window probes; PIO IRQ lines I4 **done 2026-10-03** (branch `sprinter-isa-i4`); the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
   on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, **done 2026-10-03**, branch `sprinter-esp-sn3`: `[ISA] Slot1=SPRINTERESP`, the ESP kit's `NETUP` / `PING` / `WGET` / `UNETESP.DLL` end to end
-  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line reaches PB0 since ISA I4), modem / SprinterSerial (SN4, ISA I4 built), 3C509B (SN5)
+  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line reaches PB0 since ISA I4), modem / SprinterSerial (SN4, ISA I4 built), 3C509B (SN5, **done 2026-10-03**, branch `sprinter-sn5-3c509b`: `[ISA] Slot2=EL3C509B`, the 3C509B kit's `EL3INFO` / `IFUP` / `PING` / `NSLOOKUP` / `WGET` end to end, blob 45 v2; open: `UNET509B.DLL`, FTP / NTP / TFTP / TELNET not yet run)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
   through the shared MouseManager.

@@ -317,3 +317,39 @@ TEST(NetworkPanelModel_Test, SprinterEspRowAndItsLine)
     EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("esp_chip"), std::string("esp8266-at221"))),
               changes.end());
 }
+
+// The 3C509B in a slot (network phase SN5): its 16 registers, the ID port and isolation state, window, FIFOs, link
+TEST(NetworkPanelModel_Test, El3c509bRow)
+{
+    StateNode network = StateNode::Object();
+    StateNode slots = StateNode::Array();
+    StateNode el3 = StateNode::Object();
+    el3["id"] = "isa2";
+    el3["label"] = "ISA slot 2 (J7), page #D6";
+    el3["configured"] = "el3c509b";
+    el3["card"] = "el3c509b";
+    el3["chip"] = "3C509B-TPO";
+    el3["base"] = "#300";
+    el3["id_port"] = "#110";
+    el3["ids"] = "ID_WAIT, sequence 0/255, tag 0";
+    el3["activated"] = true;
+    el3["irq"] = 3;
+    el3["mac"] = "02:53:50:00:00:02";
+    el3["link"] = "ethernet-gateway";
+    el3["link_state"] = "link pass";
+    el3["window"] = 1;
+    StateNode fifo = StateNode::Object();
+    fifo["tx_packets"] = static_cast<uint64_t>(0);
+    fifo["tx_free"] = 3068;
+    fifo["rx_packets"] = static_cast<uint64_t>(1);
+    fifo["rx_free"] = 5048;
+    el3["fifo"] = fifo;
+    slots.push(el3);
+    network["slots"] = slots;
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].line, "EL3C509B 3C509B-TPO, I/O #300-#30F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway, "
+                            "ID port #110 (ID_WAIT, sequence 0/255, tag 0), active, window 1, TX FIFO 0 pkt / 3068 free, "
+                            "RX FIFO 1 pkt / 5048 free, link pass");
+}

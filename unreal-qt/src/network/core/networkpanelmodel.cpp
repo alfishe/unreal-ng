@@ -316,7 +316,8 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const Stat
             {
                 const unsigned first = static_cast<unsigned>(std::strtoul(base.c_str() + 1, nullptr, 16));
                 char range[32];
-                const unsigned size = card == "sprinteresp" ? 0x07 : 0x1F;   // a 16550's 8 registers / the NE2000's 32
+                // a 16550's 8 registers / the 3C509B's 16 / the NE2000's 32
+                const unsigned size = card == "sprinteresp" ? 0x07 : card == "el3c509b" ? 0x0F : 0x1F;
                 std::snprintf(range, sizeof(range), ", I/O #%03X-#%03X", first, first + size);
                 row.line += range;
             }
@@ -344,6 +345,18 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const Stat
                         row.line += ", " + std::to_string(links->items.size()) + " link(s)";
                 }
                 row.line += ", MAC " + text(*esp, "mac");
+            }
+            if (card == "el3c509b")
+            {
+                // The 3C509B at a glance: its ID port and isolation state, the window, both FIFOs, the link
+                row.line += ", ID port " + text(slot, "id_port") + " (" + text(slot, "ids") + ")";
+                const StateNode* activated = slot.find("activated");
+                row.line += activated && activated->kind == StateNode::Kind::Bool && activated->b ? ", active" : ", not active";
+                row.line += ", window " + text(slot, "window");
+                if (const StateNode* fifo = slot.find("fifo"))
+                    row.line += ", TX FIFO " + text(*fifo, "tx_packets") + " pkt / " + text(*fifo, "tx_free") + " free, RX FIFO " +
+                                text(*fifo, "rx_packets") + " pkt / " + text(*fifo, "rx_free") + " free";
+                row.line += ", " + text(slot, "link_state");
             }
             if (!text(slot, "stalled").empty())
                 row.line += " - STALLED (the ISA cycle hangs until RESET)";

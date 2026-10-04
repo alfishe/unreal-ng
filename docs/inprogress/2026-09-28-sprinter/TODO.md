@@ -290,7 +290,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
 - Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
-  `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; ISA I4 PIO IRQ lines **built 2026-10-03**, branch `sprinter-isa-i4`, ISA tdd §14), SN5 3C509B (M), SN6
+  `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; ISA I4 PIO IRQ lines **built 2026-10-03**, branch `sprinter-isa-i4`, ISA tdd §14), SN5 3C509B (M; **built 2026-10-03**, branch `sprinter-sn5-3c509b`, the 3C509B kit end to end), SN6
   host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and

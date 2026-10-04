@@ -26,6 +26,8 @@
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
+#include "emulator/io/network/ethernet/etherlink3.h"
+#include "emulator/io/network/ethernet/ethernetcard.h"
 #include "emulator/io/network/ethernet/ne2000board.h"
 #include "emulator/io/network/pcserialcard.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
@@ -110,14 +112,16 @@ public:
     struct SlotCard
     {
         std::string slotId;                 ///< "isa2"
-        std::unique_ptr<Ne2000Board> ne2000;
+        std::unique_ptr<IEthernetCard> ethernet;   ///< a frame-level card (NE2000, 3C509B)
         std::unique_ptr<PcSerialCard> serial;   ///< a UART card (the SprinterESP)
     };
     /// The UART card in this slot ("isa1"), or null
     PcSerialCard* SerialCard(const std::string& slotId) const;
     const std::vector<SlotCard>& SlotCards() const { return _slotCards; }
     /// The frame card with this port key ("isa2.eth"), or null
-    Ne2000Board* EthernetCard(const std::string& portKey) const;
+    IEthernetCard* EthernetCard(const std::string& portKey) const;
+    /// Whether a slot card kind is a frame-level Ethernet card ("ne2000", "el3c509b") - the gateway's kinds
+    static bool IsFrameCardKind(const std::string& kind) { return kind == "ne2000" || kind == "el3c509b"; }
     /// The switch + router of the frame-level cards (null without one, or with the network off)
     EthernetGateway* Gateway() const { return _gateway.get(); }
 
@@ -238,7 +242,7 @@ private:
         uint8_t atm2IoEspAddress = 0xF0;  ///< its bus address
         bool zifi = false;                ///< the AVR firmware's ZiFi block (with the EvoAvr port)
         std::string zifiPeer;             ///< ComPortSpec of its UART's peer
-        /// Network cards for expansion slots (the NE2000 so far)
+        /// Network cards for expansion slots (NE2000, 3C509B, SprinterESP)
         struct SlotCard
         {
             std::string slotId, kind, chip, portKey;

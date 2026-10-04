@@ -329,6 +329,19 @@ StateNode SprinterIsaBus::Describe() const
         }
         else
             resources["io"] = "none";
+        // Addresses beside the range (the 3C509B's ID port): each with its decode step and what the card does there
+        if (s.card)
+        {
+            for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
+            {
+                StateNode one = StateNode::Object();
+                one["io"] = Hex(aux.first, 3) + "-" + Hex(aux.last, 3) + (aux.step > 1 ? " step " + Hex(aux.step, 2) : std::string());
+                one["z80"] = "window 3 page " + Hex(SlotPage(Space::Io, n), 2) + ", #9FBD A15-A14 = 0: CPU " +
+                             Hex(0xC000 | (aux.first & 0x3FFF), 4) + "-" + Hex(0xC000 | (aux.last & 0x3FFF), 4);
+                one["note"] = aux.note;
+                resources[aux.name] = one;
+            }
+        }
         if (s.card && s.card->MemRange(first, last))
         {
             resources["memory"] = Hex(first, 5) + "-" + Hex(last, 5);
@@ -385,6 +398,8 @@ StateNode SprinterIsaBus::Describe() const
             summary += s.card->Kind();
             if (s.card->IoRange(first, last))
                 summary += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
+            for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
+                summary += " " + aux.name + " " + Hex(aux.first, 3) + "-" + Hex(aux.last, 3);
             if (s.card->IrqLine() >= 0)
                 summary += " IRQ " + std::to_string(s.card->IrqLine());
         }

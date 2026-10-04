@@ -86,9 +86,9 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     {
         if (!slot.networkCard)
             continue;
-        if (slot.configured != "ne2000" && slot.configured != "sprinteresp")
+        if (!IsFrameCardKind(slot.configured) && slot.configured != "sprinteresp")
         {
-            const std::string why = slot.configured + ": not built yet (network phases SN4-SN5)";
+            const std::string why = slot.configured + ": not built yet (network phase SN4)";
             plan.notes.push_back(slot.id + ": " + why);
             continue;
         }
@@ -117,7 +117,7 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     }
     plan.ethernetLink = false;
     for (const Plan::SlotCard& card : plan.slotCards)
-        plan.ethernetLink = plan.ethernetLink || (networkOn && card.kind == "ne2000");
+        plan.ethernetLink = plan.ethernetLink || (networkOn && IsFrameCardKind(card.kind));
 
     if (!networkOn)
         return plan;
@@ -377,7 +377,7 @@ void NetworkManager::Refit()
         std::vector<Plan::SlotCard> out;
         for (const Plan::SlotCard& c : p.slotCards)
         {
-            if (c.kind == "ne2000")
+            if (IsFrameCardKind(c.kind))
                 out.push_back(c);
         }
         return out;
@@ -436,12 +436,12 @@ PcSerialCard* NetworkManager::SerialCard(const std::string& slotId) const
     return nullptr;
 }
 
-Ne2000Board* NetworkManager::EthernetCard(const std::string& portKey) const
+IEthernetCard* NetworkManager::EthernetCard(const std::string& portKey) const
 {
     for (const SlotCard& c : _slotCards)
     {
-        if (c.ne2000 && c.ne2000->PortKey() == portKey)
-            return c.ne2000.get();
+        if (c.ethernet && c.ethernet->PortKey() == portKey)
+            return c.ethernet.get();
     }
     return nullptr;
 }
@@ -451,10 +451,10 @@ void NetworkManager::FitSlotCards(const Plan& plan)
     // Kept across the refit (the Ethernet boards): only the cable is new
     for (SlotCard& card : _slotCards)
     {
-        if (card.ne2000 && _gateway)
+        if (card.ethernet && _gateway)
         {
-            card.ne2000->SetLink(_gateway.get());
-            _gateway->Attach(card.ne2000.get());
+            card.ethernet->SetLink(_gateway.get());
+            _gateway->Attach(card.ethernet.get());
         }
     }
     std::vector<std::pair<std::string, Uart16550::State>> keep;
@@ -506,27 +506,41 @@ void NetworkManager::FitSlotCards(const Plan& plan)
                 _slotCards.push_back(std::move(card));
                 continue;
             }
-            Ne2000Board::Settings settings;
-            settings.variant = want.chip == "UM9003"   ? Ne2000Board::Variant::Um9003
-                               : want.chip == "NE1000" ? Ne2000Board::Variant::Ne1000
-                                                       : Ne2000Board::Variant::Rtl8019as;
-            settings.base = want.base;
-            settings.irq = want.irq;
-            settings.mac = want.mac;
-            settings.key = want.portKey;
             SlotCard card;
             card.slotId = want.slotId;
-            card.ne2000 = std::make_unique<Ne2000Board>(settings, clock);
+            if (want.kind == "el3c509b")
+            {
+                // The 3Com EtherLink III: its EEPROM carries the slot's base, IRQ and MAC (network tdd §9)
+                EtherLink3::Settings settings;
+                settings.variant = want.chip == "3C509B-TP" ? EtherLink3::Variant::Tp : EtherLink3::Variant::Tpo;
+                settings.base = want.base;
+                settings.irq = want.irq;
+                settings.mac = want.mac;
+                settings.key = want.portKey;
+                card.ethernet = std::make_unique<EtherLink3>(settings, clock);
+            }
+            else
+            {
+                Ne2000Board::Settings settings;
+                settings.variant = want.chip == "UM9003"   ? Ne2000Board::Variant::Um9003
+                                   : want.chip == "NE1000" ? Ne2000Board::Variant::Ne1000
+                                                           : Ne2000Board::Variant::Rtl8019as;
+                settings.base = want.base;
+                settings.irq = want.irq;
+                settings.mac = want.mac;
+                settings.key = want.portKey;
+                card.ethernet = std::make_unique<Ne2000Board>(settings, clock);
+            }
             std::string why;
-            if (!slot.fit || !slot.fit(card.ne2000.get(), why))
+            if (!slot.fit || !slot.fit(card.ethernet.get(), why))
             {
                 _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
                 continue;
             }
             if (_gateway)
             {
-                card.ne2000->SetLink(_gateway.get());
-                _gateway->Attach(card.ne2000.get());
+                card.ethernet->SetLink(_gateway.get());
+                _gateway->Attach(card.ethernet.get());
             }
             _slotCards.push_back(std::move(card));
         }
@@ -577,8 +591,8 @@ void NetworkManager::Unplug(bool keepSlotCards)
         _context->pEthernetGateway = nullptr;
     for (SlotCard& card : _slotCards)
     {
-        if (card.ne2000)
-            card.ne2000->SetLink(nullptr);
+        if (card.ethernet)
+            card.ethernet->SetLink(nullptr);
     }
     _gateway.reset();
     // UART cards: their 16550 registers are kept for the card fitted next; the peer goes with the network
@@ -725,8 +739,8 @@ void NetworkManager::OnFrame()
         Refit();
     for (SlotCard& card : _slotCards)
     {
-        if (card.ne2000)
-            card.ne2000->OnFrame();
+        if (card.ethernet)
+            card.ethernet->OnFrame();
     }
     if (_network)
     {
@@ -941,11 +955,11 @@ void NetworkManager::UpdateStatus()
             s.configured = slot.configured;
             for (const SlotCard& card : _slotCards)
             {
-                if (card.slotId == slot.id && card.ne2000)
+                if (card.slotId == slot.id && card.ethernet)
                 {
-                    s.card = card.ne2000->Kind();
+                    s.card = card.ethernet->Kind();
                     s.details = StateNode::Object();
-                    card.ne2000->Describe(s.details);
+                    card.ethernet->Describe(s.details);
                 }
                 if (card.slotId == slot.id && card.serial)
                 {

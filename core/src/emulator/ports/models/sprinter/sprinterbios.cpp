@@ -135,8 +135,12 @@ bool ApplyToConfig(CONFIG& config, const Options& options, std::string& error)
         config.sprinter.accel_int_suspend = static_cast<uint8_t>(options.accelIntSuspend);
     for (int n = 0; n < 2; n++)
     {
-        if (options.isaSlot[n] >= 0)
-            config.sprinter.isa.slot[n].kind = static_cast<uint8_t>(options.isaSlot[n]);
+        if (options.isaSlot[n] < 0)
+            continue;
+        sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[n];
+        if (slot.kind != static_cast<uint8_t>(options.isaSlot[n]))
+            slot.chip = 0;   // the chip number belongs to the kind: another kind starts from its default chip
+        slot.kind = static_cast<uint8_t>(options.isaSlot[n]);
     }
     return true;
 }
