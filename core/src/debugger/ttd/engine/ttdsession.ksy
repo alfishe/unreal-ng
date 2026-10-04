@@ -548,6 +548,37 @@ types:
       - id: version
         type: u8
 
+  payload_frame_stream:
+    doc: |
+      Streams 0x0100-0x013F (ancillary, D19): the copies a frame-boundary
+      stream took in the part's frames. Each is the XOR with the stream's
+      previous copy in the file, zstd-compressed; a full copy at least every 50
+      frames, on a size change and at the file's start. Stream 0x0100 is the
+      screenshot: u2 width, u2 height, u1 video mode, then the framebuffer (RGBA)
+    seq:
+      - id: count
+        type: vlq
+      - id: copies
+        type: frame_copy
+        repeat: expr
+        repeat-expr: count.value
+
+  frame_copy:
+    seq:
+      - id: frame_delta
+        type: vlq
+        doc: from the part's first frame
+      - id: kind
+        type: u1
+        doc: 0 full, 1 the XOR with the previous copy
+      - id: raw_size
+        type: vlq
+      - id: packed_size
+        type: vlq
+      - id: packed
+        size: packed_size.value
+        doc: a zstd frame of raw_size bytes
+
   payload_write_journal:
     doc: |
       Stream 7 (ancillary, D40), with the session's last part: the records in

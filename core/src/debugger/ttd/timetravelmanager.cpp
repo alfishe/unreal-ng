@@ -3624,6 +3624,31 @@ void TimeTravelManager::SetShadowEngine(TimeTravelEngine* engine)
     _shadowRescan = true;
 }
 
+void TimeTravelManager::RegisterScreenshotStream(TimeTravelEngine& engine)
+{
+    // Frame-boundary stream 0 (D19, phase-4 TDD §5.4): the final picture of
+    // the frame that just ended, the one a seek to this frame shows. Off
+    // until switched on: a frame with it off costs one mask check
+    if (engine.Streams().IsRegistered(kScreenshotStream))
+        return;
+    engine.Streams().Register(kScreenshotStream, "screenshot", [this, &engine](const TTDPosition& at) {
+        Screen* screen = _context ? _context->pScreen : nullptr;
+        if (!screen)
+            return;
+        const FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
+        if (!fb.memoryBuffer || fb.memoryBufferSize == 0)
+            return;
+        // Width, height and video mode first: a mode change needs no special case
+        std::vector<uint8_t>& copy = _screenshotScratch;
+        copy.resize(5 + fb.memoryBufferSize);
+        std::memcpy(copy.data(), &fb.width, 2);
+        std::memcpy(copy.data() + 2, &fb.height, 2);
+        copy[4] = static_cast<uint8_t>(fb.videoMode);
+        std::memcpy(copy.data() + 5, fb.memoryBuffer, fb.memoryBufferSize);
+        engine.AddFrameStreamCopy(kScreenshotStream, at.frame, copy.data(), copy.size());
+    });
+}
+
 void TimeTravelManager::NoteFact(const TTDEvent& ev)
 {
     if (_state != TTDSessionState::Recording || _inReplayMode || !_shadowEngine)
@@ -3818,6 +3843,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         _shadowEvents.external = _externalEvents.Size();
         _shadowEvents.facts = 0;
         _shadowFacts.clear();
+        RegisterScreenshotStream(engine);
         if (_context->rzxPlayer)
         {
             // The session starts inside an RZX playback

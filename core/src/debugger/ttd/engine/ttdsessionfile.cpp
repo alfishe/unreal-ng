@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "debugger/ttd/engine/ttdbytes.h"
+#include "debugger/ttd/ttdcompression.h"
 #include "debugger/ttd/timetravelengine.h"
 
 namespace ttd
@@ -162,6 +163,8 @@ struct Range
 
 bool TTDSessionFile::KnownStream(uint16_t id)
 {
+    if (id >= kFrameStreamFirst && id <= kFrameStreamLast)
+        return true;
     for (const TTDStreamDesc& s : Streams())
         if (s.id == id)
             return true;
@@ -218,6 +221,10 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
     header.uuid = params.uuid;
     header.createdMicros = params.createdMicros;
     header.streams = Streams();
+    for (uint32_t id = 0; id < TTDStreamRegistry::kMaxStreams; ++id)
+        if (e._streams.IsRegistered(id))
+            header.streams.push_back(
+                {static_cast<uint16_t>(kFrameStreamFirst + id), 1, TTDStreamKind::Ancillary, e._streams.Name(id)});
     {
         TTDByteWriter w;
         w.U16(kTablesVersion);
@@ -251,7 +258,16 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
     return true;
 }
 
-bool TTDSessionWriter::Collect(const TimeTravelEngine& e)
+bool TTDSessionWriter::Collect(TimeTravelEngine& e)
+{
+    const bool ok = CollectParts(e);
+    // Written through: the stream copies of the queued parts are the writer's now
+    if (_next < e.CheckpointCount() && e.HasCheckpoint(_next))
+        e.DropFrameStreamCopiesBefore(e.CpAt(_next).position.frame);
+    return ok;
+}
+
+bool TTDSessionWriter::CollectParts(const TimeTravelEngine& e)
 {
     const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
     while (!Failed() && _next + perPart < std::min(_end, e.CheckpointCount()))
@@ -279,7 +295,7 @@ bool TTDSessionWriter::Finish(const TimeTravelEngine& e, size_t end)
         return !Failed();
     _finished = true;
     _end = std::min(end, e.CheckpointCount());
-    Collect(e);
+    CollectParts(e);
     const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
     while (!Failed() && _next < _end)
     {
@@ -346,22 +362,28 @@ void TTDSessionWriter::Run()
 
 void TTDSessionWriter::Write(PartJob& job)
 {
-    if (Failed())
+    // Parts already queued are written even after the writer stopped taking
+    // new ones (it fell behind): their data is whole. Only a write error stops it
+    if (_ioFailed.load())
         return;
+    auto ioFail = [this](const char* why) {
+        _ioFailed = true;
+        Fail(why);
+    };
     if (job.finalize)
     {
         if (!_writer.Finalize())
-            Fail("the index could not be written");
+            ioFail("the index could not be written");
         return;
     }
     for (const auto& [stream, bytes] : job.records)
         if (!_writer.AddRecord(stream, bytes))
         {
-            Fail("a write failed (disk full or device gone)");
+            ioFail("a write failed (disk full or device gone)");
             return;
         }
     if (!_writer.EndPart(job.end, true))
-        Fail("a write failed (disk full or device gone)");
+        ioFail("a write failed (disk full or device gone)");
 }
 
 bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job)
@@ -553,6 +575,47 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     bool ok = add(kEvents, ev, count == 0) && add(kConfiguration, config, _nextConfig == configFrom && media.empty()) &&
               add(kBusReads, reads, rr.to == rr.from) && add(kBusWrites, writes, wr.to == wr.from) &&
               add(kBusVectors, vectors, vr.to == vr.from) && add(kMediaReads, mediaReads, mr.to == mr.from);
+
+    // Frame-boundary stream copies of the part's frames (D19): each the XOR
+    // with the stream's previous copy, zstd; a full copy at least every 50
+    // frames, on a size change and at the file's start
+    const uint64_t streamUntil = atSessionEnd ? UINT64_MAX : e.CpAt(last).position.frame;
+    for (const auto& [stream, copies] : e._streamCopies)
+    {
+        TTDByteWriter sw;
+        size_t n = 0;
+        for (const TimeTravelEngine::FrameStreamCopy_& copy : copies)
+            n += copy.frame >= head.position.frame && copy.frame < streamUntil;
+        if (n == 0)
+            continue;
+        sw.Varint(n);
+        std::vector<uint8_t>& previous = _streamPrevious[stream];
+        uint32_t& sinceFull = _streamSinceFull[stream];
+        std::vector<uint8_t> diff;
+        for (const TimeTravelEngine::FrameStreamCopy_& copy : copies)
+        {
+            if (copy.frame < head.position.frame || copy.frame >= streamUntil)
+                continue;
+            const bool full = previous.size() != copy.bytes.size() || sinceFull + 1 >= kFrameStreamFullEvery;
+            const uint8_t* source = copy.bytes.data();
+            if (!full)
+            {
+                diff.resize(copy.bytes.size());
+                for (size_t k = 0; k < diff.size(); ++k)
+                    diff[k] = static_cast<uint8_t>(copy.bytes[k] ^ previous[k]);
+                source = diff.data();
+            }
+            const std::vector<uint8_t> packed = codec::Compress(source, copy.bytes.size());
+            sw.Varint(copy.frame - head.position.frame);
+            sw.U8(full ? 0 : 1);
+            sw.Varint(copy.bytes.size());
+            sw.Varint(packed.size());
+            sw.Bytes(packed.data(), packed.size());
+            previous = copy.bytes;
+            sinceFull = full ? 0 : sinceFull + 1;
+        }
+        job.records.emplace_back(static_cast<uint16_t>(kFrameStreamFirst + stream), std::move(sw.bytes));
+    }
 
     // The write journal (derived, D40) goes whole with the last part
     if (ok && lastPart && atSessionEnd && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
@@ -951,6 +1014,70 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
     if (reportOut)
         *reportOut = std::move(report);
     return any;
+}
+
+bool TTDSessionFile::ReadFrameStream(const ITTDByteSource& source, uint32_t stream, uint64_t frame,
+                                     std::vector<uint8_t>& out, std::string& error)
+{
+    TTDContainerReader reader;
+    if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
+        return false;
+    const uint16_t streamId = static_cast<uint16_t>(kFrameStreamFirst + stream);
+    std::vector<uint8_t> current, bytes, raw;
+    bool found = false;
+    for (const TTDPartRef& part : reader.Parts())
+    {
+        if (part.firstFrame > frame)
+            break;
+        if (!part.extra.empty() && (part.extra[0] & kPartFileStart))
+            current.clear();
+        for (const TTDRecordRef& record : part.records)
+        {
+            if (record.streamId != streamId)
+                continue;
+            if (!reader.ReadRecord(record, bytes, &error))
+                return false;
+            TTDByteReader r(bytes);
+            uint64_t n = 0;
+            if (!r.Varint(n))
+            {
+                error = "damaged frame stream record";
+                return false;
+            }
+            for (uint64_t k = 0; k < n; ++k)
+            {
+                uint64_t delta = 0, rawSize = 0, packedSize = 0;
+                uint8_t kind = 0;
+                const uint8_t* packed = nullptr;
+                if (!r.Varint(delta) || !r.U8(kind) || !r.Varint(rawSize) || !r.Varint(packedSize) ||
+                    !r.View(packed, static_cast<size_t>(packedSize)) || rawSize > (64u << 20) ||
+                    (kind == 1 && current.size() != rawSize))
+                {
+                    error = "damaged frame stream record";
+                    return false;
+                }
+                raw.resize(static_cast<size_t>(rawSize));
+                if (rawSize && !codec::Decompress(packed, static_cast<size_t>(packedSize), raw.size(), raw.data()))
+                {
+                    error = "damaged frame stream copy";
+                    return false;
+                }
+                if (kind == 1)
+                    for (size_t b = 0; b < raw.size(); ++b)
+                        raw[b] ^= current[b];
+                current = raw;
+                if (part.firstFrame + delta == frame)
+                {
+                    out = current;
+                    found = true;
+                }
+            }
+        }
+        if (found)
+            return true;
+    }
+    error = "frame " + std::to_string(frame) + " has no copy of this stream (not recorded)";
+    return false;
 }
 
 /// endregion </Load>

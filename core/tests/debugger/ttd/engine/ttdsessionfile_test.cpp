@@ -549,6 +549,7 @@ TEST(TTDSessionWriter_Test, ASlowDiskNeverHoldsCapture)
     TTDContainerReader reader;
     ASSERT_TRUE(reader.Open(source, error)) << error;
     EXPECT_GT(reader.Parts().size(), 0u) << "the parts queued before the limit were written";
+    EXPECT_TRUE(reader.Finalized()) << "a writer that fell behind still finishes its file";
 }
 
 /// A write error (disk full): the writer stops with the reason, and the file
@@ -655,7 +656,7 @@ FixtureCounts CountsOf(const std::vector<uint8_t>& bytes)
     TTDMemorySource source(bytes);
     TTDContainerReader reader;
     std::string error;
-    EXPECT_TRUE(reader.Open(source, error, [](uint16_t id) { return id < 0x100; })) << error;
+    EXPECT_TRUE(reader.Open(source, error, TTDSessionFile::KnownStream)) << error;
     n.parts = reader.Parts().size();
     n.finalized = reader.Finalized();
     TimeTravelEngine engine;
@@ -697,7 +698,7 @@ std::vector<uint8_t> SyntheticFixture()
 }
 
 /// The same with a record of an ancillary stream this version does not know
-/// (id 0x0100, a frame-boundary stream to come): readers skip it
+/// (id 0x01FE): readers skip it
 std::vector<uint8_t> AncillaryFixture()
 {
     const std::vector<uint8_t> base = SyntheticFixture();
@@ -706,7 +707,7 @@ std::vector<uint8_t> AncillaryFixture()
     std::string error;
     EXPECT_TRUE(reader.Open(source, error));
     TTDContainerHeader header = reader.Header();
-    header.streams.push_back({0x0100, 1, TTDStreamKind::Ancillary, "screenshot"});
+    header.streams.push_back({0x01FE, 1, TTDStreamKind::Ancillary, "future"});
     TTDMemorySink sink;
     TTDContainerWriter writer;
     EXPECT_TRUE(writer.Begin(sink, header, &error));
@@ -719,7 +720,7 @@ std::vector<uint8_t> AncillaryFixture()
             writer.AddStoredRecord(r.streamId, r.flags, stored.data(), stored.size(), r.rawSize);
         }
         const std::vector<uint8_t> picture(64, static_cast<uint8_t>(part.index));
-        writer.AddRecord(0x0100, picture);
+        writer.AddRecord(0x01FE, picture);
         writer.EndPart({part.firstFrame, part.frameCount, part.branch, part.dependencies, part.extra});
     }
     EXPECT_TRUE(writer.Finalize());
@@ -804,3 +805,98 @@ TEST_F(TTDSessionFile_Test, CommittedFixturesStillLoad)
 }
 
 /// endregion </Fixtures for the analyzer>
+
+/// region <Frame-boundary streams (Phase 4 Step 4)>
+
+namespace
+{
+/// The picture a stream would copy at @p frame: 2 KB, a few bytes moving per frame
+std::vector<uint8_t> Picture(uint64_t frame)
+{
+    std::vector<uint8_t> p(2048);
+    for (size_t i = 0; i < p.size(); ++i)
+        p[i] = static_cast<uint8_t>(i / 64);
+    for (size_t k = 0; k < 8; ++k)
+        p[(frame * 37 + k * 251) % p.size()] = static_cast<uint8_t>(frame + k);
+    return p;
+}
+}  // namespace
+
+/// A stream switched on at frame 10 and off at 40: its copies are written
+/// through (they leave memory once their part is queued), every copy reads
+/// back from the file exactly, and the frames it was off answer "not recorded"
+TEST(TTDFrameStream_Test, CopiesAreWrittenThroughAndReadBack)
+{
+    ttdtest::Session s(ttdtest::Growable(0));
+    s.engine.Streams().Register(0, "picture", [&s](const TTDPosition& at) {
+        const std::vector<uint8_t> p = Picture(at.frame);
+        s.engine.AddFrameStreamCopy(0, at.frame, p.data(), p.size());
+    });
+    TTDMemorySink sink;
+    TTDSessionWriter writer;
+    std::string error;
+    s.Frame();
+    ASSERT_TRUE(writer.Begin(s.engine, sink, Params(5), error)) << error;
+    size_t peak = 0;
+    for (int i = 1; i < 60; ++i)
+    {
+        if (i == 10)
+            s.engine.Streams().SetEnabled(0, true);
+        if (i == 40)
+            s.engine.Streams().SetEnabled(0, false);
+        s.Frame();
+        ASSERT_TRUE(writer.Collect(s.engine)) << writer.Error();
+        size_t held = 0;
+        for (const auto& [id, copies] : s.engine.FrameStreamCopies())
+            held += copies.size();
+        peak = std::max(peak, held);
+    }
+    ASSERT_TRUE(writer.Finish(s.engine)) << writer.Error();
+    EXPECT_LE(peak, 10u) << "at most two parts' copies wait in memory";
+
+    TTDMemorySource source(sink.bytes);
+    std::vector<uint8_t> out;
+    for (uint64_t f = 10; f < 40; ++f)
+    {
+        ASSERT_TRUE(TTDSessionFile::ReadFrameStream(source, 0, f, out, error)) << "frame " << f << ": " << error;
+        ASSERT_EQ(out, Picture(f)) << "frame " << f;
+    }
+    EXPECT_FALSE(TTDSessionFile::ReadFrameStream(source, 0, 5, out, error));
+    EXPECT_NE(error.find("not recorded"), std::string::npos) << error;
+    EXPECT_FALSE(TTDSessionFile::ReadFrameStream(source, 0, 45, out, error));
+
+    // The stream is ancillary: the session loads without it, and the copies cost little
+    TTDContainerReader reader;
+    ASSERT_TRUE(reader.Open(source, error));
+    ASSERT_NE(reader.Header().Stream(sessionstream::kFrameStreamFirst), nullptr);
+    EXPECT_EQ(reader.Header().Stream(sessionstream::kFrameStreamFirst)->kind, TTDStreamKind::Ancillary);
+    uint64_t stored = 0;
+    for (const TTDPartRef& part : reader.Parts())
+        for (const TTDRecordRef& r : part.records)
+            if (r.streamId == sessionstream::kFrameStreamFirst)
+                stored += r.storedSize;
+    EXPECT_GT(stored, 0u);
+    EXPECT_LT(stored, 30u * 2048 / 4) << "differences compress: well under a quarter of the copies";
+    TimeTravelEngine loaded;
+    ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error)) << error;
+    EXPECT_EQ(loaded.CheckpointCount(), 60u);
+}
+
+/// No writer (no file): the copies stay in memory and read from there
+TEST(TTDFrameStream_Test, WithoutAFileCopiesStayInMemory)
+{
+    ttdtest::Session s(ttdtest::Growable(0));
+    s.engine.Streams().Register(0, "picture", [&s](const TTDPosition& at) {
+        const std::vector<uint8_t> p = Picture(at.frame);
+        s.engine.AddFrameStreamCopy(0, at.frame, p.data(), p.size());
+    });
+    s.engine.Streams().SetEnabled(0, true);
+    for (int i = 0; i < 20; ++i)
+        s.Frame();
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(s.engine.FrameStreamCopy(0, 7, out));
+    EXPECT_EQ(out, Picture(7));
+    EXPECT_GE(s.engine.HeapBreakdown().frameStreams, 20u * 2048);
+}
+
+/// endregion </Frame-boundary streams>

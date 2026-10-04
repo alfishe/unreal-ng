@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_map>
 #include <deque>
+#include <map>
 #include <vector>
 
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
@@ -165,12 +166,13 @@ struct TTDEngineHeapBreakdown
     size_t mediaReads = 0;          ///< sectors read from media images (v1 has no such journal)
     size_t busVectors = 0;          ///< interrupt vectors taken (v1 has no such journal)
     size_t writeJournal = 0;        ///< the write journal (D40): compressed blocks and segments
+    size_t frameStreams = 0;        ///< frame-boundary stream copies not written out yet (D19)
 
     size_t Total() const
     {
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
                frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads + busVectors +
-               writeJournal;
+               writeJournal + frameStreams;
     }
 };
 
@@ -355,6 +357,22 @@ public:
     /// endregion </Events (Phase 3)>
     TTDStreamRegistry& Streams() { return _streams; }
 
+    /// Optional frame-boundary streams (D19, Phase 4 Step 4): a stream's
+    /// capture hands its copy of @p frame here. Copies are written through:
+    /// the session writer takes them into the file and they leave memory
+    /// (DropFrameStreamCopiesBefore); without a file they stay
+    void AddFrameStreamCopy(uint32_t stream, uint64_t frame, const uint8_t* data, size_t size);
+    /// The copy of @p frame still in memory; false when it was written out or never captured
+    bool FrameStreamCopy(uint32_t stream, uint64_t frame, std::vector<uint8_t>& out) const;
+    /// Copies of frames before @p frame leave memory (written to the file, or dropped with the ring)
+    void DropFrameStreamCopiesBefore(uint64_t frame);
+    struct FrameStreamCopy_
+    {
+        uint64_t frame;
+        std::vector<uint8_t> bytes;
+    };
+    const std::map<uint32_t, std::deque<FrameStreamCopy_>>& FrameStreamCopies() const { return _streamCopies; }
+
     /// endregion </Session>
 
     /// region <Capture>
@@ -497,6 +515,7 @@ private:
     size_t _changeBase = 0;   ///< change records dropped from the front
     TTDHistoryPolicy _policy;
     std::deque<TTDSegmentInfo> _segments;
+    std::map<uint32_t, std::deque<FrameStreamCopy_>> _streamCopies;   ///< by stream, oldest first
     struct PieceChange
     {
         uint32_t piece;

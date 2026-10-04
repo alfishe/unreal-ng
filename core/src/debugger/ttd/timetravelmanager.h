@@ -2038,6 +2038,16 @@ private:
     std::vector<TTDPendingFact> _shadowFacts;   ///< the live machine's facts since the last boundary
     /// A fact at the current instant (normalized past the frame's end)
     void NoteFact(const TTDEvent& ev);
+    /// The shadow engine's screenshot stream (frame-boundary stream 0, off until switched on)
+    void RegisterScreenshotStream(TimeTravelEngine& engine);
+    std::vector<uint8_t> _screenshotScratch;
+
+public:
+    /// Frame-boundary stream 0 of the shadow engine: width u16, height u16,
+    /// video mode u8, then the framebuffer (RGBA)
+    static constexpr uint32_t kScreenshotStream = 0;
+
+private:
 
     /// The media manager's read journal (Phase 3): sector reads go into the
     /// shadow engine while recording and come from the replay engine while

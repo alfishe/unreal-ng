@@ -39,9 +39,9 @@ public:
     /// The first segment's file (the session has its first checkpoint)
     bool Begin(const TimeTravelEngine& engine, std::string& error);
     /// After each capture: a new segment closes the current file and opens the next
-    bool Collect(const TimeTravelEngine& engine);
+    bool Collect(TimeTravelEngine& engine);
     /// At stop: the current file gets the rest and its index
-    bool Finish(const TimeTravelEngine& engine);
+    bool Finish(TimeTravelEngine& engine);
 
     bool Failed() const { return !_error.empty() || (_writer && _writer->Failed()); }
     std::string Error() const;

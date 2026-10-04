@@ -39,6 +39,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -68,6 +69,11 @@ constexpr uint16_t kBusReads = 13;
 constexpr uint16_t kBusWrites = 14;
 constexpr uint16_t kBusVectors = 15;
 constexpr uint16_t kMediaReads = 16;
+/// Frame-boundary streams (D19): 0x0100 + the engine's stream id (0..63); ancillary
+constexpr uint16_t kFrameStreamFirst = 0x0100;
+constexpr uint16_t kFrameStreamLast = 0x013F;
+/// A full copy at least every this many frames: reading one decodes at most this many differences
+constexpr uint32_t kFrameStreamFullEvery = 50;
 }  // namespace sessionstream
 
 /// Header flags of a session file
@@ -126,8 +132,9 @@ public:
     /// @p first: the file's first checkpoint (default: the first one held)
     bool Begin(const TimeTravelEngine& engine, ITTDByteSink& sink, const TTDSessionSaveParams& params,
                std::string& error, const Limits& limits = {}, size_t first = SIZE_MAX);
-    /// Queue every complete part; false once writing failed or fell too far behind (Error() says why)
-    bool Collect(const TimeTravelEngine& engine);
+    /// Queue every complete part; false once writing failed or fell too far behind (Error() says why).
+    /// The frame-boundary stream copies of the queued parts leave the engine's memory
+    bool Collect(TimeTravelEngine& engine);
     /// Queue the checkpoints up to @p end (all by default; a segment's file
     /// ends at the next segment's baseline), the write journal with the
     /// session's last part, write the index, wait for the writer
@@ -149,6 +156,7 @@ private:
         uint64_t bytes = 0;
     };
     bool BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job);
+    bool CollectParts(const TimeTravelEngine& e);
     void Queue(PartJob&& job);
     void Write(PartJob& job);
     void Run();
@@ -171,6 +179,8 @@ private:
     size_t _end = SIZE_MAX;   ///< the file's last checkpoint + 1 (known at Finish)
     uint64_t _base[4] = {};   ///< the journals' positions at the file's start: IN, OUT, sectors, vectors
     std::string _buildError;   ///< the engine's thread only
+    std::map<uint32_t, std::vector<uint8_t>> _streamPrevious;   ///< frame streams: the last copy written
+    std::map<uint32_t, uint32_t> _streamSinceFull;
 
     // The writer thread
     std::thread _thread;
@@ -179,7 +189,8 @@ private:
     std::condition_variable _drained;
     std::deque<PartJob> _queue;
     bool _stop = false;
-    std::atomic<bool> _failed{false};
+    std::atomic<bool> _failed{false};     ///< no more parts are taken (behind, or a write error)
+    std::atomic<bool> _ioFailed{false};   ///< a write failed: nothing more is written
     std::atomic<uint64_t> _queuedBytes{0};
     std::string _error;
 };
@@ -197,6 +208,12 @@ public:
 
     /// The stream ids this version reads
     static bool KnownStream(uint16_t id);
+
+    /// The copy frame-boundary stream @p stream (the engine's id) took at
+    /// @p frame, from a session file; false with the reason when the stream
+    /// was off then ("not recorded") or the file lacks it
+    static bool ReadFrameStream(const ITTDByteSource& source, uint32_t stream, uint64_t frame,
+                                std::vector<uint8_t>& out, std::string& error);
 };
 
 }  // namespace ttd

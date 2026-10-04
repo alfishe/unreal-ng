@@ -60,7 +60,7 @@ bool TTDRecordingWriter::Begin(const TimeTravelEngine& engine, std::string& erro
     return true;
 }
 
-bool TTDRecordingWriter::Collect(const TimeTravelEngine& engine)
+bool TTDRecordingWriter::Collect(TimeTravelEngine& engine)
 {
     if (!_writer || Failed())
         return false;
@@ -81,7 +81,7 @@ bool TTDRecordingWriter::Collect(const TimeTravelEngine& engine)
     return _writer->Collect(engine);
 }
 
-bool TTDRecordingWriter::Finish(const TimeTravelEngine& engine)
+bool TTDRecordingWriter::Finish(TimeTravelEngine& engine)
 {
     if (!_writer)
         return !Failed();

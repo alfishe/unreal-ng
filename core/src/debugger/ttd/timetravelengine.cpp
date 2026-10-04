@@ -371,6 +371,7 @@ void TimeTravelEngine::EndSession()
 {
     _readOnly = false;
     _segments.clear();
+    _streamCopies.clear();
     _configs.clear();
     _mediaSlots.clear();
     _pendingMedia.clear();
@@ -773,6 +774,32 @@ const TTDEngineCheckpoint* TimeTravelEngine::Checkpoint(size_t index) const
     return HasCheckpoint(index) ? &CpAt(index) : nullptr;
 }
 
+void TimeTravelEngine::AddFrameStreamCopy(uint32_t stream, uint64_t frame, const uint8_t* data, size_t size)
+{
+    _streamCopies[stream].push_back({frame, std::vector<uint8_t>(data, data + size)});
+}
+
+bool TimeTravelEngine::FrameStreamCopy(uint32_t stream, uint64_t frame, std::vector<uint8_t>& out) const
+{
+    const auto it = _streamCopies.find(stream);
+    if (it == _streamCopies.end())
+        return false;
+    for (const FrameStreamCopy_& c : it->second)
+        if (c.frame == frame)
+        {
+            out = c.bytes;
+            return true;
+        }
+    return false;
+}
+
+void TimeTravelEngine::DropFrameStreamCopiesBefore(uint64_t frame)
+{
+    for (auto& [stream, copies] : _streamCopies)
+        while (!copies.empty() && copies.front().frame < frame)
+            copies.pop_front();
+}
+
 void TimeTravelEngine::BeginSegment(uint64_t frame)
 {
     TTDSegmentInfo s;
@@ -821,6 +848,7 @@ void TimeTravelEngine::DropOldestSegment()
     _busReads.DropBefore(head.busReadCursor);
     _busWrites.DropBefore(head.busWriteCursor);
     _busVectors.DropBefore(head.busVectorCursor);
+    DropFrameStreamCopiesBefore(head.position.frame);
     _segments.pop_front();
 }
 
@@ -1001,6 +1029,9 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.mediaReads = _mediaReads.HeapBytes();
     h.busVectors = _busVectors.HeapBytes();
     h.writeJournal = _writes.HeapBytes();
+    for (const auto& [stream, copies] : _streamCopies)
+        for (const FrameStreamCopy_& c : copies)
+            h.frameStreams += c.bytes.capacity() + sizeof(c);
     return h;
 }
 

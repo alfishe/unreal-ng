@@ -49,7 +49,8 @@ STREAM_NAMES = {
     0: "container", 1: "pieces", 3: "checkpoints", 5: "events", 6: "configuration",
     7: "write-journal", 13: "bus-reads", 14: "bus-writes", 15: "bus-vectors", 16: "media-reads",
 }
-KNOWN_STREAMS = set(STREAM_NAMES) - {0}
+FRAME_STREAM_FIRST, FRAME_STREAM_LAST = 0x0100, 0x013F    # frame-boundary streams (D19); 0x0100 = screenshot
+KNOWN_STREAMS = (set(STREAM_NAMES) - {0}) | set(range(FRAME_STREAM_FIRST, FRAME_STREAM_LAST + 1))
 
 ENCODING_FULL, ENCODING_XOR, ENCODING_ZERO, ENCODING_RANGES = 0, 1, 2, 3
 ENCODING_NAMES = {0: "full", 1: "xor", 2: "zero", 3: "ranges"}
@@ -476,7 +477,8 @@ def read_session(c: Container) -> Session:
             for rec in part.records:
                 if rec.stream_id in KNOWN_STREAMS:
                     payloads[rec.stream_id] = read_record(c, rec)
-                    name = STREAM_NAMES[rec.stream_id]
+                    desc = c.streams.get(rec.stream_id)
+                    name = STREAM_NAMES.get(rec.stream_id, desc.name if desc else f"stream {rec.stream_id}")
                     s.stream_bytes[name] = s.stream_bytes.get(name, 0) + rec.stored_size + RECORD_HEADER
         except ValueError as e:
             s.stopped_at = f"part {part.index}: {e}"

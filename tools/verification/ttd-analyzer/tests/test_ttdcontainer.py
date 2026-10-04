@@ -53,7 +53,7 @@ class FixtureTest(unittest.TestCase):
 
     def test_unknown_ancillary_stream_is_skipped(self):
         c = open_container((FIXTURES / "synthetic-ancillary.ttd").read_bytes())
-        self.assertTrue(any("screenshot" in n and "skipped" in n for n in c.notes), c.notes)
+        self.assertTrue(any("future" in n and "skipped" in n for n in c.notes), c.notes)
 
     def test_segments_restart_at_each_baseline(self):
         s = read_session(open_container((FIXTURES / "synthetic.ttd").read_bytes()))
