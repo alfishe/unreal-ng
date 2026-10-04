@@ -165,7 +165,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
      freezes the same way in 4 of 6 runs; analysis [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2. It hits with BIOS 3.06 Hotfix 2
      (the default again since 2026-10-03) and 3.07 BETA 1 alike. The owner checks it on a real board.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
-     (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
+     (ISA / ZX-bus / NeoGS: PROPLAY MOD playback; **ISA I2 done 2026-10-04**, branch `sprinter-isa-i2-neogs`: slot 1 =
+     ZX-bus adapter + NeoGS, ProPlay vs MAME in [i2-outcome.md](../2026-10-02-sprinter-isa/i2-outcome.md)), the S7
+     remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
      decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
      confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
@@ -230,7 +232,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     (which mode file - SP.ZX / P128.ZX / ORIGIN.ZX ... - from the hardware and from the launcher's own text and option
     table in RAM, each option with its evidence, clock request / F12 / MHz, INT, ROMs by CRC, the decode of `#01FD` and
     the other ZX ports), the PLD journal (who changed CNF, turbo, `#1FFD`, `#7FFD`, ALL_MODE, the port table ... with
-    frame, T, PC; also from a TTD recording), the TTD port journals on the Sprinter (no NeoGS without a ZX-bus), the
+    frame, T, PC; also from a TTD recording), the TTD port journals on the Sprinter (since ISA I2 also with the NeoGS on the adapter: no ZX-DMA without host memory cycles), the
     Qt status line "ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)"; all five surfaces
   - [ ] The launchers parse `int-sc`, not the `/sc-int` that SC256.ZX and SCORPION.ZX carry: the Scorpion INT is never
     applied (both launchers' option tables; research §4 corrected). Report upstream (the `.ZX` files or the parser)
@@ -350,8 +352,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   test: boot 3.04, run `UP306.EXE`, reboot, ROM CRC = `187f4382`. First step when it is picked up:
   identify the chip and IDs from the BIOS flash routines and `UP306.EXE`.
 - Sound follow-ups after S6 ([s6-sound-outcome.md](s6-sound-outcome.md) §7): the stereo order on a real board
-  (MAME swaps 16-bit stereo), the PLD's AY + CBL mix levels in one DAC word, MOD playback through the General
-  Sound on the ISA ZX-bus adapter (S6b), a real-board check of the accelerator INT suspend (default now off).
+  (MAME swaps 16-bit stereo), the PLD's AY + CBL mix levels in one DAC word, ~~MOD playback through the General
+  Sound on the ISA ZX-bus adapter (S6b)~~ (ISA I2, 2026-10-04), a real-board check of the accelerator INT suspend (default now off).
 - IDE follow-ups after S3b ([roadmap-and-plan.md](roadmap-and-plan.md) §9):
   - DSS 1.71 needs a BIOS newer than 3.04 (bios-versions.md §5.1): which BIOS function, and whether 3.05 does;
   - code `#29` (drive address) reads `#FF` (the shared core has no drive-address register);

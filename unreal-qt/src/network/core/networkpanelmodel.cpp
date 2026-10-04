@@ -312,7 +312,17 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const Stat
         row.id = text(slot, "id");
         row.label = text(slot, "label");
         const std::string card = text(slot, "card");
-        if (card.empty() || card == "none")
+        // A card that is not a network card (the ZX-bus adapter with the GS / NeoGS): the ISA report's line for it
+        const StateNode* isaSlotsAll = isa ? isa->find("slots") : nullptr;
+        const size_t isaIndex = row.id == "isa1" ? 0 : row.id == "isa2" ? 1 : 2;
+        const StateNode* isaRow = isaSlotsAll && isaIndex < isaSlotsAll->items.size() ? &isaSlotsAll->items[isaIndex] : nullptr;
+        if ((card.empty() || card == "none") && isaRow && text(*isaRow, "card") != "none" && !text(*isaRow, "card").empty())
+        {
+            row.line = text(*isaRow, "summary_line");
+            if (row.line.empty())
+                row.line = text(*isaRow, "card");
+        }
+        else if (card.empty() || card == "none")
         {
             const std::string configured = text(slot, "configured");
             const std::string why = text(slot, "not_fitted");

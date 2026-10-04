@@ -12,7 +12,7 @@
 # ZXK_SNAP_EVERY=n: a PNG every n frames. SPC_DEBUG=1 runs MAME's debugger headless (-debug -debugger none) and
 # writes its console to build/zxsteps/<name>/debug.log, where "dbg" breakpoints print (e.g. the INT position:
 # dbg|bpset 38,1,{printf "INT y=%d x=%d tc=%d",beamy,beamx,totalcycles; g}, with ZXK_SEP=~ as the step separator
-# since the command holds ";"). SPC_FLOP1=<trd>: a floppy in drive A.
+# since the command holds ";"). SPC_FLOP1=<trd>: a floppy in drive A. SPC_WAV=<file.wav>: the sound output.
 # DSS reads the PC keyboard (":kbd:ms_naturl"); the Spectrum mode reads MAME's own matrix ports (":"), so switch
 # with "kbdonly|ms_naturl" before DSS typing and "kbdonly|=:" once the Spectrum menu is up.
 # Output: build/zxsteps/<name>/ here (log.txt with the "zxsteps:" lines, PNGs). SPC_BIOS: default v3.06.
@@ -36,12 +36,16 @@ if [ "${SPC_DEBUG:-0}" = 1 ]; then
 fi
 FLOP_ARGS=()
 [ -n "${SPC_FLOP1:-}" ] && FLOP_ARGS=(-flop1 "$SPC_FLOP1")
+# SPC_WAV=<file.wav>: MAME's mixed sound output (-wavwrite, SPC_SAMPLERATE or 48 kHz, stereo 16-bit): with
+# "-isa0 zxbus_adapter -isa0:zxbus_adapter:card neogs" in the MAME args it holds the NeoGS (ISA phase I2)
+WAV_ARGS=()
+[ -n "${SPC_WAV:-}" ] && WAV_ARGS=(-wavwrite "$SPC_WAV" -samplerate "${SPC_SAMPLERATE:-48000}")
 export ZXK_OUT=$OUT
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 "$MAME_BIN" sprinter -bios "${SPC_BIOS:-v3.06}" -rompath "$MAME_ROMPATH" \
 	-video none -sound none -window -nomaximize -nothrottle -skip_gameinfo -noreadconfig -noplugins \
 	-cfg_directory "$BUILD/run/cfg" -nvram_directory "$BUILD/run/nvram" -snapshot_directory "$OUT" -snapview native \
-	-hard1 "$SPC_HARD1" ${FLOP_ARGS[@]+"${FLOP_ARGS[@]}"} ${DEBUG_ARGS[@]+"${DEBUG_ARGS[@]}"} "$@" \
+	-hard1 "$SPC_HARD1" ${FLOP_ARGS[@]+"${FLOP_ARGS[@]}"} ${DEBUG_ARGS[@]+"${DEBUG_ARGS[@]}"} ${WAV_ARGS[@]+"${WAV_ARGS[@]}"} "$@" \
 	-seconds_to_run "$SECS" -autoboot_script "$HERE/mame-zxsteps.lua" > "$OUT/log.txt" 2>&1
 echo "exit $?"
 [ -f "$BUILD/run/debug.log" ] && mv "$BUILD/run/debug.log" "$OUT/debug.log"

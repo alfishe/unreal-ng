@@ -2225,7 +2225,11 @@ const char* TimeTravelManager::PortJournalUnsupportedReason() const
     if (_context->pSoundManager)
     {
         const GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound();
-        if (gs && gs->implementation() == GSCardImplementation::NGS)
+        // Only where the card's ZX-bus carries the host's memory cycles: through the Sprinter's ISA ZX-bus adapter
+        // (I/O cycles only) the ZX-DMA never installs, and every host access to the card is an ISA cycle of the
+        // machine's own deterministic state, replayed from the card's blob
+        if (gs && gs->implementation() == GSCardImplementation::NGS &&
+            (!_context->pPortDecoder || _context->pPortDecoder->ZxBusMemoryCycles()))
             return "NeoGS: its ZX-DMA serves host memory reads without IN (not isolated by the first version)";
     }
     // A machine that owns its INT logic (IInterruptSource) may put the IM2

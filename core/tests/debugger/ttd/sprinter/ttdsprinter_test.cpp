@@ -604,12 +604,12 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
 }
 
-/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; no NeoGS without a ZX-bus): a
+/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; with the NeoGS on the ISA ZX-bus adapter
+/// too: IsaZxBusAdapter_Test.NeoGsZxDmaCannotInstall_PortJournalRecords): a
 /// recording answers "who wrote this port" (/ttd/port-events) and the PLD journal's TTD source, and its replay
 /// feeds the recorded IN results with no divergence. Boot-bound: BIOS POST frames, replayed once
 TEST_F(TTDSprinterMachine_Test, PortJournal_RecordsAndAnswersPortEvents)
 {
-    EXPECT_EQ(_context->pSoundManager->getGeneralSound(), nullptr) << "no ZX-bus: [SOUND] GSType is not fitted";
     PowerOn(true);
     Skip(5);
     StartRecording();

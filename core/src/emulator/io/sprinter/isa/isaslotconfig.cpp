@@ -35,8 +35,9 @@ constexpr KindEntry kKinds[] = {
 IsaConfig DefaultConfig()
 {
     IsaConfig config{};
-    // Slot 1: the ZX-bus adapter + NeoGS is the ISA phase I2 target; empty until it is built
-    config.slot[0].kind = static_cast<uint8_t>(CardKind::None);
+    // Slot 1: the ZX-bus adapter with the General Sound behind it ([SOUND] GSType: the NeoGS in the Sprinter config;
+    // owner decision Q2, ISA phase I2)
+    config.slot[0].kind = static_cast<uint8_t>(CardKind::ZxBus);
     config.slot[0].base = 0x300;
     config.slot[0].irq = 3;
     config.slot[0].macAuto = 1;
@@ -301,8 +302,7 @@ bool KindAvailable(CardKind kind, std::string* why)
         case CardKind::None:
             return true;
         case CardKind::ZxBus:
-            reason = "the ZX-bus adapter (General Sound / NeoGS) is ISA phase I2, not built yet";
-            break;
+            break;   // ISA phase I2: the decoder fits the adapter, SoundManager the GS / NeoGS behind it
         case CardKind::Ram:
             reason = "the ISA RAM card is ISA phase I3, not built yet";
             break;

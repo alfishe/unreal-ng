@@ -929,10 +929,14 @@ public:
 
     /// Whether the machine has a ZX-bus that Spectrum peripheral cards (General Sound / NeoGS) plug into
     /// through the exact-match port map (RegisterPortHandler / PeripheralPortIn/Out). Every Spectrum-like
-    /// machine has; the Sprinter has none until its ISA ZX-bus adapter exists (Sprinter ISA design
-    /// 2026-10-02-sprinter-isa/tdd.md §2, phase I2): a card built there would run for nothing, unreachable
+    /// machine has; the Sprinter has one only while an ISA ZX-bus adapter is fitted (Sprinter ISA design
+    /// 2026-10-02-sprinter-isa/tdd.md §2 / §6, phase I2). Without it a card would run for nothing, unreachable
     /// by the software, and SoundManager does not fit it
     virtual bool ZxBusPresent() const { return true; }
+    /// Whether that ZX-bus carries the host's memory cycles (/MREQ, /CSROM), so a card that serves host memory
+    /// reads (the NeoGS ZX-DMA, neogs-zxdma-design.md) can reach the host. True on a machine's own ZX-bus; false
+    /// on the Sprinter, whose ISA ZX-bus adapter passes I/O cycles only (ISA open question Q7)
+    virtual bool ZxBusMemoryCycles() const { return ZxBusPresent(); }
 
     /// The machine's own configuration events (machineeventjournal.h: the Sprinter's PLD changes), null for
     /// machines that keep none. The video change log lists the events of its frames (/video/changes)

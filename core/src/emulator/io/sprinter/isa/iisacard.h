@@ -114,6 +114,8 @@ public:
         (void)write;
         return "";
     }
+    /// Appended to the card's entry in the one-line slot summary (" -> NeoGS on the ZX-bus: ..."; empty: nothing)
+    virtual std::string SummaryNote() const { return {}; }
     /// Whether the card hangs the bus (a cycle it never finishes)
     virtual bool Stalled() const { return false; }
 

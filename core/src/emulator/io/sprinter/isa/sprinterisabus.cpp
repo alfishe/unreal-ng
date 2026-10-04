@@ -382,31 +382,34 @@ StateNode SprinterIsaBus::Describe() const
         slot["counters"] = counters;
         slots.push(slot);
     }
-    ret["slots"] = slots;
-    // One line per slot for a status bar / the Sprinter report
+    // One line per slot for a status bar / the Sprinter report (each slot also carries its own piece)
     std::string summary;
     for (int n = 0; n < kSlots; ++n)
     {
         const Slot& s = _slots[n];
-        if (n)
-            summary += "; ";
-        summary += "slot " + std::to_string(n + 1) + ": ";
+        std::string piece;
         uint32_t first = 0, last = 0;
         if (!s.card)
-            summary += s.config.kind && !s.refusal.empty() ? sprinterisa::KindKey(static_cast<CardKind>(s.config.kind)) +
-                                                                 " not fitted (" + s.refusal + ")"
-                                                           : std::string("empty");
+            piece = s.config.kind && !s.refusal.empty() ? sprinterisa::KindKey(static_cast<CardKind>(s.config.kind)) +
+                                                              " not fitted (" + s.refusal + ")"
+                                                        : std::string("empty");
         else
         {
-            summary += s.card->Kind();
+            piece = s.card->Kind();
             if (s.card->IoRange(first, last))
-                summary += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
+                piece += " I/O " + Hex(first, 3) + "-" + Hex(last, 3);
             for (const IIsaCard::AuxIoRange& aux : s.card->AuxIoRanges())
-                summary += " " + aux.name + " " + Hex(aux.first, 3) + "-" + Hex(aux.last, 3);
+                piece += " " + aux.name + " " + Hex(aux.first, 3) + "-" + Hex(aux.last, 3);
             if (s.card->IrqLine() >= 0)
-                summary += " IRQ " + std::to_string(s.card->IrqLine());
+                piece += " IRQ " + std::to_string(s.card->IrqLine());
+            piece += s.card->SummaryNote();
         }
+        slots.items[static_cast<size_t>(n)]["summary_line"] = piece;
+        if (n)
+            summary += "; ";
+        summary += "slot " + std::to_string(n + 1) + ": " + piece;
     }
+    ret["slots"] = slots;
     ret["summary"] = summary;
     // The interrupt lines at a glance: level, who drives it, whether the PIO turns it into an interrupt, counters
     std::string irqSummary;

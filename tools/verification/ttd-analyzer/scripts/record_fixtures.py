@@ -96,9 +96,10 @@ CORPUS_DIR = "testdata/ttd"
 # fixture recorded with it cannot replay exactly; the classic card can
 FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
     "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
-    # No "gs": the Sprinter has no ZX-bus until its ISA adapter exists (PortDecoder::ZxBusPresent), no card is
-    # fitted; since 2026-10-03 the fixture also carries the port journals (PortDecoder::TtdEnginesSealed)
-    "sprinter_boot": {"out": "testdata/machines/sprinter/ttd/boot.ttd"},
+    # The Sprinter fits the General Sound behind its ISA ZX-bus adapter (slot 1, ISA phase I2, 2026-10-03); the classic
+    # card, as for the Pentagon corpus (NeoGS leaves its RAM out of TTD v1). The fixture also carries the port journals
+    # (PortDecoder::TtdEnginesSealed; the adapter passes no memory cycles, so no NeoGS ZX-DMA could stop them either)
+    "sprinter_boot": {"out": "testdata/machines/sprinter/ttd/boot.ttd", "gs": "z80"},
     # The Pentagon corpus: TTD_Corpus_Test fits the classic card before loading, and a session loads only into the
     # card it was recorded with. The shipped configs fit NeoGS, so without this a re-record from the stock app
     # produced files the test refuses ("General Sound slot mismatch")

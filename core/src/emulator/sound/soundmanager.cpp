@@ -1819,11 +1819,12 @@ bool SoundManager::attachToPorts()
         result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
     }
 
-    // A machine without a ZX-bus (PortDecoder::ZxBusPresent: the Sprinter until its ISA
-    // ZX-bus adapter exists) cannot reach the card: the software never sees it, its
-    // Z80 would run every frame for nothing, and the NeoGS's ZX-DMA keeps the TTD port
-    // journals off. The card the constructor built from [SOUND] GSType is removed
-    // before anything registers it (the decoder exists only from here on)
+    // A machine without a ZX-bus (PortDecoder::ZxBusPresent: the Sprinter with no ISA
+    // ZX-bus adapter in its slots) cannot reach the card: the software never sees it, its
+    // Z80 would run every frame for nothing. The card the constructor built from
+    // [SOUND] GSType is removed before anything registers it (the decoder exists only
+    // from here on). With an adapter the card stays and is reached through the port map
+    // below, the adapter calling PeripheralPortIn/Out (Sprinter ISA tdd §6)
     if (_gs && _context->pPortDecoder && !_context->pPortDecoder->ZxBusPresent())
     {
         LOGINFO("SoundManager: no ZX-bus on this machine - the %s card ([SOUND] GSType) is not fitted",
@@ -1850,6 +1851,7 @@ bool SoundManager::attachToPorts()
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
         result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs,
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
+        _gs->onHostBusChanged();
     }
 
 #ifdef UNREALNG_HAVE_OPL4

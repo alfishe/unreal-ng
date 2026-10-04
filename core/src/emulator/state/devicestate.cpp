@@ -789,6 +789,10 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
         StateNode& zx = dma["zx"];
         zx["mode"] = ngs.zxMode;
         zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["host_memory_bus"] = ngs.zxHostMemoryBus;
+        if (!ngs.zxHostMemoryBus)
+            zx["note"] = "no host memory cycles on this ZX-bus (the Sprinter's ISA ZX-bus adapter passes I/O only): "
+                         "the module never sees a host access, the overlay is never installed";
         zx["read_latch"] = int(ngs.zxReadLatch);
         zx["pending"] = ngs.zxPending;
         zx["pending_address"] = ngs.zxPendingAddress;
