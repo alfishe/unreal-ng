@@ -1,0 +1,6 @@
+{
+  "active-demo-converted.ttd": {"checkpoints": 301, "versions": 2545, "parts": 7, "events": 0, "bus_reads": 470790, "bus_writes": 6578, "finalized": true, "converted_from_v1": true},
+  "synthetic-ancillary.ttd": {"checkpoints": 60, "versions": 69, "parts": 8, "events": 9, "bus_reads": 60, "bus_writes": 0, "finalized": true, "converted_from_v1": false},
+  "synthetic-unfinished.ttd": {"checkpoints": 56, "versions": 65, "parts": 7, "events": 8, "bus_reads": 56, "bus_writes": 0, "finalized": false, "converted_from_v1": false},
+  "synthetic.ttd": {"checkpoints": 60, "versions": 69, "parts": 8, "events": 9, "bus_reads": 60, "bus_writes": 0, "finalized": true, "converted_from_v1": false}
+}

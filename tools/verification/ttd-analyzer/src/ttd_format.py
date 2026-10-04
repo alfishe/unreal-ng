@@ -80,6 +80,10 @@ FLAGS_LITTLE_ENDIAN = 0x0001
 FLAGS_HAS_WRITE_JOURNAL = 0x0002  # write journal section present
 FLAGS_HAS_BOOKMARKS = 0x0008  # advisory bookmarks section follows the coverage index
 FLAGS_WRITE_JOURNAL_COMPLETE = 0x0010  # the journal holds every write of the session
+# The write journal is recorded on demand (D40): a segment table follows it,
+# u32 count, then per segment u64 from, u64 to - the machine-time spans, after
+# `from` up to and including `to`, in which every memory write is in it
+FLAGS_HAS_JOURNAL_SEGMENTS = 0x1000
 FLAGS_TOP_CLOCK_TIME = 0x0020  # tInFrame / globalT count T-states at the model's top CPU clock (B4)
 # Replay inputs (always written by current writers; a file without them
 # predates saved input and replays inside a frame without the recorded input)
@@ -424,6 +428,8 @@ class JournalSection:
     """
     record_count: int = 0
     blocks: List[JournalBlock] = field(default_factory=list)
+    # (from, to) machine-time spans the journal covers (FLAGS_HAS_JOURNAL_SEGMENTS)
+    segments: List[Tuple[int, int]] = field(default_factory=list)
     payloads: List[bytes] = field(default_factory=list)
 
     @property
@@ -1161,6 +1167,8 @@ def parse_bytes(data: bytes) -> TtdDump:
     journal = None
     if header.flags & FLAGS_HAS_WRITE_JOURNAL:
         journal = parse_journal_section(r)
+        if journal is not None and header.flags & FLAGS_HAS_JOURNAL_SEGMENTS:
+            journal.segments = [(r.u64(), r.u64()) for _ in range(r.u32())]
 
     coverage = None
     if header.flags & FLAGS_HAS_COVERAGE_INDEX:

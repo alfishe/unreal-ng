@@ -151,6 +151,7 @@ public:
     }
     bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_evoAvr); }
     /// endregion </SD card>
     /// endregion </Types>
 

@@ -135,8 +135,17 @@ public:
     /// Back to the host clock (keeps any offset the guest set)
     void UseLiveTime();
     void SetEmulatedClock(EmulatedClock clock) { _emulatedClock = std::move(clock); }
+    /// The session's wall time (host local civil microseconds, taken once when
+    /// a TTD session starts; kNoSessionWall = none): every clock of the machine
+    /// anchors at that one instant, so two chips never disagree
+    static constexpr int64_t kNoSessionWall = INT64_MIN;
+    using SessionWall = std::function<int64_t()>;
+    void SetSessionWall(SessionWall wall) { _sessionWall = std::move(wall); }
+    /// The host's local civil time now (what Host mode reads), microseconds
+    static int64_t HostCivilMicrosNow();
     /// TTD recording starts / stops. Entering anchors the emulated reference at
-    /// the current reference time; a fixed clock stays fixed
+    /// the session's wall time (else the current reference time); a fixed
+    /// clock stays fixed
     void EnterEmulatedTime();
     void LeaveEmulatedTime();
     TimeMode GetTimeMode() const { return _mode; }
@@ -225,5 +234,6 @@ protected:
     bool _secondValid = false;
     int64_t _lastSecond = 0;      ///< last second UpdateFlags() saw
 
+    SessionWall _sessionWall;
     EmulatedClock _emulatedClock;
 };

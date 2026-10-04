@@ -352,7 +352,8 @@ TEST_F(ScreenTSConf_Test, TSO2_RendererMatchesTheReference)
         std::printf("TSO2 hash 0x%016llXull, reference 0x%016llXull\n", static_cast<unsigned long long>(hash),
                     static_cast<unsigned long long>(refHash));
     else
-        EXPECT_EQ(hash, 0xD8C26F86D5C26DB1ull) << "the renderer's output changed";
+        // Re-recorded 2026-10-04: the random SFILE now ends at its third LEAP (TSU2b); the reference agrees pixel for pixel
+        EXPECT_EQ(hash, 0xB5A7D172B6701667ull) << "the renderer's output changed";
 }
 
 /// VDAC ([MISC] TS_VDAC, hs §0.1 / §4.3): with a video DAC, CRAM bit 15 set

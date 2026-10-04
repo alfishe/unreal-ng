@@ -31,7 +31,7 @@ the byte-access core in
 | Where does the data live in the 64 KB the CPU sees (or in physical RAM)? | `memory/map` (`view=address` or `ram`) |
 | What is paged in at 0000/4000/8000/C000 right now? | `state/memory` (`banks`), `state/paging` (latches and decode) |
 | Which ROM is selected, with its signature? | `state/memory/rom` |
-| Does this byte sequence exist, and where? | `memory/find` (CPU address space) |
+| Does this byte sequence exist, and where? | `memory/find` (CPU address space, one page or all RAM; `??` wildcards, masks) |
 | Bytes at a CPU address | `memory/{addr}?len=` or `memory/read/{address}?length=` |
 | Bytes of a physical page, regardless of paging | `memory/page/{ram\|rom}/{n}` or `memory/{type}/{page}/{offset}` |
 | Disassemble a physical page | `disasm/page?type=&page=&offset=&count=` |
@@ -51,8 +51,14 @@ inspect_state {"aspects":["rom"]}                                 # /state/memor
 # Read at a CPU address (size max 4096; format hexdump | full | sparse)
 inspect_state {"aspects":["memory"],"address":23296,"size":64}
 
-# Search the CPU address space
+# Search the CPU address space (?? = any byte, A? = any low nibble)
 debug_code {"action":"find_bytes","pattern_hex":"CD 16 00","start":"0x4000","end":"0xFFFF","max":16}
+debug_code {"action":"find_bytes","pattern_hex":"CD ?? 00"}
+# Every RAM page, mapped or not (matches as page + offset), or one page by name
+debug_code {"action":"find_bytes","pattern_hex":"C3 00 80","space":"ram"}
+debug_code {"action":"find_bytes","pattern_hex":"C3 00 80","space":"ram5"}
+# A bit mask: 1 bits must match (here: LD HL,#40xx..#4Fxx)
+debug_code {"action":"find_bytes","pattern_hex":"21 00 40","mask_hex":"FF 00 F0"}
 
 # Disassemble at an address (current PC when omitted)
 debug_code {"action":"disassemble","address":"0x8000","count":12}
@@ -82,6 +88,11 @@ curl -s "$BASE/emulator/$EMU_ID/memory/info" | jq '.z80_banks'
 curl -s -X POST "$BASE/emulator/$EMU_ID/memory/find" -H 'Content-Type: application/json' \
      -d '{"pattern_hex":"AF 32 0E","start":"0x5B00","end":"0xFFFF","max":32,"alignment":1}' \
   | jq '{count, truncated, range, first: .matches[0]}'
+# Wildcards, every RAM page, a mask
+curl -s -X POST "$BASE/emulator/$EMU_ID/memory/find" -H 'Content-Type: application/json' \
+     -d '{"pattern_hex":"C3 ?? 80","space":"ram"}' | jq '.matches[:3]'
+curl -s -X POST "$BASE/emulator/$EMU_ID/memory/find" -H 'Content-Type: application/json' \
+     -d '{"pattern_hex":"21 00 40","mask_hex":"FF 00 F0","space":"cpu"}' | jq '.count'
 
 # Read at a CPU address (what the CPU would see)
 curl -s "$BASE/emulator/$EMU_ID/memory/0x5C00?len=32&format=hexdump" | jq -r '.hexdump'
@@ -140,9 +151,9 @@ writes go through the *device's own write path* (`write_path` says which).
   dumping bytes. `truncated: true` means the block budget coarsened the
   result; raise `max_blocks` (clamped to 1-4096) or narrow with `min_run`
   (1-16384).
-- `memory/find`: `success`, `count`, `matches[] {address, context}` (the
-  pattern plus 4 following bytes), `truncated` (hit `max`, default 64),
-  `range`.
+- `memory/find`: `success`, `space`, `count`, `matches[]` (`address` in the CPU
+  view, or `page {kind, page}` + `offset`; `context_start` and `context`: 4 bytes
+  before, the match, 4 after), `truncated` (hit `max`, default 64), `range`.
 - Reads: `address`, `length`, and by format `hexdump` (default), `hex` +
   `data` (`full`) or `segments[] {offset, length, is_fill, fill | hex}`
   (`sparse`, with `non_zero`).

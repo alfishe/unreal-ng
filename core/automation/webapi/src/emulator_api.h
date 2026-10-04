@@ -317,6 +317,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postSprinterBios, "/api/v1/emulator/{id}/sprinter/bios", drogon::Post);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
+    // ZX Profi board chips: 8255, 8253, 8251 and the port map (implementation: api/state_device_api.cpp, core DeviceState::ProfiPeripherals)
+    ADD_METHOD_TO(EmulatorAPI::getStateProfi, "/api/v1/emulator/{id}/state/profi", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateProfiActive, "/api/v1/emulator/state/profi", drogon::Get);
     // Network adapters (implementation: api/state_device_api.cpp, core DeviceState::Network)
     ADD_METHOD_TO(EmulatorAPI::getStateNetwork, "/api/v1/emulator/{id}/state/network", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNetworkActive, "/api/v1/emulator/state/network", drogon::Get);
@@ -514,6 +517,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    // D40 - the write journal on demand: switch it, build it by replay
+    ADD_METHOD_TO(EmulatorAPI::journalTTD, "/api/v1/emulator/{id}/ttd/journal", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::buildJournalTTD, "/api/v1/emulator/{id}/ttd/journal/build", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::cancelJournalBuildTTD, "/api/v1/emulator/{id}/ttd/journal/build/cancel", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::portEventsTTD, "/api/v1/emulator/{id}/ttd/port-events", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
@@ -1116,6 +1123,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateRtc(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateProfi(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateProfiActive(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateRtcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getRtcCells(const drogon::HttpRequestPtr& req,
@@ -1537,6 +1548,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void findLastTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void journalTTD(const drogon::HttpRequestPtr& req,
+                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void buildJournalTTD(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void cancelJournalBuildTTD(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
     void portEventsTTD(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepInstructionTTD(const drogon::HttpRequestPtr& req,

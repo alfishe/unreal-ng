@@ -133,7 +133,7 @@
         body["properties"]["end_recording"]["type"] = "boolean";
         body["properties"]["async"]["type"] = "boolean";
         body["properties"]["device"]["type"] = "string";
-        body["properties"]["device"]["description"] = "insert / swap on an IDE unit: disk or cdrom (swap the unit's drive first; the unit must be empty)";
+        body["properties"]["device"]["description"] = "insert / swap on an IDE unit: disk, cdrom or cf - a CompactFlash card on an IDE adapter, a disk that identifies as CFA (swap the unit's drive first; the unit must be empty)";
         body["properties"]["immediate"]["type"] = "boolean";
         body["properties"]["immediate"]["description"] = "insert: no swap delay";
         Json::Value& upload = post["requestBody"]["content"]["multipart/form-data"]["schema"];

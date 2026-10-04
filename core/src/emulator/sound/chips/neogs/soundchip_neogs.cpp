@@ -1513,6 +1513,38 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     reschedule();
 }
 
+void SoundChip_NeoGS::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+    _ramTracker.Bind(_mem.ram(), _mem.ramSize());
+    _flashTracker.Bind(_flash.data(), Flash29F040B::SIZE);
+
+    ttd::TTDDeviceRegion ram;
+    ram.desc.id = ttd::TTDRegionId::NeoGSRam;
+    ram.desc.name = "neogs.ram";
+    ram.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::NeoGS);
+    ram.desc.memory = _mem.ram();
+    ram.desc.bytes = static_cast<uint32_t>(_mem.ramSize());
+    ram.desc.pieces = _ramTracker.Pieces();
+    ram.tracker = &_ramTracker;
+    out.push_back(ram);
+
+    ttd::TTDDeviceRegion flash;
+    flash.desc.id = ttd::TTDRegionId::NeoGSFlash;
+    flash.desc.name = "neogs.flash";
+    flash.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::NeoGS);
+    flash.desc.memory = _flash.data();
+    flash.desc.bytes = static_cast<uint32_t>(Flash29F040B::SIZE);
+    flash.desc.pieces = _flashTracker.Pieces();
+    flash.tracker = &_flashTracker;
+    out.push_back(flash);
+}
+
+void SoundChip_NeoGS::TTDArmRegions(bool on)
+{
+    _mem.setRamTracker(on ? &_ramTracker : nullptr);
+    _flash.setTracker(on ? &_flashTracker : nullptr);
+}
+
 uint64_t SoundChip_NeoGS::TTDHashState() const
 {
     std::vector<uint8_t> blob(TTD_DEVICE_STATE_END);

@@ -179,6 +179,27 @@ namespace rzx
         {
             return {_framesDone, _fetches, _inPos};
         }
+        /// The whole playback position and its counters: what a time-travel
+        /// checkpoint keeps of the player (the recording itself is the medium)
+        struct SavedState
+        {
+            PlayerState state = PlayerState::Stopped;
+            uint8_t lastIn = 0xFF;
+            uint64_t framesDone = 0;
+            uint32_t fetches = 0;
+            uint32_t inPos = 0;
+            uint64_t interrupts = 0;
+            uint64_t desyncs = 0;
+            uint64_t snapshotsApplied = 0;
+            int32_t drift = 0;
+            int32_t maxDrift = 0;
+            Desync firstDesync;
+        };
+        SavedState Save() const;
+        /// Put the player where Save() was taken (the caller restored the
+        /// machine); false past the recording
+        bool Restore(const SavedState& saved);
+
         const RzxKeyframeStore& Keyframes() const
         {
             return _keyframes;
@@ -213,6 +234,12 @@ namespace rzx
         const File& GetFile() const
         {
             return *_file;
+        }
+        /// FNV-1a over every input block's frames and IN values: which
+        /// recording a saved state belongs to
+        uint64_t Fingerprint() const
+        {
+            return _fingerprint;
         }
         PlayerState State() const
         {
@@ -261,6 +288,7 @@ namespace rzx
         static const Frame kEndFrame;
 
         RzxKeyframeStore _keyframes;
+        uint64_t _fingerprint = 0;
 
         /// Set by NextBlock when a snapshot block precedes the input block just entered
         const Snapshot* _pendingSnapshot = nullptr;

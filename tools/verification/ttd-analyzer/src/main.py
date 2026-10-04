@@ -25,6 +25,19 @@ Subcommands
 ``heatmap FILE -o out.png``
     Render a one-pixel-per-checkpoint-wide heatmap of dirty pages.
 
+``parts FILE`` (schema 2)
+    The engine's session file part by part: frames, records, bytes per stream,
+    the parts each depends on, damage.
+
+``recover FILE`` (schema 2)
+    What a file without its index (an unfinished recording) still holds: the
+    complete parts a scan finds, the frames they cover, what was dropped.
+
+``info`` and ``validate`` read both schemas: schema 1 (the emulator's
+current files, ttd.ksy) and schema 2 (the time-travel engine's session file,
+ttdsession.ksy; validate decodes every piece version and checks its CRC and
+every part's dependency list).
+
 ``search FILE EVENT [ARG] [NAME=VALUE ...] [--json]``
     "When did the program ...": search the port journals (every IN and OUT
     with its time and PC) - the same events, options and answers as the
@@ -114,7 +127,108 @@ def _model_name(model_id: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _schema_of(path: str) -> int:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(6)
+    except OSError as e:
+        print(f"error: cannot read {path}: {e}", file=sys.stderr)
+        sys.exit(4)
+    if len(head) < 6 or head[:4] != b"TTDD":
+        return 0
+    return int.from_bytes(head[4:6], "little")
+
+
+def _open_v2_or_die(path: str):
+    from .ttdcontainer import TtdContainerError, open_container
+    data = open(path, "rb").read()
+    try:
+        return data, open_container(data)
+    except TtdContainerError as e:
+        print(f"error: cannot parse {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def cmd_info_v2(args: argparse.Namespace) -> int:
+    from .ttdcontainer import read_session
+    data, c = _open_v2_or_die(args.file)
+    s = read_session(c)
+    print(f"=== {args.file} ===")
+    print(f"file size: {_format_size(len(data))}")
+    print(f"schema: v2 (the time-travel engine's session file){', converted from schema 1' if s.converted_from_v1 else ''}")
+    print(f"finished: {'yes' if c.finalized else 'no (opened by scanning)'}, parts: {len(c.parts)}")
+    print(f"regions: " + ", ".join(f"{r['name']} ({r['bytes']} B)" for r in s.regions))
+    print(f"devices: {len(s.devices)}" + (": " + ", ".join(d["instance"] for d in s.devices) if s.devices else ""))
+    if s.checkpoints:
+        first, last = s.checkpoints[0].frame, s.checkpoints[-1].frame
+        segments = sum(1 for cp in s.checkpoints if cp.baseline)
+        print(f"checkpoints: {len(s.checkpoints)} (frames {first}-{last}), segments: {segments}, "
+              f"piece versions: {len(s.versions)}")
+    print(f"events: {s.events}, bus reads: {s.bus_reads}, bus writes: {s.bus_writes}, "
+          f"vectors: {s.bus_vectors}, sector reads: {s.media_reads}, write journal: {s.write_journal}")
+    for name, n in sorted(s.stream_bytes.items(), key=lambda kv: -kv[1]):
+        print(f"  {name:14} {_format_size(n)}")
+    for note in c.notes:
+        print(f"note: {note}")
+    if s.stopped_at:
+        print(f"stopped at {s.stopped_at}")
+    return 0
+
+
+def cmd_validate_v2(args: argparse.Namespace) -> int:
+    from .ttdcontainer import validate
+    data = open(args.file, "rb").read()
+    problems = validate(data)
+    if not problems:
+        print(f"{args.file}: OK")
+        return 0
+    print(f"{args.file}: FAIL ({len(problems)} problem(s))")
+    for p in problems:
+        print(f"  {p}")
+    return 1
+
+
+def cmd_parts(args: argparse.Namespace) -> int:
+    from .ttdcontainer import RECORD_HEADER, STREAM_NAMES, reachable
+    if _schema_of(args.file) != 2:
+        print("error: parts reads schema-2 files only", file=sys.stderr)
+        return 2
+    _, c = _open_v2_or_die(args.file)
+    for part in c.parts:
+        sizes = {}
+        for r in part.records:
+            name = STREAM_NAMES.get(r.stream_id, f"stream {r.stream_id}")
+            sizes[name] = sizes.get(name, 0) + r.stored_size + RECORD_HEADER
+        state = "damaged: " + part.damage if part.damaged else ("ok" if reachable(c, part.index) else "unreachable")
+        start = " [file start]" if part.file_start else ""
+        print(f"part {part.index}: frames {part.first_frame}+{part.frame_count}, {len(part.records)} records, "
+              f"depends on {part.dependencies or 'nothing'}, {state}{start}")
+        print("    " + ", ".join(f"{k} {_format_size(v)}" for k, v in sizes.items()))
+    return 0
+
+
+def cmd_recover(args: argparse.Namespace) -> int:
+    from .ttdcontainer import reachable
+    if _schema_of(args.file) != 2:
+        print("error: recover reads schema-2 files only", file=sys.stderr)
+        return 2
+    _, c = _open_v2_or_die(args.file)
+    kept = [p for p in c.parts if reachable(c, p.index)]
+    if c.finalized:
+        print(f"{args.file}: finished; nothing to recover ({len(c.parts)} parts)")
+    elif kept:
+        print(f"{args.file}: {len(kept)} complete part(s) kept, frames {kept[0].first_frame}-"
+              f"{kept[-1].first_frame + kept[-1].frame_count - 1}")
+    else:
+        print(f"{args.file}: no complete part")
+    for note in c.notes:
+        print(f"  {note}")
+    return 0
+
+
 def cmd_info(args: argparse.Namespace) -> int:
+    if _schema_of(args.file) == 2:
+        return cmd_info_v2(args)
     dump = _parse_dump_or_die(args.file)
     h = dump.header
     print(f"=== {args.file} ===")
@@ -158,6 +272,10 @@ def cmd_info(args: argparse.Namespace) -> int:
                   f"globalT {j.blocks[0].first_global_t} … {j.blocks[-1].last_global_t}")
         else:
             print("write journal: present but empty")
+        if j.segments:
+            print(f"  covers {len(j.segments)} span(s): "
+                  + ", ".join(f"({a} … {b}]" for a, b in j.segments[:4])
+                  + (" …" if len(j.segments) > 4 else ""))
     elif h.flags & 0x0002:
         print("write journal: flagged but unreadable")
     else:
@@ -209,6 +327,8 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
+    if _schema_of(args.file) == 2:
+        return cmd_validate_v2(args)
     dump = _parse_dump_or_die(args.file)
     report = check_integrity(dump)
     if report.ok and not report.warnings:
@@ -484,6 +604,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("validate", help="Run integrity checks (CI-friendly).")
     sp.add_argument("file", help="Path to .ttd file")
     sp.set_defaults(func=cmd_validate)
+
+    # parts / recover (schema 2)
+    sp = sub.add_parser("parts", help="Schema 2: parts, bytes per stream, dependencies.")
+    sp.add_argument("file", help="Path to .ttd file")
+    sp.set_defaults(func=cmd_parts)
+    sp = sub.add_parser("recover", help="Schema 2: what a scan keeps of an unfinished file.")
+    sp.add_argument("file", help="Path to .ttd file")
+    sp.set_defaults(func=cmd_recover)
 
     # analyze
     sp = sub.add_parser("analyze",

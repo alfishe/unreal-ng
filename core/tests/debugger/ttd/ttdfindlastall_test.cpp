@@ -42,6 +42,7 @@ protected:
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -76,6 +77,7 @@ protected:
 TEST_F(TTD_FindLast_Test, FindWrite_SpecificAddress_ReturnsNewest)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Populate the journal with known writes
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);
@@ -99,6 +101,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_SpecificAddress_ReturnsNewest)
 TEST_F(TTD_FindLast_Test, FindWrite_AddressRange)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x01, 0x2000, 0);
     _ttd->RecordMemoryWrite(0x1500, 0, 0x02, 0x2000, 0);
@@ -119,6 +122,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_AddressRange)
 TEST_F(TTD_FindLast_Test, FindWrite_NeverWrittenAddress_ReturnsNullopt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x01, 0x2000, 0);
     _ttd->RecordMemoryWrite(0x2000, 0, 0x02, 0x2000, 0);
@@ -141,6 +145,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_NeverWrittenAddress_ReturnsNullopt)
 TEST_F(TTD_FindLast_Test, FindWrite_ValueFilter_MatchesSpecificValue)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 0);
     _ttd->RecordMemoryWrite(0x1000, 0, 0x55, 0x2000, 0);  // different value
@@ -163,6 +168,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_ValueFilter_MatchesSpecificValue)
 TEST_F(TTD_FindLast_Test, FindWrite_ValueFilter_NonMatchingValue_ReturnsNullopt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x01, 0x2000, 0);
     _ttd->RecordMemoryWrite(0x1000, 0, 0x02, 0x2000, 0);
@@ -187,6 +193,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_ValueFilter_NonMatchingValue_ReturnsNullopt)
 TEST_F(TTD_FindLast_Test, FindWrite_PcFilter_InRange)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x01, 0x2000, 0);
     _ttd->RecordMemoryWrite(0x1000, 0, 0x02, 0x2500, 0);  // in PC range
@@ -210,6 +217,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_PcFilter_InRange)
 TEST_F(TTD_FindLast_Test, FindWrite_PcFilter_OutOfRange_ReturnsNullopt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x01, 0x1000, 0);
     _ttd->RecordMemoryWrite(0x1000, 0, 0x02, 0x3000, 0);
@@ -235,6 +243,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_PcFilter_OutOfRange_ReturnsNullopt)
 TEST_F(TTD_FindLast_Test, FindWrite_BeforeGlobalT_LimitsResults)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Record writes at different globalT values.
     // RecordMemoryWrite computes globalT from frame_counter * frame + t_in_frame.
@@ -269,6 +278,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_BeforeGlobalT_LimitsResults)
 TEST_F(TTD_FindLast_Test, FindWrite_WhileRecording_ReturnsNullopt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 0);
 
     ttd::TTDSearchQuery q;
@@ -300,6 +310,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_NoHistory_ReturnsNullopt)
 TEST_F(TTD_FindLast_Test, FindWrite_ResultShape_HasExpectedFields)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1234, 0, 0x56, 0x5678, 3);
 
@@ -332,6 +343,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_ResultShape_HasExpectedFields)
 TEST_F(TTD_FindLast_Test, FindWrite_PhysPageFilter_SeparatesBankedAddresses)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Same Z80 address, three different pages banked in at the time.
     _ttd->RecordMemoryWrite(0xC000, 0, 0xAA, 0x8000, 0);
@@ -370,6 +382,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_PhysPageFilter_SeparatesBankedAddresses)
 TEST_F(TTD_FindLast_Test, FindWrite_PhysPageFilter_UnwrittenPageReturnsNullopt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0xC000, 0, 0xAA, 0x8000, 1);
     _ttd->RecordMemoryWrite(0xC000, 0, 0xBB, 0x8100, 2);
@@ -416,6 +429,7 @@ protected:
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -511,6 +525,7 @@ TEST_F(TTD_FindLast_Marker_Test, ExecuteQuery_MarkerBlocks_ReturnsNulloptWithMar
 TEST_F(TTD_FindLast_Marker_Test, WriteQuery_MarkerDoesNotBlock_JournalFastPath)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Record a known write
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);
@@ -574,6 +589,7 @@ protected:
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -610,6 +626,7 @@ protected:
 TEST_F(TTD_FindLast_Fallback_Test, WriteQuery_FindsInJournal_ReadQueryDoesNot)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Record a known write
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);
@@ -648,6 +665,7 @@ TEST_F(TTD_FindLast_Fallback_Test, WriteQuery_FindsInJournal_ReadQueryDoesNot)
 TEST_F(TTD_FindLast_Fallback_Test, ExecuteQuery_UsesReplayPath)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);
     RunFrames(1);
@@ -670,28 +688,32 @@ TEST_F(TTD_FindLast_Fallback_Test, ExecuteQuery_UsesReplayPath)
 // Io queries use journal fast path
 // ===========================================================================
 
-TEST_F(TTD_FindLast_Fallback_Test, IoQuery_FindsInJournal)
+/// D40: a port write is found in the port journal (every session records
+/// each OUT with its time and PC), with the write journal off
+TEST_F(TTD_FindLast_Fallback_Test, IoQuery_FindsInThePortJournal)
 {
+    _ttd->SetEnableWriteJournal(false);
     ASSERT_TRUE(_ttd->StartRecording());
-
-    // Record both a memory write and an IO write
-    _ttd->RecordMemoryWrite(0xFE, 0, 0x01, 0x2000, 0);
-    _ttd->RecordIoWrite(0xFE, 0x42, 0x2100);
-    RunFrames(1);
-
+    RunFrames(30);   // the ROM's start-up sets the border: OUT (#FE)
     _ttd->StopRecording();
 
-    // IO query should find the IO record in the journal
-    ttd::TTDSearchQuery q;
-    q.addrFrom = 0xFE;
-    q.addrTo   = 0xFE;
-    q.access   = ttd::TTDAccessType::Io;
+    const ttd::TTDPortJournal& outs = _ttd->GetPortWriteJournal();
+    ASSERT_GT(outs.Size(), 0u) << "the session has port writes";
+    ttd::TTDPortRecord last;
+    ASSERT_TRUE(outs.Get(outs.Size() - 1, last));
 
+    ttd::TTDSearchQuery q;
+    q.addrFrom = last.port;
+    q.addrTo   = last.port;
+    q.access   = ttd::TTDAccessType::Io;
+    q.beforeGlobalT = _ttd->GlobalT(_ttd->SessionEndPosition()) + _ttd->FrameSpan();
     auto result = _ttd->FindLastAccess(q);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->access, ttd::TTDAccessType::Io);
-    EXPECT_EQ(result->value, 0x42u);
-    EXPECT_EQ(result->pc, 0x2100u);
+    EXPECT_EQ(result->addr, last.port);
+    EXPECT_EQ(result->value, last.value);
+    EXPECT_EQ(result->pc, last.pc);
+    EXPECT_TRUE(result->time == last.Time());
 }
 
 // ===========================================================================
@@ -705,6 +727,7 @@ TEST_F(TTD_FindLast_Fallback_Test, IoQuery_FindsInJournal)
 TEST_F(TTD_FindLast_Fallback_Test, WriteQuery_NoMatch_JournalHasRecords_ReturnsNullopt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
 
     // Write to 0x1000 but query for 0x2000
     _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);

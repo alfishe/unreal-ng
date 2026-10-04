@@ -73,6 +73,9 @@ capture_media {"action":"screenshot","format":"png","area":"full","filename":"sc
   `.img`, so `insert auto` is ambiguous: name the slot.
 - An empty CD unit on the slave: insert with `"device":"cdrom"` into an empty `ide0.slave` (or
   `[HDD] CD1=1`); the BIOS reports "UNREAL-NG CD-ROM".
+- The system disk as a CompactFlash card on an IDE adapter, the usual disk of a real Sprinter today: insert with
+  `"device":"cf"` into an empty unit (or `[HDD] CF0=1`). The card answers IDENTIFY as CF does (word 0 `#848A`);
+  BIOS 3.06 Hotfix 2 reports "UNREAL-NG CF" and boots DSS 1.71 from it; `inspect_state` `ide` shows `kind: cf`.
 
 ## WebAPI
 

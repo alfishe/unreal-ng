@@ -2,6 +2,7 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include <pybind11/pybind11.h>
@@ -161,6 +162,10 @@ inline py::dict TtdRecordedMachineDict(const ttd::TTDRecordedMachine& m)
     for (const std::string& name : m.peripherals)
         list.append(name);
     d["peripherals"] = list;
+    py::list notRecorded;
+    for (const std::string& name : m.notRecorded)
+        notRecorded.append(name);
+    d["not_recorded"] = notRecorded;
     d["general_sound"] = py::cast(std::string(ttd::GeneralSoundName(m.generalSound)));
     d["turbo_sound"] = py::cast(m.turboSound);
     return d;
@@ -2459,6 +2464,9 @@ namespace PythonBindings
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
+            .def("profi_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::ProfiPeripherals(self.GetContext()));
+            }, "ZX Profi board chips: port map in force, 8255, 8253 counters, 8251 and the #B3 latch; available=False on other machines")
             .def("rtc_read", [](Emulator& self, unsigned start, unsigned count) -> py::bytes {
                 std::vector<uint8_t> bytes;
                 std::string error;
@@ -3517,18 +3525,17 @@ namespace PythonBindings
                 info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
                 info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
                 info["write_journal_complete"]   = py::cast(si.writeJournalComplete);
-                info["write_journal_wrapped"]    = py::cast(si.writeJournalWrapped);
-                if (!si.journalGapReason.empty())
+                py::list segments;
+                for (const auto& [from, to] : si.writeJournalSpans)
                 {
-                    py::dict gap;
-                    gap["reason"] = si.journalGapReason;
-                    if (si.journalGapHasPosition)
-                    {
-                        gap["frame"]    = py::cast(si.journalGapAt.frame);
-                        gap["tinframe"] = py::cast(si.journalGapAt.tInFrame);
-                    }
-                    info["write_journal_gap"] = gap;
+                    py::dict span;
+                    span["from_frame"]    = py::cast(from.frame);
+                    span["from_tinframe"] = py::cast(from.tInFrame);
+                    span["to_frame"]      = py::cast(to.frame);
+                    span["to_tinframe"]   = py::cast(to.tInFrame);
+                    segments.append(span);
                 }
+                info["write_journal_segments"] = segments;
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
                 info["input_event_count"]        = py::cast(static_cast<uint64_t>(si.inputEventCount));
                 info["external_event_count"]     = py::cast(static_cast<uint64_t>(si.externalEventCount));
@@ -3595,24 +3602,16 @@ namespace PythonBindings
             }, "Describe a .ttd file without loading it: header, sections and the recorded machine "
                "(model, ROM signature, General Sound card, devices)", py::arg("path"))
 
-            // mode: "development" (write journal on) or "gaming" (off); an explicit
-            // enable_write_journal wins over mode; with neither, the choice made
-            // by ttd_set_journal_enabled stands (journal on by default)
-            .def("ttd_start", [](Emulator& self, py::object modeObj, py::object journalObj) -> bool {
+            // journal=True also records the write journal; without it the
+            // ttd_set_journal_enabled choice stands (off by default, D40)
+            .def("ttd_start", [](Emulator& self, py::object journalObj) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return false;
-                if (!modeObj.is_none())
-                {
-                    const std::string mode = modeObj.cast<std::string>();
-                    if (mode != "development" && mode != "gaming")
-                        throw py::value_error("mode must be \"development\" or \"gaming\"");
-                    ctx->pTimeTravelManager->SetEnableWriteJournal(mode == "development");
-                }
                 if (!journalObj.is_none())
                     ctx->pTimeTravelManager->SetEnableWriteJournal(journalObj.cast<bool>());
                 return ctx->pTimeTravelManager->StartRecording();
-            }, "Start TTD recording",
-               py::arg("mode") = py::none(), py::arg("enable_write_journal") = py::none())
+            }, "Start TTD recording (journal=True also records the write journal)",
+               py::arg("journal") = py::none())
 
             .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
                 auto* ctx = self.GetContext();
@@ -3630,16 +3629,35 @@ namespace PythonBindings
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
                 auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SetEnableWriteJournal(enabled))
-                    throw std::runtime_error(
-                        ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal));
-            }, "Choose whether the next recording keeps a write journal (RuntimeError while recording)",
+                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SwitchWriteJournal(enabled))
+                    throw std::runtime_error("write journal not available");
+            }, "Switch the write journal at any moment, also while recording: a journal segment starts or ends there",
                py::arg("enabled"))
 
             .def("ttd_get_journal_enabled", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
-                return !ctx || !ctx->pTimeTravelManager || ctx->pTimeTravelManager->GetEnableWriteJournal();
-            }, "Whether recordings keep a write journal")
+                return ctx && ctx->pTimeTravelManager && ctx->pTimeTravelManager->GetEnableWriteJournal();
+            }, "Whether the write journal is recorded (off by default)")
+
+            .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::dict {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                    throw std::runtime_error("TTD not available");
+                const ttd::TTDJournalBuildResult b = ctx->pTimeTravelManager->BuildWriteJournalFrames(
+                    fromObj.is_none() ? 0 : fromObj.cast<uint64_t>(),
+                    toObj.is_none() ? UINT64_MAX : toObj.cast<uint64_t>());
+                py::dict r;
+                r["ok"] = b.ok;
+                r["error"] = b.ok ? py::object(py::none()) : py::object(py::str(b.error));
+                r["cancelled"] = b.cancelled;
+                r["frames_built"] = b.framesBuilt;
+                r["frames_covered"] = b.framesCovered;
+                r["frames_refused"] = b.framesRefused;
+                r["records"] = b.records;
+                return r;
+            }, "Build the write journal for frames from_frame..to_frame (default: the whole session) by replaying "
+               "them, about 2-4 ms per frame; not while recording",
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none())
 
             .def("ttd_stop", [](Emulator& self) {
                 auto* ctx = self.GetContext();
@@ -4339,103 +4357,33 @@ namespace PythonBindings
            py::arg("pc"), py::arg("max_tstates") = 0)
 
         .def("mem_find",
-             [](Emulator& self, py::object patternValue, unsigned start, unsigned end, unsigned alignment,
-                unsigned max) -> py::dict {
-            py::dict d;
-            Memory* memory = self.GetMemory();
-            if (!memory) { d["error"] = "memory not available"; return d; }
-
-            std::vector<uint8_t> pattern;
-            if (py::isinstance<std::string>(patternValue))
-            {
-                std::string digits;
-                for (char c : patternValue.cast<std::string>())
-                {
-                    if (c == ' ' || c == ':')
-                        continue;
-                    if (!std::isxdigit(static_cast<unsigned char>(c)))
-                    {
-                        d["error"] = "invalid hex pattern";
-                        return d;
-                    }
-                    digits += static_cast<char>(std::toupper(c));
-                }
-                if (digits.empty() || digits.size() % 2 != 0)
-                {
-                    d["error"] = "invalid hex pattern";
-                    return d;
-                }
-                for (size_t i = 0; i < digits.size(); i += 2)
-                    pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
-            }
-            else if (py::isinstance<py::sequence>(patternValue))
-            {
+             [](Emulator& self, py::object patternValue, uint32_t start, py::object endValue, unsigned alignment,
+                unsigned max, const std::string& space, const std::string& mask) -> py::object {
+            std::vector<uint8_t> bytes;
+            const bool number = py::isinstance<py::int_>(patternValue);
+            const bool text = number || py::isinstance<py::str>(patternValue);
+            if (!text)
                 for (auto item : patternValue)
-                    pattern.push_back(static_cast<uint8_t>(item.cast<int>() & 0xFF));
-            }
-
-            if (pattern.empty() || pattern.size() > 64)
+                    bytes.push_back(static_cast<uint8_t>(item.cast<int>() & 0xFF));
+            MemorySearchRequest request;
+            std::string message;
+            const uint32_t end = endValue.is_none() ? 0xFFFFFFFFu : endValue.cast<uint32_t>();
+            const std::string pattern = number ? MemorySearch::NumberPattern(patternValue.cast<uint64_t>())
+                                        : text ? patternValue.cast<std::string>() : std::string();
+            if (!MemorySearch::BuildRequest(pattern, text ? nullptr : &bytes,
+                                            mask, space, start, end, max, alignment, request, message))
             {
-                d["error"] = "pattern must be 1..64 bytes";
-                return d;
+                py::dict d;
+                d["error"] = message;
+                return std::move(d);
             }
-            if (start > end || end > 0xFFFF || (alignment != 1 && alignment != 2))
-            {
-                d["error"] = "invalid range or alignment";
-                return d;
-            }
-
-            py::list matches;
-            size_t found = 0;
-            bool truncated = false;
-            const size_t searchLimit = static_cast<size_t>(end) - pattern.size() + 1;
-
-            for (size_t position = start; position <= searchLimit; position += alignment)
-            {
-                if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-                    continue;
-
-                bool matched = true;
-                for (size_t i = 1; i < pattern.size(); i++)
-                {
-                    if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
-                    {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (!matched)
-                    continue;
-
-                if (found >= max)
-                {
-                    truncated = true;
-                    break;
-                }
-
-                py::dict match;
-                match["address"] = static_cast<unsigned>(position);
-                py::list contextBytes;
-                const size_t contextStart = position > 4 ? position - 4 : 0;
-                for (size_t i = 0; i < pattern.size() + 4; i++)
-                {
-                    const size_t address = contextStart + i;
-                    if (address > 0xFFFF)
-                        break;
-                    contextBytes.append(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address)));
-                }
-                match["context"] = contextBytes;
-                matches.append(match);
-                found++;
-            }
-
-            d["matches"] = matches;
-            d["count"] = found;
-            d["truncated"] = truncated;
-            return d;
-        }, "Search Z80 memory for a byte pattern (hex string or byte sequence)",
-           py::arg("pattern"), py::arg("start") = 0, py::arg("end") = 0xFFFF, py::arg("alignment") = 1,
-           py::arg("max") = 64)
+            return StateNodeToPy(MemorySearch::ToState(request, MemorySearch::Search(self.GetContext(), request)));
+        }, "Search memory for a byte pattern (MemorySearch): hex text with ?? / A? wildcards or a byte sequence; "
+           "space 'cpu' (default), 'ram' (every RAM page) or a page ('ram5', 'rom2', 'cache0'); mask = hex bytes, "
+           "1 bits must match. Matches: address (cpu) or page {kind, page} + offset, context_start, context "
+           "(4 bytes before, the match, 4 after)",
+           py::arg("pattern"), py::arg("start") = 0, py::arg("end") = py::none(), py::arg("alignment") = 1,
+           py::arg("max") = 64, py::arg("space") = "", py::arg("mask") = "")
 
         .def("screen_digest",
              [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder,
@@ -4554,6 +4502,22 @@ namespace PythonBindings
                 item["tags"] = tagNames;  // empty list = untagged row
                 const char* latchName = PagingLatchToString(entry.latch);
                 item["latch"] = latchName ? py::object(py::str(latchName)) : py::object(py::none());
+                if (latchName)
+                {
+                    // The latch's value now, and decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+                    const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, context->emulatorState);
+                    item["latch_value"] = value;
+                    py::dict fields;
+                    for (const DecodedLatchField& field :
+                         DecodePagingLatch(entry.latch, value, context->config.mem_model, context->config.ramsize))
+                    {
+                        if (field.isBool)
+                            fields[py::str(field.key)] = field.boolValue;
+                        else
+                            fields[py::str(field.key)] = field.intValue;
+                    }
+                    item["latch_fields"] = fields;
+                }
 
                 entries.append(item);
             }

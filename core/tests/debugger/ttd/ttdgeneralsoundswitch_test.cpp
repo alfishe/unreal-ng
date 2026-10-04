@@ -10,6 +10,8 @@
 #include "_helpers/gsslot.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttddumpformat.h"
+#include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
@@ -143,26 +145,25 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
     ASSERT_NE(after, nullptr);
     EXPECT_NE(after, before) << "the switch must replace the card object (the freed pointer)";
 
-    // LLE and LW register under different peripheral ids (GeneralSound vs
-    // GeneralSoundLightweight - same split as the TurboSound/TSFM slots), so
-    // the switch must move the registration, not just repoint the same slot.
+    // The lightweight card is fitted but not recorded (TTD state registry):
+    // the switch vacates the outgoing slot and registers nothing in its place,
+    // so no checkpoint can save through the freed card
     const ttd::PeripheralId afterId = after->TTDPeripheralId();
     ASSERT_EQ(afterId, ttd::PeripheralId::GeneralSoundLightweight);
-    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(afterId),
-              static_cast<ttd::TTDSerializable*>(after))
-        << "UpdatePeripheral must register the new card under its own slot - "
-           "otherwise the next checkpoint saves through a dangling pointer";
-    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(beforeId), nullptr)
+    const ttd::TTDPeripheralRegistry& registry = context->pTimeTravelManager->GetPeripheralRegistry();
+    EXPECT_EQ(registry.GetDevice(afterId), nullptr) << "the LW card has no TTD state";
+    EXPECT_NE(registry.NotRecordedMask() & (uint64_t(1) << static_cast<uint8_t>(afterId)), 0u)
+        << "it is marked as fitted, not recorded";
+    EXPECT_EQ(registry.GetDevice(beforeId), nullptr)
         << "the outgoing personality's slot must be vacated, not left pointing at the freed card";
     EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().lastDropReason, "gs-card-switch");
 
     context->pTimeTravelManager->EndDebuggerLiveHistory();
 }
 
-/// Exercises the actual failure path: a checkpoint captured *after* the
-/// switch must read the new card's live state, not crash on (or silently
-/// read through) the deleted one.
-TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchCapturesTheNewCard)
+/// A checkpoint captured after a switch to the lightweight card holds no
+/// General Sound blob at all: neither the freed classic card's nor the LW's
+TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchToLightweightHoldsNoGsBlob)
 {
     ASSERT_TRUE(context->pTimeTravelManager->BeginDebuggerLiveHistory());
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
@@ -170,18 +171,11 @@ TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchCapturesTheNewCard)
     ASSERT_NE(after, nullptr);
     ASSERT_EQ(after->implementation(), GSCardImplementation::LW);
 
-    // A direct CaptureAll, the same call TTDStateManager makes on every
-    // checkpoint - this is the call that would have touched freed memory.
+    // A direct CaptureAll, the same call every checkpoint makes
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     context->pTimeTravelManager->GetPeripheralRegistry().CaptureAll(blobs);
-
-    const auto afterId = static_cast<uint8_t>(after->TTDPeripheralId());
-    const auto it = blobs.find(afterId);
-    ASSERT_NE(it, blobs.end()) << "the LW card's own slot must still be registered and captured post-switch";
-
-    const auto restored = ttd::TTDPeripheralRegistry::DecodeBlob(afterId, it->second);
-    EXPECT_EQ(restored.size(), after->TTDStateSize())
-        << "captured blob must match the NEW (LW) card's state size, not a stale LLE one";
+    EXPECT_EQ(blobs.count(static_cast<uint8_t>(ttd::PeripheralId::GeneralSoundLightweight)), 0u);
+    EXPECT_EQ(blobs.count(static_cast<uint8_t>(ttd::PeripheralId::GeneralSound)), 0u);
 
     context->pTimeTravelManager->EndDebuggerLiveHistory();
 }
@@ -263,4 +257,41 @@ TEST_F(TTDGeneralSoundSwitch_Test, SessionFromAnotherGsPersonalityIsRefused)
     session.clear();
     session.seekg(0);
     EXPECT_TRUE(context->pTimeTravelManager->DeserializeSession(session, err)) << err;
+}
+
+/// A session recorded with the lightweight card: no GS blob, the header names
+/// the card (flag bit 11, not_recorded_mask), and a machine with another card
+/// cannot load it
+TEST_F(TTDGeneralSoundSwitch_Test, LightweightSessionNamesTheCardInTheHeader)
+{
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    EmulatorTestHelper::RunFramesFast(emulator, 3);
+    const auto lw = static_cast<uint8_t>(ttd::PeripheralId::GeneralSoundLightweight);
+    for (size_t i = 0; i < context->pTimeTravelManager->GetCheckpointCount(); ++i)
+        EXPECT_EQ(context->pTimeTravelManager->GetCheckpoint(i)->peripheralBlobs.count(lw), 0u) << "checkpoint " << i;
+
+    std::stringstream session;
+    std::string err;
+    ASSERT_TRUE(context->pTimeTravelManager->SerializeSession(session, err)) << err;
+    context->pTimeTravelManager->StopRecording();
+
+    session.seekg(0);
+    ttd::TTDFileInfo info;
+    ASSERT_TRUE(ttd::ReadTTDFileInfo(session, info, err)) << err;
+    EXPECT_NE(info.flags & ttd::dump::kFlagsHasNotRecordedMask, 0);
+    EXPECT_EQ(info.machine.notRecorded, std::vector<std::string>{"gs-lw"});
+    EXPECT_EQ(info.machine.generalSound, GSTypeKind::LW) << "the slot still reads as the lightweight card";
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::Z80));
+    session.clear();
+    session.seekg(0);
+    EXPECT_FALSE(context->pTimeTravelManager->DeserializeSession(session, err));
+    EXPECT_NE(err.find("recorded with GS lightweight, fitted: GS"), std::string::npos) << err;
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
+    session.clear();
+    session.seekg(0);
+    EXPECT_TRUE(context->pTimeTravelManager->DeserializeSession(session, err)) << err;
+    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().machine.notRecorded, std::vector<std::string>{"gs-lw"});
 }

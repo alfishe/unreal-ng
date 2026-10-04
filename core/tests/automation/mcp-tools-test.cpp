@@ -1938,27 +1938,69 @@ TEST_F(McpTools_Test, TimeTravel_Status_SummarizesSession)
     EXPECT_EQ(result.structured["checkpoint_count"].asUInt(), 61u);
 }
 
-TEST_F(McpTools_Test, TimeTravel_Start_PostsModeAndReportsJournal)
+TEST_F(McpTools_Test, TimeTravel_Start_PostsJournalAndReportsIt)
 {
     Json::Value reply;
     reply["started"] = true;
     reply["already_active"] = false;
     reply["state"] = "recording";
-    reply["write_journal_enabled"] = false;
+    reply["write_journal_enabled"] = true;
     _caller->routes["POST /api/v1/emulator/emu-1/ttd/start"] = {200, reply};
 
     Json::Value args;
     args["action"] = "start";
-    args["mode"] = "gaming";
+    args["journal"] = true;
     mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
 
     ASSERT_FALSE(result.isError) << result.text;
     const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/start");
     ASSERT_NE(call, nullptr);
-    EXPECT_EQ(call->body["mode"].asString(), "gaming");
-    EXPECT_FALSE(call->body.isMember("enable_write_journal"));
+    EXPECT_TRUE(call->body["journal"].asBool());
     EXPECT_NE(result.text.find("recording started"), std::string::npos) << result.text;
-    EXPECT_NE(result.text.find("write journal off"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("write journal on"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_JournalOnAndBuild_PostAndSummarizeTheSpans)
+{
+    Json::Value spans(Json::arrayValue);
+    Json::Value span;
+    span["from_frame"] = 10;
+    span["from_tinframe"] = 0;
+    span["to_frame"] = 40;
+    span["to_tinframe"] = 3;
+    spans.append(span);
+    Json::Value state;
+    state["write_journal_enabled"] = true;
+    state["write_journal_complete"] = false;
+    state["write_journal_segments"] = spans;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/journal"] = {200, state};
+    Json::Value built = state;
+    built["ok"] = true;
+    built["frames_built"] = 30;
+    built["frames_covered"] = 0;
+    built["frames_refused"] = 0;
+    built["records"] = 12345;
+    built["cancelled"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/journal/build"] = {200, built};
+
+    Json::Value on;
+    on["action"] = "journal_on";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", on, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/journal")->body["enabled"].asBool());
+    EXPECT_NE(result.text.find("frames 10..40"), std::string::npos) << result.text;
+
+    Json::Value build;
+    build["action"] = "journal_build";
+    build["from_frame"] = 10;
+    build["to_frame"] = 39;
+    result = RunTool(*_registry, "time_travel", build, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/journal/build");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["from_frame"].asUInt64(), 10u);
+    EXPECT_EQ(call->body["to_frame"].asUInt64(), 39u);
+    EXPECT_NE(result.text.find("30 frame(s), 12345 writes"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_HistoryLimit_PostsLimitsAndSummarizes)
@@ -2010,11 +2052,11 @@ TEST_F(McpTools_Test, TimeTravel_Start_PassesHistoryLimit)
     EXPECT_FALSE(call->body.isMember("history_limit_bytes"));
 }
 
-TEST_F(McpTools_Test, TimeTravel_Start_BadMode_RejectsBeforeAnyCall)
+TEST_F(McpTools_Test, TimeTravel_Start_JournalNotABoolean_RejectsBeforeAnyCall)
 {
     Json::Value args;
     args["action"] = "start";
-    args["mode"] = "turbo";
+    args["journal"] = "development";
     mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
 
     EXPECT_TRUE(result.isError);

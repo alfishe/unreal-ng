@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "stdafx.h"
 #include "gtest/gtest.h"
 
@@ -316,6 +317,31 @@ TEST_F(PortDecoder_PortTag_Test, ReadPagingLatchMapsEnumToStateField)
     EXPECT_EQ(PortDecoder::ReadPagingLatch(PagingLatch::AFB, state), 0x20u);
     EXPECT_EQ(PortDecoder::ReadPagingLatch(PagingLatch::PFFF7Window0, state), 0x1234u);
     EXPECT_EQ(PortDecoder::ReadPagingLatch(PagingLatch::None, state), 0u);
+}
+
+/// The ULA port's last write is a latch too: every model's #FE row carries pFE, decoded as border, MIC and EAR,
+/// and it stays out of the paging latches (no Memory tag)
+TEST_F(PortDecoder_PortTag_Test, UlaPortFeIsALatchWithBorderMicEar)
+{
+    _context->config.mem_model = MM_SPECTRUM48;
+    PortDecoder_Spectrum48 decoder(_context);
+    const std::vector<PortMapEntry> rows = decoder.getPortMapEntries();
+    auto row = std::find_if(rows.begin(), rows.end(), [](const PortMapEntry& e) { return e.port == 0x00FE; });
+    ASSERT_NE(row, rows.end());
+    EXPECT_EQ(row->latch, PagingLatch::PFE);
+    EXPECT_STREQ(PagingLatchToString(PagingLatch::PFE), "pFE");
+    EXPECT_TRUE(decoder.GetPagingLatches().empty()) << "#FE is not a paging latch";
+
+    _context->emulatorState.pFE = 0x1D;  // border 5, MIC 1, EAR 1
+    EXPECT_EQ(PortDecoder::ReadPagingLatch(PagingLatch::PFE, _context->emulatorState), 0x1Du);
+    const std::vector<DecodedLatchField> fields = DecodePagingLatch(PagingLatch::PFE, 0x1D, MM_SPECTRUM48);
+    ASSERT_EQ(fields.size(), 3u);
+    EXPECT_EQ(fields[0].key, "border");
+    EXPECT_EQ(fields[0].intValue, 5);
+    EXPECT_EQ(fields[1].key, "mic");
+    EXPECT_TRUE(fields[1].boolValue);
+    EXPECT_EQ(fields[2].key, "ear");
+    EXPECT_TRUE(fields[2].boolValue);
 }
 
 TEST_F(PortDecoder_PortTag_Test, EveryMemoryRowHasALiveBinding)

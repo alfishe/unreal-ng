@@ -109,6 +109,9 @@ struct MultiSoundGsMapping
     Chip chip = Chip::Rom;
     uint8_t gma = 0;            // gma[18:15], the chip's address bits 15-18 (chip address = gma << 15 | A14-A0)
 
+    /// One RAM chip: gma (4 bits) x 32 KB
+    static constexpr uint32_t kRamChipBytes = 512u * 1024u;
+
     uint32_t ChipOffset(uint16_t address) const { return (static_cast<uint32_t>(gma) << 15) | (address & 0x7FFFu); }
 };
 
@@ -158,7 +161,11 @@ public:
     uint8_t GsStatus() const;
 
     /// The GS memory map for this address under the current page register.
-    MultiSoundGsMapping GsMemoryMap(uint16_t address) const;
+    MultiSoundGsMapping GsMemoryMap(uint16_t address) const { return GsMemoryMapFor(_latches.gsPage, _options.gsRam, address); }
+
+    /// The GS memory map for a page register value and RAM build (the bus controller alone; the General Sound card's
+    /// MultiSound profile banks through it, GSMemoryMap::MultiSound1Mb / 2Mb).
+    static MultiSoundGsMapping GsMemoryMapFor(uint8_t gsPage, MultiSoundGsRam gsRam, uint16_t address);
 
     // DAC arbitration (four channels shared by the GS and the SounDrive; the last strobe to end wins)
 

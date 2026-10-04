@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -481,6 +482,19 @@ TEST_F(IdeController_Test, SprinterHasTwoChannels)
     ASSERT_TRUE(MediaControl::ResolveSelector(Manager(), "cd", id).Ok());
     EXPECT_EQ(id, "ide1.slave");
     EXPECT_EQ(_context->config.ide[3].cd, 1);
+
+    // The empty CD unit becomes a CompactFlash card on an IDE adapter (device=cf): a disk unit again, tagged "cf"
+    ASSERT_TRUE(ide.SetUnitKind(3, IdeController::UnitKind::CompactFlash, &error)) << error;
+    EXPECT_EQ(ide.KindOf(3), IdeController::UnitKind::CompactFlash);
+    EXPECT_EQ(Manager().Info("ide1.slave")->descriptor.kind, MediaKind::Block);
+    EXPECT_EQ(Manager().Info("ide1.slave")->descriptor.label, "IDE secondary slave (CompactFlash)");
+    const std::vector<std::string> tags = Manager().Info("ide1.slave")->descriptor.tags;
+    EXPECT_NE(std::find(tags.begin(), tags.end(), "cf"), tags.end());
+    EXPECT_EQ(_context->config.ide[3].cf, 1);
+    EXPECT_EQ(_context->config.ide[3].cd, 0);
+    ASSERT_TRUE(ide.SetUnitKind(3, IdeController::UnitKind::Disk, &error)) << error;
+    EXPECT_EQ(_context->config.ide[3].cf, 0) << "back to a hard disk";
+    EXPECT_EQ(Manager().Info("ide1.slave")->descriptor.label, "IDE secondary slave (hard disk)");
 }
 
 /// Single-channel boards keep one channel and no ide1 slots

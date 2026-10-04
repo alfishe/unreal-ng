@@ -1049,6 +1049,24 @@ std::string FormatTtdFileInfo(const Json::Value& info)
     return out.str();
 }
 
+/// What the write journal covers (D40), from a status / journal response
+std::string DescribeJournalSegments(const Json::Value& status)
+{
+    const Json::Value& spans = status["write_journal_segments"];
+    if (!spans.isArray() || spans.empty())
+        return "covers nothing: write searches replay";
+    if (status["write_journal_complete"].asBool())
+        return "covers the whole session";
+    std::ostringstream out;
+    out << "covers " << spans.size() << " span(s):";
+    for (Json::ArrayIndex i = 0; i < spans.size() && i < 4; ++i)
+        out << (i ? "," : "") << " frames " << spans[i]["from_frame"].asUInt64() << ".." << spans[i]["to_frame"].asUInt64();
+    if (spans.size() > 4)
+        out << ", ...";
+    out << "; write searches outside replay";
+    return out.str();
+}
+
 std::string FormatTtdStatus(const Json::Value& status)
 {
     if (!status["ttd_available"].asBool())
@@ -1081,17 +1099,7 @@ std::string FormatTtdStatus(const Json::Value& status)
         }
     }
     out << ", write journal " << (status["write_journal_enabled"].asBool() ? "on" : "off");
-    if (status.isMember("write_journal_gap"))
-    {
-        // The journal misses writes of this session: write/io find-last replays
-        const Json::Value& gap = status["write_journal_gap"];
-        out << " (incomplete: " << gap["reason"].asString();
-        if (gap.isMember("frame"))
-        {
-            out << " at frame " << gap["frame"].asUInt64();
-        }
-        out << "; write searches replay)";
-    }
+    out << " (" << DescribeJournalSegments(status) << ")";
     if (status["bookmark_count"].asUInt64() > 0)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
@@ -1162,7 +1170,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "isa", "network", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
@@ -1197,6 +1205,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/network/frame {link, hex}, "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
+        "'profi' = the ZX Profi's board chips (the port map in force, the 8255, the 8253 counters, the 8251 and the #B3 latch; "
+        "unavailable on other machines), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
         "fitted card - an NE2000's chip, base, MAC, registers; a 3C509B's also resources.id_port (#100-#1F0, its isolation "
         "state); the ZX-bus adapter's 'zx_bus' object: the General Sound / "
@@ -1295,7 +1305,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "screen OCR text, screen image metadata, screen digest hash, raster timing (timing: the beam and the layer pixel under it), "
         "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
         "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
-        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), ZX Profi board chips (profi), "
         "the machine's mouse device + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
         "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
@@ -1323,7 +1333,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
@@ -1331,7 +1341,7 @@ void RegisterInspectState(ToolRegistry& registry)
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1697,6 +1707,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Rtc via the WebAPI; 404 = no CMOS clock
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/rtc"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "profi")
+                        {
+                            // Core DeviceState::ProfiPeripherals via the WebAPI; 404 = not a ZX Profi
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/profi"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -2155,6 +2176,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                 else
                                     out << "\n[rtc] " << value["chip"].asString() << ", " << value["time"]["text"].asString()
                                         << " (" << value["time_mode"].asString() << " time), " << value["cells"].asInt() << " cells";
+                            }
+                            else if (aspect == "profi")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[profi] " << value["description"].asString();
+                                else
+                                    out << "\n[profi] board " << value["board"].asString() << ", ExtPorts="
+                                        << value["port_map"]["ext_ports"].asString() << ", extended map "
+                                        << (value["port_map"]["extended_map"].asBool() ? "open" : "closed") << ", 8255 control #"
+                                        << std::hex << value["ppi8255"]["control"].asInt() << std::dec;
                             }
                             else if (aspect == "tsconf_tsu")
                             {
@@ -3329,12 +3360,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit"})
+                               "history_limit", "journal_on", "journal_off", "journal_build"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; optional mode), "
+        "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; journal=true "
+        "also records the write journal), "
         "'stop' (end recording, history kept and browsable), 'invalidate' (drop all history), 'position' (current point + "
         "session end), 'markers' (replay barriers: tape control, disk writes, tool memory edits made while recording; "
         "the hardware_reset kind is reserved and never written - a reset stops the recording instead). "
@@ -3358,17 +3390,18 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
         "takes the same two fields. "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
-        "'coverage_summary' (bucketed activity heatmap).";
+        "'coverage_summary' (bucketed activity heatmap). "
+        "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
+        "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
+        "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
+        "recording). find_last works without it too: outside the journal it replays one frame.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
-    schema["properties"]["mode"]["type"] = "string";
-    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
-    schema["properties"]["mode"]["enum"].append("development");
-    schema["properties"]["mode"]["enum"].append("gaming");
-    schema["properties"]["mode"]["description"] =
-        "start: 'development' (default; keeps the write journal, so find_last is fast) or 'gaming' (no write journal, "
-        "less memory; find_last falls back to replay)";
+    schema["properties"]["journal"]["type"] = "boolean";
+    schema["properties"]["journal"]["description"] =
+        "start: also record the write journal (default false). find_last for writes then answers at once; without "
+        "it, it replays one frame";
     schema["properties"]["history_frames"]["type"] = "integer";
     schema["properties"]["history_frames"]["minimum"] = 0;
     schema["properties"]["history_frames"]["description"] =
@@ -3377,8 +3410,6 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["history_bytes"]["minimum"] = 0;
     schema["properties"]["history_bytes"]["description"] =
         "start / history_limit: keep the history's checkpoint data under this many bytes; 0 = no limit";
-    schema["properties"]["enable_write_journal"]["type"] = "boolean";
-    schema["properties"]["enable_write_journal"]["description"] = "start: explicit write-journal switch, overrides mode";
     schema["properties"]["reason"]["type"] = "string";
     schema["properties"]["reason"]["description"] = "invalidate: free-text reason echoed back and logged";
     schema["properties"]["label"]["type"] = "string";
@@ -3455,9 +3486,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_summary / port_events";
+        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build";
     schema["properties"]["to_frame"]["type"] = "integer";
-    schema["properties"]["to_frame"]["description"] = "Ending frame for coverage_scan / coverage_summary / port_events";
+    schema["properties"]["to_frame"]["description"] =
+        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build";
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
     schema["properties"]["addr_from"]["type"] = "string";
@@ -3520,24 +3552,30 @@ void RegisterTimeTravel(ToolRegistry& registry)
             std::string error;
             if (action == "start")
             {
-                if (args.isMember("mode"))
+                if (args.isMember("journal"))
                 {
-                    const std::string mode = args["mode"].asString();
-                    if (mode != "development" && mode != "gaming")
+                    if (!args["journal"].isBool())
                     {
-                        done(ToolResult::Error("'mode' must be 'development' or 'gaming'"));
+                        done(ToolResult::Error("'journal' must be true or false"));
                         return;
                     }
-                    (*body)["mode"] = mode;
-                }
-                if (args.isMember("enable_write_journal"))
-                {
-                    (*body)["enable_write_journal"] = args["enable_write_journal"].asBool();
+                    (*body)["journal"] = args["journal"].asBool();
                 }
                 if (args.isMember("history_frames"))
                     (*body)["history_limit_frames"] = args["history_frames"];
                 if (args.isMember("history_bytes"))
                     (*body)["history_limit_bytes"] = args["history_bytes"];
+            }
+            else if (action == "journal_on" || action == "journal_off")
+            {
+                (*body)["enabled"] = action == "journal_on";
+            }
+            else if (action == "journal_build")
+            {
+                if (args.isMember("from_frame"))
+                    (*body)["from_frame"] = args["from_frame"];
+                if (args.isMember("to_frame"))
+                    (*body)["to_frame"] = args["to_frame"];
             }
             else if (action == "history_limit")
             {
@@ -3681,6 +3719,32 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
                                 "Run the program now (control_execution), then 'stop' to browse the history.";
                         return text;
+                    }, done);
+                }
+                else if (action == "journal_on" || action == "journal_off")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/journal"), body.get(), caller, [id](const Json::Value& b) {
+                        return "TTD write journal on " + id + ": " +
+                               (b["write_journal_enabled"].asBool() ? "on" : "off") + ", " +
+                               DescribeJournalSegments(b);
+                    }, done);
+                }
+                else if (action == "journal_build")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/journal/build"), body.get(), caller, [id](const Json::Value& b) {
+                        if (!b["ok"].asBool())
+                            return "TTD write journal not built on " + id + ": " + b["error"].asString();
+                        std::ostringstream text;
+                        text << "TTD write journal built on " << id << " for " << b["frames_built"].asUInt64()
+                             << " frame(s), " << b["records"].asUInt64() << " writes";
+                        if (b["frames_covered"].asUInt64())
+                            text << "; " << b["frames_covered"].asUInt64() << " already covered";
+                        if (b["frames_refused"].asUInt64())
+                            text << "; " << b["frames_refused"].asUInt64() << " not replayable (a marker without its data)";
+                        if (b["cancelled"].asBool())
+                            text << "; cancelled";
+                        text << ". It " << DescribeJournalSegments(b) << ".";
+                        return text.str();
                     }, done);
                 }
                 else if (action == "history_limit")

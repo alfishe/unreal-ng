@@ -115,7 +115,8 @@ class Emulator:
     # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
     # return (command-interface.md section 3.3); dicts/lists/scalars
     def audio_ay_state(self, chip: int = -1) -> dict:
-        """AY/SSG report: overview (chip=-1) or one chip fully decoded"""
+        """AY/SSG report: overview (chip=-1; active_chip = the one the ports talk to) or one chip fully
+        decoded (latched_register = the register #FFFD last selected, selected = the ports talk to it)"""
 
     def audio_fm_state(self, chip: int = -1) -> dict:
         """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
@@ -256,6 +257,12 @@ class Emulator:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
         alarm, dump (hex lines). Peeked: never clears register C. available=False without a clock"""
+
+    def profi_state(self) -> dict:
+        """ZX Profi board chips: board (v3 / v5), port_map (ext_ports cpm / sys / v003, dos_latch, cpm,
+        rom14, hires, extended_map, long_ports_beside_vg93), ppi8255 (control, port directions and
+        latches), pit8253 (counters[]: mode, count, out, gate; v5), usart8251 (mode, command, baud,
+        status flags, byte counters, com_interrupt_enable = #B3 D0; v5). available=False elsewhere"""
 
     def rtc_read(self, start: int, count: int = 1) -> bytes:
         """CMOS cells as the guest reads them, without side effects. ValueError without a
@@ -998,16 +1005,17 @@ except RuntimeError as refusal:
     print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
 ```
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
 
 **Session lifecycle:**
 
 ```python
-emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (journal on by default)
-emu.ttd_start(mode='development')        # write journal on
-emu.ttd_start(mode='gaming')             # no write journal (smaller)
-emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
-emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
+emu.ttd_start(journal=True)              # also record the write journal
+emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
+emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all)
+# -> {'ok': True, 'error': None, 'cancelled': False, 'frames_built': 301, 'frames_covered': 0,
+#     'frames_refused': 0, 'records': ...}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
 emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
 emu.ttd_get_journal_enabled()            # -> bool
@@ -1016,7 +1024,7 @@ emu.ttd_invalidate()             # drop all history (reason defaults to 'python 
 emu.ttd_invalidate(reason='manual')
 ```
 
-`mode` is `'development'` (write journal on) or `'gaming'` (journal off, less memory); any other value raises `ValueError`. `enable_write_journal` wins over `mode`. With neither, `ttd_start()` keeps the choice made by `ttd_set_journal_enabled` (on by default). This matches the CLI (`ttd start --no-journal`), the WebAPI (`{"mode": "gaming"}`) and Lua (`ttd_start("gaming")`).
+The write journal answers "who wrote this address last" at once; without it the search replays one frame (same answer, slower). It is off by default, can be switched at any moment and built later for any span by replay (about 2-4 ms per frame) - see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules). This matches the CLI (`ttd start --journal`, `ttd journal on|off|build`), the WebAPI (`{"journal": true}`, `/ttd/journal`, `/ttd/journal/build`) and Lua (`ttd_start(true)`, `ttd_build_journal`).
 
 **Status:**
 
@@ -1035,7 +1043,7 @@ status = emu.ttd_status()
 #   'model_id': 0,
 #   'model_ram_pages': 8,             # BOUND, not a count (48K reports 6)
 #   'machine': {'model': 'PENTAGON', 'model_id': 1, 'ram_page_bound': 8, 'rom_signature': '0x...',
-#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...],
+#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...], 'not_recorded': [] or ['gs-lw'],
 #               'general_sound': 'none'|'z80'|'lw'|'ngs', 'turbo_sound': 'none'|'turbosound'|'tsfm'},
 #                                     # the recorded machine; None while there is no session
 #   'recorded_by': None,              # the instance that recorded a loaded file
@@ -1047,9 +1055,9 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
-#   'write_journal_complete': True,   # False: write/io find-last replays history
-#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
-#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
+#   'write_journal_complete': True,   # one span over the whole session
+#   'write_journal_segments': [{'from_frame': 98, 'from_tinframe': 4, 'to_frame': 397, 'to_tinframe': 11}],
+#                                     # the spans it covers; outside them a write search replays one frame
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
@@ -1268,6 +1276,12 @@ emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budg
 emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 # or as a number
 emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
+emu.mem_find("CD ?? 00")             # ?? = any byte, "A?" = any low nibble
+emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
+emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
+emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match
+# Result: {space, count, truncated, matches: [{address | page, offset, context_start, context}]};
+# context = 4 bytes before, the match, 4 after; {"error": "..."} when refused
 
 # Screen state
 emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
@@ -1277,7 +1291,8 @@ emu.screen_digest(mode="active")     # hash the surface the video mode displays 
                                      # 'active_surface': {'video_mode': str, 'pages': [..]}
 emu.ports_map()                      # static port map + live routing flags (P1-5 + P1-2 tags):
                                      # {'model': str, 'entries': [{'port','mask','match','device','gate',
-                                     #                             'tags': ['memory','rom',...], 'latch'}],
+                                     #                             'tags': ['memory','rom',...], 'latch',
+                                     #                             'latch_value', 'latch_fields'}],  # e.g. pFE: border, mic, ear
                                      #  'live': {'trdos_active','mouse_ports_decoded',
                                      #           'mouse_routing_note','shadow_monitor_paged'}}
                                      # tags: semantic categories (keyboard/memory/rom/screen/storage/

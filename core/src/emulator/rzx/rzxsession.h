@@ -96,6 +96,14 @@ namespace rzx
         bool IsActive() const;
         SessionStatus Status() const;
 
+        /// Time travel (PeripheralId::RzxPlayback, RZX requirements RZ-F19):
+        /// the player's position goes into every checkpoint; a restore puts
+        /// the player back there and installs or removes the hooks as the
+        /// playback was at that point. False when no recording was played
+        /// (save) or the state belongs to another recording (restore)
+        bool SaveTtdState(RzxPlayer::SavedState& out, uint64_t& fingerprint) const;
+        bool RestoreTtdState(const RzxPlayer::SavedState& saved, uint64_t fingerprint);
+
         /// The start snapshot a recording plays from (SkoolKit rule: the last
         /// snapshot before the first input block, or the first one with
         /// ignoreLaterSnapshots), with its bytes and extension resolved

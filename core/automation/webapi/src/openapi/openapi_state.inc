@@ -92,7 +92,7 @@
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["description"] =
-        "AY / SSG overview: chip count, slot device (TurboSound / TSFM / None), `psg_clock_hz` (the clock the AY generators run at now: 1750000, or 1500000 on a Profi in hi-res with the AY slot, [PROFI] AyClock) and a per-chip summary. Same report as the CLI `state audio ay`, Lua / Python `audio_ay_state()` and MCP `inspect_state` aspect `audio_ay`.";
+        "AY / SSG overview: chip count, slot device (TurboSound / TSFM / None), `psg_clock_hz` (the clock the AY generators run at now: 1750000, or 1500000 on a Profi in hi-res with the AY slot, [PROFI] AyClock), `active_chip` (the chip #FFFD / #BFFD talk to now: TurboSound / TSFM select it with #FF / #FE on #FFFD) and a per-chip summary with each chip's `latched_register`. Same report as the CLI `state audio ay`, Lua / Python `audio_ay_state()` and MCP `inspect_state` aspect `audio_ay`.";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["required"] = true;
@@ -100,6 +100,10 @@
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["responses"]["200"]["description"] = "AY chips information";
 
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["summary"] = "Get specific AY chip details";
+    paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["description"] =
+        "One AY / SSG chip: the 16 registers, channels, envelope, noise, mixer, I/O ports decoded; `latched_register` "
+        "(+ `latched_register_name`): the register #FFFD last selected, the one #BFFD reaches next; `selected`: whether "
+        "the ports talk to this chip now.";
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][0]["in"] = "path";
@@ -155,7 +159,7 @@
         "the number of channels (2 on the Sprinter, else 1) and, with two, the channel the adapter selected "
         "(selected_channel: primary | secondary; adapter.channel, adapter.data_latch: the PLD's one data latch), "
         "the adapter latches (read / write latch, same-port pair flags), the selected unit and INTRQ of the selected "
-        "channel, and per unit (master, slave; with two channels also channel and selected): kind (disk / cdrom), "
+        "channel, and per unit (master, slave; with two channels also channel and selected): kind (disk / cdrom / cf), "
         "media slot (ide0.master ... ide1.slave), medium (description, sectors, writable), CHS translation, "
         "the task file with status / error / device control bits decoded, the command in progress (name, phase, LBA, "
         "sectors left, buffer position), and on a CD drive the disc, unit attention, byte count limit, sense key / ASC / "

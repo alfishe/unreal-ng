@@ -49,10 +49,12 @@ public:
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const override;
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
     Ppi8255& GetPpi() { return _ppi; }
+    const ProfiBoard& GetBoard() const { return _board; }
     /// The v5 board's COM port: the 8253 baud timer and the 8251 (extended port map only)
     Pit8253& GetPit() { return _pit; }
     Usart8251& GetUsart() { return _usart; }

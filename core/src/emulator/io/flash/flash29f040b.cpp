@@ -33,6 +33,8 @@ void Flash29F040B::load(const uint8_t* data, size_t size)
     std::fill(_data.begin(), _data.end(), 0xFF);
     if (data && size)
         memcpy(_data.data(), data, std::min(size, SIZE));
+    if (_tracker)
+        _tracker->MarkAll();
     _modified = false;
     reset();
 }
@@ -78,7 +80,11 @@ void Flash29F040B::finishIfDone(int64_t now)
             for (size_t s = 0; s < SECTORS; s++)
             {
                 if ((_eraseSectors >> s) & 1)
+                {
                     std::fill_n(_data.begin() + static_cast<std::ptrdiff_t>(s * SECTOR_SIZE), SECTOR_SIZE, 0xFF);
+                    if (_tracker)
+                        _tracker->MarkRange(s * SECTOR_SIZE, SECTOR_SIZE);
+                }
             }
             _modified = true;
             _erasing = false;
@@ -90,6 +96,8 @@ void Flash29F040B::finishIfDone(int64_t now)
             // Programming can only clear bits: a 1 requested over a 0 fails
             const uint8_t old = _data[_programOffset];
             _data[_programOffset] = static_cast<uint8_t>(old & _programValue);
+            if (_tracker)
+                _tracker->Mark(_programOffset);
             _modified = true;
             _mode = ((old & _programValue) != _programValue) ? Mode::Failed : Mode::Read;
         }

@@ -95,6 +95,7 @@ protected:
         z80->pc = 0x8000;
         z80->sp = 0xBFF0;
 
+        _ttd->SetEnableWriteJournal(true);   // the tests read the journal's times
         ASSERT_TRUE(_ttd->StartRecording());
         _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
         _ttd->StopRecording();

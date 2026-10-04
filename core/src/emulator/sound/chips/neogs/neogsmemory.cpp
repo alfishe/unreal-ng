@@ -21,6 +21,8 @@ void NeoGSMemory::resetRegisters()
 void NeoGSMemory::powerOn()
 {
     std::fill(_ram.begin(), _ram.end(), 0x00);
+    if (_ramTracker)
+        _ramTracker->MarkAll();
     _pg[2] = 0;
     _pg[3] = 2;
     _mpag = 0;
@@ -142,8 +144,13 @@ void NeoGSMemory::poke(uint16_t addr, uint8_t value)
     if (_windowFlash[w])
     {
         if (_flash)
+        {
             _flash->data()[physical(addr)] = value;
+            _flash->markWritten(physical(addr));
+        }
         return;
     }
     _ram[physical(addr)] = value;
+    if (_ramTracker)
+        _ramTracker->Mark(physical(addr));
 }

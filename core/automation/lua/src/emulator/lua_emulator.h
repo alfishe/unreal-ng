@@ -9,6 +9,7 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -151,6 +152,10 @@ inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRe
     for (size_t i = 0; i < m.peripherals.size(); ++i)
         list[i + 1] = m.peripherals[i];
     t["peripherals"] = list;
+    sol::table notRecorded = lua.create_table();
+    for (size_t i = 0; i < m.notRecorded.size(); ++i)
+        notRecorded[i + 1] = m.notRecorded[i];
+    t["not_recorded"] = notRecorded;
     t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
     t["turbo_sound"] = m.turboSound;
     return t;
@@ -3134,6 +3139,12 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Rtc(emulator->GetContext()));
         });
+        // ZX Profi board chips: port map, 8255, 8253, 8251 (DeviceState::ProfiPeripherals); available = false elsewhere
+        lua.set_function("profi_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::ProfiPeripherals(emulator->GetContext()));
+        });
         lua.set_function("rtc_read", [this](sol::this_state s, int start, sol::optional<int> count) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");
@@ -3634,18 +3645,17 @@ public:
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
             info["write_journal_complete"]   = si.writeJournalComplete;
-            info["write_journal_wrapped"]    = si.writeJournalWrapped;
-            if (!si.journalGapReason.empty())
+            sol::table segments = lua_view.create_table();
+            for (size_t i = 0; i < si.writeJournalSpans.size(); ++i)
             {
-                sol::table gap = lua_view.create_table();
-                gap["reason"] = si.journalGapReason;
-                if (si.journalGapHasPosition)
-                {
-                    gap["frame"]    = si.journalGapAt.frame;
-                    gap["tinframe"] = si.journalGapAt.tInFrame;
-                }
-                info["write_journal_gap"] = gap;
+                sol::table span = lua_view.create_table();
+                span["from_frame"]    = si.writeJournalSpans[i].first.frame;
+                span["from_tinframe"] = si.writeJournalSpans[i].first.tInFrame;
+                span["to_frame"]      = si.writeJournalSpans[i].second.frame;
+                span["to_tinframe"]   = si.writeJournalSpans[i].second.tInFrame;
+                segments[i + 1] = span;
             }
+            info["write_journal_segments"] = segments;
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
             info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
@@ -3712,17 +3722,15 @@ public:
             return r;
         });
 
-        // ttd_start([mode]) - start recording
-        // mode: "gaming" (smaller files, no journal) or "development" (default, full journal)
-        lua.set_function("ttd_start", [this](sol::optional<std::string> modeOpt) -> bool {
+        // ttd_start([journal]) - start recording; journal = true also records the
+        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
+        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
-            // A mode overrides the journal choice; without one the choice made
-            // by ttd_set_journal_enabled stands (journal on by default)
-            if (modeOpt.has_value())
-                ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
+            if (journalOpt.has_value())
+                ctx->pTimeTravelManager->SetEnableWriteJournal(journalOpt.value());
             return ctx->pTimeTravelManager->StartRecording();
         });
 
@@ -3742,22 +3750,50 @@ public:
             return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
-        // ttd_set_journal_enabled(bool) - configure write journal capture
-        // ok, reason: refused while recording (a recording keeps its journal mode)
+        // ttd_set_journal_enabled(bool) - switch the write journal at any moment,
+        // also while recording: a journal segment starts or ends there (D40). ok, reason
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (ctx->pTimeTravelManager->SetEnableWriteJournal(enabled)) return {true, ""};
-            return {false, ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal)};
+            if (ctx->pTimeTravelManager->SwitchWriteJournal(enabled)) return {true, ""};
+            return {false, "write journal not available"};
+        });
+
+        // ttd_build_journal([from_frame], [to_frame]) - build the write journal for
+        // frames from..to (default: the whole session) by replaying them, about
+        // 2-4 ms per frame; not while recording. Returns a table: ok, error,
+        // cancelled, frames_built, frames_covered, frames_refused, records
+        lua.set_function("ttd_build_journal", [this](sol::optional<uint64_t> fromOpt, sol::optional<uint64_t> toOpt) {
+            Emulator* emulator = effectiveEmulator();
+            sol::state_view lua_view(*_lua);
+            sol::table r = lua_view.create_table();
+            auto* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                r["ok"] = false;
+                r["error"] = "TTD not available";
+                return r;
+            }
+            const ttd::TTDJournalBuildResult b =
+                ctx->pTimeTravelManager->BuildWriteJournalFrames(fromOpt.value_or(0), toOpt.value_or(UINT64_MAX));
+            r["ok"] = b.ok;
+            if (!b.ok)
+                r["error"] = b.error;
+            r["cancelled"] = b.cancelled;
+            r["frames_built"] = b.framesBuilt;
+            r["frames_covered"] = b.framesCovered;
+            r["frames_refused"] = b.framesRefused;
+            r["records"] = b.records;
+            return r;
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return true;
+            if (!emulator) return false;
             auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return true;
+            if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->GetEnableWriteJournal();
         });
 
@@ -4594,111 +4630,41 @@ public:
         });
 
         // Search the CPU view of memory for a byte pattern (hex string or byte table)
+        // mem_find(pattern [, start, end, alignment, max, space, mask]) - MemorySearch: hex text with ?? / A?
+        // wildcards or a byte table; space "cpu" (default), "ram" (every RAM page) or a page ("ram5", "rom2")
         lua.set_function("mem_find",
-                         [this](sol::object patternValue, sol::optional<unsigned> startOpt,
-                                sol::optional<unsigned> endOpt, sol::optional<unsigned> alignOpt,
-                                sol::optional<unsigned> maxOpt) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
+                         [this](sol::this_state s, sol::object patternValue, sol::optional<uint32_t> startOpt,
+                                sol::optional<uint32_t> endOpt, sol::optional<unsigned> alignOpt,
+                                sol::optional<unsigned> maxOpt, sol::optional<std::string> spaceOpt,
+                                sol::optional<std::string> maskOpt) -> sol::object {
+            StateNode error = StateNode::Object();
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            Memory* memory = emulator->GetMemory();
-            if (!memory) { result["error"] = "memory not available"; return result; }
-
-            std::vector<uint8_t> pattern;
-            if (patternValue.is<std::string>())
+            if (!emulator)
             {
-                std::string digits;
-                for (char c : patternValue.as<std::string>())
-                {
-                    if (c == ' ' || c == ':')
-                        continue;
-                    if (!std::isxdigit(static_cast<unsigned char>(c)))
-                    {
-                        result["error"] = "invalid hex pattern";
-                        return result;
-                    }
-                    digits += static_cast<char>(std::toupper(c));
-                }
-                if (digits.empty() || digits.size() % 2 != 0)
-                {
-                    result["error"] = "invalid hex pattern";
-                    return result;
-                }
-                for (size_t i = 0; i < digits.size(); i += 2)
-                    pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
+                error["error"] = "no emulator";
+                return StateNodeToLua(s, error);
             }
-            else if (patternValue.is<sol::table>())
-            {
+            std::vector<uint8_t> bytes;
+            const bool table = patternValue.is<sol::table>();
+            if (table)
                 for (auto& pair : patternValue.as<sol::table>())
-                    pattern.push_back(static_cast<uint8_t>(pair.second.as<int>() & 0xFF));
-            }
-
-            if (pattern.empty() || pattern.size() > 64)
+                    bytes.push_back(static_cast<uint8_t>(pair.second.as<int>() & 0xFF));
+            MemorySearchRequest request;
+            std::string message;
+            std::string text;
+            if (patternValue.get_type() == sol::type::number)
+                text = MemorySearch::NumberPattern(static_cast<uint64_t>(patternValue.as<int64_t>()));
+            else if (patternValue.is<std::string>())
+                text = patternValue.as<std::string>();
+            if (!MemorySearch::BuildRequest(text, table ? &bytes : nullptr,
+                                            maskOpt.value_or(""), spaceOpt.value_or(""), startOpt.value_or(0),
+                                            endOpt.value_or(0xFFFFFFFFu), maxOpt.value_or(64), alignOpt.value_or(1),
+                                            request, message))
             {
-                result["error"] = "pattern must be 1..64 bytes";
-                return result;
+                error["error"] = message;
+                return StateNodeToLua(s, error);
             }
-
-            const size_t start = startOpt.value_or(0);
-            const size_t end = std::min<size_t>(endOpt.value_or(0xFFFF), 0xFFFF);
-            const unsigned alignment = alignOpt.value_or(1);
-            const unsigned max = maxOpt.value_or(64);
-            if (start > end || (alignment != 1 && alignment != 2))
-            {
-                result["error"] = "invalid range or alignment";
-                return result;
-            }
-
-            sol::table matches = lua_view.create_table();
-            size_t found = 0;
-            bool truncated = false;
-            const size_t searchLimit = end - pattern.size() + 1;
-
-            for (size_t position = start; position <= searchLimit; position += alignment)
-            {
-                if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-                    continue;
-
-                bool matched = true;
-                for (size_t i = 1; i < pattern.size(); i++)
-                {
-                    if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
-                    {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (!matched)
-                    continue;
-
-                if (found >= max)
-                {
-                    truncated = true;
-                    break;
-                }
-
-                sol::table match = lua_view.create_table();
-                match["address"] = static_cast<unsigned>(position);
-                sol::table context = lua_view.create_table();
-                const size_t contextStart = position > 4 ? position - 4 : 0;
-                for (size_t i = 0; i < pattern.size() + 4; i++)
-                {
-                    const size_t address = contextStart + i;
-                    if (address > 0xFFFF)
-                        break;
-                    context[i + 1] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address));
-                }
-                match["context"] = context;
-                matches[found + 1] = match;
-                found++;
-            }
-
-            result["matches"] = matches;
-            result["count"] = found;
-            result["truncated"] = truncated;
-            return result;
+            return StateNodeToLua(s, MemorySearch::ToState(request, MemorySearch::Search(emulator->GetContext(), request)));
         });
 
         // Screen-area FNV-1a-64 digest — change detection without pixel transfer.
@@ -4840,7 +4806,22 @@ public:
                 item["tags"] = tagNames;  // empty table = untagged row
                 const char* latchName = PagingLatchToString(entry.latch);
                 if (latchName)  // absent key = no live-value binding
+                {
                     item["latch"] = latchName;
+                    // The latch's value now, and decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+                    const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, context->emulatorState);
+                    item["latch_value"] = value;
+                    sol::table fields = lua.create_table();
+                    for (const DecodedLatchField& field :
+                         DecodePagingLatch(entry.latch, value, context->config.mem_model, context->config.ramsize))
+                    {
+                        if (field.isBool)
+                            fields[field.key] = field.boolValue;
+                        else
+                            fields[field.key] = field.intValue;
+                    }
+                    item["latch_fields"] = fields;
+                }
 
                 entries.add(item);
             }

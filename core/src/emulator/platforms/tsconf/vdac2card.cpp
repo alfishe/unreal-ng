@@ -327,6 +327,11 @@ bool Vdac2Card::ConfigureOutput()
     return resized;
 }
 
+bool Vdac2Card::CaptureLive() const
+{
+    return !(_context && _context->ttdReplayActive);
+}
+
 bool Vdac2Card::Drawing() const
 {
     // Only a shown picture is drawn, and not while turbo skips the frames
@@ -345,7 +350,7 @@ void Vdac2Card::OnChipFrame()
 {
     _chipFrames = EveCompletedFrames(_chip);
     EveSetLineBudgetMargin(_chip, _lineBudgetMargin.load());  // for the frame now starting
-    if (_capture.IsOpen())
+    if (_capture.IsOpen() && CaptureLive())
         _capture.Frame(EveTotalClocks(_chip), _chipFrames, _drawing, _pictureWidth, _pictureHeight,
                        _drawing ? Vdac2Capture::HashPicture(_chipFrame.data(), _chipFrame.size()) : 0);
     if (!_showing)
@@ -689,6 +694,13 @@ size_t Vdac2Card::TtdSaveMemory(uint8_t* dst) const
     return static_cast<size_t>(out - dst);
 }
 
+void Vdac2Card::TtdSaveMemoryHeader(uint8_t* dst)
+{
+    const uint32_t encoded = 0;
+    std::memcpy(dst, &kZeroRunMagic, 4);
+    std::memcpy(dst + 4, &encoded, 4);
+}
+
 bool Vdac2Card::TtdLoadMemory(const uint8_t* src)
 {
     if (!_chip)
@@ -798,7 +810,8 @@ void Vdac2Card::select(bool selected)
     if (!_chip)
         return;
     EveSelect(_chip, selected ? 1 : 0);
-    _capture.Select(EveTotalClocks(_chip), selected);
+    if (CaptureLive())
+        _capture.Select(EveTotalClocks(_chip), selected);
     SampleInt(_time.position);
     PlanNextEvent();
 }
@@ -809,7 +822,8 @@ uint8_t Vdac2Card::exchange(uint8_t mosi)
     if (!_chip)
         return 0xFF;
     const uint8_t miso = EveExchange(_chip, mosi);
-    _capture.Byte(EveTotalClocks(_chip), mosi, miso);
+    if (CaptureLive())
+        _capture.Byte(EveTotalClocks(_chip), mosi, miso);
     // A register write can raise INT_N at once (INT_EN with flags pending)
     // or release it (the REG_INT_FLAGS read)
     SampleInt(_time.position);
@@ -850,6 +864,7 @@ void Vdac2Card::TtdSaveState(uint8_t*) const {}
 bool Vdac2Card::TtdLoadState(const uint8_t*) { return false; }
 size_t Vdac2Card::TtdMemorySize() const { return 0; }
 size_t Vdac2Card::TtdSaveMemory(uint8_t*) const { return 0; }
+void Vdac2Card::TtdSaveMemoryHeader(uint8_t*) {}
 bool Vdac2Card::TtdLoadMemory(const uint8_t*) { return false; }
 uint64_t Vdac2Card::TtdStateHash() const { return 0; }
 uint64_t Vdac2Card::TtdMemoryHash() const { return 0; }

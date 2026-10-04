@@ -193,7 +193,7 @@ GS memory map [RTL] (`grom_n`, `gram*_n`, `gma[18:15]`; a chip address is `gma <
 
 | GS address | 1 MB build | 2 MB build (`GS_RAM_2MB`) |
 |---|---|---|
-| `#0000-#3FFF` | ROM, `gma = 1` (ROM address `#8000-#BFFF` if the ROM's A15 is `gma[15]`; schematic check pending for MS-2) | same |
+| `#0000-#3FFF` | ROM, `gma = 1` (ROM address `#8000-#BFFF` if the ROM's A15 is `gma[15]`; the card's `gs105b.64K.rom` is the 32 KB image twice, so the firmware sees the same bytes either way) | same |
 | `#4000-#7FFF` | RAM 1, `gma = 1`: chip address `#C000-#FFFF` | same |
 | `#8000-#FFFF`, page 0 | ROM, `gma = 0` | same |
 | `#8000-#FFFF`, page != 0 | RAM 1 (page bit 4 = 0) or RAM 2 (bit 4 = 1), `gma` = page bits 0-3; bit 5 ignored | RAM 1-4 by page bits 5-4, `gma` = bits 0-3 |

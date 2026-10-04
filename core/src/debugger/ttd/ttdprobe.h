@@ -111,6 +111,7 @@ struct TTDSearchResult
     uint8_t      value = 0;
     PhysPage     physPage = kPhysPageNone;  ///< kPhysPageNone for ROM/cache/I/O
     TTDAccessType access = TTDAccessType::Write;
+    uint16_t     addr = 0;                  ///< the address (or port) accessed
 };
 
 /// @brief A single M1 (instruction-start) cycle recorded during reverse
@@ -193,10 +194,10 @@ public:
     /// Matches() check. Reconstructs the TTDTimePoint from the EmulatorState
     /// on the caller side (the probe doesn't reach into EmulatorContext —
     /// keeps it dependency-free).
-    inline void RecordHit(const TTDTimePoint& t, uint16_t pc, uint8_t value,
+    inline void RecordHit(const TTDTimePoint& t, uint16_t addr, uint16_t pc, uint8_t value,
                           PhysPage physPage, TTDAccessType kind)
     {
-        _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind});
+        _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind, addr});
     }
 
     /// @brief Read-only view of recorded hits (control thread, post-replay).

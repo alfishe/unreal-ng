@@ -615,7 +615,8 @@ namespace
         {
             const auto id = static_cast<PeripheralId>(raw);
             ttd::TTDSerializable* from = src.registry.GetDevice(id);
-            if (!from)
+            // The RZX playback position is time travel's, not the machine's: a playback stays on its machine
+            if (!from || id == PeripheralId::RzxPlayback)
                 continue;
 
             const std::string name = DeviceLabel(id, from);
@@ -681,7 +682,8 @@ namespace
         {
             const auto id = static_cast<PeripheralId>(raw);
             ttd::TTDSerializable* to = dst.registry.GetDevice(id);
-            if (to && !src.registry.GetDevice(id) && (clone || BindingOf(id) != Binding::Machine))
+            if (to && id != PeripheralId::RzxPlayback && !src.registry.GetDevice(id) &&
+                (clone || BindingOf(id) != Binding::Machine))
                 items.push_back({DeviceLabel(id, to), Status::Note, "only the target has it; it starts from reset"});
         }
     }

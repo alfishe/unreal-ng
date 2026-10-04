@@ -3,6 +3,8 @@
 
 #include "cli-processor.h"
 #include "cli-memory-region.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/search/memorysearch.h"
 
 #include <common/dumphelper.h>
 #include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
@@ -1761,168 +1763,99 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
     session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
 }
 
-// HandleFind — search the CPU view of memory for a byte pattern (mirrors the
-// WebAPI memory/find endpoint). Pattern is a hex string: "AF 32 0E" or "af320e".
+// HandleFind — search memory for a byte pattern through MemorySearch (the WebAPI memory/find, Lua / Python
+// mem_find and MCP find_bytes use the same): hex bytes with ?? / A? wildcards, in the CPU view, one page or all RAM.
 void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<std::string>& args)
 {
+    static const char* const kUsage =
+        "Usage: find <hex pattern, ?? = any byte> [--space cpu|ram|ram5|rom2|cache0] [--mask <hex>] [--from N] [--to N] "
+        "[--align 1|2] [--max N]";
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
         session.SendResponse("No emulator selected.");
         return;
     }
-
-    Memory* memory = emulator->GetMemory();
-    if (!memory)
-    {
-        session.SendResponse("Memory not available.");
-        return;
-    }
-
-    if (args.empty())
-    {
-        session.SendResponse("Usage: find <hex-pattern> [--from N] [--to N] [--align 1|2] [--max N]");
-        return;
-    }
-
-    // Build the search pattern from the first non-flag argument
-    auto isHexDigit = [](char c) {
-        return std::isxdigit(static_cast<unsigned char>(c)) != 0;
-    };
-
-    std::string hex;
-    uint16_t start = 0;
-    uint16_t end = 0xFFFF;
-    unsigned max = 64;
-    unsigned alignment = 1;
-
+    std::string pattern, mask, space;
+    uint32_t start = 0, end = 0xFFFFFFFF;
+    unsigned max = 64, alignment = 1;
     for (size_t i = 0; i < args.size(); i++)
     {
-        if (args[i] == "--from" && i + 1 < args.size())
+        const bool value = i + 1 < args.size();
+        try
         {
-            try { start = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0) & 0xFFFF); }
-            catch (...) { session.SendResponse("Invalid --from value."); return; }
+            if (args[i] == "--from" && value)
+                start = static_cast<uint32_t>(std::stoul(args[++i], nullptr, 0));
+            else if (args[i] == "--to" && value)
+                end = static_cast<uint32_t>(std::stoul(args[++i], nullptr, 0));
+            else if (args[i] == "--align" && value)
+                alignment = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
+            else if (args[i] == "--max" && value)
+                max = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
+            else if (args[i] == "--space" && value)
+                space = args[++i];
+            else if (args[i] == "--mask" && value)
+                mask = args[++i];
+            else
+                pattern += (pattern.empty() ? "" : " ") + args[i];   // "CD ?? 00" arrives as three words
         }
-        else if (args[i] == "--to" && i + 1 < args.size())
+        catch (...)
         {
-            try { end = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0) & 0xFFFF); }
-            catch (...) { session.SendResponse("Invalid --to value."); return; }
-        }
-        else if (args[i] == "--align" && i + 1 < args.size())
-        {
-            try { alignment = std::stoul(args[++i], nullptr, 0); }
-            catch (...) { session.SendResponse("Invalid --align value."); return; }
-            if (alignment != 1 && alignment != 2)
-            {
-                session.SendResponse("--align must be 1 or 2.");
-                return;
-            }
-        }
-        else if (args[i] == "--max" && i + 1 < args.size())
-        {
-            try { max = std::stoul(args[++i], nullptr, 0); }
-            catch (...) { session.SendResponse("Invalid --max value."); return; }
-            if (max == 0) max = 1;
-        }
-        else if (hex.empty())
-        {
-            hex = args[i];
-        }
-    }
-
-    if (hex.empty())
-    {
-        session.SendResponse("No pattern provided. Usage: find <hex-pattern> [--from N] [--to N] [--align 1|2] [--max N]");
-        return;
-    }
-
-    // Parse hex bytes: spaces optional, pairs must be complete
-    std::vector<uint8_t> pattern;
-    std::string digits;
-    for (char c : hex)
-    {
-        if (c == ' ' || c == ':')
-            continue;
-        if (!isHexDigit(c))
-        {
-            session.SendResponse("Invalid hex pattern — expected bytes like 'AF320E' or 'AF 32 0E'.");
+            session.SendResponse("Invalid value for " + args[i - 1] + ". " + kUsage + NEWLINE);
             return;
         }
-        digits += static_cast<char>(std::toupper(c));
     }
-    if (digits.empty() || digits.size() % 2 != 0)
+    if (pattern.empty())
     {
-        session.SendResponse("Invalid hex pattern — expected bytes like 'AF320E' or 'AF 32 0E'.");
+        session.SendResponse(std::string(kUsage) + NEWLINE);
         return;
     }
-    for (size_t i = 0; i < digits.size(); i += 2)
+    MemorySearchRequest request;
+    std::string error;
+    if (!MemorySearch::BuildRequest(pattern, nullptr, mask, space, start, end, max, alignment, request, error))
     {
-        pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
-    }
-
-    if (pattern.size() > 64)
-    {
-        session.SendResponse("Pattern longer than 64 bytes.");
+        session.SendResponse("find: " + error + NEWLINE);
         return;
     }
-
-    if (start > end)
+    const MemorySearchResult result = MemorySearch::Search(emulator->GetContext(), request);
+    if (!result.error.empty())
     {
-        session.SendResponse("Invalid range (--from must be <= --to).");
+        session.SendResponse("find: " + result.error + NEWLINE);
         return;
     }
 
-    // Scan the CPU view of memory; the first pattern byte gates the inner loop
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
     ss << "Pattern:";
-    for (uint8_t b : pattern)
-        ss << " " << std::setw(2) << static_cast<int>(b);
-    ss << NEWLINE;
-
-    const size_t searchLimit = static_cast<size_t>(end) - pattern.size() + 1;
-    size_t found = 0;
-    bool truncated = false;
-
-    for (size_t position = start; position <= searchLimit; position += alignment)
+    for (size_t i = 0; i < request.pattern.size(); i++)
     {
-        if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
-            continue;
-
-        bool matched = true;
-        for (size_t i = 1; i < pattern.size(); i++)
+        const uint8_t m = request.mask.empty() ? 0xFF : request.mask[i];
+        ss << " ";
+        if (m == 0)
+            ss << "??";
+        else if (m == 0xFF)
+            ss << std::setw(2) << static_cast<int>(request.pattern[i]);
+        else
+            ss << std::setw(2) << static_cast<int>(request.pattern[i]) << "/" << std::setw(2) << static_cast<int>(m);
+    }
+    ss << "  in " << MemorySearch::SpaceName(request) << NEWLINE;
+    for (const MemorySearchMatch& m : result.matches)
+    {
+        // The address (a page match: page:offset), then the context from context_start: 4 before, the match, 4 after
+        if (m.page < 0)
+            ss << "  $" << std::setw(4) << m.address << ":";
+        else
+            ss << "  " << BreakpointManager::PageKindName(static_cast<MemoryBankModeEnum>(m.pageType)) << std::dec << m.page
+               << std::hex << ":$" << std::setw(4) << m.address << ":";
+        for (size_t i = 0; i < m.bytes.size(); i++)
         {
-            if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
-            {
-                matched = false;
-                break;
-            }
-        }
-        if (!matched)
-            continue;
-
-        if (found >= max)
-        {
-            truncated = true;
-            break;
-        }
-
-        // Address + context dump around the match (same layout as WebAPI)
-        ss << "  $" << std::setw(4) << static_cast<unsigned>(position) << ":";
-        const size_t contextStart = position > 4 ? position - 4 : 0;
-        for (size_t i = 0; i < pattern.size() + 8; i++)
-        {
-            const size_t address = contextStart + i;
-            if (address > 0xFFFF)
-                break;
-            ss << " " << std::setw(2)
-               << static_cast<int>(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address)));
+            const bool inside = m.contextStart + i >= m.address && m.contextStart + i < m.address + request.pattern.size();
+            ss << (inside && m.contextStart + i == m.address ? " [" : " ") << std::setw(2) << static_cast<int>(m.bytes[i])
+               << (inside && m.contextStart + i + 1 == m.address + request.pattern.size() ? "]" : "");
         }
         ss << NEWLINE;
-        found++;
     }
-
-    ss << std::dec << "Found " << found << (truncated ? "+ matches (truncated at --max)" : " match(es)");
-    session.SendResponse(ss.str());
+    ss << std::dec << "Found " << result.matches.size() << (result.truncated ? "+ matches (truncated at --max)" : " match(es)");
+    session.SendResponse(ss.str() + NEWLINE);
 }
 

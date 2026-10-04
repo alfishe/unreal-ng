@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_profi.h"
 
@@ -49,6 +50,7 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
     // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
     _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
     FitKeyboard();
@@ -1145,6 +1147,18 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
         _context->pScreen->InitRaster();
 }
 
+void PortDecoder_Profi::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
+{
+    const CONFIG& c = _context->config;
+    fp.Add("profi.sync_prom", c.profi_sync_prom);
+    fp.Add("profi.wait_phase", c.profi_wait_phase);
+    fp.Add("profi.wait_pentagon", c.profi_wait_pentagon);
+    fp.Add("profi.rom_wait", c.profi_rom_wait);
+    fp.Add("profi.turbo", c.profi_turbo);
+    fp.Add("profi.cpm", c.profi_cpm);
+    fp.Add("profi.dffd_decode", c.profi_dffd_decode);
+    fp.Add("profi.ext_ports", c.profi_ext_ports);   // cpm / sys / v003: a recording made under another decode is refused
+}
 ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
 {
     const auto* decoder = context ? dynamic_cast<const PortDecoder_Profi*>(context->pPortDecoder) : nullptr;
