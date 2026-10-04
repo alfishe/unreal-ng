@@ -1978,7 +1978,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
                                     const Json::Value& machineSerial = value["machine_serial"];
                                     if (machineSerial["fitted"].asBool())
-                                        out << "\n[com] keyboard controller " << machineSerial["kbc_firmware"].asString() << " RS-232, "
+                                        out << (machineSerial["flavor"].asString() == "usart8251"
+                                                    ? std::string("\n[com] 8251 COM port, ")
+                                                    : "\n[com] keyboard controller " + machineSerial["kbc_firmware"].asString() + " RS-232, ")
                                             << machineSerial["peer"].asString()
                                             << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
                                             << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()

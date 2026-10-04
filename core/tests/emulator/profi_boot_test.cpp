@@ -34,6 +34,10 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/io/network/networkmanager.h"
+#include "emulator/io/serial/serialpeer.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -679,3 +683,115 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
               << " pDFFD=" << int(context->emulatorState.pDFFD) << std::dec << " frame T=" << context->config.frame
               << " clock=" << context->emulatorState.current_z80_frequency << "\n";
 }
+
+/// region <PROFI-PLUS: ROM BIOS Plus 0.41h1 (docs/inprogress/2026-10-04-profi-plus/design.md, phase P4b)>
+
+class ProfiPlusBoot_Test : public ::testing::Test
+{
+protected:
+    EmulatorManager* _manager = nullptr;
+    std::shared_ptr<Emulator> _emulator;
+
+    void SetUp() override
+    {
+        _manager = EmulatorManager::GetInstance();
+        ASSERT_NE(_manager, nullptr);
+        // BIOS Plus's board test probes the AY: the test build fits none unless asked (software-zoo.md section 10)
+        SoundCardScope sound(TestSound::TurboSound);
+        _emulator = _manager->CreateEmulatorWithModel("profi-plus-boot", "PROFI-PLUS", LoggerLevel::LogError);
+        if (!_emulator)
+            GTEST_SKIP() << "PROFI-PLUS is not creatable (missing configs/profi or data/rom/profi/bios-plus-041h1.rom)";
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            const std::string id = _emulator->GetId();
+            _emulator.reset();
+            _manager->RemoveEmulator(id);
+        }
+    }
+};
+
+/// @brief The board test at power-on reports every device of the board "Ok" (no HDD image attached: the HDD lines
+///        are not part of it). BIOS Plus 0.41h1 keeps the result in its system variable (IY + 2), one bit per failed
+///        device, cleared when the device passes (SYS page #06A5..#06E4): bit 0 FDC, bit 1 parallel (8255), bits 2
+///        and 3 serial (8253 + 8251, #2720), bit 4 RTC; bits 5 / 6 the sound chip (one of them clears: AY or YM),
+///        bit 7 the hard disk. The screen prints "Ok" for the serial interface when bits 1 and 2 are clear (#0746).
+///        Checked against a mutant without the COM port: (IY + 2) = #AC, serial failed and nothing else
+TEST_F(ProfiPlusBoot_Test, BoardTestReportsEveryDeviceOk)
+{
+    // Slower than the 50 ms guideline on purpose: the real BIOS boots to its board-test screen
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(300, true);
+
+    const Z80* z80 = context->pCore->GetZ80();
+    const uint16_t iy = z80->iy;
+    const uint8_t result = context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(iy + 2));
+    std::ostringstream where;
+    where << std::hex << "pc=" << z80->pc << " iy=" << iy << " (iy+2)=" << int(result);
+    ASSERT_EQ(iy, 0x4000) << "BIOS Plus's system variables: " << where.str();
+    EXPECT_EQ(result & 0x01, 0) << "Floppy Disc Controller: " << where.str();
+    EXPECT_EQ(result & 0x02, 0) << "Parallel interface: " << where.str();
+    EXPECT_EQ(result & 0x0C, 0) << "Serial interface (8253 + 8251): " << where.str();
+    EXPECT_EQ(result & 0x10, 0) << "RTC: " << where.str();
+    EXPECT_NE(result & 0x60, 0x60) << "Sound Chip: " << where.str();
+}
+
+/// @brief The 8251 is the machine's own serial port: ComPort= plugs the peer into it through the network manager,
+///        and the state report names it
+TEST_F(ProfiPlusBoot_Test, ComPortPlugsIntoThe8251)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"com_port", "plug"}}, change, error)) << error;
+    ASSERT_TRUE(context->pCore->GetNetworkManager()->RequestChange(change, error)) << error;
+
+    ASSERT_NE(context->pMachineSerialPeer, nullptr);
+    EXPECT_STREQ(context->pMachineSerialPeer->Kind(), "plug");
+    EXPECT_EQ(context->pComPort, nullptr) << "no 16550 on #xxEF";
+    auto* decoder = dynamic_cast<PortDecoder_Profi*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    EXPECT_EQ(decoder->GetUsart().Peer(), context->pMachineSerialPeer);
+
+    const NetworkManager::Status st = context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.serialPort, "profi-8251");
+    EXPECT_TRUE(st.machineSerial.fitted);
+    EXPECT_EQ(st.machineSerial.flavor, "usart8251");
+    EXPECT_EQ(st.machineSerial.peer, "plug");
+}
+
+/// @brief TTD: the BIOS's COM setup is recorded and replays to the same 8253 / 8251 state after a seek back
+TEST_F(ProfiPlusBoot_Test, TtdReplaysTheComPortExactly)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS programs the COM port during its boot
+    EmulatorContext* context = _emulator->GetContext();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    ASSERT_TRUE(ttd->StartRecording());
+    _emulator->RunNFrames(2);
+    const uint64_t before = context->emulatorState.frame_counter;
+    _emulator->RunNFrames(150);
+    const uint64_t end = context->emulatorState.frame_counter;
+    auto* decoder = dynamic_cast<PortDecoder_Profi*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    const Pit8253::State pit = decoder->GetPit().GetState();
+    const Usart8251::State usart = decoder->GetUsart().GetState();
+    EXPECT_EQ(Pit8253::ModeOf(pit.counter[0]), 3) << "the BIOS set the baud divider";
+    ttd->StopRecording();
+
+    ASSERT_TRUE(ttd->SeekTo({before, 0}));
+    _emulator->RunNFrames(static_cast<int>(end - before));
+    ASSERT_EQ(context->emulatorState.frame_counter, end);
+    EXPECT_EQ(std::memcmp(&decoder->GetPit().GetState(), &pit, sizeof(pit)), 0) << "the 8253 as recorded";
+    EXPECT_EQ(std::memcmp(&decoder->GetUsart().GetState(), &usart, sizeof(usart)), 0) << "the 8251 as recorded";
+}
+
+/// endregion </PROFI-PLUS>

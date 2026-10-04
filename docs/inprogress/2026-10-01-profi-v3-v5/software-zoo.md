@@ -83,16 +83,23 @@ all (its PROM has no ROM14 input).
 The `#DFFD` write decode differs between boards too: `[PROFI] DffdDecode=emulators|v50|v506`
 ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)).
 
-**ROM BIOS Plus 0.32 on `PROFI`** (checked 2026-10-04 with the port trace): its "Test results controller's board"
+**ROM BIOS Plus on `PROFI`** (0.32, checked 2026-10-04 with the port trace) **and on `PROFI-PLUS`** (0.41h1 with
+the 8255, 8253 and 8251 emulated, 2026-10-04: `ProfiPlusBoot_Test.BoardTestReportsEveryDeviceOk`): its "Test
+results controller's board"
 
-| Device | `ExtPorts=cpm` | `ExtPorts=sys` | Why |
-|:--|:--|:--|:--|
-| Floppy Disc Controller, FDD0 / FDD1 | Fail | Ok (80 cylinders) | probes `IN #83`, `IN #C3` |
-| RTC | Fail | Ok | `#BF` / `#DF` |
-| Sound Chip | Ok (YM2149F) | Ok | `#FFFD` / `#BFFD` |
-| Parallel interface | Fail | Fail | the 8255 on `#87..#E7` (writes `#E7`, reads `#C7`) is not emulated in the extended map |
-| Serial interface | Fail | Fail | the COM port (`#EF`, `#AF`) is not emulated on the Profi |
-| HDD0 / HDD1 | Fail | Fail | no image attached (not tried with one) |
+| Device | 0.32, `ExtPorts=cpm` | 0.32, `ExtPorts=sys` | `PROFI-PLUS` (0.41h1) | Why |
+|:--|:--|:--|:--|:--|
+| Floppy Disc Controller, FDD0 / FDD1 | Fail | Ok (80 cylinders) | Ok | probes `IN #83`, `IN #C3` |
+| RTC | Fail | Ok | Ok | `#BF` / `#DF` |
+| Sound Chip | Ok (YM2149F) | Ok | Ok | `#FFFD` / `#BFFD` (a test needs `SoundCardScope`, section 10) |
+| Parallel interface | Fail | Fail | Ok | the 8255 on `#87..#E7`: mode `#90`, PC2 set / reset read back, B = 2 read back |
+| Serial interface | Fail | Fail | Ok | the 8253 (`#EF` control, counter 1 mode 3 loaded with `#0010` and read back through `#AF`, counter 0 the baud divider at `#8F`) and the 8251 (reset 4 x `#01`, `#40`; mode, command; status at `#F3` not `#FF`); then `OUT #B3,1` |
+| HDD0 / HDD1 | Fail | Fail | Fail without an image | no image attached |
+
+BIOS Plus keeps the result in `(IY + 2)` with IY = `#4000` (0.41h1 SYS page `#06A5..#06E4`), one bit per device that
+failed: bit 0 FDC, 1 parallel, 2 and 3 serial, 4 RTC, 5 / 6 the sound chip (AY / YM: one of them clears), 7 the hard
+disk; the screen prints the serial interface "Ok" when bits 1 and 2 are clear. With the COM port taken out it reads
+`#AC` (serial and HDD fail).
 
 ## 6. PQ-DOS
 

@@ -546,10 +546,11 @@ void NetworkWindow::refresh()
     const StateNode network = DeviceState::Network(context);
     const NetworkForm form = NetworkFormFromState(network);
 
-    const QString serial = form.serialPort == "evo-avr"    ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
-                           : form.serialPort == "zifi"     ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
-                           : form.serialPort == "atm2-kbc" ? tr("the keyboard controller's RS-232 (IN #FE commands)")
-                                                           : tr("none");
+    const QString serial = form.serialPort == "evo-avr"      ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
+                           : form.serialPort == "zifi"       ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
+                           : form.serialPort == "atm2-kbc"   ? tr("the keyboard controller's RS-232 (IN #FE commands)")
+                           : form.serialPort == "profi-8251" ? tr("the 8251 COM port (#D3 / #F3, 8253 baud timer)")
+                                                             : tr("none");
     _machine->setText(tr("This machine: ZX-Bus %1; its own serial port: %2.")
                           .arg(form.zxBus ? tr("yes") : tr("no"), serial));
 

@@ -2133,14 +2133,15 @@ StateNode Network(EmulatorContext* context)
     };
 
     // The machine's own serial port when it is no 16550 (ATM Turbo 2+
-    // keyboard controller): the MCU's UART line and its peer
+    // keyboard controller, ZX Profi v5 8251): the line and its peer
     StateNode& machineSerial = ret["machine_serial"];
     machineSerial["fitted"] = st.machineSerial.fitted;
     if (st.machineSerial.fitted)
     {
         const NetworkManager::Status::Com& m = st.machineSerial;
         machineSerial["flavor"] = m.flavor;
-        machineSerial["kbc_firmware"] = m.firmware;
+        if (!m.firmware.empty())
+            machineSerial["kbc_firmware"] = m.firmware;
         peerFields(machineSerial, m);
         machineSerial["rts"] = m.rts;
         machineSerial["dtr"] = m.dtr;
