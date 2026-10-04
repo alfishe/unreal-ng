@@ -12,7 +12,7 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 
 ## Remaining
 - [x] E1: sync-PROM decode ([tools/machines/profi/syncprom/profisync.py](../../../tools/machines/profi/syncprom/profisync.py)), including the v5 DD53 load value; settles Q1, Q2
-- [ ] E1b: trace the INT flip-flop (INT length) and the DS80 CPU clock
+- [x] E1b: the INT flip-flop (INT length) and the DS80 CPU clock: done in the hi-res work ([design-hires.md](design-hires.md))
 - [x] E2a: both port decoder PROMs obtained (v4/v5 transcribed from two manuals, v3.2 dumped by MDESK)
 - [x] E2b: decoder PROM wiring and port map ([decoder-prom.md](decoder-prom.md)); settles Q7, P7, P8, P9, P13; the A2 input traced on both boards; unreal-ng's decode matches the v5 PROM everywhere
 - [x] E3: v3.2 schematic study, turbo and floating bus (settles Q3, Q4):
@@ -51,8 +51,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   manual's "CP/M + BLOCK" sentence contradicts its own schematic); the CP/M switch holds #DFFD at #00
   (`FrontPanelSwitch::Cpm`, `[PROFI] CpmSwitch`); at power-on the BIOS then starts Spectrum 128, the manual's
   behavior (`CpmSwitchAtPowerOnStartsSpectrum128`; no other emulator models the switch); `[PROFI] DffdDecode=emulators|v50|v506`
-- [ ] The third crystal (ZQ3, 16-24 MHz) clocks the CPU only in DS80 (4-6 MHz, 8-12 in turbo): settled, not
-  modeled - the hi-res frame timing is open (design 5.3)
+- [x] The third crystal (ZQ3, 16-24 MHz) clocks the CPU only in DS80 (4-6 MHz, 8-12 in turbo): modeled with the
+  hi-res frame timing (`[PROFI] ZQ3MHz`, [design-hires.md](design-hires.md))
 - [x] Emulated test programs ([test-programs.md](test-programs.md)): Tact Meter reproduces the v3.2 turbo
   measurement to four digits; TEST 4.30 reads the expected ports, frame and memory class
 - [x] Keyboard (branch `profi-xt-kbd`, design section 9): `[PROFI] Keyboard=Matrix|XT|XTTable` (v5 XT, v3 Matrix);
@@ -91,4 +91,7 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] CP/M on v3: Klug CP/M 2.3 boots from the Kramis V0.3 "Profi-DOS" entry (`KlugCpmBootsFromKramisV03`). It
   needs TR-DOS 5.04T: V0.2's TR-DOS 5.03 double-steps on its 5 x 1024-byte disk (traced: the FDC follows TR-DOS's
   seeks; the same on a v5 with V0.2, while a v3 with BIOS 2.0 boots it) - software, not the board; `PROFI3` defaults to V0.3 since 2026-10-03
-- [ ] A native Kramis SP-DOS / Profi-DOS disk (none found; the Klug BBS archive, 581 MB, not searched)
+- [x] A native SP-DOS disk: found in KLUG's BBS archive (2005, area PROFI: UNICOPY, COPYK30, TERMINAL, BIOS by
+  V. Tereschenko); they boot on `PROFI3` from the Kramis "Profi-DOS" entry to the SP-DOS shell
+- [ ] SP-DOS disks on `PROFI` (v5, BIOS 2.0): they stop at "Загрузка системы CP/M..." (PC #00EB) - investigate
+- [ ] SP-DOS system disk into testdata (`cpm/v3/`) with a boot test

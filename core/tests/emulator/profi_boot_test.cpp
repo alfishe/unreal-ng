@@ -15,6 +15,7 @@
 #include <emulator/ports/portdecoder.h>
 #include <gtest/gtest.h>
 
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
@@ -428,7 +429,26 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
     const std::string path(program);
     const bool v3 = model && std::string(model) == "PROFI3";   // the Kramis menu: Sinclair second, TR-DOS fifth
     const bool profi = !model || std::string(model).rfind("PROFI", 0) == 0;
-    if (!profi)
+    const auto endsWith = [&](const char* ext) {
+        std::string lower = path;
+        for (char& c : lower)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return lower.size() > 4 && lower.substr(lower.size() - 4) == ext;
+    };
+    const bool anyDisk = endsWith(".trd") || endsWith(".scl") || endsWith(".fdi") || endsWith(".td0") || endsWith(".udi");
+    if (!profi && anyDisk)
+    {
+        // A reference machine with a disk in drive A: PROFI_REF_KEYS reach TR-DOS from its ROM (default: the
+        // Pentagon 128 menu's last entry), then RUN boots the disk
+        _emulator->RunNFrames(150, true);
+        std::string error;
+        ASSERT_TRUE(_emulator->LoadDisk(path, 0, &error)) << error;
+        const char* refKeys = std::getenv("PROFI_REF_KEYS");
+        TapKeys(refKeys ? refKeys : "C6,C6,C6,C6,ENT");
+        _emulator->RunNFrames(100, true);
+        TapKeys("R,ENT");
+    }
+    else if (!profi)
     {
         // A reference machine (48K, 128K, ...): its ROM boots to BASIC; a .tap only
         _emulator->RunNFrames(150, true);
