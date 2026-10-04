@@ -25,6 +25,10 @@
 >   the slot within seconds. Do not bypass the wrapper with a bare `ninja` / `cmake --build`.
 >   Benchmarks and A/B timing runs are the exception: run them on a quiet machine without
 >   lowered priority (`UNREAL_NICE=0`). Details: [`tools/build/README.md`](../tools/build/README.md).
+> - `tools/build/build.sh` re-runs the CMake configure step itself (sources are globbed: a file
+>   that arrived with a merge or rebase is otherwise missing and the link fails on undefined
+>   symbols) and configures a missing build directory. Do not run `cmake` by hand for ordinary
+>   builds; `UNREAL_NO_CONFIGURE=1` skips it.
 > - Steps before any commit:
 >   1. Run the checks that match what changed:
 >      - **C++ code in `core/` or a client** (`unreal-qt/`, `unreal-screen-viewer/`,
@@ -62,7 +66,8 @@
 
 ## Building the Project
 We use CMake with Ninja for building. **Run builds through `tools/build/build.sh`** (it applies
-the limits above); the raw commands below are what it runs. **Cap `-j` at 50% of logical cores** — multiple agents
+the limits above); the raw commands below are what it runs, except that the script also re-runs the
+configure step first (see "Why `build.sh` configures every time" below). **Cap `-j` at 50% of logical cores** — multiple agents
 build concurrently on this machine, and unbounded job counts pile up and stall everything:
 ```bash
 # Configure the build system
@@ -74,6 +79,28 @@ JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1
 # Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
 ninja -C cmake-build-agent-release -j "$JOBS"
 ```
+
+### Why `build.sh` configures every time
+Sources are collected with `file(GLOB ...)`, so CMake only learns about a new `.cpp`/`.h` when it runs
+again. Ninja re-runs CMake by itself only when a `CMakeLists.txt` or `*.cmake` file changed — **not**
+when a merge, rebase, `git pull` or another agent's landing brings in a new source file. Symptom: the
+compile succeeds, the link fails with `symbol(s) not found` / `undefined reference` for a class that
+plainly exists in the tree (seen with `Usart8251` / `TTDPit8253` after a rebase), or a new test file
+is silently missing from `core-tests`.
+
+`tools/build/build.sh` therefore runs `cmake -S . -B <build dir>` before every `ninja` (seconds, the
+cache and your `-D` options are kept) and configures a missing build dir with `-G Ninja -DTESTS=ON`.
+Its output goes to `<build dir>/configure.log` and is printed only if the configure fails.
+`tools/build/test.sh` goes through `build.sh`, so it is covered too.
+
+- Use `tools/build/build.sh` for every build; do not call `ninja` or `cmake --build` directly - that
+  skips the re-configure and brings the symptom above back.
+- After a rebase / merge / pull, nothing special is needed. If you must bypass the wrapper (benchmarks),
+  run `cmake -S . -B <build dir>` yourself first.
+- `UNREAL_NO_CONFIGURE=1 tools/build/build.sh ...` skips the step (only for a tight edit-compile loop on
+  a tree that did not change under you).
+- A new build dir needs no manual `cmake` call. Benchmarks (`-DBENCHMARKS=ON`) are the exception: one
+  manual configure with that flag, later `build.sh` runs keep it.
 
 ### Linux (gcc) build check
 CI builds on Linux with gcc, which is stricter than Apple clang (missing standard includes, deprecated
@@ -144,6 +171,7 @@ Rules of thumb:
 | Build + run everything | `tools/build/test.sh` (builds `core-tests` itself, so never stale) |
 | Run a filter after edits | rebuild via `core-tests` target **first**, then `--gtest_filter=...` |
 | Production check only | plain `tools/build/build.sh` (no test binary update) |
+| Tree changed under you (rebase, merge, pull) | nothing extra: `build.sh` / `test.sh` re-run CMake themselves |
 
 
 
