@@ -705,6 +705,7 @@ void NetworkManager::Unplug(bool keepSlotCards)
         _context->pEthernetGateway = nullptr;
     if (_hostFrames)
         _hostFrames->Close();   // the bridge's adapter goes with the gateway; the object stays (a test's fake)
+    _macTranslator.reset();
     _bridgeError.clear();
     for (SlotCard& card : _slotCards)
     {
@@ -954,12 +955,24 @@ void NetworkManager::FitBridge()
         _bridgeError = error;   // in the network report (ethernet_gateway.bridge.error)
     }
     IHostFrames* frames = _hostFrames.get();
+    _macTranslator.reset();
+    if (frames->IsOpen() && frames->Translates())
+        _macTranslator = std::make_unique<MacTranslator>(frames->HostMac());
+    MacTranslator* translator = _macTranslator.get();
     EmulatorContext* context = _context;
-    _gateway->SetLanOutput([frames, context](const uint8_t* frame, size_t length) {
+    _gateway->SetLanOutput([frames, translator, context](const uint8_t* frame, size_t length) {
         // A TTD replay sends nothing: the recording did
         if (context->pTimeTravelManager && context->pTimeTravelManager->OwnsInput())
             return;
-        if (frames->IsOpen())
+        if (!frames->IsOpen())
+            return;
+        if (translator)
+        {
+            // Wi-Fi: the frame leaves with the host adapter's MAC
+            const std::vector<uint8_t> out = translator->Outbound(frame, length);
+            frames->Send(out.data(), out.size());
+        }
+        else
             frames->Send(frame, length);
     });
 }
@@ -969,11 +982,24 @@ void NetworkManager::PumpBridge()
     if (!_gateway || !_hostFrames || !_hostFrames->IsOpen() || _gateway->GetMode() != EthernetGateway::Mode::Bridge)
         return;
     _hostFrames->SetStations(_gateway->StationMacs());
+    if (_macTranslator)
+    {
+        _macTranslator->SetCards(_gateway->StationMacs());
+        _hostFrames->SetGuestIps(_macTranslator->GuestIps());
+    }
     std::vector<std::vector<uint8_t>> frames;
     _hostFrames->Drain(frames);
     ttd::TimeTravelManager* ttm = _context ? _context->pTimeTravelManager : nullptr;
-    for (const std::vector<uint8_t>& f : frames)
+    for (std::vector<uint8_t>& f : frames)
     {
+        // Wi-Fi: the card's MAC back in a frame for its address; the host's own traffic stays out. The journal keeps
+        // the frame as the card sees it, so a replay needs no translation
+        if (_macTranslator && !_macTranslator->Inbound(f))
+            continue;
+        // A wire never carries a frame under 60 bytes (the sender pads it), and the cards drop such runts. A host
+        // adapter can hand over shorter ones: Wi-Fi's 802.11-to-Ethernet conversion leaves the padding out
+        if (f.size() < 60)
+            f.resize(60, 0);
         // Every frame from the LAN is an outside input: journaled while recording, refused while the journal drives
         // the machine (a replay's frames come from the recording)
         ttd::TTDInputEvent ev;
@@ -1260,6 +1286,24 @@ void NetworkManager::UpdateStatus()
                 error = _hostFrames->LastError();
             b["error"] = error;
             b["library"] = _hostFrames ? _hostFrames->Library() : std::string();
+            b["translation"] = _macTranslator != nullptr;
+            if (_macTranslator)
+            {
+                const MacTranslator::Mac& host = _macTranslator->HostMac();
+                char mac[18];
+                std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", host[0], host[1], host[2], host[3], host[4], host[5]);
+                b["host_mac"] = std::string(mac);
+                StateNode guests = StateNode::Array();
+                for (const auto& [ip, card] : _macTranslator->Guests())
+                {
+                    StateNode g = StateNode::Object();
+                    g["ip"] = NetIpToString(ip);
+                    std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", card[0], card[1], card[2], card[3], card[4], card[5]);
+                    g["card_mac"] = std::string(mac);
+                    guests.push(std::move(g));
+                }
+                b["guests"] = guests;
+            }
             if (_hostFrames)
             {
                 const IHostFrames::Counters c = _hostFrames->GetCounters();

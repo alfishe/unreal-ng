@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "common/network/hostframes.h"
+#include "common/network/mactranslator.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
@@ -343,6 +344,7 @@ private:
     std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
     /// BRIDGE: the host adapter (network SN6); a test puts a fake in with SetHostFrames before the gateway is built
     std::unique_ptr<IHostFrames> _hostFrames;
+    std::unique_ptr<MacTranslator> _macTranslator;   ///< a Wi-Fi adapter's MAC translation (network SN6b)
     std::string _bridgeError;                    ///< why BRIDGE has no adapter open
     void FitBridge();
     void PumpBridge();

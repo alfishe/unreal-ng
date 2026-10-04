@@ -475,7 +475,13 @@ namespace
 class FakeHostFrames : public IHostFrames
 {
 public:
-    std::vector<HostAdapter> Adapters(std::string&) override { return {HostAdapter{"fake0", "fake", {}, false, false, true, true}}; }
+    std::vector<HostAdapter> Adapters(std::string&) override
+    {
+        HostAdapter a;
+        a.name = "fake0";
+        a.up = a.running = true;
+        return {a};
+    }
     bool Open(const std::string& adapter, std::string& error) override
     {
         if (adapter != "fake0")
@@ -490,6 +496,9 @@ public:
     bool IsOpen() const override { return open; }
     std::string Adapter() const override { return open ? "fake0" : ""; }
     void SetStations(const std::vector<Mac>& s) override { stations = s; }
+    bool Translates() const override { return false; }
+    Mac HostMac() const override { return {}; }
+    void SetGuestIps(const std::vector<uint32_t>&) override {}
     void Send(const uint8_t* frame, size_t length) override { sent.emplace_back(frame, frame + length); }
     void Drain(std::vector<std::vector<uint8_t>>& out) override
     {
@@ -539,7 +548,12 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
     host->incoming.push_back(frame);
     Network()->OnFrame();
     EXPECT_EQ(Network()->Gateway()->GetLanCounters().in, 1u);
-    EXPECT_EQ(Network()->Gateway()->GetCounters().framesToCards, 1u) << "the NE2000 took it";
+    // A short frame from the adapter (Wi-Fi drops the padding): padded to the 60-byte minimum, the card takes it
+    host->incoming.push_back(std::vector<uint8_t>(frame.begin(), frame.begin() + 42));
+    Network()->OnFrame();
+    EXPECT_EQ(Network()->Gateway()->GetLanCounters().in, 2u);
+    EXPECT_EQ(Network()->Gateway()->Capture().back().bytes.size(), 60u);
+    EXPECT_EQ(Network()->Gateway()->GetCounters().framesToCards, 2u) << "the NE2000 took both";
     bool journaled = false;
     for (const ttd::TTDInputEvent& ev : ttm->GetInputJournal().Events())
     {
@@ -548,9 +562,10 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
         const ttd::TTDNetInput* net = ttm->GetInputJournal().NetOf(ev);
         ASSERT_NE(net, nullptr);
         ASSERT_EQ(net->payloadLength, frame.size());
-        EXPECT_EQ(std::vector<uint8_t>(ttm->GetInputJournal().PayloadOf(*net),
-                                       ttm->GetInputJournal().PayloadOf(*net) + net->payloadLength),
-                  frame);
+        if (!journaled)
+            EXPECT_EQ(std::vector<uint8_t>(ttm->GetInputJournal().PayloadOf(*net),
+                                           ttm->GetInputJournal().PayloadOf(*net) + net->payloadLength),
+                      frame);
         journaled = true;
     }
     EXPECT_TRUE(journaled) << "a frame from the LAN is an outside input";

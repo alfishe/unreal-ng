@@ -28,7 +28,8 @@ bool Pcap(EmulatorContext* context, const std::string& link, std::vector<uint8_t
 bool Inject(EmulatorContext* context, const std::string& link, const std::string& hex, const char* source, std::string& error);
 
 /// The host's network adapters for the bridge (network SN6): name, description, IPv4 addresses, loopback, wireless,
-/// up, running, and whether the bridge can take it (wired: yes; Wi-Fi: not yet, Q1); `library` and `error` when the
+/// up, running, mac, translation (Wi-Fi: the frames leave with the adapter's MAC, network SN6b) and whether the
+/// bridge can take it (not loopback; Wi-Fi needs its MAC); `library` and `error` when the
 /// packet library is missing or refuses
 StateNode Adapters();
 

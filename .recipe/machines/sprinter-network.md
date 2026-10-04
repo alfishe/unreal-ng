@@ -113,7 +113,7 @@ Lua / Python: `network_state()`, `network_frames("isa2.eth", 8)`, `network_injec
 `network_frames_pcap()`), `isa_state()`, `isa_journal(8)`. MCP: `inspect_state` aspects `network` and `isa`; frames and
 the journal through `invoke_api`.
 
-## Bridge to the host LAN (verified 2026-10-04)
+## Bridge to the host LAN (verified 2026-10-04, wired en0 and Wi-Fi en1)
 
 The NE2000 or 3C509B can sit on the host's real LAN instead of behind the emulator's router: the LAN's DHCP gives
 it an address, other machines reach it. Design: [sn6-bridge-design.md](../../docs/inprogress/2026-10-02-sprinter-network/sn6-bridge-design.md).
@@ -121,7 +121,9 @@ it an address, other machines reach it. Design: [sn6-bridge-design.md](../../doc
 - Needs the packet library (macOS / Linux: libpcap, part of the system; Windows: [Npcap](https://npcap.com)) and the
   host's permission: macOS read / write on `/dev/bpf*` (Wireshark's ChmodBPF, or for one session
   `sudo chmod o+rw /dev/bpf*` until the next reboot), Linux `setcap cap_net_raw,cap_net_admin=eip` on the binary.
-- A **wired** adapter only (Wi-Fi access points drop the card's own MAC; Wi-Fi bridging is planned).
+- Wired or **Wi-Fi**: on a wireless adapter the bridge translates MACs automatically (the card's frames leave with the
+  adapter's MAC, answers come back by the card's IPv4 address; `ethernet_gateway.bridge.translation: true`, `guests`
+  lists the learned addresses). IPv4 only on Wi-Fi.
 - The host itself does not see the card on the same adapter (pcap's limit); other machines do.
 
 ```bash

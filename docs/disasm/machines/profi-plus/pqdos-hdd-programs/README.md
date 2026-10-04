@@ -12,8 +12,8 @@ runs, its logo is wrong because of the program itself). What differs, measured b
 
 - BDOS function 98 (CP/M Plus "parse filename") is not implemented in PQ-DOS: cause 1.
 - BDOS function 9 stops at a NUL byte instead of `$`: cause 2.
-- For JAZZY and COLUMNS the cause is not settled (causes 3 and 4); the open-file result of COLUMNS may be another
-  PQ-DOS difference or something in the emulated disk path.
+- For COLUMNS the open of a missing file returns "found" under PQ-DOS (cause 4, settled: PQ-DOS's own behavior, the
+  emulated disk path is fine); the cause of JAZZY is not settled (cause 3).
 
 The README of PQ-DOS itself says "almost compatible" with CP/M, MicroDOS and MSX-DOS. A CP/M program that uses CP/M
 Plus calls or strings with NUL bytes can fail under PQ-DOS; the sample here is six programs, not all CP/M software.
@@ -26,7 +26,7 @@ confirm them. Programs that fail under PQ-DOS should be run from a Micco CP/M fl
 |:--|:--|
 | Normal picture or text | `DEMOS`: FIRST, YG, OLDMOVIE, SP (logo see [sp-demo](../sp-demo/README.md)); games with a graphics mode: VALLEY, WATERFAL, DEAWORLD, MOLE#, XONIX family, SUPMINER, SOKOBAN, PITON1/3/5, UDAB, CAD, LODE-RUN editors, BRKTHRU, PSWXONIX, all 10 of `VILENSKY`; the text games of `FROM1715` |
 | Garbage or crash after start | FLINES, FLINES5, FLINES8C, FLINES8F, FLINES_F (Color Lines), FLINES4, WERT#, PINGVIN# (cause 1); JAZZY (cause 3, not settled) |
-| Starts, but prints nothing | MAT (cause 2); COLUMNS (cause 4, not settled) |
+| Starts, but prints nothing | MAT (cause 2); COLUMNS (cause 4) |
 | Refuse to start by their own message | AIRCOBRA ("NOT ENOUGH MEMORY"), MODIO ("Requires SCP 3.0"), WINMINER / WORDLIFE ("Windows not loaded"), the `TANDY` set ("Old / Incorrect DOS version"), MOVIE ("old DOS version") - PC DOS programs |
 
 None of the rows is a video-mode or renderer error: in every case the program's pixels are in the bitmap page the
@@ -86,17 +86,34 @@ switches to 48K mode (`7FFD=#20`, `DFFD=#20`, 3.5 MHz). Under PQ-DOS it ends in 
 `7FFD` with values `#20/#30/#AF/#4B/#5B`: it executes data. The first deviation is not found yet; candidates are a
 smaller top of memory under PQ-DOS (JAZZY sets `SP` from `(6)`) or a BDOS result differing from CP/M.
 
-## Cause 4 (not settled): COLUMNS
+## Cause 4 (settled 2026-10-04): COLUMNS - PQ-DOS's open never reports "not found"
 
 `COLUMNS.COM` opens `COLUMNS.RES` and `MUSIC01.STR` (drive A). Neither file exists on the image. On the Kondor system
 the open returns `FF` and the program starts with its defaults (title screen). Under PQ-DOS the open returns 0
 ("found") and the program reads 128-byte records from nowhere into `#1516...`, ending in a loop with a blank screen.
-A test program that opens a non-existing file, and one that opens an existing file (`QDOS.SYS`), show A = 0 for both,
-so it is not yet clear whether PQ-DOS returns the result in another register or really reports success.
+
+A 560-byte CP/M `.COM` (hand-assembled, run from `C:\` of the PQ-DOS hard disk image on `PROFI-PLUS`) calls BDOS 0Fh
+(open) and then 11h (search first) on a missing and on an existing file and prints A, H, L, B and the FCB bytes
+`+0C..+17` after the open:
+
+| | `NOSUCH.TXT` (not on the disk) | `QDOS.SYS` (on the disk) |
+|:--|:--|:--|
+| BDOS 0Fh open: A H L B | `00 00 00 00` | `00 00 00 00` |
+| FCB `+0C..+17` after the open | `00 00 00 00 00 00 00 00 30 DF BC 5C` | `00 00 00 80 00 4A 00 00 30 DF BC 5C` |
+| BDOS 11h search first: A | `FF` (not found) | `00` (found) |
+
+- The emulated disk path is fine: search first reads the same directory and tells the two names apart, and the open of
+  `QDOS.SYS` fills the FCB with the real size (`00 4A 00 00` = 18944 bytes at `+10`, record count `#80`).
+- PQ-DOS's open (0Fh) returns A = 0 for a file that does not exist: it fills the FCB with a zero size and the current
+  date and time (`30 DF BC 5C` in both rows) and creates nothing (the root still holds the same 12 files afterwards).
+  Its search first is the call that answers "not found". A program that tests the result of open, as COLUMNS does,
+  cannot tell that a file is missing.
+- So this is a PQ-DOS difference from CP/M (open returns `FF` for a missing file), not an emulator fault. The one check
+  still missing is a second PQ-DOS source (real hardware or another emulator), as for causes 1 and 2.
 
 ## Open
 
-- JAZZY and COLUMNS root causes (above).
+- JAZZY's root cause (above).
 - `S_MIN'.COM`: the name holds an apostrophe, the batch file may not have started it; rerun by hand.
 - A second PQ-DOS source (another emulator or a real Karabas Pro) would confirm that causes 1 and 2 are the
   system's behavior.

@@ -40,6 +40,9 @@ public:
     bool IsOpen() const override { return _rx != nullptr; }
     std::string Adapter() const override;
     void SetStations(const std::vector<Mac>& stations) override;
+    bool Translates() const override { return _translate; }
+    Mac HostMac() const override { return _hostMac; }
+    void SetGuestIps(const std::vector<uint32_t>& ips) override;
     void Send(const uint8_t* frame, size_t length) override;
     void Drain(std::vector<std::vector<uint8_t>>& out) override;
     Counters GetCounters() const override;
@@ -58,12 +61,15 @@ private:
     void* _rx = nullptr;   ///< pcap_t*: the capture handle
     void* _tx = nullptr;   ///< pcap_t*: the send handle
     std::string _adapter;
+    bool _translate = false;   ///< a Wi-Fi adapter: MAC translation (set at Open, read by the capture thread after)
+    Mac _hostMac{};
 
     std::thread _thread;
     std::atomic<bool> _running{false};
 
     mutable std::mutex _mutex;   ///< guards everything below
     std::vector<Mac> _stations;
+    std::vector<uint32_t> _guestIps;
     std::deque<std::vector<uint8_t>> _queue;
     Counters _counters;
     std::string _lastError;
