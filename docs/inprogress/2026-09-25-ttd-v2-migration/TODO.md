@@ -124,6 +124,8 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] Groundwork (2026-10-03): `SetWriteJournalCapacity` (sessions with their whole write history), `RegenerateFrameWrites` (a frame's writes by replay, equal to the journal's), TTDE7 benchmark; exactness 0 mismatching frames on 17 sessions x 200 frames
 - [ ] **On landing (merge master into ttd-engine):** master fixed the toolbar's cross-thread session summary crash its own way (1de1b07bc: `GetPublishedSessionInfo`, StopRecording parks the machine). Keep master's mechanism; drop this branch's `GetLatestSessionInfo` / `PublishSessionInfo` / `_infoMutex` and `timetravelmanager_sessioninfo_test.cpp` (5f18b937b)
 
+- [x] Phase 3 results against the quality bar (D33): [phase-3-results.md](phase-3-results.md), baseline `testdata/ttd/bench/engine-phase3-full.json` (2026-10-04)
+
 ## Phase 4 — The session file
 
 Design: [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md).

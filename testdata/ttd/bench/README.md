@@ -10,6 +10,7 @@ These are the stored results of the TTD benchmark matrix (PLAN #40 Phase 0, Step
 | `v1-full.json` | The `full` set: all 13 base models, 8 workloads, and 9 peripheral sets on Pentagon and ZX-Evo | `ttd_bench_compare.py` |
 | `engine-phase1-full.json` | The `full` set with both engines (`UNREAL_TTD_BENCH_ENGINE=all`), 600 frames, no seeks: the engine's Phase 1 baseline, bytes, memory and counted work (no timings) | `ttd_engine_d33.py` |
 | `engine-phase2-full.json` | The same run after Phase 2 (device state with history, time fields, changed ranges): the engine's Phase 2 baseline ([phase-2-results.md](../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-2-results.md)) | `ttd_engine_d33.py` |
+| `engine-phase3-full.json` | The same run after Phase 3 (event stream, bus, media and write journals in the engine, RZX playback): the engine's Phase 3 baseline ([phase-3-results.md](../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-3-results.md)) | `ttd_engine_d33.py` |
 
 The byte metrics in these files are exact for the recorded commit. The timings describe the host named in each JSON file's `context` block, under that host's load at the time of the run. Use the timings as a reference point, not as a pass/fail limit.
 
