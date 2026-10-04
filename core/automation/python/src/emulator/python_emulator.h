@@ -31,6 +31,7 @@
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
@@ -200,6 +201,20 @@ inline pybind11::object StateNodeToPy(const StateNode& node)
         }
         default: return py::none();
     }
+}
+
+/// One time-travel verb through TTDControl, the layer every surface shares (Phase 5, Step 1)
+inline ttd::TTDReply TtdRunPy(Emulator& self, const std::string& verb, std::map<std::string, std::string> options = {})
+{
+    return ttd::TTDControl(self.GetContext()).Execute({verb, std::move(options)});
+}
+
+/// The reply's body; a failure raises RuntimeError with the message, as the bindings always did
+inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
+{
+    if (!reply.Ok())
+        throw std::runtime_error(reply.message);
+    return reply.body;
 }
 
 /// One media verb through MediaControl (media-control-design.md): the options
@@ -3489,79 +3504,10 @@ namespace PythonBindings
             // -----------------------------------------------------------------
 
             // Session status — returns a dict mirroring the WebAPI shape
-            .def("ttd_status", [](Emulator& self) -> py::dict {
-                py::dict info;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    info["state"] = "idle";
-                    info["ttd_available"] = false;
-                    return info;
-                }
-                ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-                ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
-                info["state"]                    = ttd::TTDSessionStateToString(si.state);
-                info["session_start_frame"]      = py::cast(si.sessionStartFrame);
-                info["current_end_frame"]        = py::cast(si.currentEndFrame);
-                info["checkpoint_count"]         = py::cast(si.checkpointCount);
-                info["page_store_bytes"]         = py::cast(si.pageStoreBytes);
-                info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
-                info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
-                info["session_heap_bytes"]       = py::cast(si.sessionHeapBytes);
-                info["history_limit_frames"]     = py::cast(si.historyLimitFrames);
-                info["history_limit_bytes"]      = py::cast(si.historyLimitBytes);
-                info["history_bytes"]            = py::cast(si.historyBytes);
-                info["evicted_checkpoints"]      = py::cast(si.evictedCheckpoints);
-                // Provenance and section sizes: "is this something I recorded
-                // or something I opened, and what is inside it".
-                info["loaded_from_file"]         = py::cast(si.loadedFromFile);
-                info["source_path"]              = py::cast(si.sourcePath);
-                info["captured_at_unix_ms"]      = py::cast(si.capturedAtUnixMs);
-                info["model_id"]                 = py::cast(si.modelId);
-                info["model_ram_pages"]          = py::cast(si.modelRamPages);
-                info["write_journal_records"]    = py::cast(si.writeJournalRecords);
-                info["write_journal_bytes"]      = py::cast(si.writeJournalBytes);
-                info["coverage_index_frames"]    = py::cast(si.coverageIndexFrames);
-                info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
-                info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
-                info["write_journal_complete"]   = py::cast(si.writeJournalComplete);
-                py::list segments;
-                for (const auto& [from, to] : si.writeJournalSpans)
-                {
-                    py::dict span;
-                    span["from_frame"]    = py::cast(from.frame);
-                    span["from_tinframe"] = py::cast(from.tInFrame);
-                    span["to_frame"]      = py::cast(to.frame);
-                    span["to_tinframe"]   = py::cast(to.tInFrame);
-                    segments.append(span);
-                }
-                info["write_journal_segments"] = segments;
-                info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
-                info["input_event_count"]        = py::cast(static_cast<uint64_t>(si.inputEventCount));
-                info["external_event_count"]     = py::cast(static_cast<uint64_t>(si.externalEventCount));
-                info["input_history_complete"]   = py::cast(si.inputHistoryComplete);
-                info["port_journal_active"]      = py::cast(si.portJournalActive);
-                info["port_journal_off_reason"]  = si.portJournalOffReason.empty()
-                                                       ? py::object(py::none())
-                                                       : py::object(py::cast(si.portJournalOffReason));
-                info["port_read_count"]          = py::cast(si.portReadCount);
-                info["port_write_count"]         = py::cast(si.portWriteCount);
-                info["port_journal_bytes"]       = py::cast(static_cast<uint64_t>(si.portJournalBytes));
-                info["port_replay_value_mismatches"] = py::cast(si.portReplayValueMismatches);
-                info["port_replay_divergences"]  = py::cast(si.portReplayDivergences);
-                info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
-                                                                             : py::object(py::cast(si.lastDropReason));
-                info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
-                                                                                : py::object(py::cast(si.unavailableReason));
-                // The recorded machine (None while there is no session) and, for a
-                // loaded file, the instance that recorded it
-                info["machine"] = si.checkpointCount != 0 ? py::object(TtdRecordedMachineDict(si.machine))
-                                                          : py::object(py::none());
-                info["recorded_by"] = si.recordedBy.empty() ? py::object(py::none())
-                                                            : py::object(py::cast(si.recordedBy));
-                info["ttd_available"]            = true;
-                return info;
-            }, "Get TTD session status")
+            .def("ttd_status", [](Emulator& self) -> py::object {
+                return StateNodeToPy(TtdRunPy(self, "status").body);
+            }, "Session status: the same fields as GET /ttd/status")
+
             .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::dict {
                 py::dict r;
                 ttd::TTDFileInfo fi;
@@ -3605,74 +3551,61 @@ namespace PythonBindings
             // journal=True also records the write journal; without it the
             // ttd_set_journal_enabled choice stands (off by default, D40)
             .def("ttd_start", [](Emulator& self, py::object journalObj) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
+                std::map<std::string, std::string> options;
                 if (!journalObj.is_none())
-                    ctx->pTimeTravelManager->SetEnableWriteJournal(journalObj.cast<bool>());
-                return ctx->pTimeTravelManager->StartRecording();
+                    options["journal"] = journalObj.cast<bool>() ? "true" : "false";
+                const ttd::TTDReply reply = TtdRunPy(self, "start", options);
+                return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
             }, "Start TTD recording (journal=True also records the write journal)",
                py::arg("journal") = py::none())
 
             .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                    throw std::runtime_error("TTD not available");
-                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
-                ctx->pTimeTravelManager->SetHistoryLimit(
-                    framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
-                    bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
-                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
-                return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
+                std::map<std::string, std::string> options;
+                if (!framesObj.is_none())
+                    options["frames"] = std::to_string(framesObj.cast<uint64_t>());
+                if (!bytesObj.is_none())
+                    options["bytes"] = std::to_string(bytesObj.cast<uint64_t>());
+                const StateNode& body = TtdBodyOrThrow(TtdRunPy(self, "history-limit", options));
+                return py::make_tuple(static_cast<uint64_t>(body.find("history_limit_frames")->i),
+                                      static_cast<uint64_t>(body.find("history_limit_bytes")->i));
             }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
                "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
                py::arg("frames") = py::none(), py::arg("bytes") = py::none())
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
-                auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SwitchWriteJournal(enabled))
-                    throw std::runtime_error("write journal not available");
+                TtdBodyOrThrow(TtdRunPy(self, "journal", {{"enabled", enabled ? "true" : "false"}}));
             }, "Switch the write journal at any moment, also while recording: a journal segment starts or ends there",
                py::arg("enabled"))
 
             .def("ttd_get_journal_enabled", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                return ctx && ctx->pTimeTravelManager && ctx->pTimeTravelManager->GetEnableWriteJournal();
+                const ttd::TTDReply reply = TtdRunPy(self, "journal");
+                return reply.Ok() && reply.body.find("write_journal_setting")->b;
             }, "Whether the write journal is recorded (off by default)")
 
-            .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::dict {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                    throw std::runtime_error("TTD not available");
-                const ttd::TTDJournalBuildResult b = ctx->pTimeTravelManager->BuildWriteJournalFrames(
-                    fromObj.is_none() ? 0 : fromObj.cast<uint64_t>(),
-                    toObj.is_none() ? UINT64_MAX : toObj.cast<uint64_t>());
-                py::dict r;
-                r["ok"] = b.ok;
-                r["error"] = b.ok ? py::object(py::none()) : py::object(py::str(b.error));
-                r["cancelled"] = b.cancelled;
-                r["frames_built"] = b.framesBuilt;
-                r["frames_covered"] = b.framesCovered;
-                r["frames_refused"] = b.framesRefused;
-                r["records"] = b.records;
-                return r;
+            .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!fromObj.is_none())
+                    options["from_frame"] = std::to_string(fromObj.cast<uint64_t>());
+                if (!toObj.is_none())
+                    options["to_frame"] = std::to_string(toObj.cast<uint64_t>());
+                const ttd::TTDReply reply = TtdRunPy(self, "journal-build", options);
+                // A build that ran and failed answers with its counts; a refusal raises
+                if (!reply.Ok() && !reply.body.find("frames_built"))
+                    throw std::runtime_error(reply.message);
+                StateNode value = reply.body;
+                if (reply.Ok())
+                    value["error"] = StateNode();
+                return StateNodeToPy(value);
             }, "Build the write journal for frames from_frame..to_frame (default: the whole session) by replaying "
                "them, about 2-4 ms per frame; not while recording",
                py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none())
 
-            .def("ttd_stop", [](Emulator& self) {
-                auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager)
-                    ctx->pTimeTravelManager->StopRecording();
-            }, "Stop TTD recording (history retained)")
+            .def("ttd_stop", [](Emulator& self) { (void)TtdRunPy(self, "stop"); }, "Stop TTD recording (history retained)")
 
             .def("ttd_invalidate", [](Emulator& self, const std::string& reason) {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                    return;
-                if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
-                    !refusal.empty())
-                    throw std::runtime_error(refusal);  // recording: stop it first
-                ctx->pTimeTravelManager->InvalidateSession(reason.c_str());
+                const ttd::TTDReply reply = TtdRunPy(self, "invalidate", {{"reason", reason}});
+                if (reply.error == ttd::TTDControlError::Conflict)
+                    throw std::runtime_error(reply.message);  // recording: stop it first
             }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
             .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::dict {

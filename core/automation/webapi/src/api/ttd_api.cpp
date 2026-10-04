@@ -43,6 +43,8 @@
 #include "../emulator_api.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "../common/statenode_json.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdprobe.h"
 
@@ -100,30 +102,6 @@ static bool PauseAndConfirm(const std::shared_ptr<Emulator>& emulator,
 /// in-place via RestoreCheckpoint -> Screen::RenderOnlyMainScreen() but do
 /// NOT run a MainLoop iteration, so the observers never see a frame event
 /// and keep displaying the pre-seek frame.
-/// The write journal's state (D40): on/off, the spans it covers, a build in
-/// progress. Shared by GET /ttd/status and the /ttd/journal endpoints
-static void AddWriteJournalJson(Json::Value& ret, const ttd::TTDSessionInfo& info, const ttd::TimeTravelManager& mgr)
-{
-    ret["write_journal_enabled"]  = info.writeJournalEnabled;
-    ret["write_journal_complete"] = info.writeJournalComplete;
-    Json::Value spans(Json::arrayValue);
-    for (const auto& [from, to] : info.writeJournalSpans)
-    {
-        Json::Value span;
-        span["from_frame"]    = Json::UInt64(from.frame);
-        span["from_tinframe"] = Json::UInt(from.tInFrame);
-        span["to_frame"]      = Json::UInt64(to.frame);
-        span["to_tinframe"]   = Json::UInt(to.tInFrame);
-        spans.append(span);
-    }
-    ret["write_journal_segments"] = spans;
-    const ttd::TimeTravelManager::JournalBuildState build = mgr.GetJournalBuildState();
-    Json::Value b;
-    b["active"] = build.active;
-    b["done"]   = Json::UInt64(build.done);
-    b["total"]  = Json::UInt64(build.total);
-    ret["write_journal_build"] = b;
-}
 
 static void NotifyFrameRefresh(Emulator& emulator)
 {
@@ -146,6 +124,73 @@ static void NotifyFrameRefresh(Emulator& emulator)
     messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
                        new EmulatorFramePayload(emulatorId, frameCounter));
 }
+
+// ---------------------------------------------------------------------------
+// The verbs TTDControl implements for every surface (Phase 5, Step 1): a route
+// turns its JSON body into string options and sends the reply back as JSON
+// ---------------------------------------------------------------------------
+static void RespondTTD(const std::string& id, const std::string& verb, std::map<std::string, std::string> options,
+                       std::function<void(const HttpResponsePtr&)>& callback)
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"]   = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (emulator->IsDestroying())
+    {
+        Json::Value error;
+        error["error"]   = "Service Unavailable";
+        error["message"] = "Emulator is shutting down";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k503ServiceUnavailable);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// A JSON body's scalar members as TTDControl options (null: absent). False when a
+/// member is an object or an array: the verbs take scalars only
+static bool OptionsFromJson(const HttpRequestPtr& req, std::map<std::string, std::string>& options,
+                            std::function<void(const HttpResponsePtr&)>& callback)
+{
+    auto json = req->getJsonObject();
+    if (!json || !json->isObject())
+        return true;
+    for (const std::string& name : json->getMemberNames())
+    {
+        const Json::Value& v = (*json)[name];
+        if (v.isNull())
+            continue;
+        if (v.isObject() || v.isArray())
+        {
+            Json::Value error;
+            error["error"]   = "Bad Request";
+            error["message"] = "'" + name + "' must be a number, a string or true / false";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return false;
+        }
+        options[name] = v.isBool() ? (v.asBool() ? "true" : "false") : v.asString();
+    }
+    return true;
+}
+
 
 // ---------------------------------------------------------------------------
 // The recorded machine and a .ttd file's info as JSON (ttdfileinfo.h). The same
@@ -274,135 +319,8 @@ void EmulatorAPI::getTTDFileInfo(const HttpRequestPtr& req, std::function<void(c
 void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
-{
-    auto emulator = getEmulatorByIdOrIndex(id);
-
-    if (!emulator)
-    {
-        Json::Value error;
-        error["error"]   = "Not Found";
-        error["message"] = "Emulator not found with ID: " + id;
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    if (emulator->IsDestroying())
-    {
-        Json::Value error;
-        error["error"]   = "Service Unavailable";
-        error["message"] = "Emulator is shutting down";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k503ServiceUnavailable);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    EmulatorContext* context = emulator->GetContext();
-    if (!context)
-    {
-        Json::Value error;
-        error["error"]   = "Internal Error";
-        error["message"] = "Unable to access emulator context";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    // Build a default "idle" payload when the manager is missing (e.g. minimal
-    // builds without TTD compiled in). The endpoint is still useful as a
-    // capability probe: automation clients can detect "TTD not available"
-    // by the absence of progression in session_start_frame / checkpoint_count.
-    Json::Value ret;
-    ret["state"]                    = ttd::TTDSessionStateToString(ttd::TTDSessionState::Idle);
-    ret["session_start_frame"]      = Json::UInt64(0);
-    ret["current_end_frame"]        = Json::UInt64(0);
-    ret["checkpoint_count"]         = Json::UInt64(0);
-    ret["page_store_bytes"]         = Json::UInt64(0);
-    ret["page_store_used_bytes"]    = Json::UInt64(0);
-    ret["baseline_frames_captured"] = Json::UInt64(0);
-    ret["session_heap_bytes"]       = Json::UInt64(0);
-    ret["bookmark_count"]           = Json::UInt64(0);
-    ret["input_event_count"]        = Json::UInt64(0);
-    ret["external_event_count"]     = Json::UInt64(0);
-    ret["input_history_complete"]   = true;
-    ret["port_journal_active"]      = false;
-    ret["history_limit_frames"]     = Json::UInt64(0);
-    ret["history_limit_bytes"]      = Json::UInt64(0);
-    ret["history_bytes"]            = Json::UInt64(0);
-    ret["evicted_checkpoints"]      = Json::UInt64(0);
-    ret["port_journal_off_reason"]  = Json::Value(Json::nullValue);
-    ret["port_read_count"]          = Json::UInt64(0);
-    ret["port_write_count"]         = Json::UInt64(0);
-    ret["port_journal_bytes"]       = Json::UInt64(0);
-    ret["port_replay_value_mismatches"] = Json::UInt64(0);
-    ret["port_replay_divergences"]  = Json::UInt64(0);
-    ret["ttd_available"]            = false;
-
-    if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
-    {
-        ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
-        ret["state"]                    = ttd::TTDSessionStateToString(info.state);
-        ret["session_start_frame"]      = Json::UInt64(info.sessionStartFrame);
-        ret["current_end_frame"]        = Json::UInt64(info.currentEndFrame);
-        ret["checkpoint_count"]         = Json::UInt64(info.checkpointCount);
-        ret["page_store_bytes"]         = Json::UInt64(info.pageStoreBytes);
-        ret["page_store_used_bytes"]    = Json::UInt64(info.pageStoreUsedBytes);
-        ret["baseline_frames_captured"] = Json::UInt64(info.baselineFramesCaptured);
-        ret["session_heap_bytes"]       = Json::UInt64(info.sessionHeapBytes);
-        ret["loaded_from_file"]      = info.loadedFromFile;
-    ret["source_path"]           = info.sourcePath;
-    ret["captured_at_unix_ms"]   = Json::UInt64(info.capturedAtUnixMs);
-    ret["model_id"]              = Json::UInt(info.modelId);
-    ret["model_ram_pages"]       = Json::UInt(info.modelRamPages);
-    // The recorded machine (null while there is no session) and, for a loaded
-    // file, the instance that recorded it
-    ret["machine"] = info.checkpointCount != 0 ? RecordedMachineJson(info.machine) : Json::Value(Json::nullValue);
-    ret["recorded_by"] = info.recordedBy.empty() ? Json::Value(Json::nullValue) : Json::Value(info.recordedBy);
-    ret["write_journal_records"] = Json::UInt64(info.writeJournalRecords);
-    ret["write_journal_bytes"]   = Json::UInt64(info.writeJournalBytes);
-    ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
-    ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
-    ret["bookmark_count"]       = Json::UInt64(info.bookmarkCount);
-    ret["input_event_count"]    = Json::UInt64(info.inputEventCount);
-    ret["external_event_count"] = Json::UInt64(info.externalEventCount);
-    ret["input_history_complete"] = info.inputHistoryComplete;
-    // Port-read journal: whether replay is isolated from media and host devices
-    ret["port_journal_active"]    = info.portJournalActive;
-    // History limit: the oldest checkpoints are released beyond it while recording
-    ret["history_limit_frames"]   = Json::UInt64(info.historyLimitFrames);
-    ret["history_limit_bytes"]    = Json::UInt64(info.historyLimitBytes);
-    ret["history_bytes"]          = Json::UInt64(info.historyBytes);
-    ret["evicted_checkpoints"]    = Json::UInt64(info.evictedCheckpoints);
-    ret["port_journal_off_reason"] = info.portJournalOffReason.empty() ? Json::Value(Json::nullValue)
-                                                                       : Json::Value(info.portJournalOffReason);
-    ret["port_read_count"]        = Json::UInt64(info.portReadCount);
-    ret["port_write_count"]       = Json::UInt64(info.portWriteCount);
-    ret["port_journal_bytes"]     = Json::UInt64(info.portJournalBytes);
-    ret["port_replay_value_mismatches"] = Json::UInt64(info.portReplayValueMismatches);
-    ret["port_replay_divergences"]  = Json::UInt64(info.portReplayDivergences);
-    // Why the last session with history was dropped (null when none was):
-    // tells an agent why its recording is gone, e.g. a device TTD cannot follow
-    ret["last_drop_reason"]     = info.lastDropReason.empty() ? Json::Value(Json::nullValue)
-                                                              : Json::Value(info.lastDropReason);
-    // Why time travel is not available for this machine at all (null when it is)
-    ret["unavailable_reason"]   = info.unavailableReason.empty() ? Json::Value(Json::nullValue)
-                                                                 : Json::Value(info.unavailableReason);
-    AddWriteJournalJson(ret, info, *mgr);
-        ret["ttd_available"]            = true;
-    }
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+{    (void)req;
+    RespondTTD(id, "status", {}, callback);
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +422,7 @@ static ttd::TimeTravelManager* resolveTTD(
     return mgr;
 }
 
+
 /// @brief POST /api/v1/emulator/{id}/ttd/start
 ///
 /// Optional JSON body:
@@ -513,56 +432,12 @@ static ttd::TimeTravelManager* resolveTTD(
 void EmulatorAPI::startTTD(const HttpRequestPtr& req,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
-{
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    // Time travel not available for this machine at all (a ZX-Poly member)
-    if (!mgr->GetUnavailableReason().empty())
-    {
-        Json::Value error;
-        error["error"]   = "Conflict";
-        error["message"] = mgr->GetUnavailableReason();
-        error["state"]   = ttd::TTDSessionStateToString(mgr->GetState());
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
+{    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
         return;
-    }
-
-    // Parse optional config from JSON body: the write journal is off unless asked for (D40)
-    bool enableWriteJournal = false;
-    auto json = req->getJsonObject();
-    if (json && json->isMember("journal"))
-        enableWriteJournal = (*json)["journal"].asBool();
-
-    bool alreadyRecording = mgr->IsRecording();
-    if (!alreadyRecording)
-    {
-        mgr->SetEnableWriteJournal(enableWriteJournal);
-    }
-    // Optional history limit, the same as POST /ttd/history-limit
-    if (json && (json->isMember("history_limit_frames") || json->isMember("history_limit_bytes")))
-    {
-        const ttd::TTDSessionInfo current = mgr->ReadSessionInfo();
-        mgr->SetHistoryLimit((*json).get("history_limit_frames", Json::UInt64(current.historyLimitFrames)).asUInt64(),
-                             (*json).get("history_limit_bytes", Json::UInt64(current.historyLimitBytes)).asUInt64());
-    }
-    bool ok = mgr->StartRecording();
-
-    Json::Value ret;
-    ret["started"]              = ok && !alreadyRecording;
-    ret["already_active"]       = alreadyRecording;
-    ret["state"]                = ttd::TTDSessionStateToString(mgr->GetState());
-    ret["write_journal_enabled"] = mgr->GetEnableWriteJournal();
-    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
-    ret["history_limit_frames"] = Json::UInt64(info.historyLimitFrames);
-    ret["history_limit_bytes"]  = Json::UInt64(info.historyLimitBytes);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    // The write journal is off unless asked for (D40)
+    options.emplace("journal", "false");
+    RespondTTD(id, "start", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/history-limit
@@ -573,65 +448,17 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
 void EmulatorAPI::historyLimitTTD(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
-{
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
-    auto json = req->getJsonObject();
-    if (json && (json->isMember("frames") || json->isMember("bytes")))
-    {
-        const Json::Value& frames = (*json)["frames"];
-        const Json::Value& bytes = (*json)["bytes"];
-        if ((!frames.isNull() && !frames.isUInt64()) || (!bytes.isNull() && !bytes.isUInt64()))
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "frames and bytes must be non-negative integers (0 = no limit)";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        mgr->SetHistoryLimit(frames.isNull() ? info.historyLimitFrames : frames.asUInt64(),
-                             bytes.isNull() ? info.historyLimitBytes : bytes.asUInt64());
-        info = mgr->ReadSessionInfo();
-    }
-
-    Json::Value ret;
-    ret["history_limit_frames"] = Json::UInt64(info.historyLimitFrames);
-    ret["history_limit_bytes"]  = Json::UInt64(info.historyLimitBytes);
-    ret["history_bytes"]        = Json::UInt64(info.historyBytes);
-    ret["evicted_checkpoints"]  = Json::UInt64(info.evictedCheckpoints);
-    ret["checkpoint_count"]     = Json::UInt64(info.checkpointCount);
-    ret["session_start_frame"]  = Json::UInt64(info.sessionStartFrame);
-    ret["current_end_frame"]    = Json::UInt64(info.currentEndFrame);
-    ret["state"]                = ttd::TTDSessionStateToString(info.state);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+{    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "history-limit", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/stop
 void EmulatorAPI::stopTTD(const HttpRequestPtr& req,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
-{
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    bool wasRecording = mgr->IsRecording();
-    mgr->StopRecording();
-
-    Json::Value ret;
-    ret["stopped"]      = wasRecording;
-    ret["state"]        = ttd::TTDSessionStateToString(mgr->GetState());
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+{    (void)req;
+    RespondTTD(id, "stop", {}, callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/invalidate
@@ -640,41 +467,12 @@ void EmulatorAPI::stopTTD(const HttpRequestPtr& req,
 void EmulatorAPI::invalidateTTD(const HttpRequestPtr& req,
                                  std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
-{
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    std::string reason = "WebAPI invalidate";
-
-    // Try to parse optional JSON body
-    auto jsonBody = req->getJsonObject();
-    if (jsonBody && jsonBody->isMember("reason") && (*jsonBody)["reason"].isString())
-    {
-        reason = (*jsonBody)["reason"].asString();
-    }
-
-    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
-    {
-        Json::Value error;
-        error["error"] = "Conflict";
-        error["message"] = refusal;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
+{    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
         return;
-    }
-
-    mgr->InvalidateSession(reason.c_str());
-
-    Json::Value ret;
-    ret["invalidated"] = true;
-    ret["reason"]      = reason;
-    ret["state"]       = ttd::TTDSessionStateToString(mgr->GetState());
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    if (options.find("reason") == options.end())
+        options["reason"] = "WebAPI invalidate";
+    RespondTTD(id, "invalidate", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/seek
@@ -2285,9 +2083,7 @@ void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
 ///        moment, also while recording (a segment starts or ends there, D40)
 void EmulatorAPI::journalTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
-{
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
+{    std::map<std::string, std::string> options;
     if (req->method() == drogon::Post)
     {
         auto json = req->getJsonObject();
@@ -2302,14 +2098,9 @@ void EmulatorAPI::journalTTD(const HttpRequestPtr& req, std::function<void(const
             callback(resp);
             return;
         }
-        mgr->SwitchWriteJournal((*json)["enabled"].asBool());
+        options["enabled"] = (*json)["enabled"].asBool() ? "true" : "false";
     }
-    Json::Value ret;
-    AddWriteJournalJson(ret, mgr->GetSessionInfo(), *mgr);
-    ret["write_journal_records"] = Json::UInt64(mgr->GetSessionInfo().writeJournalRecords);
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    RespondTTD(id, "journal", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/journal/build {"from_frame": n, "to_frame": n}
@@ -2318,36 +2109,9 @@ void EmulatorAPI::journalTTD(const HttpRequestPtr& req, std::function<void(const
 /// shows the progress meanwhile, POST /ttd/journal/build/cancel stops it
 void EmulatorAPI::buildJournalTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
-{
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-    if (rejectIfRecording(mgr, callback)) return;
-
-    auto json = req->getJsonObject();
-    const uint64_t from = json && json->isMember("from_frame") ? (*json)["from_frame"].asUInt64() : 0;
-    const uint64_t to = json && json->isMember("to_frame") ? (*json)["to_frame"].asUInt64() : UINT64_MAX;
-
-    PauseAndConfirm(emulator);
-    const ttd::TTDJournalBuildResult r = mgr->BuildWriteJournalFrames(from, to);
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["ok"] = r.ok;
-    if (!r.ok)
-        ret["error"] = r.error;
-    ret["cancelled"]      = r.cancelled;
-    ret["frames_built"]   = Json::UInt64(r.framesBuilt);
-    ret["frames_covered"] = Json::UInt64(r.framesCovered);
-    ret["frames_refused"] = Json::UInt64(r.framesRefused);
-    ret["records"]        = Json::UInt64(r.records);
-    AddWriteJournalJson(ret, mgr->GetSessionInfo(), *mgr);
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    if (!r.ok)
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-    addCorsHeaders(resp);
-    callback(resp);
+{    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "journal-build", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/journal/build/cancel - stop a running build
@@ -2355,15 +2119,6 @@ void EmulatorAPI::buildJournalTTD(const HttpRequestPtr& req, std::function<void(
 void EmulatorAPI::cancelJournalBuildTTD(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback,
                                         const std::string& id) const
-{
-    (void)req;
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-    const bool active = mgr->GetJournalBuildState().active;
-    mgr->CancelJournalBuild();
-    Json::Value ret;
-    ret["cancelled"] = active;
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+{    (void)req;
+    RespondTTD(id, "journal-build-cancel", {}, callback);
 }

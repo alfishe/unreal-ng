@@ -730,6 +730,9 @@
         for (const std::string& name : journal.getMemberNames())
             schemas["TTDJournalResponse"]["properties"][name] = journal[name];
         schemas["TTDJournalResponse"]["properties"]["write_journal_records"]["type"] = "integer";
+        schemas["TTDJournalResponse"]["properties"]["write_journal_setting"]["type"] = "boolean";
+        schemas["TTDJournalResponse"]["properties"]["write_journal_setting"]["description"] =
+            "The choice for recordings, also without a session (write_journal_enabled: a journal is recorded now)";
 
         schemas["TTDJournalBuildResponse"]["type"] = "object";
         schemas["TTDJournalBuildResponse"]["description"] = "POST /ttd/journal/build: what was built, and the journal now";

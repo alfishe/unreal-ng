@@ -35,6 +35,7 @@
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
@@ -183,6 +184,35 @@ protected:
                 return mgr->GetEmulator(id).get();
         }
         return nullptr;
+    }
+
+    /// One time-travel verb through TTDControl, the layer every surface shares
+    /// (Phase 5, Step 1). Without an emulator: NotAvailable "no emulator"
+    ttd::TTDReply TtdRun(const std::string& verb, std::map<std::string, std::string> options = {}) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator)
+        {
+            ttd::TTDReply reply;
+            reply.error = ttd::TTDControlError::NotAvailable;
+            reply.message = "no emulator";
+            return reply;
+        }
+        return ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
+    }
+
+    /// A reply as a script sees it: the body, and on failure ok = false and
+    /// error = the message (a body that names its own error keeps it)
+    static StateNode TtdScriptValue(const ttd::TTDReply& reply)
+    {
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            if (!value.find("error"))
+                value["error"] = reply.message;
+        }
+        return value;
     }
 
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
@@ -3608,76 +3638,9 @@ public:
         // shape. No-op (return false / empty table) when TTD is unavailable.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_status", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table info = lua_view.create_table();
-            if (!emulator) { info["ttd_available"] = false; return info; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                info["state"]         = "idle";
-                info["ttd_available"] = false;
-                return info;
-            }
-            ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-            ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
-            info["state"]                    = ttd::TTDSessionStateToString(si.state);
-            info["session_start_frame"]      = si.sessionStartFrame;
-            info["current_end_frame"]        = si.currentEndFrame;
-            info["checkpoint_count"]         = static_cast<uint64_t>(si.checkpointCount);
-            info["page_store_bytes"]         = static_cast<uint64_t>(si.pageStoreBytes);
-            info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
-            info["baseline_frames_captured"] = si.baselineFramesCaptured;
-            info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
-            info["history_limit_frames"]     = si.historyLimitFrames;
-            info["history_limit_bytes"]      = si.historyLimitBytes;
-            info["history_bytes"]            = si.historyBytes;
-            info["evicted_checkpoints"]      = si.evictedCheckpoints;
-            info["loaded_from_file"]      = si.loadedFromFile;
-            info["source_path"]           = si.sourcePath;
-            info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
-            info["model_id"]              = si.modelId;
-            info["model_ram_pages"]       = si.modelRamPages;
-            info["write_journal_records"] = si.writeJournalRecords;
-            info["write_journal_bytes"]   = si.writeJournalBytes;
-            info["coverage_index_frames"] = si.coverageIndexFrames;
-            info["coverage_index_bytes"]  = si.coverageIndexBytes;
-            info["write_journal_enabled"]    = si.writeJournalEnabled;
-            info["write_journal_complete"]   = si.writeJournalComplete;
-            sol::table segments = lua_view.create_table();
-            for (size_t i = 0; i < si.writeJournalSpans.size(); ++i)
-            {
-                sol::table span = lua_view.create_table();
-                span["from_frame"]    = si.writeJournalSpans[i].first.frame;
-                span["from_tinframe"] = si.writeJournalSpans[i].first.tInFrame;
-                span["to_frame"]      = si.writeJournalSpans[i].second.frame;
-                span["to_tinframe"]   = si.writeJournalSpans[i].second.tInFrame;
-                segments[i + 1] = span;
-            }
-            info["write_journal_segments"] = segments;
-            info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
-            info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
-            info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
-            info["input_history_complete"]   = si.inputHistoryComplete;
-            info["port_journal_active"]      = si.portJournalActive;
-            if (!si.portJournalOffReason.empty())
-                info["port_journal_off_reason"] = si.portJournalOffReason;
-            info["port_read_count"]          = si.portReadCount;
-            info["port_write_count"]         = si.portWriteCount;
-            info["port_journal_bytes"]       = static_cast<uint64_t>(si.portJournalBytes);
-            info["port_replay_value_mismatches"] = si.portReplayValueMismatches;
-            info["port_replay_divergences"]  = si.portReplayDivergences;
-            if (!si.lastDropReason.empty())
-                info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
-            if (!si.unavailableReason.empty())
-                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
-            if (si.checkpointCount != 0)
-                info["machine"] = TtdRecordedMachineTable(lua_view, si.machine);  // the recorded machine
-            if (!si.recordedBy.empty())
-                info["recorded_by"] = si.recordedBy;  // the instance that recorded a loaded file
-            info["ttd_available"]            = true;
-            return info;
+        lua.set_function("ttd_status", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("status");
+            return StateNodeToLua(ts, reply.Ok() ? reply.body : ttd::TTDControl::StatusBody(nullptr));
         });
 
         // ttd_file_info(path) - a .ttd file's header, sections and recorded machine,
@@ -3725,13 +3688,11 @@ public:
         // ttd_start([journal]) - start recording; journal = true also records the
         // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
         lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
+            std::map<std::string, std::string> options;
             if (journalOpt.has_value())
-                ctx->pTimeTravelManager->SetEnableWriteJournal(journalOpt.value());
-            return ctx->pTimeTravelManager->StartRecording();
+                options["journal"] = journalOpt.value() ? "true" : "false";
+            const ttd::TTDReply reply = TtdRun("start", options);
+            return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
         });
 
         // ttd_set_history_limit(frames, bytes) - bound the recorded history: while
@@ -3739,83 +3700,50 @@ public:
         // nil keeps the current value). Returns the limit now in force: frames, bytes
         lua.set_function("ttd_set_history_limit",
                          [this](sol::optional<uint64_t> frames, sol::optional<uint64_t> bytes) -> std::tuple<uint64_t, uint64_t> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {0, 0};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
-            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
-            ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
-                                                     bytes.value_or(si.historyLimitBytes));
-            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
-            return {now.historyLimitFrames, now.historyLimitBytes};
+            std::map<std::string, std::string> options;
+            if (frames.has_value())
+                options["frames"] = std::to_string(frames.value());
+            if (bytes.has_value())
+                options["bytes"] = std::to_string(bytes.value());
+            const ttd::TTDReply reply = TtdRun("history-limit", options);
+            if (!reply.Ok())
+                return {0, 0};
+            return {static_cast<uint64_t>(reply.body.find("history_limit_frames")->i),
+                    static_cast<uint64_t>(reply.body.find("history_limit_bytes")->i)};
         });
 
         // ttd_set_journal_enabled(bool) - switch the write journal at any moment,
         // also while recording: a journal segment starts or ends there (D40). ok, reason
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (ctx->pTimeTravelManager->SwitchWriteJournal(enabled)) return {true, ""};
-            return {false, "write journal not available"};
+            const ttd::TTDReply reply = TtdRun("journal", {{"enabled", enabled ? "true" : "false"}});
+            return {reply.Ok(), reply.message};
         });
 
         // ttd_build_journal([from_frame], [to_frame]) - build the write journal for
         // frames from..to (default: the whole session) by replaying them, about
         // 2-4 ms per frame; not while recording. Returns a table: ok, error,
         // cancelled, frames_built, frames_covered, frames_refused, records
-        lua.set_function("ttd_build_journal", [this](sol::optional<uint64_t> fromOpt, sol::optional<uint64_t> toOpt) {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table r = lua_view.create_table();
-            auto* ctx = emulator ? emulator->GetContext() : nullptr;
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                r["ok"] = false;
-                r["error"] = "TTD not available";
-                return r;
-            }
-            const ttd::TTDJournalBuildResult b =
-                ctx->pTimeTravelManager->BuildWriteJournalFrames(fromOpt.value_or(0), toOpt.value_or(UINT64_MAX));
-            r["ok"] = b.ok;
-            if (!b.ok)
-                r["error"] = b.error;
-            r["cancelled"] = b.cancelled;
-            r["frames_built"] = b.framesBuilt;
-            r["frames_covered"] = b.framesCovered;
-            r["frames_refused"] = b.framesRefused;
-            r["records"] = b.records;
-            return r;
+        lua.set_function("ttd_build_journal", [this](sol::this_state ts, sol::optional<uint64_t> fromOpt,
+                                                    sol::optional<uint64_t> toOpt) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (fromOpt.has_value())
+                options["from_frame"] = std::to_string(fromOpt.value());
+            if (toOpt.has_value())
+                options["to_frame"] = std::to_string(toOpt.value());
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("journal-build", options)));
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->GetEnableWriteJournal();
+            const ttd::TTDReply reply = TtdRun("journal");
+            return reply.Ok() && reply.body.find("write_journal_setting")->b;
         });
 
-        lua.set_function("ttd_stop", [this]() {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
-            auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->StopRecording();
-        });
+        lua.set_function("ttd_stop", [this]() { (void)TtdRun("stop"); });
 
         // ok, reason: refused while recording (stop the recording first)
         lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) -> std::tuple<bool, std::string> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
-                !refusal.empty())
-                return {false, refusal};
-            ctx->pTimeTravelManager->InvalidateSession(reason.value_or("lua invalidate").c_str());
-            return {true, ""};
+            const ttd::TTDReply reply = TtdRun("invalidate", {{"reason", reason.value_or("lua invalidate")}});
+            return {reply.Ok(), reply.message};
         });
 
         lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {

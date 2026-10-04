@@ -18,6 +18,12 @@ Tests multiple CMake build combinations for the `unreal-qt` project to ensure th
 
 ---
 
+### TTD surface contract
+
+[`ttd-surface-contract/`](ttd-surface-contract/README.md): the time-travel calls give the same answers on WebAPI, CLI, Lua and Python (run against a live application).
+
+---
+
 ### High-Performance RAM Builds
 
 Located in the `ram/` subdirectory, these scripts allow you to build the entire project on a RAM disk, significantly reducing build times and SSD wear.

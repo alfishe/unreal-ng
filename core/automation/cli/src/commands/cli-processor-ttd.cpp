@@ -25,6 +25,7 @@
 #include <cctype>
 
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdbookmarks.h>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdfileinfo.h>
@@ -445,7 +446,6 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
                                    const std::vector<std::string>& args)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
     if (mgr->IsRecording())
     {
         session.SendResponse(std::string("TTD: Already recording (no-op)") + NEWLINE);
@@ -453,11 +453,11 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
     }
 
     // The write journal is off unless asked for (D40)
-    bool enableJournal = false;
+    std::map<std::string, std::string> options{{"journal", "false"}};
     for (size_t i = 1; i < args.size(); ++i)
     {
         if (args[i] == "--journal" || args[i] == "-j")
-            enableJournal = true;
+            options["journal"] = "true";
         else
         {
             session.SendResponse("TTD: unknown option '" + args[i] + "' (ttd start [--journal])" + NEWLINE);
@@ -465,20 +465,14 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
         }
     }
 
-    mgr->SetEnableWriteJournal(enableJournal);
-    bool ok = mgr->StartRecording();
-    if (ok)
-    {
-        session.SendResponse(std::string(enableJournal ? "TTD: Recording started (with the write journal)"
-                                                       : "TTD: Recording started") +
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"start", options});
+    if (reply.Ok() && reply.body.find("started")->b)
+        session.SendResponse(std::string(options["journal"] == "true" ? "TTD: Recording started (with the write journal)"
+                                                                      : "TTD: Recording started") +
                              NEWLINE);
-    }
     else
-    {
-        const std::string& reason = mgr->GetUnavailableReason();
-        session.SendResponse(std::string("TTD: Failed to start recording") + (reason.empty() ? "" : ": " + reason) +
-                             NEWLINE);
-    }
+        session.SendResponse(std::string("TTD: Failed to start recording") +
+                             (reply.message.empty() ? "" : ": " + reply.message) + NEWLINE);
 }
 
 
@@ -489,7 +483,12 @@ void CLIProcessor::HandleTTDJournal(const ClientSession& session, EmulatorContex
     const std::string action = args.size() > 1 ? args[1] : "status";
     if (action == "on" || action == "off")
     {
-        mgr->SetEnableWriteJournal(action == "on");
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"journal", {{"enabled", action}}});
+        if (!reply.Ok())
+        {
+            session.SendResponse("Error: " + reply.message + NEWLINE);
+            return;
+        }
         session.SendResponse(std::string("TTD: write journal ") + action +
                              (mgr->IsRecording() ? " (a segment " + std::string(action == "on" ? "starts" : "ends") +
                                                        " here)"
@@ -499,32 +498,31 @@ void CLIProcessor::HandleTTDJournal(const ClientSession& session, EmulatorContex
     }
     if (action == "build")
     {
-        uint64_t from = 0, to = UINT64_MAX;
-        try
-        {
-            if (args.size() > 2)
-                from = std::stoull(args[2]);
-            if (args.size() > 3)
-                to = std::stoull(args[3]);
-        }
-        catch (const std::exception&)
+        std::map<std::string, std::string> options;
+        if (args.size() > 2)
+            options["from_frame"] = args[2];
+        if (args.size() > 3)
+            options["to_frame"] = args[3];
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"journal-build", options});
+        if (reply.error == ttd::TTDControlError::BadRequest)
         {
             session.SendResponse(std::string("TTD: usage: ttd journal build [from-frame] [to-frame]") + NEWLINE);
             return;
         }
-        const ttd::TTDJournalBuildResult r = mgr->BuildWriteJournalFrames(from, to);
-        if (!r.ok)
+        if (!reply.Ok())
         {
-            session.SendResponse("TTD: cannot build the write journal: " + r.error + NEWLINE);
+            session.SendResponse("TTD: cannot build the write journal: " + reply.message + NEWLINE);
             return;
         }
+        const StateNode& b = reply.body;
         std::stringstream ss;
-        ss << "TTD: write journal built for " << r.framesBuilt << " frame(s), " << r.records << " writes";
-        if (r.framesCovered)
-            ss << "; " << r.framesCovered << " already covered";
-        if (r.framesRefused)
-            ss << "; " << r.framesRefused << " not replayable (a marker without its data)";
-        if (r.cancelled)
+        ss << "TTD: write journal built for " << b.find("frames_built")->i << " frame(s), " << b.find("records")->i
+           << " writes";
+        if (b.find("frames_covered")->i)
+            ss << "; " << b.find("frames_covered")->i << " already covered";
+        if (b.find("frames_refused")->i)
+            ss << "; " << b.find("frames_refused")->i << " not replayable (a marker without its data)";
+        if (b.find("cancelled")->b)
             ss << "; cancelled";
         ss << NEWLINE << "  Journal covers: " << DescribeJournalSpans(mgr->GetSessionInfo()) << NEWLINE;
         session.SendResponse(ss.str());
@@ -595,7 +593,13 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
     }
     if (change)
     {
-        mgr->SetHistoryLimit(frames, bytes);
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute(
+            {"history-limit", {{"frames", std::to_string(frames)}, {"bytes", std::to_string(bytes)}}});
+        if (!reply.Ok())
+        {
+            session.SendResponse("Error: " + reply.message + NEWLINE);
+            return;
+        }
         info = mgr->ReadSessionInfo();
     }
 
@@ -617,35 +621,25 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
 void CLIProcessor::HandleTTDStop(const ClientSession& session, EmulatorContext* context)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
     if (!mgr->IsRecording())
     {
         session.SendResponse(std::string("TTD: Not recording (no-op)") + NEWLINE);
         return;
     }
-
-    mgr->StopRecording();
+    (void)ttd::TTDControl(context).Execute({"stop", {}});
     session.SendResponse(std::string("TTD: Recording stopped (history retained)") + NEWLINE);
 }
 
 void CLIProcessor::HandleTTDInvalidate(const ClientSession& session, EmulatorContext* context,
                                         const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    std::string reason = "CLI invalidate";
-    if (args.size() > 1)
+    const std::string reason = args.size() > 1 ? args[1] : "CLI invalidate";
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"invalidate", {{"reason", reason}}});
+    if (!reply.Ok())
     {
-        reason = args[1];
-    }
-
-    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
-    {
-        session.SendResponse("Error: " + refusal + NEWLINE);
+        session.SendResponse("Error: " + reply.message + NEWLINE);
         return;
     }
-
-    mgr->InvalidateSession(reason.c_str());
     session.SendResponse(std::string("TTD: Session invalidated (") + reason + ")" + NEWLINE);
 }
 

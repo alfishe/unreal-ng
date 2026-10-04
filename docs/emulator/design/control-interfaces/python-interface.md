@@ -1013,7 +1013,8 @@ Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pa
 emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
 emu.ttd_start(journal=True)              # also record the write journal
 emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
-emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all)
+emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all);
+                                                       # RuntimeError while recording
 # -> {'ok': True, 'error': None, 'cancelled': False, 'frames_built': 301, 'frames_covered': 0,
 #     'frames_refused': 0, 'records': ...}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
