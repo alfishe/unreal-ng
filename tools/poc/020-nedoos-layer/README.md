@@ -46,7 +46,7 @@ Python 3.9+, standard library only.
 ## Running it
 
 1. Start unreal-ng with a ZX-Evo (`ATM3`) and boot NedoOS from the SD card
-   (`.recipe/machines/atm.md`, NedoOS section). The symbols match the
+   (`.recipe/machines/atm/atm3-zxevo-baseconf.md`, NedoOS section). The symbols match the
    `sd_boot.$C` kernel of NedoOS 44049473; check with `detect`.
 2. Read-only views (pause, read, resume):
 
