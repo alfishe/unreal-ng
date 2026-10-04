@@ -24,7 +24,6 @@ class Mouse;
 class PortDecoder;
 class MouseManager;
 class VirtualNetwork;
-class EthernetGateway;
 
 namespace ttd {
 
@@ -37,8 +36,7 @@ struct TTDInputDevices
     MouseManager* mouseManager = nullptr; ///< every mouse device of the machine (wins over `mouse`)
     Joystick* joystick = nullptr;
     GeneralSoundCard* generalSound = nullptr;
-    VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset)
-    EthernetGateway* ethernetGateway = nullptr;  ///< the frame cards' gateway (NetFrame, bridge mode)
+    VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset, NetFrame)
     PortDecoder* portDecoder = nullptr;  ///< the machine's own switches (FrontPanelSwitch)
 };
 

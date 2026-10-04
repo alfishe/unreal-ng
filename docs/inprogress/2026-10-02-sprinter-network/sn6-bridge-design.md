@@ -177,3 +177,19 @@ reply reached the card and was dropped by its receive filter, so PING reported "
 
 Limits: IPv4 only (ARP, DHCP, ICMP, UDP, TCP); a protocol that carries the card's MAC elsewhere in its payload, or a
 non-IP protocol, does not cross. As with the wired bridge, the host itself does not reach the card.
+
+## 12. The virtual network is the one door (refactor, 2026-10-04)
+
+Owner request with the traffic task (PLAN #91): every adapter's traffic must pass one point. Since then the
+`VirtualNetwork` owns the frame cards' wire too:
+
+- a frame card's link (`IEthernetLink`) is the `VirtualNetwork` itself; `Transmit` goes to its `EthernetGateway`
+  (`EnableFrames`, `AttachStation` / `DetachStation`, `OnFrameDevices` for the gateway's timers);
+- the bridge (`IHostFrames`, `MacTranslator`, the padding of short frames) lives in it: `Pump` drains the host
+  adapter next to the socket answers, and the `NetFrame` input is applied by `VirtualNetwork::ApplyHostFrame` like a
+  `NetEvent` by `ApplyHostEvent`;
+- `NetworkManager` only says what to fit (`FrameSettings`: NAT / BRIDGE, adapter, the modem's reserved ports, a test's
+  fake adapter) and reports `DescribeBridge()`.
+
+Socket-level adapters already opened their sockets there. So every byte between any adapter and the network now
+crosses `VirtualNetwork`, the same place where TTD records every outside input: the traffic tap of #91 goes there.
