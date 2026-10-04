@@ -760,6 +760,41 @@ TEST(SlotManager_Test, SoundriveModeReachesTheCovox)
     EXPECT_TRUE(m.Context()->pSoundManager->getCovox()->tryClaimOut(0x00F1, 0x55));
 }
 
+/// Step 6: the ZX-bus network cards come from the slots; NetworkManager keeps the virtual network (host access off
+/// here: nothing leaves the process). Two machines (~25 ms each)
+TEST(SlotManager_Test, NetworkCardsComeFromTheSlots)
+{
+    // Plan level: the ZX-Evo's own #EF port refuses the ZX-WiFi #EF build (it used to be a NetworkManager note)
+    auto evo = MakeConfig(MM_ATM3);
+    SetSlots(*evo, { { "zxbus.1", "zx-wifi" }, { "zxbus.2", "zxnetusb" } });
+    SlotManager::Result result = SlotManager::Plan(*evo, kAllGroups);
+    ASSERT_NE(Entry(result, "zxbus.1"), nullptr);
+    EXPECT_TRUE(Entry(result, "zxbus.1")->entry.disabled);
+    SlotManager::Apply(result, *evo, kAllGroups);
+    EXPECT_EQ(evo->network.card, networkspec::kCardZxNetUsb);
+
+    // The legacy key keeps ATM2IOESP (not a ZX-bus card: the ATM Turbo 2+ INTERNAL connector)
+    auto atm = MakeConfig(MM_ATM710);
+    atm->network.card = networkspec::kCardAtm2IoEsp | networkspec::kCardZxNetUsb;
+    result = SlotManager::Plan(*atm, kAllGroups);
+    SlotManager::Apply(result, *atm, kAllGroups);
+    EXPECT_EQ(atm->network.card, networkspec::kCardAtm2IoEsp | networkspec::kCardZxNetUsb)
+        << "ZXNETUSB behind the ATM CPU-socket adapter";
+
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = zxnetusb\n[NETWORK]\nHostAccess=0");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->config.network.card, networkspec::kCardZxNetUsb);
+        EXPECT_NE(m.Context()->pZxNetUsb, nullptr);
+    }
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = neogs\n[NETWORK]\nHostAccess=0");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Context()->config.network.card, 0);
+        EXPECT_EQ(m.Context()->pZxNetUsb, nullptr);
+    }
+}
+
 TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)
 {
     Emulator emulator(LoggerLevel::LogError);
