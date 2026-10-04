@@ -154,7 +154,6 @@ private:
     std::vector<std::vector<uint32_t>> _liveItem;     ///< region, piece -> current number
     size_t _next = 0;                                 ///< the first checkpoint not laid out yet
     uint32_t _part = 0;
-    size_t _nextEvent = 0;
     size_t _nextConfig = 0;
     bool _finished = false;
     std::string _buildError;   ///< the engine's thread only

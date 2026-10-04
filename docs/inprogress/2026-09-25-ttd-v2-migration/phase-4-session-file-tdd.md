@@ -323,6 +323,8 @@ struct TTDHistoryPolicy
 - The window is counted in frames from the frame table, not in host seconds, so a paused emulator keeps its history. The earliest kept position is reported on every surface (FR-15, D12).
 - No memory budget in bytes and no eviction to the file with reading back: memory holds exactly what can be sought. This replaces the earlier proposal (a 512 MB budget, memory as a cache of the file, rebasing, rolling files deleted two windows back).
 
+**As built (2026-10-04), segments in the engine.** `TTDHistoryPolicy` / `SetHistoryPolicy` on `TimeTravelEngine`; `Segments()`, `FirstCheckpoint()`. Checkpoint indices count from the session's start, so a dropped segment leaves the later indices as they were (`Checkpoint(i)` is null for a dropped one). The capture keeps the delta base, so a baseline stores the pieces not offered at that frame from it, whole. Tests: `TimeTravelEngineSegments_Test` (the ring against a growable twin, whole pieces at every baseline, a file written while the ring drops holding the whole session); a mutant storing differences at a baseline fails all three. Not dropped by the ring yet: the sector-read journal (rare) and the write journal (off by default, D40).
+
 #### 5.3.2 Closing and dropping a segment
 
 1. At a frame boundary where the segment is full, the next frame's checkpoint is captured as a **baseline**: every memory piece and device state stored Full, new reference tables. The pieces are encoded as at the session start (Phase 1), on the emulator thread; its cost per segment is measured (`bm2_work_baseline_opf`).

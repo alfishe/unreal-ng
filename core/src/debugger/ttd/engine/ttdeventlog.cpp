@@ -36,6 +36,14 @@ bool TTDEventLog::Append(TTDEvent ev)
     return true;
 }
 
+void TTDEventLog::DropBefore(TTDMachineTime t)
+{
+    const size_t n = CursorAt(t);
+    for (size_t i = 0; i < n; ++i)
+        _payloads.Release(_events[i].payload);
+    _events.erase(_events.begin(), _events.begin() + static_cast<std::ptrdiff_t>(n));
+}
+
 size_t TTDEventLog::CursorAt(TTDMachineTime t) const
 {
     auto it = std::lower_bound(_events.begin(), _events.end(), t,

@@ -370,6 +370,7 @@ bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 void TimeTravelEngine::EndSession()
 {
     _readOnly = false;
+    _segments.clear();
     _configs.clear();
     _mediaSlots.clear();
     _pendingMedia.clear();
@@ -410,6 +411,8 @@ void TimeTravelEngine::EndSession()
     _frames.Clear();
     _checkpoints.clear();
     _checkpoints.shrink_to_fit();   // a deque returns its blocks
+    _cpBase = 0;
+    _changeBase = 0;
 }
 
 /// endregion </Session>
@@ -571,20 +574,56 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                 sum += _regionPayload[r];
         return sum;
     }();
-    const size_t index = _checkpoints.size();
+    const size_t index = _cpBase + _checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
-    const bool snapshot = index % _snapshotInterval == 0;
+    // A segment starts here (D41): every piece is stored whole, so nothing in
+    // it needs an earlier segment and a ring can drop that one whole
+    cp.baseline = _segments.empty() ||
+                  (_policy.segmentFrames > 0 && input.position.frame - _segments.back().firstFrame >= _policy.segmentFrames);
+    if (cp.baseline)
+        BeginSegment(input.position.frame);
+    const bool snapshot = cp.baseline || index % _snapshotInterval == 0;
+    std::vector<TTDChangedPiece> baselinePieces;
 
     for (uint32_t r = 0; r < _regions.size(); ++r)
     {
         TTDEngineCheckpoint::RegionRefs refs;
         refs.region = r;
-        refs.firstChange = static_cast<uint32_t>(_changes.size());
-        const std::vector<TTDChangedPiece>& pieces = IsDeviceStateRegion(r) ? devicePieces : input.changed;
-        for (const TTDChangedPiece& c : pieces)
+        refs.firstChange = static_cast<uint32_t>(_changeBase + _changes.size());
+        const std::vector<TTDChangedPiece>* pieces = IsDeviceStateRegion(r) ? &devicePieces : &input.changed;
+        if (cp.baseline && index > 0)
+        {
+            // Every piece the session knows, offered now or as last captured
+            std::vector<const uint8_t*> bytesOf(_regions[r].pieces, nullptr);
+            for (uint32_t p = 0; p < _regions[r].pieces; ++p)
+                if (_live[r][p] != TTDPieceStore::kNone)
+                    bytesOf[p] = _deltaBase[r].data() + size_t(p) * kTTDPieceSize;
+            for (const TTDChangedPiece& c : *pieces)
+                if (c.region == r)
+                    bytesOf[c.piece] = c.bytes;
+            baselinePieces.clear();
+            for (uint32_t p = 0; p < _regions[r].pieces; ++p)
+                if (bytesOf[p])
+                    baselinePieces.push_back({r, p, bytesOf[p]});
+            pieces = &baselinePieces;
+        }
+        for (const TTDChangedPiece& c : *pieces)
         {
             if (c.region != r)
                 continue;
+            if (cp.baseline && index > 0)
+            {
+                // Whole, never a difference from the previous segment's version
+                std::vector<uint8_t>& base = _deltaBase[r];
+                if (base.empty())
+                    base.assign(size_t(_regions[r].pieces) * kTTDPieceSize, 0);
+                if (base.data() + size_t(c.piece) * kTTDPieceSize != c.bytes)
+                    std::memcpy(base.data() + size_t(c.piece) * kTTDPieceSize, c.bytes, kTTDPieceSize);
+                const TTDPieceId next = _store->InternFirst(c.bytes);
+                _inMemory[r][c.piece] = next;
+                NoteChange(r, c.piece, next);
+                continue;
+            }
             std::vector<uint8_t>& base = _deltaBase[r];
             if (base.empty())
                 base.assign(size_t(_regions[r].pieces) * kTTDPieceSize, 0);
@@ -609,7 +648,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             }
             NoteChange(r, c.piece, next);   // the record takes the reference
         }
-        CloseRegion(cp, refs, snapshot);
+        CloseRegion(cp, refs, snapshot, cp.baseline);
     }
 
     for (uint32_t r = 0; r < _regions.size(); ++r)
@@ -617,12 +656,13 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             _lastWork.deviceBlobBytes += _regionPayload[r];
     _lastWork.deviceBlobBytes -= devicePayloadBefore;
 
-    const uint32_t cpIndex = static_cast<uint32_t>(_checkpoints.size());
+    const uint32_t cpIndex = static_cast<uint32_t>(index);
     for (const auto& [slot, version] : _pendingMedia)
         _mediaSlots[slot].changes.emplace_back(cpIndex, version);
     _pendingMedia.clear();
     _checkpoints.push_back(std::move(cp));
     _streams.CaptureEnabled(input.position);
+    ReleaseHistory();
 
     const TTDPieceStore::Work& w = _store->GetWork();
     _lastWork.versionsStored = w.versionsStored;
@@ -650,16 +690,19 @@ void TimeTravelEngine::NoteChange(uint32_t r, uint32_t piece, TTDPieceId next)
     }
 }
 
-void TimeTravelEngine::CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint::RegionRefs& refs, bool snapshot)
+void TimeTravelEngine::CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint::RegionRefs& refs, bool snapshot,
+                                   bool fresh)
 {
     const uint32_t r = refs.region;
-    refs.changeCount = static_cast<uint32_t>(_changes.size()) - refs.firstChange;
+    refs.changeCount = static_cast<uint32_t>(_changeBase + _changes.size() - refs.firstChange);
     if (snapshot)
     {
         // A full table: the previous one, with the pieces changed since
-        // then set; unchanged blocks stay shared
-        TTDRefTables::Table* table = _lastSnapshot[r] ? _tables->Derive(_lastSnapshot[r])
-                                                      : _tables->Create(_regions[r].pieces, BlockPieces(_regions[r]));
+        // then set; unchanged blocks stay shared. A segment's baseline starts
+        // a table of its own, so nothing is shared with the segment before
+        TTDRefTables::Table* table = _lastSnapshot[r] && !fresh
+                                         ? _tables->Derive(_lastSnapshot[r])
+                                         : _tables->Create(_regions[r].pieces, BlockPieces(_regions[r]));
         for (const uint32_t piece : _sinceSnapshot[r])
         {
             const TTDPieceId id = _live[r][piece];
@@ -689,16 +732,20 @@ bool TimeTravelEngine::ImportCheckpoint(TTDEngineCheckpoint cp, const std::vecto
         return false;
     }
     _readOnly = true;   // capture state (the delta base) is not in a file: a loaded session is not continued
-    const size_t index = _checkpoints.size();
+    const size_t index = _cpBase + _checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
     cp.regions.clear();
-    const bool snapshot = index % _snapshotInterval == 0;
+    if (_segments.empty())
+        cp.baseline = true;
+    if (cp.baseline)
+        BeginSegment(cp.position.frame);
+    const bool snapshot = cp.baseline || index % _snapshotInterval == 0;
     size_t next = 0;
     for (uint32_t r = 0; r < _regions.size(); ++r)
     {
         TTDEngineCheckpoint::RegionRefs refs;
         refs.region = r;
-        refs.firstChange = static_cast<uint32_t>(_changes.size());
+        refs.firstChange = static_cast<uint32_t>(_changeBase + _changes.size());
         for (; next < changes.size() && changes[next].region == r; ++next)
         {
             const TTDImportedChange& c = changes[next];
@@ -710,7 +757,7 @@ bool TimeTravelEngine::ImportCheckpoint(TTDEngineCheckpoint cp, const std::vecto
             _inMemory[r][c.piece] = kUnknown;
             NoteChange(r, c.piece, c.id);   // the record takes the import's reference
         }
-        CloseRegion(cp, refs, snapshot);
+        CloseRegion(cp, refs, snapshot, cp.baseline);
     }
     if (next != changes.size())
     {
@@ -723,7 +770,58 @@ bool TimeTravelEngine::ImportCheckpoint(TTDEngineCheckpoint cp, const std::vecto
 
 const TTDEngineCheckpoint* TimeTravelEngine::Checkpoint(size_t index) const
 {
-    return index < _checkpoints.size() ? &_checkpoints[index] : nullptr;
+    return HasCheckpoint(index) ? &CpAt(index) : nullptr;
+}
+
+void TimeTravelEngine::BeginSegment(uint64_t frame)
+{
+    TTDSegmentInfo s;
+    s.firstCheckpoint = _cpBase + _checkpoints.size();
+    s.firstChange = _changeBase + _changes.size();
+    s.firstFrame = frame;
+    _segments.push_back(s);
+}
+
+void TimeTravelEngine::ReleaseHistory()
+{
+    if (_policy.mode != TTDHistoryMode::Ring || _frames.Empty())
+        return;
+    const uint64_t last = _frames.LastFrame();
+    while (_segments.size() >= 2 && last - _segments[1].firstFrame >= _policy.windowFrames)
+        DropOldestSegment();
+}
+
+void TimeTravelEngine::DropOldestSegment()
+{
+    const TTDSegmentInfo next = _segments[1];
+    const size_t checkpoints = next.firstCheckpoint - _cpBase;
+    const size_t changes = next.firstChange - _changeBase;
+
+    // The versions its change records hold, its full tables
+    for (size_t k = 0; k < changes; ++k)
+        _store->Release(_changes[k].id);
+    _changes.erase(_changes.begin(), _changes.begin() + static_cast<std::ptrdiff_t>(changes));
+    _changeBase += changes;
+    for (size_t i = 0; i < checkpoints; ++i)
+        for (const TTDEngineCheckpoint::RegionRefs& r : _checkpoints[i].regions)
+            if (r.snapshot)
+                _tables->Release(r.snapshot);
+    _checkpoints.erase(_checkpoints.begin(), _checkpoints.begin() + static_cast<std::ptrdiff_t>(checkpoints));
+    _cpBase += checkpoints;
+    _frames.DropFront(checkpoints);
+
+    // Events, the RZX frame index and the bus journals before the new start
+    const TTDEngineCheckpoint& head = _checkpoints.front();
+    _events.DropBefore(head.start);
+    _rzxFrames.erase(_rzxFrames.begin(),
+                     std::lower_bound(_rzxFrames.begin(), _rzxFrames.end(), head.start,
+                                      [](const std::pair<uint64_t, TTDMachineTime>& f, TTDMachineTime t) {
+                                          return f.second < t;
+                                      }));
+    _busReads.DropBefore(head.busReadCursor);
+    _busWrites.DropBefore(head.busWriteCursor);
+    _busVectors.DropBefore(head.busVectorCursor);
+    _segments.pop_front();
 }
 
 int64_t TimeTravelEngine::CheckpointIndexOf(const TTDPosition& position) const
@@ -751,7 +849,7 @@ void TimeTravelEngine::BuildMap(size_t index, uint32_t region, std::vector<TTDPi
             continue;
         for (uint32_t k = 0; k < refs->changeCount; ++k)
         {
-            const PieceChange& c = _changes[refs->firstChange + k];
+            const PieceChange& c = ChangeAt(refs->firstChange + k);
             map[c.piece] = c.id;
         }
     }
@@ -761,7 +859,7 @@ TTDRestoreResult TimeTravelEngine::RestoreRegion(size_t index, uint32_t region, 
                                                  std::vector<uint8_t>* present) const
 {
     TTDRestoreResult result;
-    if (index >= _checkpoints.size() || region >= _regions.size() || out == nullptr)
+    if (!HasCheckpoint(index) || region >= _regions.size() || out == nullptr)
     {
         result.status = TTDRestoreStatus::Damaged;
         result.message = "no such checkpoint or region";
@@ -788,7 +886,7 @@ TTDRestoreResult TimeTravelEngine::RestoreRegion(size_t index, uint32_t region, 
 
 uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t piece) const
 {
-    if (index >= _checkpoints.size() || region >= _regions.size() || piece >= _regions[region].pieces)
+    if (!HasCheckpoint(index) || region >= _regions.size() || piece >= _regions[region].pieces)
         return kAbsent;
     // The newest record of the piece up to the checkpoint, else the nearest full table's entry
     for (size_t i = index;; --i)
@@ -797,8 +895,8 @@ uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t pie
         if (!refs)
             continue;
         for (uint32_t k = refs->changeCount; k-- > 0;)
-            if (_changes[refs->firstChange + k].piece == piece)
-                return _changes[refs->firstChange + k].id;
+            if (ChangeAt(refs->firstChange + k).piece == piece)
+                return ChangeAt(refs->firstChange + k).id;
         if (refs->snapshot)
             return _tables->Get(refs->snapshot, piece);
     }
@@ -807,7 +905,7 @@ uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t pie
 TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWrittenFn& written, TTDRestoreStats* stats)
 {
     TTDRestoreResult result;
-    if (index >= _checkpoints.size())
+    if (!HasCheckpoint(index))
     {
         result.status = TTDRestoreStatus::Damaged;
         result.message = "no such checkpoint";
@@ -917,7 +1015,7 @@ TimeTravelEngine::DeviceStateRead TimeTravelEngine::ReadDeviceState(size_t index
 {
     out.clear();
     const int32_t r = _deviceRegionOf[id];
-    if (r < 0 || index >= _checkpoints.size())
+    if (r < 0 || !HasCheckpoint(index))
         return DeviceStateRead::Missing;
     const TTDRegionDesc& desc = _regions[static_cast<size_t>(r)];
     std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize, 0);
@@ -937,7 +1035,7 @@ TimeTravelEngine::DeviceStateRead TimeTravelEngine::ReadDeviceState(size_t index
     if (length == 0 || length + 4 > anchors)
         return DeviceStateRead::Missing;
     // Time fields back from their line: anchor + (frame - anchor frame) x step + residual
-    const uint64_t frame = _checkpoints[index].position.frame;
+    const uint64_t frame = CpAt(index).position.frame;
     for (size_t f = 0; f < fields.size(); ++f)
     {
         const TTDTimeField& tf = fields[f];
@@ -980,18 +1078,18 @@ TTDRestoreIssue TimeTravelEngine::DamageIssue(size_t index, uint32_t region, uin
     size_t first = index, last = index;
     uint32_t id = kAbsent;
     bool bad = false;
-    while (first > 0 && fails(first - 1, id, bad))
+    while (first > _cpBase && fails(first - 1, id, bad))
         --first;
     id = kAbsent;
     bad = false;
-    while (last + 1 < _checkpoints.size() && fails(last + 1, id, bad))
+    while (HasCheckpoint(last + 1) && fails(last + 1, id, bad))
         ++last;
 
     TTDRestoreIssue issue;
     issue.kind = TTDRestoreIssueKind::DataDamaged;
     issue.severity = TTDRestoreStatus::Damaged;
-    issue.firstFrame = _checkpoints[first].position.frame;
-    issue.lastFrame = _checkpoints[last].position.frame;
+    issue.firstFrame = CpAt(first).position.frame;
+    issue.lastFrame = CpAt(last).position.frame;
     const std::string frames = " (frames " + std::to_string(issue.firstFrame) + "-" + std::to_string(issue.lastFrame) + ")";
     if (const TTDDeviceEntry* e = DeviceOfRegion(region))
     {
@@ -1020,7 +1118,7 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
     };
     if (_checkpoints.empty())
         return result;
-    const size_t count = _checkpoints.size();
+    const size_t count = _cpBase + _checkpoints.size();
     std::vector<uint8_t> scratch(kTTDPieceSize);
     std::unordered_map<TTDPieceId, bool> decodes;   // version -> decodes (each checked once)
     auto ok = [&](TTDPieceId id) {
@@ -1031,13 +1129,13 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
             return it->second;
         return decodes[id] = _store->Decode(id, scratch.data());
     };
-    auto frameOf = [&](size_t i) { return _checkpoints[i].position.frame; };
+    auto frameOf = [&](size_t i) { return CpAt(i).position.frame; };
 
     for (uint32_t r = 0; r < _regions.size(); ++r)
     {
         const TTDDeviceEntry* device = DeviceOfRegion(r);
         std::vector<TTDPieceId> map;
-        BuildMap(0, r, map);
+        BuildMap(_cpBase, r, map);
         std::vector<int64_t> damagedFrom(map.size(), -1);
         int64_t missingFrom = -1;   // a device region: checkpoints whose state length is 0
         auto close = [&](uint32_t p, size_t lastIndex) {
@@ -1067,17 +1165,17 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
         };
         for (uint32_t p = 0; p < map.size(); ++p)
             if (!ok(map[p]))
-                damagedFrom[p] = 0;
+                damagedFrom[p] = static_cast<int64_t>(_cpBase);
         if (device && lengthIsZero())
-            missingFrom = 0;
-        for (size_t i = 1; i < count; ++i)
+            missingFrom = static_cast<int64_t>(_cpBase);
+        for (size_t i = _cpBase + 1; i < count; ++i)
         {
             const TTDEngineCheckpoint::RegionRefs* refs = RefsOf(i, r);
             if (!refs || refs->changeCount == 0)
                 continue;
             for (uint32_t k = 0; k < refs->changeCount; ++k)
             {
-                const PieceChange& c = _changes[refs->firstChange + k];
+                const PieceChange& c = ChangeAt(refs->firstChange + k);
                 map[c.piece] = c.id;
                 const bool bad = !ok(c.id);
                 if (bad && damagedFrom[c.piece] < 0)

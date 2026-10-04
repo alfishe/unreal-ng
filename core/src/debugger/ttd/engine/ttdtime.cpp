@@ -12,7 +12,7 @@ int64_t TTDFrameTable::IndexOf(uint64_t frame) const
                                      [](const Entry& e, uint64_t f) { return e.frame < f; });
     if (it == _entries.end() || it->frame != frame)
         return -1;
-    return static_cast<int64_t>(it - _entries.begin());
+    return static_cast<int64_t>(_base + static_cast<size_t>(it - _entries.begin()));
 }
 
 bool TTDFrameTable::Start(uint64_t frame, TTDMachineTime& start) const
@@ -20,7 +20,7 @@ bool TTDFrameTable::Start(uint64_t frame, TTDMachineTime& start) const
     const int64_t idx = IndexOf(frame);
     if (idx < 0)
         return false;
-    start = _entries[static_cast<size_t>(idx)].start;
+    start = _entries[static_cast<size_t>(idx) - _base].start;
     return true;
 }
 

@@ -53,6 +53,32 @@ struct TTDSyncMiss
 };
 
 /// One recorded frame boundary
+/// What a recording keeps in memory (D41, owner decision 2026-10-04): a ring
+/// of the last windowFrames, or every frame (Growable). History is kept in
+/// segments of segmentFrames; each starts with a baseline (every piece stored
+/// whole, fresh reference tables), so a segment needs nothing from earlier
+/// ones and the ring drops the oldest whole
+enum class TTDHistoryMode : uint8_t
+{
+    Ring,
+    Growable,
+};
+
+struct TTDHistoryPolicy
+{
+    TTDHistoryMode mode = TTDHistoryMode::Ring;
+    uint32_t windowFrames = 5 * 60 * 50;   ///< Ring: the frames kept seekable (5 minutes at 50 fps)
+    uint32_t segmentFrames = 60 * 50;      ///< a baseline every minute; 0: one segment
+};
+
+/// Where a segment starts
+struct TTDSegmentInfo
+{
+    size_t firstCheckpoint = 0;   ///< its baseline
+    size_t firstChange = 0;       ///< its first change record
+    uint64_t firstFrame = 0;
+};
+
 /// One piece of a region taking a new version (TimeTravelEngine::ImportCheckpoint)
 struct TTDImportedChange
 {
@@ -68,6 +94,7 @@ struct TTDEngineCheckpoint
     TTDPosition position;
     TTDMachineTime start = 0;
     uint32_t parent = kNoParent;   ///< the checkpoint this one continues (branches share their parent's past)
+    bool baseline = false;         ///< a segment starts here: every piece stored whole (D41)
     TTDCpuState cpu;
     TTDChipsetState chipset;
     /// v1 ids of device states this frame offered for devices the table
@@ -358,7 +385,14 @@ public:
 
     /// region <Restore>
 
-    size_t CheckpointCount() const { return _checkpoints.size(); }
+    /// Checkpoints recorded, counted from the session's start (dropped ones included)
+    size_t CheckpointCount() const { return _cpBase + _checkpoints.size(); }
+    /// The first checkpoint still held: a ring drops the oldest segments (D41)
+    size_t FirstCheckpoint() const { return _cpBase; }
+
+    void SetHistoryPolicy(const TTDHistoryPolicy& policy) { _policy = policy; }
+    const TTDHistoryPolicy& HistoryPolicy() const { return _policy; }
+    const std::deque<TTDSegmentInfo>& Segments() const { return _segments; }
     const TTDEngineCheckpoint* Checkpoint(size_t index) const;
     /// Checkpoint index of @p position's frame boundary, or -1
     int64_t CheckpointIndexOf(const TTDPosition& position) const;
@@ -450,12 +484,25 @@ private:
     /// An event whose machine time is set: the log, and the RZX frame index
     bool AppendTimedEvent(const TTDEvent& ev);
     void NoteChange(uint32_t region, uint32_t piece, TTDPieceId next);
-    void CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint::RegionRefs& refs, bool snapshot);
+    void CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint::RegionRefs& refs, bool snapshot, bool fresh = false);
+    /// Checkpoints and change records by their index from the session's start
+    bool HasCheckpoint(size_t index) const { return index >= _cpBase && index - _cpBase < _checkpoints.size(); }
+    const TTDEngineCheckpoint& CpAt(size_t index) const { return _checkpoints[index - _cpBase]; }
+    /// Start a segment at the checkpoint about to be added (D41)
+    void BeginSegment(uint64_t frame);
+    /// Ring: drop the oldest segment while the next one alone covers the window
+    void ReleaseHistory();
+    void DropOldestSegment();
+    size_t _cpBase = 0;       ///< checkpoints dropped from the front
+    size_t _changeBase = 0;   ///< change records dropped from the front
+    TTDHistoryPolicy _policy;
+    std::deque<TTDSegmentInfo> _segments;
     struct PieceChange
     {
         uint32_t piece;
         TTDPieceId id;   ///< the record holds one reference to it
     };
+    const PieceChange& ChangeAt(size_t index) const { return _changes[index - _changeBase]; }
 
     /// The version of every piece of @p region at checkpoint @p index
     void BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const;
@@ -475,7 +522,7 @@ private:
     /// Checkpoint @p index's entry for @p region, or null when it has none
     const TTDEngineCheckpoint::RegionRefs* RefsOf(size_t index, uint32_t region) const
     {
-        for (const TTDEngineCheckpoint::RegionRefs& r : _checkpoints[index].regions)
+        for (const TTDEngineCheckpoint::RegionRefs& r : CpAt(index).regions)
             if (r.region == region)
                 return &r;
         return nullptr;

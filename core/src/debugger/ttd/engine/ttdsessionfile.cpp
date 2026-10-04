@@ -206,6 +206,7 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
     }
     _sink = &sink;
     _params = params;
+    _next = e._cpBase;
     _limits = limits;
     _liveItem.assign(e._regions.size(), {});
     for (size_t r = 0; r < e._regions.size(); ++r)
@@ -252,7 +253,7 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
 bool TTDSessionWriter::Collect(const TimeTravelEngine& e)
 {
     const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
-    while (!Failed() && _next + perPart < e._checkpoints.size())
+    while (!Failed() && _next + perPart < e.CheckpointCount())
     {
         if (_queuedBytes.load() > _limits.lagHardBytes)
         {
@@ -278,9 +279,9 @@ bool TTDSessionWriter::Finish(const TimeTravelEngine& e)
     _finished = true;
     Collect(e);
     const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
-    while (!Failed() && _next < e._checkpoints.size())
+    while (!Failed() && _next < e.CheckpointCount())
     {
-        const size_t last = std::min(_next + perPart, e._checkpoints.size());
+        const size_t last = std::min(_next + perPart, e.CheckpointCount());
         PartJob job;
         if (!BuildPart(e, _next, last, true, job))
         {
@@ -365,17 +366,18 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 {
     const TTDPieceStore& store = *e._store;
     const std::vector<TTDEvent>& events = e._events.Events();
-    const bool lastPart = final && last == e._checkpoints.size();
-    const TTDEngineCheckpoint& head = e._checkpoints[first];
+    const bool lastPart = final && last == e.CheckpointCount();
+    const TTDEngineCheckpoint& head = e.CpAt(first);
     TTDByteWriter pieces, checkpoints;
     std::set<uint32_t> dependencies;
     checkpoints.Varint(last - first);
     uint64_t previousFrame = 0;
     for (size_t i = first; i < last; ++i)
     {
-        const TTDEngineCheckpoint& cp = e._checkpoints[i];
+        const TTDEngineCheckpoint& cp = e.CpAt(i);
         checkpoints.Varint(cp.position.frame - previousFrame);
         previousFrame = cp.position.frame;
+        checkpoints.U8(cp.baseline ? 1 : 0);
         checkpoints.U64(cp.start);
         checkpoints.Raw(&cp.cpu, sizeof(cp.cpu));
         checkpoints.Raw(&cp.chipset, sizeof(cp.chipset));
@@ -397,7 +399,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
             checkpoints.Varint(refs.changeCount);
             for (uint32_t k = refs.firstChange; k < refs.firstChange + refs.changeCount; ++k)
             {
-                const auto& change = e._changes[k];
+                const auto& change = e.ChangeAt(k);
                 checkpoints.Varint(change.piece);
                 // The version itself, numbered as it appears
                 const TTDPieceId id = change.id;
@@ -440,15 +442,16 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     // Events up to the next part's start
     TTDMachineTime until = 0;
     if (!lastPart)
-        until = e._checkpoints[last].start;
+        until = e.CpAt(last).start;
     TTDByteWriter ev;
     size_t count = 0;
-    const size_t eventsFrom = _nextEvent;
-    while (_nextEvent < events.size() && (lastPart || events[_nextEvent].machineTime < until))
-        ++_nextEvent, ++count;
+    // By time, not by index: a ring drops old events, which shifts the indices
+    const size_t eventsFrom = first == 0 ? 0 : e._events.CursorAt(head.start);
+    const size_t eventsTo = lastPart ? events.size() : e._events.CursorAt(until);
+    count = eventsTo - eventsFrom;
     ev.Varint(count);
     TTDMachineTime previousTime = 0;
-    for (size_t k = eventsFrom; k < _nextEvent; ++k)
+    for (size_t k = eventsFrom; k < eventsTo; ++k)
     {
         const TTDEvent& x = events[k];
         ev.Varint(x.machineTime - previousTime);
@@ -468,7 +471,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 
     // Configuration entries starting in the part, media versions changing in it
     TTDByteWriter config;
-    const uint64_t frameUntil = lastPart ? UINT64_MAX : e._checkpoints[last].position.frame;
+    const uint64_t frameUntil = lastPart ? UINT64_MAX : e.CpAt(last).position.frame;
     const size_t configFrom = _nextConfig;
     while (_nextConfig < e._configs.size() && e._configs[_nextConfig].frame < frameUntil)
         ++_nextConfig;
@@ -503,7 +506,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 
     // Journals from this part's first checkpoint to the next part's
     auto range = [&](uint64_t TTDEngineCheckpoint::*cursor, uint64_t size) {
-        return Range{first == 0 ? 0 : head.*cursor, lastPart ? size : e._checkpoints[last].*cursor};
+        return Range{first == 0 ? 0 : head.*cursor, lastPart ? size : e.CpAt(last).*cursor};
     };
     TTDByteWriter reads, writes, vectors, mediaReads;
     const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._busReads.Size());
@@ -561,7 +564,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     }
 
     job.end.firstFrame = head.position.frame;
-    job.end.frameCount = static_cast<uint32_t>(e._checkpoints[last - 1].position.frame - head.position.frame + 1);
+    job.end.frameCount = static_cast<uint32_t>(e.CpAt(last - 1).position.frame - head.position.frame + 1);
     job.end.dependencies.assign(dependencies.begin(), dependencies.end());
     ++_part;
     return ok;
@@ -570,7 +573,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::string& error,
                           const TTDSessionSaveParams& params)
 {
-    if (!e._open || e._checkpoints.empty())
+    if (!e._open || e.CheckpointCount() == e.FirstCheckpoint())
     {
         error = "no session to save";
         return false;
@@ -702,12 +705,14 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         {
             TTDEngineCheckpoint cp;
             uint64_t delta = 0, unclaimed = 0, changedRegions = 0;
-            ok = c.Varint(delta) && c.U64(cp.start) && c.Raw(&cp.cpu, sizeof(cp.cpu)) &&
+            uint8_t flags = 0;
+            ok = c.Varint(delta) && c.U8(flags) && c.U64(cp.start) && c.Raw(&cp.cpu, sizeof(cp.cpu)) &&
                  c.Raw(&cp.chipset, sizeof(cp.chipset)) && c.Varint(unclaimed) && c.Bytes(cp.unclaimedDevices, unclaimed) &&
                  c.Varint(cp.busReadCursor) && c.Varint(cp.busWriteCursor) && c.Varint(cp.mediaReadCursor) &&
                  c.Varint(cp.busVectorCursor) && c.Varint(changedRegions);
             frame += delta;
             cp.position.frame = frame;
+            cp.baseline = (flags & 1) != 0;
             std::vector<TTDImportedChange> changes;
             for (uint64_t g = 0; ok && g < changedRegions; ++g)
             {
@@ -892,7 +897,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         report.partsLoaded++;
     }
 
-    report.checkpoints = e._checkpoints.size();
+    report.checkpoints = e.CheckpointCount();
     report.complete = report.partsLoaded == report.partsInFile;
     const bool any = !e._checkpoints.empty();
     if (!any)

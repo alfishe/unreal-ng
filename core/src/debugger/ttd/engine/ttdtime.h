@@ -9,6 +9,7 @@
 /// starts. A position names a branch, a frame and a point inside it (D15).
 /// Design: docs/inprogress/2026-09-25-ttd-v2-migration/phase-1-memory-regions-tdd.md §4.2.
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -38,7 +39,11 @@ struct TTDPosition
 class TTDFrameTable
 {
 public:
-    void Clear() { _entries.clear(); }
+    void Clear()
+    {
+        _entries.clear();
+        _base = 0;
+    }
 
     /// Append the next frame. Refused when the frame number does not grow or
     /// its start lies before the previous frame's start
@@ -55,8 +60,17 @@ public:
     uint64_t FirstFrame() const { return _entries.empty() ? 0 : _entries.front().frame; }
     uint64_t LastFrame() const { return _entries.empty() ? 0 : _entries.back().frame; }
 
-    /// Index of @p frame in the table, or -1 when it is not recorded
+    /// Index of @p frame in the table (counted from the session's first frame,
+    /// dropped ones included), or -1 when it is not recorded or was dropped
     int64_t IndexOf(uint64_t frame) const;
+
+    /// Forget the oldest @p count frames (a ring releasing history); indices stay as they were
+    void DropFront(size_t count)
+    {
+        count = count < _entries.size() ? count : _entries.size();
+        _entries.erase(_entries.begin(), _entries.begin() + static_cast<std::ptrdiff_t>(count));
+        _base += count;
+    }
 
     /// Start of @p frame; false when the frame is not recorded
     bool Start(uint64_t frame, TTDMachineTime& start) const;
@@ -73,6 +87,7 @@ private:
         uint64_t frame;
         TTDMachineTime start;
     };
+    size_t _base = 0;   ///< frames dropped from the front
     std::vector<Entry> _entries;
 };
 
