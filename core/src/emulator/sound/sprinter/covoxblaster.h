@@ -25,7 +25,7 @@ struct CovoxBlasterState
     uint16_t levelR;         ///< ... the right channel
     uint16_t reserved0;
     uint32_t nextTick;       ///< base T-state (3.5 MHz, frame-relative) of the next play tick (CBL_CTX = 0)
-    uint32_t ticks;          ///< statistics: play ticks while CBL was on
+    uint32_t ticks;          ///< statistics since the last reset: play ticks while CBL was on
     uint32_t ringWrites;     ///< statistics: words written into the ring
     uint32_t covoxWrites;    ///< statistics: Covox (CBL off) writes
     uint32_t intRequests;    ///< statistics: half-ring interrupts raised
@@ -99,7 +99,9 @@ public:
     CovoxBlaster& operator=(const CovoxBlaster&) = delete;
 
     /// The PLD's /RESET: control 0 (Covox), play and write indices 0, no request,
-    /// the DAC at #8000; the ring keeps its contents
+    /// the DAC at #8000; the ring and the tick divider keep their values. The
+    /// statistics (ticks, ring / Covox writes, INT requests) restart at 0: they
+    /// count since the last reset of any kind
     void Reset();
 
     /// region <Bus side: `t` = base T-state (3.5 MHz) of the access within the frame>

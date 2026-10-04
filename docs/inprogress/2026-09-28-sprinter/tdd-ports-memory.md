@@ -343,8 +343,12 @@ from its renderer. A stream nobody knows (LDConf's `STREAM.300`) falls back to S
 says `unknown PLD bitstream, full hash A65B49FC, head hash D0953276, using Standard`; the reports
 say why (`pld.selected_by`). The decoder core did not change for Game.
 
-v1 shipped **Standard only**; Game followed on 2026-10-03. DooM and Video become later modules after
-their bitstreams are analyzed against MAME.
+v1 shipped **Standard only**; Game followed on 2026-10-03. DooM and Video modules are **not planned**
+(2026-10-03): those configurations exist only as Sprinter 97 (FLEX EPF10K10) bitstreams, no Sp2000
+build exists, and the Sp2000 merged their functions into Standard (DooM's line stretching is the
+accelerator's `#C7` scale register; Video's disk-to-memory logic matches `HDD_FLIP` / `HDDR`). The
+Sp2000 DOOM demo and the 2026 video player run on Standard. Details:
+[pld-configurations.md](pld-configurations.md) §6.
 
 ## 7. Reset kinds
 

@@ -11,8 +11,9 @@ come the ISA slots and the network cards (section 3).
   fixed demo runner (the earlier "15 of 21 run" came from a runner bug that called every program running). They run,
   except: ~~GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred)~~ - **done
   2026-10-03**, they run on the Game module ([game-configuration.md](game-configuration.md));
-  BUYAN/20X20 stops with interrupts off (open, compare with MAME); WILDSND needs the ISA Wild Sound card;
-  DNTBLINK is investigated separately. The dontBlink final-version crash seen 2026-10-03 was triggered from the
+  ~~BUYAN/20X20 stops with interrupts off~~ - a race in the demo (its accelerator routine ends with `EI`; MAME and
+  other start moments confirm it, [demo-status.md](demo-status.md)), not our fault.
+  WILDSND needs the ISA Wild Sound card. The dontBlink final-version crash seen 2026-10-03 was triggered from the
   host: the macOS Command key reached the machine as PS/2 Left Ctrl (`14 F0 14`), and a stray press during loading
   latched the PLD keyboard INT. Fixed in unreal-qt (branch `qt-mac-cmd-keymap`): Command is a host key, the
   Control key is Ctrl ([keyboard.md](../../features/keyboard.md#host-keys-on-macos)); re-check the demo without
@@ -79,6 +80,10 @@ deleted. Take one only on the owner's request.
   ([bios-versions.md](bios-versions.md) §5.3).
 - Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
 - Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.
+- ~~DooM and Video PLD configurations (gap V12)~~ - **closed 2026-10-03, not planned**: they exist only as
+  Sprinter 97 (FLEX EPF10K10) bitstreams, no Sp2000 build exists, and the Sp2000 merged their functions into
+  Standard (DooM's line stretching = the accelerator's `#C7` scale register; Video = `HDD_FLIP` / `HDDR`); the
+  Sp2000 DOOM demo and the 2026 video player run on Standard ([pld-configurations.md](pld-configurations.md) §6).
 
 - **ISA I4 (2026-10-03), settled from the PLD source:** when the PIO port B (or any on-chip source) and the PLD's
   `/INT` are pending together, the chip answers the acknowledge and the PLD presets its INT flip-flop on the same
