@@ -1,8 +1,10 @@
 // WebAPI State Memory Inspection Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include "debugger/memory/memoryread.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "../common/binaryresponse.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
@@ -556,11 +558,12 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     }
 
     // Get length from query parameter (default 128)
-    uint16_t length = 128;
+    // Up to the whole 64K (a 16-bit length read 65536 as 0 before; larger values wrapped)
+    uint32_t length = 128;
     auto lengthParam = req->getOptionalParameter<std::string>("length");
     if (lengthParam)
     {
-        try { length = static_cast<uint16_t>(std::stoul(*lengthParam)); }
+        try { length = static_cast<uint32_t>(std::min<unsigned long>(std::stoul(*lengthParam), MemoryRead::kMaxLength)); }
         catch (...) { length = 128; }
     }
 
@@ -571,11 +574,28 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     auto filterParam = req->getOptionalParameter<std::string>("filter");
     if (formatParam && !formatParam->empty()) format = *formatParam;
     else if (filterParam && *filterParam == "sparse") format = "sparse";
+    if (format == "binary")
+    {
+        const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), "cpu", address, std::max<uint32_t>(length, 1));
+        if (!read.error.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = read.error;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        callback(BinaryMemoryResponse(read.space, read.address, read.bytes));
+        return;
+    }
     if (format != "hexdump" && format != "full" && format != "sparse")
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full', 'sparse' or 'binary')";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -585,7 +605,7 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     }
 
     std::vector<uint8_t> buffer(length);
-    for (uint16_t i = 0; i < length; i++)
+    for (uint32_t i = 0; i < length; i++)
         buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
 
     Json::Value ret;
@@ -907,6 +927,21 @@ bool ReadRegionPage(const HttpRequestPtr& req, EmulatorContext* context, const s
         length = region->PageSize() - offset;
     const bool sparse = req->getOptionalParameter<std::string>("filter").value_or("") == "sparse";
     const uint32_t start = static_cast<uint32_t>(page * region->PageSize() + offset);
+    if (req->getOptionalParameter<std::string>("format").value_or("") == "binary")
+    {
+        std::vector<uint8_t> bytes;
+        std::string error;
+        if (!DeviceMemory::Read(context, region->Name(), start, static_cast<uint32_t>(length), bytes, error))
+        {
+            Json::Value body;
+            body["error"] = "Bad Request";
+            body["message"] = error;
+            reply(body, HttpStatusCode::k400BadRequest);
+            return true;
+        }
+        callback(BinaryMemoryResponse(type + std::to_string(page), static_cast<uint32_t>(offset), bytes));
+        return true;
+    }
     Json::Value ret = StateNodeToJson(
         DeviceState::MemoryRegionRead(context, region->Name(), start, static_cast<uint32_t>(length), sparse ? "sparse" : "data"));
     ret["type"] = type;
@@ -1106,6 +1141,14 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
     if (offset + length > PAGE_SIZE)
         windowSize = PAGE_SIZE - offset;
     const uint8_t* window = pagePtr + offset;
+
+    // format=binary: the window raw (without it the JSON answer stays as it was)
+    if (req->getOptionalParameter<std::string>("format").value_or("") == "binary")
+    {
+        callback(BinaryMemoryResponse(type + std::to_string(page), static_cast<uint32_t>(offset),
+                                      std::vector<uint8_t>(window, window + windowSize)));
+        return;
+    }
 
     Json::Value ret;
     ret["type"] = type;

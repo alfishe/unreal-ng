@@ -46,7 +46,7 @@ Checked against the current code (master `98643fd3b`):
 | `GET /memory/read/{addr}` | `length` (default 128), formats as above, other values 400 (`state_memory_api.cpp:574`) | adds `format=binary` | as above. Bug fixed on the way: `length` is cast to 16 bits, so `65536` reads 0 bytes today (`state_memory_api.cpp:561`); it will read 65536. No client can rely on getting nothing |
 | `GET /memory/page/{type}/{page}` | `offset`, `length` (clamped to the page), hex / sparse | adds `format=binary` | additive |
 | `GET /memory/{type}/{page}/{offset}` | `len`, hex only, no `format` parameter | adds `format=binary` | a request without `format` (every existing one) answers as before |
-| `GET /memory/region/{name}` | hex / sparse, `length` up to 65536 | adds `format=binary` | additive |
+| `GET /memory/region/{name}` | hex / data / sparse (JSON up to 65536) / **binary already** (any length, headers `X-Region`, `X-Offset`) | binary answers also carry the `X-Unreal-*` headers below; `X-Region` / `X-Offset` stay | additive headers only |
 | `GET /debug/snapshot` | does not exist; no `/debug/...` route exists | new | new path |
 | Lua / Python `mem_read_block` | Lua: a table of numbers; Python: `bytes`; CPU view, `len` 16-bit | unchanged | new functions instead of changed ones (§4) |
 | CLI `memory save` | writes the CPU view to a file | unchanged; may gain `--space` (§4) | flag is optional |
@@ -57,13 +57,14 @@ field names and types stay as they are.
 
 ## 3. Binary memory reads (D7)
 
-`format=binary` on the five memory read endpoints of §2:
+`format=binary` on the memory read endpoints of §2 (the region read has it already):
 
 - Body: the bytes, nothing else. `Content-Type: application/octet-stream`.
-- Headers say what was read, so a client needs no second request: `X-Unreal-Space` (`cpu`, `ram5`, `rom2`, ...),
-  `X-Unreal-Address` (the start, hex), `X-Unreal-Length` (bytes in the body).
+- Headers say what was read, so a client needs no second request: `X-Unreal-Space` (`cpu`, `ram5`, `rom2`, ...;
+  a region's name), `X-Unreal-Address` (the start, hex), `X-Unreal-Length` (bytes in the body).
+  `Access-Control-Expose-Headers` lists them, so a browser client can read them too.
 - Length: CPU view up to 65536 (wrapping at #FFFF as the CPU sees it, the same as the JSON reads); a page up to its
-  size from the offset; a region up to 65536.
+  size from the offset; a region any length, as its binary read already allows.
 - Errors stay JSON (400 / 404 with the usual `{error, message}`): a client always knows from the status code which
   it got.
 - Reads are side-effect free (`DirectReadFromZ80Memory` and the page pointers), as the JSON reads are.

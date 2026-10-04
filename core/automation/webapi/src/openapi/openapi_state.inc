@@ -786,15 +786,21 @@
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["description"] =
-        "Number of bytes to read (default: 128)";
+        "Number of bytes to read (default: 128, at most 65536: the whole address space, wrapping at 0xFFFF)";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["name"] = "format";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["description"] =
-        "'hexdump' (default), 'full' (data array) or 'sparse' (fill-run segments)";
+        "'hexdump' (default), 'full' (data array), 'sparse' (fill-run segments) or 'binary' (the raw bytes as "
+        "application/octet-stream; headers X-Unreal-Space, X-Unreal-Address, X-Unreal-Length)";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["description"] = "Memory contents";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Space"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Address"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Length"]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["400"]["description"] = "Invalid address";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["404"]["description"] = "Emulator not found";
 
@@ -847,7 +853,18 @@
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["description"] =
         "Set 'sparse' to compress 0x00/0xFF runs into fill segments (much smaller than the byte array)";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][4]["name"] = "format";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][4]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][4]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][4]["description"] =
+        "Omit for the JSON answer; 'binary' = the raw bytes of the window (offset, length) as application/octet-stream";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][4]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["description"] = "Page data (base64 encoded)";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Space"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Address"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Length"]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["400"]["description"] = "Invalid type or page number";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["404"]["description"] = "Emulator not found";
 

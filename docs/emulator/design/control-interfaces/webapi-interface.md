@@ -382,9 +382,15 @@ PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true}
 ```
 GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr, q, t = CPU T in the frame), interrupt (iff1, iff2, im, halted, boundary), flags
 PUT /api/v1/emulator/{id}/registers/{name}    Set a register (body {"value":N}): the register table names, memptr / wz, im (0-2), iff1 / iff2 (0-1); 400 out of range
-GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
+GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 128, max 4096; ?format=hexdump|full|sparse|binary - binary = raw bytes, application/octet-stream, len up to 65536: the whole address space in one request)
+GET /api/v1/emulator/{id}/memory/read/{addr}  Read memory (?length=N, default 128, max 65536, wraps at 0xFFFF; ?format=hexdump|full|sparse|binary)
+GET /api/v1/emulator/{id}/memory/page/{type}/{page}   Read a physical page window (?offset=&length=, ?filter=sparse; ?format=binary for raw bytes)
 PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
-GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N)
+GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N; ?format=binary for raw bytes)
+
+Every `format=binary` answer is the bytes alone (`application/octet-stream`) with the headers `X-Unreal-Space`
+(`cpu`, `ram5`, a region name), `X-Unreal-Address` and `X-Unreal-Length`, exposed to browser clients
+(`Access-Control-Expose-Headers`). Errors stay JSON with a 4xx status. The JSON formats are unchanged.
 PUT /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Write to physical page (body: {"data":[...],"force":true})
 GET /api/v1/emulator/{id}/memory/info         Get memory configuration (page counts, bank mappings)
 GET /api/v1/emulator/{id}/memcounters         Memory access statistics

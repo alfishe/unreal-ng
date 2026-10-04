@@ -2,9 +2,11 @@
 // Debug endpoints for stepping, breakpoints, and inspection
 // Created 2026-01-21
 
+#include "../common/binaryresponse.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 #include <drogon/HttpResponse.h>
@@ -15,6 +17,7 @@
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>
 #include <debugger/debugmanager.h>
+#include <debugger/memory/memoryread.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -1631,6 +1634,25 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     {
         len = std::stoul(lenParam);
     }
+    // format=binary: the raw bytes, the whole 64K at once (the JSON formats keep their 4096 cap)
+    if (req->getParameter("format") == "binary")
+    {
+        const MemoryRead::Result read =
+            MemoryRead::Bytes(emulator->GetContext(), "cpu", addr, std::clamp<unsigned>(len, 1, MemoryRead::kMaxLength));
+        if (!read.error.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = read.error;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        callback(BinaryMemoryResponse(read.space, read.address, read.bytes));
+        return;
+    }
     if (len > 4096) len = 4096;
     if (len < 1) len = 1;
 
@@ -1646,7 +1668,7 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full', 'sparse' or 'binary')";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1966,6 +1988,14 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    // format=binary: the same bytes, raw (the JSON answer stays the default)
+    if (req->getParameter("format") == "binary")
+    {
+        callback(BinaryMemoryResponse(std::string(typeName) + std::to_string(page), static_cast<uint32_t>(offset),
+                                      std::vector<uint8_t>(pagePtr + offset, pagePtr + offset + len)));
+        return;
+    }
+
     // Read memory
     Json::Value ret;
     ret["type"] = typeName;
