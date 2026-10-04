@@ -11,6 +11,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/keyboardmanager.h"
 #include "platform/macos/mousecapture_macos.h"
 
 #ifndef Q_OS_MACOS
@@ -87,17 +88,12 @@ QKeySequence MouseCaptureController::releaseKey() const
     // One key combination with a key Qt knows, else the default
     if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown || sequence[0].key() == 0)
         sequence = QKeySequence::fromString(kDefaultReleaseKey, QKeySequence::PortableText);
-#ifdef Q_OS_MACOS
-    // The config names physical keys: "Ctrl" is the Control key. Qt on macOS reports
-    // Control as Meta and Command as Ctrl, so swap them in the parsed combination
+    // The config names physical keys: "Ctrl" is the Control key. Qt on macOS reports Control as Meta
+    // and Command as Ctrl: the host keyboard's one swap turns the physical combination into Qt's
+    // (KeyboardManager::physicalModifiers, its own inverse; identity off macOS)
     const QKeyCombination combination = sequence[0];
-    Qt::KeyboardModifiers modifiers = combination.keyboardModifiers();
-    const bool control = modifiers.testFlag(Qt::ControlModifier);
-    const bool meta = modifiers.testFlag(Qt::MetaModifier);
-    modifiers.setFlag(Qt::ControlModifier, meta);
-    modifiers.setFlag(Qt::MetaModifier, control);
-    sequence = QKeySequence(QKeyCombination(modifiers, combination.key()));
-#endif
+    sequence = QKeySequence(
+        QKeyCombination(KeyboardManager::physicalModifiers(combination.keyboardModifiers()), combination.key()));
     return sequence;
 }
 

@@ -12,7 +12,11 @@ come the ISA slots and the network cards (section 3).
   except: ~~GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred)~~ - **done
   2026-10-03**, they run on the Game module ([game-configuration.md](game-configuration.md));
   BUYAN/20X20 stops with interrupts off (open, compare with MAME); WILDSND needs the ISA Wild Sound card;
-  DNTBLINK is investigated separately. FBIRD and NOTHENG run after the CTC fix.
+  DNTBLINK is investigated separately. The dontBlink final-version crash seen 2026-10-03 was triggered from the
+  host: the macOS Command key reached the machine as PS/2 Left Ctrl (`14 F0 14`), and a stray press during loading
+  latched the PLD keyboard INT. Fixed in unreal-qt (branch `qt-mac-cmd-keymap`): Command is a host key, the
+  Control key is Ctrl ([keyboard.md](../../features/keyboard.md#host-keys-on-macos)); re-check the demo without
+  touching Command. FBIRD and NOTHENG run after the CTC fix.
 - scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
   reproduce (likely cured by the PS/2 overrun fix).
 
