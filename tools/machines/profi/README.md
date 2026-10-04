@@ -10,6 +10,7 @@ They read hardware PROMs and schematics and turn them into numbers the emulator 
 | [waitmodel/](waitmodel/README.md) | a gate-level model of the v5 board's DRAM arbiter: when the board holds the CPU for the video (the v5 video WAIT) |
 | [netlist/](netlist/README.md) | helpers to read the v5.06 netlist (a part's pins and nets) and to disassemble a ROM range |
 | [turbomodel/](turbomodel/README.md) | the v3 board's turbo wait rule, checked against a measured frame on a real board; the v3.2 port decoder dump |
+| [pqdosimage/](pqdosimage/README.md) | cuts the 3 MB PQ-DOS test hard disk image out of the 2 GB Karabas Pro image (root files, `DN`, `DOS` kept; the games and demos dropped) |
 | [xtkbd/](xtkbd/README.md) | an 8035 simulator of the PROFI-XT keyboard controller board, running its firmware: the key map, the Z80 wait per read |
 
 All need only Python 3 (`turbomodel/crop.py` also needs PyMuPDF, `netlist/dis.py` z80dis). They print text; only `waitmodel/parsenet.py`

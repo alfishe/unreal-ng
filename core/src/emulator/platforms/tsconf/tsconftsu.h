@@ -42,6 +42,11 @@ public:
     static constexpr uint32_t kMaxWidth = 360;
     static constexpr uint32_t kDescriptors = 85;
 
+    /// The sprite layers over SFILE: S0 is descriptors [bounds[0], bounds[1]), S1 [bounds[1], bounds[2]), S2
+    /// [bounds[2], bounds[3]); bounds[3] is also where the sprites end - the THIRD LEAP ends them, or descriptor 84
+    /// (a descriptor with LEAP belongs to the layer it ends; LEAP counts on inactive descriptors too)
+    static void LayerBounds(const TsConfState& ts, uint32_t (&bounds)[4]);
+
     /// Tilemap prefetch ring: [slot][column][layer] map words
     using MapRing = uint16_t[4][64][2];
 

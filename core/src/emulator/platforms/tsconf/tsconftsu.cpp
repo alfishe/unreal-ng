@@ -173,6 +173,23 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_u
     return true;
 }
 
+void TsConfTsu::LayerBounds(const TsConfState& ts, uint32_t (&bounds)[4])
+{
+    // S0 runs to the first descriptor with LEAP, S1 to the next one, S2 to the third LEAP or to descriptor 84. LEAP
+    // counts on inactive descriptors too, and a descriptor with LEAP belongs to the layer it ends. Nothing behind the
+    // third LEAP is processed: the layer machine has ended the last layer ([V] video_ts.v:263-274, layer_skip |=
+    // layer_end), which is how a program ends its list while the rest of the SFILE holds anything (zifi.spg loads all
+    // 256 words from a table followed by text)
+    bounds[0] = 0;
+    bounds[1] = bounds[2] = bounds[3] = kDescriptors;
+    uint32_t layer = 1;
+    for (uint32_t d = 0; d < kDescriptors && layer < 4; d++)
+    {
+        if (ts.sfile[d * 3] & 0x4000)
+            bounds[layer++] = d + 1;
+    }
+}
+
 template <bool kProbe>
 bool TsConfTsu::Render(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
                        uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used)
@@ -188,20 +205,8 @@ bool TsConfTsu::Render(const TsConfState& ts, const TsConfLine& set, const uint8
             sources[x] = Source{};
     }
 
-    // Sprite layers: S0 runs to the first descriptor with LEAP, S1 to the
-    // next one, S2 to the third LEAP or to descriptor 84. LEAP counts on
-    // inactive descriptors too, and a descriptor with LEAP belongs to the layer
-    // it ends. Nothing behind the third LEAP is processed: the layer machine has
-    // ended the last layer ([V] video_ts.v:263-274, layer_skip |= layer_end), which is
-    // how a program ends its list while the rest of the SFILE holds anything
-    // (zifi.spg loads all 256 words from a table followed by text)
-    uint32_t bounds[4] = {0, kDescriptors, kDescriptors, kDescriptors};
-    uint32_t layer = 1;
-    for (uint32_t d = 0; d < kDescriptors && layer < 4; d++)
-    {
-        if (ts.sfile[d * 3] & 0x4000)
-            bounds[layer++] = d + 1;
-    }
+    uint32_t bounds[4];
+    LayerBounds(ts, bounds);
 
     // Processing order S0, T0, S1, T1, S2 is also the drawing order; the
     // first object that does not fit ends the line

@@ -343,6 +343,12 @@ public:
     /// peripherals watch the bus for it to end their interrupt service (the
     /// Z84C15 daisy chain; the Sprinter re-arms its accelerator)
     virtual void OnReti() {}
+    /// The source wants OnWait for every stretch of the CPU clock (Z80::AddWaitStates / AddWaitTicks): a pulse
+    /// that counts only CPU clocks without /WAIT (TS-Conf's frame INT). Asked once, in SetInterruptSource;
+    /// a source that does not need it costs the other machines nothing
+    virtual bool ObservesWaits() const { return false; }
+    /// The CPU clock is stretched by `ticks` (256 per CPU clock) at counter value `ttBefore` (Z80::tt: t << 8)
+    virtual void OnWait([[maybe_unused]] uint32_t ttBefore, [[maybe_unused]] uint32_t ticks) {}
 };
 
 /// Model-side engine that must advance with the CPU (see
@@ -643,6 +649,7 @@ public:
 
 private:
     IInterruptSource* _interruptSource = nullptr;
+    IInterruptSource* _waitObserver = nullptr;  ///< _interruptSource when it asks for OnWait, else null
     IMachineStepHook* _machineStepHook = nullptr;
     ICpuEngine* _engine = nullptr;
 
@@ -869,10 +876,20 @@ public:
 public:
     /// Stretches the memory cycle in progress by `tStates` (a device's /WAIT).
     /// Called from a host bus overlay; the plain memory paths never call it.
-    void AddWaitStates(uint32_t tStates) { tt += tStates * rate; }
+    void AddWaitStates(uint32_t tStates)
+    {
+        if (_waitObserver) [[unlikely]]
+            _waitObserver->OnWait(tt, tStates * rate);
+        tt += tStates * rate;
+    }
     /// The same in counter ticks (256 per 3.5 MHz T): a wait shorter than one
     /// CPU clock of a turbo machine (TSConf's 28 MHz fclk waits at 14 MHz)
-    void AddWaitTicks(uint32_t ticks) { tt += ticks; }
+    void AddWaitTicks(uint32_t ticks)
+    {
+        if (_waitObserver) [[unlikely]]
+            _waitObserver->OnWait(tt, ticks);
+        tt += ticks;
+    }
 
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
