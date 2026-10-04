@@ -438,6 +438,12 @@ StateNode SprinterIsaBus::Describe() const
             conflicts.push("slot " + std::to_string(n + 1) + ": I/O range " + Hex(first, 3) + "-" + Hex(last, 3) +
                            " passes #3FF: it wraps onto " + Hex(first & 0x3FF, 3));
     }
+    for (int n = 0; n < kSlots; ++n)
+    {
+        const std::string warning = sprinterisa::SlotWarning(_slots[n].config, n);
+        if (!warning.empty())
+            conflicts.push(warning);
+    }
     ret["conflicts"] = conflicts;
     ret["conflict_rule"] = "each slot has its own select (page bit 1): cards in different slots may use the same "
                            "addresses; no on-board device decodes ISA cycles";
