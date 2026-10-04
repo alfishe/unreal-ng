@@ -104,6 +104,9 @@ private:
     TTDReply PortEvents(const TTDRequest& request);
     TTDReply FindLast(const TTDRequest& request);
     TTDReply ReverseContinue(const TTDRequest& request);
+    TTDReply CoverageProbe(const TTDRequest& request);
+    TTDReply CoverageScan(const TTDRequest& request);
+    TTDReply CoverageSummary(const TTDRequest& request);
 
     /// Moving in the timeline is refused while recording: the restored state would
     /// overwrite the live machine and the next capture would break the timeline

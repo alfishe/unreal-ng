@@ -402,3 +402,47 @@ TEST_F(TTDControl_Test, PortEventsNeedAnEventAndKnownOptions)
     EXPECT_EQ(Run("port-events", {{"event", "teleport"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("port-events", {{"event", "border"}, {"colour", "2"}}).error, TTDControlError::BadRequest);
 }
+
+// ---------------------------------------------------------------------------
+// Group 4b: coverage queries
+// ---------------------------------------------------------------------------
+
+TEST_F(TTDControl_Test, CoverageQueriesCheckEveryValue)
+{
+    EXPECT_EQ(Run("coverage-probe").error, TTDControlError::BadRequest);  // frame is required
+    EXPECT_EQ(Run("coverage-probe", {{"frame", "1"}, {"kind", "jumped"}}).error, TTDControlError::BadRequest);
+    const TTDReply range = Run("coverage-scan", {{"addr_from", "0x8000"}, {"addr_to", "0x4000"}});
+    EXPECT_EQ(range.error, TTDControlError::BadRequest);
+    EXPECT_EQ(range.message, "addr_from (0x8000) must not exceed addr_to (0x4000)");
+    EXPECT_EQ(Run("coverage-scan", {{"limit", "0"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("coverage-scan", {{"phys_page", "256"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("coverage-summary", {{"bucket_size", "x"}}).error, TTDControlError::BadRequest);
+}
+
+TEST_F(TTDControl_Test, CoverageQueriesAnswerWithoutTimeTravel)
+{
+    TTDControl control(nullptr);
+    const TTDReply probe = control.Execute({"coverage-probe", {{"frame", "5"}}});
+    ASSERT_TRUE(probe.Ok()) << probe.message;
+    EXPECT_FALSE(Bool(probe, "index_available"));
+    EXPECT_FALSE(Bool(probe, "touched"));
+    EXPECT_EQ(Str(probe, "addr_to"), "0xFFFF");
+    const TTDReply scan = control.Execute({"coverage-scan", {}});
+    ASSERT_TRUE(scan.Ok()) << scan.message;
+    EXPECT_TRUE(scan.body.find("frames")->isArray());
+    const TTDReply summary = control.Execute({"coverage-summary", {}});
+    ASSERT_TRUE(summary.Ok()) << summary.message;
+    EXPECT_EQ(Int(summary, "bucket_size"), 0);
+}
+
+TEST_F(TTDControl_Test, CoverageScanFindsTheFramesThatRanTheRom)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    const TTDReply r = Run("coverage-scan", {{"kind", "executed"}, {"addr_from", "0"}, {"addr_to", "0x3FFF"}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    if (!Bool(r, "index_available"))
+        GTEST_SKIP() << "coverage index off in this configuration";
+    EXPECT_GT(Int(r, "matching_frames"), 0);
+    EXPECT_EQ(static_cast<int64_t>(r.body.find("frames")->items.size()), Int(r, "matching_frames"));
+}

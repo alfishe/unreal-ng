@@ -313,6 +313,22 @@ def run_contract(c: Contract) -> None:
     lua = c.lua("local r = ttd_port_events('border', nil, {colour = 2}); print(tostring(r.ok) .. '|' .. tostring(r.error))")
     c.check(status == 400 and lua == "false|" + web.get("message", ""), f"an unknown port option: 400 and the same message in Lua ({status}, {lua!r})")
 
+    print("[coverage queries]")
+    _, web = c.web("GET", "/ttd/coverage/scan?kind=executed&addr_from=0&addr_to=0x3FFF")
+    lua = c.lua("local r = ttd_coverage_scan({kind = 'executed', addr_from = 0, addr_to = 0x3FFF}); "
+                "print(tostring(r.index_available) .. '|' .. r.matching_frames)")
+    c.check(lua == f"{scalar_text(web.get('index_available'))}|{web.get('matching_frames')}",
+            f"Lua and WebAPI coverage scan agree ({lua!r}; WebAPI {web.get('index_available')}, {web.get('matching_frames')})")
+    cli = c.cli.run("ttd coverage scan --kind executed --from 0 --to 0x3FFF")
+    if web.get("index_available"):
+        c.check(f"matched {web.get('matching_frames')} frames" in cli, f"CLI coverage scan ({cli.strip()[:90]!r})")
+    status, web = c.web("GET", "/ttd/coverage/probe")
+    lua = c.lua("local r = ttd_coverage_probe({}); print(tostring(r.ok) .. '|' .. tostring(r.error))")
+    c.check(status == 400 and lua == "false|" + web.get("message", ""), f"probe without a frame: 400, the same message in Lua ({status}, {lua!r})")
+    status, web = c.web("GET", "/ttd/coverage/scan?addr_from=0x8000&addr_to=0x4000")
+    cli = c.cli.run("ttd coverage scan --from 0x8000 --to 0x4000")
+    c.check(status == 400 and ("Error: " + web.get("message", "")) in cli, f"reversed range: 400, the same message on the CLI ({cli.strip()!r})")
+
     print("[write journal: Lua start() keeps the choice, WebAPI start defaults it off]")
     c.lua("ttd_set_journal_enabled(true)")
     c.lua("ttd_start()")

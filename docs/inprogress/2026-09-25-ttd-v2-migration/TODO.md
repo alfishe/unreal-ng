@@ -159,7 +159,7 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
     - [x] Group 2 (2026-10-04): position, seek, step-back, step-forward, resume, step-instruction, reverse-step
     - [x] Group 3 (2026-10-04): markers, bookmarks, bookmark-add, bookmark-delete
     - [x] Group 4a (2026-10-04): find-last, reverse-continue, port-events
-    - [ ] Group 4b: coverage probe / scan / summary
+    - [x] Group 4b (2026-10-04): coverage probe / scan / summary
     - [ ] Group 5: dump, load, file-info, export-clip
   - [ ] 1c GDB, DeZog, Qt, ZX-Poly group control and the Sprinter port search on `TTDControl`
 - [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events

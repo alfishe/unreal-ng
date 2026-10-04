@@ -226,6 +226,14 @@ inline std::string TtdOptionTextPy(const pybind11::handle& o)
     return py::str(o).cast<std::string>();
 }
 
+/// A coverage query's answer; a bad argument raises ValueError
+inline pybind11::object TtdCoveragePy(const ttd::TTDReply& reply)
+{
+    if (reply.error == ttd::TTDControlError::BadRequest)
+        throw pybind11::value_error(reply.message);
+    return StateNodeToPy(reply.body);
+}
+
 /// A seek's answer as a dict: the reply's fields; a refused seek has reached = False and
 /// error = the message (seeks never raised: scripts read reached)
 inline pybind11::object TtdSeekPy(const ttd::TTDReply& reply)
@@ -3867,123 +3875,45 @@ namespace PythonBindings
                py::arg("pcs"))
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
-                                          uint16_t addrFrom, uint16_t addrTo, py::object pageObj) -> py::dict {
-                py::dict d;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    d["index_available"] = false;
-                    d["touched"] = false;
-                    return d;
-                }
-                ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-                ttd::TTDCoverageKindFromString(kindStr, kind);
-                std::optional<ttd::PhysPage> physPage;
+                                          uint16_t addrFrom, uint16_t addrTo, py::object pageObj) -> py::object {
+                std::map<std::string, std::string> options{{"frame", std::to_string(frame)}, {"kind", kindStr},
+                                                           {"addr_from", std::to_string(addrFrom)},
+                                                           {"addr_to", std::to_string(addrTo)}};
                 if (!pageObj.is_none())
-                {
-                    const int page = pageObj.cast<int>();
-                    if (page < 0 || page > ttd::kPhysPageMax)
-                        throw py::value_error("phys_page expects 0..255");
-                    physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                auto res = ctx->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
-                d["frame"] = res.frame;
-                d["kind"] = ttd::TTDCoverageKindToString(res.kind);
-                d["touched"] = res.touched;
-                d["index_available"] = res.indexAvailable;
-                return d;
-            }, "Probe coverage for a frame and address range",
-               py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none())
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                return TtdCoveragePy(TtdRunPy(self, "coverage-probe", options));
+            }, "Was the address range touched in this frame (coverage index)",
+                py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none())
 
             .def("ttd_coverage_scan", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                          const std::string& kindStr, uint16_t addrFrom, uint16_t addrTo,
-                                         py::object pageObj, size_t limit) -> py::dict {
-                py::dict d;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    d["index_available"] = false;
-                    d["scanned_frames"] = 0;
-                    d["matching_frames"] = 0;
-                    d["frames"] = py::list();
-                    return d;
-                }
-                auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
-                ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-                ttd::TTDCoverageKindFromString(kindStr, kind);
-                std::optional<ttd::PhysPage> physPage;
+                                         py::object pageObj, size_t limit) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from_frame", std::to_string(fromFrame)}, {"kind", kindStr},
+                    {"addr_from", std::to_string(addrFrom)},   {"addr_to", std::to_string(addrTo)},
+                    {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
                 if (!pageObj.is_none())
-                {
-                    const int page = pageObj.cast<int>();
-                    if (page < 0 || page > ttd::kPhysPageMax)
-                        throw py::value_error("phys_page expects 0..255");
-                    physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
-                d["kind"] = ttd::TTDCoverageKindToString(res.kind);
-                d["scanned_frames"] = res.scannedFrames;
-                d["matching_frames"] = res.matchingFrames;
-                d["first_match"] = res.firstMatch;
-                d["last_match"] = res.lastMatch;
-                d["covered_from"] = res.coveredFrom;
-                d["covered_to"] = res.coveredTo;
-                d["truncated"] = res.truncated;
-                d["index_available"] = res.indexAvailable;
-                py::list frameList;
-                for (uint64_t f : res.frames) frameList.append(f);
-                d["frames"] = frameList;
-                return d;
-            }, "Scan frames in [fromFrame, toFrame] touching range",
-               py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
-               py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200)
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                return TtdCoveragePy(TtdRunPy(self, "coverage-scan", options));
+            }, "Frames in from_frame..to_frame that touched the address range (coverage index)",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
+                py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200)
 
             .def("ttd_coverage_summary", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
-                                            py::object kindObj, uint64_t bucketSize, size_t limit) -> py::dict {
-                py::dict d;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    d["index_available"] = false;
-                    d["buckets"] = py::list();
-                    return d;
-                }
-                auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
-                std::optional<ttd::TTDCoverageKind> optKind;
+                                            py::object kindObj, uint64_t bucketSize, size_t limit) -> py::object {
+                std::map<std::string, std::string> options{{"from_frame", std::to_string(fromFrame)},
+                                                           {"bucket_size", std::to_string(bucketSize)},
+                                                           {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
                 if (!kindObj.is_none())
-                {
-                    ttd::TTDCoverageKind k;
-                    if (ttd::TTDCoverageKindFromString(kindObj.cast<std::string>(), k)) optKind = k;
-                }
-
-                auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, optKind, bucketSize, limit);
-                d["from_frame"] = res.fromFrame;
-                d["to_frame"] = res.toFrame;
-                d["covered_from"] = res.coveredFrom;
-                d["covered_to"] = res.coveredTo;
-                d["bucket_size"] = res.bucketSize;
-                d["bucket_count"] = res.bucketCount;
-                d["index_available"] = res.indexAvailable;
-                py::list bucketList;
-                for (const auto& b : res.buckets)
-                {
-                    py::dict bObj;
-                    bObj["frame_start"] = b.frameStart;
-                    bObj["frame_end"] = b.frameEnd;
-                    bObj["executed_distinct"] = b.executedDistinct;
-                    bObj["written_distinct"] = b.writtenDistinct;
-                    bObj["read_distinct"] = b.readDistinct;
-                    bObj["has_keyframe"] = b.hasKeyframe;
-                    bucketList.append(bObj);
-                }
-                d["buckets"] = bucketList;
-                return d;
-            }, "Activity heatmap over [fromFrame, toFrame]",
-               py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = py::none(),
-               py::arg("bucket_size") = 0, py::arg("limit") = 100);
+                    options["kind"] = TtdOptionTextPy(kindObj);
+                return TtdCoveragePy(TtdRunPy(self, "coverage-summary", options));
+            }, "Activity heatmap over from_frame..to_frame (coverage index)",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = py::none(),
+                py::arg("bucket_size") = 0, py::arg("limit") = 100);
 
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:

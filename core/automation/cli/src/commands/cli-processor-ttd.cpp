@@ -22,6 +22,7 @@
 
 #include "cli-processor.h"
 
+#include <algorithm>
 #include <cctype>
 
 #include <debugger/ttd/timetravelmanager.h>
@@ -1244,169 +1245,88 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
 
 void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context ? context->pTimeTravelManager : nullptr;
-    if (!mgr)
-    {
-        session.SendResponse(std::string("Error: TTD manager not available") + NEWLINE);
-        return;
-    }
-
     if (args.size() < 2)
     {
         session.SendResponse(std::string("Usage: ttd coverage [probe|scan|summary] [options]") + NEWLINE);
         return;
     }
+    const std::string sub = args[1];
+    if (sub != "probe" && sub != "scan" && sub != "summary")
+    {
+        session.SendResponse("Unknown coverage subcommand '" + sub + "'. Expected: probe, scan, summary" + NEWLINE);
+        return;
+    }
 
-    std::string sub = args[1];
-    uint64_t frame = 0;
-    uint64_t fromFrame = 0;
-    uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
-    ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-    bool hasKindParam = false;
-    bool kindParamValid = true;
-    bool hasFrameParam = false;
-    uint16_t addrFrom = 0;
-    uint16_t addrTo = 0xFFFF;
-    std::optional<ttd::PhysPage> physPage;
-    size_t limit = (sub == "summary") ? 100 : 200;
-    uint64_t bucketSize = 0;
-
+    // Flags to the verb's options; the verb checks every value
+    static const std::map<std::string, std::string> flags = {
+        {"--frame", "frame"},         {"-f", "frame"},           {"--from-frame", "from_frame"},
+        {"--to-frame", "to_frame"},   {"--kind", "kind"},        {"-k", "kind"},
+        {"--from", "addr_from"},      {"--addr-from", "addr_from"}, {"-a", "addr_from"},
+        {"--to", "addr_to"},          {"--addr-to", "addr_to"},  {"-b", "addr_to"},
+        {"--page", "phys_page"},      {"--phys-page", "phys_page"}, {"-p", "phys_page"},
+        {"--limit", "limit"},         {"-l", "limit"},           {"--bucket", "bucket_size"},
+        {"--bucket-size", "bucket_size"}};
+    std::map<std::string, std::string> options;
     for (size_t i = 2; i < args.size(); ++i)
     {
-        std::string a = args[i];
-        if ((a == "--frame" || a == "-f") && i + 1 < args.size())
-        {
-            frame = std::stoull(args[++i], nullptr, 0);
-            hasFrameParam = true;
-        }
-        else if (a == "--from-frame" && i + 1 < args.size())
-        {
-            fromFrame = std::stoull(args[++i], nullptr, 0);
-        }
-        else if (a == "--to-frame" && i + 1 < args.size())
-        {
-            toFrame = std::stoull(args[++i], nullptr, 0);
-        }
-        else if ((a == "--kind" || a == "-k") && i + 1 < args.size())
-        {
-            hasKindParam = ttd::TTDCoverageKindFromString(args[++i], kind);
-            if (!hasKindParam)
-            {
-                kindParamValid = false;
-            }
-        }
-        else if ((a == "--from" || a == "--addr-from" || a == "-a") && i + 1 < args.size())
-        {
-            addrFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-        }
-        else if ((a == "--to" || a == "--addr-to" || a == "-b") && i + 1 < args.size())
-        {
-            addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-        }
-        else if ((a == "--page" || a == "--phys-page" || a == "-p") && i + 1 < args.size())
-        {
-            unsigned long p = std::stoul(args[++i], nullptr, 0);
-            if (p > ttd::kPhysPageMax)
-            {
-                session.SendResponse(std::string("Error: --phys-page expects 0..255") + NEWLINE);
-                return;
-            }
-            physPage = static_cast<ttd::PhysPage>(p);
-        }
-        else if ((a == "--limit" || a == "-l") && i + 1 < args.size())
-        {
-            limit = static_cast<size_t>(std::stoul(args[++i], nullptr, 0));
-        }
-        else if ((a == "--bucket" || a == "--bucket-size") && i + 1 < args.size())
-        {
-            bucketSize = std::stoull(args[++i], nullptr, 0);
-        }
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
     }
+    const std::string verb = "coverage-" + sub;
+    // Options another subcommand takes are ignored, as before
+    const auto& allowed = ttd::TTDControl::OptionsFor(verb);
+    for (auto it = options.begin(); it != options.end();)
+        it = std::find(allowed.begin(), allowed.end(), it->first) == allowed.end() ? options.erase(it) : std::next(it);
 
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({verb, options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    const StateNode& b = reply.body;
     std::ostringstream ss;
-    if (!kindParamValid)
+    if (!b.find("index_available")->b)
     {
-        ss << "Error: invalid --kind value (expected executed, written or read)" << NEWLINE;
-    }
-    else if (sub == "probe" && !hasFrameParam)
-    {
-        ss << "Error: ttd coverage probe requires --frame <number>" << NEWLINE;
-    }
-    else if (addrFrom > addrTo)
-    {
-        ss << "Error: --from (0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << addrFrom
-           << ") must not exceed --to (0x" << std::setw(4) << addrTo << std::dec << ")" << NEWLINE;
+        if (sub == "probe")
+            ss << "Coverage index not available for frame " << b.find("frame")->i << NEWLINE;
+        else
+            ss << "Coverage index not available for this session" << NEWLINE;
     }
     else if (sub == "probe")
     {
-        auto res = mgr->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
-        if (!res.indexAvailable)
-        {
-            ss << "Coverage index not available for frame " << frame << NEWLINE;
-        }
-        else
-        {
-            ss << "Frame " << frame << " kind=" << ttd::TTDCoverageKindToString(kind)
-               << " range=[0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << addrFrom
-               << "..0x" << std::setw(4) << addrTo << std::dec << "]: "
-               << (res.touched ? "TOUCHED" : "NOT touched") << NEWLINE;
-        }
+        ss << "Frame " << b.find("frame")->i << " kind=" << b.find("kind")->s << " range=[" << b.find("addr_from")->s
+           << ".." << b.find("addr_to")->s << "]: " << (b.find("touched")->b ? "TOUCHED" : "NOT touched") << NEWLINE;
     }
     else if (sub == "scan")
     {
-        auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
-        if (!res.indexAvailable)
+        ss << "Scanned " << b.find("scanned_frames")->i << " frames, matched " << b.find("matching_frames")->i
+           << " frames (first=" << b.find("first_match")->i << ", last=" << b.find("last_match")->i << ")"
+           << " [index covers " << b.find("covered_from")->i << ".." << b.find("covered_to")->i << "]";
+        if (b.find("truncated")->b)
+            ss << " [TRUNCATED]";
+        ss << NEWLINE;
+        const auto& frames = b.find("frames")->items;
+        if (!frames.empty())
         {
-            ss << "Coverage index not available for this session" << NEWLINE;
-        }
-        else
-        {
-            ss << "Scanned " << res.scannedFrames << " frames, matched " << res.matchingFrames << " frames"
-               << " (first=" << res.firstMatch << ", last=" << res.lastMatch << ")"
-               << " [index covers " << res.coveredFrom << ".." << res.coveredTo << "]";
-            if (res.truncated) ss << " [TRUNCATED]";
+            ss << "Matching frames: ";
+            for (size_t n = 0; n < frames.size(); ++n)
+                ss << (n ? ", " : "") << frames[n].i;
             ss << NEWLINE;
-            if (!res.frames.empty())
-            {
-                ss << "Matching frames: ";
-                for (size_t k = 0; k < res.frames.size(); ++k)
-                {
-                    if (k > 0) ss << ", ";
-                    ss << res.frames[k];
-                }
-                ss << NEWLINE;
-            }
-        }
-    }
-    else if (sub == "summary")
-    {
-        std::optional<ttd::TTDCoverageKind> optKind;
-        if (hasKindParam) optKind = kind;
-        auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, optKind, bucketSize, limit);
-        if (!res.indexAvailable)
-        {
-            ss << "Coverage index not available for this session" << NEWLINE;
-        }
-        else
-        {
-            ss << "Coverage summary (" << res.fromFrame << ".." << res.toFrame
-               << ", index covers " << res.coveredFrom << ".." << res.coveredTo
-               << ", bucket_size=" << res.bucketSize << ", buckets=" << res.bucketCount << "):" << NEWLINE;
-            for (const auto& b : res.buckets)
-            {
-                ss << "  [" << b.frameStart << ".." << b.frameEnd << "]"
-                   << " exec=" << b.executedDistinct
-                   << " write=" << b.writtenDistinct
-                   << " read=" << b.readDistinct
-                   << (b.hasKeyframe ? " [I-frame]" : "") << NEWLINE;
-            }
         }
     }
     else
     {
-        ss << "Unknown coverage subcommand '" << sub << "'. Expected: probe, scan, summary" << NEWLINE;
+        ss << "Coverage summary (" << b.find("from_frame")->i << ".." << b.find("to_frame")->i << ", index covers "
+           << b.find("covered_from")->i << ".." << b.find("covered_to")->i << ", bucket_size=" << b.find("bucket_size")->i
+           << ", buckets=" << b.find("bucket_count")->i << "):" << NEWLINE;
+        for (const StateNode& bucket : b.find("buckets")->items)
+            ss << "  [" << bucket.find("frame_start")->i << ".." << bucket.find("frame_end")->i << "]"
+               << " exec=" << bucket.find("executed_distinct")->i << " write=" << bucket.find("written_distinct")->i
+               << " read=" << bucket.find("read_distinct")->i << (bucket.find("has_keyframe")->b ? " [I-frame]" : "")
+               << NEWLINE;
     }
-
     session.SendResponse(ss.str());
 }
 

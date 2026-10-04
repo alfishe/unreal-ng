@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
+#include <optional>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/machinestatehash.h"
@@ -205,7 +207,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
-        "port-events", "find-last", "reverse-continue"};
+        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-summary"};
     return verbs;
 }
 
@@ -227,6 +229,9 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page",
                        "before_frame", "before_tin", "before"}},
         {"reverse-continue", {"pcs"}},
+        {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page"}},
+        {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "limit"}},
+        {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -263,9 +268,16 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
         }
     }
 
-    // Status answers without time travel too: it is the capability probe
+    // Status answers without time travel too: it is the capability probe. So do the
+    // coverage queries: "no index" (index_available false) is their answer then
     if (verb == "status")
         return Status();
+    if (verb == "coverage-probe")
+        return CoverageProbe(request);
+    if (verb == "coverage-scan")
+        return CoverageScan(request);
+    if (verb == "coverage-summary")
+        return CoverageSummary(request);
     if (!_manager)
         return Fail(TTDControlError::NotAvailable, "TTD engine not available in this build");
     return Run(verb, request);
@@ -1061,6 +1073,187 @@ TTDReply TTDControl::ReverseContinue(const TTDRequest& request)
         reply.body["blocked_by_marker"] = m;
     }
     AddSearchWindow(reply.body, r.window);
+    return reply;
+}
+
+namespace
+{
+std::string Hex4(uint16_t v)
+{
+    char buf[8];
+    snprintf(buf, sizeof(buf), "0x%04X", v);
+    return buf;
+}
+
+/// The coverage queries' shared options: kind, an address range, a physical page.
+/// Empty string: all good; otherwise the 400 message
+std::string CoverageRange(const TTDRequest& request, TTDCoverageKind& kind, uint16_t& addrFrom, uint16_t& addrTo,
+                          std::optional<PhysPage>& page)
+{
+    uint64_t n = 0;
+    if (const std::string* k = Option(request, "kind"); k && !TTDCoverageKindFromString(*k, kind))
+        return "Invalid kind: '" + *k + "' (expected executed, written or read)";
+    if (const std::string* t = Option(request, "addr_from"))
+    {
+        if (!ParseUpTo(*t, 0xFFFF, n))
+            return "Invalid addr_from: '" + *t + "' (expected 16-bit address)";
+        addrFrom = static_cast<uint16_t>(n);
+    }
+    if (const std::string* t = Option(request, "addr_to"))
+    {
+        if (!ParseUpTo(*t, 0xFFFF, n))
+            return "Invalid addr_to: '" + *t + "' (expected 16-bit address)";
+        addrTo = static_cast<uint16_t>(n);
+    }
+    if (addrFrom > addrTo)
+        return "addr_from (" + Hex4(addrFrom) + ") must not exceed addr_to (" + Hex4(addrTo) + ")";
+    if (const std::string* t = Option(request, "phys_page"))
+    {
+        if (!ParseUpTo(*t, kPhysPageMax, n))
+            return "Invalid phys_page: '" + *t + "' (expected 0..255)";
+        page = static_cast<PhysPage>(n);
+    }
+    return "";
+}
+
+/// from_frame / to_frame / limit of scan and summary; to_frame defaults to the session's end
+std::string CoverageWindow(const TTDRequest& request, uint64_t& fromFrame, uint64_t& toFrame, size_t& limit)
+{
+    uint64_t n = 0;
+    if (const std::string* t = Option(request, "from_frame"); t && !ParseU64(*t, fromFrame))
+        return "Invalid from_frame: '" + *t + "' (expected unsigned integer)";
+    if (const std::string* t = Option(request, "to_frame"); t && !ParseU64(*t, toFrame))
+        return "Invalid to_frame: '" + *t + "' (expected unsigned integer)";
+    if (const std::string* t = Option(request, "limit"))
+    {
+        if (!ParseU64(*t, n) || n == 0)
+            return "Invalid limit: '" + *t + "' (expected integer >= 1)";
+        limit = static_cast<size_t>(n);
+    }
+    return "";
+}
+}  // namespace
+
+TTDReply TTDControl::CoverageProbe(const TTDRequest& request)
+{
+    const std::string* frameText = Option(request, "frame");
+    uint64_t frame = 0;
+    if (!frameText)
+        return Fail(TTDControlError::BadRequest, "Missing required parameter: frame");
+    if (!ParseU64(*frameText, frame))
+        return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *frameText + "' (expected unsigned integer)");
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<PhysPage> page;
+    if (const std::string err = CoverageRange(request, kind, addrFrom, addrTo, page); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+
+    TTDReply reply;
+    reply.body["frame"] = frame;
+    reply.body["kind"] = TTDCoverageKindToString(kind);
+    reply.body["addr_from"] = Hex4(addrFrom);
+    reply.body["addr_to"] = Hex4(addrTo);
+    if (page)
+        reply.body["phys_page"] = static_cast<unsigned>(*page);
+    const TTDCoverageProbeResult res = _manager ? _manager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, page)
+                                                : TTDCoverageProbeResult{};
+    reply.body["touched"] = res.touched;
+    reply.body["index_available"] = res.indexAvailable;
+    return reply;
+}
+
+TTDReply TTDControl::CoverageScan(const TTDRequest& request)
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<PhysPage> page;
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
+    size_t limit = 200;
+    std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
+    if (err.empty())
+        err = CoverageRange(request, kind, addrFrom, addrTo, page);
+    if (!err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+
+    TTDReply reply;
+    reply.body["kind"] = TTDCoverageKindToString(kind);
+    reply.body["addr_from"] = Hex4(addrFrom);
+    reply.body["addr_to"] = Hex4(addrTo);
+    if (page)
+        reply.body["phys_page"] = static_cast<unsigned>(*page);
+    const TTDCoverageScanResult res =
+        _manager ? _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit)
+                 : TTDCoverageScanResult{};
+    reply.body["scanned_frames"] = res.scannedFrames;
+    reply.body["matching_frames"] = res.matchingFrames;
+    reply.body["first_match"] = res.firstMatch;
+    reply.body["last_match"] = res.lastMatch;
+    reply.body["truncated"] = res.truncated;
+    reply.body["index_available"] = res.indexAvailable;
+    // The covered window shows a request range that was clamped to the index
+    if (res.indexAvailable)
+    {
+        reply.body["covered_from"] = res.coveredFrom;
+        reply.body["covered_to"] = res.coveredTo;
+    }
+    StateNode frames = StateNode::Array();
+    for (uint64_t f : res.frames)
+        frames.push(f);
+    reply.body["frames"] = frames;
+    return reply;
+}
+
+TTDReply TTDControl::CoverageSummary(const TTDRequest& request)
+{
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
+    size_t limit = 100;
+    if (const std::string err = CoverageWindow(request, fromFrame, toFrame, limit); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    std::optional<TTDCoverageKind> kind;
+    if (const std::string* k = Option(request, "kind"))
+    {
+        TTDCoverageKind parsed;
+        if (!TTDCoverageKindFromString(*k, parsed))
+            return Fail(TTDControlError::BadRequest, "Invalid kind: '" + *k + "' (expected executed, written or read)");
+        kind = parsed;
+    }
+    uint64_t bucketSize = 0;
+    if (const std::string* t = Option(request, "bucket_size"); t && !ParseU64(*t, bucketSize))
+        return Fail(TTDControlError::BadRequest, "Invalid bucket_size: '" + *t + "' (expected unsigned integer)");
+
+    TTDReply reply;
+    reply.body["from_frame"] = fromFrame;
+    reply.body["to_frame"] = toFrame;
+    TTDCoverageSummaryResult res;
+    if (_manager)
+        res = _manager->QueryCoverageSummary(fromFrame, toFrame, kind, bucketSize, limit);
+    else
+        res.bucketSize = 0;
+    reply.body["bucket_size"] = res.bucketSize;
+    reply.body["bucket_count"] = static_cast<uint64_t>(res.bucketCount);
+    reply.body["index_available"] = res.indexAvailable;
+    if (res.indexAvailable)
+    {
+        reply.body["covered_from"] = res.coveredFrom;
+        reply.body["covered_to"] = res.coveredTo;
+    }
+    StateNode buckets = StateNode::Array();
+    for (const TTDCoverageSummaryBucket& b : res.buckets)
+    {
+        StateNode node = StateNode::Object();
+        node["frame_start"] = b.frameStart;
+        node["frame_end"] = b.frameEnd;
+        node["executed_distinct"] = static_cast<unsigned>(b.executedDistinct);
+        node["written_distinct"] = static_cast<unsigned>(b.writtenDistinct);
+        node["read_distinct"] = static_cast<unsigned>(b.readDistinct);
+        node["has_keyframe"] = b.hasKeyframe;
+        buckets.push(node);
+    }
+    reply.body["buckets"] = buckets;
     return reply;
 }
 
