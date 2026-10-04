@@ -277,7 +277,8 @@ def record_session(api: EmulatorApi, emu_id: str, out_path: str,
             run_frames(api, base, settle_frames)
 
     print("  starting TTD recording")
-    api.post(f"{base}/ttd/start")
+    # The write journal is recorded on demand since D40; the corpus exercises it, so ask for it
+    api.post(f"{base}/ttd/start", {"journal": True})
     run_frames(api, base, frames)
 
     status = api.get(f"{base}/ttd/status") or {}

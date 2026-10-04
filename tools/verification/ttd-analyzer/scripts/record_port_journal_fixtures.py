@@ -103,7 +103,7 @@ def record_dizzy(api: EmulatorApi) -> Dict[str, Any]:
         fit_classic_gs(api, base)
         api.post(f"{base}/snapshot/load", {"path": str(PROJECT_ROOT / "testdata/loaders/z80/dizzyx.z80")})
         run_frames(api, base, 50)
-        api.post(f"{base}/ttd/start")
+        api.post(f"{base}/ttd/start", {"journal": True})  # the write journal is on demand since D40
         run_frames(api, base, 25)
         for key, held, after in DIZZY_KEYS:
             api.post(f"{base}/keyboard/press", {"key": key})
@@ -124,7 +124,7 @@ def record_tape(api: EmulatorApi) -> Dict[str, Any]:
         fit_classic_gs(api, base)
         api.post(f"{base}/tape/load", {"path": str(PROJECT_ROOT / "testdata/loaders/tap/greenberet.tap")})
         run_frames(api, base, 150)  # the 128K menu is up
-        api.post(f"{base}/ttd/start")
+        api.post(f"{base}/ttd/start", {"journal": True})  # the write journal is on demand since D40
         api.post(f"{base}/keyboard/press", {"key": "enter"})  # Tape Loader
         run_frames(api, base, 10)
         api.post(f"{base}/keyboard/release", {"key": "enter"})
