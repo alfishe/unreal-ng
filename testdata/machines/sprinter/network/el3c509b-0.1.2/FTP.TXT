@@ -1,0 +1,112 @@
+FTP.EXE
+
+FTP.EXE is a PASV-only FTP client over the polling-only 3C509B backend. The
+control and data sessions are two independent TCP channels, opened and read
+concurrently -- no PORT/active mode, no proxying through a single channel.
+Run NETCFG -i and IFUP first.
+
+Usage
+
+FTP host[:port] path [-u user] [-p pass] [-o out] [-y|-f] [-r] [-d]
+FTP host[:port] PUT local [-u user] [-p pass] [-o remote]
+FTP host[:port] [path] -l|-n [-u user] [-p pass]
+FTP /?
+
+| Option | Meaning                                                      |
+|--------|--------------------------------------------------------------|
+| -u   | Login user name.                                             |
+| -p   | Login password.                                              |
+| -o   | Local name when downloading, wire name when uploading.       |
+| -y   | Overwrite an existing local file without prompting.          |
+| -f   | Same as -y.                                                |
+| -r   | Resume a download through REST.                            |
+| -d   | Dot progress instead of the KB counter.                      |
+| -l   | List a remote directory.                                     |
+| -n   | List names through NLST; retry LIST after an NLST 5xx.  |
+
+The port defaults to 21. -u/-p log in as that user/password; without
+either, the client logs in as anonymous/anonymous@ (the conventional
+anonymous-FTP password). Giving -u without -p sends an empty password
+instead of anonymous@, since that default would be wrong for a real account.
+
+Without PUT, path is the remote file to download; the local name is its
+basename unless -o overrides it. With PUT local, local is read from disk
+and the wire-side name is its basename unless -o overrides it. In listing
+mode, path is optional and names a remote directory; omitted, the server's
+own current directory is listed.
+
+Behaviour
+
+If the local output exists, FTP asks whether to overwrite, resume, or cancel,
+the same Overwrite/Resume/Cancel contract as WGET. -y/-f overwrites
+without asking; -r silently resumes: the local size becomes both a REST
+offset sent to the server and the starting point of the on-screen byte count.
+A server that refuses REST fails without downloading anything. PUT never
+resumes.
+
+Esc or Ctrl+C keeps whatever GET has already written, so a later -r run
+continues it; PUT and listings have nothing to preserve on cancel.
+
+A missing or timed-out 226 Transfer complete after the data channel closes
+is not fatal -- the transfer already succeeded once the server accepted
+RETR/STOR/LIST/NLST and the data channel closed cleanly.
+
+-l sends LIST and prints the server's normal directory detail. -n sends
+NLST for a terse name-only list. If the server rejects NLST with a 5xx,
+FTP prints a warning and sends LIST on the already-open PASV data channel;
+no second PASV negotiation or data connection is made. A 4xx response and a
+failed fallback remain ordinary FTP errors.
+
+Progress display
+
+Progress repaints every sixteenth disk-buffer flush (GET) or upload chunk
+(PUT) -- roughly every 20-32 KiB -- and once more when the transfer ends, so
+the last figure shown is always exact. Repainting on every flush cost
+measurable transfer time: the counter is a carriage return, a dozen console
+characters and two 32-bit decimal conversions, all on the transfer's critical
+path.
+
+GET receives each segment straight from the card into its disk buffer and
+writes whole 512-byte sectors as soon as the next segment would not fit, so a
+flush happens about once per segment and every write is sector-aligned.
+-l/-n stream the listing straight to the console instead. -d prints one
+dot per flush instead of the KB counter.
+
+Examples
+
+FTP files.lan pub/boot.bin
+FTP files.lan pub/big.zip -o C:\NET\BIG.ZIP -y
+FTP files.lan pub/big.zip -r
+FTP files.lan PUT LOCAL.BIN -o incoming/local.bin -u alice -p secret
+FTP files.lan -l -u alice -p secret
+FTP files.lan pub -l
+FTP files.lan pub -n
+
+Exit codes
+
+| Code | Meaning                                                    |
+|------|------------------------------------------------------------|
+| 0    | OK                                                         |
+| 1    | Usage error                                                |
+| 2    | 3C509B not detected                                        |
+| 3    | Connect/receive timeout, or DNS failure                    |
+| 4    | NET_* environment missing or invalid; run NETCFG -i    |
+| 5    | Local file error                                           |
+| 6    | FTP/server error, including a non-2xx reply such as 550    |
+| 7    | Cancelled with Esc or Ctrl+C                               |
+
+Every run ends with RESULT OK or RESULT FAIL code=N.
+
+Known limitations
+
+- Shorter messages than the sibling. The dialog and exit codes match the
+  RTL8019A kit's client, but the wording is trimmed (Host X -> Y,
+  Opening data..., Done. N bytes recv.) -- the full-length strings did not
+  fit under the image-size ceiling.
+- PUT keeps two segments in flight, not more. A pair is what obliges the
+  receiver to acknowledge at once instead of holding its delayed-ACK timer,
+  which is what made uploads slow when only one segment was ever outstanding.
+  A deeper window would have to hold several unacknowledged payloads and
+  handle partial acknowledgements, and the image-size ceiling has no room for
+  that. A tail shorter than two whole segments, and a peer window that cannot
+  hold two, still go one segment at a time.

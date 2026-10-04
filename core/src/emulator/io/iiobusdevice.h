@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "emulator/state/statenode.h"
 
@@ -50,6 +51,16 @@ public:
         return false;
     }
     virtual int IrqLine() const { return -1; }
+    /// Further I/O addresses the device decodes beside IoRange, for the slot report (the 3C509B's ID port: any of
+    /// #100-#1F0 in steps of #10)
+    struct AuxIoRange
+    {
+        std::string name;             ///< "id_port"
+        uint32_t first = 0, last = 0;
+        uint32_t step = 1;            ///< the decoded addresses are first, first + step, ... last
+        std::string note;             ///< what the device does there, now
+    };
+    virtual std::vector<AuxIoRange> AuxIoRanges() const { return {}; }
     /// The register name at an offset, for access journals ("CR", "ISR", "data port"); empty = unnamed
     virtual const char* RegisterName(uint16_t offset, bool write) const
     {

@@ -14,7 +14,8 @@ on), SN0, SN1, SN2 - the RTL8019AS kit runs end to end (`IFUP`, `PING`, `NSLOOKU
 [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md). SN3 (branch `sprinter-esp-sn3`):
 the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET`, `UNETESP.DLL`). SN4 (branch
 `sprinter-sn4-modem`): the Hayes modem peer, the ISA modem card and SprinterSerial - BC-Term dials and talks over
-interrupts.
+interrupts. SN5 (branch
+`sprinter-sn5-3c509b`): the 3Com 3C509B - the 3C509B kit runs end to end (`IFUP`, `PING`, `NSLOOKUP`, `WGET`).
 
 ## Documents
 
@@ -60,7 +61,13 @@ interrupts.
 - [ ] SN4 follow-ups: owner questions Q12 (SprinterSerial COM1's floating modem inputs) and Q13 (both IRQ jumpers
   fitted); BC-Term's file transfers (X / Y / Zmodem) over the modem not run yet; a modem on the ZX-Evo COM port is
   unit-tested (the peer), not run with a ZX program
-- [ ] SN5 3Com 3C509B (M)
+- [x] SN5 (2026-10-03, branch `sprinter-sn5-3c509b`, as built in [tdd.md](tdd.md) §18): `EtherLink3` (ID port
+  isolation, EEPROM from the real boards, windows 0-6, FIFOs, status / IRQ, 10BASE-T link test, loopback, statistics,
+  power) as an `IEthernetCard`, `[ISA] SlotN=EL3C509B` (`SlotNChip=TPO | TP`, base in steps of `#10`), blob 45 v2;
+  the Sprinter 3C509B kit 0.1.2 end to end (`EL3INFO`, `NETCFG`, `IFUP` DHCP, `PING`, `NSLOOKUP`, `WGET` byte-exact,
+  TTD replay without the host); recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
+- [ ] SN5 follow-ups: `UNET509B.DLL` through `UNETTEST` (assemble from the kit's tag with sjasmplus); run `FTP`, `NTP`,
+  `TFTP`, `TELNET`; ISA Plug and Play isolation (not used by the kit; the boards ship "contention only")
 - [ ] SN6 optional bridge to the host LAN (M), only on request (Q2)
 - [ ] When the hardware facts are final: move them to `docs/hardware/` with the Sprinter S7 docs move
   (the "Sprinter RTL8019" line of the NedoOS network catalog is already corrected in this branch)

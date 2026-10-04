@@ -1167,14 +1167,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
         "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
-        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers) and the "
+        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers, the 3C509B with its ID port, window, FIFOs, EEPROM and link) and the "
         "Ethernet gateway (ethernet_gateway: leases, ARP, TCP / UDP, counters); its frame capture and frame injection go "
         "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
         "/api/v1/emulator/{id}/network/frame {link, hex}, "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
-        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; per slot 'irq_line': the IRQ line's level, "
+        "fitted card - an NE2000's chip, base, MAC, registers; a 3C509B's also resources.id_port (#100-#1F0, its isolation "
+        "state) - and cycle counters; per slot 'irq_line': the IRQ line's level, "
         "who drives it, its route to the Z84C15 PIO port B (PB0 / PB1), the PIO's bit-mode setup, pending / under service, "
         "whether it reaches the CPU, and edge / request / acknowledge counters ('irq_summary' in one line); "
         "unavailable on other machines - run an "
@@ -2031,6 +2032,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                                           slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
                                                           " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
                                                     : std::string())
+                                            << (slot.isMember("id_port") ? "; " + slot["summary"].asString() : std::string())
                                             << (slot["card"].asString() == "modem" ? uartLine(slot, "line") : std::string())
                                             << (slot["card"].asString() == "dual16552"
                                                     ? uartLine(slot, "COM1") + uartLine(slot["channel_b"], "COM2")
@@ -2077,6 +2079,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << ", IRQ " << slot["resources"]["irq"].asString() << " (" << slot["resources"]["irq_route"].asString() << ")";
                                         if (slot["z80_access"].isMember("io"))
                                             out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
+                                        if (slot["resources"].isMember("id_port"))
+                                            out << "\n[isa]   ID port " << slot["resources"]["id_port"]["io"].asString() << " ("
+                                                << slot["resources"]["id_port"]["z80"].asString() << "): "
+                                                << slot["resources"]["id_port"]["note"].asString();
                                     }
                                     if (value.isMember("irq_summary"))
                                         out << "\n[isa] irq: " << value["irq_summary"].asString();

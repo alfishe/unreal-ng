@@ -271,7 +271,10 @@ class Emulator:
         (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
         2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters with the IRQ
         counters, irq_line: the slot's IRQ line - level, driver, route to PIO port B bit 0 / 1, the
-        PIO's bit-mode setup, pending / under service, reaches_cpu), pio_port_b, irq_summary.
+        PIO's bit-mode setup, pending / under service, reaches_cpu), pio_port_b, irq_summary. A 3C509B
+        (card 'el3c509b') adds resources['id_port'] (its ID port range, how the Z80 reaches it, the
+        isolation state); network_state()['slots'][n] then shows its ID port, window, FIFOs, EEPROM,
+        statistics, link state, events and a one-line summary.
         available=False on other machines"""
 
     def isa_io_read(self, slot: int, address) -> int:

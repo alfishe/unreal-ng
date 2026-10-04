@@ -32,10 +32,11 @@
 
 #include "emulator/io/iiobusdevice.h"
 #include "emulator/io/network/ethernet/dp8390.h"
+#include "emulator/io/network/ethernet/ethernetcard.h"
 #include "emulator/io/network/ethernet/eeprom93c46.h"
 #include "emulator/io/network/ethernet/ethernetlink.h"
 
-class Ne2000Board final : public IIoBusDevice, public IEthernetPort, private Dp8390::IBoard
+class Ne2000Board final : public IEthernetCard, private Dp8390::IBoard
 {
 public:
     enum class Variant : uint8_t
@@ -64,8 +65,8 @@ public:
 
     /// The wire the card is plugged into (the virtual network's Ethernet gateway); null = no cable: transmitted
     /// frames are lost (counted)
-    void SetLink(IEthernetLink* link) { _link = link; }
-    IEthernetLink* Link() const { return _link; }
+    void SetLink(IEthernetLink* link) override { _link = link; }
+    IEthernetLink* Link() const override { return _link; }
 
     // IIoBusDevice
     const char* Kind() const override { return "ne2000"; }
@@ -121,6 +122,14 @@ public:
     void SaveState(uint8_t* dst) const;
     /// False when the blob is of another version / variant (nothing loaded)
     bool LoadState(const uint8_t* src, size_t size);
+    // IEthernetCard: the same bytes
+    size_t CardStateBound() const override { return StateSize(); }
+    void SaveCardState(std::vector<uint8_t>& out) const override
+    {
+        out.resize(StateSize());
+        SaveState(out.data());
+    }
+    bool LoadCardState(const uint8_t* src, size_t size) override { return LoadState(src, size); }
 
 private:
     // Dp8390::IBoard

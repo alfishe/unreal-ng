@@ -76,3 +76,34 @@ TEST(IsaSlotConfig_Test, Mac_AutoAndExplicit)
     EXPECT_FALSE(ParseMac("00:11:22:33:44", slot));
     EXPECT_FALSE(ParseMac("00:11:22:33:44:55:66", slot));
 }
+
+// Network phase SN5: the 3C509B in a slot - its two verified boards, a base in steps of #10, the kind is built
+TEST(IsaSlotConfig_Test, El3c509b_ChipBaseAndAvailability)
+{
+    El3Chip chip = El3Chip::Tp;
+    ASSERT_TRUE(ParseEl3Chip("tpo", chip));
+    EXPECT_EQ(chip, El3Chip::Tpo);
+    ASSERT_TRUE(ParseEl3Chip("3C509B-TP", chip));
+    EXPECT_EQ(chip, El3Chip::Tp);
+    EXPECT_FALSE(ParseEl3Chip("COMBO", chip)) << "only the boards the kit verified";
+    EXPECT_STREQ(El3ChipName(El3Chip::Tpo), "3C509B-TPO");
+
+    uint16_t base = 0;
+    ASSERT_TRUE(ParseSlotBase("#310", CardKind::El3c509b, base)) << "the 3C509B's base: #200 + 16 x n";
+    EXPECT_EQ(base, 0x310);
+    EXPECT_FALSE(ParseSlotBase("#310", CardKind::Ne2000, base)) << "the NE2000's: steps of #20";
+    EXPECT_FALSE(ParseSlotBase("#3F0", CardKind::El3c509b, base)) << "#3F0 would be the EISA code 1Fh";
+    EXPECT_FALSE(ParseSlotBase("#308", CardKind::El3c509b, base));
+
+    SlotConfig slot{};
+    slot.kind = static_cast<uint8_t>(CardKind::El3c509b);
+    slot.chip = static_cast<uint8_t>(El3Chip::Tp);
+    EXPECT_EQ(SlotChipName(slot), "3C509B-TP");
+    slot.kind = static_cast<uint8_t>(CardKind::Ne2000);
+    slot.chip = static_cast<uint8_t>(Ne2000Chip::Um9003);
+    EXPECT_EQ(SlotChipName(slot), "UM9003");
+
+    std::string why;
+    EXPECT_TRUE(KindAvailable(CardKind::El3c509b, &why)) << why;
+    EXPECT_TRUE(KindAvailable(CardKind::Modem, &why)) << "network phase SN4";
+}

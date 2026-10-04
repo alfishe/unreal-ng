@@ -1701,7 +1701,7 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
         slot.networkCard = kind == sprinterisa::CardKind::Ne2000 || kind == sprinterisa::CardKind::El3c509b ||
                            kind == sprinterisa::CardKind::SprinterEsp || kind == sprinterisa::CardKind::Modem ||
                            kind == sprinterisa::CardKind::Dual16552;
-        slot.chip = sprinterisa::ChipName(static_cast<sprinterisa::Ne2000Chip>(config.chip));
+        slot.chip = sprinterisa::SlotChipName(config);
         slot.base = config.base;
         slot.irq = config.irq;
         uint8_t mac[6];
