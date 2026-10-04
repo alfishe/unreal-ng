@@ -286,3 +286,30 @@ TEST_F(TsConfInterrupts_Test, INT9e_OtherMachinesAreNotNotified)
     } plain;
     EXPECT_FALSE(plain.ObservesWaits()) << "the default: a source that does not ask is never called on a wait";
 }
+
+/// INT-10: a /WAIT that straddles the frame end carries a rest into the new frame (Z80::t after the rebase); a
+/// frame INT whose event fell in that rest starts its pulse where the clock ran again. The first INT of the frame
+/// was lost whenever a 400-clock UART access straddled the frame end (zifi.spg's polling: every few frames)
+TEST_F(TsConfInterrupts_Test, INT10_AWaitAcrossTheFrameEndKeepsTheFirstPulse)
+{
+    SetMultiplier(4);
+    const uint32_t frameClocks = TsConfInterrupts::kFrameTacts * 4;
+    // The last wait of the frame: the CPU is at the end of it, 400 clocks into the new frame
+    _z80->tt = (frameClocks + 400u) << 8;  // the rebase has not happened yet ...
+    _z80->tt -= frameClocks << 8;          // ... and now has: Z80::t = 400
+    Ints().OnMachineFrameRollover(frameClocks);
+    EXPECT_TRUE(Ints().IsIntAsserted(400)) << "the new frame's INT (clock 4) fell inside the rest of the stall";
+    EXPECT_TRUE(Ints().IsIntAsserted(431));
+    EXPECT_FALSE(Ints().IsIntAsserted(432)) << "32 clocks after the stall";
+}
+
+TEST_F(TsConfInterrupts_Test, INT10b_AShortRestChangesNothing)
+{
+    SetMultiplier(4);
+    const uint32_t frameClocks = TsConfInterrupts::kFrameTacts * 4;
+    _z80->tt = 12u << 8;  // an ordinary instruction ran over the frame end by 12 clocks
+    Ints().OnMachineFrameRollover(frameClocks);
+    EXPECT_TRUE(Ints().IsIntAsserted(12));
+    EXPECT_TRUE(Ints().IsIntAsserted(35));
+    EXPECT_FALSE(Ints().IsIntAsserted(36)) << "the pulse is still 32 clocks from clock 4";
+}

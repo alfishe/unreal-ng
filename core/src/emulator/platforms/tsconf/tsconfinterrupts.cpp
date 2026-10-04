@@ -184,4 +184,28 @@ void TsConfInterrupts::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLen
     CatchUp(kFrameTacts - 1);
     _ts.intLastRaster = 0;
     _ts.intFrameRaster -= static_cast<int32_t>(kFrameTacts);
+
+    // The instruction that crossed the frame end may have carried a stretch of the clock (a /WAIT) into the new
+    // frame; Z80::t is the part of it that is left. A frame INT whose event fell inside that part has its pulse
+    // start where the clock ran again (OnWait does this for a stall inside one frame): without it the first INT of
+    // the frame was lost whenever the stall straddled the frame end - the instruction's own clocks never reach 32
+    Core* core = _context->pCore;
+    Z80* z80 = core ? core->GetZ80() : nullptr;
+    if (z80 && (_ts.regs[TsConfReg::IntMask] & TsConfInt::Frame))
+    {
+        const uint32_t residue = z80->t;
+        if (residue > kFramePulseClocks)
+        {
+            // An old pulse that is over is dropped here as IsIntAsserted drops it (lazily)
+            if ((_ts.intPending & TsConfInt::Frame) && !FramePulseActive(residue))
+                _ts.intPending &= static_cast<uint8_t>(~TsConfInt::Frame);
+            const bool pendingBefore = (_ts.intPending & TsConfInt::Frame) != 0;
+            CatchUp(RasterAt(residue));  // the new frame's events up to where the CPU is
+            if (!pendingBefore && (_ts.intPending & TsConfInt::Frame) && !FramePulseActive(residue))
+            {
+                const uint32_t multiplier = Multiplier();
+                _ts.intFrameRaster = static_cast<int32_t>((residue + multiplier - 1) / multiplier);
+            }
+        }
+    }
 }
