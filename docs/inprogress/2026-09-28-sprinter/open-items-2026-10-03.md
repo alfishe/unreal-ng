@@ -52,12 +52,15 @@ deleted. Take one only on the owner's request.
 
 ## 3. Devices, in the owner's order of 2026-10-02
 
-- **Network first:** ISA slots (I1, **done 2026-10-03**, branch `sprinter-isa-network`), then NE2000 Ethernet and
-  the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
-  zero-window probes; PIO IRQ lines I4 **done 2026-10-03** (branch `sprinter-isa-i4`); the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
-  on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, **done 2026-10-03**, branch `sprinter-esp-sn3`: `[ISA] Slot1=SPRINTERESP`, the ESP kit's `NETUP` / `PING` / `WGET` / `UNETESP.DLL` end to end
-  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line reaches PB0 since ISA I4), modem / SprinterSerial (SN4 **built 2026-10-03**, branch `sprinter-sn4-modem`: the shared Hayes modem peer, the ISA modem card, SprinterSerial; BC-Term 1.11 dials a BBS and talks over the ISA interrupt; open: network Q12 / Q13, BC-Term file transfers), 3C509B (SN5, **done 2026-10-03**, branch `sprinter-sn5-3c509b`: `[ISA] Slot2=EL3C509B`, the 3C509B kit's `EL3INFO` / `IFUP` / `PING` / `NSLOOKUP` / `WGET` end to end, blob 45 v2; open: `UNET509B.DLL`, FTP / NTP / TFTP / TELNET not yet run)
-  ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
+- **Network: done 2026-10-03 / 04**, all on master ([ISA](../2026-10-02-sprinter-isa/TODO.md),
+  [network](../2026-10-02-sprinter-network/TODO.md)): ISA I1 (slots) and I4 (IRQ lines to the PIO); NE2000 + the
+  Ethernet gateway (SN0-SN2, the RTL8019AS kit); SprinterESP (SN3, the ESP kit, ESP-AT 2.2.1 / 2.2.2); the Hayes modem,
+  the ISA modem card and SprinterSerial (SN4, BC-Term over the interrupt; Q12 = inactive inputs + the `PLUG` test plug,
+  Q13 = high wins + a warning); 3Com 3C509B (SN5, the 3C509B kit). Each kit runs end to end with a TTD replay without
+  the host. The kits run from a floppy only on BIOS 3.06 Hotfix 2 (the default), see §4.
+  Open: **SN6, the bridge to the host LAN** (owner Q2: wanted; P2 since 2026-10-04, after the ATAPI CD); the kits' other programs (FTP, NTP, TELNET, TFTP, WTERM,
+  Gopher, `UNET509B.DLL`), BC-Term's file transfers over the modem; the gateway's host-side receive pause and TCP
+  zero-window probes; ISA I3 (RAM card), `DACK`, the 16550 character timeout.
 - ~~Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback)~~ **done 2026-10-04** (ISA I2,
   branch `sprinter-isa-i2-neogs`, [i2-outcome.md](../2026-10-02-sprinter-isa/i2-outcome.md)): ProPlay plays a MOD at
   MAME's pitch and timing; open: the MAME ISA I/O tap; the NeoGS RAM joins TTD with TTD v2 (owner, 2026-10-04).
