@@ -278,6 +278,16 @@ void EventQueue::RemoveObserverById(const std::string& topic, uint64_t observerI
     WaitForDispatchesToComplete();
 }
 
+size_t EventQueue::ObserverCount(const std::string& topic)
+{
+    int topicId = ResolveTopic(topic);
+
+    std::lock_guard<std::mutex> lock(m_mutexObservers);
+
+    ObserverVectorPtr observers = GetObservers(topicId);
+    return observers != nullptr ? observers->size() : 0;
+}
+
 int EventQueue::ResolveTopic(const char* topic)
 {
     std::string strTopic(topic);

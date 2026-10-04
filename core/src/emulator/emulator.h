@@ -212,6 +212,10 @@ private:
     /// paced to real time, but it is a debugger step and must be silent like every other step. The host output
     /// hold (reason DirectRun) lasts from that resume to the stop: the breakpoint, a cancel or any pause
     SoundManager::HostOutputHold _stepOverHostHold;
+    /// Id of the NC_EXECUTION_BREAKPOINT observer StepOver() registers; its handler captures this emulator and its
+    /// FeatureManager, so it must be unregistered before either goes away. Never from inside the handler (deadlock)
+    uint64_t _stepOverObserverId = 0;
+    void RemoveStepOverObserver();
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
 
     // Frame step target (persistent to prevent cumulative drift)
