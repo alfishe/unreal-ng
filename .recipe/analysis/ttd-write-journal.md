@@ -63,6 +63,19 @@ emu.ttd_set_journal_enabled(True)
 emu.ttd_build_journal(from_frame=1200, to_frame=1500)
 ```
 
+## A saved file, from a script
+
+`tools/verification/ttd-analyzer/scripts/build_write_journal.py` loads a `.ttd`
+in a running emulator, builds the journal for the frames asked and saves the
+result ([README](../../tools/verification/ttd-analyzer/README.md#building-the-write-journal-of-a-saved-session)):
+
+```text
+$ python3 tools/verification/ttd-analyzer/scripts/build_write_journal.py session.ttd --from 130 --to 170
+session.ttd (PENTAGON): built 41 frame(s), 1951 writes
+the journal covers 1 span(s): frame 130:3 .. 171:7
+saved .../session-journal.ttd
+```
+
 ## Notes
 
 - Building is refused while recording (stop first). The session's last frame

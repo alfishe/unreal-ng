@@ -500,6 +500,15 @@ Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileRe
 - **Tests.** `unreal-qt-tests` `JournalSpanSlider_Test` checks the band's pixels; a mutant without the painting is caught. The dialog itself is not exercised by an automated test.
 - **Docs.** `time-travel-ux.md` §3.4a.
 
+**As built, J5 (2026-10-04).** `tools/verification/ttd-analyzer/scripts/build_write_journal.py` drives a running emulator through the WebAPI:
+
+1. Reads the file's recorded machine (`/ttd/file-info`).
+2. Creates that model with its General Sound card and loads the session.
+3. Builds the journal for `--from`..`--to` (`/ttd/journal/build`).
+4. Saves the result (`/ttd/dump`) and removes the instance.
+
+Checked live: a Pentagon session recorded without the journal had frames 130..170 built (41 frames, 1951 writes), and the analyzer reads the saved span. The analyzer has a README now.
+
 E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance
