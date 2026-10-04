@@ -6,6 +6,7 @@
 #include <cstring>
 #include <unordered_map>
 
+#include "debugger/ttd/engine/ttdsessionfile.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
@@ -260,6 +261,19 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
     if (stats)
         *stats = local;
     return true;
+}
+
+bool ConvertV1Session(const TimeTravelManager& v1, ITTDByteSink& sink, std::string& error,
+                      uint32_t checkpointsPerPart)
+{
+    TimeTravelEngine engine;
+    engine.SetHistoryPolicy({TTDHistoryMode::Growable, 0, 0});   // the whole session, one segment
+    if (!FeedV1Session(v1, engine, error))
+        return false;
+    TTDSessionSaveParams params;
+    params.headerFlags = kSessionConvertedFromV1;
+    params.checkpointsPerPart = checkpointsPerPart;
+    return TTDSessionFile::Save(engine, sink, error, params);
 }
 
 }  // namespace ttd::bench

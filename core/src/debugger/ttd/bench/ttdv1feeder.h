@@ -22,6 +22,7 @@ namespace ttd
 {
 class TimeTravelManager;
 class TimeTravelEngine;
+class ITTDByteSink;
 }  // namespace ttd
 
 namespace ttd::bench
@@ -52,5 +53,12 @@ bool SplitV1GeneralSound(const std::vector<uint8_t>& blob, std::vector<uint8_t>&
 /// reference-table block size (0 = the engine's default for the region size)
 bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::string& error,
                    FeedStats* stats = nullptr, uint32_t blockPieces = 0);
+
+/// D31: the session loaded into @p v1 as an engine session file, fed frame
+/// by frame and written to @p sink, marked "converted from schema 1" (what v1
+/// does not store stays absent, never invented). For the verification tools
+/// only (D32): tests, the benchmark, the comparison scripts
+bool ConvertV1Session(const TimeTravelManager& v1, ITTDByteSink& sink, std::string& error,
+                      uint32_t checkpointsPerPart = 50);
 
 }  // namespace ttd::bench

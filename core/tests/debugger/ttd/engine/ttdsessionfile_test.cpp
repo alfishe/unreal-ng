@@ -245,6 +245,29 @@ TEST_F(TTDSessionFile_Test, EveryCorpusSessionSurvivesTheFile)
     }
 }
 
+/// D31: every v1 session of the corpus converts to an engine file marked as
+/// converted, which loads as the session fed straight into the engine
+TEST_F(TTDSessionFile_Test, EveryV1SessionConverts)
+{
+    for (const fs::path& file : CorpusFiles())
+    {
+        SCOPED_TRACE(file.filename().string());
+        TimeTravelEngine fed;
+        ASSERT_NO_FATAL_FAILURE(Feed(file, fed));
+        TTDMemorySink sink;
+        std::string error;
+        ASSERT_TRUE(bench::ConvertV1Session(*_v1, sink, error)) << error;
+        TimeTravelEngine loaded;
+        TTDMemorySource source(sink.bytes);
+        TTDSessionLoadReport report;
+        ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error, &report)) << error;
+        EXPECT_TRUE(report.convertedFromV1);
+        EXPECT_TRUE(report.complete);
+        ASSERT_EQ(loaded.CheckpointCount(), fed.CheckpointCount());
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSession(fed, loaded, fed.CheckpointCount()));
+    }
+}
+
 /// A damaged piece record in part 2: the load stops there with the frames of
 /// parts 0 and 1, which restore as before
 TEST_F(TTDSessionFile_Test, DamageStopsTheLoadAtTheFirstUnreachablePart)

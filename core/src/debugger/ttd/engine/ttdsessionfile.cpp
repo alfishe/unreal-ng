@@ -214,6 +214,7 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
 
     // Header: the streams and the session's tables
     TTDContainerHeader header;
+    header.flags = params.headerFlags;
     header.uuid = params.uuid;
     header.createdMicros = params.createdMicros;
     header.streams = Streams();
@@ -617,6 +618,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         return false;
     report.notes = reader.Notes();
     report.partsInFile = reader.Parts().size();
+    report.convertedFromV1 = (reader.Header().flags & kSessionConvertedFromV1) != 0;
 
     // The tables: regions and devices, then the session as at its start
     TTDByteReader t(reader.Header().sessionTables);

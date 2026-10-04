@@ -70,8 +70,12 @@ constexpr uint16_t kBusVectors = 15;
 constexpr uint16_t kMediaReads = 16;
 }  // namespace sessionstream
 
+/// Header flags of a session file
+constexpr uint16_t kSessionConvertedFromV1 = 1;   ///< converted from a schema-1 file (D31): what v1 lacks is absent
+
 struct TTDSessionSaveParams
 {
+    uint16_t headerFlags = 0;
     uint32_t checkpointsPerPart = 50;   ///< about a second of recording
     uint64_t createdMicros = 0;         ///< the header's creation time (tests fix it)
     std::array<uint8_t, 16> uuid{};     ///< the session's identity
@@ -83,6 +87,7 @@ struct TTDSessionLoadReport
     size_t partsLoaded = 0;
     size_t partsInFile = 0;
     bool complete = false;       ///< every part came in
+    bool convertedFromV1 = false;   ///< kSessionConvertedFromV1: no fingerprint, media versions or device regions v1 lacks
     std::string stoppedAt;       ///< why the load stopped early
     std::vector<std::string> notes;   ///< the container's notes (scan, skipped streams)
 };
