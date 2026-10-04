@@ -286,6 +286,13 @@ struct PortMapEntry
 };
 
 
+/// A raw-port mask / match pair: the device claims port p when (p & mask) == match
+struct PortMaskMatch
+{
+    uint16_t mask = 0x0000;
+    uint16_t match = 0x0000;
+};
+
 /// Base class to mark all devices connected to port decoder
 class PortDevice
 {
@@ -314,6 +321,13 @@ public:
     /// AY, memory latches, ...) never need to implement these.
     virtual bool tryClaimOut(uint16_t /*rawPort*/, uint8_t /*value*/) { return false; }
     virtual bool tryClaimIn(uint16_t /*rawPort*/, uint8_t& /*outValue*/) { return false; }
+
+    /// The raw ports tryClaimOut/In can accept, as the claims a self-decoding
+    /// device registers in the decoder's claim table (RegisterSelfDecodingDevice,
+    /// control path): a port none of them covers is never offered to the
+    /// device and costs the decoder one bit test. The default covers every
+    /// port, so tryClaimOut/In alone decide
+    virtual std::vector<PortMaskMatch> selfDecodingClaims() const { return { PortMaskMatch{} }; }
 };
 
 typedef uint8_t (PortDevice::* PortDeviceInMethod)(uint16_t port);              // Class method callback
@@ -491,11 +505,23 @@ protected:
 
     // Self-decoding devices (see PortDevice::tryClaimOut/In) - tried, in
     // registration order, for any raw port no exact-match device or
-    // higher-priority model-specific decode claimed first. Kept separate
-    // from _portDevices because these devices recognize a MASK/MATCH
+    // higher-priority model-specific decode claimed first. Kept apart from
+    // the exact port map because these devices recognize a MASK/MATCH
     // pattern across several raw addresses, not one exact key (see
-    // Covox: mode-1/mode-2 SoundDrive ports)
-    std::vector<PortDevice*> _selfDecodingDevices;
+    // Covox: mode-1/mode-2 SoundDrive ports). Their claims
+    // (PortDevice::selfDecodingClaims) live in a claim table of their own
+    // (ZX-bus slots SL-3): the board offers them a port only after its own
+    // decode declined it, so they must not mark the bus-side observers' ports
+    // claimed; one slot, registration order = the table's sequence order. A
+    // port none of them covers costs one bit test
+#pragma push_macro("slots")
+#undef slots
+    slots::PortClaimTable _selfDecodingClaims;
+#pragma pop_macro("slots")
+
+    /// The claimed-port halves of DispatchSelfDecodingOut / In (out of line: the unclaimed path stays one bit test)
+    bool DispatchClaimedSelfDecodingOut(uint16_t rawPort, uint8_t value);
+    bool DispatchClaimedSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
 
     // Semantic tags passed via the RegisterPortHandler overload, so dynamic
     // devices land in the tag collections instead of the anonymous fallback
@@ -1171,8 +1197,18 @@ public:
     /// have already declined the address - and use the return value to
     /// distinguish "a self-decoding peripheral claimed this" from "truly
     /// unmapped" for port-trace disposition. Stops at the first claim.
-    bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
-    bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
+    bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value)
+    {
+        if (!_selfDecodingClaims.IsClaimed(rawPort)) [[likely]]
+            return false;
+        return DispatchClaimedSelfDecodingOut(rawPort, value);
+    }
+    bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
+    {
+        if (!_selfDecodingClaims.IsClaimed(rawPort)) [[likely]]
+            return false;
+        return DispatchClaimedSelfDecodingIn(rawPort, outValue);
+    }
     
     /// Unlock port 7FFD paging for snapshot loading or debug sessions: clears the
     /// p7FFD lock bit, so subsequent port writes via DecodePortOut() are accepted

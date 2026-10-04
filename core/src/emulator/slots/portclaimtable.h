@@ -161,6 +161,22 @@ public:
         return nullptr;
     }
 
+    /// Every claim covering the port, in slot order (registration order within a slot): `bool f(const ClaimEntry&)`
+    /// returns true to stop. Returns whether f stopped. Claimed ports only (call IsClaimed first)
+    template <typename F>
+    bool ForEachMatch(uint16_t port, F&& f) const
+    {
+        const uint8_t low = static_cast<uint8_t>(port);
+        const ClaimEntry* entry = _bucket.data() + _bucketBegin[low];
+        const ClaimEntry* const end = _bucket.data() + _bucketBegin[low + 1u];
+        for (; entry != end; ++entry)
+        {
+            if ((port & entry->mask) == entry->match && f(*entry))
+                return true;
+        }
+        return false;
+    }
+
     /// A write cycle: every card that sees it gets the value; `board(BoardCycle)` is called unless the board is
     /// hidden (architecture.md §4.3 steps 1-4)
     template <typename BoardOut>

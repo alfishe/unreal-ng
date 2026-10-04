@@ -210,6 +210,18 @@ bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
     return true;
 }
 
+std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
+{
+    switch (_fitment)
+    {
+        case Fitment::Quad:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mono:
+            return { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+    }
+    return {};
+}
+
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
 {
     if (!MatchesFitment(_fitment, rawPort))

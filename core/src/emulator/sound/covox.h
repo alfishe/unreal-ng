@@ -224,6 +224,8 @@ public:
     /// See PortDevice::tryClaimOut/In and the Fitment doc above.
     bool tryClaimOut(uint16_t rawPort, uint8_t value) override;
     bool tryClaimIn(uint16_t rawPort, uint8_t& outValue) override;
+    /// The fitment's raw-port claims (the same mask / match tryClaimOut/In test)
+    std::vector<PortMaskMatch> selfDecodingClaims() const override;
 
     // Determine which channel a port address maps to
     static Channel portToChannel(uint16_t port);

@@ -1853,46 +1853,58 @@ void PortDecoder::WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc)
 
 bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)
 {
-    bool result = false;
-
-    if (device && std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device) == _selfDecodingDevices.end())
+    if (!device)
+        return false;
+    for (const slots::ClaimEntry& entry : _selfDecodingClaims.Entries())
     {
-        _selfDecodingDevices.push_back(device);
-        result = true;
+        if (entry.owner == device)
+            return false;
     }
 
-    return result;
+    // Control path: the device's claims, one slot, registration order kept by the table's sequence
+    for (const PortMaskMatch& claim : device->selfDecodingClaims())
+    {
+        slots::ClaimEntry entry;
+        entry.mask = claim.mask;
+        entry.match = claim.match;
+        entry.owner = device;
+        _selfDecodingClaims.Add(entry);
+    }
+    _selfDecodingClaims.Build();
+    return true;
 }
 
 void PortDecoder::UnregisterSelfDecodingDevice(PortDevice* device)
 {
-    auto it = std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device);
-    if (it != _selfDecodingDevices.end())
-    {
-        _selfDecodingDevices.erase(it);
-    }
+    if (device && _selfDecodingClaims.RemoveOwner(device))
+        _selfDecodingClaims.Build();
 }
 
-bool PortDecoder::DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value)
+/// DispatchSelfDecodingOut, claimed port: every device whose claim covers the
+/// port, in registration order, until one takes it (tryClaimOut). A device is
+/// asked once however many of its claims cover the port
+bool PortDecoder::DispatchClaimedSelfDecodingOut(uint16_t rawPort, uint8_t value)
 {
-    for (PortDevice* device : _selfDecodingDevices)
+    const PortDevice* asked = nullptr;
+    return _selfDecodingClaims.ForEachMatch(rawPort, [&](const slots::ClaimEntry& entry)
     {
-        if (device->tryClaimOut(rawPort, value))
-            return true;
-    }
-
-    return false;
+        if (entry.owner == asked)
+            return false;
+        asked = entry.owner;
+        return entry.owner->tryClaimOut(rawPort, value);
+    });
 }
 
-bool PortDecoder::DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
+bool PortDecoder::DispatchClaimedSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
 {
-    for (PortDevice* device : _selfDecodingDevices)
+    const PortDevice* asked = nullptr;
+    return _selfDecodingClaims.ForEachMatch(rawPort, [&](const slots::ClaimEntry& entry)
     {
-        if (device->tryClaimIn(rawPort, outValue))
-            return true;
-    }
-
-    return false;
+        if (entry.owner == asked)
+            return false;
+        asked = entry.owner;
+        return entry.owner->tryClaimIn(rawPort, outValue);
+    });
 }
 
 /// Pass port IN operation to the peripheral device registered to handle specified port
