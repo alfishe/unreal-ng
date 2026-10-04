@@ -1381,11 +1381,11 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frames, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+| `videorecord status` | | Show recording state, output file, frames, region, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,

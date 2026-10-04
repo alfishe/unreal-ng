@@ -164,7 +164,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["region"]["enum"].append("full");
     schema["properties"]["region"]["enum"].append("screen");
     schema["properties"]["region"]["enum"].append("main");
-    schema["properties"]["region"]["description"] = "Recording capture region (default full)";
+    schema["properties"]["region"]["description"] = "Recording capture region: full (default, the whole frame with its border) or screen/main (the working picture; the file keeps the start window's size, a window that changes later is scaled into it with black bars)";
     schema["properties"]["filename"]["type"] = "string";
     schema["properties"]["filename"]["description"] = "Output file for recording, screenshot (e.g. scratch/screen.png) or vdac2_capture_start (an .evr stream). Saves binary directly to disk on server side.";
     schema["properties"]["path"]["type"] = "string";
