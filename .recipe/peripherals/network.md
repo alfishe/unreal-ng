@@ -73,7 +73,8 @@ takes the same values for the card's side:
 | `ComPort=` / `ZxWifi=` | Peer |
 |:--|:--|
 | `NONE` | nothing on the line (the ZX-Evo's registers still answer) |
-| `LOOPBACK` | every byte the ZX sends comes back |
+| `LOOPBACK` | every byte the ZX sends comes back; CTS / DSR / DCD held active |
+| `PLUG` | an RS-232 loopback test plug: bytes come back, the UART's own RTS drives CTS and DTR drives DSR / DCD (only the inputs the card wires to its connector) |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
 | `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
 | `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |
@@ -109,6 +110,11 @@ polling loop enough for the 8051's serial interrupt; with the `contention`
 feature off they are gone and received bytes are lost (`lost` in
 `machine_serial`; tdd-atm2-kbc.md §7.1). Details:
 [tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md).
+
+On the ZX Profi v5 (`PROFI`, `PROFI-PLUS`) the machine's serial port is the board's 8251 USART (`#D3` data, `#F3`
+control / status, clocked by an 8253 at `#8F..#EF`, extended port map only): `ComPort=` plugs into it, it is not on
+#xxEF, `inspect_state network` shows it as `machine_serial` (flavor `usart8251`). Details:
+[profi.md](../machines/profi.md#serial-port-com).
 
 The other real-world way on the ATM Turbo 2+ is the **ATM2IOESP** card
 (`Card=ATM2IOESP`, `Atm2IoEsp=AT|ESPNET|...`, `Atm2IoEspAddress=0xF0`, 0xF8

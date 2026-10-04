@@ -160,8 +160,17 @@ uint8_t AtapiCdrom::ReadyStatus() const
 
 void AtapiCdrom::MediumChanged()
 {
-    // The drive stays on the bus; its next command learns of the new disc
-    _s.unitAttention = 1;
+    // The drive stays on the bus. A disc put in (or swapped) from outside: the tray is closed with it and
+    // the next command learns of it (UNIT ATTENTION). The disc taken out: the tray is open - a disc the
+    // guest ejected itself (the tray already open) raises nothing; one taken out from outside (the
+    // drive's eject button) is reported like a change, as before
+    // A guest's eject (the tray already open when the slot lets the disc go) changes no machine state
+    // here: the drive did all of it inside the command, so a sealed replay - where the slot is not
+    // touched again - reaches the same state
+    const bool guestEjected = !_medium && _stage.trayOpen;
+    if (!guestEjected)
+        _s.unitAttention = 1;
+    _stage.trayOpen = _medium ? 0 : 1;
     _ownDisc.reset();
     _disc = nullptr;
     if (_medium)
@@ -189,10 +198,13 @@ void AtapiCdrom::MediumChanged()
         }
     }
     _pendingDisc = nullptr;
-    _stage.trayOpen = 0;  // a disc put in from outside: the tray is closed with it
-    // A new disc: the drive reads its TOC from the lead-in, the head waits at the start
+    // A new disc: the drive reads its TOC from the lead-in, the head waits at the start. Taken out from
+    // outside: the play ends
     _audio.SetDisc(_disc);
-    _audio.SeekTo(0);
+    if (_medium)
+        _audio.SeekTo(0);
+    else if (!guestEjected)
+        _audio.Stop();
 }
 
 void AtapiCdrom::PowerOnReset()
@@ -522,7 +534,13 @@ void AtapiCdrom::ExecutePacket()
             if (!start)
                 _audio.Stop();
             if (loej && !start && !_stage.trayOpen)
+            {
+                // The disc comes out: the slot is emptied by its owner at the frame boundary
+                // (MediaManager::GuestEject); the drive already reads no disc
                 _stage.trayOpen = 1;
+                if (HasDisc() && _onEject)
+                    _onEject();
+            }
             else if (loej && start && _stage.trayOpen)
             {
                 _stage.trayOpen = 0;

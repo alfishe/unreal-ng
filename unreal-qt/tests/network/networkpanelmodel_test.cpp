@@ -80,6 +80,15 @@ TEST(NetworkPanelModel_Test, TheZxEvoOffersItsOwnPortAndTheAvr)
     EXPECT_NE(a.zxWifiWhy.find("AVR"), std::string::npos);
 }
 
+TEST(NetworkPanelModel_Test, TheProfiOffersIts8251)
+{
+    const NetworkAvailability a = NetworkFormAvailability(NetworkFormFromState(State("profi-8251", true, "NONE", "PLUG", "AT")));
+    EXPECT_TRUE(a.comPort) << a.comPortWhy;
+    EXPECT_TRUE(a.zxWifi) << "the 8251 is not on #xxEF";
+    EXPECT_FALSE(a.avrFirmware);
+    EXPECT_FALSE(a.kbcFirmware);
+}
+
 TEST(NetworkPanelModel_Test, TheAtm2OffersItsControllersPort)
 {
     StateNode state = State("atm2-kbc", true, "NONE", "LOOPBACK", "AT");

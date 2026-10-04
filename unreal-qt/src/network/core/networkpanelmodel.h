@@ -27,7 +27,7 @@ struct NetworkForm
     // What the machine offers (read-only)
     bool zxBus = true;
     bool internalIo = false;           ///< the ATM Turbo 2+ INTERNAL I/O connector (ATM2IOESP)
-    std::string serialPort = "none";   ///< none | evo-avr | zifi | atm2-kbc
+    std::string serialPort = "none";   ///< none | evo-avr | zifi | atm2-kbc | profi-8251
     bool zifiMachine = false;          ///< the TS AVR firmware's ZiFi (TS-Conf, ZX-Evo + a TS firmware)
 
     // ZX-Bus cards

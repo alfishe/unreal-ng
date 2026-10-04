@@ -2129,6 +2129,8 @@ private:
 
     /// Refresh EmulatorContext::kStepWorkTtdInput (the per-step gate)
     void UpdateInputWorkFlag();
+    /// Live input other threads queued: applied in order (and journaled), or dropped when the journal owns input
+    void DrainPendingLiveInput();
 
     /// RestoreCheckpoint + ArmInputPlayback + port-journal playback from the
     /// checkpoint's cursor: every restore that navigates history (seek,

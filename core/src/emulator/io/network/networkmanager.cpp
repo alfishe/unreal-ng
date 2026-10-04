@@ -11,6 +11,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
@@ -64,7 +65,7 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (caps.zifi && networkOn)
             plan.zifiPeer = zifiPeer;
     }
-    else if (caps.serialPort == SerialPort::Atm2Kbc)
+    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251)
     {
         // Not on #xxEF: a ZX-WiFi card fits beside it
         plan.machineSerial = true;
@@ -162,7 +163,8 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     if (cards & networkspec::kCardZxWifi)
     {
         // The card's 16550 sits on #F8EF..#FFEF: a clash with the machine's own #xxEF device disables the card
-        const bool ownOnEf = caps.serialPort != SerialPort::None && caps.serialPort != SerialPort::Atm2Kbc;
+        const bool ownOnEf = caps.serialPort != SerialPort::None && caps.serialPort != SerialPort::Atm2Kbc &&
+                             caps.serialPort != SerialPort::Profi8251;
         if (plan.serial != Plan::Serial::None || ownOnEf || (decoder && decoder->ReservesLowByte(ComPort::kPortLowByte)))
         {
             const char* note = caps.serialPort == SerialPort::EvoAvr
@@ -194,6 +196,8 @@ std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specTex
     {
         case ComPortSpec::Kind::Loopback:
             return std::make_unique<LoopbackPeer>();
+        case ComPortSpec::Kind::Plug:
+            return std::make_unique<LoopbackPeer>(true);
         case ComPortSpec::Kind::Tcp:
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
@@ -957,10 +961,11 @@ void NetworkManager::UpdateStatus()
         if (caps.reloadFirmware)   // the board has the keyboard controller socket
             st.settings.kbcFirmware = Atm2Kbc::FirmwareName(static_cast<Atm2Kbc::Firmware>(_context->config.atm.kbc_firmware));
         st.zifiMachine = caps.zifi;
-        st.serialPort = caps.serialPort == SerialPort::EvoAvr    ? "evo-avr"
-                        : caps.serialPort == SerialPort::ZiFi    ? "zifi"
-                        : caps.serialPort == SerialPort::Atm2Kbc ? "atm2-kbc"
-                                                                 : "none";
+        st.serialPort = caps.serialPort == SerialPort::EvoAvr      ? "evo-avr"
+                        : caps.serialPort == SerialPort::ZiFi      ? "zifi"
+                        : caps.serialPort == SerialPort::Atm2Kbc   ? "atm2-kbc"
+                        : caps.serialPort == SerialPort::Profi8251 ? "profi-8251"
+                                                                   : "none";
         if (caps.serialPort == SerialPort::Atm2Kbc)
         {
             auto& m = st.machineSerial;
@@ -981,6 +986,27 @@ void NetworkManager::UpdateStatus()
                     m.bytesOut = line.bytesOut;
                     m.lost = line.lost;
                 }
+            }
+            FillPeerStatus(_machinePeer.get(), m);
+        }
+        if (caps.serialPort == SerialPort::Profi8251)
+        {
+            // The ZX Profi v5's 8251: the line as the program set it (mode word, the 8253's counter 0)
+            auto& m = st.machineSerial;
+            m.fitted = true;
+            m.flavor = "usart8251";
+            m.baud = caps.serialBaud ? caps.serialBaud() : 0;
+            m.modemLines = _context->config.network.comModemLines != 0;
+            if (auto* profi = dynamic_cast<PortDecoder_Profi*>(_context->pPortDecoder))
+            {
+                const Usart8251& usart = profi->GetUsart();
+                const Usart8251::State& chip = usart.GetState();
+                m.frameBits = usart.FrameBits();
+                m.rts = usart.Rts();
+                m.dtr = usart.Dtr();
+                m.bytesIn = chip.bytesIn;
+                m.bytesOut = chip.bytesOut;
+                m.lost = chip.overruns;
             }
             FillPeerStatus(_machinePeer.get(), m);
         }

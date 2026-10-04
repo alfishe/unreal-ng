@@ -25,6 +25,10 @@
 >   the slot within seconds. Do not bypass the wrapper with a bare `ninja` / `cmake --build`.
 >   Benchmarks and A/B timing runs are the exception: run them on a quiet machine without
 >   lowered priority (`UNREAL_NICE=0`). Details: [`tools/build/README.md`](../tools/build/README.md).
+> - `tools/build/build.sh` re-runs the CMake configure step itself (sources are globbed: a file
+>   that arrived with a merge or rebase is otherwise missing and the link fails on undefined
+>   symbols) and configures a missing build directory. Do not run `cmake` by hand for ordinary
+>   builds; `UNREAL_NO_CONFIGURE=1` skips it.
 > - Steps before any commit:
 >   1. Run the checks that match what changed:
 >      - **C++ code in `core/` or a client** (`unreal-qt/`, `unreal-screen-viewer/`,
@@ -62,7 +66,8 @@
 
 ## Building the Project
 We use CMake with Ninja for building. **Run builds through `tools/build/build.sh`** (it applies
-the limits above); the raw commands below are what it runs. **Cap `-j` at 50% of logical cores** — multiple agents
+the limits above); the raw commands below are what it runs, except that the script also re-runs the
+configure step first (see "Why `build.sh` configures every time" below). **Cap `-j` at 50% of logical cores** — multiple agents
 build concurrently on this machine, and unbounded job counts pile up and stall everything:
 ```bash
 # Configure the build system
@@ -74,6 +79,28 @@ JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1
 # Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
 ninja -C cmake-build-agent-release -j "$JOBS"
 ```
+
+### Why `build.sh` configures every time
+Sources are collected with `file(GLOB ...)`, so CMake only learns about a new `.cpp`/`.h` when it runs
+again. Ninja re-runs CMake by itself only when a `CMakeLists.txt` or `*.cmake` file changed — **not**
+when a merge, rebase, `git pull` or another agent's landing brings in a new source file. Symptom: the
+compile succeeds, the link fails with `symbol(s) not found` / `undefined reference` for a class that
+plainly exists in the tree (seen with `Usart8251` / `TTDPit8253` after a rebase), or a new test file
+is silently missing from `core-tests`.
+
+`tools/build/build.sh` therefore runs `cmake -S . -B <build dir>` before every `ninja` (seconds, the
+cache and your `-D` options are kept) and configures a missing build dir with `-G Ninja -DTESTS=ON`.
+Its output goes to `<build dir>/configure.log` and is printed only if the configure fails.
+`tools/build/test.sh` goes through `build.sh`, so it is covered too.
+
+- Use `tools/build/build.sh` for every build; do not call `ninja` or `cmake --build` directly - that
+  skips the re-configure and brings the symptom above back.
+- After a rebase / merge / pull, nothing special is needed. If you must bypass the wrapper (benchmarks),
+  run `cmake -S . -B <build dir>` yourself first.
+- `UNREAL_NO_CONFIGURE=1 tools/build/build.sh ...` skips the step (only for a tight edit-compile loop on
+  a tree that did not change under you).
+- A new build dir needs no manual `cmake` call. Benchmarks (`-DBENCHMARKS=ON`) are the exception: one
+  manual configure with that flag, later `build.sh` runs keep it.
 
 ### Linux (gcc) build check
 CI builds on Linux with gcc, which is stricter than Apple clang (missing standard includes, deprecated
@@ -144,6 +171,7 @@ Rules of thumb:
 | Build + run everything | `tools/build/test.sh` (builds `core-tests` itself, so never stale) |
 | Run a filter after edits | rebuild via `core-tests` target **first**, then `--gtest_filter=...` |
 | Production check only | plain `tools/build/build.sh` (no test binary update) |
+| Tree changed under you (rebase, merge, pull) | nothing extra: `build.sh` / `test.sh` re-run CMake themselves |
 
 
 
@@ -206,7 +234,7 @@ pkill -9 unreal-qt 2>/dev/null || true
 
 **ZX-Poly configurations** (four synchronized instances of one base model, created by name like any model): `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` — see [`.recipe/machines/zxpoly.md`](../.recipe/machines/zxpoly.md).
 
-**Machine variants** (a base model with a fixed board, created by name like any model; Machine menu entry in unreal-qt): `TSL-VDAC2` (alias `TSCONF-VDAC2`: TS-Conf with the VDAC2 card, FT812 graphics on the IDE connector) — see [`.recipe/machines/tsconf-vdac2.md`](../.recipe/machines/tsconf-vdac2.md). The table is `core/src/emulator/machinevariants.cpp`.
+**Machine variants** (a base model with a fixed board, created by name like any model; Machine menu entry in unreal-qt): `TSL-VDAC2` (alias `TSCONF-VDAC2`: TS-Conf with the VDAC2 card, FT812 graphics on the IDE connector) — see [`.recipe/machines/tsconf-vdac2.md`](../.recipe/machines/tsconf-vdac2.md); `PROFI-PLUS` (alias `PROFIPLUS`: a Profi v5 with Djoni's V0.03 port decoder, `[PROFI] ExtPorts=sys`, running ROM BIOS Plus 0.41h1 `rom/profi/bios-plus-041h1.rom` - PQ-DOS and DOS Navigator; the serial port is not emulated yet) — see [`.recipe/machines/profi.md`](../.recipe/machines/profi.md). The table is `core/src/emulator/machinevariants.cpp`.
 
 > Runtime-authoritative list: `GET /api/v1/emulator/models` — each entry carries a `creatable` flag. Creatable on `master`: `PENTAGON`, `48K`, `128k`, `PLUS2` (grey +2: 128K hardware, Amstrad ROM), `PLUS2A` (the +3 without its floppy controller), `PLUS3` (uPD765A floppy controller, see `docs/inprogress/2026-09-28-plus3-upd765/`), `ATM710`, `ATM3` (ZX-Evo; decoders landed with the ATM Turbo 2+/3 clone support, configs ship as `configs/atm710` + `configs/atm3`), `SCORPION`, `PROFSCORP`, `ATM450` (ATM Turbo 2 v4.50, 512K: boots the system ROM menu from `rom/atm1.rom`, see `.recipe/machines/atm.md` and `docs/inprogress/2026-10-01-atm450/`), `PROFI` (Profi v5, 1024K; IDE works: `[HDD] Scheme=PROFI`, slots `ide0.master` / `ide0.slave`, see `.recipe/machines/profi.md` and `docs/inprogress/2026-09-21-profi/`), `PROFI3` (Profi v3, 512K: Kramis BIOS, monochrome hi-res, no palette / extended ports / RTC / IDE; `docs/inprogress/2026-10-01-profi-v3-v5/`), `TSL` (TS-Conf, alias `TSCONF`: TS-BIOS from `rom/zxevo.rom`, TSU, DMA, SD slot `sd.zc`, `.spg` programs; see `.recipe/machines/tsconf.md` and `docs/inprogress/2026-09-27-tsconf/`), `SPRINTER` (Peters Plus Sprinter Sp2000: firmware 3.06 Hotfix 2 from `rom/sprinter/sp2k-3.06-hf2.rom` by default (owner decision 2026-10-03: back from 3.07 BETA 1, whose floppy driver changes IY so DSS 1.71.57 cannot start programs from a floppy, until the BIOS author publishes his fixed build) on its own Z84C15 CPU library, with the renderer, floppy, IDE (two channels), PS/2 keyboard and serial mouse: DSS 1.71 boots from a hard-disk image (needs BIOS 3.06+), DSS 1.62 from a 1.44 MB floppy (drive A; drive B on BIOS 3.04) or a hard disk; BIOS 3.04 (`sp2k-3.04.rom`, DSS 1.62 only) and 3.07 BETA 1 (`sp2k-3.07-beta1.rom`, `known_issues` warning) stay selectable; block accelerator (S5), AY + Covox-Blaster (S6), TTD (S7); BIOS selectable at create / runtime (`"sprinter":{"bios":"3.04"}`, `POST /sprinter/bios`); recipes `.recipe/machines/sprinter.md` (video modes, palettes, video RAM region `vram`, change log), `sprinter-accelerator.md`, `sprinter-sound.md`, `.recipe/media/sprinter-hdd.md`; see `docs/inprogress/2026-09-28-sprinter/`). NOT creatable (no port-decoder factory case yet): `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` — a create request for them fails with HTTP 400 + reason, never a silent 48K fallback. Build fingerprint: `GET /api/v1/emulator/status` -> `server.git_branch`/`server.git_commit`. MCP clients get identical data: `emulator_manage` action `list_models` / action `server` (all automation modules serve the same information from the same source).
 

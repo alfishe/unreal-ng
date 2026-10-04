@@ -1,0 +1,3 @@
+# The card's RTL is fetched by fetch-rtl.sh and never committed; build output of build.sh
+refs/
+build/

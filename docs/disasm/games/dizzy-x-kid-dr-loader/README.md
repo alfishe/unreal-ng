@@ -59,13 +59,18 @@ set: the CPU executes the bitmap of an "&" as code and runs wild.
 
 ## Verdict
 
-This is a **copy and clone protection working as designed**, not an emulator defect. The project
-keeps the Pentagon ROM set as it is; the tape does not run on machines whose 48K ROM is not the
-original one, as on those real clones. Use a model with the original 48K ROM (the 48K model, verified) to play it.
+The tape does not run on any unreal-ng model, and none of it is an emulator defect to fix:
+- On the Pentagon ROM set it is a **copy and clone protection working as designed**: the patched 48K ROM there fails the
+  `#006D` check. The project keeps the ROM set as it is (owner decision).
+- On 48K and 128K with the original ROM the ROM check passes, but the loader never locks onto the pilot of block 2
+  (see below). MAME's `spectrum` behaves the same.
 
 ## Emulator consequences
 
-- **48K, 128K, ZX-Spectrum+ models with the original 48K ROM** pass the check.
+- **48K and 128K with the original 48K ROM** pass the ROM check but the tape still does not load: the loader never locks onto
+  the pilot of block 2 (at `#5DE1` it measures B = `#BF`, needs more than `#C6`) and waits for ever. Same in MAME's
+  `spectrum` with the original ROM. The pulse loop at `#5E47` (63 T per count) looks tuned for a machine without memory
+  contention, a Pentagon-class one (hypothesis, not verified).
 - **unreal-ng Pentagon** uses the ROM set `[ROM.pentagon]` whose 48K page is
   `rom/48for128.rom` (patched, `#28` at `#006D`) - the game derails right after the first
   decrypt; the cursor stays at block 2 of 6. The same tape loads on MAME's Pentagon, whose ROM

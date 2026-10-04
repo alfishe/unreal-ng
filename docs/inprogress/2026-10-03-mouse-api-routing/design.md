@@ -117,6 +117,19 @@ The status read (`PeekMouseView`) does not count. BIOS SETUP reads neither, so a
 nothing; under DSS 1.71 with FN the click captures and the host mouse drives FN's pointer. The poll
 frames are not machine state (not in TTD), as the Kempston interface's are not.
 
+## 6a. Input on a paused machine is applied before the call returns (2026-10-04)
+
+Every surface promises "the change is applied before the response". While the emulation thread runs, live input
+(mouse, keyboard, any `TimeTravelManager::SubmitLiveInput` event) is queued for its next instruction boundary - the
+only thread that may change the machine is that one. A paused machine has no next boundary until it resumes, so the
+queue held the input and a status read right after it showed the old values (eight cases of the WebAPI's
+`test_api_mouse.py` failed this way). Now a machine whose pause is confirmed (the thread parked, no direct run on any
+thread) takes the input on the caller's thread at once, after whatever was queued before it, and journals it at the
+same time point the queue would have used. `Emulator::RunWhileParked` holds the pause lock meanwhile, so a Resume
+waits for it. Worked example: pause -> `move dx=10 dy=-5` -> `status` reads X + 10, Y - 5, the frame counter
+unchanged; resume -> nothing is applied twice. Test: `DebugMouseManagerPaused_Test`; all 55 cases of
+`test_api_mouse.py` pass against a live build.
+
 ## 7. Tests
 
 | Test | What it proves |

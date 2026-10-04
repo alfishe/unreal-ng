@@ -1,0 +1,39 @@
+; #1C bit 1: generators restart and wait; writes during RST act after the first half period (item 6)
+16 A #08
+24 D #64
+32 A #09
+40 D #C8
+48 A #10
+56 D #34
+64 A #16
+72 D #00
+80 A #1C
+88 D #01
+96 A #00
+104 D #FF
+112 A #01
+120 D #FF
+128 A #02
+136 D #FF
+144 A #03
+152 D #FF
+160 A #04
+168 D #FF
+176 A #05
+184 D #FF
+192 A #14
+200 D #03
+208 A #15
+216 D #04
+224 A #1C
+232 D #01
+50240 A #1C
+50248 D #03
+; new numbers while RST is held
+51256 A #08
+51264 D #0A
+51272 A #10
+51280 D #56
+52288 A #1C
+52296 D #01
+132304 END

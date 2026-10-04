@@ -108,3 +108,22 @@ TEST(IsaSlotConfig_Test, El3c509b_ChipBaseAndAvailability)
     EXPECT_TRUE(KindAvailable(CardKind::El3c509b, &why)) << why;
     EXPECT_TRUE(KindAvailable(CardKind::Modem, &why)) << "network phase SN4";
 }
+
+/// Network Q13 (owner 2026-10-04): SprinterSerial with both IRQ jumpers is allowed (it can be built that way) but
+/// warned about - the push-pull INTR outputs fight on the slot's one IRQ line
+TEST(IsaSlotConfig_Test, SlotWarning_SprinterSerialWithBothIrqJumpers)
+{
+    IsaConfig c = DefaultConfig();
+    SlotConfig& s = c.slot[1];
+    s.kind = static_cast<uint8_t>(CardKind::Dual16552);
+    s.irq = 3;
+    s.irqB = 0;
+    EXPECT_TRUE(SlotWarning(s, 1).empty()) << "one jumper: fine";
+    s.irqB = 4;
+    const std::string warning = SlotWarning(s, 1);
+    EXPECT_NE(warning.find("slot 2"), std::string::npos) << warning;
+    EXPECT_NE(warning.find("J5 IRQ 3, J6 IRQ 4"), std::string::npos) << warning;
+    EXPECT_NE(warning.find("the high one wins"), std::string::npos) << warning;
+    s.kind = static_cast<uint8_t>(CardKind::Modem);
+    EXPECT_TRUE(SlotWarning(s, 1).empty()) << "only SprinterSerial has two INTR outputs";
+}

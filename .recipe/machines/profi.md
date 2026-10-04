@@ -14,6 +14,13 @@ machines here
 | Extended ports (CP/M + ROM14), RTC, IDE | none | yes |
 | Frame (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
 
+**`PROFI-PLUS`** (alias `PROFIPLUS`, a machine variant, Machine menu in unreal-qt): a `PROFI` with Djoni's V0.03
+port decoder PROM (`[PROFI] ExtPorts=sys`: the extended ports also from the SYS ROM) running Vadim's ROM BIOS Plus
+0.41h1 (`rom/profi/bios-plus-041h1.rom`). It boots PQ-DOS from a floppy or an IDE disk (`ide0.master`) and runs DOS
+Navigator. Its start-up board test passes the FDC, drives, parallel port (8255), serial port (8253 + 8251, see
+[Serial port](#serial-port-com)), RTC and AY. PQ-DOS disks and a 2 GB HDD image: see
+`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`.
+
 `[PROFI] SyncProm=` picks another sync PROM: `0a1d`, `samx6`, `fb0579b6`
 (71680 T, INT 48 T before paper) or `v503`.
 
@@ -220,6 +227,39 @@ boots from the disk; the geometry comes from the disk's ProfiHiDD header
 TTD on Profi follows the standard recipes —
 [recording](../analysis/ttd-recording.md),
 [reverse debugging](../analysis/ttd-reverse-debugging.md).
+
+## Serial port (COM)
+
+The v5 board (`PROFI`, `PROFI-PLUS`) has an RS-232 port: a KR580VV51A (8251 USART) whose clock is counter 0 of a
+KR580VI53 (8253 timer) running at 1.5 MHz. It answers only in the extended port map (CP/M + ROM14; with
+`[PROFI] ExtPorts=sys`, as on `PROFI-PLUS`, also in the SYS ROM). The v3 board has none.
+
+| Port (low byte) | Device |
+|:--|:--|
+| `#8F` / `#AF` / `#CF` | 8253 counters 0 / 1 / 2 (counter 0 = the 8251's TxC / RxC) |
+| `#EF` | 8253 control word |
+| `#D3` | 8251 data |
+| `#F3` | 8251 mode / command words (write), status (read) |
+| `#B3` (and `#93`) | COM control: write D0 = interrupt enable; read D0 = RI, D7 = DCD |
+
+Baud rate = 1 500 000 / (counter 0's count x the 8251's baud factor): ROM BIOS Plus programs mode 3, count 156 and
+factor x1 for 9600 baud. Only the asynchronous mode moves bytes (sync mode words are accepted); the COM interrupt
+(`#B3` D0) is kept as a latch but raises no INT.
+
+The peer on the other end is picked like every machine's own serial port, with `ComPort=` (`[NETWORK] ComPort=` in
+the INI): `LOOPBACK`, `PLUG` (a test plug: DTR to DSR / DCD, RTS to CTS / RI, like the Profi's TESTCOM.COM plug),
+`TCP:<host>:<port>`, `SERIAL:<device>[,baud]`, `MODEM`, `ESPNET`, `AT`; `NONE` (the default) = nothing connected
+(CTS / DSR / DCD inactive: the 8251 does not send).
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"com_port": "loopback"}}}
+```
+
+CLI `network set com_port=plug`, Lua `network_configure{com_port="tcp:127.0.0.1:2323"}`, Python
+`emu.network_configure(com_port="modem")`; Qt: Tools > Network. `inspect_state network` shows the port as
+`machine.serial_port = "profi-8251"` and `machine_serial` (flavor `usart8251`, the peer, `baud`, `frame_bits`,
+`rts`, `dtr`, `bytes_in`, `bytes_out`, `lost` = overruns). The 8253, the 8251 and the peer are recorded in TTD.
 
 ## Pitfalls
 

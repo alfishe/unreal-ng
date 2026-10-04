@@ -1,8 +1,9 @@
 # TODO - Sprinter ISA slots, ZX-bus adapter, General Sound on the Sprinter
 
-**Status:** I1, I4 and **I2 (2026-10-04: the ZX-bus adapter + NeoGS in slot 1, ProPlay vs MAME)** built; design drafted 2026-10-02 (branch `sprinter-isa-design`); owner decisions Q1-Q3 recorded. **I1 built**
-2026-10-03 (branch `sprinter-isa-network`, as-built notes in [tdd.md](tdd.md) §14); the network cards come next
-(owner order 2026-10-02: ISA I1 and network SN1-SN3 before the NeoGS adapter I2).
+**Status (2026-10-04):** I1 (the bus), I4 (the IRQ lines) and I2 (the ZX-bus adapter + NeoGS in slot 1, ProPlay vs
+MAME) built and on master, as are the network cards on them (SN0-SN5, [network TODO](../2026-10-02-sprinter-network/TODO.md)).
+Open: I3 ISA RAM, the I2 / I4 follow-ups, the deferred I5-I8. As-built notes in [tdd.md](tdd.md) §14; design drafted
+2026-10-02, owner decisions Q1-Q3 recorded.
 Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/README.md), PLAN row #59, phase S6b).
 
 ## Documents
@@ -16,7 +17,8 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
 
 ## Remaining
 
-- [ ] Owner review; answers to Q1-Q4 before I1 / I2
+- [x] Owner review: Q1-Q3 decided 2026-10-02; Q4 (the NeoGS firmware for the MAME comparison) settled by I2, which
+  compared both the default and MAME's v1.10 fix2 flash with the same result ([i2-outcome.md](i2-outcome.md))
 - [ ] I0 references: ~~MAME ProPlay + NeoGS capture~~, ~~MOD generator~~ (done with I2:
   `tools/machines/sprinter/test-mod/`, `mame-zxsteps.sh` `SPC_WAV`); the ISA I/O tap on MAME is still open (S)
 - [x] I1 ISA bus core (2026-10-03): `SprinterIsaBus` + `IIsaCard` (`core/src/emulator/io/sprinter/isa/`), window-3
@@ -42,7 +44,8 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   disk receives through the interrupt (env-gated test, TTD replay equal)
 - [ ] I4 follow-ups: `IsaCycle::dack` (DACK into the cycle; no card uses DMA), the 16550 character timeout (now:
   immediate below the trigger level)
-- [ ] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial):
+- [x] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial) -
+  SN0-SN5 built 2026-10-03; SN6 (the host-LAN bridge) open in the network TODO:
   [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md), phases SN0-SN6; SN1 needs I1, SN4 needs I4.
   SN4 built 2026-10-03 (ISA modem + SprinterSerial: their IRQs ride the I4 lines - the modem's through MCR OUT2,
   SprinterSerial's through jumpers J5 / J6; BC-Term takes them over IM 2).

@@ -148,9 +148,10 @@ slot is an audio CD anyway; `media targets <folder>` offers the CD drive first.
   track 1 must be audio, and the first press after a disc change only clears the drive's unit
   attention ([its disassembly](../../docs/disasm/software/sprinter/cdplayer-flx/README.md)). Its
   Pause / Stop / skip buttons do nothing (beta1); Eject stops the music and opens the drive's tray.
-- **A guest eject opens the tray** (START STOP UNIT LoEj): `cdaudio` state `tray_open` true, the drive
-  answers NOT READY (3Ah / 02h) and `cdaudio play` `no-disc` until the guest loads it again or the disc
-  is inserted again from outside; the medium stays in its slot.
+- **A guest eject empties the slot** (START STOP UNIT LoEj, not when PREVENT ALLOW holds the disc):
+  at the next frame `media info cd` says `empty` on every surface, `cdaudio` `tray_open` is true and
+  the drive answers NOT READY (3Ah / 02h); `media insert` the disc again (it closes the tray). A guest
+  Load with no disc closes the tray (3Ah / 01h). Under TTD the eject is guest I/O: the recording goes on.
 - **cdplay does not check the drive's errors**: `3` on the Enhanced CD's data track (or `1` on a
   mixed-mode disc) shows `[PLAYING]` and then follows the drive back to the track that still
   plays (or stays at 00:00 when nothing played) - the player's behavior, a real drive answers the same.

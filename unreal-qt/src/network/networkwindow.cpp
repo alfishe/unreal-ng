@@ -43,7 +43,8 @@ namespace
         PeerSerial,
         PeerEspnet,
         PeerAt,
-        PeerModem
+        PeerModem,
+        PeerPlug
     };
 
     ComPortSpec::Kind KindOf(int index)
@@ -56,6 +57,7 @@ namespace
             case PeerEspnet: return ComPortSpec::Kind::Espnet;
             case PeerAt: return ComPortSpec::Kind::At;
             case PeerModem: return ComPortSpec::Kind::Modem;
+            case PeerPlug: return ComPortSpec::Kind::Plug;
             default: return ComPortSpec::Kind::None;
         }
     }
@@ -70,6 +72,7 @@ namespace
             case ComPortSpec::Kind::Espnet: return PeerEspnet;
             case ComPortSpec::Kind::At: return PeerAt;
             case ComPortSpec::Kind::Modem: return PeerModem;
+            case ComPortSpec::Kind::Plug: return PeerPlug;
             default: return PeerNone;
         }
     }
@@ -98,12 +101,13 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
 
     _kind = new QComboBox(this);
     _kind->addItem(tr("Nothing connected"));
-    _kind->addItem(tr("Loopback plug (every byte comes back)"));
+    _kind->addItem(tr("Echo (every byte comes back, lines held active)"));
     _kind->addItem(tr("TCP: a host endpoint (BBS, test harness)"));
     _kind->addItem(tr("Serial: a host serial device (real ESP, modem)"));
     _kind->addItem(tr("ESP module, ESPNET firmware (NedoOS)"));
     _kind->addItem(tr("ESP module, AT firmware (Espressif)"));
     _kind->addItem(tr("Hayes modem (ATDT dials host:port or a phone book number)"));
+    _kind->addItem(tr("Loopback test plug (bytes back; RTS -> CTS, DTR -> DSR / DCD)"));
     layout->addWidget(_kind);
 
     _tcpRow = new QWidget(this);
@@ -542,10 +546,11 @@ void NetworkWindow::refresh()
     const StateNode network = DeviceState::Network(context);
     const NetworkForm form = NetworkFormFromState(network);
 
-    const QString serial = form.serialPort == "evo-avr"    ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
-                           : form.serialPort == "zifi"     ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
-                           : form.serialPort == "atm2-kbc" ? tr("the keyboard controller's RS-232 (IN #FE commands)")
-                                                           : tr("none");
+    const QString serial = form.serialPort == "evo-avr"      ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
+                           : form.serialPort == "zifi"       ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
+                           : form.serialPort == "atm2-kbc"   ? tr("the keyboard controller's RS-232 (IN #FE commands)")
+                           : form.serialPort == "profi-8251" ? tr("the 8251 COM port (#D3 / #F3, 8253 baud timer)")
+                                                             : tr("none");
     _machine->setText(tr("This machine: ZX-Bus %1; its own serial port: %2.")
                           .arg(form.zxBus ? tr("yes") : tr("no"), serial));
 

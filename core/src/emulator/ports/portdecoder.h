@@ -864,6 +864,7 @@ public:
             EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
             ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
+            Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -873,14 +874,14 @@ public:
         /// ComPort= names none (ESPNET / AT without ,<baud>)
         uint32_t espBaud = 115200;
 
-        /// A port that is no 16550 on #xxEF (Atm2Kbc) takes its peer here; nullptr detaches
+        /// A port that is no 16550 on #xxEF (Atm2Kbc, Profi8251) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector
         std::function<void(IIoBusDevice* device, bool attach)> internalIo;
 
-        /// Atm2Kbc: the RS-232 line as the firmware set it (baud), and a refit
+        /// Atm2Kbc / Profi8251: the RS-232 line as the firmware / program set it (baud); Atm2Kbc: a refit
         /// of the firmware from the config ([ATM] Kbc=); false + reason
         std::function<uint32_t()> serialBaud;
         std::function<bool(std::string& error)> reloadFirmware;

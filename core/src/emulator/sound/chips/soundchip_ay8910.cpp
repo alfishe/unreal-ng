@@ -343,6 +343,7 @@ void SoundChip_AY8910::reset()
     memset(&_registers, 0x00, sizeof(_registers));
     _currentRegister = 0;
     std::memcpy(_appliedRegisters, _registers, sizeof(_registers));
+    refreshIoPortPins();
 
     // Reset generators
     _toneGenerators[AY_CHANNEL_A].reset();
@@ -522,13 +523,13 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
 }
 
 
-void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
+void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, uint64_t t)
 {
-    latchRegister(regAddr, value);
+    latchRegister(regAddr, value, t);
     applyRegister(regAddr, value);
 }
 
-void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value)
+void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value, uint64_t t)
 {
     // Invalid register address provided - ignore it
     if (regAddr > 0x0F)
@@ -540,6 +541,38 @@ void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value)
     _hasBeenWritten = true;
 
     _registers[regAddr] = value;
+
+    // I/O port pins: only with a listener (out of line, per OUT, never per sample)
+    if (_ioPortListener) [[unlikely]]
+    {
+        if (AyIoPort::AffectsPins(regAddr))
+            notifyIoPortPins(t);
+    }
+}
+
+void SoundChip_AY8910::setIoPortListener(IAyIoPortListener* listener)
+{
+    _ioPortListener = listener;
+    // A new listener starts from the pins as they are: it hears changes from now on
+    refreshIoPortPins();
+}
+
+void SoundChip_AY8910::refreshIoPortPins()
+{
+    for (int port = 0; port < AyIoPort::PortCount; port++)
+        _ioPortPins[port] = ioPortPins(port);
+}
+
+void SoundChip_AY8910::notifyIoPortPins(uint64_t t)
+{
+    for (int port = 0; port < AyIoPort::PortCount; port++)
+    {
+        const uint8_t pins = ioPortPins(port);
+        if (pins == _ioPortPins[port])
+            continue;
+        _ioPortPins[port] = pins;
+        _ioPortListener->OnIoPortPins(t, port, pins);
+    }
 }
 
 void SoundChip_AY8910::applyRegister(uint8_t regAddr, uint8_t value)
@@ -1108,6 +1141,9 @@ void SoundChip_AY8910::TTDLoadState(const uint8_t* src)
 
     // --- Generator-side register view ---
     std::memcpy(_appliedRegisters, cur, 16); cur += 16;
+
+    // The I/O port pins follow from the restored registers; a listener keeps its own state (silent)
+    refreshIoPortPins();
 
     // Note: _tick, filters, panning, mixer buffers, stereoMode, chipModel are
     // intentionally not restored — they are host-side / user-config / transient

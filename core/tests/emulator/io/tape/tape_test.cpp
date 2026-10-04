@@ -416,6 +416,33 @@ TEST_F(TapeLoaderFollow_Test, DelayInsidePilotLongerThanTheDataHoldDoesNotRewind
     EXPECT_GE(_tape->_currentOffsetWithinPulse, 100u);
 }
 
+// A pilot shorter than the playback pause in a pilot (KID__DR's data blocks: 1.94 s, 97 frames) must not run out while
+// nobody listens: the playback is paused and the pilot rewound inside it, so a loader that comes back gets a whole
+// pilot instead of a tape frozen at the first data byte
+TEST_F(TapeLoaderFollow_Test, ShortPilotIsPausedAndRewoundBeforeItRunsOut)
+{
+    StartAt(0);
+    const size_t pilot = _tape->_currentTapeBlock->pilotEdgeCount;
+    ASSERT_GT(pilot, 100u);
+    const uint32_t pulse = _tape->_currentTapeBlock->edgePulseTimings[0];
+
+    // The head is one pulse short of the tail window: the pilot hold still applies
+    const uint64_t tailPulses = TAPE_PILOT_TAIL_TSTATES / pulse + 1;
+    ASSERT_GT(pilot, tailPulses + 10);
+    _tape->_currentOffsetWithinPulse = pilot - tailPulses - 5;
+    for (uint32_t i = 0; i < TAPE_BLOCK_HOLD_FRAMES + 5; i++)
+        Frame(EAR_LOOP_AT, 0);
+    EXPECT_TRUE(_tape->IsPlaying()) << "still in the body of the pilot: the long pause threshold applies";
+
+    // One pilot pulse inside the tail window: a loader silent for the data pause threshold is paused, pilot rewound
+    StartAt(0);
+    _tape->_currentOffsetWithinPulse = pilot - tailPulses + 5;
+    for (uint32_t i = 0; i < TAPE_BLOCK_HOLD_FRAMES; i++)
+        Frame(EAR_LOOP_AT, 0);
+    EXPECT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Paused);
+    EXPECT_EQ(_tape->_currentOffsetWithinPulse, 0u) << "the pilot was rewound to its first pulse";
+}
+
 // Test T12 (P3): the ROM gave up inside a block's data (BREAK) and LOAD "" calls LD-BYTES again. A fresh
 // LD-BYTES needs a pilot: the frozen block starts over, never from the pulse it froze on
 TEST_F(TapeLoaderFollow_Test, RomRestartAfterFreezeInDataStartsTheBlockOver)
