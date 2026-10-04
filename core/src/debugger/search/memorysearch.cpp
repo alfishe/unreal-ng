@@ -44,6 +44,25 @@ struct View
 };
 }  // namespace
 
+uint32_t RamPageCount(EmulatorContext* context)
+{
+    return context && context->config.ramsize ? context->config.ramsize / 16 : MAX_RAM_PAGES;
+}
+
+const uint8_t* PageHost(EmulatorContext* context, MemoryBankModeEnum type, uint32_t page)
+{
+    Memory* memory = context ? context->pMemory : nullptr;
+    if (!memory)
+        return nullptr;
+    if (type == BANK_RAM && page < RamPageCount(context))
+        return memory->RAMPageAddress(static_cast<uint16_t>(page));
+    if (type == BANK_ROM && page < MAX_ROM_PAGES)
+        return memory->ROMPageHostAddress(static_cast<uint8_t>(page));
+    if (type == BANK_CACHE && page < MAX_CACHE_PAGES && memory->CacheBase())
+        return memory->CacheBase() + static_cast<size_t>(page) * PAGE_SIZE;
+    return nullptr;
+}
+
 bool ParsePattern(const std::string& text, std::vector<uint8_t>& pattern, std::vector<uint8_t>& mask, std::string& error)
 {
     pattern.clear();
@@ -178,13 +197,7 @@ MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& r
             break;
         case MemorySearchRequest::Space::Page:
         {
-            const uint32_t ramPages = context->config.ramsize ? context->config.ramsize / 16 : MAX_RAM_PAGES;
-            if (request.pageType == BANK_RAM && request.page < ramPages)
-                view.page = memory->RAMPageAddress(request.page);
-            else if (request.pageType == BANK_ROM && request.page < MAX_ROM_PAGES)
-                view.page = memory->ROMPageHostAddress(request.page);
-            else if (request.pageType == BANK_CACHE && request.page < MAX_CACHE_PAGES && memory->CacheBase())
-                view.page = memory->CacheBase() + static_cast<size_t>(request.page) * PAGE_SIZE;
+            view.page = PageHost(context, request.pageType, request.page);
             if (!view.page)
             {
                 result.error = "this machine has no page " + SpaceName(request);
@@ -195,8 +208,7 @@ MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& r
         }
         case MemorySearchRequest::Space::AllRam:
         {
-            const uint32_t ramPages = context->config.ramsize ? context->config.ramsize / 16 : MAX_RAM_PAGES;
-            for (uint32_t p = 0; p < ramPages; p++)
+            for (uint32_t p = 0; p < RamPageCount(context); p++)
             {
                 const uint8_t* address = memory->RAMPageAddress(static_cast<uint16_t>(p));
                 if (!address)
