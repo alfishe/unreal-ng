@@ -132,8 +132,8 @@ Design: [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md).
 
 - [x] Step 1 — Integrity and versioning decision (owner, 2026-10-04): CRC32C per record, header and index; open with holes (only frames depending on a damaged record are unreachable); no compatibility promise before the release
 - [ ] Step 2 — Written as it records: append-only, background writer, crash-safe
-  - Decided 2026-10-04 (owner): black box = rolling segment files; each recording in its own folder `~/.unreal-ng/ttd/<date-time>-<name>/` (Windows `%USERPROFILE%\.unreal-ng\`), saved recordings as files in `~/.unreal-ng/ttd/`; an asynchronous `CleanupManager` at startup (steps from any subsystem, errors and exceptions caught per step, each step at least weekly) removes crashed recordings older than 7 days
-- [ ] Step 3 — Memory as a cache: budget, eviction with rebasing, read-back on seek, accounting
+  - Decided 2026-10-04 (owner): nothing is written until a recording is asked for; history in memory is a ring of segments (default: the last 5 minutes) or, on request at start, a longer ring or a list that grows (seek over the whole session); every closed segment is written to a file, so the disk holds the whole session; loading a long session reads the last 5 minutes by default, or a range; each recording in its own folder `~/.unreal-ng/ttd/<date-time>-<name>/` (Windows `%USERPROFILE%\.unreal-ng\`), saved recordings as files in `~/.unreal-ng/ttd/`; an asynchronous `CleanupManager` at startup (steps from any subsystem, errors and exceptions caught per step, each step at least weekly) removes crashed recordings older than 7 days
+- [ ] Step 3 — Segments: a baseline per segment, the ring (default 5 minutes) and the growable list, loading a range of a long session, accounting (replaces "memory as a cache" with budget, eviction and rebasing, owner decision 2026-10-04)
 - [ ] Step 4 — Optional frame-boundary streams in the file (screenshot first)
 - [ ] Step 5 — v1 files read into the engine's format
 - [ ] Step 6 — `ttd.ksy` and the Python analyzer
