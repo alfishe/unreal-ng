@@ -112,6 +112,8 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 - [x] Step 5 — Emulated real-time clocks (2026-10-03): one session time base (host wall time + emulated time at the recording start, `PortDecoder::SessionWallMicros`) for every DS12887 user; emulated microseconds from the base T-states, each frame at its own length (Sprinter 320 / 312 lines never goes back)
 - [x] Step 6 — No writes outside the session during replay (2026-10-03): write-through block media held in memory and released to their files when the replay ends (`HostWriteHold`, `MediaManager::HoldHostWrites`, engaged by v1's replay); floppy write-through waits for the next live frame; VDAC2 bus capture and the video recording's audio skip replayed frames
 - [ ] Step 7 — Write journal as a derived index with a retention policy (experiment E7 first)
+  - [x] E7 groundwork (2026-10-03): `SetWriteJournalCapacity` (sessions with their whole write history), `RegenerateFrameWrites` (a frame's writes by replay, equal to the journal's), TTDE7 benchmark; exactness 0 mismatching frames on 17 sessions x 200 frames
+- [ ] **On landing (merge master into ttd-engine):** master fixed the toolbar's cross-thread session summary crash its own way (1de1b07bc: `GetPublishedSessionInfo`, StopRecording parks the machine). Keep master's mechanism; drop this branch's `GetLatestSessionInfo` / `PublishSessionInfo` / `_infoMutex` and `timetravelmanager_sessioninfo_test.cpp` (5f18b937b)
 
 ## Phase 4 — The session file
 

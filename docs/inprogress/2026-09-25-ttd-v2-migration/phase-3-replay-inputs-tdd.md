@@ -461,6 +461,8 @@ public:
   It is a derived index as well and stays optional (switchable, one check per frame).
 - **Not sealed means no window.** A configuration whose replay is not sealed yet (a tap of Step 1 missing) cannot regenerate. It may only use `Ring` or `WholeHistory`, and says so in status.
 
+**E7 results (2026-10-03):** [write-journal-e7.md](write-journal-e7.md) — which operations use the journal (only "who wrote this last"), its size against the required part of a recording, the search time without it, and the open decision Q1.
+
 **Experiment E7 — choosing the default.** Run before Phase 4 (D17), as a model on recordings like E6, in `tools/poc/011-ttd-v2-capture-analysis/experiments/e7-write-journal-retention/`.
 
 - *Input:*
