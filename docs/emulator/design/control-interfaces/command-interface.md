@@ -449,9 +449,12 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 **Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
 audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
 The machine computes the same samples as at normal speed (TTD determinism; captures and recordings still get
-them). TTD seek / replay and turbo mode hold the output the same way; `resume` restores sound. The mixer
-(`mixer`, `GET /audio/mixer`) reports it under `host_output`: `held`, `frames_delivered`, `frames_audible`,
-`frames_held`.
+them). TTD seek / replay and turbo mode hold the output the same way; the user's master mute is never touched.
+Each hold ends with the run, seek or turbo span that took it (also when it fails), and `resume` drops any hold
+whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
+`GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
+`ttd_replay`, `turbo`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
+`frames_delivered`, `frames_audible`, `frames_held`.
 
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision

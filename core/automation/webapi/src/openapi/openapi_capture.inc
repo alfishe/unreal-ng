@@ -228,7 +228,9 @@
         "/audio/capture), name, muted, solo, audible, volume (0..1), gain_db, peak and active (the last frame), "
         "capturable; capture_source = what an armed capture records; host_output = what the host speakers got: held "
         "(true while a run not paced to real time - run_frames and the other direct runs, TTD seek / replay, "
-        "turbo - withholds it), frames_delivered, frames_audible (of those, non-silent), frames_held (emulated "
+        "turbo - withholds it), holders (active holds by reason: direct_run, ttd_replay, turbo; all 0 while the "
+        "machine plays), holds_taken (ever taken, by reason), stale_holds_cleared (holds a resume found without "
+        "their reason and dropped), frames_delivered, frames_audible (of those, non-silent), frames_held (emulated "
         "frames since creation).";
     paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["in"] = "path";

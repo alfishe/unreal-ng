@@ -1383,6 +1383,13 @@ void Emulator::Resume(bool broadcast)
     if (_mainloop)
         _mainloop->InvalidatePauseConfirmation();
 
+    // A resumed machine runs paced to real time and is heard: a host output hold whose reason is not in effect
+    // now (no direct run on any thread, no TTD replay, no turbo) is a holder that leaked it - drop it, so no
+    // pause / step / seek sequence on any surface can leave the speakers silent (SoundManager::HostOutputHold)
+    if (_context && _context->pSoundManager)
+        _context->pSoundManager->reconcileHostOutputHolds(IsDirectStepping(), _context->ttdReplayActive,
+                                                          _context->config.turbo_mode);
+
     {
         // Mirror Pause(): the flag flip must be mutex-protected so the parked
         // CPU thread's CV predicate (WaitWhilePaused) can't miss the transition.
@@ -2491,12 +2498,11 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 
 Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
 {
+    const bool firstIn = _emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel) == 0;
     if (_emulator._context && _emulator._context->pSoundManager)
-    {
-        _heldSound = _emulator._context->pSoundManager;
-        _heldSound->holdHostOutput();
-    }
-    if (_emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel) == 0)
+        _hostHold = SoundManager::HostOutputHold(_emulator._context->pSoundManager,
+                                                 SoundManager::HostHoldReason::DirectRun);
+    if (firstIn)
     {
         // A new direct run: no breakpoint stop yet; its first instruction may leave the execution
         // breakpoint the emulator is stopped at (nothing executed since it stopped there)
@@ -2509,8 +2515,7 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
 
 Emulator::DirectStepScope::~DirectStepScope()
 {
-    if (_heldSound)
-        _heldSound->releaseHostOutput();
+    _hostHold.Release();
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
     {
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
