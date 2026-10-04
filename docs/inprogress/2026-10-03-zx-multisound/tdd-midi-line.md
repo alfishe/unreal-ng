@@ -180,7 +180,7 @@ The header forward-declares `sam2695::Synth`; the `.cpp` includes the library un
    on the legacy device). The MultiSound does not depend on it (its MIDI pin is on the YM2203 SSG, MS-1). Recommended
    fix when the 128K MIDI / RS-232 use lands: R14 / R15 = `#FF` at reset (same pins as the real chip, and the same
    reads - an input port reads its pulled-up pins) plus a gate baseline refresh.
-3. **YM2203 SSG not hooked yet** (owner decision 2026-10-04: `soundchip_turbosoundfm.*` and `tsfm/*` change on the
+3. **YM2203 SSG not hooked yet** (resolved in MS-1: the pair's SSG is a `SoundChip_AY8910`, so `Ym2203Pair::setIoPortListener(chip, listener)` reuses the AY's pin cache and listener as they are; pin changes carry the write's host tick) (owner decision 2026-10-04: `soundchip_turbosoundfm.*` and `tsfm/*` change on the
    `ttd-engine` branch). The interface is chip-agnostic: `Ym2203Pair`'s SSG (MS-1) keeps a pin cache of two bytes,
    calls `AyIoPort::AffectsPins(reg)` on its register writes behind one listener test, and reports
    `AyIoPort::Pins(r7, port, latch)` changes to the same `IAyIoPortListener`.

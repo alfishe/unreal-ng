@@ -23,193 +23,8 @@ uint64_t SoundChip_TurboSoundFM::nowT() const
     return _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
 }
 
-void SoundChip_TurboSoundFM::fmHalfTick(int chipIndex, int64_t h)
-{
-    TsfmChip& c = *_chips[chipIndex];
-    TsfmOutputState& o = c.out;
-
-    // Consume every word that has landed by half-tick boundary h into the
-    // hold register (§6.2). The tap sees the raw, pre-mute DAC stream;
-    // words are 72 T apart at /6, half-ticks 8 T, so each word is held for
-    // exactly 9 half-ticks - across frame boundaries too, since the cursor
-    // and the words share one rebased timeline. Signed compare: words left
-    // over from the previous frame sit at negative T after the rebase
-    bool consumed = false;
-    while (!c.words.empty() && int64_t(c.words.front().t) <= h)
-    {
-        o.hold = static_cast<double>(c.words.front().word) / 32768.0;
-        if (o.nativeTap->isActive())
-            o.nativeTap->push(static_cast<float>(o.hold), static_cast<float>(o.hold));
-        c.words.pop();
-        consumed = true;
-    }
-
-    // Mute-at-hold-input (§6.2): the board mute grounds the DAC data line,
-    // so the filter (and its state) sees silence while FM is disabled -
-    // no click on unmute, the decimator stays warmed up. The output coupling
-    // capacitor sits after the DAC buffer, so it sees the gated value too
-    const double gated = _board.fmEnabled ? o.hold : 0.0;
-
-    // First live word after a flush (TTD seek, resume after a gap): the chip
-    // may be mid-sound; pick the coupling up at the level it is fed instead
-    // of passing a step from the flushed 0 to it
-    if (consumed && o.couplingSettlePending)
-    {
-        o.coupling.settle(gated);
-        o.couplingSettlePending = false;
-    }
-    const double sample = o.coupling.filter(gated);
-    o.lastFed = sample;
-    if (_hqEnabled)
-        o.decimator.feedSample(sample);
-    else
-    {
-        o.lqSum += sample;
-        o.lqCount++;
-    }
-}
-
-double SoundChip_TurboSoundFM::fmLqSample(int chipIndex)
-{
-    TsfmOutputState& o = _chips[chipIndex]->out;
-    if (o.lqCount == 0)
-        return o.lastFed;  // no half-tick landed on this output sample
-    const double sample = o.lqSum / o.lqCount;
-    o.lqSum = 0.0;
-    o.lqCount = 0;
-    return sample;
-}
-
-void SoundChip_TurboSoundFM::flushOutputStage()
-{
-    for (auto& c : _chips)
-    {
-        c->out.hold = 0.0;
-        c->out.coupling.reset();
-        c->out.couplingSettlePending = true;
-        c->out.lastFed = 0.0;
-        c->out.lqSum = 0.0;
-        c->out.lqCount = 0;
-        c->ssg.decimatorLeft().clearHistory();
-        c->ssg.decimatorRight().clearHistory();
-        c->out.decimator.clearHistory();
-    }
-}
-
-void SoundChip_TurboSoundFM::queueSsgWrite(TsfmChip& c, uint8_t reg, uint8_t value)
-{
-    if (_synthesisSuppressed)
-    {
-        // Nothing renders, so no tick would ever take it: the generators
-        // simply follow the register file
-        c.ssg.applyRegister(reg, value);
-        return;
-    }
-    if (c.ssgWrites.full())
-    {
-        c.ssg.applyRegister(c.ssgWrites.front().reg, c.ssgWrites.front().value);
-        c.ssgWrites.pop();
-    }
-    c.ssgWrites.push(SsgWrite{int64_t(_syncedT), reg, value});
-}
-
-void SoundChip_TurboSoundFM::applySsgWrites(int64_t t)
-{
-    for (auto& c : _chips)
-    {
-        while (!c->ssgWrites.empty() && c->ssgWrites.front().t <= t)
-        {
-            c->ssg.applyRegister(c->ssgWrites.front().reg, c->ssgWrites.front().value);
-            c->ssgWrites.pop();
-        }
-    }
-}
-
-void SoundChip_TurboSoundFM::applyAllSsgWrites()
-{
-    for (auto& c : _chips)
-    {
-        while (!c->ssgWrites.empty())
-        {
-            c->ssg.applyRegister(c->ssgWrites.front().reg, c->ssgWrites.front().value);
-            c->ssgWrites.pop();
-        }
-    }
-}
-
-void SoundChip_TurboSoundFM::syncTo(uint64_t t)
-{
-    if (_adoptCpuClock)
-    {
-        // After reset/restore: adopt the CPU's position without advancing -
-        // nothing has been simulated yet, so there is nothing to catch up.
-        _syncedT = t;
-        _adoptCpuClock = false;
-        return;
-    }
-    if (t <= _syncedT)
-        return;
-    int32_t delta = int32_t(t - _syncedT);
-    for (auto& c : _chips)
-        advanceChip(*c, delta, _syncedT);
-    _syncedT = t;
-}
-
-void SoundChip_TurboSoundFM::advanceChip(TsfmChip& c, int32_t delta, uint64_t t0)
-{
-    // Walk FM sample boundaries and timer expiries in time order, so a CSM
-    // key-on from timer A lands on the right FM sample (§5.2 ordering rule:
-    // at the same T-state, expiry is processed before the sample).
-    if (_coreSynthesisSkipped)
-    {
-        // Sound off and no TTD: the FM operators (phases, envelopes) feed only the sound output, so
-        // their clocking is skipped. Everything the CPU can observe stays exact - timers expire on
-        // their T-state (CSM key-on included), busy counts down, and the sample-clock phase keeps
-        // its alignment for the moment synthesis resumes
-        while (delta > 0)
-        {
-            const int32_t period = 12 * int32_t(c.fm.fmClockPrescale());
-            if (c.fmClockPhase >= period)
-                c.fmClockPhase = period - 1;
-
-            const int32_t n = std::min(delta, c.intf.clocksToNextExpiry());  // INT32_MAX when both stopped
-            c.intf.advance(n);
-
-            // FM sample clocks that would have completed in these n T-states; the engine still counts
-            // them (its low clock-counter bits are CPU-observable through the timer B first load)
-            const int32_t total = c.fmClockPhase + n;
-            c.fm.skipFmClocks(uint32_t(total / period));
-            c.fmClockPhase = total % period;
-            delta -= n;
-        }
-        return;
-    }
-
-    while (delta > 0)
-    {
-        const int32_t period = 12 * int32_t(c.fm.fmClockPrescale());
-        // A prescaler write (address 0x2D-0x2F) takes effect on the next
-        // iteration; clamp the phase so a shrinking period cannot produce
-        // toClock <= 0 (negative step) or skip a sample.
-        if (c.fmClockPhase >= period)
-            c.fmClockPhase = period - 1;
-        const int32_t toClock = period - c.fmClockPhase;
-        const int32_t toTimer = c.intf.clocksToNextExpiry();  // INT32_MAX when both stopped
-        const int32_t n = std::min({delta, toClock, toTimer});
-
-        c.intf.advance(n);  // counts down busy; fires expired timers exactly on their T-state
-        c.fmClockPhase += n;
-        delta -= n;
-        t0 += n;
-
-        if (c.fmClockPhase == period)
-        {
-            c.fmClockPhase = 0;
-            const int16_t word = c.fm.clockFmOnce();
-            c.words.push(t0, word);  // the output stage drops these when suppressed (§6.1)
-        }
-    }
-}
+// The core loop itself (syncTo / advanceChip, FM half-ticks, timed SSG
+// writes, the output-stage flush) is the shared Ym2203Pair's (tsfm/ym2203pair.cpp)
 
 /// endregion </Core loop>
 
@@ -221,38 +36,20 @@ void SoundChip_TurboSoundFM::reset()
     // read, FM muted. Both YM2203 /RES pins are wired to host reset.
     _board = TsfmBoard{};
 
-    // Clock: adopt the CPU's T-state on the next sync; nobody has touched
-    // the chips since the reset, so there is nothing to advance to.
-    _adoptCpuClock = true;
-    _chips[0]->words.clear();
-    _chips[1]->words.clear();
-
-    // Per-chip sequence (construction runs the same code, §5.4)
-    _chips[0]->resetChip();
-    _chips[1]->resetChip();
+    // Both chips (/RES on host reset, §5.4), the clock (adopt the CPU's
+    // T-state on the next sync), the render cursor and the output stage -
+    // FM hold/boxcar state and the decimators (state only; the rate-designed
+    // coefficients and the slave wiring from setCoreRate are preserved)
+    _pair.reset();
 
     // Render loop (§6): same reset set as the legacy device - PLL, buffer
-    // cursor, LQ phase - plus the FM hold/boxcar state and the decimators
-    // (state only; the rate-designed coefficients and the slave wiring
-    // from setCoreRate are preserved)
+    // cursor, LQ phase
     _lastTStates = 0;
     _samplePhase = 0;
     _ayBufferIndex = 0;
     _decimationPhase = 0.0;
-    _renderT = -kFmRenderLagT;
     _renderReanchor = false;
     _outputFlushPending = false;
-    for (auto& c : _chips)
-    {
-        c->out.hold = 0.0;
-        c->out.coupling.reset();
-        c->out.lastFed = 0.0;
-        c->out.lqSum = 0.0;
-        c->out.lqCount = 0;
-        c->ssg.decimatorLeft().reset();
-        c->ssg.decimatorRight().reset();
-        c->out.decimator.reset();
-    }
 }
 
 /// endregion </Methods>
@@ -266,19 +63,7 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     // queued word timestamp by the same delta so they land on the new
     // frame's axis. No CPU instruction runs between the adjust and this
     // hook, so no time is lost or double-counted.
-    if (!_adoptCpuClock)
-    {
-        const int32_t delta = int32_t(_syncedT - nowT());
-        if (delta != 0)
-        {
-            _syncedT = uint64_t(int64_t(_syncedT) - int64_t(delta));
-            _chips[0]->words.rebase(delta);
-            _chips[1]->words.rebase(delta);
-            _chips[0]->ssgWrites.rebase(delta);
-            _chips[1]->ssgWrites.rebase(delta);
-            _renderT -= delta;
-        }
-    }
+    _pair.rebaseFrame(nowT());
 
     // The FM cursor carries its position across the boundary: the render loop
     // does not run exactly frame/16 ticks per frame (the decimators' fractional
@@ -289,9 +74,10 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     // (re-anchor once, together with the filter redesign, instead of letting
     // the offsets pile up); far outside the window it has lost the timeline
     // (host speed multiplier > 1, synthesis resumed after suppression)
-    if (_renderReanchor || _renderT < -4 * kFmRenderLagT || _renderT > 0)
+    const int64_t renderT = _pair.renderT();
+    if (_renderReanchor || renderT < -4 * kFmRenderLagT || renderT > 0)
     {
-        _renderT = -kFmRenderLagT;
+        _pair.setRenderT(-kFmRenderLagT);
         _renderReanchor = false;
     }
 
@@ -300,25 +86,24 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     // carry the old level (ISSUES #7). Applied here, on the emulation thread
     if (_outputFlushPending)
     {
-        flushOutputStage();
+        _pair.flushOutputStage();
         _outputFlushPending = false;
     }
 
     // When the output stage is off, nobody drains the word queues - clear
     // them here so they cannot wrap (§6.1; handleFrameStart runs in turbo
     // and with the sound feature off too).
-    if (_synthesisSuppressed)
+    if (_pair.synthesisSuppressed())
     {
-        _chips[0]->words.clear();
-        _chips[1]->words.clear();
-        applyAllSsgWrites();  // queued just before suppression began
+        _pair.clearWords();
+        _pair.applyAllSsgWrites();  // queued just before suppression began
     }
 
     // §9.4: the SSG clock change at /3 or /2 is not modelled - warn once per
     // device instance, at frame granularity, so a player's 0x2F -> 0x2D init
     // (which ends at /6 within a frame) never warns.
     if (!_prescalerWarned &&
-        (_chips[0]->fm.fmClockPrescale() != 6 || _chips[1]->fm.fmClockPrescale() != 6))
+        (_pair.chip(0)->fm.fmClockPrescale() != 6 || _pair.chip(1)->fm.fmClockPrescale() != 6))
     {
         _prescalerWarned = true;
         MLOGWARNING("SoundChip_TurboSoundFM: prescaler != /6 - the SSG clock ratio is not modelled (design §9.4)");
@@ -348,7 +133,7 @@ void SoundChip_TurboSoundFM::handleFrameStart()
 /// change a float (the -0.0 + 0.0 -> +0.0 edge casts to the same int16).
 ///
 /// The FM half interleaves around each SSG generator tick (§6.2): two FM
-/// half-ticks (boundaries _renderT and _renderT+8) per tick, each consuming
+/// half-ticks (boundaries renderT and renderT+8 of the pair's cursor) per tick, each consuming
 /// the FM words that landed by its boundary into a sample-and-hold register
 /// and feeding the muted-or-held value to the 437.5 kHz decimator (HQ) or
 /// the boxcar accumulator (LQ). The FM decimators are slaves of chip-0 SSG
@@ -357,10 +142,10 @@ void SoundChip_TurboSoundFM::handleStep()
 {
     // §6.1: the core advances in every mode (turbo, sound feature off) -
     // SoundManager reaches this call unconditionally. Rendering is gated
-    // on _synthesisSuppressed; the core never is.
+    // on synthesis suppression; the core never is.
     syncTo(nowT());
 
-    if (_synthesisSuppressed)
+    if (_pair.synthesisSuppressed())
         return;
 
     // Hardware turbo descaled: the YM2203 has its own clock, so under the
@@ -387,6 +172,9 @@ void SoundChip_TurboSoundFM::handleStep()
         // Native-rate recording tap: active only during DSD capture.
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
+        const bool hqEnabled = _pair.hqEnabled();
+        TsfmChip& chip0 = *_pair.chip(0);
+        TsfmChip& chip1 = *_pair.chip(1);
 
         _samplePhase += uint64_t(diff) * _coreRate;
 
@@ -397,51 +185,44 @@ void SoundChip_TurboSoundFM::handleStep()
             int16_t leftSample;
             int16_t rightSample;
 
-            if (_hqEnabled)
+            if (hqEnabled)
             {
                 // ========== HIGH QUALITY MODE ==========
                 // Native clock rendering + FIR decimation (legacy loop)
                 // with the FM half-ticks of §6.2 interleaved per tick
 
-                // Feed generator samples to decimators until we have an output
-                while (!_chips[0]->ssg.decimatorLeft().hasOutput())
+                // Feed generator samples to decimators until we have an output.
+                // One SSG tick of the pair: FM half-tick 1/2 (§6.2), the
+                // register writes timed up to this tick applied, generators
+                // ticked (bypass internal prescaler), the lambda, FM half-tick
+                // 2/2; the cursor advances one SSG tick
+                while (!chip0.ssg.decimatorLeft().hasOutput())
                 {
-                    // FM half-tick 1/2 of this SSG tick (§6.2)
-                    fmHalfTick(0, _renderT);
-                    fmHalfTick(1, _renderT);
-
-                    // Tick generators (bypass internal prescaler), with the
-                    // register writes timed up to this tick applied first
-                    applySsgWrites(_renderT);
-                    updateState(true);
-
-                    // Native-rate tap for DSD capture (pre-decimation, both SSGs summed)
-                    if (tapActive)
+                    _pair.renderTick(_board.fmEnabled, [&](TsfmChip& c0, TsfmChip& c1)
                     {
-                        _nativeTap->push(static_cast<float>(_chips[0]->ssg.mixedLeft() + _chips[1]->ssg.mixedLeft()),
-                                         static_cast<float>(_chips[0]->ssg.mixedRight() + _chips[1]->ssg.mixedRight()));
-                    }
+                        // Native-rate tap for DSD capture (pre-decimation, both SSGs summed)
+                        if (tapActive)
+                        {
+                            _nativeTap->push(static_cast<float>(c0.ssg.mixedLeft() + c1.ssg.mixedLeft()),
+                                             static_cast<float>(c0.ssg.mixedRight() + c1.ssg.mixedRight()));
+                        }
 
-                    // Feed mixed output to decimators
-                    _chips[0]->ssg.decimatorLeft().feedSample(_chips[0]->ssg.mixedLeft());
-                    _chips[0]->ssg.decimatorRight().feedSample(_chips[0]->ssg.mixedRight());
-                    _chips[1]->ssg.decimatorLeft().feedSample(_chips[1]->ssg.mixedLeft());
-                    _chips[1]->ssg.decimatorRight().feedSample(_chips[1]->ssg.mixedRight());
-
-                    // FM half-tick 2/2 (§6.2); the cursor advances one SSG tick
-                    fmHalfTick(0, _renderT + 8);
-                    fmHalfTick(1, _renderT + 8);
-                    _renderT += 16;
+                        // Feed mixed output to decimators
+                        c0.ssg.decimatorLeft().feedSample(c0.ssg.mixedLeft());
+                        c0.ssg.decimatorRight().feedSample(c0.ssg.mixedRight());
+                        c1.ssg.decimatorLeft().feedSample(c1.ssg.mixedLeft());
+                        c1.ssg.decimatorRight().feedSample(c1.ssg.mixedRight());
+                    });
                 }
 
                 // Get decimated output per chip (SSG verbatim; FM slaves
                 // follow the master's cadence, gain-scaled, §7.1)
-                float c0L = _chips[0]->ssg.decimatorLeft().getOutput();
-                float c0R = _chips[0]->ssg.decimatorRight().getOutput();
-                float c1L = _chips[1]->ssg.decimatorLeft().getOutput();
-                float c1R = _chips[1]->ssg.decimatorRight().getOutput();
-                float f0 = static_cast<float>(_chips[0]->out.decimator.getOutput() * _fmGain);
-                float f1 = static_cast<float>(_chips[1]->out.decimator.getOutput() * _fmGain);
+                float c0L = chip0.ssg.decimatorLeft().getOutput();
+                float c0R = chip0.ssg.decimatorRight().getOutput();
+                float c1L = chip1.ssg.decimatorLeft().getOutput();
+                float c1R = chip1.ssg.decimatorRight().getOutput();
+                float f0 = static_cast<float>(chip0.out.decimator.getOutput() * _fmGain);
+                float f1 = static_cast<float>(chip1.out.decimator.getOutput() * _fmGain);
 
                 // Store per-chip buffers (SSG for registry-driven capture,
                 // FM centre-panned, §6.4/§7.2)
@@ -476,39 +257,30 @@ void SoundChip_TurboSoundFM::handleStep()
                 {
                     _decimationPhase -= 1.0;
 
-                    // FM half-tick 1/2 of this SSG tick (§6.2)
-                    fmHalfTick(0, _renderT);
-                    fmHalfTick(1, _renderT);
-
-                    // Tick generators directly (bypass internal prescaler),
-                    // with the register writes timed up to this tick applied
-                    applySsgWrites(_renderT);
-                    updateState(true);
-
-                    double l = _chips[0]->ssg.mixedLeft() + _chips[1]->ssg.mixedLeft();
-                    double r = _chips[0]->ssg.mixedRight() + _chips[1]->ssg.mixedRight();
-
-                    // Native-rate tap for DSD capture (pre-decimation)
-                    if (tapActive)
+                    // One SSG tick of the pair (FM half-ticks interleaved,
+                    // timed writes applied, generators ticked directly)
+                    _pair.renderTick(_board.fmEnabled, [&](TsfmChip& c0, TsfmChip& c1)
                     {
-                        _nativeTap->push(static_cast<float>(l), static_cast<float>(r));
-                    }
+                        double l = c0.ssg.mixedLeft() + c1.ssg.mixedLeft();
+                        double r = c0.ssg.mixedRight() + c1.ssg.mixedRight();
 
-                    // Accumulate samples
-                    leftSum += l;
-                    rightSum += r;
-                    sampleCount++;
+                        // Native-rate tap for DSD capture (pre-decimation)
+                        if (tapActive)
+                        {
+                            _nativeTap->push(static_cast<float>(l), static_cast<float>(r));
+                        }
 
-                    // FM half-tick 2/2 (§6.2); the cursor advances one SSG tick
-                    fmHalfTick(0, _renderT + 8);
-                    fmHalfTick(1, _renderT + 8);
-                    _renderT += 16;
+                        // Accumulate samples
+                        leftSum += l;
+                        rightSum += r;
+                        sampleCount++;
+                    });
                 }
 
                 // FM boxcar sample (gated values; the hold when no half-tick
                 // landed on this output sample), gain-scaled (§7.1)
-                const double f0 = fmLqSample(0) * _fmGain;
-                const double f1 = fmLqSample(1) * _fmGain;
+                const double f0 = _pair.fmLqSample(0) * _fmGain;
+                const double f1 = _pair.fmLqSample(1) * _fmGain;
 
                 // Average (simple boxcar decimation)
                 float c0L, c0R, c1L, c1R;
@@ -523,9 +295,9 @@ void SoundChip_TurboSoundFM::handleStep()
                     // bit-identical under the swap - chip 1 takes the r0 share,
                     // chip 0 the 1-r0 share
                     double total = leftSum + rightSum;
-                    double r0 = (total > 0) ? (_chips[1]->ssg.mixedLeft() + _chips[1]->ssg.mixedRight()) /
-                                              (_chips[0]->ssg.mixedLeft() + _chips[0]->ssg.mixedRight() +
-                                               _chips[1]->ssg.mixedLeft() + _chips[1]->ssg.mixedRight() + 1e-9) : 0.5;
+                    double r0 = (total > 0) ? (chip1.ssg.mixedLeft() + chip1.ssg.mixedRight()) /
+                                              (chip0.ssg.mixedLeft() + chip0.ssg.mixedRight() +
+                                               chip1.ssg.mixedLeft() + chip1.ssg.mixedRight() + 1e-9) : 0.5;
 
                     c0L = static_cast<float>((leftSum * (1.0 - r0)) / sampleCount);
                     c0R = static_cast<float>((rightSum * (1.0 - r0)) / sampleCount);
@@ -538,10 +310,10 @@ void SoundChip_TurboSoundFM::handleStep()
                 else
                 {
                     // No ticks this sample - use previous value
-                    c0L = static_cast<float>(_chips[0]->ssg.mixedLeft());
-                    c0R = static_cast<float>(_chips[0]->ssg.mixedRight());
-                    c1L = static_cast<float>(_chips[1]->ssg.mixedLeft());
-                    c1R = static_cast<float>(_chips[1]->ssg.mixedRight());
+                    c0L = static_cast<float>(chip0.ssg.mixedLeft());
+                    c0R = static_cast<float>(chip0.ssg.mixedRight());
+                    c1L = static_cast<float>(chip1.ssg.mixedLeft());
+                    c1R = static_cast<float>(chip1.ssg.mixedRight());
                     leftSample = static_cast<int16_t>((c0L + c1L + static_cast<float>(f0) + static_cast<float>(f1)) * INT16_MAX);
                     rightSample = static_cast<int16_t>((c0R + c1R + static_cast<float>(f0) + static_cast<float>(f1)) * INT16_MAX);
                 }
@@ -583,23 +355,20 @@ void SoundChip_TurboSoundFM::handleFrameEnd()
 uint8_t SoundChip_TurboSoundFM::portDeviceInMethod(uint16_t port)
 {
     syncTo(nowT());
-    TsfmChip& c = *_chips[_board.chip];
 
     // Status mode applies to #FFFD only; IN #BFFD keeps the register path
     // for regression parity with the legacy device (§5.3)
     if (_board.statusRead && port == PORT_FFFD)
-        return c.fm.read_status();  // busy | timer B | timer A
+        return _pair.readStatus(_board.chip);  // busy | timer B | timer A
 
-    if (c.address < 0x10)
-        return c.ssg.readCurrentRegister();
-
-    return 0xFF;  // FM address latched (hardware-reference H2)
+    // SSG register on the bus (input ports read their pins), #FF while an FM
+    // address is latched (hardware-reference H2)
+    return _pair.readData(_board.chip);
 }
 
 void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
     syncTo(nowT());
-    TsfmChip& c = *_chips[_board.chip];
 
     switch (port)
     {
@@ -615,33 +384,18 @@ void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
             else
             {
                 // Address: latched in BOTH modes, regardless of FM mute
-                // (hardware §3.4)
-                c.address = value;
-                c.fm.write_address(value);  // ymfm address + prescaler side effect (0x2D-0x2F)
-                c.ssg.setRegister(value);   // SSG: <0x10 selects; >=0x10 keeps the previous register
+                // (hardware §3.4): ymfm address + prescaler side effect
+                // (0x2D-0x2F), SSG select (<0x10 selects; >=0x10 keeps the
+                // previous register)
+                _pair.writeAddress(_board.chip, value);
             }
             break;
 
         case PORT_BFFD:
-            if (c.address < 0x10)
-            {
-                // SSG register: the CPU sees it now, the generators on the
-                // tick of this T-state (SsgWriteQueue). Busy is set by SSG
-                // data writes too - ymfm's write_data does it for both halves.
-                const uint8_t reg = c.ssg.getCurrentRegisterIndex();
-                c.ssg.latchRegister(reg, value);
-                queueSsgWrite(c, reg, value);
-                c.intf.ymfm_set_busy_end(c.fm.busyClocks());
-            }
-            else
-            {
-                // FM register; sets busy itself; allowed while muted
-                c.fm.write_data(value);
-                // Key-on mirror for the state report: 0x28 = ch (bits 0-1,
-                // 3 = none) | slot mask (bits 4-7)
-                if (c.address == 0x28 && (value & 3) < 3)
-                    c.fmKeyOn[value & 3] = uint8_t(value >> 4);
-            }
+            // SSG register (the CPU sees it now, the generators on the tick
+            // of this T-state) or FM register (allowed while muted); both
+            // set busy
+            _pair.writeData(_board.chip, value);
             break;
 
         default:
@@ -657,7 +411,7 @@ void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
         record.port = port;
         record.value = value;
         record.chip = _board.chip;
-        record.reg = (port == PORT_BFFD) ? c.address : value;
+        record.reg = (port == PORT_BFFD) ? _pair.chip(_board.chip)->address : value;
         if (_context && _context->pCore)
         {
             const Z80* z80 = _context->pCore->GetZ80();
@@ -713,29 +467,21 @@ namespace
 {
 /// Cursor-based little-endian writers/readers, matching soundchip_ay8910.cpp.
 inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
-inline void put_u16(uint8_t*& cur, uint16_t v)  { std::memcpy(cur, &v, 2); cur += 2; }
-inline void put_i32(uint8_t*& cur, int32_t v)   { std::memcpy(cur, &v, 4); cur += 4; }
 inline void put_u32(uint8_t*& cur, uint32_t v)  { std::memcpy(cur, &v, 4); cur += 4; }
 inline void put_u64(uint8_t*& cur, uint64_t v)  { std::memcpy(cur, &v, 8); cur += 8; }
 inline void put_f64(uint8_t*& cur, double v)    { std::memcpy(cur, &v, 8); cur += 8; }
 
 inline uint8_t  get_u8 (const uint8_t*& cur)  { return *cur++; }
-inline uint16_t get_u16(const uint8_t*& cur)  { uint16_t v; std::memcpy(&v, cur, 2); cur += 2; return v; }
-inline int32_t  get_i32(const uint8_t*& cur)  { int32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
 inline uint32_t get_u32(const uint8_t*& cur)  { uint32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
 inline uint64_t get_u64(const uint8_t*& cur)  { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 inline double   get_f64(const uint8_t*& cur)  { double v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 
-// ymfm's save_restore() serializes ym2203 (FM engine, its dormant internal
-// SSG copy, and the SSG resampler) into a caller-owned byte vector. Measured
-// and pinned by ymfm_ttd_patch_test.cpp (YmfmTtdPatch.*): fixed at 494 bytes
-// for the vendored/patched engine as long as the register file and channel
-// topology don't change.
-constexpr size_t kYmfmStateSize = 494;
-
-// address(1) + fmClockPhase(4) + timer[2](8) + busy(4) + ymfmSize(2) +
-// ymfm payload(kYmfmStateSize) + SSG payload(73, SoundChip_AY8910)
-constexpr size_t kTsfmChipStateSize = 1 + 4 + 4 + 4 + 4 + 2 + kYmfmStateSize + 73;
+// Per-chip payload (the shared Ym2203Pair writes it): address(1) +
+// fmClockPhase(4) + timer[2](8) + busy(4) + ymfmSize(2) + ymfm payload(494:
+// ymfm's save_restore() of ym2203 - FM engine, its dormant internal SSG copy,
+// the SSG resampler - measured and pinned by ymfm_ttd_patch_test.cpp) + SSG
+// payload(73, SoundChip_AY8910)
+constexpr size_t kTsfmChipStateSize = Ym2203Pair::kChipStateSize;
 static_assert(kTsfmChipStateSize == 586, "TSFM per-chip state size drift");
 
 // Render-loop free-running accumulators (§6.2): _samplePhase (the mixer-exact
@@ -777,8 +523,10 @@ constexpr size_t kRenderPhaseStateSize =
 // device's synced position (the frame end at a checkpoint) and rebuilt
 // around the restored CPU position - the same rebase a frame start does.
 // Per chip: count(1) + kCapacity x {t offset i32, reg u8, value u8}
-constexpr size_t kSsgQueueStateSize = 1 + SsgWriteQueue::kCapacity * (4 + 1 + 1);
-constexpr size_t kTimelineStateSize = 8 /* render cursor offset */ + 2 * kSsgQueueStateSize;
+// (Ym2203Pair::saveTimeline / loadTimeline)
+constexpr size_t kTimelineStateSize = Ym2203Pair::kTimelineStateSize;
+static_assert(kTimelineStateSize == 8 /* render cursor offset */ + 2 * (1 + SsgWriteQueue::kCapacity * (4 + 1 + 1)),
+              "TSFM timeline tail size drift");
 
 // v5 tail: the current frame's render progress - the frame position the
 // render loop has reached (_lastTStates, scaled T-states) and the samples it
@@ -825,53 +573,18 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
     put_u8(cur, EncodeBoardByte(_board));
     put_u64(cur, _samplePhase);
     put_f64(cur, _decimationPhase);
-    put_f64(cur, _chips[0]->ssg.decimatorLeft().phase());
-    put_f64(cur, _chips[0]->ssg.decimatorRight().phase());
-    put_f64(cur, _chips[1]->ssg.decimatorLeft().phase());
-    put_f64(cur, _chips[1]->ssg.decimatorRight().phase());
+    put_f64(cur, _pair.chip(0)->ssg.decimatorLeft().phase());
+    put_f64(cur, _pair.chip(0)->ssg.decimatorRight().phase());
+    put_f64(cur, _pair.chip(1)->ssg.decimatorLeft().phase());
+    put_f64(cur, _pair.chip(1)->ssg.decimatorRight().phase());
 
-    for (int i = 0; i < 2; ++i)
-    {
-        TsfmChip& c = *_chips[i];  // non-const through the unique_ptr, see header comment
+    // Per chip: latch, clock phase, timers, busy, ymfm engine, SSG half
+    _pair.saveChipState(0, cur);
+    _pair.saveChipState(1, cur);
 
-        put_u8 (cur, c.address);
-        put_i32(cur, c.fmClockPhase);
-        put_i32(cur, c.intf._timer[0]);
-        put_i32(cur, c.intf._timer[1]);
-        put_i32(cur, c.intf._busy);
-
-        // ymfm serializes via push_back into a caller-owned vector; the
-        // scratch buffer is pre-reserved (TsfmChip::ttdScratch) so this does
-        // not allocate on the steady-state save path.
-        c.ttdScratch.clear();
-        ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/true);
-        c.fm.save_restore(state);
-        assert(c.ttdScratch.size() == kYmfmStateSize &&
-               "ymfm engine payload size drifted from the §8.2-measured 494 bytes");
-
-        put_u16(cur, static_cast<uint16_t>(c.ttdScratch.size()));
-        std::memcpy(cur, c.ttdScratch.data(), c.ttdScratch.size());
-        cur += c.ttdScratch.size();
-
-        c.ssg.TTDSaveState(cur);
-        cur += c.ssg.TTDStateSize();
-    }
-
-    // v4 tail: render cursor + pending SSG writes, relative to _syncedT
-    const int64_t base = int64_t(_syncedT);
-    put_u64(cur, uint64_t(_renderT - base));
-    for (int i = 0; i < 2; ++i)
-    {
-        const SsgWriteQueue& q = _chips[i]->ssgWrites;
-        put_u8(cur, uint8_t(q.size()));
-        for (size_t k = 0; k < SsgWriteQueue::kCapacity; ++k)
-        {
-            const SsgWrite w = (k < q.size()) ? q.at(k) : SsgWrite{};
-            put_i32(cur, (k < q.size()) ? int32_t(w.t - base) : 0);
-            put_u8(cur, w.reg);
-            put_u8(cur, w.value);
-        }
-    }
+    // v4 tail: render cursor + pending SSG writes, relative to the synced
+    // position
+    _pair.saveTimeline(cur);
 
     // v5 tail: the current frame's render progress
     put_u32(cur, _lastTStates);
@@ -899,47 +612,18 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     const double chip1LeftPhase = get_f64(cur);
     const double chip1RightPhase = get_f64(cur);
 
-    for (int i = 0; i < 2; ++i)
-    {
-        TsfmChip& c = *_chips[i];
-
-        c.address = get_u8(cur);
-        c.fmClockPhase = get_i32(cur);
-        c.intf._timer[0] = get_i32(cur);
-        c.intf._timer[1] = get_i32(cur);
-        c.intf._busy = get_i32(cur);
-
-        const uint16_t ymfmSize = get_u16(cur);
-        assert(ymfmSize == kYmfmStateSize &&
-               "TTD blob's ymfm payload size does not match this build's engine layout");
-        c.ttdScratch.assign(cur, cur + ymfmSize);
-        cur += ymfmSize;
-        ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/false);
-        c.fm.save_restore(state);
-
-        c.ssg.TTDLoadState(cur);
-        cur += c.ssg.TTDStateSize();
-    }
+    _pair.loadChipState(0, cur);
+    _pair.loadChipState(1, cur);
 
     // v4 tail: render cursor + pending SSG writes, rebuilt around the
-    // restored CPU position (the machine resumes at the start of a frame)
-    const int64_t base = int64_t(nowT());
-    _syncedT = uint64_t(base);
-    const int64_t cursorOffset = int64_t(get_u64(cur));
-    for (int i = 0; i < 2; ++i)
-    {
-        SsgWriteQueue& q = _chips[i]->ssgWrites;
-        q.clear();
-        const size_t count = get_u8(cur);
-        for (size_t k = 0; k < SsgWriteQueue::kCapacity; ++k)
-        {
-            const int32_t offset = get_i32(cur);
-            const uint8_t reg = get_u8(cur);
-            const uint8_t value = get_u8(cur);
-            if (k < count)
-                q.push(SsgWrite{base + offset, reg, value});
-        }
-    }
+    // restored CPU position (the machine resumes at the start of a frame).
+    // The cursor is historical: it decides on which tick the pending and
+    // future SSG writes land. The pair continues from this position without
+    // adopting it: the restore sets z80.t before the devices load, so the
+    // next syncTo() clocks the FM chips over exactly the T-states the
+    // original run did (adopting the next position instead skipped the first
+    // instruction's T-states and slipped every FM sample clock)
+    _pair.loadTimeline(cur, nowT());
 
     // v5 tail: the current frame's render progress
     const uint32_t lastTStates = get_u32(cur);
@@ -961,9 +645,8 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     // state just restored above) - a clean, silent decimator settling in
     // over one filter length is inaudible; stale foreign history snapping
     // into new content is not.
-    _chips[0]->words.clear();
-    _chips[1]->words.clear();
-    flushOutputStage();
+    _pair.clearWords();
+    _pair.flushOutputStage();
     _outputFlushPending = false;
 
     // The flush keeps each SSG decimator's resampling PHASE
@@ -972,14 +655,12 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     // requirement as _samplePhase/_decimationPhase above (v3 fix; see
     // kRenderPhaseStateSize comment). Restore it explicitly on top of the
     // flush: buffer silent, phase historically correct.
-    _chips[0]->ssg.decimatorLeft().setPhase(chip0LeftPhase);
-    _chips[0]->ssg.decimatorRight().setPhase(chip0RightPhase);
-    _chips[1]->ssg.decimatorLeft().setPhase(chip1LeftPhase);
-    _chips[1]->ssg.decimatorRight().setPhase(chip1RightPhase);
+    _pair.chip(0)->ssg.decimatorLeft().setPhase(chip0LeftPhase);
+    _pair.chip(0)->ssg.decimatorRight().setPhase(chip0RightPhase);
+    _pair.chip(1)->ssg.decimatorLeft().setPhase(chip1LeftPhase);
+    _pair.chip(1)->ssg.decimatorRight().setPhase(chip1RightPhase);
 
-    // The render cursor is historical (v4 tail above): it decides on which
-    // tick the pending and future SSG writes land
-    _renderT = base + cursorOffset;
+    // The render cursor is historical (v4 tail above)
     _renderReanchor = false;
 
     // The per-frame render progress is historical (v5 tail): the frame was
@@ -1008,13 +689,6 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
                                          uint64_t(_ayBufferIndex / AUDIO_CHANNELS) * CPU_CLOCK_RATE;
         _context->pSoundManager->adoptSamplePhase(frameStartPhase);
     }
-
-    // The core continues from the restored CPU position (_syncedT = base
-    // above): the restore sets z80.t before the devices load, so the next
-    // syncTo() clocks the FM chips over exactly the T-states the original run
-    // did. Adopting the next position instead skipped the first instruction's
-    // T-states and slipped every FM sample clock after a restore
-    _adoptCpuClock = false;
 }
 
 uint64_t SoundChip_TurboSoundFM::TTDHashState() const
