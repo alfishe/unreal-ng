@@ -1699,8 +1699,7 @@ void ZiFiNativeModule::OnFrame()
     if (_op != Op::None && Now() >= _opDeadline)
         Timeout();
     _vfs.Tick();
-    if (!_vfs.Waiting())
-        BridgePoll();
+    BridgePoll();   // S3: the network core runs while the UART core waits for the Z80; E01: only the STOR hook
     SntpTick();
     if (_variant == Variant::S3 && _ftp->Running() && Now() >= _nextSignalAt)
     {

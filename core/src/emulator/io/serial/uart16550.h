@@ -114,6 +114,10 @@ public:
         uint32_t avrClockHz = 11059200;  ///< the ATmega128's crystal (Q2 11.059 MHz)
         uint16_t isrCycles = 37;         ///< INT6: the wait flag noted
         uint16_t loopCycles = 260;       ///< one main-loop pass: the flag is looked at once per pass
+        /// Wait-flag tests per pass: BaseConf tests it once, after the last task; the TS firmware since
+        /// 2016-03 (9a3b541b "ISRed ZiFi-UART") calls waittask() after each of its 8 tasks (TS-AVR main.c:414-431),
+        /// so a wait is picked up at the next task boundary [inferred: the pass split evenly]
+        uint8_t waitChecksPerLoop = 1;
         uint16_t serviceWrite = 258;     ///< SPI #42 + #40 and the register write
         uint16_t serviceRead = 278;      ///< a register read
         uint16_t serviceRbr = 308;       ///< a receive-buffer read

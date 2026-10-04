@@ -158,7 +158,54 @@ registers, TTD with peer kind 7).
 
 - Which "2.2.1" the kit's author has (the binary is not published); if it is Espressif's v2.2.1.0, the
   `ESP8266-AT221` preset should get `SYSSTORE`, passive receive and no `_CUR` (§7.1).
-- Z3b: the VFS file bridge (FTP / SMB / WebDAV through the Wild Commander plugins), OTA, weather.
+- Z3b: SMB, TLS (HTTPS GET, redirects to HTTPS), WC Update, the online update (§7.5 "Open"). FTP is done (§7.5).
 - HTTPS for the S3's HTTP GET needs a TLS decision (reference-sprinter-wifi-driver open question 7).
 - `ERR CODE` extensions for parameter errors carry the parameter index where the module knows it, else 0
   (Espressif documents the layout, not every command's index).
+
+### 7.5 Z3b: the file bridge (as built 2026-10-04, branch `zifi-z3b`)
+
+The direction is the firmware's: the ESP is the **server** (FTP; WebDAV on the ESP-01S), a PC's client connects
+to it through the virtual network, and every file operation becomes **VFS request frames to the Z80** (`40..5E`),
+answered by the Wild Commander plugin from the SD card (the Z5 file-bridge table). Sources (local mirrors at the
+commits of §7.2): S3 [src/vfs_client.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/vfs_client.cpp),
+[src/vfs_bridge.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/vfs_bridge.cpp),
+[src/ftp_server.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/ftp_server.cpp),
+[src/fat_time.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/fat_time.cpp),
+[src/main.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/main.cpp) (FTP_START / STOP,
+events, the RSSI bar, `configTime`), [docs/PROTOCOL.md](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/docs/PROTOCOL.md)
+"VFS: команды ESP -> Z80"; E01 [src/vfs_client.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/vfs_client.cpp),
+[src/ftp_server.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/ftp_server.cpp),
+[src/main.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/main.cpp); the plugin side
+`FTP Server/src/vfs.asm` and `shared/z80/zifi_uart.asm` of the S3 repository.
+
+| Part | As built |
+|:--|:--|
+| `ZiFiVfsBridge` (`zifivfsbridge.{h,cpp}`) | the VFS client + bridge: one operation at a time (`Submit*` / `TakeResult`), the S3 64 KiB rings (VFS -> network for RETR, network -> VFS for STOR); STAT (FILEX metadata), OPENDIR / READDIR (S3 batches of 16 when OPENDIR announces them), OPEN modes 0-3 with the plugin's capabilities, READ 512 or READ_WINDOW 16 KiB (CRC-16/CCITT-FALSE), BLOCK 512 (fragments 248 / 252, each acknowledged) or WRITE_WINDOW 16 KiB (one acknowledgment), CLOSE commit / abort (`ingress-pending`), DELETE, MKDIR, RENAME, MOVE_RENAME, EXTEND, SEEK, SET_EOF, SET_METADATA; the client's timeouts (5 / 30 / 60 / 180 s) and error texts (`stat-4`, `block-status-34`, `timeout-40`, ...). E01: STAT / READDIR / OPEN 0-1 / READ 512 / BLOCK / CLOSE / DELETE / MKDIR, the E01 parsing |
+| UART while the VFS waits | `waitFor`: the awaited frame goes to the client; PING (`F0`) and SYS_RESET are served; every other frame is lost (`dropped_while_waiting`). ESP01S: while an FTP command runs and no VFS answer is awaited, the UART is not read at all (one loop) |
+| `ZiFiFtpServer` (`zififtpserver.{h,cpp}`) | each FTP command a job (the firmware's blocking call stack as data) that waits for the VFS result, the data connection or TCP bytes. S3: 3 sessions, passive 2122-2124, one VFS owner (a second session's file command queues, its control socket is then not read), the others' commands served meanwhile, FTP-level VFS timeouts 10 / 65 / 185 s (`bridge-timeout-N`), LIST dates as `ls -l` by the ESP's SNTP clock, MLSD / MLST / MDTM / MFMT in UTC by `time:`. E01: one session (421), passive 2122, LIST "Jan 01 00:00", STOR through four 256-byte slots. Both: the 220 banner with the firmware's version and a fresh module's free memory, events 60 (client state) / 61 (command, USER / PASS without argument), S3 66 every 2 s (`Wi-Fi [################] 100%`), FTP_RAM_STATS |
+| Module (`zifinativemodule`) | FTP_START (`[port][user][password]`, defaults 21 zx / zx) closes the TCP client and restarts the file services, `86 [1][port]` or `EE "ftp:<reason>"` (E01 `ftp/webdav:`); NET_OPEN / HTTP GET / ping / OTA / online update / WC Update / SMB_START stop FTP (both firmwares); a rejoin to another network stops it on the ESP-01S (the S3 keeps listening, its connections end). S3: a network command during an FTP command gets its ACK and runs after it (`Op::Deferred`: the network core is inside the FTP server). Sockets: 16 slots (0 client, 1 probe, 2.. the servers: §zififtpserver.h; 12 / 13 / 15 WebDAV). S3 events through the 8-deep queue, sent only while the VFS does not wait. Output paced through a 4 KiB TX backlog (a 16 KiB window waits there, not in the TTD output buffer). S3 SNTP in the background after a join (`configTime`: pool.ntp.org, retry 15 s, then hourly; a user command takes the resolver first) |
+| TTD | the ZiFi blob (id 40) is variable size now: `ZiFi::State` (32 bytes; `reserved[0] = 1` marks a bridge section) then `[length LE32][SaveBridge]`: the VFS client, the FTP server, the queues, the clock, the socket slots beyond the eighth (received bytes as journal references; raw only for bytes not from the journal), their re-arm; older 32-byte blobs load with no bridge. `EspStack` saves the re-arm mask only for slots 0..7 now (slot 9 used to alias slot 1) and gains `AcceptInto`, `RestoreSlot`, `RearmQueued`, `Network()`. Checked: seeks into a recorded STOR (VFS waiting for `#56`) and RETR restore the same bridge state every time |
+| Status | `esp.native_session.file_bridge`: `ftp` (running, port, `host_port` / `host_port_note`, passive_ports, sessions, command, last command / reply, bytes, files), `vfs` (pending, waiting_for, last_error, requests, bytes, timeouts, dropped_while_waiting), `esp_clock_set`; WebAPI (OpenAPI text), MCP (`[zifi]` line: "FTP on 21 (host 2121), n session(s)"), CLI / Lua / Python through the same node, Qt Network window status tree |
+
+**The TS AVR wait (a fix found by the real plugin).** The first real upload lost bytes in the ZiFi ring (`dropped`
+532): a 16 KiB write window arrives at 115200 without pauses, and the plugin's INIR bursts paid a whole AVR
+main-loop pass per byte (the BaseConf model, §2 Timing). The TS firmware calls `waittask()` after each of its 8
+tasks since 2016-03 ([main.c:414-431](https://github.com/tslabs/zx-evo/blob/master/pentevo/avr/current/main.c),
+commit 9a3b541b "ISRed ZiFi-UART"), so a wait is picked up at the next task boundary: `Uart16550::Params::
+waitChecksPerLoop = 8` for `TS2016-04` [inferred: the 260-cycle pass split evenly]. A back-to-back read now costs
+~31 us instead of ~52 us; the real uploads then ran with no drop.
+
+**Results** (real plugins under WC, host Python ftplib, TTD with a 3000-frame limit): S3 v0.15 RETR 100 000 bytes
+8.8 KB/s, STOR 70 000 bytes 9.2 KB/s; E01 v0.11 RETR 6.0 KB/s, STOR 2.6 KB/s; byte-exact both ways (also on the
+exported card image), passive and active, MKD / CWD, 550 for a missing file, 530 / 421 for a bad login.
+
+**Deviations** [inferred where noted]: free-memory numbers in the banner and RAM stats are a fresh module's
+(fixed, as SYS_INFO); the S3 RSSI is the virtual AP's -48 dBm (100 %); a TCP send never blocks (the virtual
+network queues), so `sendAll` fails only on a closed socket; network events reach the servers at the next frame
+boundary (up to 20 ms); the S3 SNTP timing is lwIP's defaults [inferred]; the E01 diagnostics HTTP server (port
+8268) is not emulated.
+
+**Open:** SMB (S3: the firmware is libsmb2 in server mode plus a 10 000-line adapter, NBNS / LLMNR / WS-Discovery),
+TLS for the S3's HTTPS GET and redirects to HTTPS, WC Update (HTTPS to GitHub, git SHA-1 over VFS reads), the
+online update.

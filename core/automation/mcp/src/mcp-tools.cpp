@@ -2034,7 +2034,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                                                                 ? ", " + zifi["esp"]["native_session"]["activity"].asString() +
                                                                                       (zifi["esp"]["native_session"]["last_error"].asString().empty()
                                                                                            ? std::string()
-                                                                                           : ", last error \"" + zifi["esp"]["native_session"]["last_error"].asString() + "\"")
+                                                                                           : ", last error \"" + zifi["esp"]["native_session"]["last_error"].asString() + "\"") +
+                                                                                      (zifi["esp"]["native_session"]["file_bridge"]["ftp"]["running"].asBool()
+                                                                                           ? ", FTP on " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["port"].asString() +
+                                                                                                 " (host " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["host_port"].asString() +
+                                                                                                 "), " + std::to_string(zifi["esp"]["native_session"]["file_bridge"]["ftp"]["sessions"].size()) +
+                                                                                                 " session(s)"
+                                                                                           : std::string())
                                                                                 : std::string()) +
                                                                            "]"
                                                                      : std::string())
