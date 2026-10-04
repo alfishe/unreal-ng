@@ -10,6 +10,8 @@
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdfileinfo.h"
+#include "debugger/ttd/ttdportsearch.h"
+#include "debugger/ttd/ttdprobe.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
@@ -79,7 +81,7 @@ StateNode StringOrNull(const std::string& s)
     return s.empty() ? StateNode() : StateNode(s);
 }
 
-/// A non-negative integer, decimal or 0x hex; nothing else (no sign, no fraction)
+/// A non-negative integer: decimal, or hex as 0x.., #.. or $..; nothing else (no sign, no fraction)
 bool ParseU64(const std::string& text, uint64_t& out)
 {
     if (text.empty())
@@ -90,6 +92,11 @@ bool ParseU64(const std::string& text, uint64_t& out)
     {
         base = 16;
         i = 2;
+    }
+    else if (text.size() > 1 && (text[0] == '#' || text[0] == '$'))
+    {
+        base = 16;
+        i = 1;
     }
     uint64_t value = 0;
     for (; i < text.size(); ++i)
@@ -160,6 +167,23 @@ StateNode TimePointNode(const TTDTimePoint& t)
     return node;
 }
 
+/// TD-8: the part of history a backward search examined
+void AddSearchWindow(StateNode& body, const TTDSearchWindow& window)
+{
+    if (!window.searched)
+        return;
+    body["covered_from"] = window.from.frame;
+    body["covered_from_tinframe"] = static_cast<unsigned>(window.from.tInFrame);
+    body["covered_to"] = window.to.frame;
+    body["covered_to_tinframe"] = static_cast<unsigned>(window.to.tInFrame);
+}
+
+/// An address-sized number (decimal, 0x.., #.., $..) no larger than @p max
+bool ParseUpTo(const std::string& text, uint64_t max, uint64_t& out)
+{
+    return ParseU64(text, out) && out <= max;
+}
+
 /// A position in the reply body: frame and tinframe as top-level fields
 void AddPosition(StateNode& body, const TTDTimePoint& t)
 {
@@ -180,7 +204,8 @@ const std::vector<std::string>& TTDControl::Verbs()
     static const std::vector<std::string> verbs = {
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
-        "markers", "bookmarks", "bookmark-add", "bookmark-delete"};
+        "markers", "bookmarks", "bookmark-add", "bookmark-delete",
+        "port-events", "find-last", "reverse-continue"};
     return verbs;
 }
 
@@ -198,6 +223,10 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"reverse-step", {"count", "tstates"}},
         {"bookmark-add", {"label", "frame", "tinframe"}},
         {"bookmark-delete", {"label"}},
+        {"port-events", {"*"}},
+        {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page",
+                       "before_frame", "before_tin", "before"}},
+        {"reverse-continue", {"pcs"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -219,10 +248,11 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
 
     // Every option name is checked, so a typo fails the same way on every surface
     const auto& allowed = OptionsFor(verb);
+    const bool anyName = allowed.size() == 1 && allowed.front() == "*";
     for (const auto& [name, value] : request.options)
     {
         (void)value;
-        if (std::find(allowed.begin(), allowed.end(), name) == allowed.end())
+        if (!anyName && std::find(allowed.begin(), allowed.end(), name) == allowed.end())
         {
             std::string list;
             for (const std::string& o : allowed)
@@ -277,6 +307,12 @@ TTDReply TTDControl::Run(const std::string& verb, const TTDRequest& request)
         return BookmarkAdd(request);
     if (verb == "bookmark-delete")
         return BookmarkDelete(request);
+    if (verb == "port-events")
+        return PortEvents(request);
+    if (verb == "find-last")
+        return FindLast(request);
+    if (verb == "reverse-continue")
+        return ReverseContinue(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -792,6 +828,239 @@ TTDReply TTDControl::BookmarkDelete(const TTDRequest& request)
     TTDReply reply;
     reply.body["removed"] = true;
     reply.body["label"] = *label;
+    return reply;
+}
+
+// "When did the program ..." over the session's port journals (ttdportsearch.h): no
+// replay, works on a loaded file. event + arg build the query; every other option
+// is a port query option (ApplyPortQueryOption checks the name); file: a .ttd on
+// disk, searched without loading it (the session is untouched)
+TTDReply TTDControl::PortEvents(const TTDRequest& request)
+{
+    const std::string* event = Option(request, "event");
+    if (!event || event->empty())
+    {
+        std::string names;
+        for (const std::string& n : PortEventNames())
+            names += (names.empty() ? "" : ", ") + n;
+        return Fail(TTDControlError::BadRequest, "'event' is required: one of " + names);
+    }
+    const std::string* arg = Option(request, "arg");
+    TTDPortQuery q;
+    std::string err;
+    if (!BuildPortEventQuery(*event, arg ? *arg : std::string(), q, err))
+        return Fail(TTDControlError::BadRequest, err);
+    for (const auto& [name, value] : request.options)
+    {
+        if (name == "event" || name == "arg" || name == "file")
+            continue;
+        if (!ApplyPortQueryOption(q, name, value, err))
+            return Fail(TTDControlError::BadRequest, err);
+    }
+
+    const std::string* file = Option(request, "file");
+    const TTDPortSearchResult result = file ? _manager->SearchPortEventsInFile(*file, q) : _manager->SearchPortEvents(q);
+    if (!result.ok)
+        return Fail(file ? TTDControlError::BadRequest : TTDControlError::Conflict, result.error);
+
+    TTDReply reply;
+    reply.body["event"] = *event;
+    reply.body["direction"] = PortDirectionName(q.direction);
+    reply.body["count"] = static_cast<uint64_t>(result.hits.size());
+    reply.body["truncated"] = result.truncated;
+    reply.body["scanned"] = static_cast<uint64_t>(result.scanned);
+    StateNode hits = StateNode::Array();
+    for (const TTDPortHit& h : result.hits)
+    {
+        StateNode hit = StateNode::Object();
+        hit["index"] = static_cast<uint64_t>(h.index);
+        hit["frame"] = h.record.frame;
+        hit["tinframe"] = static_cast<unsigned>(h.record.tInFrame);
+        hit["port"] = static_cast<unsigned>(h.record.port);
+        hit["value"] = static_cast<unsigned>(h.record.value);
+        hit["pc"] = static_cast<unsigned>(h.record.pc);
+        if (h.ayRegister >= 0)
+            hit["ay_register"] = h.ayRegister;
+        hits.push(hit);
+    }
+    reply.body["hits"] = hits;
+    return reply;
+}
+
+TTDReply TTDControl::FindLast(const TTDRequest& request)
+{
+    TTDSearchQuery q;
+    const std::string* addr = Option(request, "addr");
+    const std::string* addrFrom = Option(request, "addr_from");
+    const std::string* addrTo = Option(request, "addr_to");
+    const std::string* value = Option(request, "value");
+    const std::string* pcFrom = Option(request, "pc_from");
+    const std::string* pcTo = Option(request, "pc_to");
+    if (!addr && !addrFrom && !addrTo && !pcFrom && !pcTo && !value)
+        return Fail(TTDControlError::BadRequest, "Missing search criteria (must supply 'addr', 'addr_from', 'addr_to', "
+                                                 "'pc_from', 'pc_to', or 'value')");
+
+    // Numbers: decimal, or hex as 0x.., #.. or $..
+    auto number = [&](const std::string* text, const char* name, uint64_t max, uint64_t& out) -> std::string {
+        if (!text || ParseUpTo(*text, max, out))
+            return "";
+        return std::string("'") + name + "' must be 0.." + std::to_string(max) +
+               " (decimal, or hex as \"0x..\", \"#..\" or \"$..\")";
+    };
+    uint64_t n = 0;
+    std::string err;
+    if (addr)
+    {
+        if (!(err = number(addr, "addr", 0xFFFF, n)).empty())
+            return Fail(TTDControlError::BadRequest, err);
+        q.addrFrom = q.addrTo = static_cast<uint16_t>(n);
+    }
+    else
+    {
+        if (addrFrom)
+        {
+            if (!(err = number(addrFrom, "addr_from", 0xFFFF, n)).empty())
+                return Fail(TTDControlError::BadRequest, err);
+            q.addrFrom = static_cast<uint16_t>(n);
+        }
+        if (addrTo)
+        {
+            if (!(err = number(addrTo, "addr_to", 0xFFFF, n)).empty())
+                return Fail(TTDControlError::BadRequest, err);
+            q.addrTo = static_cast<uint16_t>(n);
+        }
+    }
+    if (const std::string* access = Option(request, "access"))
+    {
+        if (*access != "write" && *access != "w" && *access != "read" && *access != "execute" && *access != "io")
+            return Fail(TTDControlError::BadRequest, "access must be write, read, execute or io");
+        q.access = TTDAccessTypeFromString(access->c_str());
+    }
+    if (value)
+    {
+        if (!(err = number(value, "value", 0xFF, n)).empty())
+            return Fail(TTDControlError::BadRequest, err);
+        q.value = static_cast<uint8_t>(n);
+        q.hasValueFilter = true;
+    }
+    if (pcFrom)
+    {
+        if (!(err = number(pcFrom, "pc_from", 0xFFFF, n)).empty())
+            return Fail(TTDControlError::BadRequest, err);
+        q.pcFrom = static_cast<uint16_t>(n);
+        q.hasPcFilter = true;
+    }
+    if (pcTo)
+    {
+        if (!(err = number(pcTo, "pc_to", 0xFFFF, n)).empty())
+            return Fail(TTDControlError::BadRequest, err);
+        q.pcTo = static_cast<uint16_t>(n);
+        q.hasPcFilter = true;
+    }
+    // Bank-aware search: an address on a banked machine answers for one physical RAM page
+    if (const std::string* page = Option(request, "phys_page"))
+    {
+        if (!ParseUpTo(*page, kPhysPageMax, n))
+            return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255)");
+        q.physPage = static_cast<PhysPage>(n);
+        q.hasPhysPageFilter = true;
+    }
+    // Only accesses at or before a point: a frame [+ T-state], or a raw machine time
+    if (const std::string* beforeFrame = Option(request, "before_frame"))
+    {
+        uint64_t f = 0;
+        uint64_t t = 0;
+        const std::string* beforeTin = Option(request, "before_tin");
+        if (!ParseU64(*beforeFrame, f) || (beforeTin && (!ParseU64(*beforeTin, t) || t > UINT32_MAX)))
+            return Fail(TTDControlError::BadRequest, "before_frame and before_tin must be non-negative integers");
+        q.beforeGlobalT = _manager->GlobalT({f, static_cast<uint32_t>(t)});
+    }
+    else if (const std::string* before = Option(request, "before"))
+    {
+        if (!ParseU64(*before, q.beforeGlobalT))
+            return Fail(TTDControlError::BadRequest, "before must be a non-negative integer (machine T-states)");
+    }
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+    PauseAndConfirm();
+    TTDExternalEvent marker;
+    TTDSearchWindow window;
+    const auto found = _manager->FindLastAccess(q, &marker, &window);
+    NotifyFrameRefresh();
+
+    TTDReply reply;
+    if (found)
+    {
+        reply.body["found"] = true;
+        reply.body["frame"] = found->time.frame;
+        reply.body["tinframe"] = static_cast<unsigned>(found->time.tInFrame);
+        reply.body["pc"] = static_cast<unsigned>(found->pc);
+        reply.body["value"] = static_cast<unsigned>(found->value);
+        // null = the access had no RAM page (ROM, cache, I/O)
+        reply.body["phys_page"] = found->physPage == kPhysPageNone ? StateNode() : StateNode(static_cast<unsigned>(found->physPage));
+        reply.body["access"] = TTDAccessTypeToString(found->access);
+    }
+    else
+    {
+        reply.body["found"] = false;
+        if (marker.reason[0] != '\0')
+        {
+            // A replay barrier stopped the search before any match
+            reply.body["blocked"] = true;
+            reply.body["marker_frame"] = marker.time.frame;
+            reply.body["marker_tinframe"] = static_cast<unsigned>(marker.time.tInFrame);
+            reply.body["marker_kind"] = TTDExternalEventKindToString(marker.kind);
+            reply.body["marker_reason"] = std::string(marker.reason);
+        }
+    }
+    AddSearchWindow(reply.body, window);
+    return reply;
+}
+
+TTDReply TTDControl::ReverseContinue(const TTDRequest& request)
+{
+    const std::string* pcsText = Option(request, "pcs");
+    if (!pcsText || pcsText->empty())
+        return Fail(TTDControlError::BadRequest, "'pcs' must be a non-empty list of addresses");
+    std::vector<uint16_t> pcs;
+    size_t start = 0;
+    while (start <= pcsText->size())
+    {
+        size_t end = pcsText->find(',', start);
+        if (end == std::string::npos)
+            end = pcsText->size();
+        std::string item = pcsText->substr(start, end - start);
+        item.erase(0, item.find_first_not_of(" \t"));
+        item.erase(item.find_last_not_of(" \t") + 1);
+        uint64_t pc = 0;
+        if (!ParseUpTo(item, 0xFFFF, pc))
+            return Fail(TTDControlError::BadRequest,
+                        "'pcs' entries must be 0..65535 (decimal, or hex as \"0x..\", \"#..\" or \"$..\")");
+        pcs.push_back(static_cast<uint16_t>(pc));
+        start = end + 1;
+    }
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+    PauseAndConfirm();
+    const auto r = _manager->ReverseContinue(pcs);
+    NotifyFrameRefresh();
+
+    TTDReply reply;
+    reply.body["matched"] = r.matched;
+    reply.body["pc"] = static_cast<unsigned>(r.pc);
+    AddPosition(reply.body, r.arrivedAt);
+    if (r.blockingMarker.reason[0] != '\0')
+    {
+        StateNode m = StateNode::Object();
+        m["kind"] = TTDExternalEventKindToString(r.blockingMarker.kind);
+        m["reason"] = std::string(r.blockingMarker.reason);
+        m["frame"] = r.blockingMarker.time.frame;
+        m["tinframe"] = static_cast<unsigned>(r.blockingMarker.time.tInFrame);
+        reply.body["blocked_by_marker"] = m;
+    }
+    AddSearchWindow(reply.body, r.window);
     return reply;
 }
 

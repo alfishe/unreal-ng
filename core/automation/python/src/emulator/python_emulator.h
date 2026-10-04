@@ -217,6 +217,15 @@ inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
     return reply.body;
 }
 
+/// A Python value as option text: True / False, an integer, a string
+inline std::string TtdOptionTextPy(const pybind11::handle& o)
+{
+    namespace py = pybind11;
+    if (py::isinstance<py::bool_>(o))
+        return o.cast<bool>() ? "true" : "false";
+    return py::str(o).cast<std::string>();
+}
+
 /// A seek's answer as a dict: the reply's fields; a refused seek has reached = False and
 /// error = the message (seeks never raised: scripts read reached)
 inline pybind11::object TtdSeekPy(const ttd::TTDReply& reply)
@@ -3749,71 +3758,18 @@ namespace PythonBindings
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
             .def("ttd_port_events", [](Emulator& self, const std::string& event, py::object argObj,
-                                        py::kwargs options) -> py::dict {
-                py::dict result;
-                result["ok"] = false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["error"] = "TTD engine not available";
-                    return result;
-                }
-                auto text = [](const py::handle& o) -> std::string {
-                    if (py::isinstance<py::bool_>(o))
-                        return o.cast<bool>() ? "true" : "false";
-                    return py::str(o).cast<std::string>();
-                };
-                ttd::TTDPortQuery q;
-                std::string err;
-                if (!ttd::BuildPortEventQuery(event, argObj.is_none() ? std::string() : text(argObj), q, err))
-                {
-                    result["error"] = err;
-                    return result;
-                }
-                std::string file;  // file=: a .ttd on disk, searched without loading it
-                for (const auto& [key, value] : options)
-                {
-                    const std::string name = py::str(key).cast<std::string>();
-                    if (name == "file")
-                    {
-                        file = text(value);
-                        continue;
-                    }
-                    if (!ttd::ApplyPortQueryOption(q, name, text(value), err))
-                    {
-                        result["error"] = err;
-                        return result;
-                    }
-                }
-                const ttd::TTDPortSearchResult found = file.empty()
-                                                           ? ctx->pTimeTravelManager->SearchPortEvents(q)
-                                                           : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
-                if (!found.ok)
-                {
-                    result["error"] = found.error;
-                    return result;
-                }
-                result["ok"] = true;
-                result["direction"] = ttd::PortDirectionName(q.direction);
-                result["count"] = py::cast(static_cast<uint64_t>(found.hits.size()));
-                result["truncated"] = found.truncated;
-                result["scanned"] = py::cast(found.scanned);
-                py::list hits;
-                for (const ttd::TTDPortHit& h : found.hits)
-                {
-                    py::dict hit;
-                    hit["index"] = py::cast(h.index);
-                    hit["frame"] = py::cast(h.record.frame);
-                    hit["tinframe"] = py::cast(h.record.tInFrame);
-                    hit["port"] = py::cast(h.record.port);
-                    hit["value"] = py::cast(h.record.value);
-                    hit["pc"] = py::cast(h.record.pc);
-                    if (h.ayRegister >= 0)
-                        hit["ay_register"] = py::cast(h.ayRegister);
-                    hits.append(hit);
-                }
-                result["hits"] = hits;
-                return result;
+                                        py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"event", event}};
+                if (!argObj.is_none())
+                    options["arg"] = TtdOptionTextPy(argObj);
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const ttd::TTDReply reply = TtdRunPy(self, "port-events", options);
+                StateNode value = reply.body;
+                value["ok"] = reply.Ok();
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
             }, "When did the program ...: search the port journals for an event (key, ear, ay-read, ay-write, "
                "ay-select, border, beeper, in, out) with an optional argument (a key name, an AY register) and "
                "options (limit, newest, from, to, port, port_mask, value, value_mask, match, trigger, ay_register; "
@@ -3830,94 +3786,32 @@ namespace PythonBindings
                                       py::object physPageObj,
                                       py::object addrFromObj,
                                       py::object addrToObj) -> py::object {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return py::none();
-
-                ttd::TTDSearchQuery q;
-                if (!addrObj.is_none())
-                {
-                    q.addrFrom = q.addrTo = static_cast<uint16_t>(addrObj.cast<int>());
-                }
-                else
-                {
-                    if (!addrFromObj.is_none()) q.addrFrom = static_cast<uint16_t>(addrFromObj.cast<int>());
-                    if (!addrToObj.is_none()) q.addrTo = static_cast<uint16_t>(addrToObj.cast<int>());
-                }
-                q.access = ttd::TTDAccessTypeFromString(access.c_str());
-
-                if (!valueObj.is_none())
-                {
-                    q.value = static_cast<uint8_t>(valueObj.cast<int>());
-                    q.hasValueFilter = true;
-                }
-                if (!pcFromObj.is_none())
-                {
-                    q.pcFrom = static_cast<uint16_t>(pcFromObj.cast<int>());
-                    q.hasPcFilter = true;
-                }
-                if (!pcToObj.is_none())
-                {
-                    q.pcTo = static_cast<uint16_t>(pcToObj.cast<int>());
-                    if (!q.hasPcFilter) q.hasPcFilter = true;
-                }
-                // Bank-aware search: pins the query to one physical RAM page.
-                if (!physPageObj.is_none())
-                {
-                    const int page = physPageObj.cast<int>();
-                    if (page < 0 || page > ttd::kPhysPageMax)
-                        throw py::value_error("phys_page expects 0..255");
-                    q.physPage = static_cast<ttd::PhysPage>(page);
-                    q.hasPhysPageFilter = true;
-                }
-
+                std::map<std::string, std::string> options{{"access", access}};
+                const std::pair<const char*, py::object*> fields[] = {
+                    {"addr", &addrObj},     {"value", &valueObj},        {"pc_from", &pcFromObj},
+                    {"pc_to", &pcToObj},    {"phys_page", &physPageObj}, {"addr_from", &addrFromObj},
+                    {"addr_to", &addrToObj}};
+                for (const auto& [name, obj] : fields)
+                    if (!obj->is_none())
+                        options[name] = TtdOptionTextPy(*obj);
                 if (!beforeFrameObj.is_none())
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({beforeFrameObj.cast<uint64_t>(), beforeTin});
-
-                ttd::TTDExternalEvent marker{};
-                ttd::TTDSearchWindow window;
-                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
-                if (!result)
                 {
-                    if (marker.reason[0] == '\0')
-                        return py::none();  // genuinely no match
-                    // A replay barrier stopped the search before any match
-                    py::dict blocked;
-                    blocked["found"]           = false;
-                    blocked["blocked"]         = true;
-                    blocked["marker_frame"]    = py::cast(marker.time.frame);
-                    blocked["marker_tinframe"] = py::cast(marker.time.tInFrame);
-                    blocked["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
-                    blocked["marker_reason"]   = std::string(marker.reason);
-                    // TD-8: the part of history the search examined
-                    if (window.searched)
-                    {
-                        blocked["covered_from"]          = py::cast(window.from.frame);
-                        blocked["covered_from_tinframe"] = py::cast(window.from.tInFrame);
-                        blocked["covered_to"]            = py::cast(window.to.frame);
-                        blocked["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
-                    }
-                    return blocked;
+                    options["before_frame"] = TtdOptionTextPy(beforeFrameObj);
+                    options["before_tin"] = std::to_string(beforeTin);
                 }
-
-                py::dict r;
-                r["found"]     = true;
-                r["frame"]     = py::cast(result->time.frame);
-                r["tinframe"]  = py::cast(result->time.tInFrame);
-                r["pc"]        = py::cast(result->pc);
-                r["value"]     = py::cast(result->value);
-                // None = the access had no RAM page (ROM, cache, I/O)
-                r["phys_page"] = result->physPage == ttd::kPhysPageNone ? py::object(py::none())
-                                                                         : py::object(py::cast(result->physPage));
-                r["access"]    = ttd::TTDAccessTypeToString(result->access);
-                // TD-8: the part of history the search examined
-                if (window.searched)
+                const ttd::TTDReply reply = TtdRunPy(self, "find-last", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                if (!reply.Ok())
                 {
-                    r["covered_from"]          = py::cast(window.from.frame);
-                    r["covered_from_tinframe"] = py::cast(window.from.tInFrame);
-                    r["covered_to"]            = py::cast(window.to.frame);
-                    r["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
+                    StateNode value = reply.body;
+                    value["found"] = false;
+                    value["error"] = reply.message;
+                    return StateNodeToPy(value);
                 }
-                return r;
+                if (!reply.body.find("found")->b && !reply.body.find("blocked"))
+                    return py::none();  // genuinely no match
+                return StateNodeToPy(reply.body);
             }, "Reverse search: find last access at address or within address/PC range",
                py::arg("addr") = py::none(),
                py::arg("access") = "write",
@@ -3953,35 +3847,22 @@ namespace PythonBindings
                py::arg("tstates"))
 
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return py::none();
-                auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
-                const bool blocked = r.blockingMarker.reason[0] != '\0';
-                if (!r.matched && !blocked)
+                std::string list;
+                for (uint16_t pc : pcs)
+                    list += (list.empty() ? "" : ",") + std::to_string(pc);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", {{"pcs", list}});
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                if (!reply.Ok())
+                {
+                    StateNode value = reply.body;
+                    value["matched"] = false;
+                    value["error"] = reply.message;
+                    return StateNodeToPy(value);
+                }
+                if (!reply.body.find("matched")->b && !reply.body.find("blocked_by_marker"))
                     return py::none();
-                py::dict d;
-                d["matched"]  = r.matched;
-                d["pc"]       = r.pc;
-                d["frame"]    = r.arrivedAt.frame;
-                d["tinframe"] = r.arrivedAt.tInFrame;
-                if (blocked)
-                {
-                    py::dict m;
-                    m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                    m["reason"]   = std::string(r.blockingMarker.reason);
-                    m["frame"]    = py::cast(r.blockingMarker.time.frame);
-                    m["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
-                    d["blocked_by_marker"] = m;
-                }
-                // TD-8: the part of history the search examined
-                if (r.window.searched)
-                {
-                    d["covered_from"]          = py::cast(r.window.from.frame);
-                    d["covered_from_tinframe"] = py::cast(r.window.from.tInFrame);
-                    d["covered_to"]            = py::cast(r.window.to.frame);
-                    d["covered_to_tinframe"]   = py::cast(r.window.to.tInFrame);
-                }
-                return d;
+                return StateNodeToPy(reply.body);
             }, "Run backward until any PC matches; returns dict or None",
                py::arg("pcs"))
 

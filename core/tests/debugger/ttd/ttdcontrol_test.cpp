@@ -355,3 +355,50 @@ TEST_F(TTDControl_Test, BookmarksAreAddedListedAndDeletedByLabel)
     EXPECT_EQ(gone.error, TTDControlError::NotFound);
     EXPECT_EQ(gone.message, "Unknown bookmark label: entry");
 }
+
+// ---------------------------------------------------------------------------
+// Group 4a: reverse queries (find-last, reverse-continue) and port events
+// ---------------------------------------------------------------------------
+
+TEST_F(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
+{
+    Record(4);
+    ASSERT_TRUE(Run("stop").Ok());
+
+    EXPECT_EQ(Run("find-last").error, TTDControlError::BadRequest);  // no criteria
+    EXPECT_EQ(Run("find-last", {{"addr", "0x10000"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr", "#5C00"}, {"access", "poke"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"value", "256"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr", "$5C00"}, {"phys_page", "300"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("reverse-continue").error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38,"}}).error, TTDControlError::BadRequest);
+
+    // Every number form an address field takes
+    for (const char* addr : {"23552", "0x5C00", "#5C00", "$5C00"})
+    {
+        const TTDReply r = Run("find-last", {{"addr", addr}});
+        ASSERT_TRUE(r.Ok()) << addr << ": " << r.message;
+        ASSERT_NE(r.body.find("found"), nullptr) << addr;
+    }
+    const TTDReply rc = Run("reverse-continue", {{"pcs", "0x38, #0D6B"}});
+    ASSERT_TRUE(rc.Ok()) << rc.message;
+    ASSERT_NE(rc.body.find("matched"), nullptr);
+}
+
+TEST_F(TTDControl_Test, ReverseQueriesAreRefusedWhileRecording)
+{
+    Record(2);
+    EXPECT_EQ(Run("find-last", {{"addr", "0x5C00"}}).error, TTDControlError::Conflict);
+    EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38"}}).error, TTDControlError::Conflict);
+}
+
+TEST_F(TTDControl_Test, PortEventsNeedAnEventAndKnownOptions)
+{
+    Record(2);
+    ASSERT_TRUE(Run("stop").Ok());
+    TTDReply r = Run("port-events");
+    EXPECT_EQ(r.error, TTDControlError::BadRequest);
+    EXPECT_NE(r.message.find("'event' is required"), std::string::npos) << r.message;
+    EXPECT_EQ(Run("port-events", {{"event", "teleport"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("port-events", {{"event", "border"}, {"colour", "2"}}).error, TTDControlError::BadRequest);
+}

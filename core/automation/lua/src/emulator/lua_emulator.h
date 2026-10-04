@@ -215,6 +215,16 @@ protected:
         return value;
     }
 
+    /// A Lua value as option text: true / false, an integer, a string; nothing else
+    static std::string TtdOptionText(const sol::object& o)
+    {
+        if (o.is<bool>())
+            return o.as<bool>() ? "true" : "false";
+        if (o.get_type() == sol::type::number)
+            return std::to_string(static_cast<long long>(o.as<double>()));
+        return o.is<std::string>() ? o.as<std::string>() : std::string();
+    }
+
     /// A seek's answer as a table: the reply's fields; a refused seek has reached = false
     sol::object TtdSeekValue(sol::this_state ts, const ttd::TTDReply& reply) const
     {
@@ -3884,83 +3894,22 @@ public:
         // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
         // port_mask, value, value_mask, match, trigger, ay_register; file = a
         // .ttd path searched without loading it)
-        lua.set_function("ttd_port_events", [this](const std::string& event, sol::object argObj,
-                                                     sol::object optionsObj) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["ok"] = false;
-            Emulator* emulator = effectiveEmulator();
-            auto* ctx = emulator ? emulator->GetContext() : nullptr;
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["error"] = "TTD engine not available";
-                return result;
-            }
-            auto text = [](const sol::object& o) -> std::string {
-                if (o.is<bool>())
-                    return o.as<bool>() ? "true" : "false";
-                if (o.is<double>())
-                    return std::to_string(static_cast<long long>(o.as<double>()));
-                return o.is<std::string>() ? o.as<std::string>() : std::string();
-            };
-            ttd::TTDPortQuery q;
-            std::string err;
-            const std::string arg = (argObj.valid() && argObj.get_type() != sol::type::lua_nil) ? text(argObj) : "";
-            if (!ttd::BuildPortEventQuery(event, arg, q, err))
-            {
-                result["error"] = err;
-                return result;
-            }
-            std::string file;  // options.file: a .ttd on disk, searched without loading it
+        lua.set_function("ttd_port_events", [this](sol::this_state ts, const std::string& event, sol::object argObj,
+                                                     sol::object optionsObj) -> sol::object {
+            std::map<std::string, std::string> options{{"event", event}};
+            if (argObj.valid() && argObj.get_type() != sol::type::lua_nil)
+                options["arg"] = TtdOptionText(argObj);
             if (optionsObj.is<sol::table>())
-            {
                 for (const auto& [key, value] : optionsObj.as<sol::table>())
-                {
-                    if (key.as<std::string>() == "file")
-                    {
-                        file = text(value);
-                        continue;
-                    }
-                    if (!ttd::ApplyPortQueryOption(q, key.as<std::string>(), text(value), err))
-                    {
-                        result["error"] = err;
-                        return result;
-                    }
-                }
-            }
-            const ttd::TTDPortSearchResult found = file.empty()
-                                                       ? ctx->pTimeTravelManager->SearchPortEvents(q)
-                                                       : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
-            if (!found.ok)
-            {
-                result["error"] = found.error;
-                return result;
-            }
-            result["ok"] = true;
-            result["direction"] = ttd::PortDirectionName(q.direction);
-            result["count"] = static_cast<uint64_t>(found.hits.size());
-            result["truncated"] = found.truncated;
-            result["scanned"] = found.scanned;
-            sol::table hits = lua_view.create_table();
-            int i = 1;
-            for (const ttd::TTDPortHit& h : found.hits)
-            {
-                sol::table hit = lua_view.create_table();
-                hit["index"] = h.index;
-                hit["frame"] = h.record.frame;
-                hit["tinframe"] = h.record.tInFrame;
-                hit["port"] = h.record.port;
-                hit["value"] = h.record.value;
-                hit["pc"] = h.record.pc;
-                if (h.ayRegister >= 0)
-                    hit["ay_register"] = h.ayRegister;
-                hits[i++] = hit;
-            }
-            result["hits"] = hits;
-            return result;
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("port-events", options);
+            StateNode value = TtdScriptValue(reply);
+            if (reply.Ok())
+                value["ok"] = true;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
+        lua.set_function("ttd_find_last", [this](sol::this_state ts, sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
                                                    sol::optional<uint16_t> pcFromOpt,
@@ -3969,128 +3918,49 @@ public:
                                                    sol::optional<uint32_t> beforeTinOpt,
                                                    sol::optional<uint32_t> physPageOpt,
                                                    sol::optional<uint16_t> addrFromOpt,
-                                                   sol::optional<uint16_t> addrToOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["found"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
-
-            ttd::TTDSearchQuery q;
+                                                   sol::optional<uint16_t> addrToOpt) -> sol::object {
+            std::map<std::string, std::string> options;
             if (firstArgOpt.is<sol::table>())
             {
-                sol::table tbl = firstArgOpt.as<sol::table>();
-                if (tbl["addr"].valid())
+                // A table of options; the camelCase spellings are accepted as before
+                static const std::map<std::string, std::string> aliases = {
+                    {"addrFrom", "addr_from"}, {"addrTo", "addr_to"}, {"pcFrom", "pc_from"},
+                    {"pcTo", "pc_to"},         {"physPage", "phys_page"}};
+                for (const auto& [key, value] : firstArgOpt.as<sol::table>())
                 {
-                    uint16_t a = tbl["addr"].get<uint16_t>();
-                    q.addrFrom = q.addrTo = a;
-                }
-                else
-                {
-                    q.addrFrom = tbl["addr_from"].valid() ? tbl["addr_from"].get<uint16_t>() : (tbl["addrFrom"].valid() ? tbl["addrFrom"].get<uint16_t>() : 0);
-                    q.addrTo = tbl["addr_to"].valid() ? tbl["addr_to"].get<uint16_t>() : (tbl["addrTo"].valid() ? tbl["addrTo"].get<uint16_t>() : 0xFFFF);
-                }
-
-                std::string accStr = tbl["access"].valid() ? tbl["access"].get<std::string>() : "write";
-                q.access = ttd::TTDAccessTypeFromString(accStr.c_str());
-
-                if (tbl["value"].valid()) { q.hasValueFilter = true; q.value = tbl["value"].get<uint8_t>(); }
-                if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
-                else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
-
-                sol::object pageObj = tbl["phys_page"];
-                if (!pageObj.valid())
-                    pageObj = tbl["physPage"];
-                if (pageObj.valid())
-                {
-                    const uint32_t page = pageObj.as<uint32_t>();
-                    if (page > ttd::kPhysPageMax)
-                    {
-                        result["found"] = false;
-                        result["error"] = "phys_page expects 0..255";
-                        return result;
-                    }
-                    q.hasPhysPageFilter = true;
-                    q.physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                if (tbl["before_frame"].valid())
-                {
-                    uint64_t f = tbl["before_frame"].get<uint64_t>();
-                    uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({f, tin});
-                }
-                else if (tbl["before"].valid())
-                {
-                    q.beforeGlobalT = tbl["before"].get<uint64_t>();
+                    const std::string name = key.as<std::string>();
+                    const auto alias = aliases.find(name);
+                    options[alias == aliases.end() ? name : alias->second] = TtdOptionText(value);
                 }
             }
             else
             {
-                if (firstArgOpt.is<uint16_t>())
-                {
-                    q.addrFrom = q.addrTo = firstArgOpt.as<uint16_t>();
-                }
-                else
-                {
-                    q.addrFrom = addrFromOpt.value_or(0);
-                    q.addrTo = addrToOpt.value_or(0xFFFF);
-                }
-                q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
-                if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
-                if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+                if (firstArgOpt.get_type() == sol::type::number)
+                    options["addr"] = TtdOptionText(firstArgOpt);
+                if (addrFromOpt)
+                    options["addr_from"] = std::to_string(*addrFromOpt);
+                if (addrToOpt)
+                    options["addr_to"] = std::to_string(*addrToOpt);
+                if (accessOpt)
+                    options["access"] = *accessOpt;
+                if (valueOpt)
+                    options["value"] = std::to_string(*valueOpt);
+                if (pcFromOpt)
+                    options["pc_from"] = std::to_string(*pcFromOpt);
+                if (pcToOpt)
+                    options["pc_to"] = std::to_string(*pcToOpt);
                 if (physPageOpt)
-                {
-                    if (*physPageOpt > ttd::kPhysPageMax)
-                    {
-                        result["found"] = false;
-                        result["error"] = "phys_page expects 0..255";
-                        return result;
-                    }
-                    q.hasPhysPageFilter = true;
-                    q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
-                }
+                    options["phys_page"] = std::to_string(*physPageOpt);
                 if (beforeFrameOpt)
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT(
-                        {static_cast<uint64_t>(*beforeFrameOpt), beforeTinOpt.value_or(0)});
-            }
-
-            ttd::TTDExternalEvent marker{};
-            ttd::TTDSearchWindow window;
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
-            // TD-8: the part of history the search examined
-            if (window.searched)
-            {
-                result["covered_from"]          = window.from.frame;
-                result["covered_from_tinframe"] = window.from.tInFrame;
-                result["covered_to"]            = window.to.frame;
-                result["covered_to_tinframe"]   = window.to.tInFrame;
-            }
-            if (!found)
-            {
-                result["found"] = false;
-                if (marker.reason[0] != '\0')
                 {
-                    // A replay barrier stopped the search before any match
-                    result["blocked"]         = true;
-                    result["marker_frame"]    = marker.time.frame;
-                    result["marker_tinframe"] = marker.time.tInFrame;
-                    result["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
-                    result["marker_reason"]   = marker.reason;
+                    options["before_frame"] = std::to_string(*beforeFrameOpt);
+                    options["before_tin"] = std::to_string(beforeTinOpt.value_or(0));
                 }
-                return result;
             }
-            result["found"]    = true;
-            result["frame"]    = found->time.frame;
-            result["tinframe"]  = found->time.tInFrame;
-            result["pc"]        = found->pc;
-            result["value"]     = found->value;
-            // nil = the access had no RAM page (ROM, cache, I/O)
-            if (found->physPage != ttd::kPhysPageNone)
-                result["phys_page"] = found->physPage;
-            result["access"]    = ttd::TTDAccessTypeToString(found->access);
-            return result;
+            StateNode value = TtdScriptValue(TtdRun("find-last", options));
+            if (!value.find("found"))
+                value["found"] = false;
+            return StateNodeToLua(ts, value);
         });
 
         lua.set_function("ttd_step_instruction_back", [this]() -> bool {
@@ -4117,48 +3987,14 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["matched"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["matched"] = false; return result; }
-
-            std::vector<uint16_t> pcs;
-            pcs.reserve(pcsTable.size());
+        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable) -> sol::object {
+            std::string pcs;
             for (auto& pair : pcsTable)
-            {
-                uint16_t pc = static_cast<uint16_t>(pair.second.as<uint32_t>());
-                pcs.push_back(pc);
-            }
-
-            auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
-            result["matched"] = r.matched;
-            result["pc"]      = r.pc;
-            if (r.matched)
-            {
-                result["frame"]   = r.arrivedAt.frame;
-                result["tinframe"] = r.arrivedAt.tInFrame;
-            }
-            if (r.blockingMarker.reason[0] != '\0')
-            {
-                sol::table m = lua_view.create_table();
-                m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                m["reason"]   = r.blockingMarker.reason;
-                m["frame"]    = r.blockingMarker.time.frame;
-                m["tinframe"] = r.blockingMarker.time.tInFrame;
-                result["blocked_by_marker"] = m;
-            }
-            // TD-8: the part of history the search examined
-            if (r.window.searched)
-            {
-                result["covered_from"]          = r.window.from.frame;
-                result["covered_from_tinframe"] = r.window.from.tInFrame;
-                result["covered_to"]            = r.window.to.frame;
-                result["covered_to_tinframe"]   = r.window.to.tInFrame;
-            }
-            return result;
+                pcs += (pcs.empty() ? "" : ",") + TtdOptionText(pair.second);
+            StateNode value = TtdScriptValue(TtdRun("reverse-continue", {{"pcs", pcs}}));
+            if (!value.find("matched"))
+                value["matched"] = false;
+            return StateNodeToLua(ts, value);
         });
 
         lua.set_function("ttd_coverage_probe", [this](sol::table argsTable) -> sol::table {

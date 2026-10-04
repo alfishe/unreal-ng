@@ -1141,7 +1141,8 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 
 ```python
 result = emu.ttd_find_last(addr=0x5800, access='write')
-# None if no match. On a hit:
+# None if no match; ValueError for a bad argument (an address above 0xFFFF, an unknown access);
+# while recording: {'found': False, 'error': '<why>'}. On a hit:
 # {
 #   'found': True,
 #   'frame': 4823,

@@ -136,6 +136,8 @@ class Contract:
 
 def scalar_text(value: Any) -> str:
     """A JSON scalar as Lua's tostring prints it"""
+    if value is None:
+        return "nil"
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
@@ -274,6 +276,42 @@ def run_contract(c: Contract) -> None:
     _, web = c.web("GET", "/ttd/markers")
     lua = c.lua("print(#ttd_markers())")
     c.check(lua == str(web.get("count")), f"Lua and WebAPI count the same markers ({lua!r}, {web.get('count')})")
+
+    print("[reverse queries and port events]")
+    c.web("POST", "/ttd/start", {"journal": True})
+    run_frames(c.api, c.base, 6)
+    status, web = c.web("POST", "/ttd/find-last", {"addr": "0x5C78"})
+    c.check(status == 409 and web.get("message") == scrub, f"WebAPI find-last while recording: 409, the scrub message ({status})")
+    lua = c.lua("local r = ttd_find_last(0x5C78); print(tostring(r.found) .. '|' .. tostring(r.error))")
+    c.check(lua == "false|" + scrub, f"Lua find-last while recording: found false and the same message ({lua!r})")
+    cli = c.cli.run("ttd find-last --addr 0x5C78")
+    c.check(("Error: " + scrub) in cli, f"CLI find-last while recording prints the same message ({cli.strip()!r})")
+    c.web("POST", "/ttd/stop")
+    # FRAMES (0x5C78) changes every frame in the 128K ROM's interrupt
+    _, web = c.web("POST", "/ttd/find-last", {"addr": "#5C78"})
+    lua = c.lua("local r = ttd_find_last({addr = 0x5C78}); print(tostring(r.found) .. '|' .. tostring(r.frame) .. '|' .. tostring(r.pc))")
+    c.check(lua == f"{scalar_text(web.get('found'))}|{scalar_text(web.get('frame'))}|{scalar_text(web.get('pc'))}",
+            f"Lua and WebAPI find the same last write ({lua!r}; WebAPI {web.get('found')}, {web.get('frame')}, {web.get('pc')})")
+    status, _ = c.web("POST", "/ttd/find-last", {"addr": "0x5C78", "access": "poke"})
+    c.check(status == 400, f"WebAPI unknown access is 400 ({status})")
+    _, web = c.web("POST", "/ttd/reverse-continue", {"pcs": [56]})
+    lua = c.lua("local r = ttd_reverse_continue({56}); print(tostring(r.matched) .. '|' .. tostring(r.pc))")
+    c.check(lua.split("|")[0] == scalar_text(web.get("matched")), f"Lua and WebAPI reverse-continue agree on matched ({lua!r}, {web.get('matched')})")
+    # The fresh instance may have no port journal (NeoGS fitted): then every surface
+    # must give the same refusal instead of the same count
+    status, web = c.web("POST", "/ttd/port-events", {"event": "border", "limit": 5})
+    lua = c.lua("local r = ttd_port_events('border', nil, {limit = 5}); print(tostring(r.ok) .. '|' .. tostring(r.count) .. '|' .. tostring(r.error))")
+    cli = c.cli.run("ttd port-events border limit=5")
+    if status == 200:
+        c.check(lua.startswith(f"true|{web.get('count')}|"), f"Lua and WebAPI port-events count the same ({lua!r}, {web.get('count')})")
+        c.check(f"{web.get('count')} hit(s)" in cli, f"CLI port-events reports the same count ({cli.strip()[:80]!r})")
+    else:
+        message = web.get("message", "")
+        c.check(lua == f"false|nil|{message}", f"Lua port-events refused with the WebAPI's message ({lua!r})")
+        c.check(("Error: " + message) in cli, f"CLI port-events refused with the same message ({cli.strip()[:80]!r})")
+    status, web = c.web("POST", "/ttd/port-events", {"event": "border", "colour": 2})
+    lua = c.lua("local r = ttd_port_events('border', nil, {colour = 2}); print(tostring(r.ok) .. '|' .. tostring(r.error))")
+    c.check(status == 400 and lua == "false|" + web.get("message", ""), f"an unknown port option: 400 and the same message in Lua ({status}, {lua!r})")
 
     print("[write journal: Lua start() keeps the choice, WebAPI start defaults it off]")
     c.lua("ttd_set_journal_enabled(true)")

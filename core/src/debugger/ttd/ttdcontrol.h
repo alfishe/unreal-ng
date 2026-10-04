@@ -72,7 +72,8 @@ public:
     TTDReply Execute(const TTDRequest& request);
 
     static const std::vector<std::string>& Verbs();
-    /// The options a verb accepts (help texts, tests)
+    /// The options a verb accepts (help texts, tests). "*": any name, the verb checks them
+    /// itself (port-events: the port query's options)
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
 
     /// Status fields, also the idle answer when time travel is not constructed
@@ -100,6 +101,9 @@ private:
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
+    TTDReply PortEvents(const TTDRequest& request);
+    TTDReply FindLast(const TTDRequest& request);
+    TTDReply ReverseContinue(const TTDRequest& request);
 
     /// Moving in the timeline is refused while recording: the restored state would
     /// overwrite the live machine and the next capture would break the timeline

@@ -943,6 +943,8 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- Positional form: addr, access, value, pc_from, pc_to, before_frame, before_tin,
 --                  phys_page, addr_from, addr_to
 local r = ttd_find_last(0x5800, "write")
+-- Not while recording, and the access must be write, read, execute or io:
+-- otherwise { found = false, ok = false, error = "<why>" }
 
 -- Table form (snake_case or camelCase keys: addr_from/addrFrom, pc_from/pcFrom, phys_page/physPage):
 local r2 = ttd_find_last{

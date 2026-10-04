@@ -783,15 +783,6 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
 /// TD-8: the part of history a backward search examined. It walked back from
 /// covered_to and stopped at covered_from - the match, a replay barrier, or
 /// the session start. Absent when the search was refused.
-static void AddSearchWindow(Json::Value& ret, const ttd::TTDSearchWindow& window)
-{
-    if (!window.searched)
-        return;
-    ret["covered_from"]          = Json::UInt64(window.from.frame);
-    ret["covered_from_tinframe"] = Json::UInt(window.from.tInFrame);
-    ret["covered_to"]            = Json::UInt64(window.to.frame);
-    ret["covered_to_tinframe"]   = Json::UInt(window.to.tInFrame);
-}
 
 /// @brief POST /api/v1/emulator/{id}/ttd/find-last
 /// @brief POST /api/v1/emulator/{id}/ttd/port-events
@@ -813,303 +804,18 @@ void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    auto fail = [&](HttpStatusCode code, const std::string& message) {
-        Json::Value error;
-        error["error"] = code == k400BadRequest ? "Bad Request" : "Conflict";
-        error["message"] = message;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(code);
-        addCorsHeaders(resp);
-        callback(resp);
-    };
-
-    auto json = req->getJsonObject();
-    if (!json || !(*json)["event"].isString())
-    {
-        std::string names;
-        for (const std::string& n : ttd::PortEventNames())
-            names += (names.empty() ? "" : ", ") + n;
-        fail(k400BadRequest, "'event' is required: one of " + names);
-        return;
-    }
-
-    auto text = [](const Json::Value& v) -> std::string {
-        if (v.isString())
-            return v.asString();
-        if (v.isBool())
-            return v.asBool() ? "true" : "false";
-        if (v.isIntegral())
-            return std::to_string(v.asLargestUInt());
-        return v.toStyledString();
-    };
-
-    ttd::TTDPortQuery q;
-    std::string err;
-    const std::string event = (*json)["event"].asString();
-    if (!ttd::BuildPortEventQuery(event, json->isMember("arg") ? text((*json)["arg"]) : std::string(), q, err))
-    {
-        fail(k400BadRequest, err);
-        return;
-    }
-    for (const std::string& name : json->getMemberNames())
-    {
-        if (name == "event" || name == "arg" || name == "file")
-            continue;
-        if (!ttd::ApplyPortQueryOption(q, name, text((*json)[name]), err))
-        {
-            fail(k400BadRequest, err);
-            return;
-        }
-    }
-
-    // "file": search a .ttd on disk without loading it (the session is untouched)
-    const bool inFile = (*json)["file"].isString();
-    const ttd::TTDPortSearchResult result =
-        inFile ? mgr->SearchPortEventsInFile((*json)["file"].asString(), q) : mgr->SearchPortEvents(q);
-    if (!result.ok)
-    {
-        fail(inFile ? k400BadRequest : k409Conflict, result.error);
-        return;
-    }
-
-    Json::Value ret;
-    ret["event"] = event;
-    ret["direction"] = ttd::PortDirectionName(q.direction);
-    ret["count"] = Json::UInt64(result.hits.size());
-    ret["truncated"] = result.truncated;
-    ret["scanned"] = Json::UInt64(result.scanned);
-    Json::Value hits(Json::arrayValue);
-    for (const ttd::TTDPortHit& h : result.hits)
-    {
-        Json::Value hit;
-        hit["index"] = Json::UInt64(h.index);
-        hit["frame"] = Json::UInt64(h.record.frame);
-        hit["tinframe"] = Json::UInt(h.record.tInFrame);
-        hit["port"] = Json::UInt(h.record.port);
-        hit["value"] = Json::UInt(h.record.value);
-        hit["pc"] = Json::UInt(h.record.pc);
-        if (h.ayRegister >= 0)
-            hit["ay_register"] = h.ayRegister;
-        hits.append(hit);
-    }
-    ret["hits"] = hits;
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "port-events", std::move(options), callback);
 }
 
 void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    if (rejectIfRecording(mgr, callback)) return;
-
-    auto json = req->getJsonObject();
-    const bool hasAddr = json && json->isMember("addr");
-    const bool hasAddrFrom = json && json->isMember("addr_from");
-    const bool hasAddrTo = json && json->isMember("addr_to");
-    const bool hasPcFrom = json && json->isMember("pc_from");
-    const bool hasPcTo = json && json->isMember("pc_to");
-    const bool hasValue = json && json->isMember("value");
-
-    if (!json || (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue))
-    {
-        Json::Value err;
-        err["error"] = "Missing search criteria in request body (must supply 'addr', 'addr_from', 'addr_to', 'pc_from', 'pc_to', or 'value')";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    ttd::TTDSearchQuery q;
-    if (hasAddr)
-    {
-        uint32_t parsed = 0;
-        if (!ParseJsonUInt((*json)["addr"], 0xFFFF, parsed))
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "'addr' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        q.addrFrom = q.addrTo = static_cast<uint16_t>(parsed);
-    }
-    else
-    {
-        if (hasAddrFrom)
-        {
-            uint32_t parsed = 0;
-            if (!ParseJsonUInt((*json)["addr_from"], 0xFFFF, parsed))
-            {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "'addr_from' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
-            q.addrFrom = static_cast<uint16_t>(parsed);
-        }
-        if (hasAddrTo)
-        {
-            uint32_t parsed = 0;
-            if (!ParseJsonUInt((*json)["addr_to"], 0xFFFF, parsed))
-            {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "'addr_to' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
-            q.addrTo = static_cast<uint16_t>(parsed);
-        }
-    }
-
-    if (json->isMember("access"))
-        q.access = ttd::TTDAccessTypeFromString((*json)["access"].asCString());
-
-    if (json->isMember("value"))
-    {
-        uint32_t parsed = 0;
-        if (!ParseJsonUInt((*json)["value"], 0xFF, parsed))
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "'value' must be 0..255 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        q.value = static_cast<uint8_t>(parsed);
-        q.hasValueFilter = true;
-    }
-
-    if (json->isMember("pc_from"))
-    {
-        uint32_t parsed = 0;
-        if (!ParseJsonUInt((*json)["pc_from"], 0xFFFF, parsed))
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "'pc_from' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        q.pcFrom = static_cast<uint16_t>(parsed);
-        q.hasPcFilter = true;
-    }
-
-    if (json->isMember("pc_to"))
-    {
-        uint32_t parsed = 0;
-        if (!ParseJsonUInt((*json)["pc_to"], 0xFFFF, parsed))
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "'pc_to' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        q.pcTo = static_cast<uint16_t>(parsed);
-        if (!q.hasPcFilter) q.hasPcFilter = true;
-    }
-
-    // Bank-aware search: without this, an address query on a banked machine
-    // answers with writes to whatever page happened to be mapped, which is
-    // rarely the page the caller meant.
-    if (json->isMember("phys_page"))
-    {
-        const Json::Value& page = (*json)["phys_page"];
-        if (!page.isUInt() || page.asUInt() > ttd::kPhysPageMax)
-        {
-            Json::Value err;
-            err["error"] = "Invalid phys_page (expected 0..255)";
-            auto resp = HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        q.physPage = static_cast<ttd::PhysPage>(page.asUInt());
-        q.hasPhysPageFilter = true;
-    }
-
-    if (emulator)
-    {
-        if (json->isMember("before_frame"))
-        {
-            uint64_t f = (*json)["before_frame"].asUInt64();
-            uint32_t tin = json->isMember("before_tin") ? (*json)["before_tin"].asUInt() : 0;
-            q.beforeGlobalT = mgr->GlobalT({f, tin});
-        }
-    }
-
-    PauseAndConfirm(emulator);
-
-    ttd::TTDExternalEvent marker;
-    ttd::TTDSearchWindow window;
-    auto result = mgr->FindLastAccess(q, &marker, &window);
-
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    if (result)
-    {
-        ret["found"]      = true;
-        ret["frame"]      = Json::UInt64(result->time.frame);
-        ret["tinframe"]   = Json::UInt(result->time.tInFrame);
-        ret["pc"]         = Json::UInt(result->pc);
-        ret["value"]      = Json::UInt(result->value);
-        // null = the access had no RAM page (ROM, cache, I/O)
-        ret["phys_page"]  = result->physPage == ttd::kPhysPageNone ? Json::Value(Json::nullValue)
-                                                                   : Json::Value(Json::UInt(result->physPage));
-        ret["access"]     = ttd::TTDAccessTypeToString(result->access);
-    }
-    else if (marker.reason[0] != '\0')
-    {
-        ret["found"]  = false;
-        ret["blocked"] = true;
-        ret["marker_frame"]    = Json::UInt64(marker.time.frame);
-        ret["marker_tinframe"] = Json::UInt(marker.time.tInFrame);
-        ret["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
-        ret["marker_reason"]   = marker.reason;
-    }
-    else
-    {
-        ret["found"] = false;
-    }
-    AddSearchWindow(ret, window);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "find-last", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/step-instruction
@@ -1148,81 +854,23 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    if (rejectIfRecording(mgr, callback)) return;
-
+    // pcs: a JSON array of addresses; the verb takes them as one comma list
     auto json = req->getJsonObject();
     if (!json || !json->isMember("pcs") || !(*json)["pcs"].isArray())
     {
-        Json::Value err;
-        err["error"] = "Missing or invalid 'pcs' (expected a JSON array of addresses)";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
+        Json::Value error;
+        error["error"]   = "Bad Request";
+        error["message"] = "Missing or invalid 'pcs' (expected a JSON array of addresses)";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-
-    const auto& pcsArr = (*json)["pcs"];
-    if (pcsArr.empty())
-    {
-        Json::Value err;
-        err["error"] = "'pcs' array must be non-empty";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    // Same number forms as find-last's addresses: a number, or a decimal / hex string
-    std::vector<uint16_t> bps;
-    bps.reserve(pcsArr.size());
-    for (Json::ArrayIndex i = 0; i < pcsArr.size(); ++i)
-    {
-        uint32_t pc = 0;
-        if (!ParseJsonUInt(pcsArr[i], 0xFFFF, pc))
-        {
-            Json::Value err;
-            err["error"] = "'pcs' entries must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
-            auto resp = HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        bps.push_back(static_cast<uint16_t>(pc));
-    }
-
-    PauseAndConfirm(emulator);
-
-    auto result = mgr->ReverseContinue(bps);
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["matched"]  = result.matched;
-    ret["pc"]       = result.pc;
-    ret["frame"]    = Json::UInt64(result.arrivedAt.frame);
-    ret["tinframe"] = Json::UInt(result.arrivedAt.tInFrame);
-
-    if (result.blockingMarker.reason[0] != '\0')
-    {
-        Json::Value m;
-        m["kind"]   = ttd::TTDExternalEventKindToString(result.blockingMarker.kind);
-        m["reason"] = result.blockingMarker.reason;
-        m["frame"]  = Json::UInt64(result.blockingMarker.time.frame);
-        m["tinframe"] = Json::UInt(result.blockingMarker.time.tInFrame);
-        ret["blocked_by_marker"] = m;
-    }
-    AddSearchWindow(ret, result.window);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::string pcs;
+    for (const Json::Value& pc : (*json)["pcs"])
+        pcs += (pcs.empty() ? "" : ",") + (pc.isString() ? pc.asString() : pc.isIntegral() ? pc.asString() : std::string("?"));
+    RespondTTD(id, "reverse-continue", {{"pcs", pcs}}, callback);
 }
 
 static bool ParseUint16Param(const std::string& str, uint16_t& outVal)

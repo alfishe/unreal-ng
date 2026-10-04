@@ -69,14 +69,16 @@ std::string DescribeJournalSpans(const ttd::TTDSessionInfo& info)
 /// region <TTD Commands>
 
 
-/// TD-8: the part of history a backward search examined, one line
-static std::string FormatSearchWindow(const ttd::TTDSearchWindow& window)
+/// TD-8: the part of history a backward search examined, one line (a TTDControl
+/// reply's covered_* fields)
+static std::string FormatSearchWindow(const StateNode& body)
 {
-    if (!window.searched)
+    const StateNode* from = body.find("covered_from");
+    if (!from)
         return {};
     std::stringstream ss;
-    ss << "  Searched: frame " << window.from.frame << " t=" << window.from.tInFrame << " .. frame "
-       << window.to.frame << " t=" << window.to.tInFrame << CLIProcessor::NEWLINE;
+    ss << "  Searched: frame " << from->i << " t=" << body.find("covered_from_tinframe")->i << " .. frame "
+       << body.find("covered_to")->i << " t=" << body.find("covered_to_tinframe")->i << CLIProcessor::NEWLINE;
     return ss.str();
 }
 
@@ -1007,12 +1009,6 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
 void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
                                         const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-    if (!mgr)
-    {
-        session.SendResponse(std::string("Error: TTD engine not available") + NEWLINE);
-        return;
-    }
     if (args.size() < 2)
     {
         session.SendResponse(std::string("Usage: ttd port-events <event> [arg] [option=value ...]  (ttd help)") +
@@ -1021,56 +1017,39 @@ void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorCon
     }
 
     // args[1] is the event; an argument without '=' after it is the event's
-    // argument (a key name, an AY register); the rest are options
+    // argument (a key name, an AY register); the rest are option=value
+    std::map<std::string, std::string> options{{"event", args[1]}};
     size_t next = 2;
-    std::string arg;
     if (args.size() > 2 && args[2].find('=') == std::string::npos)
-        arg = args[next++];
-
-    ttd::TTDPortQuery q;
-    std::string err;
-    if (!ttd::BuildPortEventQuery(args[1], arg, q, err))
-    {
-        session.SendResponse("Error: " + err + NEWLINE);
-        return;
-    }
-    std::string file;  // file=<path>: search a .ttd on disk without loading it
+        options["arg"] = args[next++];
     for (; next < args.size(); ++next)
     {
         const size_t eq = args[next].find('=');
-        if (eq != std::string::npos && args[next].substr(0, eq) == "file")
+        if (eq == std::string::npos)
         {
-            file = args[next].substr(eq + 1);
-            continue;
-        }
-        if (eq == std::string::npos ||
-            !ttd::ApplyPortQueryOption(q, args[next].substr(0, eq), args[next].substr(eq + 1), err))
-        {
-            session.SendResponse("Error: " + (eq == std::string::npos ? "expected option=value, got '" + args[next] + "'"
-                                                                       : err) +
-                                 NEWLINE);
+            session.SendResponse("Error: expected option=value, got '" + args[next] + "'" + NEWLINE);
             return;
         }
+        options[args[next].substr(0, eq)] = args[next].substr(eq + 1);
     }
 
-    const ttd::TTDPortSearchResult result = file.empty() ? mgr->SearchPortEvents(q) : mgr->SearchPortEventsInFile(file, q);
-    if (!result.ok)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"port-events", options});
+    if (!reply.Ok())
     {
-        session.SendResponse("Error: " + result.error + NEWLINE);
+        session.SendResponse("Error: " + reply.message + NEWLINE);
         return;
     }
-
+    const StateNode& b = reply.body;
     std::stringstream ss;
-    ss << result.hits.size() << " hit(s)" << (result.truncated ? " (more than the limit)" : "") << ", "
-       << result.scanned << (q.direction == ttd::TTDPortJournal::Direction::Read ? " IN" : " OUT")
-       << " record(s) scanned" << NEWLINE;
-    for (const ttd::TTDPortHit& h : result.hits)
+    ss << b.find("count")->i << " hit(s)" << (b.find("truncated")->b ? " (more than the limit)" : "") << ", "
+       << b.find("scanned")->i << (b.find("direction")->s == "in" ? " IN" : " OUT") << " record(s) scanned" << NEWLINE;
+    for (const StateNode& h : b.find("hits")->items)
     {
-        ss << "  frame " << h.record.frame << " t " << h.record.tInFrame << "  PC #" << std::hex << std::uppercase
-           << std::setw(4) << std::setfill('0') << h.record.pc << "  port #" << std::setw(4) << h.record.port
-           << "  value #" << std::setw(2) << static_cast<unsigned>(h.record.value) << std::dec << std::setfill(' ');
-        if (h.ayRegister >= 0)
-            ss << "  R" << h.ayRegister;
+        ss << "  frame " << h.find("frame")->i << " t " << h.find("tinframe")->i << "  PC #" << std::hex
+           << std::uppercase << std::setw(4) << std::setfill('0') << h.find("pc")->i << "  port #" << std::setw(4)
+           << h.find("port")->i << "  value #" << std::setw(2) << h.find("value")->i << std::dec << std::setfill(' ');
+        if (const StateNode* r = h.find("ay_register"))
+            ss << "  R" << r->i;
         ss << NEWLINE;
     }
     session.SendResponse(ss.str());
@@ -1079,135 +1058,67 @@ void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorCon
 void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                                       const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    // Parse --key value pairs from args[1..]
-    ttd::TTDSearchQuery q;
-    bool hasAddr = false;
-    bool hasAddrFrom = false;
-    bool hasAddrTo = false;
-    bool hasPcFrom = false;
-    bool hasPcTo = false;
-    bool hasValue = false;
-
+    // --key value pairs from args[1..]; the verb checks every value
+    static const std::map<std::string, std::string> flags = {
+        {"--addr", "addr"},       {"--addr-from", "addr_from"},   {"--addr-to", "addr_to"},
+        {"--access", "access"},   {"--value", "value"},           {"--pc-from", "pc_from"},
+        {"--pc-to", "pc_to"},     {"--phys-page", "phys_page"},   {"--before-frame", "before_frame"},
+        {"--before-tin", "before_tin"}};
+    std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
     {
-        const std::string& tok = args[i];
-        if (tok == "--addr" && i + 1 < args.size())
-        {
-            q.addrFrom = q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-            hasAddr = true;
-        }
-        else if (tok == "--addr-from" && i + 1 < args.size())
-        {
-            q.addrFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-            hasAddrFrom = true;
-        }
-        else if (tok == "--addr-to" && i + 1 < args.size())
-        {
-            q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-            hasAddrTo = true;
-        }
-        else if (tok == "--access" && i + 1 < args.size())
-        {
-            q.access = ttd::TTDAccessTypeFromString(args[++i].c_str());
-        }
-        else if (tok == "--value" && i + 1 < args.size())
-        {
-            q.value = static_cast<uint8_t>(std::stoul(args[++i], nullptr, 0));
-            q.hasValueFilter = true;
-            hasValue = true;
-        }
-        else if (tok == "--pc-from" && i + 1 < args.size())
-        {
-            q.pcFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-            q.hasPcFilter = true;
-            hasPcFrom = true;
-        }
-        else if (tok == "--pc-to" && i + 1 < args.size())
-        {
-            q.pcTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
-            if (!q.hasPcFilter) q.hasPcFilter = true;
-            hasPcTo = true;
-        }
-        else if (tok == "--phys-page" && i + 1 < args.size())
-        {
-            // Bank-aware search: pins the query to one physical RAM page so a
-            // banked address does not answer with another page's write.
-            const unsigned long page = std::stoul(args[++i], nullptr, 0);
-            if (page > ttd::kPhysPageMax)
-            {
-                session.SendResponse(std::string("Error: --phys-page expects 0..255") + NEWLINE);
-                return;
-            }
-            q.physPage = static_cast<ttd::PhysPage>(page);
-            q.hasPhysPageFilter = true;
-        }
-        else if (tok == "--before-frame" && i + 1 < args.size())
-        {
-            uint64_t f = std::stoull(args[++i]);
-            // Combined with --before-tin in either order (TTD time: GlobalT)
-            const uint32_t frameSpan = mgr->FrameSpan();
-            uint32_t tin = 0;
-            if (q.beforeGlobalT != UINT64_MAX)
-                tin = static_cast<uint32_t>(q.beforeGlobalT % frameSpan);
-            q.beforeGlobalT = mgr->GlobalT({f, tin});
-        }
-        else if (tok == "--before-tin" && i + 1 < args.size())
-        {
-            uint32_t tin = static_cast<uint32_t>(std::stoul(args[++i]));
-            const uint32_t frameSpan = mgr->FrameSpan();
-            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameSpan) : 0;
-            q.beforeGlobalT = mgr->GlobalT({frame, tin});
-        }
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
     }
+    // --before-tin alone: T-state of frame 0, as before
+    if (options.count("before_tin") && !options.count("before_frame"))
+        options["before_frame"] = "0";
 
-    if (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"find-last", options});
+    if (!reply.Ok())
     {
-        session.SendResponse(std::string("Error: Missing search criteria") + NEWLINE +
-                             "Usage: ttd find-last [--addr <A> | --addr-from <F> --addr-to <T>] "
-                             "[--access write|read|execute|io] [--value V] [--pc-from X] [--pc-to Y] "
-                             "[--before-frame F] [--before-tin T]" + NEWLINE);
+        session.SendResponse("Error: " + reply.message + NEWLINE +
+                             (reply.error == ttd::TTDControlError::BadRequest
+                                  ? std::string("Usage: ttd find-last [--addr <A> | --addr-from <F> --addr-to <T>] "
+                                                "[--access write|read|execute|io] [--value V] [--pc-from X] [--pc-to Y] "
+                                                "[--phys-page P] [--before-frame F] [--before-tin T]") +
+                                        NEWLINE
+                                  : std::string()));
         return;
     }
 
-    ttd::TTDExternalEvent blockingMarker;
-    ttd::TTDSearchWindow window;
-    auto result = mgr->FindLastAccess(q, &blockingMarker, &window);
-
-    if (result)
+    const StateNode& b = reply.body;
+    std::stringstream ss;
+    if (b.find("found")->b)
     {
-        std::stringstream ss;
         ss << "TTD: Match found" << NEWLINE;
-        ss << "  Frame:    " << result->time.frame << NEWLINE;
-        ss << "  tInFrame: " << result->time.tInFrame << NEWLINE;
-        ss << "  PC:       0x" << std::hex << std::uppercase << std::setfill('0')
-           << std::setw(4) << result->pc << NEWLINE;
-        ss << "  Value:    0x" << std::setw(2) << static_cast<int>(result->value) << NEWLINE;
+        ss << "  Frame:    " << b.find("frame")->i << NEWLINE;
+        ss << "  tInFrame: " << b.find("tinframe")->i << NEWLINE;
+        ss << "  PC:       0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << b.find("pc")->i
+           << NEWLINE;
+        ss << "  Value:    0x" << std::setw(2) << b.find("value")->i << NEWLINE;
         ss << "  PhysPage: " << std::dec;
-        if (result->physPage == ttd::kPhysPageNone)
+        if (b.find("phys_page")->kind == StateNode::Kind::Null)
             ss << "none (ROM / no RAM page)" << NEWLINE;
         else
-            ss << result->physPage << NEWLINE;
-        ss << "  Access:   " << ttd::TTDAccessTypeToString(result->access) << NEWLINE;
-        ss << FormatSearchWindow(window);
-        session.SendResponse(ss.str());
+            ss << b.find("phys_page")->i << NEWLINE;
+        ss << "  Access:   " << b.find("access")->s << NEWLINE;
     }
-    else if (blockingMarker.reason[0] != '\0')
+    else if (b.find("blocked"))
     {
-        std::stringstream ss;
         ss << "TTD: Search blocked by external-event marker" << NEWLINE;
-        ss << "  Marker at frame=" << blockingMarker.time.frame
-           << " tInFrame=" << blockingMarker.time.tInFrame << NEWLINE;
-        ss << "  Kind: " << ttd::TTDExternalEventKindToString(blockingMarker.kind) << NEWLINE;
-        ss << "  Reason: " << blockingMarker.reason << NEWLINE;
-        ss << FormatSearchWindow(window);
-        session.SendResponse(ss.str());
+        ss << "  Marker at frame=" << b.find("marker_frame")->i << " tInFrame=" << b.find("marker_tinframe")->i
+           << NEWLINE;
+        ss << "  Kind: " << b.find("marker_kind")->s << NEWLINE;
+        ss << "  Reason: " << b.find("marker_reason")->s << NEWLINE;
     }
     else
     {
-        session.SendResponse(std::string("TTD: No match found") + NEWLINE + FormatSearchWindow(window));
+        ss << "TTD: No match found" << NEWLINE;
     }
+    ss << FormatSearchWindow(b);
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
@@ -1290,49 +1201,44 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
 void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
                                              const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    // Parse one or more --pc <V> arguments.
-    std::vector<uint16_t> bps;
+    // One or more --pc <V> arguments
+    std::string pcs;
     for (size_t i = 1; i < args.size(); ++i)
-    {
-        const std::string& tok = args[i];
-        if (tok == "--pc" && i + 1 < args.size())
-        {
-            bps.push_back(static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0)));
-        }
-    }
-
-    if (bps.empty())
+        if (args[i] == "--pc" && i + 1 < args.size())
+            pcs += (pcs.empty() ? "" : ",") + args[++i];
+    if (pcs.empty())
     {
         session.SendResponse(std::string("Error: --pc is required (at least one)") + NEWLINE +
                              "Usage: ttd reverse-continue --pc <A> [--pc <B> ...]" + NEWLINE);
         return;
     }
 
-    auto result = mgr->ReverseContinue(bps);
-
-    std::stringstream ss;
-    if (result.matched)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-continue", {{"pcs", pcs}}});
+    if (!reply.Ok())
     {
-        ss << "TTD: Reverse-continue hit PC=0x" << std::hex << std::uppercase
-           << std::setfill('0') << std::setw(4) << result.pc << std::dec
-           << " at (frame=" << result.arrivedAt.frame
-           << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
     }
-    else if (result.blockingMarker.reason[0] != '\0')
+    const StateNode& b = reply.body;
+    std::stringstream ss;
+    if (b.find("matched")->b)
     {
-        ss << "TTD: Reverse-continue blocked by marker at "
-           << "(frame=" << result.blockingMarker.time.frame
-           << ", tInFrame=" << result.blockingMarker.time.tInFrame << ")" << NEWLINE;
-        ss << "  Kind: " << ttd::TTDExternalEventKindToString(result.blockingMarker.kind) << NEWLINE;
-        ss << "  Reason: " << result.blockingMarker.reason << NEWLINE;
+        ss << "TTD: Reverse-continue hit PC=0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4)
+           << b.find("pc")->i << std::dec << " at (frame=" << b.find("frame")->i
+           << ", tInFrame=" << b.find("tinframe")->i << ")" << NEWLINE;
+    }
+    else if (const StateNode* m = b.find("blocked_by_marker"))
+    {
+        ss << "TTD: Reverse-continue blocked by marker at (frame=" << m->find("frame")->i
+           << ", tInFrame=" << m->find("tinframe")->i << ")" << NEWLINE;
+        ss << "  Kind: " << m->find("kind")->s << NEWLINE;
+        ss << "  Reason: " << m->find("reason")->s << NEWLINE;
     }
     else
     {
         ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
     }
-    ss << FormatSearchWindow(result.window);
+    ss << FormatSearchWindow(b);
     session.SendResponse(ss.str());
 }
 
