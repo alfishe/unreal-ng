@@ -170,6 +170,15 @@ constexpr uint16_t kFlagsHasNetInputs = 0x0400;
 /// the older layout byte for byte.
 constexpr uint16_t kFlagsHasNotRecordedMask = 0x0800;
 
+/// Bit 12 of header.flags — the write journal section is followed by its
+/// segment table (D40): u32 count, then per segment u64 from, u64 to, machine
+/// times (GlobalT): the spans, after `from` up to and including `to`, in which
+/// every memory write is in the journal. The journal is recorded on demand, so
+/// a session may hold it for some spans only; outside them a write search
+/// replays. Without the bit and with kFlagsWriteJournalComplete the journal
+/// covers the whole session; without either there is no journal.
+constexpr uint16_t kFlagsHasJournalSegments = 0x1000;
+
 /// Bytes per network-input record (the layout above)
 constexpr uint32_t kNetInputRecordSize = 4 + 2 + 1 + 1 + 4 + 2 + 4 + 4;
 

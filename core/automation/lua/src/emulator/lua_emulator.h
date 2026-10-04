@@ -3340,7 +3340,7 @@ public:
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
             if (ctx->pTimeTravelManager->SetEnableWriteJournal(enabled)) return {true, ""};
-            return {false, ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal)};
+            return {false, "write journal not available"};
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {

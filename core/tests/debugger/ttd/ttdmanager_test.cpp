@@ -69,6 +69,7 @@ protected:
         ASSERT_NE(ctx, nullptr);
         _ttd = ctx->pTimeTravelManager;
         ASSERT_NE(_ttd, nullptr) << "TimeTravelManager was not created during Emulator::Init";
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         _memory = ctx->pMemory;
         ASSERT_NE(_memory, nullptr);
         _fm = _emulator->GetFeatureManager();
@@ -729,6 +730,7 @@ protected:
         EmulatorContext* context = _emulator->GetContext();
         _core = context->pCore;
         _ttd = context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         _fm = _emulator->GetFeatureManager();
         ASSERT_NE(_core, nullptr);
         ASSERT_NE(_ttd, nullptr);
@@ -1288,141 +1290,4 @@ TEST_F(TimeTravelManagerSearchWindow_Test, RefusedSearchHasNoWindow)
     EXPECT_FALSE(_ttd->ReverseContinue({kTarget}).window.searched);
 }
 
-// ===========================================================================
-// Write-journal completeness in the session status, with where and why it
-// stopped covering the session; the idle journal freed when switched off
-// ===========================================================================
-
-class TimeTravelManagerJournalStatus_Test : public TimeTravelManagerJournal_Test
-{
-};
-
-TEST_F(TimeTravelManagerJournalStatus_Test, CompleteWhileEveryWriteIsJournaled)
-{
-    _ttd->SetEnableWriteJournal(true);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(2);
-    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
-    _ttd->StopRecording();
-
-    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
-    EXPECT_TRUE(info.writeJournalComplete) << "a stop keeps a complete journal complete";
-    EXPECT_FALSE(info.writeJournalWrapped);
-    EXPECT_TRUE(info.journalGapReason.empty());
-}
-
-/// A running recording refuses the switch (B9), so the journal stays complete
-TEST_F(TimeTravelManagerJournalStatus_Test, RefusedSwitchDuringARecordingKeepsItComplete)
-{
-    _ttd->SetEnableWriteJournal(true);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(1);
-    EXPECT_FALSE(_ttd->SetEnableWriteJournal(false)) << "precondition: a recording keeps its journal mode";
-    RunFrames(1);
-    _ttd->StopRecording();
-    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
-}
-
-/// On a stopped session with history the switch is allowed - and leaves a gap
-TEST_F(TimeTravelManagerJournalStatus_Test, JournalSwitchedOnAStoppedSessionReportsWhereAndWhy)
-{
-    _ttd->SetEnableWriteJournal(true);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(2);
-    _ttd->StopRecording();
-    const ttd::TTDTimePoint at = _ttd->CurrentPosition();
-    ASSERT_TRUE(_ttd->SetEnableWriteJournal(false));
-
-    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
-    EXPECT_FALSE(info.writeJournalComplete);
-    EXPECT_NE(info.journalGapReason.find("write journal"), std::string::npos) << info.journalGapReason;
-    ASSERT_TRUE(info.journalGapHasPosition);
-    EXPECT_EQ(info.journalGapAt.frame, at.frame);
-    EXPECT_EQ(info.journalGapAt.tInFrame, at.tInFrame);
-}
-
-/// The machine ran a few instructions between the stop and a live resume:
-/// those writes are in no journal
-TEST_F(TimeTravelManagerJournalStatus_Test, RunBetweenStopAndLiveResumeReportsWhy)
-{
-    _ttd->SetEnableWriteJournal(true);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(2);
-    _ttd->StopRecording();
-    _emulator->RunTStates(200, /*skipBreakpoints=*/true);  // same frame: a live resume stays possible
-    ASSERT_TRUE(_ttd->ResumeRecordingLive());
-    RunFrames(1);
-    _ttd->StopRecording();
-
-    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
-    EXPECT_FALSE(info.writeJournalComplete);
-    EXPECT_NE(info.journalGapReason.find("unrecorded"), std::string::npos) << info.journalGapReason;
-    EXPECT_TRUE(info.journalGapHasPosition);
-}
-
-TEST_F(TimeTravelManagerJournalStatus_Test, RecordedWithoutAJournalIsIncompleteFromTheStart)
-{
-    _ttd->SetEnableWriteJournal(false);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(1);
-    _ttd->StopRecording();
-
-    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
-    EXPECT_FALSE(info.writeJournalComplete);
-    EXPECT_NE(info.journalGapReason.find("without"), std::string::npos) << info.journalGapReason;
-}
-
-TEST_F(TimeTravelManagerJournalStatus_Test, LoadCarriesCompletenessFromTheFile)
-{
-    _ttd->SetEnableWriteJournal(true);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(2);
-    _ttd->StopRecording();
-    std::stringstream complete;
-    std::string err;
-    ASSERT_TRUE(_ttd->SerializeSession(complete, err)) << err;
-
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(1);
-    _ttd->StopRecording();
-    _emulator->RunTStates(200, /*skipBreakpoints=*/true);  // unjournaled writes
-    ASSERT_TRUE(_ttd->ResumeRecordingLive());
-    RunFrames(1);
-    _ttd->StopRecording();
-    std::stringstream partial;
-    ASSERT_TRUE(_ttd->SerializeSession(partial, err)) << err;
-
-    complete.seekg(0);
-    ASSERT_TRUE(_ttd->DeserializeSession(complete, err)) << err;
-    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
-
-    partial.seekg(0);
-    ASSERT_TRUE(_ttd->DeserializeSession(partial, err)) << err;
-    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
-    EXPECT_FALSE(info.writeJournalComplete);
-    EXPECT_FALSE(info.journalGapReason.empty()) << "a loaded incomplete journal still says why";
-}
-
-/// Switching journaling off with no session frees the 64 MB the feature
-/// pre-allocated; with a retained session the journal still answers for it.
-TEST_F(TimeTravelManagerJournalStatus_Test, SwitchingOffWithNoSessionFreesTheJournal)
-{
-    ASSERT_TRUE(_fm->setFeature(Features::kTimeTravel, true));
-    ASSERT_NE(_ttd->GetWriteJournal(), nullptr) << "precondition: the feature pre-allocates the journal";
-    _ttd->SetEnableWriteJournal(false);
-    EXPECT_EQ(_ttd->GetWriteJournal(), nullptr) << "an idle, disabled journal still holds its 64 MB";
-
-    _ttd->SetEnableWriteJournal(true);
-    InstallWritingProgram();
-    ASSERT_TRUE(_ttd->StartRecording());
-    RunFrames(1);
-    _ttd->StopRecording();
-    _ttd->SetEnableWriteJournal(false);
-    EXPECT_NE(_ttd->GetWriteJournal(), nullptr) << "the retained session's journal was freed";
-}
+// Write-journal segments and their status: timetravelmanager_journalsegments_test.cpp (D40)

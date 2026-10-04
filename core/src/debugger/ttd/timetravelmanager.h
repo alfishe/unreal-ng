@@ -193,6 +193,17 @@ struct TTDHeapBreakdown
     }
 };
 
+/// A span of a session in which every memory write is in the write journal
+/// (D40): machine times (GlobalT) after `from` up to and including `to`. The
+/// journal is recorded on demand: switched on and off at any instruction, each
+/// on-to-off span one segment
+struct TTDJournalSegment
+{
+    uint64_t from = 0;
+    uint64_t to = 0;
+    bool operator==(const TTDJournalSegment& o) const { return from == o.from && to == o.to; }
+};
+
 struct TTDSessionInfo
 {
     TTDSessionState state = TTDSessionState::Idle;
@@ -231,6 +242,8 @@ struct TTDSessionInfo
     size_t   livePayloadBytes = 0;  ///< Sum of compressed payload bytes (live slots)
 
     bool writeJournalEnabled = false;  ///< True if write journal is active (for FindLast)
+    /// The spans the write journal covers (D40), oldest first
+    std::vector<TTDJournalSegment> writeJournalSegments;
 
     /// The journal holds every write/port write of the session since its start,
     /// so write/io find-last answers from it instead of replaying.
@@ -344,7 +357,6 @@ enum class TTDGuardedAction : uint8_t
     Invalidate,          ///< discards the session
     DisableTimeTravel,   ///< capture stops mid-session
     DisableDebugMode,    ///< writes stop reaching the history
-    ChangeWriteJournal,  ///< a recording keeps the journal mode it started with
     SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
     CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
 };
@@ -587,26 +599,17 @@ public:
     // Session configuration (v2 optimizations)
     // -----------------------------------------------------------------------
 
-    /// @brief Enable/disable write journal capture.
+    /// @brief Switch the write journal on or off (D40). Off by default.
     ///
-    /// **Gaming mode** (`enable = false`):
-    ///   - Smaller .ttd files (~90% reduction)
-    ///   - Checkpoint scrubbing and rewind work normally
-    ///   - Reverse-watchpoint queries fall back to checkpoint replay (slower)
-    ///   - Best for: recording gameplay, demos, general time-travel
-    ///
-    /// **Development mode** (`enable = true`, default):
-    ///   - Full write journal with every memory/port write (12 bytes each)
-    ///   - Fast reverse-watchpoint queries ("where was X last written?")
-    ///   - Best for: debugging, step-back analysis, reverse debugging
-    ///
-    /// Must be called before StartRecording() to take effect. Refused (false)
-    /// while a user recording runs: it keeps the mode it started with
-    /// (RecordingGuard(ChangeWriteJournal) explains; a debugger's live history
-    /// is not protected). Changing it on a stopped session that holds history
-    /// leaves a gap in the journal (reported in the session status), so reverse
-    /// queries on that session fall back to replay. Switching it off with no
-    /// session frees the pre-allocated journal.
+    /// The journal records every memory write (time, address, value, PC,
+    /// page) so "who wrote address X last" answers at once. Port writes are
+    /// not in it: the port journal, recorded in every session, has them.
+    /// Allowed at any moment, also during a recording and inside a frame (a
+    /// breakpoint handler on the emulation thread may call it): switching on
+    /// opens a journal segment at the current instruction, switching off
+    /// closes it. Outside the segments a write search uses the coverage index
+    /// and replays one frame. Switching it off with no session frees the
+    /// pre-allocated journal.
     bool SetEnableWriteJournal(bool enable);
     bool GetEnableWriteJournal() const { return _enableWriteJournal; }
 
@@ -1362,8 +1365,9 @@ public:
 private:
     /// @brief May the coverage index be used to skip frames for this query?
     ///
-    /// Only Read and Execute searches reach the replay loop at all (Write and
-    /// Io are answered by the journal), and pruning is sound only when the
+    /// Read, Execute and Write searches reach the replay loop (a Write only
+    /// for frames outside the write journal's segments; Io answers from the
+    /// port journal), and pruning is sound only when the
     /// query's Z80 address range collapses to one non-wrapping offset interval
     /// inside a 16 KB page. A range spanning a page boundary, or wider than a
     /// page, could match any offset, so it is left unpruned rather than
@@ -1372,7 +1376,7 @@ private:
     {
         if (!_enableCoverageIndex)
             return false;
-        if (q.access != TTDAccessType::Read && q.access != TTDAccessType::Execute)
+        if (q.access != TTDAccessType::Read && q.access != TTDAccessType::Execute && q.access != TTDAccessType::Write)
             return false;
         if (q.addrTo < q.addrFrom)
             return false;
@@ -2223,27 +2227,33 @@ private:
     std::atomic<std::thread::id> _captureThread{};   ///< the thread that captured the last frame
     /// endregion
 
-    bool _enableWriteJournal = true;
+    bool _enableWriteJournal = false;   ///< D40: the journal is recorded on demand
     static constexpr size_t kDefaultWriteJournalBytes = 64u * 1024 * 1024;
     size_t _writeJournalBytes = kDefaultWriteJournalBytes;   ///< SetWriteJournalCapacity
 
-    /// True while the journal holds every write of the session since its start
-    /// (journaling on at StartRecording, never switched, no unrecorded run
-    /// between a stop and a live resume). Only then may FindLastAccess answer
-    /// from it; a loaded file's journal cannot vouch for this and replays.
-    bool _journalGapless = false;
+    /// The write journal's segments (D40): closed spans, then the open one
+    /// (to == kSegmentOpen) while writes reach the journal
+    std::vector<TTDJournalSegment> _journalSegments;
+    static constexpr uint64_t kSegmentOpen = UINT64_MAX;
+    /// Writes reach the journal now: recording, journal on, capture features on
+    bool JournalLive() const;
+    /// Open a segment at the current position when writes start reaching the
+    /// journal, close the open one when they stop. Called on every change of
+    /// those conditions (SetState, SetEnableWriteJournal, UpdateFeatureCache)
+    void SyncJournalSegment();
+    /// Drop the segments' parts after @p cutT (a resume from an earlier point)
+    void ClipJournalSegments(uint64_t cutT);
+    /// The segments as they stand: the open one ends at the current position,
+    /// and the ring's evicted records are no longer covered
+    std::vector<TTDJournalSegment> JournalSegments() const;
+    /// Where a checkpoint's CPU stands in machine time: its frame boundary plus
+    /// the last instruction's overshoot (a frame's writes are after it)
+    uint64_t CheckpointStartT(const TTDCheckpoint& cp) const;
+    /// One segment from the session's first checkpoint to its last
+    bool JournalCoversSession(const std::vector<TTDJournalSegment>& segments) const;
     /// See TTDSessionInfo::lastDropReason
     std::string _lastDropReason;
     std::string _unavailableReason;    // see SetUnavailableReason
-    /// Why and where _journalGapless dropped, for the session status (MarkJournalGap)
-    std::string  _journalGapReason;
-    bool         _journalGapHasPosition = false;
-    TTDTimePoint _journalGapAt{};
-    /// The journal stops covering the session: clear _journalGapless, remember
-    /// why/where, warn once. No-op when it was already incomplete.
-    void MarkJournalGap(const char* reason, bool hasPosition = true);
-    /// No session any more (or a fresh one): forget the previous gap
-    void ClearJournalGap();
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;
 

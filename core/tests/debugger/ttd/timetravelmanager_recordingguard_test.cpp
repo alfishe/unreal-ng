@@ -64,8 +64,7 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, NothingIsGuarded_WhenNotRecording)
     for (TTDGuardedAction action :
          {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
           TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate,
-          TTDGuardedAction::DisableTimeTravel, TTDGuardedAction::DisableDebugMode,
-          TTDGuardedAction::ChangeWriteJournal})
+          TTDGuardedAction::DisableTimeTravel, TTDGuardedAction::DisableDebugMode})
     {
         EXPECT_TRUE(_ttd->RecordingGuard(action).empty()) << static_cast<int>(action);
     }
@@ -77,8 +76,7 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, EveryGuardedActionHasAReason_While
     for (TTDGuardedAction action :
          {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
           TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate,
-          TTDGuardedAction::DisableTimeTravel, TTDGuardedAction::DisableDebugMode,
-          TTDGuardedAction::ChangeWriteJournal})
+          TTDGuardedAction::DisableTimeTravel, TTDGuardedAction::DisableDebugMode})
     {
         const std::string reason = _ttd->RecordingGuard(action);
         EXPECT_NE(StringHelper::ToLower(reason).find("stop the recording first"), std::string::npos) << reason;
@@ -138,18 +136,16 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, SwitchingTtdFeaturesOffIsRefused_W
     EXPECT_TRUE(_fm->setFeature(Features::kTimeTravel, false));
 }
 
-TEST_F(TimeTravelManager_RecordingGuard_Test, WriteJournalModeIsFixed_WhileRecording)
+/// D40: the write journal is not guarded - it switches on and off at any
+/// moment of a recording (each span a segment)
+TEST_F(TimeTravelManager_RecordingGuard_Test, WriteJournalSwitchesWhileRecording)
 {
     StartRecordingWithHistory();
-    const bool mode = _ttd->GetEnableWriteJournal();
-
-    EXPECT_TRUE(_ttd->SetEnableWriteJournal(mode));  // re-selecting is not a change
-    EXPECT_FALSE(_ttd->SetEnableWriteJournal(!mode));
-    EXPECT_EQ(_ttd->GetEnableWriteJournal(), mode);
-
-    _ttd->StopRecording();
-    EXPECT_TRUE(_ttd->SetEnableWriteJournal(!mode));
-    EXPECT_EQ(_ttd->GetEnableWriteJournal(), !mode);
+    EXPECT_FALSE(_ttd->GetEnableWriteJournal()) << "off by default";
+    EXPECT_TRUE(_ttd->SetEnableWriteJournal(true));
+    EXPECT_TRUE(_ttd->GetEnableWriteJournal());
+    EXPECT_TRUE(_ttd->SetEnableWriteJournal(false));
+    EXPECT_FALSE(_ttd->GetEnableWriteJournal());
 }
 
 TEST_F(TimeTravelManager_RecordingGuard_Test, ActionsWorkAfterStop_AndStatusSaysWhyHistoryWasDropped)

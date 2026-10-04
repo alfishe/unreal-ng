@@ -128,10 +128,15 @@ types:
           bookmarks section follows the coverage index (TD-4 agent
           bookmarks: u32 count, then per bookmark u64 frame, u32 tInFrame,
           u8 label_len, label bytes — labels are unique, non-empty and at
-          most 63 chars). Bit 4 = the write journal holds every write
-          of the session (journaling never paused, the ring never
-          overwrote a record): only then may a reader answer write/port
-          reverse queries from it instead of replaying. Bit 5 = every
+          most 63 chars). Bit 4 = the write journal covers the whole
+          session (one segment from the first checkpoint to the last).
+          Bit 12 = the write journal is followed by its segment table
+          (D40: the journal is recorded on demand): u32 count, then per
+          segment u64 from, u64 to - the machine-time spans, after `from`
+          up to and including `to`, in which every memory write is in the
+          journal. A reader answers write searches inside them from the
+          journal and replays elsewhere. Port OUTs are not in the write
+          journal (the port journals, bit 8, have them). Bit 5 = every
           in-frame position (tInFrame, journal globalT) counts T-states at
           the model's top CPU clock (B4); without it a model with a hardware
           turbo is refused, because its positions counted at the clock

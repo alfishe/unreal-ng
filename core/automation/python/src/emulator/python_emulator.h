@@ -3302,8 +3302,7 @@ namespace PythonBindings
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
                 auto* ctx = self.GetContext();
                 if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SetEnableWriteJournal(enabled))
-                    throw std::runtime_error(
-                        ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal));
+                    throw std::runtime_error("write journal not available");
             }, "Choose whether the next recording keeps a write journal (RuntimeError while recording)",
                py::arg("enabled"))
 

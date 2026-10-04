@@ -37,6 +37,7 @@ const ttd::TTDWriteJournal* Record(Emulator* emulator, size_t bytes, int frames)
 {
     ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
     EXPECT_TRUE(ttd->SetWriteJournalCapacity(bytes));
+    ttd->SetEnableWriteJournal(true);
     EXPECT_TRUE(ttd->StartRecording());
     EXPECT_FALSE(ttd->SetWriteJournalCapacity(bytes * 2)) << "not while a session exists";
     emulator->RunNFrames(frames, /*skipBreakpoints=*/true);

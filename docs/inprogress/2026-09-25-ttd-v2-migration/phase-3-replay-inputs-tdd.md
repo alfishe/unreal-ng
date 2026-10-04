@@ -456,6 +456,20 @@ Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileRe
 | J5 | Python tool: a script that drives a running emulator through the WebAPI: load a `.ttd`, build the journal for a span, save. The offline analyzer reads files but cannot replay | `tools/verification/ttd-analyzer` README |
 | J6 | Engine: the journal as segments in `TimeTravelEngine`, fed from v1 in shadow mode; the segment table in the Phase 4 session file | Phase 4 TDD |
 
+**As built, J1 (2026-10-03).**
+
+- The write journal is off by default. `SetEnableWriteJournal` works at any moment; the journal's on/off state is synced at every session state change (`SetState`), at the switch itself and when the time-travel or debug-mode feature changes (`SyncJournalSegment`).
+- Segments are `(from, to]` in machine time. A segment closed at the instant the journal is switched back on continues instead of starting a new one. The ring's evicted records shrink the first segment; recording again from an earlier point clips the segments at the cut.
+- The "gap" state of v1 (`write_journal_gap`, `_journalGapless`) is gone. `writeJournalComplete` now means one segment over the whole session; the session status lists the segments (`writeJournalSegments`). The old status text fields stay until J3 replaces them on the automation surfaces.
+- Port OUTs are no longer written to the write journal; port find-last answers from the port journal.
+- Write find-last walks the frames backward:
+  - a run of frames inside one segment answers from the journal (`TTDWriteJournal::FindLastInRange`, a binary search, then a scan back to the run's start);
+  - any other frame uses the coverage index (now also for writes) and replays the frame.
+- Fixed on the way, a v1 bug: a replay answer could be a write made after the asked moment, because the replay finishes the instruction that crosses it. Late hits are now dropped.
+- File: bit 12 `kFlagsHasJournalSegments` and the segment table after the journal section; bit 4 means one segment over the whole session. Reader: the Python analyzer prints the spans; `ttd.ksy` and the format document describe bit 12.
+- CI gate rows updated: fewer journal records (no port OUTs), and 20 more bytes for the segment table.
+- Tests: `timetravelmanager_journalsegments_test.cpp` (7 tests). Two identical machines: the journal over the whole session against segments switched mid-frame; the answers are equal at every 7,919th T-state. Also: segments travel with the file, a run between stop and live resume is not covered, a resume from an earlier point cuts them, and inside a segment the journal answers without a replay. The port find-last test is rewritten for the port journal. Five compilable mutants are caught.
+
 E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance

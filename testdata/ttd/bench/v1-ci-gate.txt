@@ -18,6 +18,7 @@
 # All rows 2026-10-02 (exact-size compression, POC 011 E5): bm4_resident_* down (no unused payload allocation), bm3_journal_writes_opf added; every byte row unchanged.
 # Device blob and file rows updated 2026-10-02 (TTD state registry, ttd-engine): the KeyboardMatrix blob (id 46, 22 bytes per capture with its header, no key held) on every machine; nothing else moved.
 # Device blob and file rows updated 2026-10-02 (TTD state registry gap 4): the Wd1793Context blob (id 35) on every Beta machine, 52 bytes per capture with its header; nothing else moved.
+# Journal and file rows updated 2026-10-03 (D40, journal segments): port OUTs leave the write journal (the port journal has them), and the file gains the journal segment table (20 bytes for one segment).
 48K/idle bm2_work_compress_calls_opf 3.966667 0
 48K/idle bm2_work_compress_input_bpf 16247.466667 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -36,8 +37,8 @@
 48K/idle bm3_write_journal_bpf 21704.400000 0
 48K/idle bm4_resident_bpf 80171.566667 25
 48K/idle bm4_resident_bytes 4810294.000000 25
-48K/idle bm7_file_bpf 1281.900000 0
-48K/idle bm7_file_bytes 76914 0
+48K/idle bm7_file_bpf 1282.233333 0
+48K/idle bm7_file_bytes 76934 0
 48K/idle checkpoints 61.000000 0
 48K/idle frames 60.000000 0
 ATM3/idle bm2_work_compress_calls_opf 8.216667 0
@@ -51,15 +52,15 @@ ATM3/idle bm3_checkpoint_core_bpf 170.800000 0
 ATM3/idle bm3_coverage_bpf 54287.050000 25
 ATM3/idle bm3_device_blobs_bpf 2413.483333 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
-ATM3/idle bm3_journal_writes_opf 450.083333 0
+ATM3/idle bm3_journal_writes_opf 404.083333 0
 ATM3/idle bm3_page_refs_bpf 4164.266667 0
 ATM3/idle bm3_ram_payload_bpf 898.833333 0
 ATM3/idle bm3_total_bpf 67260.200000 25
-ATM3/idle bm3_write_journal_bpf 5401.000000 0
+ATM3/idle bm3_write_journal_bpf 4849 0
 ATM3/idle bm4_resident_bpf 76470.933333 25
 ATM3/idle bm4_resident_bytes 4588256.000000 25
-ATM3/idle bm7_file_bpf 8640.533333 0
-ATM3/idle bm7_file_bytes 518432 0
+ATM3/idle bm7_file_bpf 8505.866667 0
+ATM3/idle bm7_file_bytes 510352 0
 ATM3/idle checkpoints 61.000000 0
 ATM3/idle frames 60.000000 0
 PENTAGON/game bm2_work_compress_calls_opf 8.100000 0
@@ -73,15 +74,15 @@ PENTAGON/game bm3_checkpoint_core_bpf 170.800000 0
 PENTAGON/game bm3_coverage_bpf 69894.983333 25
 PENTAGON/game bm3_device_blobs_bpf 973.850000 0
 PENTAGON/game bm3_input_journal_bpf 2.133333 0
-PENTAGON/game bm3_journal_writes_opf 2196.416667 0
+PENTAGON/game bm3_journal_writes_opf 2097.833333 0
 PENTAGON/game bm3_page_refs_bpf 130.133333 0
 PENTAGON/game bm3_ram_payload_bpf 2514.583333 0
 PENTAGON/game bm3_total_bpf 99968.250000 25
-PENTAGON/game bm3_write_journal_bpf 26357.000000 0
+PENTAGON/game bm3_write_journal_bpf 25174 0
 PENTAGON/game bm4_resident_bpf 113413.383333 25
 PENTAGON/game bm4_resident_bytes 6804803.000000 25
-PENTAGON/game bm7_file_bpf 10140.666667 0
-PENTAGON/game bm7_file_bytes 608440 0
+PENTAGON/game bm7_file_bpf 10043.916667 0
+PENTAGON/game bm7_file_bytes 602635 0
 PENTAGON/game checkpoints 61.000000 0
 PENTAGON/game frames 60.000000 0
 PENTAGON/idle bm2_work_compress_calls_opf 2.050000 0
@@ -95,14 +96,14 @@ PENTAGON/idle bm3_checkpoint_core_bpf 170.800000 0
 PENTAGON/idle bm3_coverage_bpf 52885.650000 25
 PENTAGON/idle bm3_device_blobs_bpf 966.050000 0
 PENTAGON/idle bm3_input_journal_bpf 0.000000 0
-PENTAGON/idle bm3_journal_writes_opf 54.333333 0
+PENTAGON/idle bm3_journal_writes_opf 50.2 0
 PENTAGON/idle bm3_page_refs_bpf 130.133333 0
 PENTAGON/idle bm3_ram_payload_bpf 67.416667 0
 PENTAGON/idle bm3_total_bpf 54796.816667 25
-PENTAGON/idle bm3_write_journal_bpf 652.000000 0
+PENTAGON/idle bm3_write_journal_bpf 602.4 0
 PENTAGON/idle bm4_resident_bpf 67476.450000 25
 PENTAGON/idle bm4_resident_bytes 4048587.000000 25
-PENTAGON/idle bm7_file_bpf 1488.516667 0
-PENTAGON/idle bm7_file_bytes 89311 0
+PENTAGON/idle bm7_file_bpf 1484.1 0
+PENTAGON/idle bm7_file_bytes 89046 0
 PENTAGON/idle checkpoints 61.000000 0
 PENTAGON/idle frames 60.000000 0

@@ -158,6 +158,10 @@ def cmd_info(args: argparse.Namespace) -> int:
                   f"globalT {j.blocks[0].first_global_t} … {j.blocks[-1].last_global_t}")
         else:
             print("write journal: present but empty")
+        if j.segments:
+            print(f"  covers {len(j.segments)} span(s): "
+                  + ", ".join(f"({a} … {b}]" for a, b in j.segments[:4])
+                  + (" …" if len(j.segments) > 4 else ""))
     elif h.flags & 0x0002:
         print("write journal: flagged but unreadable")
     else:

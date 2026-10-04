@@ -104,6 +104,7 @@ protected:
 TEST_F(TimeTravelManager_RegenerateWrites_Test, ALiveRecordingsFramesRegenerateTheirWrites)
 {
     ASSERT_NO_FATAL_FAILURE(StartMachine("PENTAGON"));
+    _ttd->SetEnableWriteJournal(true);
     ASSERT_TRUE(_ttd->StartRecording());
     _emulator->RunNFrames(40, /*skipBreakpoints=*/true);   // the ROM's boot: RAM test, system variables
     _ttd->StopRecording();

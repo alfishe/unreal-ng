@@ -128,6 +128,14 @@ public:
         uint64_t beforeT,
         const std::function<bool(const TTDWriteRecord&)>& pred) const;
 
+    /// @brief The newest record with @p afterT < globalT <= @p upToT matching
+    /// @p pred (one journal segment's part of a query). The records are in
+    /// time order, so the scan starts at @p upToT (binary search) and stops
+    /// at @p afterT instead of walking the whole ring.
+    std::optional<TTDWriteRecord> FindLastInRange(
+        uint64_t afterT, uint64_t upToT,
+        const std::function<bool(const TTDWriteRecord&)>& pred) const;
+
     /// @brief Oldest globalT currently held in the ring.
     ///
     /// Returns 0 when the ring is empty. Used by FindLastAccess to decide

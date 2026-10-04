@@ -89,6 +89,34 @@ std::optional<TTDWriteRecord> TTDWriteJournal::FindLast(
     return std::nullopt;
 }
 
+std::optional<TTDWriteRecord> TTDWriteJournal::FindLastInRange(
+    uint64_t afterT, uint64_t upToT,
+    const std::function<bool(const TTDWriteRecord&)>& pred) const
+{
+    if (IsEmpty() || upToT <= afterT)
+        return std::nullopt;
+
+    // The first seq whose record is past upToT (records are in time order)
+    uint64_t lo = _seqTail, hi = _seqHead;
+    while (lo < hi)
+    {
+        const uint64_t mid = lo + (hi - lo) / 2;
+        if (_ring[SeqToIdx(mid)].globalT <= upToT)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    for (uint64_t seq = lo; seq > _seqTail; --seq)
+    {
+        const TTDWriteRecord& rec = _ring[SeqToIdx(seq - 1)];
+        if (rec.globalT <= afterT)
+            break;
+        if (pred(rec))
+            return rec;
+    }
+    return std::nullopt;
+}
+
 uint64_t TTDWriteJournal::OldestGlobalT() const
 {
     if (IsEmpty())
