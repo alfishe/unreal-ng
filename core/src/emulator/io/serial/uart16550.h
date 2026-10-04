@@ -135,6 +135,14 @@ public:
     /// snapshot load) moves the UART onto the new time base (Rebase)
     void Advance(uint64_t now);
 
+    /// The earliest time (the caller's clock) at which Advance would change something by itself: a received
+    /// character lands, a transmitted one leaves the shifter (THRE / the next byte). UINT64_MAX: nothing on the
+    /// line. A byte the peer holds but has not started yet starts at the next Advance, whenever that is
+    uint64_t NextEventAt() const;
+    /// Called at the end of every Advance (also the ones inside Read / Write): the interrupt output or
+    /// NextEventAt may have changed. A card that wires INTR to a bus listens (the Sprinter's ISA slot)
+    std::function<void()> onAdvance;
+
     /// Put the UART's times on a new clock: `now` is the same instant as the
     /// last time it saw; a character on the line keeps its remaining time
     void Rebase(uint64_t now);

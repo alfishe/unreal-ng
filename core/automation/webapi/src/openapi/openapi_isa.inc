@@ -11,7 +11,16 @@
             "(whether memory window 3 shows a slot now: page, slot, space io / memory), and slots[] with slot (1 = J6, "
             "page_io #D4, page_mem #D0; 2 = J7, #D6 / #D2), configured (the [ISA] SlotN kind), card (fitted: none, "
             "ne2000, ...), not_fitted (why a configured card is missing), the card's own fields (an NE2000: chip, "
-            "base, mac, registers, counters) and counters (io_reads, io_writes, mem_reads, mem_writes, reset_pulses). "
+            "base, mac, registers, counters) and counters (io_reads, io_writes, mem_reads, mem_writes, reset_pulses, "
+            "irq_rises, irq_falls, irq_pio_requests, irq_acknowledged, irq_service_ends). "
+            "Interrupts (ISA phase I4): each slot's irq_line object - card_irq (the IRQ the card selects), pio_bit (PB0 slot "
+            "1, PB1 slot 2: every IRQ pin of a slot is one net with a 3.9 kOhm pull-up, wired to the Z84C15 PIO port "
+            "B), driven (who drives the line; an undriven line reads high), line (high / low; ISA IRQs are active "
+            "high), card_request, cause (the card's words: an NE2000's ISR & IMR and IRQEN, a 16550's IIR / IER), pio "
+            "(input, monitored, active_level, logic, interrupt_enabled, vector, condition, pending, under_service) and "
+            "reaches_cpu (yes with the IM 2 vector and the daisy-chain order, or why not). pio_port_b: the PIO port's "
+            "mode, lines, inputs_latched, read, output, direction, mask, interrupt_control, vector, pending, "
+            "under_service; irq_summary: the lines in one sentence. "
             "The ISA address of a window access is (#9FBD bits 5-0) << 14 | CPU A13-A0.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";
@@ -68,7 +77,9 @@
             "Who touched which card register: the last `last` ISA cycles and bus events (default 64, 0 = all, up to "
             "512 kept), oldest first - frame, t (base T-state in the frame), pc, slot, space (io / memory), access "
             "(read / write), address (20-bit ISA), cpu_address (window 3), value, what (the card's register: CR, ISR, "
-            "data port, ...; or RESET DRV, a stall). Recorded live and while a TTD recording replays; control/isa "
+            "data port, ...; or RESET DRV, a stall). Interrupt events carry event = irq (with slot for a line edge): "
+            "IRQ line high / low with the card's cause, PIO port B requests (vector), INT acknowledged (IM, vector, "
+            "table), RETI. Recorded live and while a TTD recording replays; control/isa "
             "journal_clear / journal_on / journal_off.";
         paths[kJournal]["get"]["parameters"][0]["name"] = "id";
         paths[kJournal]["get"]["parameters"][0]["in"] = "path";

@@ -197,7 +197,14 @@ StateNode DeviceState::IsaJournal(EmulatorContext* context, unsigned last)
         n["frame"] = e.frame;
         n["t"] = static_cast<uint64_t>(e.t);
         n["pc"] = Hex(e.pc, 4);
-        if (e.slot >= 0)
+        if (e.irq)
+        {
+            // An interrupt event: a slot's IRQ line edge (slot set), a PIO port B request, acknowledge or RETI
+            n["event"] = "irq";
+            if (e.slot >= 0)
+                n["slot"] = e.slot + 1;
+        }
+        else if (e.slot >= 0)
         {
             n["slot"] = e.slot + 1;
             n["space"] = e.io ? "io" : "memory";

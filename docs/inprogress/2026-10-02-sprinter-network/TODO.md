@@ -46,9 +46,11 @@ the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET
   [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
 - [ ] SN3 follow-ups: run the kit's `FTP` (passive, two links), `NTP`, `TELNET`, `TFTP`, `WTERM` and the Gopher browser
   through `UNETESP.DLL`; ESPT / wterm from the MAME-pack disk; both `NET_ESP_FLOW` modes in a test (the kit picks 3 on
-  the emulated ESP); the IRQ3 line to the PIO (I4); the ESP32 preset's `+PING` / `+CIPRECVDATA` forms are NonOS-style
+  the emulated ESP); ~~the IRQ3 line to the PIO (I4)~~ done with ISA I4 2026-10-03 (BC-Term receives the ESP through IRQ3 -> PB0); the ESP32 preset's `+PING` / `+CIPRECVDATA` forms are NonOS-style
   (ESP32 AT 2.x prints the 2.x forms); the ROM's 74 880-baud boot log and flashing in download mode are not modeled
-- [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - after ISA I4
+- [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - ISA I4 is built (2026-10-03): the
+  `MODEM` / `DUAL16552` presets only need `IrqDriven` = MCR.OUT2 (the PC tri-state buffer) and their jumpered IRQ;
+  BC-Term's interrupt path already runs against the SprinterESP (ISA tdd §14 I4)
 - [ ] SN5 3Com 3C509B (M)
 - [ ] SN6 optional bridge to the host LAN (M), only on request (Q2)
 - [ ] When the hardware facts are final: move them to `docs/hardware/` with the Sprinter S7 docs move
