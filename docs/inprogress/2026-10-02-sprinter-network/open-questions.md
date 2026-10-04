@@ -143,6 +143,10 @@ plain RX / TX line, because its CH340 drives none of the UART's modem inputs.
 
 ## Q13. SprinterSerial with both IRQ jumpers fitted on the Sprinter
 
+**Owner decision (2026-10-04): as built - the high output wins - plus a warning.** The population is allowed (the
+board can be jumpered that way); the log at machine creation and the ISA report's `conflicts` say that the two
+push-pull INTR outputs fight and to fit one jumper (`sprinterisa::SlotWarning`).
+
 The Sprinter joins every IRQ pin of a slot into one line (ISA I4). SprinterSerial's INTA / INTB are push-pull
 outputs through J5 / J6: with both jumpers fitted, an idle channel drives the line low while the other requests
 (high) - two outputs fight; the level the PIO sees is not defined by any datasheet.
