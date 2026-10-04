@@ -10,6 +10,7 @@
 #include "emulator/video/profi/profigeometry.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/state/devicestate.h"
 
 #include <fstream>
 #include <iterator>
@@ -872,6 +873,61 @@ TEST_F(ProfiPortDecoder_Test, ExtPortsV003FollowsTheDjoniPromTable)
         EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x00);
         EXPECT_FALSE(decoder->LongPortOpen(0x009F));
     }
+    _context->config.profi_ext_ports = 0;
+}
+
+/// The board report every automation surface serves (DeviceState::ProfiPeripherals): the port map in force, the 8255,
+/// the 8253 counters and the 8251 with the #B3 interrupt-enable latch
+TEST_F(ProfiPortDecoder_Test, PeripheralsReportShowsTheChips)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+    auto get = [](const StateNode& node, const char* key) -> const StateNode& {
+        const StateNode* found = node.find(key);
+        EXPECT_NE(found, nullptr) << key;
+        static const StateNode none;
+        return found ? *found : none;
+    };
+
+    _context->config.profi_ext_ports = 2;
+    Out7FFD(0x10);   // ROM14 = 1
+    OutDFFD(0x80);   // CP/M off, hi-res
+    State().flags |= CF_TRDOS | CF_DOSPORTS;
+    // 8255: mode word #80 = every port an output, then port A and C
+    decoder->GetPpi().Write(Ppi8255::kControl, 0x80);
+    decoder->GetPpi().Write(Ppi8255::kPortA, 0xA5);
+    // 8253 counter 0: mode 3, LSB then MSB, count 0x0010
+    decoder->GetPit().Write(Pit8253::kControl, 0x36, 0);
+    decoder->GetPit().Write(Pit8253::kCounter0, 0x10, 0);
+    decoder->GetPit().Write(Pit8253::kCounter0, 0x00, 0);
+    decoder->GetUsart().SetBoardLatch(1);
+
+    const StateNode report = DeviceState::ProfiPeripherals(_context);
+    EXPECT_TRUE(get(report, "available").b);
+    EXPECT_EQ(get(report, "board").s, "v5");
+    const StateNode& map = get(report, "port_map");
+    EXPECT_EQ(get(map, "ext_ports").s, "v003");
+    EXPECT_TRUE(get(map, "dos_latch").b);
+    EXPECT_FALSE(get(map, "cpm").b);
+    EXPECT_TRUE(get(map, "rom14").b);
+    EXPECT_TRUE(get(map, "hires").b);
+    EXPECT_FALSE(get(map, "extended_map").b);
+    EXPECT_TRUE(get(map, "long_ports_beside_vg93").b);
+
+    const StateNode& ppi = get(report, "ppi8255");
+    EXPECT_EQ(get(ppi, "control").i, 0x80);
+    EXPECT_EQ(get(get(ppi, "port_a"), "direction").s, "out");
+    EXPECT_EQ(get(get(ppi, "port_a"), "output_latch").i, 0xA5);
+
+    const StateNode& counters = get(get(report, "pit8253"), "counters");
+    ASSERT_EQ(counters.size(), 3u);
+    EXPECT_EQ(get(counters.items[0], "mode").i, 3);
+    EXPECT_EQ(get(counters.items[0], "count_register").i, 0x10);
+    EXPECT_EQ(get(counters.items[1], "counting").b, false);
+
+    const StateNode& usart = get(report, "usart8251");
+    EXPECT_TRUE(get(usart, "com_interrupt_enable").b);
+
     _context->config.profi_ext_ports = 0;
 }
 

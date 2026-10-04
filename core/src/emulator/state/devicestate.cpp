@@ -26,6 +26,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
@@ -2428,6 +2429,108 @@ StateNode Rtc(EmulatorContext* context)
         dump.push(line);
     }
     ret["dump"] = dump;
+    return ret;
+}
+
+StateNode ProfiPeripherals(EmulatorContext* context)
+{
+    if (!context || !context->pPortDecoder)
+        return Unavailable("No emulator");
+    auto* decoder = dynamic_cast<PortDecoder_Profi*>(context->pPortDecoder);
+    if (!decoder)
+        return Unavailable("Not a ZX Profi machine");
+    const ProfiBoard& board = decoder->GetBoard();
+    const EmulatorState& state = context->emulatorState;
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["board"] = board.extendedPorts ? "v5" : "v3";
+
+    // Which port map answers now
+    static const char* const kExtPortsName[] = {"cpm", "sys", "v003"};
+    const uint8_t extPorts = context->config.profi_ext_ports;
+    StateNode map = StateNode::Object();
+    map["ext_ports"] = kExtPortsName[extPorts < 3 ? extPorts : 0];
+    map["dos_latch"] = (state.flags & CF_TRDOS) != 0;
+    map["cpm"] = (state.pDFFD & 0x20) != 0;
+    map["rom14"] = (state.p7FFD & 0x10) != 0;
+    map["hires"] = (state.pDFFD & 0x80) != 0;
+    map["extended_map"] = decoder->IsExtMode();
+    map["long_ports_beside_vg93"] = decoder->IsLongBesideShort();
+    ret["port_map"] = map;
+
+    // The 8255: A / B / C at #1F..#7F, and at #87..#E7 in the extended map
+    const Ppi8255& ppi = decoder->GetPpi();
+    const Ppi8255::State& p = ppi.GetState();
+    StateNode ppiNode = StateNode::Object();
+    ppiNode["control"] = int(p.control);
+    ppiNode["mode"] = 0;
+    auto portNode = [](bool input, uint8_t latch) {
+        StateNode n = StateNode::Object();
+        n["direction"] = input ? "in" : "out";
+        n["output_latch"] = int(latch);
+        return n;
+    };
+    ppiNode["port_a"] = portNode(ppi.IsInputA(), p.outA);
+    ppiNode["port_b"] = portNode(ppi.IsInputB(), p.outB);
+    ppiNode["port_c_upper"] = portNode(ppi.IsInputCUpper(), static_cast<uint8_t>(p.outC >> 4));
+    ppiNode["port_c_lower"] = portNode(ppi.IsInputCLower(), static_cast<uint8_t>(p.outC & 0x0F));
+    ret["ppi8255"] = ppiNode;
+
+    if (!board.extendedPorts)
+        return ret;   // the v3 board has no COM port
+
+    // The 8253: counters 0 / 1 / 2 at #8F / #AF / #CF, control #EF; the clock is 1.5 MHz
+    const Pit8253& pit = decoder->GetPit();
+    StateNode pitNode = StateNode::Object();
+    pitNode["clock_hz"] = int(pit.ClockHz());
+    StateNode counters = StateNode::Array();
+    for (uint8_t i = 0; i < 3; ++i)
+    {
+        const Pit8253::Counter& c = pit.GetState().counter[i];
+        StateNode n = StateNode::Object();
+        n["index"] = int(i);
+        n["mode"] = int(Pit8253::ModeOf(c));
+        n["rw"] = int(Pit8253::RwOf(c));
+        n["bcd"] = Pit8253::BcdOf(c);
+        n["count_register"] = int(c.cr);
+        n["count"] = int(pit.PeekCount(i));
+        n["out"] = c.out != 0;
+        n["gate"] = c.gate != 0;
+        n["counting"] = c.counting != 0;
+        n["output_period_clk"] = int(pit.OutputPeriod(i));
+        counters.push(n);
+    }
+    pitNode["counters"] = counters;
+    ret["pit8253"] = pitNode;
+
+    // The 8251: data #D3, control / status #F3; the board latch is #B3 (D0 = COM interrupt enable)
+    const Usart8251& usart = decoder->GetUsart();
+    const Usart8251::State& u = usart.GetState();
+    const uint8_t status = usart.Status();
+    StateNode usartNode = StateNode::Object();
+    usartNode["mode_word"] = int(u.mode);
+    usartNode["command_word"] = int(u.command);
+    usartNode["async"] = usart.IsAsync();
+    usartNode["baud"] = int(usart.Baud());
+    usartNode["data_bits"] = int(usart.DataBits());
+    usartNode["stop_half_bits"] = int(usart.StopHalfBits());
+    usartNode["rts"] = usart.Rts();
+    usartNode["dtr"] = usart.Dtr();
+    StateNode flags = StateNode::Object();
+    flags["value"] = int(status);
+    flags["tx_ready"] = (status & Usart8251::kTxRdy) != 0;
+    flags["rx_ready"] = (status & Usart8251::kRxRdy) != 0;
+    flags["tx_empty"] = (status & Usart8251::kTxEmpty) != 0;
+    flags["parity_error"] = (status & Usart8251::kPe) != 0;
+    flags["overrun_error"] = (status & Usart8251::kOe) != 0;
+    flags["framing_error"] = (status & Usart8251::kFe) != 0;
+    usartNode["status"] = flags;
+    usartNode["bytes_in"] = uint64_t(u.bytesIn);
+    usartNode["bytes_out"] = uint64_t(u.bytesOut);
+    usartNode["overruns"] = uint64_t(u.overruns);
+    usartNode["com_interrupt_enable"] = (usart.BoardLatch() & 0x01) != 0;
+    ret["usart8251"] = usartNode;
     return ret;
 }
 

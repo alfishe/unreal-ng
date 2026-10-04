@@ -35,6 +35,7 @@ openapi/
 ├── openapi_memoryregion.inc # Device memory regions (the Sprinter's video RAM): list, read, write, save, load
 ├── openapi_moonsound.inc  # MoonSound (OPL4) state reports
 ├── openapi_rtc.inc        # CMOS clock report + cell read / write
+├── openapi_profi.inc      # ZX Profi board chips (8255, 8253, 8251, port map)
 ├── openapi_isa.inc        # ISA slots (Sprinter): report + cycles
 ├── openapi_rzx.inc        # RZX input recording playback
 ├── openapi_state.inc      # State inspection (screen, audio)
