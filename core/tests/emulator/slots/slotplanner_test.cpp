@@ -563,7 +563,10 @@ TEST(SlotPlanner_Test, MalformedRequestsRefused)
     EXPECT_TRUE(Planner().Plan(MM_PENTAGON, {}, Plug("isa.1", "gs", "", true)).hardRefusal) << "no such bus";
     EXPECT_TRUE(Planner().Plan(MM_PENTAGON, {}, Plug("zxbus.1", "tsfm", "", true)).hardRefusal) << "socket board";
     EXPECT_TRUE(Planner().Plan(MM_PENTAGON, {}, Plug("ay-socket", "gs", "", true)).hardRefusal) << "bus card";
-    EXPECT_TRUE(Planner().Plan(MM_SPECTRUM48, {}, Plug("", "ts", "", true)).hardRefusal) << "48K has no AY socket";
+    // The 48K's AY socket is retrofitted since SL-4 step 2 (the emulator's 48K decoder routes the 128K AY decode
+    // to an AY interface, and the shipped 48K config fits one): a socket board is planned, not refused
+    EXPECT_TRUE(Planner().Plan(MM_SPECTRUM48, {}, Plug("", "ts", "", true)).allowed) << "48K retrofitted AY socket";
+    EXPECT_TRUE(Planner().Plan(MM_SPECTRUM48, {}, Plug("ay-socket", "gs", "", true)).hardRefusal) << "bus card";
     EXPECT_TRUE(Planner().Plan(MM_NEXT, {}, Plug("zxbus.1", "gs", "", true)).hardRefusal) << "not a creatable model";
 }
 

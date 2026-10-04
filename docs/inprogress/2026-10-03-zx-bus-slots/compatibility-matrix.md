@@ -132,7 +132,7 @@ with identical columns are merged.
 <!-- slots:generated:machines:begin -->
 | Model | Board | Buses (physical slots) | Arbitration | +12 V | Built-ins | Board ports hidden from the slots | Notes |
 |---|---|---|---|---|---|---|---|
-| 48K | Sinclair 16K / 48K | `edge` (sinclair-edge, 1) | UlaOnly | yes | `ula` | - | - |
+| 48K | Sinclair 16K / 48K | `ay-socket`, `edge` (sinclair-edge, 1) | UlaOnly | yes | `ula` | - | `ay-socket`: no AY on the 48K board: an AY interface on the edge connector is retrofitted (128K decode) |
 | 128K | Sinclair 128K (UK / Spanish) | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula` | - | - |
 | PLUS2 | Amstrad grey +2 | `ay-socket`, `edge` (sinclair-edge, 1) | UlaOnly | yes | `ay`, `ula` | - | `edge`: lower 13 is /IORQGE; its scope beyond the ULA is unconfirmed |
 | PLUS2A | Amstrad +2A | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula` | - | `edge`: no /ROMCS (/ROM1OE + /ROM2OE), no IORQGE |
@@ -150,21 +150,21 @@ with identical columns are merged.
 <!-- slots:generated:machines:end -->
 
 <!-- slots:generated:card-x-machine:begin -->
-| Card \ machine | 48K | 128K / PLUS2 / PLUS2A / PLUS3 | PENTAGON | SCORPION | PROFSCORP | ATM450 / ATM710 | ATM3 | TSL | PROFI | PROFI3 / SPRINTER |
-|---|---|---|---|---|---|---|---|---|---|---|
-| **ts** | **X** (no `ay-socket`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **tsfm** | **X** (no `ay-socket`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **gs** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
-| **gs-lw** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
-| **neogs** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
-| **moonsound** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A |
-| **covox-fb** | A | A | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A |
-| **soundrive** mode 1 | A | A | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F` is a board port) | A | A |
-| **soundrive** mode 2 | A | A | ✓ | ✓ | ✓ | A | ✓ | partly dead (`#FB` is a board port) | A | A |
-| **multisound** | A | A | **S** (`ay`) | A (needs +12V) | **S** (`ay`) | A | **R** (`ay` YM2149 out of its socket) | **R** (`ay` YM2149 out of its socket) | A | A |
-| **zxnetusb** | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
-| **zx-wifi** `#EF` build | A | A | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A |
-| **zx-wifi** `#EE` build | A | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| Card \ machine | 48K / 128K / PLUS2 / PLUS2A / PLUS3 | PENTAGON | SCORPION | PROFSCORP | ATM450 / ATM710 | ATM3 | TSL | PROFI | PROFI3 / SPRINTER |
+|---|---|---|---|---|---|---|---|---|---|
+| **ts** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **tsfm** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **gs** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **gs-lw** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **neogs** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **moonsound** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A |
+| **covox-fb** | A | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A |
+| **soundrive** mode 1 | A | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F` is a board port) | A | A |
+| **soundrive** mode 2 | A | ✓ | ✓ | ✓ | A | ✓ | partly dead (`#FB` is a board port) | A | A |
+| **multisound** | A | **S** (`ay`) | A (needs +12V) | **S** (`ay`) | A | **R** (`ay` YM2149 out of its socket) | **R** (`ay` YM2149 out of its socket) | A | A |
+| **zxnetusb** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
+| **zx-wifi** `#EF` build | A | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A |
+| **zx-wifi** `#EE` build | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A |
 <!-- slots:generated:card-x-machine:end -->
 
 Notes the cells do not carry: the Pentagon has no Covox of its own (a Covox there is a card); a SounDrive mode-1 card

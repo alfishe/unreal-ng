@@ -205,6 +205,7 @@ TEST(RefData_Test, CollectionIsConsistent)
 
         std::set<std::string> busIds;
         bool hasSocketBus = false;
+        bool retrofitSocket = false;
         for (const BusDef& bus : machine.buses)
         {
             EXPECT_TRUE(busIds.insert(bus.id).second) << where << " bus " << bus.id << " twice";
@@ -212,6 +213,7 @@ TEST(RefData_Test, CollectionIsConsistent)
             {
                 EXPECT_STREQ(bus.id, "ay-socket") << where;
                 hasSocketBus = true;
+                retrofitSocket = bus.retrofit;
                 continue;
             }
             // A retrofitted bus (the board has no connector) has no physical slots; every other bus has some
@@ -255,7 +257,9 @@ TEST(RefData_Test, CollectionIsConsistent)
                 ExpectValidClaim(claim, where + " built-in " + builtIn.id);
             }
         }
-        EXPECT_EQ(socketBuiltIns, hasSocketBus ? 1 : 0) << where << ": the AY socket's own chip is one built-in";
+        // A retrofitted AY socket (the 48K's AY interface, SL-4 step 2) is empty by default: the board has no AY
+        EXPECT_EQ(socketBuiltIns, hasSocketBus && !retrofitSocket ? 1 : 0)
+            << where << ": the AY socket's own chip is one built-in";
     }
     // endregion
 

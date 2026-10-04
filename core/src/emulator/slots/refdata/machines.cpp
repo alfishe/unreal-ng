@@ -81,7 +81,13 @@ constexpr PortClaim kCovoxFbClaims[] = {
 
 // region <48K (research-machines.md §5)>
 
+// The 48K has no AY: an AY / TurboSound board on the edge connector (Melodik-style interfaces) answers the 128K's
+// #FFFD / #BFFD decode, which the emulator's 48K decoder routes to the AY socket. Modeled as a retrofitted AY socket
+// (R-BUS-1a): empty by default, no physical socket, and every report says it is bolted on
 constexpr BusDef kSpectrum48Buses[] = {
+    { .id = "ay-socket", .kind = BusKind::AySocket, .physicalSlots = 0,
+      .note = "no AY on the 48K board: an AY interface on the edge connector is retrofitted (128K decode)",
+      .retrofit = true },
     { .id = "edge", .kind = BusKind::SinclairEdge, .signals = kEdge48, .physicalSlots = 1,
       .arbitration = Arbitration::UlaOnly, .readRule = ReadRule::CardOverUla },
 };

@@ -470,6 +470,87 @@ TEST(SlotManager_Test, AFieldChangedAfterTheIniWins)
     EXPECT_EQ(config->sound.moonsound, 1);
 }
 
+/// A shipped config with a [SLOTS] section appended (the legacy card keys it still carries are then ignored),
+/// staged in the per-process scratch folder; the machine is created from it with every sound device as configured
+class StagedMachine
+{
+public:
+    StagedMachine(const std::string& folder, const std::string& slotsSection)
+    {
+        const fs::path source = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
+        std::ifstream in(source, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        text += "\n[SLOTS]\n" + slotsSection + "\n";
+        _path = TestPathHelper::GetUniqueTestScratchPath("slots-" + folder + ".ini");
+        std::ofstream out(_path, std::ios::binary);
+        out << text;
+        out.close();
+        _emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
+        _emulator->SetCustomConfigPath(_path.string());
+        _ok = _emulator->Init();
+    }
+    ~StagedMachine()
+    {
+        _emulator->Release();
+        std::error_code ignored;
+        fs::remove(_path, ignored);
+    }
+    bool Ok() const
+    {
+        return _ok;
+    }
+    EmulatorContext* Context() const
+    {
+        return _emulator->GetContext();
+    }
+
+private:
+    SoundCardScope _everySound;
+    fs::path _path;
+    std::unique_ptr<Emulator> _emulator;
+    bool _ok = false;
+};
+
+/// What the AY socket holds: "none", "<chips> ay", "<chips> fm"
+std::string SocketDevice(EmulatorContext* context)
+{
+    ITurboSoundDevice* ts = context->pSoundManager->getTurboSound();
+    return ts == nullptr ? std::string("none") : std::to_string(ts->getChipCount()) + (ts->hasFm() ? " fm" : " ay");
+}
+
+/// Step 2: the AY socket's content comes from the slot. Four machines (about 20 ms each): the slot's effect is
+/// what is checked, on the device SoundManager builds
+TEST(SlotManager_Test, SocketBoardComesFromTheSlot)
+{
+    {
+        StagedMachine m("spectrum48", "ay-socket = tsfm");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(SocketDevice(m.Context()), "2 fm") << "the 48K's retrofitted AY socket takes a TurboSound FM";
+    }
+    {
+        StagedMachine m("pentagon128k", "ay-socket = ay");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(SocketDevice(m.Context()), "1 ay") << "the machine's own AY (the ini's TurboSound=FM ignored)";
+    }
+    {
+        StagedMachine m("pentagon128k", "ay-socket = none\nzxbus.1 = moonsound");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(SocketDevice(m.Context()), "none");
+        const StateNode report = DeviceState::Slots(m.Context());
+        bool socketEmpty = false;
+        for (const StateNode& builtIn : report.find("builtIns")->items)
+        {
+            socketEmpty = socketEmpty || (builtIn.find("id")->s == "ay" && builtIn.find("state")->s == "socket empty");
+        }
+        EXPECT_TRUE(socketEmpty);
+    }
+    {
+        StagedMachine m("scorpion", "zxbus.1 = neogs");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(SocketDevice(m.Context()), "1 ay") << "[SLOTS] without the socket: the machine's own chip";
+    }
+}
+
 TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)
 {
     Emulator emulator(LoggerLevel::LogError);
