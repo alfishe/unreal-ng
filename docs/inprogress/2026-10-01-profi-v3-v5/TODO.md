@@ -93,5 +93,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   seeks; the same on a v5 with V0.2, while a v3 with BIOS 2.0 boots it) - software, not the board; `PROFI3` defaults to V0.3 since 2026-10-03
 - [x] A native SP-DOS disk: found in KLUG's BBS archive (2005, area PROFI: UNICOPY, COPYK30, TERMINAL, BIOS by
   V. Tereschenko); they boot on `PROFI3` from the Kramis "Profi-DOS" entry to the SP-DOS shell
-- [ ] SP-DOS disks on `PROFI` (v5, BIOS 2.0): they stop at "Загрузка системы CP/M..." (PC #00EB) - investigate
-- [ ] SP-DOS system disk into testdata (`cpm/v3/`) with a boot test
+- [x] SP-DOS disks on `PROFI` (v5, BIOS 2.0) stopped at "Загрузка системы CP/M...": every read of the hi-res
+  loader ended in Lost Data. The VG93 took the CPU clock as its time base, which steps back at every frame boundary
+  when the CPU runs faster than 3.5 MHz (v5 hi-res, turbo). Fixed: the Profi decoder sets the base-clock time base
+  for the VG93 and the tape, as the Sprinter does ([design-hires.md](design-hires.md) section 4); they now boot on both
+- [x] SP-DOS system disk in testdata (`cpm/sp-dos/unicopy-sp-dos.td0`), `SpDosBootsToItsShell` on both boards

@@ -337,6 +337,30 @@ static uint32_t HiresLinesWithInk(EmulatorContext* context)
     return lines;
 }
 
+/// @brief The SP-DOS system disk (testdata/machines/profi/cpm/sp-dos) boots on the v5 from BIOS 2.0's CP/M entry to
+///        "SP-DOS Shell by Michael Markowsky". Its loader runs in hi-res (CPU at 5 MHz) and polls the VG93 through
+///        #BF with INI: the VG93 has to keep its own 3.5 MHz clock, or its time steps back at every frame boundary
+///        and every read ends in Lost Data (WD1793::SetBaseClockTimeBase, set by PortDecoder_Profi)
+TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and SP-DOS boot from a floppy
+    const std::string disk = TestPathHelper::GetTestDataPath("machines/profi/cpm/sp-dos/unicopy-sp-dos.td0");
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(600, true);   // the BIOS menu
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
+    TapKeys("ENT");                      // the first entry: CP/M
+    _emulator->RunNFrames(1500, true);
+
+    std::string ram;
+    for (uint32_t a = 0; a < 0x10000; a++)
+        ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
+    EXPECT_NE(ram.find("SP-DOS Shell by Michael Markowsky"), std::string::npos)
+        << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
+    EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
+}
+
 /// @brief CP/M boots on the v5 from the BIOS menu's "Загрузка системы CP/M" entry: the Kondor "Copy K" system disk
 ///        (testdata/machines/profi/cpm/v5, README there) loads its drivers from CONFIG.SYS, signs on in hi-res and
 ///        runs its AUTOEXEC.BAT (KEYHELP, PRSCR, then PAUSE, which waits for Space)
@@ -548,15 +572,19 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
                 WD1793* fdc = context->pBetaDisk;
                 if (!fdc || !fdc->getDrive())
                     continue;
+                static uint8_t lastStatusBits = 0;
+                const uint8_t statusBits = static_cast<uint8_t>(static_cast<const WD1793*>(fdc)->getStatusRegister() & 0x1C);
+                const bool statusChanged = statusBits != lastStatusBits;
+                lastStatusBits = statusBits;
                 const uint32_t now = (uint32_t(fdc->getCommandRegister()) << 24) | (uint32_t(fdc->getTrackRegister()) << 16) |
                                      (uint32_t(fdc->getSectorRegister()) << 8) | uint32_t(fdc->getDrive()->getTrack()) |
                                      (fdc->getSideUp() ? 0x80u : 0u);
-                if (now == lastFdc)
+                if (now == lastFdc && !statusChanged)
                     continue;
                 lastFdc = now;
                 std::cout << "F" << f << std::hex << " pc=" << context->pCore->GetZ80()->pc << " cmd=" << (now >> 24)
                           << " trk=" << ((now >> 16) & 0xFF) << " sec=" << ((now >> 8) & 0xFF) << " head=" << (now & 0x7F)
-                          << " side=" << ((now >> 7) & 1) << std::dec << "\n";
+                          << " side=" << ((now >> 7) & 1) << " st=" << int(static_cast<const WD1793*>(fdc)->getStatusRegister()) << std::dec << "\n";
             }
         }
         if (keys && keysAt > 0 && (f == keysAt || (every > 0 && f > keysAt && (f - keysAt) % every == 0)))
