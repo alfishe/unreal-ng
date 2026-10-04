@@ -4,6 +4,7 @@
 #include "sysdefs.h"
 #include "common/sound/filters/filtervoicing.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/slots/slotconfig.h"
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -860,6 +861,11 @@ struct CONFIG
 		uint8_t mix_frames;
 		uint8_t mode; // RSM_MODE
 	} rsm;
+
+    /// [SLOTS] (ZX-bus slots, architecture.md §6): the cards of the machine; SlotManager plans it at creation. Empty
+    /// without the section: the legacy card keys ([SOUND] TurboSound, GSType, MoonSound, CovoxFB, SD, [NETWORK] Card)
+    /// are translated into slots then
+    SlotConfig slotConfig;
 
     std::string romSetName;
     std::string romSet128Path;

@@ -33,6 +33,7 @@ class WD1793;
 class UPD765;
 class IdeController;
 class PortDecoder;
+class SlotManager;
 class Screen;
 class UlaContention;
 class TapeFastLoad;
@@ -210,6 +211,9 @@ public:
 
     // Sound manager
     SoundManager* pSoundManager = nullptr;
+
+    // The slot set of the machine (ZX-bus slots, emulator/slots/slotmanager.h): planned at creation
+    SlotManager* pSlotManager = nullptr;
 
 #ifdef ENABLE_RECORDING
     // Recording manager (video/audio capture for recordings)

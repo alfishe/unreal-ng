@@ -94,6 +94,15 @@ StateNode Isa(EmulatorContext* context);
 /// register ("ISR", "data port") or the event (RESET DRV, a stall). Recorded live and while a TTD recording replays
 StateNode IsaJournal(EmulatorContext* context, unsigned last);
 
+/// ZX-bus slots (docs/inprogress/2026-10-03-zx-bus-slots, R-REP-1): `Slots()` the machine's declaration (board,
+/// buses with their kind, arbitration, physical slots and whether the bus is retrofitted), where the cards came from
+/// ([SLOTS] or the translated legacy keys), per configured slot the card, its options, adapter, fit (real / adapter /
+/// unrealistic), state (active / disabled with the reason), functions and port claims (IORQGE flag, gate) and what the
+/// plan said, and per built-in device its state (active / switched off / shadowed by a slot / replaced in its
+/// socket). The core report every automation surface renders (surfaces arrive with SL-7). Built in
+/// emulator/slots/slotreport.cpp
+StateNode Slots(EmulatorContext* context);
+
 /// Network adapters (network adapters TDD §9): `Network()` the fitted card
 /// (ZXNETUSB: its ports, the W5300 held in reset or running, the chip's
 /// address registers and per socket mode / state / ports / buffers), the

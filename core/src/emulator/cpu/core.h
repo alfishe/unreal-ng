@@ -36,6 +36,7 @@ class DiskFastLoad;
 class DiskAutostart;
 class HostBusOverlay;
 class NetworkManager;
+class SlotManager;
 
 class Core
 {
@@ -86,6 +87,7 @@ protected:
 #endif
     IdeController* _ide = nullptr;
     NetworkManager* _networkManager = nullptr;  // network adapters (ZXNETUSB); empty unless fitted
+    SlotManager* _slotManager = nullptr;        // the slot set, planned before any card is built (ZX-bus slots SL-4)
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
@@ -133,6 +135,7 @@ public:
     void OnNetworkFrame();
 
     NetworkManager* GetNetworkManager() { return _networkManager; }
+    SlotManager* GetSlotManager() { return _slotManager; }
     /// endregion </Peripherals>
 
     /// region <Properties>

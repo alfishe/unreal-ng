@@ -38,6 +38,7 @@ private:
     static constexpr const char* ngs = "NGS";
     static constexpr const char* zc = "ZC";
     static constexpr const char* network = "NETWORK";
+    static constexpr const char* slotsSection = "SLOTS";   // not `slots`: a Qt macro
     static constexpr const char* vdac2 = "VDAC2";
 
     // Separate ROM file variables within ROMSET profile

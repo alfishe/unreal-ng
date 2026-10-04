@@ -19,6 +19,7 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/slots/slotmanager.h"
 #include <cassert>
 #include <array>
 #include <algorithm>
@@ -1204,6 +1205,32 @@ bool Config::ParseConfig(IniFile& inimanager)
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");
+
+	// SLOTS section (ZX-bus slots, architecture.md §6): the single source of the cards when present. The legacy
+	// card keys are still parsed above (they keep working for INIs without [SLOTS]); their names are kept so the
+	// slot plan at creation can log each one as deprecated (or as ignored next to [SLOTS]). With [SLOTS] the card
+	// fields of the groups that moved onto slots are its projection from here on
+	{
+		config.slotConfig.Clear();
+		const auto slotLines = inimanager.GetSectionEntries(slotsSection);
+		const std::vector<std::string> sections = inimanager.GetAllSections();
+		const bool hasSlots = !slotLines.empty() ||
+		                      std::any_of(sections.begin(), sections.end(), [](const std::string& name) {
+			                      return StringHelper::ToUpper(name) == slotsSection;
+		                      });
+		if (hasSlots)
+			ParseSlotsSection(slotLines, config.slotConfig);
+		static const std::pair<const char*, const char*> kLegacyCardKeys[] = {
+			{sound, "TurboSound"}, {sound, "GSType"}, {sound, "MoonSound"}, {sound, "CovoxFB"}, {sound, "SD"},
+			{network, "Card"}};
+		for (const auto& [section, key] : kLegacyCardKeys)
+		{
+			if (inimanager.GetValue(section, key, nullptr) != nullptr)
+				config.slotConfig.legacyKeys.push_back(std::string("[") + section + "] " + key);
+		}
+		if (config.slotConfig.section)
+			SlotManager::Project(config.slotConfig, config);
+	}
 
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))

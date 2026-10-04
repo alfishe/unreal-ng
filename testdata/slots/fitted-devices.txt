@@ -1,0 +1,464 @@
+== atm3
+model 5
+mixer [Beeper] [AY 1] [AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 ay
+gs NeoGS
+covox quad
+network.card 0 comport 1
+port 001F 00FF/001F Kempston joystick
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 0057 00FF/0057 Z-Controller SD data
+port 005F FFFF/005F Beta128 FDC sector
+port 0077 00FF/0077 Z-Controller SD chip select (reads #00)
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00BD 00FF/00BD Evo register readback (A12..A8 index); #10BD/#11BD breakpoint, #13BD virtual-drive mask
+port 00BE 00FF/00BE Evo NMI / virtual-drive exit (write only)
+port 00BF 00FF/00BF Evo config (shadow, flash write, font write, NMI, breakpoint)
+port 00F6 00FF/00F6 Keyboard / Border 8-15 (no beeper)
+port 00FB 00FF/00FB Covox (mono #FB)
+port 00FC 00FF/00FC Border 0-7 (+ #7FFD when A15=0)
+port 00FE 00FF/00FE Keyboard / Beeper / Border 0-7 / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 37F7 0DFF/05F7 4 MB RAM page register (A15:A14 = window)
+port 3FF7 0DFF/0DF7 ATM window register (A15:A14 = window)
+port 7FFD 80FE/00FC Memory paging (#FD/#FC, A15=0; 1 MB mode uses bits 7-5)
+port BFF7 41FF/01F7 Gluk clock data (#BFF7; #BEF7 in shadow)
+port BFFD C0FF/80FD AY data
+port DFF7 21FF/01F7 Gluk clock address (#DFF7; #DEF7 in shadow)
+port EFF7 11FF/01F7 #EFF7: 16c / 128K lock / RAM0 / turbo off / multicolor / clock enable
+port FADF 01FF/00DF Kempston mouse buttons (+ wheel)
+port FBDF 05FF/01DF Kempston mouse X axis
+port FF77 00FF/0077 ATM system port (video mode, turbo, pager, CP/M, palette write)
+port FFDF 05FF/05DF Kempston mouse Y axis
+port FFFD C0FF/C0FD AY register select / read
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+fulldecode 00FF/00EF slot 1
+ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:48 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 56:22 notRecorded 0
+== atm450
+model 7
+mixer [Beeper] [AY 1] [AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 ay
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 0:77 1:72 2:34 3:21 7:20 8:90 10:216 12:137 17:50 35:52 56:22 notRecorded 0
+== atm710
+model 6
+mixer [Beeper] [AY 1] [AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 ay
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
+== pentagon128k
+model 0
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F 00AF/000F SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FB 00F5/00F1 SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 7FFD 8006/0004 Memory paging (RAM bank, shadow screen, ROM)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+== pentagon512k
+model 0
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F 00AF/000F SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FB 00F5/00F1 SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 7FFD 8006/0004 Memory paging (incl. extended RAM bits [6:7])
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+== profi
+model 8
+mixer [Beeper] [AY 1] [COVOX] [NeoGS] [NeoGS MP3]
+turbosound 1 ay
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007E 0081/0000 Profi palette write (OUT #xx7E, hi-res only)
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 7FFD 8002/0000 Memory paging (RAM bank, shadow screen, ROM14, lock)
+port BFFD C002/8000 AY / TurboSound data
+port DFFD A002/8000 Profi extended paging (RAM high bits, SCO, WOROM, CP/M, SCR) + video mode (bit 7)
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 0:77 1:72 2:34 3:21 7:20 9:46 12:138 17:50 18:48 23:14 35:52 44:54 50:16 51:35 52:33 56:22 notRecorded 0
+== profi3
+model 20
+mixer [Beeper] [AY 1] [COVOX] [NeoGS] [NeoGS MP3]
+turbosound 1 ay
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 7FFD 8002/0000 Memory paging (RAM bank, shadow screen, ROM14, lock)
+port BFFD C002/8000 AY / TurboSound data
+port DFFD A002/8000 Profi extended paging (RAM high bits, SCO, WOROM, CP/M, SCR) + video mode (bit 7)
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 0:77 1:72 2:34 3:21 7:20 9:46 12:138 23:14 35:52 50:16 56:22 notRecorded 0
+== profscorp
+model 10
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BA 00FE/00BA SMUC board (EEPROM / RTC / PIC / IDE window)
+port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
+port 7EFD D127/5025 ProfROM service-window latch
+port 7FFD D027/5025 Memory paging (incl. extended RAM bits)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FF1F FFFF/FF1F Kempston joystick interface
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+== scorpion
+model 9
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
+port 7FFD D027/5025 Memory paging (incl. extended RAM bits)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FF1F FFFF/FF1F Kempston joystick interface
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+== spectrum128
+model 2
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [NeoGS] [NeoGS MP3]
+turbosound 2 fm
+gs NeoGS
+covox none
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 7FFD 8006/0004 Memory paging (RAM bank, shadow screen, ROM)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 4:107 7:20 12:141 35:52 56:22 notRecorded 0
+== spectrum2
+model 17
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [NeoGS] [NeoGS MP3]
+turbosound 2 fm
+gs NeoGS
+covox none
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 7FFD 8006/0004 Memory paging (RAM bank, shadow screen, ROM)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 4:107 7:20 12:141 35:52 56:22 notRecorded 0
+== spectrum2a
+model 18
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [NeoGS] [NeoGS MP3]
+turbosound 2 fm
+gs NeoGS
+covox none
+network.card 0 comport 0
+port 001F FFFF/001F Registered peripheral device
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Registered peripheral device
+port 005F FFFF/005F Registered peripheral device
+port 007F FFFF/007F Registered peripheral device
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF FFFF/00FF Registered peripheral device
+port 1FFD F002/1000 Disk motor/strobe + special paging
+port 7FFD C002/4000 Memory paging (RAM bank, shadow screen, ROM)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 4:107 7:20 12:141 13:16 35:52 56:22 notRecorded 0
+== spectrum3
+model 3
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [NeoGS] [NeoGS MP3]
+turbosound 2 fm
+gs NeoGS
+covox none
+network.card 0 comport 0
+port 001F FFFF/001F Registered peripheral device
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Registered peripheral device
+port 005F FFFF/005F Registered peripheral device
+port 007F FFFF/007F Registered peripheral device
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF FFFF/00FF Registered peripheral device
+port 1FFD F002/1000 Disk motor/strobe + special paging
+port 2FFD F002/2000 uPD765A main status register
+port 3FFD F002/3000 uPD765A data register
+port 7FFD C002/4000 Memory paging (RAM bank, shadow screen, ROM)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 4:107 7:20 12:141 13:16 14:42 35:52 56:22 notRecorded 0
+== spectrum48
+model 1
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [NeoGS] [NeoGS MP3]
+turbosound 2 fm
+gs NeoGS
+covox none
+network.card 0 comport 0
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 4:107 7:20 12:137 35:52 56:22 notRecorded 0
+== sprinter
+model 19
+mixer [Beeper] [AY 1] [NeoGS] [NeoGS MP3] [Covox-Blaster]
+turbosound 1 ay
+gs NeoGS
+covox none
+network.card 0 comport 0
+port 0010 00FC/0010 Z84C15 CTC channels 0-3 (on-chip)
+port 0018 00FC/0018 Z84C15 SIO A / B data and control: AT keyboard, serial mouse (on-chip)
+port 001C 00FC/001C Z84C15 PIO A / B (on-chip)
+port 001F 0087/0007 WD1793 #1F / #3F / #5F / #7F, Beta #FF (codes #10-#15)
+port 0024 00A7/0024 CNF / SYS: port map, clean rules, turbo, system RAM (code #C6)
+port 0033 FFFF/0033 Registered peripheral device
+port 003C 00BF/003C OUT #3C / #7C: system ROM out of / into window 0 (fixed decode)
+port 0050 00E0/0040 IDE task file (codes #20-#29)
+port 005C 00FF/005C OUT #5C: ROM_RG while the system ROM is in (fixed decode)
+port 007B 007F/007B IN #FB / #7B: fast RAM in window 0 on / off (fixed decode)
+port 0082 00E7/0082 Window 0 page (code #E8)
+port 0089 00E7/0081 PORT_Y / RGADR: graphics row (code #C4)
+port 00A2 00E7/00A2 Window 1 page (code #E9)
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00BD 00E7/00A5 #xxBD group: density #01BD / #21BD, CMOS #DFBD / #BFBD / #FFBD, ISA #9FBD, frame #40BD / #60BD (codes #16-#1E, #2C, #2D)
+port 00C1 00E7/00C1 RGMOD: mode table page (code #C5)
+port 00C2 00E7/00C2 Window 2 page (code #EA)
+port 00E2 00E7/00E2 Window 3 page (code #F0)
+port 00EE 00FE/00EE Z84C15 SCRP / SCDP: WCR, MWBR, CSBR, MCR (on-chip)
+port 00F0 00FE/00F0 Z84C15 watchdog WDTMR / WDTCR (on-chip)
+port 00F4 00FF/00F4 Z84C15 interrupt priority (on-chip)
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF FFFF/00FF Registered peripheral device
+port 1FFD E0E7/00E5 #1FFD Scorpion paging (code #C0)
+port 204E E0E7/2046 ALL_MODE (code #C3)
+port 7FFD C0E7/40E5 #7FFD Spectrum paging (code #C1)
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 0:77 1:64 2:34 7:20 12:138 17:70 18:52 20:39 23:14 25:142 28:42 29:93 30:32 31:39 32:42 33:16 35:52 45:var 56:22 notRecorded 0
+== ts-conf
+model 4
+mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox quad
+network.card 0 comport 1
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port BFFD C002/8000 AY / TurboSound data
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+fulldecode 00FF/00EF slot 1
+ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:16 56:22 notRecorded 0
+== zx-diagnostics
+config turbosound 1 gs 4 moonsound 1 covoxFB 0 sd 1 network.card 0

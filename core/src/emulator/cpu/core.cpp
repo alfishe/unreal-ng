@@ -1,4 +1,5 @@
 #include "core.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/io/network/networkmanager.h"
 
 #include <algorithm>
@@ -311,6 +312,18 @@ bool Core::Init()
 
     /// endregion </Fast disk loading>
 
+    /// region <Slots>
+
+    // The slot set first: it decides which cards the managers below build (ZX-bus slots architecture.md §5-§7)
+    if (result)
+    {
+        _slotManager = new SlotManager(_context);
+        _slotManager->PlanAtCreate();
+        _context->pSlotManager = _slotManager;
+    }
+
+    /// endregion </Slots>
+
     /// region <Sound manager>
 
     if (result)
@@ -506,6 +519,10 @@ void Core::Release()
     delete _networkManager;
     _networkManager = nullptr;
     _context->pPortDecoder = nullptr;
+
+    _context->pSlotManager = nullptr;
+    delete _slotManager;
+    _slotManager = nullptr;
 
     _context->pSoundManager = nullptr;
     {
