@@ -86,6 +86,9 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
     cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON
     cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"
     if [ "$RUNTESTS" = 1 ]; then
-      "$BUILDDIR/bin/core-tests" --gtest_filter="$FILTER" --gtest_color=no
+      # From the binary directory: the tests open testdata/ and rom/ relative to it (the
+      # copies CMake puts next to core-tests), and the scratch helper expects the same layout
+      cd "$BUILDDIR/bin"
+      ./core-tests --gtest_filter="$FILTER" --gtest_color=no
     fi
   '
