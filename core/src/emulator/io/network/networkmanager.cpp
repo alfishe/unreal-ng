@@ -745,7 +745,7 @@ void NetworkManager::Unplug(bool keepSlotCards)
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
 {
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    if (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
     {
         error = "a TTD recording is running: the network settings are fixed until it stops";
         return false;

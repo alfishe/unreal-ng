@@ -58,6 +58,7 @@
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
+#include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks, TTDSessionState, TTDGuardedAction
 #include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
@@ -90,25 +91,6 @@ struct EmulatorState;
 namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
 
 namespace ttd {
-
-/// @brief Session state machine values (TDD §4.2).
-enum class TTDSessionState : uint8_t
-{
-    Idle       = 0,  ///< No active recording. History may or may not be present.
-    Recording  = 1,  ///< Capture is active; OnFrameBoundary appends checkpoints.
-    Detached   = 2,  ///< Emulator paused at a historical point (future seek state).
-};
-
-/// @brief Stable string identifier for a TTDSessionState.
-///
-/// The values ("idle" / "recording" / "detached") are part of the public
-/// automation contract per parent TDD §10.4: WebAPI JSON, Lua tables, Python
-/// attributes, and CLI tokens all use these exact spellings. Defined here
-/// (rather than in each surface's own adapter) so the contract lives in one
-/// place and is unit-testable from core-tests.
-///
-/// Keep in sync with the enum order above.
-const char* TTDSessionStateToString(TTDSessionState state);
 
 /// @brief Recording mode: which surface owns the session lifecycle.
 ///
@@ -348,24 +330,6 @@ struct TTDSessionInfo
     std::string unavailableReason;
 };
 
-/// @brief Actions that would end, wipe or corrupt a recording in progress.
-/// While TTD records they are refused (TimeTravelManager::RecordingGuard):
-/// stop the recording first. A machine reset is not one of them - it stops
-/// the recording and keeps the history.
-enum class TTDGuardedAction : uint8_t
-{
-    LoadSnapshot,        ///< replaces the whole machine state
-    LoadTape,            ///< a new medium
-    LoadDisk,            ///< a new medium
-    CreateDisk,          ///< a new medium
-    LoadRom,             ///< the code every checkpoint relies on
-    Invalidate,          ///< discards the session
-    DisableTimeTravel,   ///< capture stops mid-session
-    DisableDebugMode,    ///< writes stop reaching the history
-    SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
-    CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
-};
-
 /// @brief String conversion for TTDCoverageKind.
 inline const char* TTDCoverageKindToString(TTDCoverageKind kind)
 {
@@ -453,7 +417,7 @@ struct TTDCoverageSummaryResult
     bool indexAvailable = false;
 };
 
-class TimeTravelManager
+class TimeTravelManager final : public ITimeTravelHooks
 {
 public:
     /// @brief I-frame / P-frame discriminator.
@@ -485,17 +449,24 @@ public:
     /// user sees: StartRecording (and the debugger live history built on it)
     /// and DeserializeSession refuse while it is set. Any session held is
     /// dropped. An empty reason makes it available again.
-    void SetUnavailableReason(const std::string& reason);
+    void SetUnavailableReason(const std::string& reason) override;
     const std::string& GetUnavailableReason() const { return _unavailableReason; }
 
     /// @brief Stop capturing new frames. History is retained and browsable.
     /// Idempotent: calling while Idle is a no-op.
-    void StopRecording();
+    void StopRecording() override;
 
     /// @brief Drop all captured history and return to Idle.
     /// Called by session-invalidation hooks (Reset / Load* / speed change).
     /// The reason is logged and kept as TTDSessionInfo::lastDropReason.
     void InvalidateSession(const char* reason);
+
+    /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
+    /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
+    void OnLoad(TTDLoadKind, const char* reason) override { InvalidateSession(reason); }
+    void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
+    void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
+    bool HasHistory() const override { return !_timeline.empty(); }
 
     /// @brief Whether `action` may run now. While a user recording runs, every
     /// TTDGuardedAction is refused - stop the recording first. A debugger's
@@ -504,7 +475,7 @@ public:
     /// @return empty when allowed; otherwise the reason, one sentence a user can
     /// act on. Every automation surface shows it verbatim, and the core paths
     /// that perform the action refuse with it too.
-    std::string RecordingGuard(TTDGuardedAction action) const;
+    std::string RecordingGuard(TTDGuardedAction action) const override;
 
     /// @brief InvalidateSession requested from inside emulation, by a device
     /// whose state TTD cannot follow yet (storage: the SD card, IDE).
@@ -515,9 +486,9 @@ public:
     inline bool IsInvalidationPending() const { return _pendingInvalidation.load(std::memory_order_acquire) != nullptr; }
 
     /// Any thread: the state is atomic (observers poll it while the machine runs)
-    inline bool IsRecording() const { return _state.load(std::memory_order_acquire) == TTDSessionState::Recording; }
+    inline bool IsRecording() const override { return _state.load(std::memory_order_acquire) == TTDSessionState::Recording; }
 
-    inline TTDSessionState GetState() const { return _state.load(std::memory_order_acquire); }
+    inline TTDSessionState GetState() const override { return _state.load(std::memory_order_acquire); }
     inline TTDRecordMode GetRecordMode() const { return _recordMode; }
     inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
 
@@ -576,7 +547,7 @@ public:
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact
-    void OnMachineParking();
+    void OnMachineParking() override;
 
     /// @brief History limit: while recording, the oldest checkpoints are
     /// released once the timeline holds more than `maxFrames` checkpoints or
@@ -624,7 +595,7 @@ public:
 
     /// @brief Called by FeatureManager when feature flags change.
     /// Deallocates write journal when TimeTravel feature is disabled.
-    void UpdateFeatureCache();
+    void UpdateFeatureCache() override;
 
     // -----------------------------------------------------------------------
     // Session configuration (v2 optimizations)
@@ -782,7 +753,7 @@ public:
     ///   - Dirty pages: one 16 KB Intern per dirty page (typically 2–6/frame)
     ///   - Clean pages: one AddRef each (no memcpy)
     ///   - CPU + chipset: field copies (< 2 KB)
-    void OnFrameBoundary();
+    void OnFrameBoundary() override;
 
     // -----------------------------------------------------------------------
     // Restore path (control thread; emulator must be paused)
@@ -865,7 +836,7 @@ public:
 
     /// @brief Query the replay-mode flag. Reads `_context->ttdReplayActive`.
     /// Defined out-of-line (EmulatorContext is only forward-declared here).
-    bool IsReplayActive() const;
+    bool IsReplayActive() const override;
 
     // -----------------------------------------------------------------------
     // Input journal (Phase 2 Item 3; parent TDD §5 row #1)
@@ -940,7 +911,7 @@ public:
     /// @brief True while the journal owns input: a seek replay is running, or
     /// the machine sits Detached inside the recorded session (seeked into the
     /// past and possibly running forward through it). Live input is refused.
-    bool OwnsInput() const;
+    bool OwnsInput() const override;
 
     /// @brief The one entry point for live input (any thread). Refused (false)
     /// while OwnsInput(). While the emulator loop runs, the event is queued
@@ -948,19 +919,19 @@ public:
     /// the next instruction boundary (ServiceInput); in synchronous mode (loop
     /// not running, the caller is the only thread) it is applied at once.
     /// `ev.time` is ignored: the time is stamped when the event is applied.
-    bool SubmitLiveInput(const TTDInputEvent& ev);
+    bool SubmitLiveInput(const TTDInputEvent& ev) override;
 
     /// @brief SubmitLiveInput for a NetEvent: its network record and bytes are
     /// copied; the journal keeps them while recording, and the virtual network
     /// reads them when the event is applied.
-    bool SubmitLiveInput(const TTDInputEvent& ev, const TTDNetInput& net, const uint8_t* payload, uint32_t length);
+    bool SubmitLiveInput(const TTDInputEvent& ev, const TTDNetInput& net, const uint8_t* payload, uint32_t length) override;
 
     /// @brief A lockstep group (the ZX-Poly master) takes live input itself, to
     /// give it to every member at one frame boundary. SubmitLiveInput hands each
     /// event to `interceptor` first; when it returns true the event is consumed
     /// there. Events it declines (false) take the normal path. An empty function
     /// removes it
-    void SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor);
+    void SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor) override;
 
     /// @brief Run `task` on the machine's thread - for automation actions that
     /// touch a device the executing thread may be using (a NeoGS SD card
@@ -968,25 +939,25 @@ public:
     /// for the next instruction boundary while the emulator loop runs (while
     /// paused: when execution continues), run at once otherwise. Not
     /// journaled: a task is not replayable input. Refused while OwnsInput().
-    enum class MachineTaskResult : uint8_t { RanNow, Queued, Refused };
-    MachineTaskResult SubmitMachineTask(std::function<void()> task);
+    using MachineTaskResult = TTDMachineTaskResult;
+    MachineTaskResult SubmitMachineTask(std::function<void()> task) override;
 
     /// @brief Executing thread, before every instruction (Z80::StepInstruction;
     /// cheap gate: EmulatorContext::kStepWorkTtdInput in stepWork): play due journal events,
     /// then apply queued live input.
-    void ServiceInput();
+    void ServiceInput() override;
 
     /// RZX playback while recording (Phase 3, Step 2): the CPU reports each
     /// RZX frame end at the end of the step that ended it (@p rzxFrame: the
     /// frames done after it, @p interrupt: the step took the interrupt); the
     /// playback reports its end. Facts for the shadow engine; nothing while
     /// not recording or while a replay runs
-    void NoteRzxFrameEnd(uint64_t rzxFrame, bool interrupt);
-    void NoteReplaySource(TTDReplaySource source);
+    void NoteRzxFrameEnd(uint64_t rzxFrame, bool interrupt) override;
+    void NoteReplaySource(TTDReplaySource source) override;
 
     /// @brief The machine left the recorded timeline from outside (reset):
     /// a Detached session returns to Idle and journal playback stops.
-    void OnMachineReset();
+    void OnMachineReset() override;
 
     // -----------------------------------------------------------------------
     // Seek engine (Phase 2 Item 4; parent TDD §8.1)
@@ -1091,7 +1062,7 @@ public:
     ///
     /// @param kind   Source classification (UI / automation hint).
     /// @param reason Short human-readable description. May be nullptr.
-    void RecordExternalEvent(TTDExternalEventKind kind, const char* reason);
+    void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) override;
 
     /// A tool's edit of the machine while recording (Emulator::EditMemoryFromTool,
     /// Phase 3): BeginToolEdit before the edit, EndToolEdit after it. The edit
@@ -1099,8 +1070,8 @@ public:
     /// RAM pages and device-memory pieces written since the last checkpoint,
     /// and every device state the edit changed - an input event the engine's
     /// replay applies (no barrier)
-    void BeginToolEdit();
-    void EndToolEdit(const char* source);
+    void BeginToolEdit() override;
+    void EndToolEdit(const char* source) override;
 
     /// The bytes of the tool edit recorded as v1 marker @p markerIndex (empty: none)
     const std::unordered_map<size_t, std::vector<uint8_t>>& ToolEditPayloads() const { return _toolEditPayloads; }
@@ -1762,7 +1733,7 @@ public:
     /// to guard against, not this method's job. An @p oldId with no existing
     /// registration (e.g. no GS card was fitted at RegisterModelPeripherals
     /// time) is harmless - Unregister on an absent id is a no-op.
-    inline void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device)
+    inline void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device) override
     {
         if (oldId != newId)
             _peripherals.Unregister(oldId);

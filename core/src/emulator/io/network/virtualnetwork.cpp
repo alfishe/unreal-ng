@@ -58,7 +58,7 @@ VirtualNetwork::~VirtualNetwork()
 
 bool VirtualNetwork::IsReplaying() const
 {
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
 }
 
 bool VirtualNetwork::IsInternal(uint32_t addr) const
@@ -537,8 +537,8 @@ void VirtualNetwork::Pump()
         {
             TTDInputEvent ev;
             ev.kind = TTDInputKind::NetLinkReset;
-            if (_context && _context->pTimeTravelManager)
-                _context->pTimeTravelManager->SubmitLiveInput(ev);
+            if (_context && _context->pTimeTravelHooks)
+                _context->pTimeTravelHooks->SubmitLiveInput(ev);
             else
                 ApplyLinkReset();
         }
@@ -583,8 +583,8 @@ void VirtualNetwork::SubmitHostEvent(const HostNetEvent& hev)
     const auto length = static_cast<uint32_t>(hev.data.size());
     net.payloadLength = length;
 
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->SubmitLiveInput(ev, net, payload, length);
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->SubmitLiveInput(ev, net, payload, length);
     else
         ApplyHostEvent(net, payload);
 }

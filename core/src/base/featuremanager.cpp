@@ -75,9 +75,9 @@ bool FeatureManager::isTtdRecordingActive() const
         return true;
     }
 
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
-        if (_context->pTimeTravelManager->IsRecording())
+        if (_context->pTimeTravelHooks->IsRecording())
             return true;
     }
 
@@ -97,8 +97,8 @@ bool FeatureManager::isTtdTimelineBound() const
         return false;
     if (_context->ttdReplayActive)
         return true;
-    return _context->pTimeTravelManager &&
-           _context->pTimeTravelManager->GetState() == ttd::TTDSessionState::Detached;
+    return _context->pTimeTravelHooks &&
+           _context->pTimeTravelHooks->GetState() == ttd::TTDSessionState::Detached;
 }
 
 void FeatureManager::onTtdRecordingStarted()
@@ -298,14 +298,14 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
     // Either direction swaps the fitted General Sound card (FR-4)
     if (id == Features::kGSLightweight)
     {
-        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
         const bool gsFitted = _context && _context->pSoundManager && _context->pSoundManager->getGeneralSound();
         return (ttd && gsFitted) ? ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard) : std::string();
     }
 
     if (!enabled)
     {
-        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
         if (ttd && id == Features::kTimeTravel)
             return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableTimeTravel);
         if (ttd && id == Features::kDebugMode)
@@ -726,9 +726,9 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     }
 
     // Notify TTD manager of feature changes (for memory deallocation on disable)
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
-        _context->pTimeTravelManager->UpdateFeatureCache();
+        _context->pTimeTravelHooks->UpdateFeatureCache();
     }
 
     // Update port trace recorder cache in PortDecoder (instantiates/releases the

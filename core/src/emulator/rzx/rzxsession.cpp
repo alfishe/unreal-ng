@@ -362,14 +362,14 @@ namespace rzx
 
         // A snapshot replaces the machine: not while TTD records, a stopped
         // history is dropped (as for any snapshot load)
-        ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
         if (ttd && ttd->IsRecording())
         {
             error = "a TTD recording runs: the recording's snapshot block cannot be applied";
             return false;
         }
         if (ttd)
-            ttd->InvalidateSession("rzx-snapshot");
+            ttd->OnLoad(ttd::TTDLoadKind::RzxSnapshot, "rzx-snapshot");
 
         if (!_emulator.ApplySnapshotData(bytes, extension, error))
             return false;
@@ -406,7 +406,7 @@ namespace rzx
             }
         }
         Uninstall();
-        if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+        if (ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks)
             ttd->NoteReplaySource(ttd::TTDReplaySource::LiveInput);
         PostEvent("stopped", reason);
         if (wasRunning)
@@ -454,7 +454,7 @@ namespace rzx
 
         // A seek back replaces the machine like a snapshot load: refused while
         // TTD records, a stopped TTD history is dropped
-        ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
         if (ttd && ttd->IsRecording())
         {
             error = "a TTD recording runs: stop it before seeking the RZX playback";
@@ -483,7 +483,7 @@ namespace rzx
             else
             {
                 if (ttd)
-                    ttd->InvalidateSession("rzx-seek");
+                    ttd->OnLoad(ttd::TTDLoadKind::RzxSeek, "rzx-seek");
                 const Keyframe copy = *keyframe;  // the store may thin while playing on
                 Uninstall();
                 ok = RestoreState(copy.state, error) && player->SeekCursor(copy.cursor);
@@ -608,7 +608,7 @@ namespace rzx
         // Emulation thread, at the end of a step: the machine continues live
         const PlayerStatus status = player.Status();
         Uninstall();
-        if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+        if (ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks)
             ttd->NoteReplaySource(ttd::TTDReplaySource::LiveInput);
 
         switch (status.state)

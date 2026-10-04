@@ -768,8 +768,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     // at or before now (TTD playback) and live input queued by other threads.
     // An event stamped T is first visible to the instruction starting at T -
     // the machine state AT T (a seek target, a pause) does not include it yet
-    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->ServiceInput();
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->ServiceInput();
 
     StepResult result;
 
@@ -842,8 +842,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         // A frame end (with its interrupt or, IFF1 clear, without) while TTD
         // records: a fact at the end of this step, where a seek to "RZX
         // frame N" lands (Phase 3, Step 2)
-        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelManager)
-            _context->pTimeTravelManager->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
+        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
                                                           rzxBoundary == RzxBoundary::Interrupt);
         if (rzxPlayer->EndPending())
             rzxPlayer->NotifyEnded();

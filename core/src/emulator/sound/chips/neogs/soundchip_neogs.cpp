@@ -122,7 +122,7 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
 
 bool SoundChip_NeoGS::ttdRecording() const
 {
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording();
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording();
 }
 
 bool SoundChip_NeoGS::insertSdCard(const std::string& path)
@@ -209,8 +209,8 @@ bool SoundChip_NeoGS::ejectSdCard()
 void SoundChip_NeoGS::markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason)
 {
     // No-op unless a TTD session is recording
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(kind, reason);
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(kind, reason);
 }
 
 /// region <SD slot>

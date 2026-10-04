@@ -51,7 +51,7 @@ class EthernetGateway;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
+namespace ttd { class TimeTravelManager; class ITimeTravelHooks; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
@@ -225,6 +225,10 @@ public:
     // Time-travel debugging manager (owned by Emulator, lives across the
     // lifetime of the context). May be null on minimal builds without TTD.
     ttd::TimeTravelManager* pTimeTravelManager = nullptr;
+    /// What the core calls into time travel (frame boundary, loads, input, guards): the
+    /// same object as pTimeTravelManager until the engine takes over (Phase 5). Null when
+    /// time travel is not constructed. The core uses this pointer; surfaces use the manager
+    ttd::ITimeTravelHooks* pTimeTravelHooks = nullptr;
 
     // Media manager: every storage slot and the media in them (owned by
     // Emulator; created before Core so peripherals can register their slots,

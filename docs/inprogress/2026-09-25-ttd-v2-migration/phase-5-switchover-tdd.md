@@ -1,6 +1,6 @@
 # Phase 5 — Switch the emulator to the engine: technical design
 
-Status: **design, not implemented (2026-10-02)**. Roadmap: [README §2, Phase 5](README.md#phase-5--switch-the-emulator-to-the-engine). Decisions: [engine-decisions.md](engine-decisions.md) D7–D13, D29, D30, D32, D33 (and D11, D17, D19, D26 where the switch touches them). Requirements: QR-8, FR-17, FR-24, FR-9 and FR-8 on the engine, FR-7 on every surface, PR-1 / PR-2 with v1 out of the frame, and the acceptance criteria of [requirements §6](requirements.md#6-acceptance-criteria).
+Status: **in progress (2026-10-04)**: item 1a done (the hooks interface, §4.2.2; progress in §7). Roadmap: [README §2, Phase 5](README.md#phase-5--switch-the-emulator-to-the-engine). Decisions: [engine-decisions.md](engine-decisions.md) D7–D13, D29, D30, D32, D33 (and D11, D17, D19, D26 where the switch touches them). Requirements: QR-8, FR-17, FR-24, FR-9 and FR-8 on the engine, FR-7 on every surface, PR-1 / PR-2 with v1 out of the frame, and the acceptance criteria of [requirements §6](requirements.md#6-acceptance-criteria).
 
 Code references are to master at `8ddaf708e`. `TTM` = `core/src/debugger/ttd/timetravelmanager.cpp`, `TTM.h` = its header, `CTX` = `core/src/emulator/emulatorcontext.h`, `EMU` = `core/src/emulator/emulator.cpp`.
 
@@ -484,6 +484,20 @@ Each item lands as its own commits and passes the full gate of README §3; the g
 8. Full matrix run stored as the Phase 5 baseline; results document; README and TODO updated.
 
 Items 1 and 3 move code around v1 before the switch, so the switch itself (item 4) changes one object and a few pointers.
+
+Item 1 lands in three parts:
+
+| Part | Content | State |
+|---|---|---|
+| 1a | `ITimeTravelHooks` (`core/src/debugger/ttd/timetravelhooks.h`), implemented by v1's `TimeTravelManager` (`final`); `EmulatorContext::pTimeTravelHooks`; the core files call it instead of the manager; `InvalidateSession(reason)` calls become `OnLoad` / `OnConfigurationChange` / `OnModelTransfer` with the same reason strings | Done 2026-10-04 (`TimeTravelHooks_Test`) |
+| 1b | `TTDCommands` over v1; the WebAPI on it; the surface contract test | Next |
+| 1c | CLI, Lua, Python, GDB, DeZog, Qt on `TTDCommands`; ZX-Poly's group control and the Sprinter port search, which drive a session like a surface, through the commands too | |
+
+Decided in 1a:
+
+- **Per-event sinks move at the switch (item 4), not in item 1.** Until then the engine is fed by v1 (shadow mode), so the per-event calls (memory and port writes, coverage) stay on the concrete manager; a sink type would only be a second name for it. The sink takes the engine's event stream as its shape when the engine records.
+- **The interface is what the core calls today** (24 methods), not the sketch in §4.2.2: `OnMachineParking`, `StopRecording` (reset and autostart), `NoteRzxFrameEnd` / `NoteReplaySource` (RZX), `BeginToolEdit` / `EndToolEdit`, `UpdatePeripheral` (GS card swap), `HasHistory`, `GetState`, `IsReplayActive` are in it; `StopForFeatureChange` comes with the clean stop (item 3).
+- `TTDSessionState`, `TTDGuardedAction` and `TTDMachineTaskResult` moved from the manager's header to the hooks header, so a core file needs only the interface.
 
 ## 8. Risks and open questions
 

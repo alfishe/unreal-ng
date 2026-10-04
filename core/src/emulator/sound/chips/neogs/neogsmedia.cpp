@@ -31,7 +31,7 @@ bool neogsFitted(EmulatorContext* context)
 
 bool recording(EmulatorContext* context)
 {
-    return context->pTimeTravelManager && context->pTimeTravelManager->IsRecording();
+    return context->pTimeTravelHooks && context->pTimeTravelHooks->IsRecording();
 }
 
 /// Carry `action` out on the machine's thread, on the card fitted by then
@@ -45,16 +45,16 @@ NeoGSMediaResult onMachineThread(EmulatorContext* context, std::function<bool(Ge
         if (context->pSoundManager)
             context->pSoundManager->publishGeneralSoundSlot(); // the SD image may have changed
     };
-    if (!context->pTimeTravelManager)
+    if (!context->pTimeTravelHooks)
     {
         task(); // no manager (bare contexts): the caller is the only thread
         return *result ? NeoGSMediaResult::Done : NeoGSMediaResult::Failed;
     }
-    switch (context->pTimeTravelManager->SubmitMachineTask(task))
+    switch (context->pTimeTravelHooks->SubmitMachineTask(task))
     {
-        case ttd::TimeTravelManager::MachineTaskResult::RanNow:
+        case ttd::TTDMachineTaskResult::RanNow:
             return *result ? NeoGSMediaResult::Done : NeoGSMediaResult::Failed;
-        case ttd::TimeTravelManager::MachineTaskResult::Queued:
+        case ttd::TTDMachineTaskResult::Queued:
             return NeoGSMediaResult::Queued;
         default:
             return NeoGSMediaResult::ReplayOwnsInput;

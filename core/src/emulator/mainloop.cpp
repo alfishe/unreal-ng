@@ -146,8 +146,8 @@ void MainLoop::Run(volatile bool& stopRequested)
 
             // Status reads while paused take the published TTD summary: make
             // it exact before anyone can see this thread parked
-            if (_context->pTimeTravelManager)
-                _context->pTimeTravelManager->OnMachineParking();
+            if (_context->pTimeTravelHooks)
+                _context->pTimeTravelHooks->OnMachineParking();
 
             // Signal that we've entered paused state
             {
@@ -467,11 +467,11 @@ void MainLoop::CompleteFrame()
     if (_context->pCore)
         _context->pCore->OnNetworkFrameDevices();
 
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
         try
         {
-            _context->pTimeTravelManager->OnFrameBoundary();
+            _context->pTimeTravelHooks->OnFrameBoundary();
         }
         catch (const std::exception& e)
         {

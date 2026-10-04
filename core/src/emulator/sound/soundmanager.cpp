@@ -843,7 +843,7 @@ void SoundManager::handleFrameStart()
 
             // With the output stage off, the FM core's internal synthesis state feeds nothing the CPU can
             // see - except through the TTD core hash, so TTD recording / replay keeps the full core running
-            const ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+            const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
             const bool ttdActive = ttd != nullptr && (ttd->IsRecording() || ttd->IsReplayActive());
             _turboSound->setCoreSynthesisSkipped(turboSoundSuppressed && !ttdActive);
 
@@ -1749,7 +1749,7 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     // recording refuses it (the reason is also reported at request time);
     // a stopped session or a debugger's live history is dropped, since no
     // checkpoint could restore the outgoing card into the new one
-    if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+    if (ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks)
     {
         const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
         if (!refusal.empty())
@@ -1757,8 +1757,8 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
             LOGWARNING("SoundManager: %s", refusal.c_str());
             return false;
         }
-        if (ttd->GetCheckpointCount() > 0)
-            ttd->InvalidateSession("gs-card-switch");
+        if (ttd->HasHistory())
+            ttd->OnConfigurationChange(ttd::TTDConfigChangeKind::GsCard, "gs-card-switch");
     }
 
     const char* from = gsImplementationLabel(_gs->implementation());
@@ -1817,8 +1817,8 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     //     TTDPeripheralId(), which differs across a personality switch by
     //     construction. Safe to call unconditionally: a null
     //     TimeTravelManager (TTD unavailable) no-ops.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->UpdatePeripheral(outgoingTtdId, _gs->TTDPeripheralId(), _gs);
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->UpdatePeripheral(outgoingTtdId, _gs->TTDPeripheralId(), _gs);
 
     // 4. Re-register the host ports for the new card (#B3/#BB/#33, GS design §6)
     bool portsRegistered = true;
@@ -1896,10 +1896,10 @@ bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target, std::string*
         return false;
 
     // A real change while a user recording runs is refused (FR-4, see switchGeneralSoundCard)
-    if (_gs && _gs->implementation() != targetImplementation && _context->pTimeTravelManager)
+    if (_gs && _gs->implementation() != targetImplementation && _context->pTimeTravelHooks)
     {
         const std::string refusal =
-            _context->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+            _context->pTimeTravelHooks->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
         if (!refusal.empty())
         {
             if (error)

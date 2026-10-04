@@ -1057,8 +1057,8 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
     if (report.ok)
     {
         // The target leaves its own history: a transfer teleports its state, like a snapshot load
-        if (targetContext->pTimeTravelManager)
-            targetContext->pTimeTravelManager->InvalidateSession("state-transfer");
+        if (targetContext->pTimeTravelHooks)
+            targetContext->pTimeTravelHooks->OnModelTransfer("state-transfer");
 
         report = Apply(*sourceContext, *targetContext, options);
         if (report.ok)

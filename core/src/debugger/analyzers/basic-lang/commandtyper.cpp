@@ -530,7 +530,7 @@ void CommandTyper::Step_()
             Fail(Failure::UnknownTarget, "no debugger");
             return;
         }
-        if (_context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput())
+        if (_context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput())
         {
             Fail(Failure::InputLocked, "time travel replay owns the keyboard");
             return;
