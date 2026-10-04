@@ -74,6 +74,11 @@ fixed with a test; none was reproduced yet):
      `VideoSize_EachRecordingDerivesItsOwn`). Only a size given to `SetVideoResolution` is kept.
    - `WorkingWindow()` of TS-Conf now is the whole 360x288 window when `T_CONFIG[0]`, a TSU layer (`T_CONFIG[7:5]`)
      and not `NOTSU` make the TSU show over the border (test `GEOM2`).
+   - The colored noise over the ZiFi list (and its flicker while a page loads) was the TSU: S2 ran to descriptor 84,
+     but on the hardware the THIRD LEAP ends the sprites ([V] `video_ts.v:263-274`). `zifi.spg` loads all 256 words of
+     the SFILE by DMA from a table followed by AT command text and the downloaded page, and ends its list with a LEAP
+     descriptor ("exit"); the descriptors behind it drew that text as sprites. Fixed in `TsConfTsu::Render`
+     (test `TSU2b_ThirdLeapEndsTheSprites`), the state view calls such descriptors layer `ended`.
    Not checked on a running GUI after the fixes (the flicker was explained from the code, not seen on the fix).
 
 Possible follow-ups, not part of this work: the Qt "Take Screenshot" (clipboard) still crops to the window's

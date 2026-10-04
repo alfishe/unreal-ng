@@ -129,6 +129,39 @@ TEST_F(TsConfTsu_Test, TSU2_LayerOrder)
     EXPECT_EQ(Line(0)[0], 0x51) << "S2 over T1";
 }
 
+/// TSU-2b: the THIRD LEAP ends the sprites (S2 runs to it, not to descriptor 84; [V] video_ts.v:263-274, the layer
+/// machine skips every layer that has ended). Descriptors after it are never processed: a program ends its list with
+/// a LEAP descriptor (zifi.spg: "exit") and may leave anything behind it - zifi.spg loads the whole 512-byte SFILE
+/// from a table followed by ASCII text, and those descriptors drew colored noise over the list
+TEST_F(TsConfTsu_Test, TSU2b_ThirdLeapEndsTheSprites)
+{
+    Reg(TsConfReg::TConfig, 0x80);
+    Reg(TsConfReg::PalSel, 0x00);
+    Pixel(kSpritePage, 0, 0, 1);  // bitmap cell 0, pixel 0 -> nibble 1
+
+    Sprite(0, kLeap, 0, 0);                  // ends S0 (inactive)
+    Sprite(1, kLeap, 0, 0);                  // ends S1 (inactive)
+    Sprite(2, kActive, 0, 0x2000);           // S2, PAL 2: drawn
+    Sprite(3, kLeap, 0, 0);                  // the third LEAP: S2 and the sprites end here
+    Sprite(4, kActive, 8, 0x5000);           // behind it: X 8, PAL 5 - never processed
+    Sprite(84, kActive, 16, 0x6000);         // nor this one
+
+    std::vector<uint8_t> line = Line(0);
+    EXPECT_EQ(line[0], 0x21) << "S2 before the third LEAP is drawn";
+    EXPECT_EQ(line[8], 0x00) << "a descriptor behind the third LEAP is not";
+    EXPECT_EQ(line[16], 0x00);
+
+    // The LEAP descriptor itself is the last one of S2 and is drawn when it is active
+    Sprite(3, kLeap | kActive, 24, 0x3000);  // X 24, PAL 3
+    line = Line(0);
+    EXPECT_EQ(line[24], 0x31) << "the LEAP descriptor belongs to the layer it ends";
+    EXPECT_EQ(line[8], 0x00);
+
+    // With fewer than three LEAPs S2 still runs to descriptor 84
+    Sprite(3, kActive, 24, 0x3000);
+    EXPECT_EQ(Line(0)[16], 0x61);
+}
+
 /// TSU-3: 85 descriptors per frame - descriptor 84 is drawn
 TEST_F(TsConfTsu_Test, TSU3_DescriptorCap)
 {

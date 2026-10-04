@@ -73,6 +73,10 @@ Evidence (not committed): `scratch/z5/` in the worktree - `ttd/*.ttd` per run, `
    sprites. The picture viewer (ZX mode) and Wild Commander capture fine. Text was read from the text page (RAM
    page `#D8`) and the graphics from VRAM instead. To re-check after the black-screenshot fix; if it stays black,
    check the renderer's per-line mode latching.
+   **Done 2026-10-04:** the black screenshots were the renderer clearing the frame at every mode switch (fixed in
+   `f40928ee0` / `6d992bb0e`, [screenshotter TODO](../2026-10-03-screenshotter/TODO.md) item 6); the colored noise over
+   the list was the TSU drawing the junk behind the third sprite LEAP (this commit). Screenshots and recordings of the
+   browser now show the header, the list and the status bar.
 3. `zifi.spg` sends empty lines (`\r\n`) between commands; the AT module answers `ERROR` to each (NonOS does the
    same as far as known; harmless, the program ignores it).
 4. **Done 2026-10-04 (zifi-plugins):** the module, on the virtual AP from the box, takes the first password for it as
