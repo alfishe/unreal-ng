@@ -116,7 +116,13 @@ PictureRect ScreenTSConf::WorkingWindow() const
     if (!decoder)
         return Screen::WorkingWindow();
 
-    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(decoder->GetState().regs[TsConfReg::VConfig]);
+    const TsConfState& ts = decoder->GetState();
+    const uint8_t vConfig = ts.regs[TsConfReg::VConfig];
+    const uint8_t tConfig = ts.regs[TsConfReg::TConfig];
+    // T_CONFIG[0]: the TSU works in the whole 360x288 window, and its layers (T_CONFIG[7:5]) show over the border
+    // unless V_CONFIG NOTSU hides them: that whole window is the picture then (the engine's own rule, RenderTsu)
+    const bool tsuOutside = (tConfig & 0x01) && (tConfig & 0xE0) && !(vConfig & 0x10);
+    const TsConfGeometry::Window& win = tsuOutside ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(vConfig);
     return PictureRect{static_cast<uint16_t>((win.x0 - TsConfGeometry::kFirstVisibleDot) * 2),
                      static_cast<uint16_t>(win.y0 - TsConfGeometry::kFirstVisibleLine),
                      static_cast<uint16_t>(win.w * 2), win.h};
