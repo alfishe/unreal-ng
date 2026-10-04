@@ -239,7 +239,8 @@ Decisions:
    Multicast (LLMNR, WS-Discovery Hello) does not cross the virtual network's NAT, exactly as on a home router: the
    Hello is visible in the status and the traffic capture (#91), not on the host LAN.
 3. **A LAN-facing listener** (bind `0.0.0.0` so another PC, or an older Windows, can connect, and real WS-Discovery
-   to the LAN) is a network-wide decision, not ZiFi's: it is listed as an open question for the network design
+   to the LAN): decided network-wide (owner, 2026-10-04): `0.0.0.0` by default with an "allow remote access" setting
+   (§6 item 1; phase N0)
    (the SN6 host bridge carries frames for frame cards only; the ESP is socket-level).
 
 ### 2.4 TTD sealed replay
@@ -347,8 +348,10 @@ flowchart LR
 
 ## 6. Open questions
 
-1. A LAN-facing listener (bind `0.0.0.0`) for SMB and real WS-Discovery on the host LAN: owner decision for the
-   network design as a whole, not per device (§2.3 item 3).
+1. ~~A LAN-facing listener~~ **Decided (owner, 2026-10-04):** host listeners of the virtual network bind `0.0.0.0` by
+   default, with a network-wide setting "allow remote access" (on by default; off = `127.0.0.1` only). It applies to
+   every `Forward=` listener (TCP now, UDP with B0), not per device, and is available on every automation surface and
+   in Qt. Implementation: PLAN #92 phase N0 (before B0).
 2. The plugin README claims 2.0.2 / 2.1 / 3.0 / 3.0.2; the code negotiates 3.0.2 only. We follow the code; ask the
    author whether the README or the code is intended (same channel as tdd §7.4).
 3. The firmware's 640 KiB read cache and directory cache shape the VFS traffic; B2 copies their policies. If a
