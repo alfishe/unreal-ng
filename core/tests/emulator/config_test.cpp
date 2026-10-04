@@ -325,9 +325,11 @@ TEST_F(Config_Test, ShippedConfigsFitNeoGS)
 
 TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
 {
-    // Each shipped config with only its GSType value changed to NGS: the
+    // Each shipped config with its General Sound card set to NeoGS: the
     // parsed config selects NeoGS, and a SoundManager built from it fits the
-    // card under the mixer name "NeoGS" with its MP3 source
+    // card under the mixer name "NeoGS" with its MP3 source. (ZX-bus slots
+    // SL-4 step 7: the card is a [SLOTS] entry, no longer [SOUND] GSType=;
+    // every shipped config names neogs there, so the copy is the shipped file)
     SoundCardScope gs(TestSound::GeneralSound);
     for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
     {
@@ -338,11 +340,9 @@ TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
 
         std::ifstream in(ini, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        const size_t key = text.find("\nGSType=");
-        ASSERT_NE(key, std::string::npos) << name;
-        const size_t value = key + strlen("\nGSType=");
-        const size_t valueEnd = text.find_first_of(" \t;\r\n", value);
-        text.replace(value, valueEnd - value, "NGS");
+        const size_t slotsSection = text.find("\n[SLOTS]");
+        ASSERT_NE(slotsSection, std::string::npos) << name;
+        ASSERT_NE(text.find(" = neogs", slotsSection), std::string::npos) << name;
 
         // Written next to the original so relative paths resolve the same way
         const fs::path copy = entry.path() / "unreal-ngs-test.ini";

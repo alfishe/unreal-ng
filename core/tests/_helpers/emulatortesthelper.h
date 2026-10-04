@@ -43,7 +43,7 @@ public:
     /// (TurboSound=FM) on the capable machines (pentagon128k, scorpion,
     /// spectrum128); suites that model a specific slot (legacy AY blobs,
     /// TTD session-kind guards, the player harness) must request it here.
-    /// Stages a scratch copy of the model's ini with the TurboSound= line
+    /// Stages a scratch copy of the model's ini with the [SLOTS] ay-socket line
     /// rewritten - either direction - and boots from it
     /// @param modelName Model short name (empty = the bare-Init default Pentagon)
     /// @param kind Slot kind to force

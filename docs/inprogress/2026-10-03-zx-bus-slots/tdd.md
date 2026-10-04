@@ -17,7 +17,7 @@
 | **SL-1** | Core types and the reference data collection ([reference-data.md](reference-data.md)): vocabulary, `CardDef` / `BusDef` / `BuiltInDef` / `MachineDef` / `AdapterDef` / `ExceptionDef`, the first card catalog, one `MachineDef` per creatable model, the pure plan engine `SlotPlanner::Plan`, the matrix generator (data only, no behavior change). **Done 2026-10-03**, see §5 | plan tests §2.1 green; no production path uses it yet | M |
 | **SL-2** | `PortClaimTable` with IORQGE and passive claims, shadowing, read-conflict rule, ROM-fetch lock; wired into the Z80 funnel behind the existing mechanisms (they register into it) | claim tests §2.2 green; all of `core-tests` green; A/B benchmark: no regression on the port hot path, the no-card case at least as fast |L; **built 2026-10-04**, see §6 |
 | **SL-3** | Rule migration: R6, `OverrideDecodeForFullDecodeClaim`, self-decoding dispatch, the exact port map's peripheral entries become claims; the three old mechanisms removed one at a time | each removal its own merge with the TTD corpus and machine boot tests green | L; **built 2026-10-04**, see §7 |
-| **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L |
+| **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L; **built 2026-10-04**, see §8 |
 | **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M |
 | **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M |
 | **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M |
@@ -128,7 +128,8 @@ adapter, Scorpion without +12 V), `FixedBuiltInBlocksEvenWithFlag`, `SwitchableB
 `ResultDoesNotDependOnInsertionOrder`, `DisplacementIsOneStep`, `SocketBoardOnBoardWinsMachine`,
 `BoardPortsAreDeadForIorqCards`, `RemoveReleasesMedia`, `MalformedRequestsRefused`, `OptionsParseAndFormat`.
 **Skipped (later phases):** `RefusedWhileTtdRecords` (SL-5: the TTD session guard), `IniLoadUsesSamePlan` and
-`LegacyKeysTranslated` (SL-4: `[SLOTS]` and legacy key translation).
+`LegacyKeysTranslated` (SL-4: `[SLOTS]` and legacy key translation; built in SL-4 as `SlotManager_Test.*` in
+`core/tests/emulator/slots/slotmanager_test.cpp`, §8).
 
 **Deviations from the design, with the reason:**
 
@@ -372,3 +373,116 @@ spread = (max - min) / median, the largest of the four binaries (A has no `#FFFD
   2-5 % faster than M.
 - Under this load the spreads are 7-18 %; rows within a few percent of zero are noise. A quiet-machine rerun (load
   below 12) is worth doing before the SL-4 card measurements, which use F as their baseline.
+
+## 8. SL-4 as built (2026-10-04)
+
+**Before SL-4:** `zx-bus-slots` merged with master `e378c483a` (N0 remote access, network SN6b, TS-Conf WAIT fixes,
+PQ-DOS). Clean auto-merge (`z80.cpp`: master's `_waitObserver` in `SetInterruptSource`); full build without warnings,
+`core-tests` 7599 green.
+
+**Steps** (each a full `core-tests` run, all green, the full build without compiler warnings, the existing tests
+unchanged except where named):
+
+| Step | What moved | Tests |
+|---|---|---|
+| 1 | `SlotManager` (`slots/slotmanager.{h,cpp}`): the slot set of an instance, planned in `Core::Init` before any card is built, from `[SLOTS]` (`slots/slotconfig.{h,cpp}`, `CONFIG::slotConfig`) or from the legacy card fields translated into slots; entries in slot order through `SlotPlanner::Plan` without the replace flag (first wins, a later card that would displace it is disabled with the reasons); deprecation log per legacy key present in the INI; `DeviceState::Slots` (`slots/slotreport.cpp`) | `SlotManager_Test.*` (`ParsesTheSlotsSection`, `LegacyKeysTranslated`, `IniLoadUsesSamePlan`, `FitOverrideNeverDisplaces`, `HardRefusalKeptEvenWithTheOverride`, `NotEmulatedCardsAreDisabled`, `AFieldChangedAfterTheIniWins`, `ReportListsSlotsAndBuiltIns`), `SlotManagerShipped_Test.FitsTheDevicesOfMaster/*` |
+| 2 | The AY socket's board (`ay` = Single, `ts` = the two-AY TurboSound, the legacy `AY` kind, `tsfm`, `none`); the 48K gets a **retrofitted** AY socket (R-BUS-1a: the emulator's 48K decoder routes the 128K AY decode to an AY interface and the shipped 48K config fits a TSFM there) | `SocketBoardComesFromTheSlot`; changed: `RefData_Test.CollectionIsConsistent` (a retrofitted socket has no chip of its own), `SlotPlanner_Test.MalformedRequestsRefused` (`ts` on the 48K is now planned) |
+| 3 | The General Sound personality (`gs` / `gs-lw` / `neogs`) and the card's `ram` option (`gs` 128k-512k -> `[SOUND] GSRamSize`, larger sizes clamp to 512k as before; `neogs` -> `[NGS] RamSize`); the runtime personality switch is unchanged until SL-6 | `GeneralSoundComesFromTheSlot` |
+| 4 | MoonSound; on the Profi the card is refused with the reason (`#7E` is the palette, a fixed built-in the board wins), also from a legacy `MoonSound=1` - **the one intended behavior change** (the shipped Profi config has `MoonSound=0`) | `MoonSoundComesFromTheSlot` |
+| 5 | `covox-fb` and `soundrive`: the SounDrive `mode` option reaches the Covox module (`Covox::Fitment` gains `Mode1`, `Mode2`, `Mode1Mono`; `CONFIG::sound.sdMode`; port map rows per mode); `mode` gains the value `both` (the emulator's decode of both port sets, what the legacy `SD=1` fits). The board Covox of ATM450 / ATM710 / ATM3 / TSL and a newly declared one on PROFI / PROFI3 (`#5F` / `#3F`) are switchable built-ins: `builtin.covox = on | off` (default on with `[SLOTS]`; the legacy `CovoxFB` switches it where the machine has one, else it is a `covox-fb` card) | `CovoxCardsAndTheBoardCovoxComeFromTheSlots`, `SoundriveModeReachesTheCovox` |
+| 6 | `zxnetusb` / `zx-wifi` (`port=ef`); `NetworkManager` keeps the virtual network and its own checks for the runtime `RequestChange` path (SL-6), ATM2IOESP stays a `[NETWORK] Card` value (the INTERNAL connector, a later bus) | `NetworkCardsComeFromTheSlots` |
+| 7 | The 17 shipped `data/configs/*/unreal.ini` carry `[SLOTS]`; the legacy card keys are gone from them (`[NETWORK] Card=NONE` replaced by a comment) | changed (they rewrote the old keys): `emulatortesthelper.cpp` `StageTurboSoundKindIni` (rewrites `ay-socket`), `Config_Test.EveryShippedConfigFitsNeoGSWithGSTypeNGS` (checks the `[SLOTS]` `neogs`), the TSFM suites' `CreateFmEmulator` (accept `ay-socket = tsfm`) |
+
+**How the decision reaches the devices.** The cards are still built by their owners: `SoundManager` (mixer, AY
+socket, GS, MoonSound, Covox) and `NetworkManager` (virtual network). `SlotManager::Apply` writes the fitted set into
+the CONFIG card fields they read (`sound.turboSoundKind`, `gsTypeKind`, `moonsound`, `covoxFB`, `sd`, `sdMode`,
+`network.card`'s ZX-bus bits), group by group (`kSlotDecidedGroups`, one group per step). With `[SLOTS]` the parser
+writes the same fields as the section's projection (`SlotManager::Project`), so code that reads a loaded config keeps
+working. A field that code changes after the INI was read (the test runner's sound policy, a snapshot transfer's
+`FitSourceDevices`, the TTD bench) is honored: at creation that group's slots are translated from the field again.
+Deviation from architecture.md §5/§7 ("SlotManager owns the fitted cards"): it owns the *decision* and the slot report;
+`ICard` objects arrive with the ZX-MultiSound (the first card written for slots) and SL-6's restart path.
+
+**The fit override in a config** (`<slot>.fit = unrealistic`, new key): R-CFG-3 plans an INI without the replace
+flag, but the shipped and old configs fit cards the reference data calls unrealistic (NeoGS on the Sinclair edge, on
+the Profi bus, behind the Sprinter ISA). Every translated legacy key carries the override, so an old INI keeps its
+devices; the override accepts the bus fit only - a plan that would displace a card, switch a built-in off or take a
+chip out of its socket is still refused, and hard refusals stay hard. Cards the emulator cannot build are disabled
+with the reason (`multisound`, `covox-fb decode=a2`, `zx-wifi port=ee`).
+
+**Same devices per shipped model.** `SlotManagerShipped_Test.FitsTheDevicesOfMaster/<folder>` creates each shipped
+config's machine (all sound devices as configured) and compares mixer rows, the AY socket device, the GS card, the
+Covox fitment, network bits, every port map row, the full-decode claims and the TTD device set with each blob's size
+against `testdata/slots/fitted-devices.txt`, captured from the merge binary before step 1 (master's device code; the
+Ethernet NIC blob's size is per-process state, only its presence is compared). Green after every step, and after the
+configs were converted. `zx-diagnostics` (a 48K config for a ROM the user supplies) is compared at the config level.
+TTD corpus, CoreGolden and the bench-gate byte counts are part of `core-tests` and unchanged.
+
+**Shipped `[SLOTS]` per model:**
+
+| Configs | AY socket | Cards | Built-in |
+|---|---|---|---|
+| pentagon128k, pentagon512k, scorpion, profscorp, ts-conf | `tsfm` | `zxbus.1 neogs`, `zxbus.2 moonsound`, `zxbus.3 soundrive mode=both` | ts-conf: `builtin.covox = on` |
+| atm3 | `ts` | as above | `builtin.covox = on` |
+| atm450, atm710 | `ts` | the same three on `cpu-socket.1-3` behind `atm-cpu-socket-zxbus` (fit `adapter`) | `builtin.covox = on` |
+| spectrum48 (retrofitted socket), spectrum128, spectrum2, spectrum2a, spectrum3 | `tsfm` | `edge.1 neogs` behind `zxbus-to-sinclair-edge`, `fit = unrealistic` | - |
+| zx-diagnostics (48K) | `tsfm` | as spectrum48 + `edge.2 moonsound`, `edge.3 soundrive mode=both` (fit `adapter`) | - |
+| profi, profi3 | `ay` | `profi-bus.1 neogs`, `profi-bus.2 soundrive mode=both`, both `fit = unrealistic` (the SounDrive keeps the shared Covox module in its four-channel form, as before; the Profi decoder does not route the card's ports) | `builtin.covox = on` |
+| sprinter | `ay` | `isa.1 neogs` behind `sprinter-isa-zxbus`, `fit = unrealistic` (reached only through an ISA ZX-bus adapter card, SL-8) | - |
+
+**Benchmarks.** `BM_PortIn` / `BM_PortOut` / `BM_PortCard`; A = SL-3 final (`bin/core-benchmarks-final`), B = after
+step 2 / after step 6; `UNREAL_NICE=0`, `--benchmark_min_time=0.3s`, six interleaved rounds (A B, B A, ...). The
+machine was loaded (owner decision: run anyway, relative numbers): 1-minute load per run start -> end, step 2: 37-64,
+step 6: 26-61. SL-4 changes no port code path (the cards are decided at creation), so the expectation is parity.
+After step 2: every row within -2.3 .. +0.8 % except Pentagon `OUT #00FD` (+3.5 %, +4.2 %) and `OUT #00C4` no card
+(+4.0 %), spreads 2-8 %. After step 6 the same Pentagon OUT rows +3.2 .. +4.1 %, the rest -1.6 .. +2.9 % (ATM3
+MoonSound `IN #00C4` +3.8 %), spreads 1-4 %. To separate the master merge from SL-4, a third binary was built from the
+merge tree (step 0, `scratch/wt-slots-sl4base`) and run against step 6 (load 17-34): the Pentagon OUT rows are at
+parity there (-0.7 .. +0.3 %), so their +4 % against the SL-3 binary comes with the master merge (it adds a branch to
+`Z80::AddWaitStates` / `AddWaitTicks`), not with SL-4. Step 6 vs step 0, every row: -3.4 .. +3.7 %, spreads 0-4 %;
+the largest, ATM3 `IN #00C4` with the MoonSound +3.7 % and the ATM3 `IN` rows +2.1 .. +2.6 %, are on a path SL-4 does
+not touch (the ATM3 decoder has no self-decoding IN; the cards on the ATM3 machine are the same objects) - code
+layout under load; a quiet-machine rerun is listed in TODO.md.
+
+Columns "final" / "step 2" come from the step-2 run, "step 0" / "step 6" from the step-0-versus-6 run (different
+loads: compare within a pair).
+
+| Benchmark (us per 1000 accesses, median of 6) | final | step 2 | step 0 | step 6 | step 6 / step 0 |
+|---|--:|--:|--:|--:|--:|
+| PortIn 48K IN #00FF | 39.0 | 39.0 | 37.6 | 37.7 | +0.1 % |
+| PortIn 128k IN #00FF | 43.6 | 43.8 | 41.9 | 42.4 | +1.2 % |
+| PortIn PENTAGON IN #00FF | 39.6 | 39.6 | 38.2 | 38.5 | +0.8 % |
+| PortIn 48K IN #40FF | 51.2 | 51.1 | 49.3 | 49.6 | +0.6 % |
+| PortIn 128k IN #40FF | 53.1 | 53.2 | 51.1 | 51.5 | +0.7 % |
+| PortIn PENTAGON IN #40FF | 39.7 | 39.6 | 38.3 | 38.7 | +1.0 % |
+| PortIn 48K IN #00FE | 50.1 | 50.1 | 48.1 | 48.5 | +0.7 % |
+| PortIn 128k IN #00FE | 53.0 | 52.7 | 50.8 | 51.5 | +1.2 % |
+| PortIn PENTAGON IN #00FE | 42.6 | 42.5 | 40.9 | 41.5 | +1.4 % |
+| PortIn 48K IN #FFFD | 35.7 | 35.6 | 35.6 | 34.7 | -2.6 % |
+| PortIn 128k IN #FFFD | 39.6 | 39.5 | 39.7 | 38.4 | -3.4 % |
+| PortIn PENTAGON IN #FFFD | 34.9 | 35.0 | 33.9 | 34.1 | +0.4 % |
+| PortOut 48K OUT #00FF | 30.8 | 30.4 | 30.1 | 29.9 | -0.7 % |
+| PortOut 128k OUT #00FF | 30.0 | 29.4 | 28.6 | 28.9 | +1.0 % |
+| PortOut PENTAGON OUT #00FF | 28.2 | 28.1 | 27.3 | 27.3 | +0.0 % |
+| PortOut 48K OUT #40FF | 40.6 | 40.3 | 39.3 | 39.4 | +0.2 % |
+| PortOut 128k OUT #40FF | 40.3 | 39.4 | 38.0 | 38.2 | +0.5 % |
+| PortOut PENTAGON OUT #40FF | 28.2 | 28.1 | 27.2 | 27.1 | -0.2 % |
+| PortOut 48K OUT #00FE | 72.3 | 72.1 | 70.2 | 69.6 | -0.9 % |
+| PortOut 128k OUT #00FE | 73.1 | 72.8 | 70.6 | 70.8 | +0.2 % |
+| PortOut PENTAGON OUT #00FE | 41.6 | 41.4 | 40.1 | 39.9 | -0.3 % |
+| PortCard PENTAGON no card IN #00FD | 28.2 | 28.4 | 27.3 | 27.6 | +1.1 % |
+| PortCard ATM3 no card IN #00FD | 29.5 | 29.4 | 28.6 | 29.2 | +2.1 % |
+| PortCard PENTAGON MoonSound IN #00FD | 28.2 | 28.4 | 27.4 | 27.5 | +0.3 % |
+| PortCard ATM3 MoonSound IN #00FD | 29.5 | 29.5 | 28.5 | 29.2 | +2.6 % |
+| PortCard PENTAGON no card OUT #00FD | 39.7 | 41.1 | 39.6 | 39.7 | +0.3 % |
+| PortCard ATM3 no card OUT #00FD | 44.8 | 45.0 | 43.4 | 43.4 | -0.1 % |
+| PortCard PENTAGON MoonSound OUT #00FD | 39.8 | 41.4 | 39.6 | 39.6 | +0.0 % |
+| PortCard ATM3 MoonSound OUT #00FD | 44.9 | 45.2 | 43.7 | 43.4 | -0.8 % |
+| PortCard PENTAGON no card IN #00C4 | 28.4 | 28.9 | 27.7 | 27.9 | +0.8 % |
+| PortCard ATM3 no card IN #00C4 | 30.5 | 30.9 | 29.4 | 30.2 | +2.5 % |
+| PortCard PENTAGON MoonSound IN #00C4 | 37.6 | 36.9 | 35.3 | 35.8 | +1.5 % |
+| PortCard ATM3 MoonSound IN #00C4 | 37.0 | 37.6 | 35.9 | 37.2 | +3.7 % |
+| PortCard PENTAGON no card OUT #00C4 | 39.6 | 41.2 | 39.9 | 39.6 | -0.7 % |
+| PortCard ATM3 no card OUT #00C4 | 30.7 | 30.9 | 29.8 | 29.9 | +0.3 % |
+| PortCard PENTAGON MoonSound OUT #00C4 | 31.1 | 31.3 | 30.3 | 30.2 | -0.4 % |
+| PortCard ATM3 MoonSound OUT #00C4 | 33.3 | 33.8 | 32.2 | 32.3 | +0.3 % |

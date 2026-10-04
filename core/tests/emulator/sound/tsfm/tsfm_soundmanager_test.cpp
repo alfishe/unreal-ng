@@ -40,9 +40,12 @@ Emulator* CreateFmEmulator(LoggerLevel level)
     }
     // The shipped slot kind flips between releases (FM ships enabled now);
     // force FM from whichever value the ini carries
+    // (Since ZX-bus slots SL-4 the shipped ini names the board in [SLOTS] as `ay-socket = tsfm` and has no
+    // TurboSound= key: that form counts as FM too)
     const std::string to = "TurboSound=FM";
     const size_t atAy = ini.find("TurboSound=AY");
-    if (ini.empty() || (atAy == std::string::npos && ini.find(to) == std::string::npos))
+    if (ini.empty() ||
+        (atAy == std::string::npos && ini.find(to) == std::string::npos && ini.find("\nay-socket = tsfm") == std::string::npos))
         return nullptr;
     if (atAy != std::string::npos)
         ini.replace(atAy, to.size(), to);  // both slot literals are the same length

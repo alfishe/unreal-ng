@@ -1,6 +1,6 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04, uncommitted. PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) built 2026-10-04, uncommitted. PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -63,7 +63,27 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   - [ ] owner review: three role tables (`_fullDecodeClaims` raw / bus side, `_selfDecodingClaims` raw / after the
     board, `_peripheralClaims` decoded port) instead of one; collapse into one table as SL-4 moves the cards
   - [ ] quiet-machine rerun of the SL-3 A/B (load below 12) before the SL-4 card measurements
-- [ ] SL-4 migrate cards one by one; `[SLOTS]` + legacy key translation; `data/configs` converted
+- [x] SL-4 migrate cards one by one; `[SLOTS]` + legacy key translation; `data/configs` converted (2026-10-04,
+  working tree of `zx-bus-slots`, not committed; [tdd.md](tdd.md) §8): (0) merge of master `e378c483a`; (1)
+  `SlotManager` plans the slot set at creation (`[SLOTS]`, legacy keys translated with a deprecation line, first wins,
+  `DeviceState::Slots`); (2) AY socket (`ay` / `ts` / `tsfm` / `none`; the 48K's AY socket retrofitted); (3) `gs` /
+  `gs-lw` / `neogs` + `ram`; (4) `moonsound` (refused on the Profi: `#7E` palette); (5) `covox-fb` / `soundrive`
+  (`mode` 1 / 2 / `both` reaches the Covox decode; the board Covox switchable, `builtin.covox`); (6) `zxnetusb` /
+  `zx-wifi`; (7) the 17 shipped configs carry `[SLOTS]`. Every step a full green `core-tests` run; the shipped
+  machines fit exactly master's devices (`SlotManagerShipped_Test`, golden `testdata/slots/fitted-devices.txt`)
+  - [ ] owner review: the per-slot fit override `<slot>.fit = unrealistic` in configs (shipped Sinclair / Profi /
+    Sprinter NeoGS, Profi SounDrive) and on every translated legacy key; `builtin.<id> = on | off`; the soundrive
+    `mode=both` value (the emulator decode); the retrofitted 48K AY socket; the Profi board Covox declaration
+  - [ ] owner review: `SlotManager` decides and reports, the managers still build the cards (CONFIG fields as the
+    hand-over); `ICard` objects with the ZX-MultiSound / SL-6
+  - [ ] the Profi's shipped `profi-bus.2 = soundrive` exists only to keep the shared Covox module four-channel as on
+    master (the Profi decoder never routes the card's ports): drop it once a fitted-device change is acceptable
+  - [ ] quiet-machine rerun of the SL-4 A/B (step 6 vs step 0 under load 17-34: -3.4 .. +3.7 %, no port path changed)
+  - [ ] runtime card changes (`requestGeneralSoundCardSwitch`, `NetworkManager::RequestChange`) bypass the slot set
+    and its report until SL-6 builds the restart path
+  - [ ] recipes / user docs still name the legacy keys (`[SOUND] GSType`, `TurboSound`, `[NETWORK] Card`): SL-7
+  - [ ] side note (not slots): the old ts-conf line `CovoxFB=1 ; ... (#FB and the #FE beeper bit ...)` parsed as 0
+    (IniFile strips the inline comment at the last `#`); the converted config says `builtin.covox = on`, same devices
 - [ ] SL-5 TTD fingerprint and session guard
 - [ ] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it
 - [ ] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc

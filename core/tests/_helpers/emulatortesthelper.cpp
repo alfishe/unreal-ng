@@ -37,17 +37,19 @@ namespace
             ini.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
 
-        const char* value = kind == TurboSoundKind::FM       ? "FM"
-                            : kind == TurboSoundKind::None   ? "None"
-                            : kind == TurboSoundKind::Single ? "Single"
-                                                             : "AY";
-        const std::string to = std::string("TurboSound=") + value;
-        // The active line (not a comment): "TurboSound=" at a line start, its value up to the line end
-        size_t at = ini.find("\nTurboSound=");
+        // The shipped inis name the AY socket's board in [SLOTS] (ZX-bus slots SL-4): `ay-socket = <card>`, the
+        // card for each kind (TurboSound=AY was the two-AY TurboSound, `ts`; Single the machine's own AY, `ay`)
+        const char* value = kind == TurboSoundKind::FM       ? "tsfm"
+                            : kind == TurboSoundKind::None   ? "none"
+                            : kind == TurboSoundKind::Single ? "ay"
+                                                             : "ts";
+        const std::string to = std::string("ay-socket = ") + value;
+        // The active line (not a comment): "ay-socket" at a line start, its value up to the line end
+        size_t at = ini.find("\nay-socket");
         if (at == std::string::npos)
             return std::string();
         at++;
-        size_t end = ini.find_first_of("\r\n ;\t", at + strlen("TurboSound="));
+        size_t end = ini.find_first_of("\r\n;\t", at + strlen("ay-socket = "));
         if (end == std::string::npos)
             end = ini.size();
         ini.replace(at, end - at, to);

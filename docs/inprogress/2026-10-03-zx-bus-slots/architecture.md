@@ -373,6 +373,14 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the fi
   into `[SLOTS]` entries at load with a deprecation warning; the card-specific settings sections (`[NGS]`,
   `[MOONSOUND]`, `[ROM] GS`, ...) stay as the cards' option sources until each card's migration moves them under
   `zxbus.N.*` (each move listed in tdd.md).
+- **As built (SL-4,** [tdd.md](tdd.md) §8**):** `[SLOTS]` is `CONFIG::slotConfig` (`slots/slotconfig.{h,cpp}`), planned
+  by `SlotManager` in `Core::Init` before any card is built. Two keys beyond the sketch: `<slot>.adapter = <id>` and
+  `<slot>.fit = unrealistic` (the fit override per slot: an INI is planned without the replace flag, but the shipped and
+  old configs fit cards the reference data calls unrealistic, such as NeoGS on the Sinclair edge; every translated
+  legacy key carries it, so an old INI keeps its devices; it never displaces a card and never lifts a hard refusal);
+  and `builtin.<id> = on | off` for a switchable built-in (wired: the board Covox). A missing `ay-socket` means the
+  machine's own chip. `[NETWORK] Card=ATM2IOESP` stays a network key (INTERNAL connector). The card-specific sections
+  (`[NGS]`, `[MOONSOUND]`, `[SOUND] GSRamSize`) stay option sources; a slot option (`ram`) overrides them.
 - **Model switch:** `ModelSwitch::Run` today rebuilds everything from the target model's INI. New: the current slot set
   is carried as the request list and planned against the new machine; non-fitting cards are reported in the switch
   result (R-OP-9), exactly as stranded media are reported today.
@@ -389,6 +397,13 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the fi
 | ATM2IOESP | `IIoBusDevice` on the ATM INTERNAL connector | a slot on a machine-declared `atm-internal` bus (same model, one more bus kind) |
 | Sprinter ISA cards | `SprinterIsaBus` | unchanged; `isa1` / `isa2` appear in the slot report; the ZX-bus adapter hosts a `zxbus` |
 | Built-ins (Beta-128 on Pentagon, ZX-Evo TurboSound, board Covox, Kempston on Pentagon) | inline in decoders | declared as `BuiltInDef`s of the machine's `MachineDef` with functions and ports; behavior unchanged |
+
+**As built (SL-4):** `SlotManager` owns the decision and the slot report (`DeviceState::Slots`), not the card
+objects: it writes the fitted set into the CONFIG card fields `SoundManager` / `NetworkManager` / the Covox module
+read (`SlotManager::Apply`), and those keep building, mixing and wiring the cards. `ICard` objects come with the
+ZX-MultiSound and the restart path (SL-6). The board Covox (ATM, ZX-Evo, TS-Conf, Profi v3 / v5) is a switchable
+built-in on the same Covox module; the SounDrive card's `mode` (1 / 2 / `both`, the emulator's decode) selects the
+module's decode.
 | Beta-128 / IDE / Kempston as *interfaces* on Sinclair machines | config flags | later cards (function `beta128`, `ide.*`, `kempston-*`); not in the first migration (tdd.md "later") |
 
 ## 8. TTD and snapshots

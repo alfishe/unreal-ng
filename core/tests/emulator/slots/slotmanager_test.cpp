@@ -475,8 +475,8 @@ TEST(SlotManager_Test, AFieldChangedAfterTheIniWins)
     EXPECT_EQ(config->sound.moonsound, 1);
 }
 
-/// A shipped config with a [SLOTS] section appended (the legacy card keys it still carries are then ignored),
-/// staged in the per-process scratch folder; the machine is created from it with every sound device as configured
+/// A shipped config with its [SLOTS] section replaced (any legacy card keys are then ignored), staged in the
+/// per-process scratch folder; the machine is created from it with every sound device as configured
 class StagedMachine
 {
 public:
@@ -485,6 +485,12 @@ public:
         const fs::path source = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
         std::ifstream in(source, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t shipped = text.find("\n[SLOTS]");
+        if (shipped != std::string::npos)
+        {
+            const size_t next = text.find("\n[", shipped + 1);
+            text.erase(shipped, next == std::string::npos ? std::string::npos : next - shipped);
+        }
         text += "\n[SLOTS]\n" + slotsSection + "\n";
         _path = TestPathHelper::GetUniqueTestScratchPath("slots-" + folder + ".ini");
         std::ofstream out(_path, std::ios::binary);
@@ -592,61 +598,6 @@ TEST(SlotManager_Test, GeneralSoundComesFromTheSlot)
     }
 }
 
-/// A shipped config with one line replaced (the legacy key form), staged and created like StagedMachine
-class LegacyMachine
-{
-public:
-    LegacyMachine(const std::string& folder, const std::string& fromLine, const std::string& toLine)
-    {
-        const fs::path source = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
-        std::ifstream in(source, std::ios::binary);
-        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        const size_t at = text.find("\n" + fromLine);
-        if (at != std::string::npos)
-        {
-            const size_t end = text.find_first_of("\r\n", at + 1);
-            text.replace(at + 1, end - at - 1, toLine);
-        }
-        else
-        {
-            // A converted config: the legacy key goes first into [SOUND] (its card is not in [SLOTS])
-            const size_t sound = text.find("[SOUND]");
-            const size_t lineEnd = sound == std::string::npos ? std::string::npos : text.find('\n', sound);
-            if (lineEnd != std::string::npos)
-            {
-                text.insert(lineEnd + 1, toLine + "\n");
-            }
-        }
-        _path = TestPathHelper::GetUniqueTestScratchPath("legacy-" + folder + ".ini");
-        std::ofstream out(_path, std::ios::binary);
-        out << text;
-        out.close();
-        _emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
-        _emulator->SetCustomConfigPath(_path.string());
-        _ok = _emulator->Init();
-    }
-    ~LegacyMachine()
-    {
-        _emulator->Release();
-        std::error_code ignored;
-        fs::remove(_path, ignored);
-    }
-    bool Ok() const
-    {
-        return _ok;
-    }
-    EmulatorContext* Context() const
-    {
-        return _emulator->GetContext();
-    }
-
-private:
-    SoundCardScope _everySound;
-    fs::path _path;
-    std::unique_ptr<Emulator> _emulator;
-    bool _ok = false;
-};
-
 /// The report's entry for a card; nullptr when the report has none
 const StateNode* ReportSlot(const StateNode& report, const std::string& card)
 {
@@ -661,7 +612,8 @@ const StateNode* ReportSlot(const StateNode& report, const std::string& card)
 }
 
 /// Step 4: MoonSound through the slot. The Profi's #7E palette is a fixed built-in the board wins, so the card is
-/// refused with that reason (it used to be an INI comment), even from the legacy key. Three machines (~20 ms each)
+/// refused with that reason (it used to be an INI comment), even with the fit override (the legacy key too:
+/// HardRefusalKeptEvenWithTheOverride). Three machines (~20 ms each)
 TEST(SlotManager_Test, MoonSoundComesFromTheSlot)
 {
     {
@@ -675,7 +627,7 @@ TEST(SlotManager_Test, MoonSoundComesFromTheSlot)
         EXPECT_EQ(m.Context()->pSoundManager->getMoonSound(), nullptr) << "the ini's MoonSound=1 ignored";
     }
     {
-        LegacyMachine m("profi", "MoonSound=0", "MoonSound=1");
+        StagedMachine m("profi", "ay-socket = ay\nprofi-bus.1 = moonsound\nprofi-bus.1.fit = unrealistic");
         ASSERT_TRUE(m.Ok());
         EXPECT_EQ(m.Context()->pSoundManager->getMoonSound(), nullptr);
         EXPECT_EQ(m.Context()->config.sound.moonsound, 0);
