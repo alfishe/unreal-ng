@@ -208,6 +208,10 @@ private:
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
     uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    /// A step over that steps across a CALL resumes the machine to a temporary breakpoint: the machine then runs
+    /// paced to real time, but it is a debugger step and must be silent like every other step. The host output
+    /// hold (reason DirectRun) lasts from that resume to the stop: the breakpoint, a cancel or any pause
+    SoundManager::HostOutputHold _stepOverHostHold;
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
 
     // Frame step target (persistent to prevent cumulative drift)
