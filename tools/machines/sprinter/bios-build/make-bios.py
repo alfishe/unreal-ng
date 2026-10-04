@@ -19,8 +19,12 @@ What the tool does (docs/inprogress/2026-09-28-sprinter/bios-versions.md §3):
      (BUILD.a80 itself needs a sjasmplus that lets ORG pass #FFFF without a device.)
 
 Reproducibility: the build stamps its date (and, in a BETA build, the time) into
-the screen text. --date / --time fix them (default: COMMIT's author date, 12:00:00),
-so the same commit gives the same bytes. Two sjasmplus differences are patched in
+the screen text, and SETUP takes the default CMOS date (written when the CMOS
+checksum is bad) from the build host's clock (os.date in bios/rom/SETUP/MAIN.asm).
+--date / --time / --cmos-date fix them (default: COMMIT's author date, 12:00:00,
+and --date), so the same commit gives the same bytes. The kept images in
+data/rom/sprinter were built before --cmos-date existed, on 2026-10-02: rebuild
+them with --cmos-date 2026-10-02. Two sjasmplus differences are patched in
 the exported copy only: newer versions reject "BLOCK 0,filler" (a zero-length block
 emits nothing, so it is guarded with IF), and versions from 1.22 reject the empty
 string in TEXT 128,{""," "} used by trees before 2026-06 - use sjasmplus 1.21.1 for
@@ -35,7 +39,7 @@ Build/Bin/LOADER_K30.BIN from commit 4c5d44a, which is what the sources of
 Usage:
   make-bios.py --repo ~/emulators/zxgit/Sprinter-BIOS --includes ~/emulators/zxgit/Shared_Includes \
                 --commit c14a8c5 --sjasmplus /path/to/sjasmplus --out sp2k-3.06-hf2.rom \
-                [--bitstream K30.bin] [--date 2026-05-01] [--time 12:00:00] [--workdir DIR]
+                [--bitstream K30.bin] [--date 2026-05-01] [--time 12:00:00] [--cmos-date 2026-10-02] [--workdir DIR]
 """
 
 import argparse
@@ -114,10 +118,13 @@ def main() -> int:
     ap.add_argument("--bitstream", type=Path, help="1K30 bitstream for trees without Build/ACEX/K30.ACX")
     ap.add_argument("--date", help="build date YYYY-MM-DD (default: the commit's author date)")
     ap.add_argument("--time", default="12:00:00", help="build time of a BETA build")
+    ap.add_argument("--cmos-date", help="default CMOS date YYYY-MM-DD that SETUP sets on a bad checksum (default: --date)")
     ap.add_argument("--workdir", type=Path, help="keep the build tree here (default: a temporary folder)")
     args = ap.parse_args()
 
     date = args.date or authorDate(args.repo, args.commit)
+    cmosYear, cmosMonth, cmosDay = (args.cmos_date or date).split("-")
+    hostClock = {b'os.date("%Y")': cmosYear, b'os.date("%y")': cmosYear[2:], b'os.date("%m")': cmosMonth, b'os.date("%d")': cmosDay}
     work = args.workdir or Path(tempfile.mkdtemp(prefix="sprinter-bios-"))
     if work.exists():
         shutil.rmtree(work)
@@ -140,6 +147,18 @@ def main() -> int:
     for messages in work.rglob("*"):
         if messages.is_file() and messages.name.lower() == "messages.z80":
             messages.write_bytes(messages.read_bytes().replace(b"__TIME__", b'"' + args.time.encode() + b'"'))
+
+    # SETUP's default CMOS date comes from the host clock at assembly time
+    for source in work.rglob("*"):
+        if source.is_file() and source.suffix.lower() in (".asm", ".a80", ".z80", ".inc"):
+            text = source.read_bytes()
+            if b"os.date" in text:
+                for call, value in hostClock.items():
+                    text = text.replace(call, b'"' + value.encode() + b'"')
+                if b"os.date" in text:
+                    print(f"{source.relative_to(work)}: unhandled os.date format, the image depends on the build day", file=sys.stderr)
+                    return 1
+                source.write_bytes(text)
 
     (work / "Build" / "Bin" / "temp").mkdir(parents=True, exist_ok=True)
     acex = work / "Build" / "ACEX"
@@ -166,7 +185,7 @@ def main() -> int:
                                                                          image[:PAGE] + image[8 * PAGE:9 * PAGE])})
     print(f"{args.out}: {len(image)} bytes, CRC32 {zlib.crc32(image) & 0xFFFFFFFF:08x}, "
           f"SHA-256 {hashlib.sha256(image).hexdigest()}")
-    print(f"  commit {args.commit}, build date {date}; {', '.join(banner)}")
+    print(f"  commit {args.commit}, build date {date}, CMOS date {args.cmos_date or date}; {', '.join(banner)}")
     if not args.workdir:
         shutil.rmtree(work)
     return 0

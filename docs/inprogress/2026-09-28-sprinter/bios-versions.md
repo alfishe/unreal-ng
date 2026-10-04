@@ -93,9 +93,11 @@ python3 tools/machines/sprinter/bios-build/make-bios.py \
     --bitstream <59 215-byte 1K30 bitstream> --out sp2k-3.06-hf2.rom
 ```
 
-Worked example: `--commit f546c4e` (the 3.07 beta of 2026-09-24) prints
+Worked example: `--commit f546c4e --cmos-date 2026-10-02` (the 3.07 beta of 2026-09-24) prints
 `CRC32 a06a1a02 ... Firmware v3.07 BETA 1`, byte-identical to `data/rom/sprinter/sp2k-3.07-beta1.rom`.
-The beta tree carries its own bitstream, so `--bitstream` is not needed there.
+The beta tree carries its own bitstream, so `--bitstream` is not needed there. `--commit c14a8c5
+--cmos-date 2026-10-02 --bitstream <LOADER_K30.BIN of 4c5d44a without its first 256 bytes>` gives
+`sp2k-3.06-hf2.rom` (both checked 2026-10-03 with sjasmplus 1.21.1).
 
 What the tool has to work around (all inside its temporary copy of the sources):
 
@@ -110,6 +112,12 @@ What the tool has to work around (all inside its temporary copy of the sources):
   Team") and a BETA build also the date and time ("Test build! 24.09.2026, 12:00:00"). The tool
   fixes them (`--date`, default the commit's author date; `--time`, default 12:00:00) so that a
   commit always gives the same image.
+- **The default CMOS date.** SETUP's `MAIN.asm` takes the date it writes to a CMOS with a bad
+  checksum from the build host's clock (`os.date("%Y")`, `%y`, `%m`, `%d` in Lua). Until 2026-10-03
+  the tool did not fix it, so a rebuild on another day differed in one byte (page 0 `#0896`, the day).
+  `--cmos-date` (default: the build date) fixes it now. The kept 3.06 Hotfix 2 and 3.07 BETA 1 were
+  built on 2026-10-02: rebuild them with `--cmos-date 2026-10-02`. The tool stops if a tree uses
+  another `os.date` format.
 - **The bitstream.** Trees before 2026-06-26 do not carry the bitstream binary (it is compiled
   from `src/altera/acex/k30/*.TDF` with Altera MAX+plus II). The FPGA sources did not change from
   2024-08-16 (`085ef3c`) to 2026-09-24, so the 3.06 images here use the stream that the first
