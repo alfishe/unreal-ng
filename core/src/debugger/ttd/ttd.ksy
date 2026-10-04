@@ -601,7 +601,11 @@ types:
           RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card),
           46 SlotSerial1 (the UART card in expansion slot 1, the Sprinter's SprinterESP: netstate::SerialPort as id
           24 - the TL16C550C and its peer, an ESP module with its AT state, sockets and received bytes by journal
-          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2).
+          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2), 48 Saa1099 (a Philips
+          SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
+          generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
+          divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
+          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

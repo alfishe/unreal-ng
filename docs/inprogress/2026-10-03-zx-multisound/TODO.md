@@ -28,7 +28,13 @@ full decode sweep. Depends on the
 ## Remaining
 
 - [ ] Owner review of the design
-- [ ] Independent modules (can start before the slots work): SAA-0..3, SAM-0..5, ML-0..2
+- [ ] Independent modules (can start before the slots work): SAM-0..5, ML-0..2
+- [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
+  `tools/verification/saa1099/` (SAASound, MAME, MiSTer RTL under Verilator; consensus table in its README), the
+  module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 48; not registered in any machine
+- [ ] SAA follow-ups: the MultiSound integration plugs it in (TTD inside the card's blob set, mixer row, `Describe` on
+  the automation surfaces, its `[SAA1099]` ini section); audio-level check against the real-chip recordings in
+  `rejunity/tt06-psg-saa1099`; captured SAM Coupe / VGM SAA streams in the corpus (tdd §6 item 1)
 - [x] CL-0 RTL co-simulation (`tools/verification/multisound/`: pinned `top.v`, Verilator testbench, `.msc` scenarios,
   sweep tables) and CL-1 `MultiSoundLogic` + `core-tests` ([tdd-card-logic.md](tdd-card-logic.md) §2, §4, §5)
 - [x] RTL findings F1-F11 folded into [hardware-reference.md](hardware-reference.md) and [architecture.md](architecture.md)

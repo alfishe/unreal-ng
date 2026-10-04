@@ -628,7 +628,7 @@ struct CONFIG
 
 	struct
 	{
-		unsigned fq, ayfq, saa1099fq;
+		unsigned fq, ayfq;
 
 		/// Core audio rate from [SOUND] CoreRate (multirate plan phase 6):
 		/// one of 44100/48000/88200/96000/176400/192000, or 0 = auto.
@@ -673,7 +673,7 @@ struct CONFIG
 		FilterVoicing::Preset ayVoicing = FilterVoicing::DEFAULT_PRESET;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
-		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
+		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
 		VOID_FUNC do_sound;

@@ -1,0 +1,18 @@
+; silent levels: amplitude 0 with tone on, sound enable off, no mixer (item 7)
+16 A #08
+24 D #80
+32 A #10
+40 D #55
+48 A #00
+56 D #00
+64 A #01
+72 D #5A
+80 A #14
+88 D #03
+4096 A #1C
+4104 D #01
+44112 A #14
+44120 D #00
+48128 A #1C
+48136 D #00
+52144 END
