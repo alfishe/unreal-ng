@@ -278,7 +278,9 @@ it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a load
 3.5 MHz. The status line shows the clock. The v5 also has the CP/M switch (`"name":"cpm"`, CLI `switch cpm on`,
 `[PROFI] CpmSwitch`): while it is on, #DFFD is held at #00 and writes to it are lost. `[PROFI] DffdDecode=` picks
 the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
-`OUT (n),A`).
+`OUT (n),A`). `[PROFI] ExtPorts=` picks when the extended port map (VG93 #83.., RTC #BF/#DF, IDE) is decoded: `cpm`
+(CP/M and ROM14, the 5.0 PROM, default; BIOS 1.0 / 2.0) or `sys` (also from the SYS ROM, as Karabas Pro: ROM BIOS
+Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk).
 
 ## Keyboard (`[PROFI] Keyboard=`)
 | Value | Keyboard |

@@ -883,6 +883,8 @@ struct CONFIG
 	uint8_t profi_cpm;                    // [PROFI] CpmSwitch: the v5 front-panel CP/M switch at power-on
 	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
 	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)
+	uint8_t profi_ext_ports;              // [PROFI] ExtPorts: 0 cpm (the extended port map with CP/M and ROM14, the 5.0
+	                                      // decoder PROM), 1 sys (also with the DOS latch on and ROM14 = 0, as Karabas Pro)
 	uint8_t profi_keyboard;               // [PROFI] Keyboard: a ProfiKeyboard (ports/models/profiboard.h), 0 = the board's own
 	char profi_xt_rom_path[FILENAME_MAX]; // [ROM] PROFIXT: the PROFI-XT controller firmware instead of rom/profixt/profi-xt-v1.27.rom
 	char kay_rom_path[FILENAME_MAX];

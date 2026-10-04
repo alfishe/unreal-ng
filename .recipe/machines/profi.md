@@ -180,7 +180,7 @@ curl -s -X POST "$BASE/emulator/$ID/switches" -H 'Content-Type: application/json
 
 CLI: `switch turbo on`; Lua / Python: `set_switch("turbo", true)`, `get_switch("turbo")`; Qt: Machine > TURBO
 Switch; `[PROFI] Turbo=1` turns it on at power-on. The v5 CP/M switch works the same way (`"cpm"`, Machine > CP/M
-Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
+Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. `[PROFI] ExtPorts=sys` decodes the extended ports (VG93 `#83..`, RTC, IDE) from the SYS ROM too, as Karabas Pro: ROM BIOS Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk (default `cpm`; `docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md`). In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
 its DRAM slot), code in ROM 2x.
 
 ## WebAPI

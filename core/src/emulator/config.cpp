@@ -369,6 +369,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		else if (decode && StringHelper::CompareCaseInsensitive(decode, "emulators", 9) != 0)
 			MLOGWARNING("Config: unknown [PROFI] DffdDecode=%s, emulators (A15=1, A13=0, A1=0) used", decode);
 	}
+	{
+		// The extended port map (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md): cpm | sys
+		const char* ext = inimanager.GetValue("PROFI", "ExtPorts", "cpm");
+		config.profi_ext_ports = 0;
+		if (ext && StringHelper::CompareCaseInsensitive(ext, "sys", 3) == 0 && ext[3] == '\0')
+			config.profi_ext_ports = 1;
+		else if (ext && !(StringHelper::CompareCaseInsensitive(ext, "cpm", 3) == 0 && ext[3] == '\0'))
+			MLOGWARNING("Config: unknown [PROFI] ExtPorts=%s, cpm (CP/M and ROM14) used", ext);
+	}
 
 	{
 		// The keyboard on the connector X9 / KEYB (design section "Keyboard"): matrix | xt | xttable

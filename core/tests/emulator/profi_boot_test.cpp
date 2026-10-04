@@ -27,9 +27,11 @@
 #include "emulator/video/profi/profigeometry.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/ports/portdiagrecorder.h"
 #include "emulator/video/screen.h"
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "pch.h"
@@ -435,13 +437,18 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         GTEST_SKIP() << "PROFI_PROGRAM not set";
     const bool bootOnly = std::string(program) == "none";   // PROFI_PROGRAM=none: only the BIOS, with the switches
     const char* model = std::getenv("PROFI_MODEL");
-    if (model && std::string(model) != "PROFI")
     {
+        // The test build fits no sound card unless a test asks (SoundCardScope): programs and BIOS tests probe the
+        // AY, so the machine is made again with its configured TurboSound slot
+        SoundCardScope sound(TestSound::TurboSound);
         const std::string id = _emulator->GetId();
         _emulator.reset();
         _manager->RemoveEmulator(id);
-        _emulator = _manager->CreateEmulatorWithModel("profi-program", model, LoggerLevel::LogError);
-        ASSERT_NE(_emulator, nullptr) << model;
+        if (model && std::string(model) != "PROFI")
+            _emulator = _manager->CreateEmulatorWithModel("profi-program", model, LoggerLevel::LogError);
+        else
+            _emulator = _manager->CreateEmulatorWithModelAndRAM("profi-program", "PROFI", 1024, LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << (model ? model : "PROFI");
     }
     EmulatorContext* context = _emulator->GetContext();
     if (const char* contention = std::getenv("PROFI_CONTENTION"); contention && contention[0] == '0')
@@ -450,6 +457,22 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, true);
     if (const char* turbo = std::getenv("PROFI_TURBO"); turbo && turbo[0] == '1')
         _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true);
+    if (const char* rom = std::getenv("PROFI_ROM"))
+    {
+        // Another system ROM image (a path, absolute or relative to the binary)
+        ASSERT_TRUE(_emulator->LoadROM(rom)) << rom;
+        _emulator->Reset(true);
+    }
+    // PROFI_PORTTRACE=<file>: every IN / OUT from here on, written at the end (development aid)
+    const char* portTraceFile = std::getenv("PROFI_PORTTRACE");
+    PortDiagnosticRecorder* portTrace = nullptr;
+    if (portTraceFile)
+    {
+        ASSERT_TRUE(_emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+        portTrace = context->pPortDecoder->getPortTraceRecorder();
+        ASSERT_NE(portTrace, nullptr);
+        portTrace->start();
+    }
     const std::string path(program);
     const bool v3 = model && std::string(model) == "PROFI3";   // the Kramis menu: Sinclair second, TR-DOS fifth
     const bool profi = !model || std::string(model).rfind("PROFI", 0) == 0;
@@ -626,6 +649,18 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         for (int i = -16; i < 48; i++)
             std::cout << " " << std::hex << int(z->DirectRead(static_cast<uint16_t>(z->pc + i)));
         std::cout << std::dec << "\n";
+    }
+    if (portTrace)
+    {
+        portTrace->stop();
+        if (FILE* f = std::fopen(portTraceFile, "w"))
+        {
+            for (const PortTraceEvent& e : portTrace->getAll())
+                std::fprintf(f, "F%u pc=%04X %s %04X %02X decoded=%04X %s dev=%u\n", e.frameNumber, e.pc,
+                             e.isOut() ? "OUT" : "IN ", e.rawPort, e.value, e.decodedPort,
+                             e.wasDecoded() ? "hit" : "miss", static_cast<unsigned>(e.deviceId));
+            std::fclose(f);
+        }
     }
     if (const char* memFile = std::getenv("PROFI_DUMP_MEM"))
     {
