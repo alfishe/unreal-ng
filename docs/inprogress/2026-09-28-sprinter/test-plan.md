@@ -55,7 +55,8 @@ folders.
 | ID | Case | Expected |
 |---|---|---|
 | T-CFG-1 | the full bitstream write count (constant from the S0 loader trace) while loading | configured, CPU reset, window 3 = `#40`, starting = 1; not configured after 4 096 writes |
-| T-CFG-2 | a stream whose first 4 096 writes match MAME's Game constant, no Game module registered | Standard active, warning with both hashes logged |
+| T-CFG-2 | a stream whose first 4 096 writes match MAME's Game constant (the full hash another); then a stream nobody knows | Game active, `selected_by` = `head_hash`; then Standard, `unknown_bitstream`, warning with both hashes logged (since 2026-10-03: before the Game module the first one ran Standard) |
+| T-GAME-1…6 | the Game module: selection by full / head hash, cells `#EE`, back to Standard by reload and RESET, reports, screen, TTD blob (`SprinterPldGame_Test`); the grid-offset picture (`SprinterGameVideo_Test`, MAME's frame from MAME's video RAM); GAME_00 / TEST_005 / TEST_010 / LDConf START.BAT from the MAME pack's disk (`SprinterGameConfig_Test`, `UNREAL_SPRINTER_HDD`) | [game-configuration.md](game-configuration.md) §6 |
 | T-CFG-3 | fast start vs full start (ROM-gated, 3.04 and 3.06) | identical PLD state and RAM at the first BIOS instruction |
 | T-CFG-4 | code `#2E` | back to loading; fast RAM kept; module chosen again after the load |
 | T-CFG-5 | a load that stops before the count | watchdog ends it: Standard active, warning logged, CPU reset |
@@ -201,7 +202,7 @@ and skips with a message when the ROM or the image is missing. Each test runs on
 | Requirement | Tests |
 |---|---|
 | FR-3 configuration | T-CFG-1…6, R-1 |
-| FR-9 configuration modules | T-PLDM-1…5, T-CFG-2 |
+| FR-9 configuration modules | T-PLDM-1…5, T-CFG-2, T-GAME-1…6 |
 | FR-4 port table | T-DCP-1…8 |
 | FR-5 memory | T-MEM-1…9 |
 | FR-6 clock/waits | T-MEM-10, clock-ratio tests incl. the TTD round-trip of `hw_turbo_ratio` (technical design §3, PLAN #60) |

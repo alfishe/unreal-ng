@@ -1359,8 +1359,11 @@ void EmulatorAPI::getCalltraceProfilerEntries(const HttpRequestPtr& req, std::fu
     }
 
     // Get count from query params
+    // "limit" is accepted as a synonym: the other profiler reads (opcode counters, MCP) use it
     uint32_t count = 100;
     auto countParam = req->getParameter("count");
+    if (countParam.empty())
+        countParam = req->getParameter("limit");
     if (!countParam.empty())
     {
         try { count = static_cast<uint32_t>(std::stoul(countParam)); }

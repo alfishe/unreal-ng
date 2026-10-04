@@ -264,6 +264,8 @@ set(COMMON_SOURCES
     src/api/ttd_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
+    src/debug-event-hub.cpp
+    src/debug-event-hub.h
     src/automation-webapi.cpp
     src/automation-webapi.h
 )

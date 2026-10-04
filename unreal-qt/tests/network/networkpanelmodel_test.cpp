@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include "network/core/networkpanelmodel.h"
@@ -245,4 +247,73 @@ TEST(NetworkPanelModel_Test, SlotRowsSayWhatIsPluggedAndWhatItUses)
     EXPECT_EQ(rows[0].line, "zxbus not fitted: not built yet");
     EXPECT_EQ(rows[1].line, "NE2000 RTL8019AS, I/O #300-#31F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway");
     EXPECT_TRUE(NetworkSlotRows(StateNode::Object()).empty()) << "machines without slots show no group";
+}
+
+// The SprinterESP in a slot: its UART line and the ESP's session in the row, its line editable (isaN_peer)
+TEST(NetworkPanelModel_Test, SprinterEspRowAndItsLine)
+{
+    StateNode network = StateNode::Object();
+    StateNode slots = StateNode::Array();
+    StateNode esp = StateNode::Object();
+    esp["id"] = "isa1";
+    esp["label"] = "ISA slot 1 (J6), page #D4";
+    esp["configured"] = "sprinteresp";
+    esp["card"] = "sprinteresp";
+    esp["chip"] = "TL16C550C";
+    esp["base"] = "#3E8";
+    esp["irq"] = 3;
+    esp["peer_spec"] = "AT";
+    StateNode uart = StateNode::Object();
+    uart["baud"] = 115200;
+    uart["mcr"] = "#22";
+    esp["uart"] = uart;
+    StateNode module = StateNode::Object();
+    module["firmware"] = "ESP8266-AT222";
+    module["state"] = "running";
+    module["wifi"] = "got_ip";
+    module["ip"] = "10.0.2.15";
+    module["mac"] = "5C:CF:7F:5A:00:01";
+    StateNode session = StateNode::Object();
+    session["links"] = StateNode::Array();
+    module["at_session"] = session;
+    esp["esp"] = module;
+    slots.push(esp);
+    network["slots"] = slots;
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].line, "SPRINTERESP TL16C550C, I/O #3E8-#3EF, IRQ 3, UART 115200 baud, MCR #22; ESP ESP8266-AT222 "
+                            "(running), Wi-Fi got_ip 10.0.2.15, 0 link(s), MAC 5C:CF:7F:5A:00:01");
+
+    // With the ISA report the row ends with the slot's IRQ line (ISA I4): level, PIO port B bit, whether it interrupts
+    StateNode isa = StateNode::Object();
+    StateNode isaSlots = StateNode::Array();
+    StateNode isaSlot = StateNode::Object();
+    StateNode irqLine = StateNode::Object();
+    irqLine["line"] = "low";
+    irqLine["pio_bit"] = "PB0";
+    irqLine["reaches_cpu"] = "yes: the line going high makes the PIO request IM 2 vector #00 ...";
+    isaSlot["irq_line"] = irqLine;
+    StateNode counters = StateNode::Object();
+    counters["irq_acknowledged"] = static_cast<uint64_t>(6);
+    isaSlot["counters"] = counters;
+    isaSlots.push(isaSlot);
+    isa["slots"] = isaSlots;
+    const std::vector<NetworkSlotRow> withIrq = NetworkSlotRows(network, &isa);
+    ASSERT_EQ(withIrq.size(), 1u);
+    EXPECT_EQ(withIrq[0].line, rows[0].line + "; IRQ line low -> PB0, interrupts the CPU, 6 acknowledged");
+
+    const NetworkForm before = NetworkFormFromState(network);
+    EXPECT_TRUE(before.slotUart[0]);
+    EXPECT_FALSE(before.slotUart[1]);
+    EXPECT_EQ(before.slotPeer[0].ToString(), "AT");
+    NetworkForm after = before;
+    std::string error;
+    ASSERT_TRUE(ComPortSpec::Parse("loopback", after.slotPeer[0], error));
+    after.espChip = "ESP8266-AT221";
+    const auto changes = NetworkFormChanges(before, after);
+    EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("isa1_peer"), std::string("LOOPBACK"))),
+              changes.end());
+    EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("esp_chip"), std::string("esp8266-at221"))),
+              changes.end());
 }

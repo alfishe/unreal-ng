@@ -342,6 +342,15 @@ POST /api/v1/emulator/{id}/run_frame         Run exactly one video frame
 POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N})
 ```
 
+> [!NOTE]
+> **Host audio during direct runs.** These commands run at full host speed, not real time. For the run, the
+> host audio output (the speakers) gets nothing, on every machine and from every sound source (beeper, AY,
+> Covox / Sprinter Covox-Blaster, GS, FM, MoonSound, CD): the same as while paused. The machine computes exactly
+> the same samples as at normal speed (TTD stays deterministic), and audio captures (`/audio/capture`) and
+> recordings still get them. TTD seek / replay and turbo mode hold the host output the same way. `resume`
+> restores sound. `GET /audio/mixer` -> `host_output` shows it: `held`, `frames_delivered`, `frames_audible`,
+> `frames_held` (emulated frames since the instance was created).
+
 ### Debug Mode
 ```
 GET  /api/v1/emulator/{id}/debugmode     Get debug mode state
@@ -353,7 +362,8 @@ PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true}
 
 ### State Inspection
 ```
-GET /api/v1/emulator/{id}/registers           Get CPU registers (AF, BC, DE, HL, PC, SP, etc.)
+GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr, q, t = CPU T in the frame), interrupt (iff1, iff2, im, halted, boundary), flags
+PUT /api/v1/emulator/{id}/registers/{name}    Set a register (body {"value":N}): the register table names, memptr / wz, im (0-2), iff1 / iff2 (0-1); 400 out of range
 GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
 PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
 GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N)
@@ -380,7 +390,7 @@ GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binar
 GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
-GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
@@ -407,16 +417,16 @@ GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, stat
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks, status (11h-15h), head (LBA, MSF, track, index), play range, page 0Eh volume, mixer row (available=false without a CD drive)
 POST /api/v1/emulator/{id}/cdaudio/{verb}      CD audio control: status | play (track, to | lba, frames | msf, end) | pause | resume | stop | volume (left, right, route, sotc) | mixer (volume, mute, solo); drive picks the drive. 409 recording / no-disc / not-playing, 404 no-cd-drive
-GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD (404 on other machines)
+GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map (+ fm_maps raw), video (mode, geometry, TSU, the engine's line with t0_gpage / t1_gpage), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs[72] = the register file as last written (404 on other machines)
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity); 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at|loopback|tcp:host:port|serial:dev[,baud]"} (zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's RS-232 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at|loopback|tcp:host:port|serial:dev[,baud]"} (zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's RS-232 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
-GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, DMA), z80_access (the page / latch / #1FFD path), not_fitted, the card's own fields, counters), conflicts; 404 on other machines
-GET  /api/v1/emulator/{id}/state/isa/journal?last=N   The ISA access journal (512 entries): frame, t, pc, slot, access (read / write / stall), space, isa_address, cpu_address, what (the card's register name), value
+GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, the card's own fields, irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
+GET  /api/v1/emulator/{id}/state/isa/journal?last=N   The ISA access journal (512 entries): frame, t, pc, slot, access (read / write / stall), space, isa_address, cpu_address, what (the card's register name), value; event "irq" entries for the interrupt lines (edges, PIO requests, acknowledges, RETI), also in irq_events (their own 128-entry ring: a card that is polled does not flush them)
 GET  /api/v1/emulator/{id}/network/frames      The Ethernet gateway's frame capture (last 256, both ways): ?link=isa2.eth, last=N, format=json|pcap; JSON frames[] (index, frame, direction, port, length, summary, hex)
 POST /api/v1/emulator/{id}/network/frame       {"link": "isa2.eth", "hex": "..."} - a frame towards a card at the next frame boundary (a tool edit while TTD records)
 POST /api/v1/emulator/{id}/control/isa         {"action": "io_read|io_write|io_peek|mem_read|mem_write|mem_peek|reset|latch|journal_clear|journal_on|journal_off", "slot": 1|2, "address": "#30A", "value": n} - one ISA cycle at a 20-bit address (an empty slot reads #FF), a RESET DRV pulse or a latch write; a tool edit while TTD records
@@ -637,10 +647,20 @@ GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakp
 {
   "type": "execution|read|write|port_in|port_out",
   "address": 32768,
+  "page": {"kind": "ram", "page": 32},
   "note": "optional annotation",
   "group": "optional group name"
 }
 ```
+
+`page` (optional, execution / read / write): `{kind: ram | rom | cache, page}` (debugger protocol; the text
+form `"ram32"` is accepted too). The breakpoint fires only
+while that page is mapped at the address - for example code in TS-Conf RAM page 32 at `#C000`, not
+whatever else is paged in there. 400 for a page the machine does not have. The list and
+`/breakpoints/status` (`last_triggered_page`) name it back the same way.
+
+`note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
+on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.
 
 ### Analyzers
 ```

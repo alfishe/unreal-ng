@@ -7,7 +7,8 @@
 # Actions (mame-zxsteps.lua): keys <text with {ENTER}> | snap <png name> | play | stop | load <snapshot path> |
 #   kbd | kbdonly <tag part, or =exact tag> | reset (soft reset) | hardreset | state | end | dbg <debugger command> |
 #   vram <name> (the 256 KB video RAM to <name>.bin, for the INT positions of the mode table) |
-#   fields <port tag>/<field name>+... (input fields held for 4 frames: chords the natural keyboard cannot type).
+#   fields <port tag>/<field name>+... (input fields held for 4 frames: chords the natural keyboard cannot type),
+#   listfields <tag part> (the field names of those ports: e.g. the PC keyboard's "Down" or the shift for "_").
 # ZXK_SNAP_EVERY=n: a PNG every n frames. SPC_DEBUG=1 runs MAME's debugger headless (-debug -debugger none) and
 # writes its console to build/zxsteps/<name>/debug.log, where "dbg" breakpoints print (e.g. the INT position:
 # dbg|bpset 38,1,{printf "INT y=%d x=%d tc=%d",beamy,beamx,totalcycles; g}, with ZXK_SEP=~ as the step separator

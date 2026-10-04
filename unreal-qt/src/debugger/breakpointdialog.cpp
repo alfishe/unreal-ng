@@ -350,6 +350,8 @@ void BreakpointDialog::populateBreakpointTable()
 
         // Address column
         QString addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
+        if (bp->matchType == BRK_MATCH_BANK_ADDR)  // fires only while that page is mapped there
+            addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp));
         QTableWidgetItem* addrItem = new QTableWidgetItem(addrStr);
         addrItem->setTextAlignment(Qt::AlignCenter);
         _breakpointTable->setItem(row, 2, addrItem);

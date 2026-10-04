@@ -11,7 +11,11 @@
 /// Slot2Chip=RTL8019AS    ; NE2000: RTL8019AS | UM9003 | NE1000
 /// Slot2Base=0x300        ; NE2000: 0x200..0x3E0 in steps of 0x20 (in an INI '#' starts a comment: 0x300 or 300h)
 /// Slot2Irq=3             ; written into the card's EEPROM (one IRQ line per slot)
-/// Slot2Mac=auto          ; auto = 02:53:50:00:<instance>:<slot>
+/// Slot2Mac=auto          ; auto = 02:53:50:00:<instance>:<slot> (SPRINTERESP: the ESP's station MAC, auto =
+///                        ; 5C:CF:7F:5A:<instance>:<slot>)
+/// Slot1=SPRINTERESP      ; the SprinterESP Wi-Fi card: TL16C550C at #3E8 (fixed), IRQ 3 (wired), an ESP-12F
+/// Slot1Peer=AT           ; what the 16550 is wired to (ComPortSpec): AT (default, the ESP), ESPNET, LOOPBACK,
+///                        ; TCP:host:port, SERIAL:device[,baud] (a real ESP on a USB adapter), NONE
 /// ```
 ///
 /// Slot numbers are 1 and 2 everywhere a person reads them (config, reports, automation), as on the board and in
@@ -55,7 +59,14 @@ struct SlotConfig
     uint8_t irq;         ///< the IRQ the card's configuration names (informational: one line per slot)
     uint8_t macAuto;     ///< 1: 02:53:50:00:<instance>:<slot>
     uint8_t mac[6];
+    char peer[64];       ///< UART cards (SPRINTERESP): ComPortSpec text of the line's other end; empty = AT
 };
+
+/// The SprinterESP card's fixed resources (rev 1.0.5 schematic: 74HC30 + 74HC27 decode A13-A3 = #3E8 >> 3, INTR to
+/// ISA IRQ3, a 14.7456 MHz crystal at the TL16C550C's XIN)
+constexpr uint16_t kSprinterEspBase = 0x3E8;
+constexpr uint8_t kSprinterEspIrq = 3;
+constexpr uint32_t kSprinterEspUartClock = 14745600;
 
 /// The configured slots ([ISA] section)
 struct IsaConfig

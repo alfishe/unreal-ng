@@ -62,6 +62,18 @@ NetworkForm NetworkFormFromState(const StateNode& network)
         form.serialPort = Text(machine->find("serial_port"), "none");
         form.zifiMachine = Flag(machine->find("zifi"), false);
     }
+    if (const StateNode* slots = network.find("slots"))
+    {
+        for (const StateNode& slot : slots->items)
+        {
+            const std::string id = Text(slot.find("id"));
+            const int n = id == "isa1" ? 0 : id == "isa2" ? 1 : -1;
+            if (n < 0 || Text(slot.find("card")) != "sprinteresp")
+                continue;
+            form.slotUart[n] = true;
+            form.slotPeer[n] = Peer(Text(slot.find("peer_spec")), "AT");
+        }
+    }
     const StateNode* set = network.find("settings");
     if (!set)
         return form;
@@ -105,12 +117,22 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
     }
     if (before.zifiPeer.ToString() != after.zifiPeer.ToString())
         out.emplace_back("zifi", after.zifiPeer.ToString());
+    for (int n = 0; n < 2; ++n)
+    {
+        if (after.slotUart[n] && before.slotPeer[n].ToString() != after.slotPeer[n].ToString())
+            out.emplace_back(n == 0 ? "isa1_peer" : "isa2_peer", after.slotPeer[n].ToString());
+    }
     if (before.comPort.ToString() != after.comPort.ToString())
         out.emplace_back("com_port", after.comPort.ToString());
     if (before.zxWifiPeer.ToString() != after.zxWifiPeer.ToString())
         out.emplace_back("zx_wifi", after.zxWifiPeer.ToString());
     if (Upper(before.espChip) != Upper(after.espChip))
-        out.emplace_back("esp_chip", Upper(after.espChip) == "ESP8266" ? "esp8266" : "esp32");
+    {
+        std::string chip = after.espChip;
+        for (char& c : chip)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        out.emplace_back("esp_chip", chip.empty() ? std::string("esp32") : chip);
+    }
     if (before.modemLines != after.modemLines)
         out.emplace_back("com_modem_lines", after.modemLines ? "on" : "off");
     if (Upper(before.avrFirmware) != Upper(after.avrFirmware))
@@ -251,7 +273,7 @@ std::vector<uint32_t> NetworkSerialBaudChoices()
     return {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
 }
 
-std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network)
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const StateNode* isa)
 {
     std::vector<NetworkSlotRow> rows;
     const StateNode* slots = network.find("slots");
@@ -294,7 +316,8 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network)
             {
                 const unsigned first = static_cast<unsigned>(std::strtoul(base.c_str() + 1, nullptr, 16));
                 char range[32];
-                std::snprintf(range, sizeof(range), ", I/O #%03X-#%03X", first, first + 0x1F);
+                const unsigned size = card == "sprinteresp" ? 0x07 : 0x1F;   // a 16550's 8 registers / the NE2000's 32
+                std::snprintf(range, sizeof(range), ", I/O #%03X-#%03X", first, first + size);
                 row.line += range;
             }
             const std::string irq = text(slot, "irq");
@@ -306,8 +329,44 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network)
             const std::string link = text(slot, "link");
             if (!link.empty())
                 row.line += ", cable: " + link;
+            if (const StateNode* esp = slot.find("esp"))
+            {
+                // The SprinterESP: its UART line and the ESP's session at a glance
+                if (const StateNode* uart = slot.find("uart"))
+                    row.line += ", UART " + text(*uart, "baud") + " baud, MCR " + text(*uart, "mcr");
+                row.line += "; ESP " + text(*esp, "firmware") + " (" + text(*esp, "state") + "), Wi-Fi " + text(*esp, "wifi");
+                const std::string ip = text(*esp, "ip");
+                if (!ip.empty() && ip != "0.0.0.0")
+                    row.line += " " + ip;
+                if (const StateNode* session = esp->find("at_session"))
+                {
+                    if (const StateNode* links = session->find("links"))
+                        row.line += ", " + std::to_string(links->items.size()) + " link(s)";
+                }
+                row.line += ", MAC " + text(*esp, "mac");
+            }
             if (!text(slot, "stalled").empty())
                 row.line += " - STALLED (the ISA cycle hangs until RESET)";
+            // The slot's IRQ line from the ISA report: level, PIO port B bit, whether it interrupts the CPU
+            const StateNode* isaSlots = isa ? isa->find("slots") : nullptr;
+            const size_t index = row.id == "isa1" ? 0 : row.id == "isa2" ? 1 : 2;
+            if (isaSlots && index < isaSlots->items.size())
+            {
+                const StateNode& isaSlot = isaSlots->items[index];
+                if (const StateNode* irq = isaSlot.find("irq_line"))
+                {
+                    const std::string reach = text(*irq, "reaches_cpu");
+                    row.line += "; IRQ line " + text(*irq, "line") + " -> " + text(*irq, "pio_bit") + ", " +
+                                (reach.rfind("yes", 0) == 0 ? std::string("interrupts the CPU")
+                                                            : reach.size() > 4 ? reach.substr(4) : std::string("-"));
+                    if (const StateNode* counters = isaSlot.find("counters"))
+                    {
+                        const StateNode* acks = counters->find("irq_acknowledged");
+                        if (acks && acks->kind == StateNode::Kind::Int && acks->i > 0)
+                            row.line += ", " + std::to_string(acks->i) + " acknowledged";
+                    }
+                }
+            }
         }
         rows.push_back(std::move(row));
     }

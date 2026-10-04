@@ -11,7 +11,8 @@ slot 2); maximum reuse of the shared network stack, no Sprinter-only parallel pa
 
 Built so far (branch `sprinter-isa-network`, as-built notes in [tdd.md](tdd.md) §18): ISA I1 (the bus the cards sit
 on), SN0, SN1, SN2 - the RTL8019AS kit runs end to end (`IFUP`, `PING`, `NSLOOKUP`, `WGET`); recipe
-[.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md).
+[.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md). SN3 (branch `sprinter-esp-sn3`):
+the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET`, `UNETESP.DLL`).
 
 ## Documents
 
@@ -35,9 +36,21 @@ on), SN0, SN1, SN2 - the RTL8019AS kit runs end to end (`IFUP`, `PING`, `NSLOOKU
 - [x] SN2 (2026-10-03): `EthernetGateway` (ARP / IPv4 / ICMP / UDP / TCP, DHCP + DNS + forwards shared), RTL kit end
   to end incl. a TTD replay without the host, frame capture (JSON / pcap) + injection on every surface, recipe
 - [ ] SN2 follow-ups: host-side receive pause (now: reset above 256 KB queued), TCP zero-window probes
-- [ ] SN3 `PcSerialCard` + SprinterESP, ESP reset pins, ESP8266 AT 2.2.1 / 2.2.2 presets, TTD ids 40-43; the Sprinter
-  ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi), `UNETESP.DLL`) end to end (M)
-- [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - after ISA I4
+- [x] SN3 (2026-10-03, branch `sprinter-esp-sn3`, as built in [tdd.md](tdd.md) §18): `PcSerialCard` (preset
+  `SPRINTERESP`, read from the rev 1.0.5 schematic: A13-A3 decode without AEN, INTR to IRQ3 ungated), OUT1 = ESP RST,
+  OUT2 = GPIO0 (`Uart16550::onAuxLines`, `EspModule::SetResetPin` / `SetFlashPin`), ESP8266 ESP-AT 2.2.1 / 2.2.2
+  presets (`EspChip=ESP8266-AT221|ESP8266-AT222`) with the commands the kit sends, `[ISA] SlotNPeer`, runtime
+  `isa1_peer` / `isa2_peer`, guests 7 / 8, TTD blobs **46 / 47** (`SlotSerial1` / `2`; 40-43 had gone to other
+  devices); the Sprinter ESP Network Kit 0.2.1 end to end (`NETUP` 2.2.2 and 2.2.1 profiles, DHCP, `PING` with DNS,
+  `WGET` byte-exact, `UNETESP.DLL` through `UNETTEST`, TTD replay without the host); recipe
+  [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
+- [ ] SN3 follow-ups: run the kit's `FTP` (passive, two links), `NTP`, `TELNET`, `TFTP`, `WTERM` and the Gopher browser
+  through `UNETESP.DLL`; ESPT / wterm from the MAME-pack disk; both `NET_ESP_FLOW` modes in a test (the kit picks 3 on
+  the emulated ESP); ~~the IRQ3 line to the PIO (I4)~~ done with ISA I4 2026-10-03 (BC-Term receives the ESP through IRQ3 -> PB0); the ESP32 preset's `+PING` / `+CIPRECVDATA` forms are NonOS-style
+  (ESP32 AT 2.x prints the 2.x forms); the ROM's 74 880-baud boot log and flashing in download mode are not modeled
+- [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - ISA I4 is built (2026-10-03): the
+  `MODEM` / `DUAL16552` presets only need `IrqDriven` = MCR.OUT2 (the PC tri-state buffer) and their jumpered IRQ;
+  BC-Term's interrupt path already runs against the SprinterESP (ISA tdd §14 I4)
 - [ ] SN5 3Com 3C509B (M)
 - [ ] SN6 optional bridge to the host LAN (M), only on request (Q2)
 - [ ] When the hardware facts are final: move them to `docs/hardware/` with the Sprinter S7 docs move

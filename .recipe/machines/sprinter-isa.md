@@ -28,9 +28,12 @@ population refuses to load on another).
 - Machine config `configs/sprinter/unreal.ini`, section `[ISA]`: `Slot1=` / `Slot2=` with `NONE | ZXBUS | RAM |
   NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552`; a network card adds `Slot2Chip=RTL8019AS`, `Slot2Base=0x300`
   (write `0x300` or `300h`: a `#` starts an INI comment), `Slot2Irq=3`, `Slot2Mac=auto`.
+  `SPRINTERESP` (the Wi-Fi card, built: `#3E8` and IRQ 3 fixed by the board) takes `SlotNPeer=AT` (its 16550's line)
+  and `SlotNMac=`; it decodes A13-A3 without AEN, so `z80_access.io` reads "any #9FBD AEN" for it
+  ([sprinter-network.md](sprinter-network.md#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit)).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
-- A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
+- Built kinds: `NE2000`, `SPRINTERESP`. A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
 ## WebAPI (verified)
 
@@ -44,7 +47,7 @@ curl -s $B/$ID/state/isa | jq '{summary, latch, window, slots: [.slots[] | {slot
 # summary: "slot 1: empty; slot 2: ne2000 I/O #300-#31F IRQ 3" (the default NE2000, recipe sprinter-network.md)
 # What a card uses and how the Z80 reaches it; conflicts (none possible between the slots: each has its own select)
 curl -s $B/$ID/state/isa | jq '.slots[1] | {resources, z80_access}, .conflicts'
-# resources: io "#300-#31F", memory "none", irq 3, irq_route "Z84C15 PIO port B bit 1 (not wired yet: ISA phase I4)", dma none
+# resources: io "#300-#31F", memory "none", irq 3, irq_route "J7 IRQ2-IRQ7 pins tied (net IRQ2, 3.9 kOhm pull-up) -> Z84C15 PIO port B bit 1 (PB1, ...)", dma "none (...); DRQ -> PB2, DACK <- PB3"
 # z80_access.io: "#1FFD bit 4 set, window 3 page #D6, #9FBD AEN = 0: CPU #C300-#C31F (A9-A0 decoded: ...)"
 # Who touched which card register (512 entries): frame, t, pc, slot, access, isa / cpu address, register name, value
 curl -s "$B/$ID/state/isa/journal?last=4" | jq -c '.entries[]'
@@ -72,7 +75,8 @@ isa io 2 #30A             # one I/O read cycle in slot 2 at ISA #30A (isa io 2 #
 isa mem 1 0xDC000         # one memory cycle; isa peek 2 #30A [mem] shows what the card answers, no side effect
 isa latch 0x37            # #9FBD: A19-A14 = #37 -> window 3 addresses ISA #DC000-#DFFFF
 isa reset                 # one RESET DRV pulse to both slots
-isa journal 8             # the last 8 accesses (frame, T, PC, register name, value); isa journal clear | on | off
+isa journal 8             # the last 8 accesses (frame, T, PC, register name, value) + irq_events; isa journal clear | on | off
+isa irq                   # the interrupt lines only: irq_summary, pio_port_b, each slot's irq_line
 ```
 
 ## Lua (verified)
@@ -85,6 +89,61 @@ print(isa_reset())                    -- true; isa_mem_read / isa_mem_write, isa
 ```
 
 Python has the same names on the emulator object (`emu.isa_state()`, `emu.isa_io_read(2, "#30A")`, ...).
+
+## Interrupt lines (verified 2026-10-03)
+
+Each slot's IRQ pins are one net with a 3.9 kOhm pull-up, wired to the Z84C15's PIO port B: **PB0 = slot 1, PB1 =
+slot 2** (PB4 / PB2 DRQ, PB5 / PB3 DACK; schematic `SPRINT_3`). ISA IRQs are active high: a card that drives its pin
+holds it low until it requests, a pin nobody drives reads high. A program gets the interrupt by putting port B into bit
+mode with the bit monitored and the interrupt enabled (BC-Term: control `#00` vector, `#CF`, `#01`, `#B7`, `#FE`,
+`#83`, then IM 2); the CPU takes IM 2 through the Z84C15 daisy chain, ahead of the PLD's frame INT. The NE2000 drives
+while CONFIG1.IRQEN is set (ISR & IMR), the SprinterESP's 16550 drives INTR straight to IRQ3 (OUT2 does not gate it).
+
+```bash
+ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' \
+       -d '{"model":"SPRINTER","sprinter":{"fast_start":true,"isa_slot1":"sprinteresp"}}' | jq -r .id)
+# The lines at a glance (ESP in slot 1, NE2000 in slot 2, BIOS 3.07 at its prompt: port B in bit mode, nothing monitored)
+curl -s $B/$ID/state/isa | jq -r .irq_summary
+# slot 1 IRQ low (driven by sprinteresp) -> PB0: PB0 is masked (mask #FF): readable at #1E only; 0 requests, 0 acknowledged; slot 2 ...
+curl -s $B/$ID/state/isa | jq '.slots[0].irq_line, .pio_port_b'
+# irq_line: card_irq 3, pio_bit "PB0", driven "by the card (sprinteresp)", line "low", card_request, cause "IIR #01 (none pending), IER #00; ...",
+#           pio {input, monitored, active_level, logic, interrupt_enabled, vector, condition, pending, under_service}, reaches_cpu
+# pio_port_b: mode "bit control (mode 3)", lines "#FC", inputs_latched, read, output "#C0", direction "#3F", mask "#FF", ...
+
+# Raise the 16550's receive interrupt by hand: 8N1 at divisor 8, FIFO trigger 1, IER = 1, loopback, one byte to THR
+w() { curl -s -X POST $B/$ID/control/isa -H 'Content-Type: application/json' \
+       -d "{\"action\":\"io_write\",\"slot\":1,\"address\":\"$1\",\"value\":\"$2\"}" >/dev/null; }
+w '#3EB' '#80'; w '#3E8' '#08'; w '#3E9' '#00'; w '#3EB' '#03'; w '#3EA' '#07'; w '#3E9' '#01'; w '#3EC' '#10'; w '#3E8' '#41'
+curl -s $B/$ID/state/isa | jq -c '.slots[0].irq_line | {line, cause}'
+# {"line":"high","cause":"IIR #C4 (received data at the FIFO trigger level), IER #01; INTR wired to IRQ3, OUT2 does not gate it"}
+curl -s "$B/$ID/state/isa/journal?last=8" | jq -c '.irq_events[]'
+# ... {"event":"irq","frame":164,"pc":"#89FF","slot":1,"t":1,"value":"#FD","what":"IRQ line high -> PB0 (IIR #C4 ...)"}
+# (the line rises at the frame's catch-up: nothing waits for it, the PIO does not monitor PB0)
+```
+
+A program that waits for it - BC-Term 1.11 (`MODEM/BCTERM.EXE` on the MAME pack's system disk) with the SprinterESP:
+its rate table is for a 1.8432 MHz UART, so its default "57600" (divisor 2) is 460 800 baud on the card's 14.7456 MHz -
+give the ESP that rate (`network set isa1_peer=at,460800`, an ESP whose UART_DEF holds 460800). Start a TTD recording
+first, then the program:
+
+```bash
+curl -s -X POST $B/$ID/ttd/start
+curl -s -X POST $B/$ID/keyboard/type -H 'Content-Type: application/json' -d '{"text":"c:\\modem\\bcterm.exe"}'
+curl -s -X POST $B/$ID/keyboard/tap -H 'Content-Type: application/json' -d '{"key":"enter","frames":3}'
+curl -s $B/$ID/state/isa | jq -r .irq_summary
+# slot 1 IRQ low (driven by sprinteresp) -> PB0: interrupts the CPU; 6 requests, 6 acknowledged; slot 2 ... PB1 is programmed as an output
+curl -s "$B/$ID/state/isa/journal?last=4" | jq -r '.irq_events[].what'
+# PIO port B requests an interrupt (vector #00; slot 1)
+# INT acknowledged: PIO port B, IM 2 vector #00 -> table #B500 (slot 1)
+# IRQ line low -> PB0 (IIR #C1 (none pending), IER #01; ...)
+# RETI: the PIO port B interrupt service ended
+```
+
+BC-Term's screen then shows what its interrupt handler received: the ESP's `ready`, `WIFI CONNECTED`, `WIFI GOT IP`
+and the echo of its init string `ATZ` (CR-terminated: ESP-AT waits for CR LF and answers nothing more). Lua:
+`isa_state().irq_summary`, `isa_state().slots[1].irq_line.line`, `isa_journal(16).irq_events`; Python the same names on
+`emu`; MCP `inspect_state` aspect `isa` prints the `[isa] irq:` line. Qt: Network window, the slot rows end with "IRQ
+line low -> PB0, interrupts the CPU, N acknowledged".
 
 ## MCP
 
@@ -106,3 +165,5 @@ port is the ISA address's low 16 bits, the raw port the CPU address (`#C30A`). P
   (`reset_pulses` in the counters).
 - While RESET DRV is held every cycle reads `#FF`; AEN = 1 makes an I/O card ignore the cycle.
 - Tools (debugger, memory viewer, `memory read`) see what the card shows without side effects.
+- The cards' lines are pushed to PIO port B on every change; a card's own timed events (a character arriving at the
+  16550) are caught up mid-frame only while the PIO waits for an ISA interrupt - polling programs see no difference.

@@ -557,7 +557,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["drive"]["type"] = "string";
     schema["properties"]["drive"]["default"] = "A";
-    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A or B)";
+    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A-D or 0-3; autostart needs A)";
     schema["properties"]["play"]["type"] = "boolean";
     schema["properties"]["play"]["default"] = false;
     schema["properties"]["play"]["description"] = "Start tape playback immediately after loading a tape";
@@ -761,6 +761,14 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out";
+    schema["properties"]["page"]["type"] = "string";
+    schema["properties"]["page"]["description"] =
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - the breakpoint fires only while "
+        "that page is mapped at the address (e.g. code in RAM page 32 at #C000, not whatever else is paged in there)";
+    schema["properties"]["note"]["type"] = "string";
+    schema["properties"]["note"]["description"] = "Optional annotation for bp_add";
+    schema["properties"]["group"]["type"] = "string";
+    schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable";
     schema["required"].append("action");
@@ -848,6 +856,9 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
+                    for (const char* key : {"page", "note", "group"})
+                        if (args.isMember(key))
+                            body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
                     return;
                 }
@@ -925,6 +936,17 @@ void RegisterControlExecution(ToolRegistry& registry)
 
                     const Json::Value* bodyPtr = body.isNull() ? nullptr : &body;
                     caller.Call(method, path, bodyPtr, [summary, &caller, id, done](int status, Json::Value response) mutable {
+                        // A breakpoint that ended a step says so (the structured result carries `stop`)
+                        if (response.isObject() && response.isMember("stop") &&
+                            response["stop"].get("reason", "").asString() == "breakpoint")
+                        {
+                            const Json::Value& stop = response["stop"];
+                            char where[96];
+                            std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u (%s) at $%04X after %u instruction(s). ",
+                                          stop.get("breakpoint_id", 0).asUInt(), stop.get("access", "").asString().c_str(),
+                                          stop.get("address", 0).asUInt(), response.get("executed", 0).asUInt());
+                            summary = where;
+                        }
                         if (status < 200 || status >= 300)
                         {
                             std::string hint;
@@ -1152,10 +1174,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
-        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; unavailable on other machines - run an "
+        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; per slot 'irq_line': the IRQ line's level, "
+        "who drives it, its route to the Z84C15 PIO port B (PB0 / PB1), the PIO's bit-mode setup, pending / under service, "
+        "whether it reaches the CPU, and edge / request / acknowledge counters ('irq_summary' in one line); "
+        "unavailable on other machines - run an "
         "ISA cycle with invoke_api POST /api/v1/emulator/{id}/control/isa {action: io_read|io_write|io_peek|mem_read|"
         "mem_write|mem_peek|reset|latch, slot, address, value}; the access journal - who touched which card register, "
-        "frame / T / PC - with invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
+        "frame / T / PC, with the interrupt events (event: irq - line edges, PIO requests, acknowledges, RETI; also in "
+        "irq_events, a ring that polling does not flush) - with "
+        "invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
@@ -1895,9 +1922,9 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 out << "\n[breakpoints] " << value["count"].asUInt() << " active";
                             }
-                            else if (aspect == "screen_digest" && value.isMember("digest"))
+                            else if (aspect == "screen_digest" && value.isMember("combined"))
                             {
-                                out << "\n[screen_digest] " << value["digest"].asString();
+                                out << "\n[screen_digest] " << value["combined"].asString();
                             }
                             else if (aspect == "contention")
                             {
@@ -1977,8 +2004,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << zifi["dropped"].asUInt64();
                                     for (const Json::Value& slot : value["slots"])
                                         out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
-                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() + ", MAC " + slot["mac"].asString()
-                                                                      : std::string());
+                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() +
+                                                                            (slot.isMember("mac") ? ", MAC " + slot["mac"].asString() : std::string())
+                                                                      : std::string())
+                                            << (slot.isMember("esp")
+                                                    ? ", IRQ " + std::to_string(slot["irq"].asInt()) + ", UART " + std::to_string(slot["uart"]["baud"].asUInt64()) +
+                                                          " baud MCR " + slot["uart"]["mcr"].asString() + "; ESP " + slot["esp"]["firmware"].asString() + " " +
+                                                          slot["esp"]["state"].asString() + ", Wi-Fi " + slot["esp"]["wifi"].asString() + " " +
+                                                          slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
+                                                          " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
+                                                    : std::string());
                                     if (value.isMember("ethernet_gateway"))
                                     {
                                         const Json::Value& gw = value["ethernet_gateway"];
@@ -2022,6 +2057,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         if (slot["z80_access"].isMember("io"))
                                             out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
                                     }
+                                    if (value.isMember("irq_summary"))
+                                        out << "\n[isa] irq: " << value["irq_summary"].asString();
                                     for (const Json::Value& conflict : value["conflicts"])
                                         out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
                                     out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";

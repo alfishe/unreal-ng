@@ -89,6 +89,13 @@ TurboSound device that the machine sets at run time:
 
 ## 4. Open
 
+- Fixed after landing (2026-10-03): the VG93 and the tape now count time in base T on both boards
+  (`SetBaseClockTimeBase`, set in the `PortDecoder_Profi` constructor). Before, their time was `t_states` plus the
+  CPU T inside the frame, so when the CPU ran faster than 3.5 MHz (v5 hi-res at 10/7, turbo x2) it stepped back by
+  the difference at every frame boundary, and forward when slower (v3 hi-res at 6/7). The SP-DOS boot loader, which
+  reads in hi-res polling `#BF`, got Lost Data on every sector on a v5 (`ProfiBoot_Test.SpDosBootsToItsShell`
+  catches it). The disk and the tape now run in real time whatever the CPU clock, as on the boards.
+
 - The v3 DS80 floating bus: which screen page each of the two latches holds (O).
 - The v5 DS80 wait rule is a model of the 5.06 netlist; BIOS 2.0's speed test reproduces a real 5.06's figures exactly
   (1.50 / 2.45 with the waits; 1.65 / 3.35 without them), see test-programs.md.

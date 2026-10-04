@@ -92,6 +92,8 @@ public:
     /// refused with the reason (shown in the report); the machine always starts
     void Configure(const sprinterisa::IsaConfig& config);
     const sprinterisa::SlotConfig& Configured(int slot) const { return _slots[slot & 1].config; }
+    /// A UART card's line changed at runtime (the card is fitted again by NetworkManager)
+    void SetConfiguredPeer(int slot, const std::string& peer);
 
     /// Put a card into a slot (the previous one leaves). `card` = nullptr empties it
     void Fit(int slot, std::unique_ptr<sprinterisa::IIsaCard> card);
@@ -103,6 +105,63 @@ public:
     /// The frame boundary: the cards' FrameEnd
     void FrameEnd();
 
+    // --- Interrupt and DMA lines (phase I4, tdd §4.5) -------------------------------------------
+    //
+    // The board (SP2000 schematic, SPRINT_3): every IRQ pin of a slot (B4 IRQ2/9, B21-B25 IRQ7-IRQ3) is one net,
+    // IRQ1 for J6 and IRQ2 for J7, with a 3.9 kOhm pull-up (R167 / R168), wired straight to the Z84C15's PIO port
+    // B: PB0 = slot 1 IRQ, PB1 = slot 2 IRQ, PB2 = slot 2 DRQ, PB3 = slot 2 DACK, PB4 = slot 1 DRQ, PB5 = slot 1
+    // DACK (DRQ / DACK pulled up too: R165, R166, R169, R170), PB6 / PB7 the printer. ISA IRQs are active high: a
+    // card that drives its pin holds it low until it requests; a pin nobody drives reads high.
+    //
+    // Worked example (BC-Term, a modem in slot 1): the program writes PIO B control #00 (vector 0), #CF (mode 3),
+    // #01 (PB0 input), #B7 (interrupt enabled, OR, active high, a mask follows), #FE (PB0 monitored), #83; the UART
+    // drives IRQ low; a received character raises INTR, PB0 goes high, the PIO requests and the CPU takes IM 2
+    // vector #00 through the Z84C15 daisy chain.
+
+    static constexpr uint8_t kPioIrqBit[kSlots] = {0x01, 0x02};
+    static constexpr uint8_t kPioDrqBit[kSlots] = {0x10, 0x04};
+    static constexpr uint8_t kPioDackBit[kSlots] = {0x20, 0x08};
+    /// The PIO port B input byte the slots give: IRQ and DRQ per slot (a card's level, the pull-up where nobody
+    /// drives), every other bit high (the pull-ups; the printer lines are not modeled)
+    uint8_t PioLines() const;
+    /// Slot `slot`'s IRQ line level (true = high) and whether a card drives it
+    bool IrqLine(int slot) const;
+    bool IrqDriven(int slot) const;
+    /// The earliest machine time any fitted card's line may change by itself (UINT64_MAX: none)
+    uint64_t NextLineEventAt() const;
+    /// Bring every fitted card to now (the deadline above passed while the CPU waits for an interrupt)
+    void CatchUpCards();
+    /// Called when the lines (or their next event) may have changed: after every cycle, a RESET DRV edge, a refit,
+    /// and whenever a card says so outside a cycle. The owner (the Sprinter decoder) pushes PioLines into the PIO
+    void SetLinesHandler(std::function<void()> handler) { _linesHandler = std::move(handler); }
+    void LinesMayHaveChanged()
+    {
+        if (_linesHandler)
+            _linesHandler();
+    }
+
+    /// What the owner tells the report about the PIO port B and the CPU (the bus does not know the chip)
+    struct PioView
+    {
+        bool valid = false;
+        uint8_t mode = 1;           ///< 0 output, 1 input, 2 bidirectional, 3 bit control
+        uint8_t direction = 0xFF;   ///< mode 3: 1 = input
+        uint8_t mask = 0xFF;        ///< mode 3: 1 = not monitored
+        uint8_t intControl = 0;     ///< bit 7 enable, 6 AND, 5 active high
+        uint8_t vector = 0;
+        uint8_t inputs = 0xFF;      ///< the input byte the PIO holds
+        uint8_t output = 0;
+        uint8_t read = 0xFF;        ///< what IN A,(#1E) returns now
+        bool condition = false;
+        bool pending = false;       ///< IP
+        bool underService = false;  ///< IUS
+        uint8_t priority = 0;       ///< #F4
+        uint8_t im = 0;
+        bool iff1 = false;
+        uint8_t i = 0;
+    };
+    void SetPioView(std::function<PioView()> view) { _pioView = std::move(view); }
+
     // --- Observation (not machine state) ----------------------------------------
 
     struct Counters
@@ -112,7 +171,14 @@ public:
         uint64_t memReads = 0;
         uint64_t memWrites = 0;
         uint64_t resetPulses = 0;   ///< RESET DRV 0 -> 1 edges
+        // IRQ line (phase I4)
+        uint64_t irqRises = 0;      ///< the slot's IRQ line went high
+        uint64_t irqFalls = 0;
+        uint64_t pioRequests = 0;   ///< the PIO latched an interrupt request with this slot's line active
+        uint64_t acknowledged = 0;  ///< the CPU took the PIO port B interrupt while this slot's line was the cause
+        uint64_t serviceEnds = 0;   ///< RETI ended that service
     };
+    Counters& MutableCounters(int slot) { return _slots[slot & 1].counters; }
     const Counters& GetCounters(int slot) const { return _slots[slot & 1].counters; }
 
     /// Every real cycle (not peeks): the Sprinter port trace shows ISA cycles (dispositions isa_io / isa_mem)
@@ -137,11 +203,22 @@ public:
         uint32_t address = 0;
         uint8_t value = 0;
         std::string what;        ///< the card's register name, or the event ("reset asserted", "stall")
+        bool irq = false;        ///< an interrupt event (line edge, PIO request, acknowledge, RETI): `what` says which
     };
+    /// An interrupt event of a slot (-1: the PIO port B as a whole) into the journal, and into the interrupt ring below
+    void NoteIrq(int slot, uint8_t value, std::string what);
+    /// The interrupt events alone (line edges, PIO requests, acknowledges, RETI), newest last: a program that polls
+    /// a card (BC-Term reads MSR thousands of times a frame) pushes them out of the access journal in a few frames
+    static constexpr size_t kIrqJournalLength = 128;
+    const std::deque<JournalEntry>& IrqJournal() const { return _irqJournal; }
     static constexpr size_t kJournalLength = 512;
     /// Who touched which card register, newest last (every cycle while the machine runs or replays a recording)
     const std::deque<JournalEntry>& Journal() const { return _journal; }
-    void ClearJournal() { _journal.clear(); }
+    void ClearJournal()
+    {
+        _journal.clear();
+        _irqJournal.clear();
+    }
     void SetJournalEnabled(bool on) { _journalOn = on; }
     bool JournalEnabled() const { return _journalOn; }
     /// Where the time comes from (the decoder: frame counter, base T, the PC of the access)
@@ -177,11 +254,16 @@ private:
     void Note(int slot, bool io, bool write, uint32_t address, uint8_t value, std::string what);
     void AfterCycle(int slot);
 
+    void DescribeIrq(int slot, const PioView& pio, StateNode& out) const;
+
     std::array<Slot, kSlots> _slots;
+    std::function<void()> _linesHandler;
+    std::function<PioView()> _pioView;
     uint8_t _latch = 0;
     Tracer _tracer;
     Clock _clock;
     StallHandler _stall;
     bool _journalOn = true;
     std::deque<JournalEntry> _journal;
+    std::deque<JournalEntry> _irqJournal;
 };

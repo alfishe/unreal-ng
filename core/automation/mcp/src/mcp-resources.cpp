@@ -321,6 +321,7 @@ aspects:["paging"]` reports `profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clo
 The v5 turbo and hi-res wait rules are models of the 5.06 arbiter (M). The BIOS menu entries (TR-DOS, Sinclair, 128)
 are verified on both boards. CP/M boots on v5 from "Загрузка системы CP/M" (disks in testdata/machines/profi/cpm/v5); on v3
 Klug CP/M (cpm/v3) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2's TR-DOS 5.03 cannot load it.
+SP-DOS (cpm/sp-dos, MicroDOS by V. Tereschenko) boots on both boards from the same CP/M entries to its hi-res shell.
 )md";
 
 const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)
@@ -353,7 +354,10 @@ With a blank CMOS the BIOS opens its Setup Utility (text mode); ENTER changes an
 ## Video
 ZX, 16C (4 bpp), 256C (8 bpp) and TXT modes in 256x192 / 320x200 / 320x240 / 360x288; the framebuffer is 720x288
 for every mode. TSU: two tile layers + 85 sprites. `inspect_state aspects:["video"]` reports e.g. `TS16C 320x200`
-with the active pages; `inspect_state aspects:["tsconf"]` decodes memory, video, TSU, interrupts, DMA and the clock;
+with the active pages; `inspect_state aspects:["tsconf"]` decodes memory, video, TSU, interrupts, DMA and the clock,
+and carries what a debugger board shows raw: `regs` (the register file #00-#47 as last written), DMA
+`programmed_source` / `programmed_destination` next to the live counters, `dma.ctrl` decoded, `sys_config` /
+`cache_en`, `memory.fm_maps`, and `video.line.t0_gpage` / `t1_gpage` (the tile pages the current line is drawn with);
 `aspects:["tsconf_tsu"]` lists the TSU objects (tile layers, 85 sprites decoded) and the 256 CRAM cells.
 Video debug mapping (`invoke_api` /video/pixel, /video/address): layer 0 = the graphics mode, layer 1 = "tsu"
 (which sprite / tile drew a pixel, its SFILE / tilemap words, graphics byte and CRAM cell).
@@ -416,6 +420,15 @@ or from a hard disk / CHD on `ide0.master` (recipe media/sprinter-hdd.md); Flex 
 (`inspect_state aspects:["sprinter"]` accelerator: mode, length, operations). Sound: AY + Covox-Blaster (`sprinter`
 sound block, `sprinter_sound_ring`, `audio_covox`). TTD records and replays the machine (recipe analysis/sprinter-ttd.md).
 Spectrum mode: DSS `SPECTRUM.EXE PENT128.ZX` (A:\ZX), then TR-DOS from drive A.
+
+## PLD configurations
+A program can load another logic bitstream into the PLD (code #2E, LDConf). The machine picks a configuration module by
+the loaded bitstream's hash: Standard (the BIOS's) or Game (`GAME_00.ACX` / LDConf's `GC.BIN`, full hash #C0FA3055, MAME's
+head hash #3861CFA4: every square graphics 320 with a per-square grid offset, cell #EE = #41 so the BIOS returns to the
+program). `inspect_state aspects:["sprinter"]` pld: `module`, `selected_by` (full_hash / head_hash / unknown_bitstream /
+watchdog), `why`, `game` (the grid-offset register); the PLD journal's `pld_configured` event says the same. An unknown
+bitstream runs Standard. A reload with the ROM's stream or the RESET button goes back to Standard (recipe
+machines/sprinter.md).
 
 ## Known limitations
 No ISA cards; the 21 MHz wait rule is MAME's (per-frame wait totals not reported); in the GUI F4 is bound to a speed

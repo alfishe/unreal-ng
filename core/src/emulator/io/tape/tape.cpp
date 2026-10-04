@@ -792,9 +792,12 @@ void Tape::handleFrameEnd()
     {
         ParkAtNextBlock();
     }
-    else if (!inTrailingPause && _framesNotListened >= TAPE_BLOCK_HOLD_FRAMES)
+    else if (!inTrailingPause)
     {
-        pausePlayback();
+        // A pilot gets the longer wait (TAPE_PILOT_HOLD_FRAMES): a loader may sit out a fixed delay inside it
+        const bool inPilot = _currentTapeBlock != nullptr && _currentOffsetWithinPulse < _currentTapeBlock->pilotEdgeCount;
+        if (_framesNotListened >= (inPilot ? TAPE_PILOT_HOLD_FRAMES : TAPE_BLOCK_HOLD_FRAMES))
+            pausePlayback();
     }
 }
 

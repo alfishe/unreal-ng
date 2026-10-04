@@ -81,7 +81,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/disk/A/insert" \
 # decoded sector vs raw stream: the raw view keeps gaps, marks and interleave
 curl -s "$BASE/emulator/$EMU_ID/disk/A/sector/40/0/1/raw" | jq '{raw_size, has_data}'
 curl -s "$BASE/emulator/$EMU_ID/disk/A/track/40/0/raw" \
-  | jq '{track_size, clock: (.clock_bitmap_base64 | length)}'
+  | jq '{raw_size, encoding, clock: (.clock_bitmap_base64 | length)}'
 ```
 
 `clock_bitmap_base64` exposes the missing-clock marks — dense/unusual clock
@@ -130,7 +130,7 @@ With the check-loop PC from the trace:
 # (TTD-record the failing boot first — analysis/ttd-recording.md)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" \
      -H 'Content-Type: application/json' \
-     -d '{"addr": 0x3F, "access": "io"}' | jq .     # last FDC track-register touch
+     -d '{"addr": 63, "access": "io"}' | jq .     # last FDC track-register touch
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
      -H 'Content-Type: application/json' -d '{"pcs":[<check-loop-pc>]}' | jq .
 ```

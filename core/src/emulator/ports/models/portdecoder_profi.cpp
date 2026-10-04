@@ -10,6 +10,7 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/covox.h"
@@ -45,6 +46,16 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
     FitKeyboard();
+
+    // The VG93 and the tape keep their own clocks while the CPU clock changes (turbo x2, hi-res 6/7 on v3 and
+    // ZQ3/14 on v5): without the base-clock time base their time is t_states + CPU T in the frame, which steps
+    // back at every frame boundary when the CPU runs faster than 3.5 MHz (by 29952 T in v5 hi-res) and forward
+    // when slower (v3 hi-res). The VG93 then reports Lost Data on reads polled through #BF: SP-DOS's boot loader
+    // (UNICOPY, KLUG's BBS) retried every sector on a v5 forever
+    if (_context->pBetaDisk)
+        _context->pBetaDisk->SetBaseClockTimeBase(true);
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(true);
 }
 
 void PortDecoder_Profi::FitKeyboard()
@@ -92,6 +103,12 @@ PortDecoder_Profi::~PortDecoder_Profi()
         core->GetZ80()->SetMachineStepHook(nullptr);
     if (_waitsInstalled && core)
         core->RemoveBusOverlay(_waitOverlay.get());
+
+    // The next model's decoder decides the time base again
+    if (_context->pBetaDisk)
+        _context->pBetaDisk->SetBaseClockTimeBase(false);
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(false);
 
     // Battery-backed state outlives the machine ([PROFI] NvramFile); the v3 board has no clock (_nvramLoaded stays false)
     const char* nvramPath = _context->config.profi_nvram_path;

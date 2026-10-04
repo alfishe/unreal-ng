@@ -5,13 +5,20 @@
     paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["description"] =
+        "The main Z80: main (af, bc, de, hl), alternate (af_, bc_, de_, hl_), index (ix, iy), special (pc, sp, i, "
+        "r with bit 7 as last written, memptr = the internal WZ latch, q = the flag capture register, t = CPU "
+        "T-states since the frame's start - above the base T at turbo), interrupt (iff1, iff2, im, halted, boundary = "
+        "what the next INT / NMI sampling sees: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack) and the "
+        "decoded flags. Field names follow the debugger protocol's Registers.";
     paths["/api/v1/emulator/{id}/registers"]["get"]["responses"]["200"]["description"] = "CPU register values";
 
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["summary"] = "Set CPU register value";
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["description"] =
         "Write a value into the named CPU register (af, bc, de, hl, af', bc', de', hl', ix, "
-        "iy, sp, pc, i, r and 8-bit halves). The value is masked to the register width, "
-        "written, read back and echoed in the response.";
+        "iy, sp, pc, i, r, ir, memptr (alias wz), the 8-bit halves, and the interrupt state im (0-2), iff1 and "
+        "iff2 (0-1)). The value is masked to the register width (im / iff1 / iff2: refused above their range, "
+        "400), written, read back and echoed in the response.";
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][0]["in"] = "path";
@@ -32,7 +39,7 @@
          ["value"]["description"] = "Register value (0-65535)";
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["responses"]["200"]["description"] = "Register updated";
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["responses"]["400"]["description"] =
-        "Unknown register or missing 'value' field";
+        "Unknown register, missing 'value' field, or a value im / iff1 / iff2 cannot hold";
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["responses"]["404"]["description"] = "Emulator instance not found";
 
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["summary"] = "Read memory";

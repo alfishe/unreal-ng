@@ -172,11 +172,16 @@
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["description"] =
         "The TS-Conf machine (model TSL): build (the emulated firmware: vdac, vdac_ver = STATUS VDAC_VER, blt2; "
         "[MISC] TS_VDAC), memory (MEM_CONFIG decoded, the four window pages, LCK128 mode, lock48, DOS, "
-        "virtual TR-DOS, cache, the FM window), video (V_CONFIG decoded: mode ZX / 16C / 256C / TXT, geometry, NOGFX / "
-        "NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and active sprite count; the raster "
-        "line the engine is on with its latched registers and DRAM use), interrupts (mask, pending sources, frame "
-        "position), DMA (busy, task, live byte addresses, block counters), the CPU clock and the SD card. 404 on other "
-        "machines.";
+        "virtual TR-DOS, cache, the FM window and fm_maps = FM_MAPS raw), video (V_CONFIG decoded: mode ZX / 16C / "
+        "256C / TXT, geometry, NOGFX / NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and "
+        "active sprite count; line = the raster line the engine is on with its latched registers, DRAM use and "
+        "t0_gpage / t1_gpage, the tile graphics pages it is drawn with - copies taken at the line start, so a "
+        "T0_G_PAGE / T1_G_PAGE write shows from the next line), interrupts (mask, pending sources, frame position), "
+        "DMA (busy, task, source / destination = the live byte addresses, programmed_source / programmed_destination "
+        "= the byte addresses as the CPU last wrote them, block counters, ctrl = DMA_CTRL as last written: raw, "
+        "device = DDEV {bit 7, bits 2:0}, opt, s_align, d_align, a_sz), cpu_clock, sys_config (raw) with cache_en "
+        "(bit 2), the SD card, and regs[72] = the register file #00-#47 as the CPU last wrote it (register = port "
+        "#xxAF's high byte; the write-only registers have no other way out). 404 on other machines.";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["required"] = true;
@@ -210,7 +215,10 @@
         paths[kState]["get"]["tags"].append("Machine State");
         paths[kState]["get"]["description"] =
             "The Peters Plus Sprinter Sp2000 (model SPRINTER): pld (configuration state unconfigured / loading / "
-            "configured, the active configuration module, bitstream writes and hashes - full FNV-1a and MAME's head "
+            "configured, the active configuration module - Standard or Game - and why: selected_by full_hash / head_hash "
+            "/ unknown_bitstream / watchdog with a sentence in why, cell_EE (RET_PORT: the Game bitstream sets #41, the BIOS "
+            "returns to the program that loaded it), game (the Game module's grid-offset register: active, grid_offset_x / "
+            "_y, frame_start_offset, beam_t), bitstream writes and hashes - full FNV-1a and MAME's head "
             "hash, fast_start, whether the BIOS opened the port decoder), decoder (CNF map 0-3, clean rules, DOS, PN5, "
             "#7FFD / #1FFD after the clean rules), windows[] (per 16K window: kind ROM / loader ROM / fast RAM / vROM "
             "/ RAM / graphics / ISA / port table, the physical page, writable, the cell that names it), registers "
@@ -387,8 +395,9 @@
             "has), loaded_crc32, identified (pages 8 / 0 / 12 by signature), images[] (file, alias, version, crc32, "
             "present, loaded, selected, known_issues), known_issues (what a user should know about the loaded image, e.g. "
             "3.07 BETA 1's floppy driver changes IY so DSS 1.71.57 cannot start programs from a floppy; empty when "
-            "none), reload_pending (a selection waits for the next reset), options (fast_start, accel_int_suspend) and "
-            "how to select. 404 on other machines.";
+            "none), reload_pending (a selection waits for the next reset), options (fast_start, accel_int_suspend), pld (the "
+            "PLD configuration the BIOS runs on: module, selected_by, why, the hashes, cell_EE) and how to select. 404 on "
+            "other machines.";
         paths[kBios]["get"]["parameters"][0]["name"] = "id";
         paths[kBios]["get"]["parameters"][0]["in"] = "path";
         paths[kBios]["get"]["parameters"][0]["required"] = true;
@@ -422,7 +431,8 @@
         paths[kZx]["get"]["description"] =
             "Which Spectrum mode the Sprinter runs and how (core DeviceState::SprinterZxMode; also the zx_mode section of "
             "/state/sprinter; CLI `state sprinter zx`, Lua / Python sprinter_zx_mode(), MCP inspect_state aspect "
-            "sprinter_zx_mode). Fields: active and active_rule (vROM in window 0, ALL_MODE bit 0 = 0), picture, summary (the "
+            "sprinter_zx_mode). Fields: active and active_rule (vROM in window 0, ALL_MODE bit 0 = 0), pld (the PLD "
+            "configuration module, selected_by, why, the hashes, cell_EE: the ZX mode needs Standard), picture, summary (the "
             "status bar line, e.g. \"ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)\"), config (options[]: /turbo, /sprinter, "
             "/7FFD, /1FFD, /mem512, /lines312, /origin, /int-sc each with on and the hardware evidence - CNF bits, map, "
             "ALL_MODE, the frame latch, the INT position; option_line; return /ret-fn | /ret-zx; best_match: file, name, "
@@ -788,7 +798,9 @@
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["summary"] = "Write memory";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["description"] =
-        "Write one or more bytes to the Z80 address space.";
+        "Write one or more bytes to the Z80 address space (a debugger poke). It is NOT subject to the ROM "
+        "write protection flag: bytes written to an address that is mapped to ROM change the ROM. The flag "
+        "(see /memory/rom/protect) only guards writes to ROM pages through /memory/page/rom/{page}.";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["required"] = true;
@@ -861,7 +873,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled.";
+        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
+        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
+        "instances.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;

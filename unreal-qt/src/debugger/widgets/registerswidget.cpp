@@ -199,6 +199,8 @@ void RegistersWidget::reset()
         ui->valIR->setText("");
         ui->valT->setText("");
         ui->valINT->setText("");
+        ui->valWZ->setText("");
+        ui->valHALT->setText("");
         ui->valFlags->setText("");
 
         update();
@@ -246,9 +248,17 @@ void RegistersWidget::refresh()
         ui->valIX->setText(QStringLiteral("%1").arg(m_z80Registers->ix, 4, 16, QLatin1Char('0')).toUpper());
         ui->valIY->setText(QStringLiteral("%1").arg(m_z80Registers->iy, 4, 16, QLatin1Char('0')).toUpper());
 
-        ui->valIR->setText(QStringLiteral("%1").arg(m_z80Registers->ir_, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valIR->setText(QStringLiteral("%1").arg((m_z80Registers->i << 8) | Z80::RegisterR(m_z80Registers), 4, 16, QLatin1Char('0')).toUpper());
         ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valINT->setText(QStringLiteral("%1").arg(m_z80Registers->im, 2, 16, QLatin1Char('0')).toUpper());
+        // Interrupt mode and the enable flip-flops: "IM1 EI" (IFF1 / IFF2 spelled out when they differ, as after NMI)
+        QString interrupt = QStringLiteral("IM%1 ").arg(m_z80Registers->im);
+        if (m_z80Registers->iff1 == m_z80Registers->iff2)
+            interrupt += m_z80Registers->iff1 ? QStringLiteral("EI") : QStringLiteral("DI");
+        else
+            interrupt += QStringLiteral("IFF%1%2").arg(m_z80Registers->iff1 ? 1 : 0).arg(m_z80Registers->iff2 ? 1 : 0);
+        ui->valINT->setText(interrupt);
+        ui->valWZ->setText(QStringLiteral("%1").arg(m_z80Registers->memptr, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valHALT->setText(m_z80Registers->halted ? QStringLiteral("yes") : QStringLiteral("no"));
         ui->valFlags->setText(flagString);
 
         update();

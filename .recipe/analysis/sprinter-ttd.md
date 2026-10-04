@@ -39,9 +39,9 @@ real cost, ~10 ms of host time per frame with the full renderer.
 
 ```text
 emulator_manage {"action":"create","model":"SPRINTER"}
-control_execution {"action":"run_frames","count":40}         # inside the PLD load (full start)
+control_execution {"action":"run_frames","frames":40}         # inside the PLD load (full start)
 time_travel {"action":"start"}
-control_execution {"action":"run_frames","count":120}
+control_execution {"action":"run_frames","frames":120}
 time_travel {"action":"stop"}
 time_travel {"action":"seek","frame":80}
 #   → structuredContent: {"arrived_at":{"frame":80,"tinframe":0},"halt_reason":"target","reached":true,"state":"detached"}

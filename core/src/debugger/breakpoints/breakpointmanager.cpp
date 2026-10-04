@@ -1,11 +1,18 @@
 #include "breakpointmanager.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
 
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "stdafx.h"
 
 /// region <Constructors / destructors>
@@ -189,6 +196,12 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     info.active = bp->active;
     info.note = bp->note;
     info.group = bp->group;
+    info.page = PageSpecName(*bp);
+    if (bp->matchType == BRK_MATCH_BANK_ADDR)
+    {
+        info.pageKind = PageKindName(bp->pageType);
+        info.pageNumber = bp->page;
+    }
 
     // Breakpoint type
     switch (bp->type)
@@ -502,6 +515,86 @@ uint16_t BreakpointManager::AddCombinedMemoryBreakpointInPage(uint16_t z80addres
     return result;
 }
 
+bool BreakpointManager::ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType,
+                                      std::string& error)
+{
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string kind;
+    for (const char* name : {"cache", "ram", "rom"})
+        if (lower.rfind(name, 0) == 0)
+            kind = name;
+    if (kind.empty())
+    {
+        error = "page must be ramN, romN or cacheN (e.g. ram5), got '" + text + "'";
+        return false;
+    }
+    std::string number = lower.substr(kind.size());
+    int base = 10;
+    if (number.rfind("0x", 0) == 0)
+        number = number.substr(2), base = 16;
+    else if (!number.empty() && (number[0] == '#' || number[0] == '$'))
+        number = number.substr(1), base = 16;
+    char* end = nullptr;
+    const unsigned long value = number.empty() ? 256 : std::strtoul(number.c_str(), &end, base);
+    if (number.empty() || *end != '\0' || value > 0xFF)
+    {
+        error = "page number must be 0..255, got '" + text + "'";
+        return false;
+    }
+    page = static_cast<uint8_t>(value);
+    pageType = kind == "ram" ? BANK_RAM : (kind == "rom" ? BANK_ROM : BANK_CACHE);
+    return true;
+}
+
+const char* BreakpointManager::PageKindName(MemoryBankModeEnum pageType)
+{
+    return pageType == BANK_ROM ? "rom" : (pageType == BANK_CACHE ? "cache" : "ram");
+}
+
+std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoint)
+{
+    if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
+        return {};
+    return std::string(PageKindName(breakpoint.pageType)) + std::to_string(breakpoint.page);
+}
+
+bool BreakpointManager::HasPage(uint8_t page, MemoryBankModeEnum pageType) const
+{
+    switch (pageType)
+    {
+        case BANK_RAM:
+        {
+            const uint32_t ramKb = _context ? _context->config.ramsize : 0;
+            const uint32_t pages = ramKb ? ramKb / 16 : MAX_RAM_PAGES;
+            return page < pages;
+        }
+        case BANK_ROM:
+            return page < MAX_ROM_PAGES;
+        case BANK_CACHE:
+            return page < MAX_CACHE_PAGES;
+        default:
+            return false;
+    }
+}
+
+uint16_t BreakpointManager::AddMemoryBreakpointInPageSpec(uint16_t z80address, uint8_t memoryType,
+                                                         const std::string& pageSpec, std::string& error)
+{
+    if (pageSpec.empty())
+        return AddCombinedMemoryBreakpoint(z80address, memoryType);
+    uint8_t page = 0;
+    MemoryBankModeEnum pageType = BANK_RAM;
+    if (!ParsePageSpec(pageSpec, page, pageType, error))
+        return BRK_INVALID;
+    if (!HasPage(page, pageType))
+    {
+        error = "this machine has no page " + pageSpec;
+        return BRK_INVALID;
+    }
+    return AddCombinedMemoryBreakpointInPage(z80address, memoryType, page, pageType);
+}
+
 // Breakpoint listing
 
 // Retrieves a reference to the map containing all breakpoints
@@ -593,6 +686,10 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
 
         // Format status - exactly matching header width
         oss << " " << std::setw(8) << std::left << (bp->active ? "Active" : "Inactive");
+
+        // A breakpoint bound to a page fires only while that page is mapped at the address
+        if (bp->matchType == BRK_MATCH_BANK_ADDR)
+            oss << " in " << PageSpecName(*bp);
 
         // Format note if available
         if (!bp->note.empty())
@@ -854,7 +951,17 @@ bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::str
 
     BreakpointDescriptor* breakpoint = _breakpointMapByID[breakpointID];
     breakpoint->group = groupName;
+    NotifyBreakpointsChanged();
 
+    return true;
+}
+
+bool BreakpointManager::SetBreakpointNote(uint16_t breakpointID, const std::string& note)
+{
+    if (!key_exists(_breakpointMapByID, breakpointID))
+        return false;
+    _breakpointMapByID[breakpointID]->note = note;
+    NotifyBreakpointsChanged();
     return true;
 }
 
@@ -1597,6 +1704,52 @@ void BreakpointManager::RebuildFilters()
             _hotState.hasPortOut = 1;
         }
     }
+
+    // Every mutation of the set ends here: tell the surfaces
+    NotifyBreakpointsChanged();
+}
+
+std::string BreakpointManager::PublishedFields(const BreakpointDescriptor& bp)
+{
+    return std::to_string(bp.type) + "|" + std::to_string(bp.matchType) + "|" + std::to_string(bp.memoryType) + "|" +
+           std::to_string(bp.ioType) + "|" + std::to_string(bp.keyType) + "|" + std::to_string(bp.z80address) + "|" +
+           std::to_string(bp.page) + "|" + std::to_string(bp.pageType) + "|" + (bp.active ? "1" : "0") + "|" +
+           bp.owner + "|" + bp.group + "|" + bp.note;
+}
+
+void BreakpointManager::NotifyBreakpointsChanged()
+{
+    // A manager without an emulator (unit tests) has nobody to tell: the changes wait for the next report
+    if (!_context || !_context->pEmulator)
+        return;
+    std::vector<uint16_t> ids = TakeChangedIds();
+    if (ids.empty())
+        return;
+    auto* payload = new BreakpointsChangedPayload(_context->pEmulator->GetId());
+    payload->ids = std::move(ids);
+    MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED, payload, true);
+}
+
+std::vector<uint16_t> BreakpointManager::TakeChangedIds()
+{
+    std::map<uint16_t, std::string> current;
+    for (const auto& [id, bp] : _breakpointMapByID)
+        if (bp && !bp->hidden)
+            current.emplace(id, PublishedFields(*bp));
+
+    std::vector<uint16_t> ids;
+    for (const auto& [id, fields] : current)
+    {
+        auto was = _published.find(id);
+        if (was == _published.end() || was->second != fields)
+            ids.push_back(id);  // added or changed
+    }
+    for (const auto& [id, fields] : _published)
+        if (!current.count(id))
+            ids.push_back(id);  // removed
+    _published.swap(current);
+    std::sort(ids.begin(), ids.end());
+    return ids;
 }
 
 /// endregion </Helper methods>

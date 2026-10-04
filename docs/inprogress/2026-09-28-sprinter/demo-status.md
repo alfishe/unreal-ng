@@ -26,12 +26,12 @@ of the main checkout (`final/`, `keys/`, `ldconf/`, `scroller/`; not committed).
 | EXAMPLES (13: 256COLOR, 3D_STARS, FAN256, FISH, FLAMES, FLAMES1, PLASMA, PLASMA1, PSY, REAL_3D, SD, splines, STARWAY) | run | PSY: animated logo, Esc exits |
 | FBIRD: `FBIRD.EXE`, `FBIRD_.EXE`, `_FBIRD.EXE` | run | re-checked after the CTC fix: the bird and pipes move (IM 2) |
 | FRACTALS | runs | |
-| GAME_00: `GAME_00.EXE`, `TEST_005.EXE`, `TEST_010.EXE` | **needs the "Game" PLD configuration** | each loads its own bitstream `GAME_00.ACX` (head hash `#3861CFA4`) and reloads the PLD (code `#2E`, through a patched port-table entry). The machine restarts with the new logic, which owns the reset memory map and starts the game. unreal-ng has no module for that configuration ([mame-gap-analysis.md](mame-gap-analysis.md) V10, deferred after v1), falls back to Standard, and the BIOS cold-boots to Flex Navigator. MAME recognizes the hash and has `screen_update_game` |
+| GAME_00: `GAME_00.EXE`, `TEST_005.EXE`, `TEST_010.EXE` | **run** (2026-10-03, the Game module) | each loads its own copy of the "Game" bitstream (`GAME_00.ACX`, full hash `#C0FA3055`) and reloads the PLD (code `#2E`); the **Game** configuration module runs ([game-configuration.md](game-configuration.md)), its cell `#EE` = `#41` makes the BIOS return into the program: GAME_00 scrolls its color grid (like MAME's frame, 0.8 % of the pixels differ), TEST_005 and TEST_010 scroll a landscape over pixel-offset squares. Runner: verdict `pld-reload`, `pld_module` Game by `full_hash`, `after_reload` running; on BIOS 3.07 BETA 1 and 3.06 |
 | kosarew (18: ANIME, ANIME2, ARCANO, ARCANOI, ARCANOID, Dep, DIAMONDS/DEMO, Full, LISA, LOST/DEMO, LOST/DEMO2, Matrix, MEMTEST, MEMTESTO, MK3, NEWYEAR, Parks, Term) | run | DIAMONDS: a title screen that waits for a key (reacts to Space / Enter) |
 | kosarew/RCACHE | runs (tool) | prints its report on the DSS screen and returns on a key |
 | LDCONF/`LDCONF.EXE` | as designed | without arguments it prints its help and exits |
 | LDCONF/`300.BAT` ... `305.BAT` (`ldconf a c stream.30x`) | as designed | the stream loads through `#2E`; the logic runs as Standard (the streams' hashes are not the shipped Standard one) and the BIOS boots back to DSS, as LDConf's help says for a plain configuration file |
-| LDCONF/`START.BAT` (`ldconf c gc.bin e scroll.exe`), `SCROLL.EXE` | **needs the "Game" PLD configuration** | `GC.BIN` has the Game head hash `#3861CFA4` (same as GAME_00.ACX); started alone, `SCROLL.EXE` draws garbage text on Standard logic |
+| LDCONF/`START.BAT` (`ldconf c gc.bin e scroll.exe`), `SCROLL.EXE` | **runs** (2026-10-03, the Game module) | `GC.BIN` is the same Game bitstream: LDConf reloads the PLD, the Game module runs and `SCROLL.EXE` draws on it (see the recipe for what it shows); started alone on Standard logic `SCROLL.EXE` still draws garbage, as it should. MAME restarts the BIOS over and over here (its reload shortcut), so it is no reference for this one |
 | MK_DEMO: MK_DEMO, MK_OUTI | run | Covox-Blaster |
 | notheng `NOTHENG.EXE` | runs | re-checked after the CTC fix |
 | NU `NUPOGODI.EXE` | runs | |
@@ -50,8 +50,7 @@ the likely cure. TTD: `scroller/scroller-run.ttd`. Note for scripted runs: TR-DO
 ## Open
 
 1. BUYAN/20X20: compare with MAME (or real hardware), then decide whether the `DI` queue loop is our bug.
-2. The "Game" PLD configuration (V10): GAME_00 (3 programs) and LDConf's `START.BAT` need it. Needs an analysis of
-   `GAME_00.ACX` / `GC.BIN` (the mode-byte-3 per-square scroll renderer, the reset memory map). Deferred after v1 by
-   the owner; these four are the known programs that would use it.
+2. ~~The "Game" PLD configuration (V10)~~ **done 2026-10-03** (branch `sprinter-pld-game`,
+   [game-configuration.md](game-configuration.md)): GAME_00 (3 programs) and LDConf's `START.BAT` run on the Game module.
 3. Side observation: the Covox-Blaster `int_requests` counter in `/state/sprinter` survives a machine reset (it kept
    counting across programs in the runner). Harmless for the picture; check whether the report should reset it.

@@ -447,7 +447,7 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     for (const auto& [id, s] : _sockets)
     {
         if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo || s.guest == keep.zifi ||
-                        s.guest == keep.ethernet))
+                        s.guest == keep.ethernet || s.guest == keep.slotUart[0] || s.guest == keep.slotUart[1]))
             kept[id] = s;
     }
     if (_host)
@@ -701,6 +701,8 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
                      : s.guest == serial.atmIo   ? 4
                      : s.guest == serial.zifi    ? 5
                      : s.guest == serial.ethernet ? 6
+                     : s.guest == serial.slotUart[0] ? 7
+                     : s.guest == serial.slotUart[1] ? 8
                                                  : 1;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
@@ -795,6 +797,8 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
                   : o.hasGuest == 4 ? serial.atmIo
                   : o.hasGuest == 5 ? serial.zifi
                   : o.hasGuest == 6 ? serial.ethernet
+                  : o.hasGuest == 7 ? serial.slotUart[0]
+                  : o.hasGuest == 8 ? serial.slotUart[1]
                   : o.hasGuest      ? guest
                                     : nullptr;
         s.cookie = o.cookie;

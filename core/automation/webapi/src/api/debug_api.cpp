@@ -66,6 +66,46 @@ static std::shared_ptr<Emulator> getEmulatorOrError(
 
 // region Stepping Commands
 
+namespace
+{
+/// The end of a step as the protocol's PauseEvent describes it (docs/inprogress/2026-09-28-debugger-model/
+/// protocol.md §3.16): reason "step", or "breakpoint" with which one, where and on what access
+/// A breakpoint's page as the debugger protocol carries it: {kind: ram | rom | cache, page}; null when it
+/// matches the address in any page
+Json::Value BreakpointPageJson(const BreakpointDescriptor& bp)
+{
+    if (bp.matchType != BRK_MATCH_BANK_ADDR)
+        return Json::Value(Json::nullValue);
+    Json::Value page;
+    page["kind"] = BreakpointManager::PageKindName(bp.pageType);
+    page["page"] = bp.page;
+    return page;
+}
+
+/// The page a request names, as {kind, page} or as the text form "ram32"; the text form for messages
+std::string BreakpointPageText(const Json::Value& value)
+{
+    if (value.isObject())
+        return value.get("kind", "").asString() + (value.isMember("page") ? value["page"].asString() : std::string());
+    return value.asString();
+}
+
+Json::Value StepStopJson(const Emulator& emulator)
+{
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    Json::Value json;
+    json["cpu"] = "main";
+    json["reason"] = stop.hit ? "breakpoint" : "step";
+    if (stop.hit)
+    {
+        json["breakpoint_id"] = stop.breakpointId;
+        json["address"] = stop.address;
+        json["access"] = BreakpointHitKindName(stop.kind);
+    }
+    return json;
+}
+}  // namespace
+
 /// @brief POST /api/v1/emulator/{id}/step
 /// @brief Execute single CPU instruction
 void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -93,13 +133,19 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
     try
     {
         // Execute single instruction
-        emulator->RunSingleCPUCycle(false); // Don't skip breakpoints
+        // Don't skip breakpoints: an execution breakpoint stops the step before its instruction,
+        // a memory or port breakpoint after it (the reply's "stop" says which)
+        emulator->RunSingleCPUCycle(false);
+        const Emulator::BreakpointStop& stop = emulator->LastDirectStop();
+        const bool executed = !(stop.hit && stop.kind == BreakpointHitKind::Execute);
         
         Z80State* z80 = emulator->GetZ80State();
         
         Json::Value ret;
         ret["status"] = "success";
-        ret["message"] = "Executed 1 instruction";
+        ret["message"] = executed ? "Executed 1 instruction" : "Stopped at a breakpoint before the instruction";
+        ret["executed"] = executed ? 1 : 0;
+        ret["stop"] = StepStopJson(*emulator);
         if (z80)
         {
             ret["pc"] = z80->pc;
@@ -156,15 +202,17 @@ void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const Http
         if (count < 1) count = 1;
         if (count > 100000) count = 100000; // Safety limit
         
-        // Execute N instructions
-        emulator->RunNCPUCycles(count, false); // Don't skip breakpoints
+        // Execute N instructions; a breakpoint ends the run early (the reply's "stop" says which)
+        const unsigned executed = emulator->RunNCPUCycles(count, false);
         
         Z80State* z80 = emulator->GetZ80State();
         
         Json::Value ret;
         ret["status"] = "success";
-        ret["message"] = "Executed " + std::to_string(count) + " instructions";
+        ret["message"] = "Executed " + std::to_string(executed) + " instructions";
         ret["count"] = count;
+        ret["executed"] = executed;
+        ret["stop"] = StepStopJson(*emulator);
         if (z80)
         {
             ret["pc"] = z80->pc;
@@ -858,6 +906,8 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
             }
             
             bpObj["address"] = bp->z80address;
+            if (bp->matchType == BRK_MATCH_BANK_ADDR)
+                bpObj["page"] = BreakpointPageJson(*bp);
             
             // Type-specific access flags
             switch (bp->type)
@@ -960,22 +1010,53 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    // Optional "page": {"kind":"ram","page":32} (protocol) or "ram32" - the memory breakpoint fires only while
+    // that page is mapped at the address
+    const Json::Value& body = *json;
+    bool inPage = false;
+    uint8_t page = 0;
+    MemoryBankModeEnum pageType = BANK_RAM;
+    if (body.isMember("page") && !body["page"].isNull())
+    {
+        std::string pageError;
+        const bool memory = type == "execution" || type == "exec" || type == "bp" || type == "read" || type == "r" ||
+                            type == "write" || type == "w";
+        if (!memory)
+            pageError = "'page' applies to execution, read and write breakpoints";
+        else if (!BreakpointManager::ParsePageSpec(BreakpointPageText(body["page"]), page, pageType, pageError))
+            ;
+        else if (!bpm->HasPage(page, pageType))
+            pageError = "this machine has no page " + BreakpointPageText(body["page"]);
+        if (!pageError.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = pageError;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        inPage = true;
+    }
+
     uint16_t bpId = 0;
     bool success = false;
     
     if (type == "execution" || type == "exec" || type == "bp")
     {
-        bpId = bpm->AddExecutionBreakpoint(address);
+        bpId = inPage ? bpm->AddExecutionBreakpointInPage(address, page, pageType) : bpm->AddExecutionBreakpoint(address);
         success = true;
     }
     else if (type == "read" || type == "r")
     {
-        bpId = bpm->AddMemReadBreakpoint(address);
+        bpId = inPage ? bpm->AddMemReadBreakpointInPage(address, page, pageType) : bpm->AddMemReadBreakpoint(address);
         success = true;
     }
     else if (type == "write" || type == "w")
     {
-        bpId = bpm->AddMemWriteBreakpoint(address);
+        bpId = inPage ? bpm->AddMemWriteBreakpointInPage(address, page, pageType) : bpm->AddMemWriteBreakpoint(address);
         success = true;
     }
     else if (type == "port_in" || type == "in")
@@ -1001,11 +1082,34 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    if (bpId == BRK_INVALID || !bpm->GetAllBreakpoints().count(bpId))
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Breakpoint not added";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Optional annotation and group (a group the request names is created with the breakpoint)
+    if (body.isMember("note") && body["note"].isString())
+        bpm->SetBreakpointNote(bpId, body["note"].asString());
+    if (body.isMember("group") && body["group"].isString() && !body["group"].asString().empty())
+        bpm->SetBreakpointGroup(bpId, body["group"].asString());
+
     Json::Value ret;
     ret["status"] = "success";
     ret["id"] = bpId;
     ret["type"] = type;
     ret["address"] = address;
+    const BreakpointDescriptor* added = bpm->GetAllBreakpoints().at(bpId);
+    if (inPage)
+        ret["page"] = BreakpointPageJson(*added);
+    ret["note"] = added->note;
+    ret["group"] = added->group;
     ret["message"] = "Breakpoint added";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -1217,6 +1321,11 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
         ret["last_triggered_access"] = bpInfo.access;
         ret["last_triggered_active"] = bpInfo.active;
         ret["last_triggered_note"] = bpInfo.note;
+        if (!bpInfo.pageKind.empty())
+        {
+            ret["last_triggered_page"]["kind"] = bpInfo.pageKind;
+            ret["last_triggered_page"]["page"] = bpInfo.pageNumber;
+        }
         ret["last_triggered_info"] = bpm->FormatBreakpointInfo(bpInfo.id);
         ret["paused_by_breakpoint"] = emulator->IsPaused();
     }
@@ -1290,7 +1399,10 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     special["pc"] = z80->pc;
     special["sp"] = z80->sp;
     special["i"] = z80->i;
-    special["r"] = (z80->r_hi << 7) | (z80->r_low & 0x7F);
+    special["r"] = Z80::RegisterR(z80);
+    special["memptr"] = z80->memptr;
+    special["q"] = z80->q;
+    special["t"] = static_cast<Json::UInt>(z80->t);  // CPU T-states since the frame's start
     ret["special"] = special;
     
     // Interrupt state
@@ -1298,6 +1410,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     interrupt["iff1"] = z80->iff1;
     interrupt["iff2"] = z80->iff2;
     interrupt["im"] = z80->im;
+    interrupt["halted"] = z80->halted != 0;
+    interrupt["boundary"] = Z80::BoundaryName(z80->boundary);  // what the next INT / NMI sampling sees
     ret["interrupt"] = interrupt;
     
     // Flags decoded
@@ -1384,7 +1498,18 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    Z80::SetRegisterValue(z80, name, value);
+    if (!Z80::SetRegisterValue(z80, name, value))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = std::string(regInfo->name) + " cannot hold " + std::to_string(value) + " (at most " +
+                           std::to_string(regInfo->maxValue) + ")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     // Read back to confirm
     uint16_t readBack;
@@ -2355,10 +2480,28 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
         if (limit > 1000) limit = 1000;
         
         ret["limit"] = limit;
-        ret["message"] = "Call trace active";
-        
-        // TODO: Add actual call trace entries when CallTraceManager exposes API
-        ret["entries"] = Json::arrayValue;
+
+        // The same buffer GET /profiler/calltrace/entries reads; it fills while a calltrace
+        // profiler session is capturing (POST /profiler/calltrace/start)
+        Json::Value entriesJson(Json::arrayValue);
+        auto* memory = ctx->pMemory;
+        auto* calltraceBuffer = memory ? memory->GetAccessTracker().GetCallTraceBuffer() : nullptr;
+        if (calltraceBuffer)
+        {
+            for (const auto& entry : calltraceBuffer->GetRecentEntries(limit))
+            {
+                Json::Value e;
+                e["type"] = static_cast<int>(entry.type);
+                e["from_address"] = entry.m1_pc;
+                e["to_address"] = entry.target_addr;
+                e["sp"] = entry.sp;
+                e["loop_count"] = entry.loop_count;
+                entriesJson.append(e);
+            }
+            ret["total_count"] = static_cast<Json::UInt>(calltraceBuffer->GetCount());
+        }
+        ret["message"] = "Call trace active; entries are filled while a calltrace profiler session is capturing";
+        ret["entries"] = entriesJson;
     }
     else
     {

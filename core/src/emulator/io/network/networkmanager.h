@@ -27,10 +27,12 @@
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
 #include "emulator/io/network/ethernet/ne2000board.h"
+#include "emulator/io/network/pcserialcard.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
 #include "emulator/state/statenode.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/io/serial/comport.h"
+#include "emulator/io/serial/esp/espmodule.h"
 
 class EmulatorContext;
 
@@ -66,12 +68,14 @@ public:
         std::optional<std::string> comPort;    ///< ComPort= value (ComPortSpec): the machine's own serial port
         std::optional<std::string> zxWifi;     ///< ZxWifi= value (ComPortSpec): the ZX-WiFi card's ESP
         std::optional<bool> comModemLines;     ///< a serial device's RTS / DTR / CTS / DSR / RI / DCD
-        std::optional<uint8_t> espChip;        ///< 0 ESP32, 1 ESP8266
+        std::optional<uint8_t> espChip;        ///< EspModule::Firmware: 0 ESP32, 1 ESP8266 (NonOS), 2 / 3 ESP8266 AT 2.2.1 / 2.2.2
         std::optional<uint8_t> avrFirmware;    ///< ZX-Evo: Uart16550::AvrFirmware ([EVO] Avr=)
         std::optional<uint8_t> kbcFirmware;    ///< ATM Turbo 2+: Atm2Kbc::Firmware ([ATM] Kbc=)
         std::optional<std::string> atm2IoEsp;  ///< Atm2IoEsp= value (ComPortSpec): the ATM2IOESP card's ESP
         std::optional<uint8_t> atm2IoEspAddress;   ///< Atm2IoEspAddress=: its bus address (#F0 / #F8)
         std::optional<std::string> zifi;       ///< ZiFi= value (ComPortSpec): the TS AVR's ZiFi UART
+        /// isa1_peer / isa2_peer ([ISA] SlotNPeer, ComPortSpec): what a UART card in that expansion slot is wired to
+        std::vector<std::pair<std::string, std::string>> slotPeers;
     };
     bool RequestChange(const Change& change, std::string& error);
 
@@ -83,7 +87,8 @@ public:
     /// esp_chip (esp32 | esp8266), avr_firmware (ZX-Evo, [EVO] Avr= names:
     /// baseconf | base2010 .. base2023 | ts | ts2013 | ts2016-02 | ts2016-04),
     /// kbc_firmware (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names:
-    /// none | v22-7 .. v41), atm2ioesp (ComPortSpec: what the ATM2IOESP card's
+    /// none | v22-7 .. v41), isa1_peer / isa2_peer (ComPortSpec: what the UART card in that Sprinter ISA slot -
+    /// the SprinterESP - is wired to, default at), atm2ioesp (ComPortSpec: what the ATM2IOESP card's
     /// 16550 is wired to, default at), atm2ioesp_address (its bus address, a
     /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0), zifi (ComPortSpec:
     /// what the TS AVR firmware's ZiFi UART is wired to, default none; at =
@@ -106,7 +111,10 @@ public:
     {
         std::string slotId;                 ///< "isa2"
         std::unique_ptr<Ne2000Board> ne2000;
+        std::unique_ptr<PcSerialCard> serial;   ///< a UART card (the SprinterESP)
     };
+    /// The UART card in this slot ("isa1"), or null
+    PcSerialCard* SerialCard(const std::string& slotId) const;
     const std::vector<SlotCard>& SlotCards() const { return _slotCards; }
     /// The frame card with this port key ("isa2.eth"), or null
     Ne2000Board* EthernetCard(const std::string& portKey) const;
@@ -237,10 +245,12 @@ private:
             uint16_t base = 0;
             uint8_t irq = 0;
             std::array<uint8_t, 6> mac{};
+            std::string peer;             ///< UART cards: ComPortSpec of the line ("" = nothing on it)
+            uint8_t espFirmware = 0;      ///< UART cards with an ESP: EspModule::Firmware
             bool operator==(const SlotCard& o) const
             {
                 return slotId == o.slotId && kind == o.kind && chip == o.chip && portKey == o.portKey && base == o.base &&
-                       irq == o.irq && mac == o.mac;
+                       irq == o.irq && mac == o.mac && peer == o.peer && espFirmware == o.espFirmware;
             }
         };
         std::vector<SlotCard> slotCards;
@@ -270,7 +280,11 @@ private:
     /// The peer a ComPortSpec names (nullptr for NONE); an ESP module without
     /// its own ,<baud> ships at `espBaud` (the port's default)
     static constexpr uint32_t kDefaultEspBaud = 115200;
-    std::unique_ptr<ISerialPeer> MakePeer(const std::string& specText, uint32_t espBaud) const;
+    /// `firmware` / `mac`: an ESP module of a given build and station address (a card's own module); default: the
+    /// [NETWORK] EspChip firmware and the chip family's MAC
+    std::unique_ptr<ISerialPeer> MakePeer(const std::string& specText, uint32_t espBaud,
+                                          std::optional<EspModule::Firmware> firmware = std::nullopt,
+                                          const std::array<uint8_t, 6>* mac = nullptr) const;
     /// Plug `_machinePeer` into the machine's own non-16550 port
     void FitMachineSerial(const Plan& plan);
     void FitAtm2IoEsp(const Plan& plan);
@@ -286,6 +300,8 @@ private:
     std::unique_ptr<Atm2IoEsp> _atm2IoEsp;       ///< the card on the ATM Turbo 2+ INTERNAL I/O connector
     std::unique_ptr<ZiFi> _zifi;                 ///< the TS AVR firmware's ZiFi block (on `_com`'s #xxEF)
     std::vector<SlotCard> _slotCards;            ///< network cards in expansion slots (they outlive a network-off refit)
+    /// UART cards' 16550 registers across a refit (the chip stays; its line's peer is rebuilt with the network)
+    std::vector<std::pair<std::string, Uart16550::State>> _serialKeep;
     std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};

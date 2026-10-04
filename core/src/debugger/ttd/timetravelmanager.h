@@ -41,6 +41,7 @@
 ///   public API.
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
 #include <functional>
@@ -488,9 +489,10 @@ public:
     void RequestInvalidation(const char* reason);
     inline bool IsInvalidationPending() const { return _pendingInvalidation.load(std::memory_order_acquire) != nullptr; }
 
-    inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
+    /// Any thread: the state is atomic (observers poll it while the machine runs)
+    inline bool IsRecording() const { return _state.load(std::memory_order_acquire) == TTDSessionState::Recording; }
 
-    inline TTDSessionState GetState() const { return _state; }
+    inline TTDSessionState GetState() const { return _state.load(std::memory_order_acquire); }
     inline TTDRecordMode GetRecordMode() const { return _recordMode; }
     inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
 
@@ -512,7 +514,45 @@ public:
     ///        flows. Idempotent (no-op when not in DebuggerLive).
     void EndDebuggerLiveHistory();
 
+    /// @brief The session summary, computed from the live session structures.
+    ///
+    /// Thread contract (TDD section 7.2): only the thread that drives the
+    /// session may call it - the machine's thread, or a control thread while
+    /// the machine is paused (the same rule as every other session operation).
+    /// It walks the timeline, the page store and the journals, which the
+    /// machine's thread reallocates while it records. Every call also
+    /// publishes its result for GetPublishedSessionInfo().
     TTDSessionInfo GetSessionInfo() const;
+
+    /// @brief The last published session summary - for observers on any thread
+    /// at any time (UI tooltips, status bar, polling timers).
+    ///
+    /// Never touches the live session: it copies a snapshot under its own
+    /// small mutex. Published by the thread that drives the session: at every
+    /// session operation (start, stop, invalidate, load, seek, resume, history
+    /// limit), on every GetSessionInfo() call, and at frame boundaries while a
+    /// session is active (at most every kPublishIntervalMs, and only once an
+    /// observer has asked since the last publication). So the numbers lag the
+    /// running machine by at most one interval plus a frame; while the machine
+    /// is paused they are exact.
+    TTDSessionInfo GetPublishedSessionInfo() const;
+    static constexpr uint32_t kPublishIntervalMs = 100;
+
+    /// @brief The session summary for automation status reads, from any thread.
+    ///
+    /// Live (GetSessionInfo) when nothing else can be changing the session:
+    /// the caller is the machine's thread; or no thread executes the machine
+    /// and no other control operation is in progress (the control lock is
+    /// free) and the session is not recording (a recording machine could be
+    /// resumed by another thread mid-read). Otherwise the published snapshot,
+    /// which is exact for a parked recording (the machine's thread publishes
+    /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
+    /// a frame old while it runs. Never blocks, never pauses the machine.
+    TTDSessionInfo ReadSessionInfo() const;
+
+    /// @brief The machine's thread, about to park (pause): publish the
+    /// recording's summary so status reads while paused are exact
+    void OnMachineParking();
 
     /// @brief History limit: while recording, the oldest checkpoints are
     /// released once the timeline holds more than `maxFrames` checkpoints or
@@ -643,7 +683,7 @@ public:
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
     /// report provenance; streams with no path leave it empty.
-    void SetSessionSourcePath(const std::string& path) { _sourcePath = path; }
+    void SetSessionSourcePath(const std::string& path);
 
     /// @brief In-memory capture/restore divergence self-test.
     ///
@@ -1869,7 +1909,54 @@ private:
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
-    TTDSessionState _state = TTDSessionState::Idle;
+    /// Written only by the thread that drives the session, read by observers
+    /// on any thread (IsRecording / GetState)
+    std::atomic<TTDSessionState> _state{TTDSessionState::Idle};
+
+    /// GetPublishedSessionInfo(): the snapshot observers read instead of the
+    /// live session (TDD section 7.2: "a small mutex-protected summary struct").
+    /// _published is guarded by _publishedMutex; everything else is touched by
+    /// the session-driving thread only
+    void PublishSessionInfo(const TTDSessionInfo& info) const;
+    void PublishSessionInfo() const { (void)GetSessionInfo(); }
+    /// Frame boundary: publish when an observer asked and the interval passed
+    void MaybePublishAtFrameBoundary();
+    mutable std::mutex _publishedMutex;
+    mutable TTDSessionInfo _published;
+    mutable std::atomic<bool> _publishRequested{false};
+    /// Every public operation that reads or changes the session holds one for
+    /// its whole run (TDD section 7.2, "control thread, emulator paused").
+    /// On the machine's own thread it does nothing but publish after a change.
+    /// On any other thread it
+    ///   - takes the control lock (_controlMutex): one control operation at a
+    ///     time, and ReadSessionInfo never computes beside one;
+    ///   - parks the machine while a session is active (Recording: its thread
+    ///     appends to the timeline and journals; Detached: it replays them),
+    ///     and resumes it afterwards if it parked it here;
+    ///   - after a Change, the outermost operation publishes the summary.
+    /// An Idle session is not touched by a running machine, so it is not parked.
+    class SessionOperation
+    {
+    public:
+        enum class Kind : uint8_t { Read, Change };
+        SessionOperation(const TimeTravelManager& manager, Kind kind);
+        ~SessionOperation();
+        SessionOperation(const SessionOperation&) = delete;
+        SessionOperation& operator=(const SessionOperation&) = delete;
+
+    private:
+        const TimeTravelManager& _manager;
+        Kind _kind;
+        bool _locked = false;
+        bool _parked = false;
+    };
+    bool OnMachineThread() const;
+    mutable std::recursive_mutex _controlMutex;
+    mutable int _operationDepth = 0;  ///< nesting on the lock holder's thread (guarded by _controlMutex)
+    std::chrono::steady_clock::time_point _lastPublish{};
+    /// ROM signature of a live session, taken with its baseline (the ROM the
+    /// recording relies on); GetSessionInfo no longer hashes the ROM per call
+    uint64_t _liveRomSignature = 0;
 
     /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
     TTDRecordMode _recordMode = TTDRecordMode::Session;
@@ -1911,8 +1998,10 @@ private:
     /// I-frame restore by walking deltas from this anchor. Updated on
     /// every OnFrameBoundary when an I-frame is emitted.
     uint64_t _lastKeyFrameIdx = 0;
-    uint64_t _historyLimitFrames = 0;   ///< SetHistoryLimit (0 = no limit)
-    uint64_t _historyLimitBytes = 0;
+    /// SetHistoryLimit (0 = no limit). Atomic: a control thread sets them while
+    /// the machine's thread enforces them after every capture
+    std::atomic<uint64_t> _historyLimitFrames{0};
+    std::atomic<uint64_t> _historyLimitBytes{0};
     uint64_t _evictedCheckpoints = 0;   ///< released by the limit in this session
     uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _timeline (kept with it)
     static uint64_t BlobBytes(const TTDCheckpoint& cp);

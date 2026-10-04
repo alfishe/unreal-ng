@@ -16,7 +16,7 @@
 #   --cpus N          hard CPU cap for the whole container: configure, link and the
 #                     test run included, not only the compile jobs (default: same as
 #                     --jobs, i.e. half the host cores)
-#   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3)
+#   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04)
 #   --type TYPE       CMAKE_BUILD_TYPE (default: Release, like CI)
 #   --clean           remove the build directory first
 #
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGE="ghcr.io/alfishe/unreal-ng:qt6.9.3"
+IMAGE="ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04"
 TARGET="core-tests"
 TYPE="Release"
 PLATFORM=""
@@ -77,6 +77,7 @@ BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
 
 docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
   -v "$ROOT":/src -w /src/unreal-qt \
+  --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
   -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \
   "$IMAGE" bash -c '
@@ -85,6 +86,9 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
     cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON
     cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"
     if [ "$RUNTESTS" = 1 ]; then
-      "$BUILDDIR/bin/core-tests" --gtest_filter="$FILTER" --gtest_color=no
+      # From the binary directory: the tests open testdata/ and rom/ relative to it (the
+      # copies CMake puts next to core-tests), and the scratch helper expects the same layout
+      cd "$BUILDDIR/bin"
+      ./core-tests --gtest_filter="$FILTER" --gtest_color=no
     fi
   '

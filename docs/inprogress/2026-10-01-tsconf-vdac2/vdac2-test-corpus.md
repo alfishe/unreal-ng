@@ -6,7 +6,8 @@ VDAC2 integration ([vdac2-integration-design.md](vdac2-integration-design.md), "
 each test proves, and how the expected results are produced. Behavior rules are in
 [ft812-behavior-spec.md](ft812-behavior-spec.md) ("spec").
 
-Date: 2026-10-01. Status: draft for review.
+Date: 2026-10-01. Status: in use: the SDK programs are in testdata, the golden cases and
+replays in `eve-emu`.
 
 ## 1. Layers
 

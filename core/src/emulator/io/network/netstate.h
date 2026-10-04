@@ -80,7 +80,7 @@ struct W5300Socket
 struct NetSocket
 {
     uint16_t id, hostId;
-    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the #xxEF port peer, 3 the machine serial port peer, 4 the ATM2IOESP peer, 5 the ZiFi peer, 6 the Ethernet gateway
+    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the #xxEF port peer, 3 the machine serial port peer, 4 the ATM2IOESP peer, 5 the ZiFi peer, 6 the Ethernet gateway, 7 / 8 the UART card in expansion slot 1 / 2
     uint32_t cookie;
     uint32_t remoteAddr;
     uint16_t remotePort, listenPort;
@@ -170,9 +170,11 @@ constexpr int kEspFirmware = 256;     ///< the firmware's own state (EspnetModul
 struct EspModuleState
 {
     uint8_t present, chip, wifi, lineMismatch;
-    uint8_t mac[6], flowControl, reserved;
+    uint8_t mac[6], flowControl;
+    uint8_t pins;           ///< bit 0 RST held, bit 1 GPIO0 low, bit 2 the ROM's download mode (0 in older blobs)
     char ssid[36];
-    uint32_t ip, baud, pendingBaud, rxLength, outLength, reserved2;
+    uint32_t ip, baud, pendingBaud, rxLength, outLength;
+    uint32_t factoryBaud;   ///< the rate a hardware reset returns to (0 in older blobs: keep the module's)
     uint64_t wifiAt, pendingBaudAt, outReadyAt, requests;
     uint8_t rx[kEspRxBytes];
     uint8_t out[kEspOutBytes];

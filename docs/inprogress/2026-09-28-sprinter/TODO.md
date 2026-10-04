@@ -153,7 +153,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
        ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference. **Pass done 2026-10-03:
-     [demo-status.md](demo-status.md)** (open: BUYAN/20X20; the Game PLD configuration for GAME_00 / LDConf START.BAT).
+     [demo-status.md](demo-status.md)** (open: BUYAN/20X20). ~~The Game PLD configuration for GAME_00 / LDConf
+     START.BAT~~ **done 2026-10-03** (branch `sprinter-pld-game`, [game-configuration.md](game-configuration.md)): the
+     Game module (selected by the bitstream's full hash `#C0FA3055`, cell `#EE` = `#41`, the per-square grid-offset
+     picture), all five automation surfaces + the status bar, recipe, MAME captures, env-gated HDD tests.
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
@@ -182,6 +185,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
   tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
   SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
+  - **Owner, 2026-10-03: the open items of this ZX-mode section are doubtful** - kept for the record, not
+    scheduled, not to be deleted; take one only on the owner's request ([open-items-2026-10-03.md](open-items-2026-10-03.md) §2)
   - [x] Z1 (S) faithful path on unreal-ng against MAME (2026-10-02, branch `sprinter-zx-timing`, tdd-zx-mode §4.1, §11):
     every launcher mode (SP, P128, P512, SC256, ORIGIN) runs the zxtime program; frame, clock, INT position (identical
     mode tables), INT count / repeat, 21 MHz loop counts and the picture equal MAME's; launcher + TRD / SCL RAM disk,
@@ -293,7 +298,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
 - Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
-  `UNETESP.DLL`, owner: must be supported) (M), SN4 modem / SprinterSerial (S-M, needs I4), SN5 3C509B (M), SN6
+  `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; ISA I4 PIO IRQ lines **built 2026-10-03**, branch `sprinter-isa-i4`, ISA tdd §14), SN5 3C509B (M), SN6
   host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
@@ -372,8 +377,11 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   source address once per square, invalidated by video RAM writes into the mode table or the
   square's source) and measure with the same benchmark.
 - Hook 3, second half: a configuration module's own INT source (with the first module that needs
-  it, e.g. Game).
+  it; Game does not: its INT is Standard's, the program waits with EI / HALT on the mode table's INT).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
-- After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams
-  against MAME.
+- After v1: DooM and Video PLD configuration modules, after analyzing their bitstreams
+  against MAME (Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
+  Mode0 bits 5-4, whether `/RESET` clears the grid offset).
+- LDConf's `STREAM.300` / `.303` / `.305` (other Standard core builds?) run as Standard with "unknown bitstream";
+  name them once their source is known.

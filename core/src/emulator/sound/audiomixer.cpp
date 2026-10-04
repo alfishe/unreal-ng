@@ -203,6 +203,14 @@ StateNode AudioMixer(EmulatorContext* context)
     master["muted"] = sm->isMuted();
     master["sample_rate_hz"] = static_cast<uint64_t>(sm->getCoreRate());
     ret["master"] = master;
+    // What the host audio output (the speakers) received: a run not paced to real time (run_frames and the
+    // other direct runs, TTD seek / replay, turbo) holds it; counters are emulated frames since creation
+    StateNode host = StateNode::Object();
+    host["held"] = sm->isHostOutputHeld();
+    host["frames_delivered"] = sm->hostFramesDelivered();
+    host["frames_audible"] = sm->hostFramesAudible();
+    host["frames_held"] = sm->hostFramesHeld();
+    ret["host_output"] = host;
     StateNode devices = StateNode::Array();
     bool anySolo = false;
     for (const AudioDeviceInfo& d : sm->devices())

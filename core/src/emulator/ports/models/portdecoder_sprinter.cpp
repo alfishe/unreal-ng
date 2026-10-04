@@ -22,6 +22,7 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/ports/models/sprinter/sprinterpldstandard.h"
 #include "emulator/ports/models/sprinter/sprinterzxports.h"
 #include "common/stringhelper.h"
 #include <map>
@@ -31,14 +32,8 @@
 
 namespace
 {
-/// Cells after power-on (MAME sprinter.cpp machine_start, port_default):
-/// #Cx 0, #Dx = #10-#1F, #Ex mostly #41 (#E9 = 5, #EA = 2, #EC = #FF), #Fx = #00-#0F
-constexpr uint8_t kCellsPowerOn[64] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x00, 0x05, 0x02, 0x41, 0xFF, 0x00, 0x00, 0x41,
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-};
+/// Cells after power-on: the shipped bitstream's (SprinterPldStandard::kCells); the load sets them again
+constexpr const uint8_t (&kCellsPowerOn)[64] = SprinterPldStandard::kCells;
 
 /// "ACEX_30K_LOADING" at fast RAM #FEF0: the BIOS left a new bitstream at #1000 (loader 3.04 #003B)
 constexpr char kReloadSignature[16] = {'A', 'C', 'E', 'X', '_', '3', '0', 'K', '_', 'L', 'O', 'A', 'D', 'I', 'N', 'G'};
@@ -138,6 +133,9 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         pc = CpuPc();
     });
     _isaBus.SetStallHandler([this](int slot) { StallCpuOnIsa(slot); });
+    // I4: the slots' IRQ lines reach PIO port B the moment a card changes them; the report reads the PIO through us
+    _isaBus.SetLinesHandler([this]() { PushIsaLines(); });
+    _isaBus.SetPioView([this]() { return IsaPioView(); });
     _instanceNumber = TakeInstanceNumber();
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_input);
@@ -155,6 +153,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         _waits = std::make_unique<SprinterWaits>(_context->pCore->GetZ80());
         _origWaits = std::make_unique<SprinterOrigWaits>(_context->pCore->GetZ80());
         _cpuEngine = std::make_unique<Z84C15Engine>(_context, _context->pCore->GetZ80(), _z84);
+        _cpuEngine->SetInterruptObserver(this);
     }
 
     // The WD1793 has its own clock: the disk keeps 300 rpm when the CPU runs at 21 MHz
@@ -226,6 +225,8 @@ void PortDecoder_Sprinter::PowerOn()
     _pld.configModule = 0;
     _pld.configState = SprinterConfigState::Unconfigured;
     _z84.PowerOn();
+    _pioBIusSeen = false;   // a chip reset ends every service (I4 journal)
+    RescheduleIsaLines();
     _pld.isaAddrExt = 0;
     _isaBus.PowerOn();
     _input.Clear();
@@ -262,6 +263,8 @@ void PortDecoder_Sprinter::reset()
     // The keyboard is not reset; the machine's clock restarted under it
     _input.Rebase();
     _z84.Reset();
+    _pioBIusSeen = false;   // a chip reset ends every service (I4 journal)
+    RescheduleIsaLines();
     ResetPld(powerOn ? SprinterResetKind::PowerOn : SprinterResetKind::Button);
     InstallHooks();
 
@@ -354,6 +357,7 @@ void PortDecoder_Sprinter::BeginLoading()
 {
     if (JournalOn())
         JournalEvent("pld_load", CpuPc(), -1, -1, -1, "the PLD loads a configuration: the CPU runs the ROM loader into the sink");
+    NoteModuleBeforeLoad();
     SprinterPldConfig::Begin(_pld);
     _pld.configModule = static_cast<uint8_t>(SprinterPldConfigurationRegistry::kStandardIndex);
     _pld.turbo = 0;
@@ -380,6 +384,7 @@ void PortDecoder_Sprinter::FastStart()
         z80->ix = 0xFFFD;
     }
 
+    NoteModuleBeforeLoad();
     SprinterPldConfig::Begin(_pld);
     LoadFastRamImage();
     FinishLoad(false);
@@ -444,12 +449,15 @@ void PortDecoder_Sprinter::FinishLoad(bool watchdog)
     _pld.configModule = static_cast<uint8_t>(index);
     if (JournalOn())
     {
+        const SprinterPldModuleDescriptor& module = _registry.At(static_cast<size_t>(index)).Descriptor();
+        const char* matched = watchdog ? "the load watchdog fired"
+                              : module.KnowsFullHash(_pld.bitstreamHashFull) ? "matched by the full hash"
+                              : module.headHash == _pld.bitstreamHashHead ? "matched by MAME's head hash only"
+                                                                          : "unknown bitstream, Standard runs";
         JournalEvent("pld_configured", CpuPc(), -1, static_cast<int>(index), -1,
-                     StringHelper::Format("PLD configured: module %s (%u writes, full hash %08X, head hash %08X)%s%s",
-                                          _registry.At(static_cast<size_t>(index)).Descriptor().name, _pld.bitstreamCount,
-                                          _pld.bitstreamHashFull, _pld.bitstreamHashHead,
-                                          watchdog ? ", the load watchdog fired" : "",
-                                          _context->config.sprinter.fast_start ? ", fast start" : ""));
+                     StringHelper::Format("PLD configured: module %s (%u writes, full hash %08X, head hash %08X): %s%s",
+                                          module.name, _pld.bitstreamCount, _pld.bitstreamHashFull, _pld.bitstreamHashHead,
+                                          matched, _context->config.sprinter.fast_start ? ", fast start" : ""));
     }
     RequestCpuReset(SprinterResetKind::Configured);
 }
@@ -483,10 +491,17 @@ void PortDecoder_Sprinter::PerformPendingReset()
     {
         case SprinterResetKind::Configured:
             _pld.configState = SprinterConfigState::Configured;
+            // The cells are the PLD's embedded RAM: a load brings the bitstream's contents (hook 5). Applied when the
+            // load changes the configuration: the emulator's RESET button reloads the running bitstream, and the
+            // launchers' reset intercept (cell #EE = #41, /ret-fn) survives that button (sprinterzxmode_test.cpp)
+            if (_pld.moduleBeforeLoad != _pld.configModule)
+                ApplyInitialCells();
             ActiveModule().OnActivate(_pld);
             ResetPld(kind);
             ResetCpu();
             _z84.Reset();
+            _pioBIusSeen = false;   // a chip reset ends every service (I4 journal)
+            RescheduleIsaLines();
             ApplyTurbo();
             UpdateBanks();
             break;
@@ -494,18 +509,78 @@ void PortDecoder_Sprinter::PerformPendingReset()
             ResetPld(kind);
             ResetCpu();
             _z84.Reset();
+            _pioBIusSeen = false;   // a chip reset ends every service (I4 journal)
+            RescheduleIsaLines();
             BeginLoading();
             break;
         default:  // SoftReset: CPU reset only, the PLD stays configured
             ResetPld(kind);
             ResetCpu();
             _z84.Reset();
+            _pioBIusSeen = false;   // a chip reset ends every service (I4 journal)
+            RescheduleIsaLines();
             ApplyTurbo();
             UpdateBanks();
             break;
     }
     RefreshAccelerator();
+    if (kind == SprinterResetKind::Configured && _beamVideo)
+        _beamVideo->Start(_state->frame_counter, BaseTstate());  // the new configuration's picture runs from here
     RefreshStepHook();
+}
+
+void PortDecoder_Sprinter::NoteModuleBeforeLoad()
+{
+    _pld.moduleBeforeLoad = _pld.configState == SprinterConfigState::Configured ? _pld.configModule : kNoModule;
+}
+
+void PortDecoder_Sprinter::ApplyInitialCells()
+{
+    if (!ActiveModule().InitialCells(_pld.cells))
+        _registry.Standard().InitialCells(_pld.cells);
+}
+
+void PortDecoder_Sprinter::ModuleSelection(std::string& key, std::string& why) const
+{
+    if (_pld.configState == SprinterConfigState::Loading)
+    {
+        key = "loading";
+        why = StringHelper::Format("the PLD is loading a configuration (%u of %u writes)", _pld.bitstreamCount,
+                                   SprinterPldConfig::kPldConfigurationWrites);
+        return;
+    }
+    if (_pld.configState != SprinterConfigState::Configured)
+    {
+        key = "not_configured";
+        why = "the PLD has no configuration yet";
+        return;
+    }
+    const SprinterPldModuleDescriptor& module = ActiveModule().Descriptor();
+    if (_pld.bitstreamCount < SprinterPldConfig::kPldConfigurationWrites)
+    {
+        key = "watchdog";
+        why = StringHelper::Format("the load stopped after %u of %u writes (the watchdog ended it): %s runs",
+                                   _pld.bitstreamCount, SprinterPldConfig::kPldConfigurationWrites, module.name.c_str());
+    }
+    else if (const SprinterPldStream* stream = module.Stream(_pld.bitstreamHashFull); stream || module.fullHash == _pld.bitstreamHashFull)
+    {
+        key = "full_hash";
+        why = StringHelper::Format("the bitstream's full hash %08X is the %s module's%s%s%s", _pld.bitstreamHashFull,
+                                   module.name.c_str(), stream ? " (" : "", stream ? stream->source.c_str() : "",
+                                   stream ? ")" : "");
+    }
+    else if (module.headHash == _pld.bitstreamHashHead)
+    {
+        key = "head_hash";
+        why = StringHelper::Format("only MAME's head hash %08X matches the %s module (full hash %08X is not its %08X)",
+                                   _pld.bitstreamHashHead, module.name.c_str(), _pld.bitstreamHashFull, module.fullHash);
+    }
+    else
+    {
+        key = "unknown_bitstream";
+        why = StringHelper::Format("no module knows the bitstream (full hash %08X, head hash %08X): %s runs",
+                                   _pld.bitstreamHashFull, _pld.bitstreamHashHead, module.name.c_str());
+    }
 }
 
 /// endregion </Resets>
@@ -547,6 +622,8 @@ void PortDecoder_Sprinter::RefreshAccelerator()
     _activeAccelerator = accelerator;
     if (_cpuEngine)
         _cpuEngine->SetBusAgent(accelerator);
+    // The module's picture with state (hook 3) follows the module too; Standard has none
+    _beamVideo = _pld.configState == SprinterConfigState::Configured ? ActiveModule().BeamVideo() : nullptr;
 }
 
 /// The step hook runs only while a load is in progress (the watchdog) or a CPU
@@ -560,7 +637,8 @@ void PortDecoder_Sprinter::RefreshStepHook()
 
     Z80* z80 = core->GetZ80();
     // ... or while a keyboard byte is on its way that raises the keyboard INT
-    const bool needed = _pld.resetPending || _pld.configState == SprinterConfigState::Loading || _input.NeedsStepHook();
+    const bool needed = _pld.resetPending || _pld.configState == SprinterConfigState::Loading || _input.NeedsStepHook() ||
+                        _isaDeadline != UINT64_MAX || _isaRescheduleOnStep;
     if (needed)
         z80->SetMachineStepHook(this);
     else if (z80->GetMachineStepHook() == this)
@@ -577,6 +655,168 @@ void PortDecoder_Sprinter::OnMachineStep([[maybe_unused]] uint32_t t)
         if (!_input.NeedsStepHook())
             RefreshStepHook();
     }
+    if (_isaRescheduleOnStep)
+    {
+        // After a TTD restore every blob is in: the deadline from the restored cards, as the live run had it
+        _isaRescheduleOnStep = false;
+        _pioBIusSeen = _z84.pio.GetPort(1).ius != 0;
+        RescheduleIsaLines();
+        RefreshStepHook();
+    }
+    // A card's line changes at its own time (a character lands in a UART) while the PIO waits for it: the cards
+    // catch up after the instruction that reached that time, the line reaches PB0 / PB1 before the next one
+    if (_isaDeadline != UINT64_MAX && IsaNow() >= _isaDeadline)
+        SyncIsaLines();
+}
+
+uint64_t PortDecoder_Sprinter::IsaNow() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
+    return _state->t_states + (z80 ? z80->t / multiplier : 0);
+}
+
+bool PortDecoder_Sprinter::IsaIrqArmed() const
+{
+    const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
+    const uint8_t irqBits = SprinterIsaBus::kPioIrqBit[0] | SprinterIsaBus::kPioIrqBit[1];
+    return b.mode == 3 && (b.intControl & 0x80) && (b.direction & ~b.mask & irqBits);
+}
+
+void PortDecoder_Sprinter::RescheduleIsaLines()
+{
+    const uint64_t next = IsaIrqArmed() ? _isaBus.NextLineEventAt() : UINT64_MAX;
+    if (next != _isaDeadline)
+    {
+        _isaDeadline = next;
+        RefreshStepHook();
+    }
+}
+
+void PortDecoder_Sprinter::SyncIsaLines()
+{
+    _isaBus.CatchUpCards();   // the cards' listeners push what changed
+    PushIsaLines();           // and the deadline moves on even when nothing did
+}
+
+void PortDecoder_Sprinter::PushIsaLines()
+{
+    const uint8_t lines = _isaBus.PioLines();
+    const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
+    const uint8_t before = b.inputs;
+    if (lines != before)
+    {
+        for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+        {
+            const uint8_t bit = SprinterIsaBus::kPioIrqBit[n];
+            if (!((before ^ lines) & bit))
+                continue;
+            const bool high = (lines & bit) != 0;
+            SprinterIsaBus::Counters& c = _isaBus.MutableCounters(n);
+            ++(high ? c.irqRises : c.irqFalls);
+            if (_isaBus.JournalEnabled())
+            {
+                const sprinterisa::IIsaCard* card = _isaBus.Card(n);
+                const std::string cause = card ? card->IrqCause() : std::string();
+                _isaBus.NoteIrq(n, lines,
+                                StringHelper::Format("IRQ line %s -> PB%d (%s)", high ? "high" : "low", n,
+                                                     !_isaBus.IrqDriven(n) ? "not driven: the pull-up"
+                                                                            : cause.empty() ? "the card" : cause.c_str()));
+            }
+        }
+        const bool ipBefore = b.ip != 0;
+        _z84.pio.SetInputs(1, lines);
+        NotePioRequest(ipBefore);
+    }
+    RescheduleIsaLines();
+}
+
+void PortDecoder_Sprinter::NotePioRequest(bool ipBefore)
+{
+    const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
+    if (ipBefore || !b.ip)
+        return;
+    // The slots whose monitored line is at the active level caused it
+    const uint8_t active = static_cast<uint8_t>((b.intControl & 0x20) ? b.inputs : ~b.inputs);
+    std::string who;
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        const uint8_t bit = SprinterIsaBus::kPioIrqBit[n];
+        if ((b.direction & ~b.mask & bit) && (active & bit))
+        {
+            ++_isaBus.MutableCounters(n).pioRequests;
+            who += (who.empty() ? "slot " : ", slot ") + std::to_string(n + 1);
+        }
+    }
+    _isaBus.NoteIrq(-1, b.vector,
+                    StringHelper::Format("PIO port B requests an interrupt (vector #%02X; %s)", b.vector,
+                                         who.empty() ? "no ISA line: another PB bit" : who.c_str()));
+}
+
+void PortDecoder_Sprinter::OnChipAcknowledge(uint8_t vector)
+{
+    const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
+    if (!b.ius || _pioBIusSeen)
+        return;
+    _pioBIusSeen = true;
+    const uint8_t active = static_cast<uint8_t>((b.intControl & 0x20) ? b.inputs : ~b.inputs);
+    _pioBServiceSlots = 0;
+    std::string who;
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        const uint8_t bit = SprinterIsaBus::kPioIrqBit[n];
+        if ((b.direction & ~b.mask & bit) && (active & bit))
+        {
+            _pioBServiceSlots = static_cast<uint8_t>(_pioBServiceSlots | (1u << n));
+            ++_isaBus.MutableCounters(n).acknowledged;
+            who += (who.empty() ? "slot " : ", slot ") + std::to_string(n + 1);
+        }
+    }
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    _isaBus.NoteIrq(-1, vector,
+                    StringHelper::Format("INT acknowledged: PIO port B, IM %d vector #%02X -> table #%04X (%s)",
+                                         z80 ? z80->im : 0, vector, z80 ? (z80->i << 8 | vector) : vector,
+                                         who.empty() ? "no ISA line active any more" : who.c_str()));
+}
+
+void PortDecoder_Sprinter::OnChipReti()
+{
+    if (!_pioBIusSeen || _z84.pio.GetPort(1).ius)
+        return;
+    _pioBIusSeen = false;
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        if (_pioBServiceSlots & (1u << n))
+            ++_isaBus.MutableCounters(n).serviceEnds;
+    }
+    _pioBServiceSlots = 0;
+    _isaBus.NoteIrq(-1, 0, "RETI: the PIO port B interrupt service ended");
+}
+
+SprinterIsaBus::PioView PortDecoder_Sprinter::IsaPioView()
+{
+    SprinterIsaBus::PioView v;
+    const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
+    v.valid = true;
+    v.mode = b.mode;
+    v.direction = b.direction;
+    v.mask = b.mask;
+    v.intControl = b.intControl;
+    v.vector = b.vector;
+    v.inputs = b.inputs;
+    v.output = b.output;
+    v.read = _z84.pio.Read(0x02);   // the data register: no side effect
+    v.condition = b.condition != 0;
+    v.pending = b.ip != 0;
+    v.underService = b.ius != 0;
+    v.priority = _z84.system.irqPriority;
+    if (const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        v.im = z80->im;
+        v.iff1 = z80->iff1 != 0;
+        v.i = z80->i;
+    }
+    return v;
 }
 
 void PortDecoder_Sprinter::BeforeMachineM1(uint16_t address)
@@ -722,6 +962,9 @@ void PortDecoder_Sprinter::OnTtdStateLoaded()
     UpdateBanks();
     ApplyTurbo();
     RefreshAccelerator();  // the configured module's accelerator as the CPU's bus agent (none while loading)
+    // The ISA line deadline follows the restored cards and PIO; their blobs may load after this one, so it is
+    // recomputed at the next step (no catch-up, no push: the PIO's inputs come from the chip blob)
+    _isaRescheduleOnStep = true;
     RefreshStepHook();
 }
 
@@ -855,6 +1098,8 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
     {
         // The Z84C15 decodes its own ports; the PLD does not see the read (MAME internal map)
         _input.BeforeChipAccess(low);
+        if (low == 0x1E)
+            SyncIsaLines();   // PIO port B data: the slots' IRQ / DRQ lines as they are now
         value = _z84.Read(low);
         disp.internalCode = static_cast<uint16_t>(kTraceZ84Base + low);
     }
@@ -902,7 +1147,16 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
     if (z84Port)
     {
         _input.BeforeChipAccess(low);
+        const bool pioB = low == 0x1F;
+        if (pioB)
+            SyncIsaLines();   // the PIO evaluates its bit-mode condition on the lines as they are now
+        const bool ipBefore = _z84.pio.GetPort(1).ip != 0;
         _z84.Write(low, value);
+        if (pioB)
+        {
+            NotePioRequest(ipBefore);   // a mask written while the condition holds requests at once
+            RescheduleIsaLines();
+        }
         disp.internalCode = static_cast<uint16_t>(kTraceZ84Base + low);
         // A layout change of the loader's chip selects moves its fast RAM window
         if (_pld.configState != SprinterConfigState::Configured && (low == 0xEF))
@@ -1453,7 +1707,16 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
         uint8_t mac[6];
         sprinterisa::EffectiveMac(config, n, NetworkInstanceIndex(), mac);
         std::copy(mac, mac + 6, slot.mac.begin());
-        slot.portKey = slot.id + ".eth";
+        slot.portKey = slot.id + (kind == sprinterisa::CardKind::SprinterEsp ? ".uart0" : ".eth");
+        slot.macAuto = config.macAuto != 0;
+        slot.instance = NetworkInstanceIndex();
+        slot.peer.assign(config.peer, strnlen(config.peer, sizeof(config.peer)));
+        if (kind == sprinterisa::CardKind::SprinterEsp)
+        {
+            // Fixed on the board (decoder and IRQ wiring): the config's Base / Irq do not apply
+            slot.base = sprinterisa::kSprinterEspBase;
+            slot.irq = sprinterisa::kSprinterEspIrq;
+        }
         slot.fit = [this, n](IIoBusDevice* device, std::string& why) {
             (void)why;
             if (!device)
@@ -1465,6 +1728,11 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
             return true;
         };
         slot.notFitted = [this, n](const std::string& why) { _isaBus.SetRefusal(n, why); };
+        slot.setPeer = [this, n](const std::string& peer) {
+            _isaBus.SetConfiguredPeer(n, peer);
+            sprinterisa::SlotConfig& cfg = _context->config.sprinter.isa.slot[n];
+            std::snprintf(cfg.peer, sizeof(cfg.peer), "%s", peer.c_str());
+        };
         caps.expansionSlots.push_back(std::move(slot));
     }
     return caps;

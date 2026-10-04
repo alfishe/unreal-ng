@@ -95,6 +95,8 @@ enum class PeripheralId : uint8_t
     ProfiXtKbc = 44,      // Profi PROFI-XT keyboard controller: the MCS-48 (RAM, registers, ports, timer), output latch, WAIT
                           // flip-flop, the XT keyboard's wire, time base; the table engine's matrix (ProfiXtKbc::State)
     EthernetNics = 45,    // frame-level network cards in expansion slots (the Sprinter's NE2000): DP8390, packet RAM, EEPROM (network tdd §13)
+    SlotSerial1 = 46,     // the UART card in expansion slot 1 (the Sprinter's SprinterESP): its 16550 and peer (netstate::SerialPort)
+    SlotSerial2 = 47,     // the same for slot 2. A second channel per slot (SprinterSerial, network phase SN4) takes new ids
     // Future: SAA1099, GS512, etc.
     Count
 };

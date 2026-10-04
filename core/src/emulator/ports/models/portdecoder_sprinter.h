@@ -24,6 +24,7 @@
 class ScreenSprinter;
 class SprinterMemory;
 class SprinterVideoRenderer;
+class SprinterBeamVideo;
 namespace ttd
 {
 class TTDSprinterPld;
@@ -64,7 +65,7 @@ class TTDSprinterPld;
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits), and the ZX mode's
 ///     "original waits" at 3.5 MHz (SprinterOrigWaits).
-class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook
+class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook, public IZ84InterruptObserver
 {
 public:
     /// Port trace internal codes: the PLD codes #00-#FF as they are; the
@@ -152,6 +153,15 @@ public:
     /// The frame boundary: the host speed control's next multiplier reaches the Z84C15's clock
     void OnFrameEnd() override;
 
+    /// region <ISA interrupt lines -> PIO port B (ISA phase I4, tdd §4.5)>
+    /// The daisy chain took / ended an interrupt: the ISA slot report counts and journals the PIO port B ones
+    void OnChipAcknowledge(uint8_t vector) override;
+    void OnChipReti() override;
+    /// When the step hook next catches the cards up (base T-states, UINT64_MAX: never): set while the PIO waits for
+    /// an ISA interrupt (port B in bit mode, interrupt enabled, an IRQ bit monitored) and a card has a timed event
+    uint64_t IsaLineDeadline() const { return _isaDeadline; }
+    /// endregion
+
     /// region <PLD state and parts>
 public:
     SprinterPldState& GetPldState() { return _pld; }
@@ -179,6 +189,14 @@ public:
     SprinterAccelerator* GetAccelerator() const { return _activeAccelerator; }
     /// The picture of the active module (hook 3), Standard's when it brings none
     const SprinterVideoRenderer& VideoRenderer() const;
+    /// The active module's beam-ordered picture (hook 3: the Game module's grid offset); null for a
+    /// stateless picture (Standard) and while the PLD is not configured. ScreenSprinter runs it on every
+    /// catch-up and closes its frame at every frame start
+    SprinterBeamVideo* BeamVideo() const { return _beamVideo; }
+    /// Why the active module runs (reports, the journal): `key` = "full_hash" (the bitstream is the module's),
+    /// "head_hash" (only MAME's first-4 096-writes hash matches), "unknown_bitstream" (no module knows it:
+    /// Standard), "watchdog" (the load never ended: Standard), "loading" or "not_configured"; `why` = a sentence
+    void ModuleSelection(std::string& key, std::string& why) const;
 
     /// Port table index and code (§3.1)
     uint16_t LookupIndex(uint16_t port, bool isRead) const;
@@ -302,6 +320,11 @@ private:
     /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
     void NoteVideoLatches();
     void LoadFastRamImage();
+    /// A load ended: the cells get the configuration's initial contents (hook 5, Standard's by default)
+    void ApplyInitialCells();
+    /// A load begins: remember the module that ran (SprinterPldState::moduleBeforeLoad)
+    void NoteModuleBeforeLoad();
+    static constexpr uint8_t kNoModule = 0xFF;
 
     /// The journal is on and the machine runs live (a TTD replay re-executes history: nothing is noted)
     bool JournalOn() const { return _journal.Enabled() && !_context->ttdReplayActive; }
@@ -332,6 +355,8 @@ private:
     /// The standard accelerator and the one in use (hook 4)
     SprinterAccelerator _accelerator{_context, _pld};
     SprinterAccelerator* _activeAccelerator = nullptr;
+    /// The active module's beam-ordered picture (hook 3), refreshed with the accelerator
+    SprinterBeamVideo* _beamVideo = nullptr;
     Z84Lib::Z84C15 _z84;
     /// The keyboard (SIO A) and the serial mouse (SIO B)
     SprinterInput _input{_context, _z84, _intSource, _pld};
@@ -354,6 +379,23 @@ private:
     uint8_t _instanceNumber = 0;   ///< among the live Sprinters (the automatic MAC)
     /// A card hung its ISA cycle (UM9003 reset port): the CPU waits for RESET - halted, interrupts off
     void StallCpuOnIsa(int slot);
+    /// The slots' IRQ / DRQ lines into PIO port B (only a change reaches the PIO: its bit-mode edge), the journal
+    /// and counters of the edges and the requests they cause; then the next deadline
+    void PushIsaLines();
+    /// The cards to now, then PushIsaLines (a read of PIO port B data, a write of its control, a deadline)
+    void SyncIsaLines();
+    /// A PIO request latched since `ipBefore` (a line edge, a mask written while the condition holds): journal it
+    void NotePioRequest(bool ipBefore);
+    /// The PIO waits for a slot's IRQ: port B in mode 3, its interrupt enabled, PB0 or PB1 input and monitored
+    bool IsaIrqArmed() const;
+    void RescheduleIsaLines();
+    /// The cards' clock: base T-states now (ComPort::Now)
+    uint64_t IsaNow() const;
+    SprinterIsaBus::PioView IsaPioView();
+    uint64_t _isaDeadline = UINT64_MAX;
+    bool _isaRescheduleOnStep = false;   ///< a TTD restore: the deadline from the restored cards at the next step
+    bool _pioBIusSeen = false;           ///< PIO port B under service as the journal last saw it (observation)
+    uint8_t _pioBServiceSlots = 0;       ///< the slots whose lines caused that service (bit n = slot n + 1)
     /// The instance's place among the running emulators (the automatic MAC 02:53:50:00:<instance>:<slot>)
     uint8_t NetworkInstanceIndex() const;
     /// An ISA cycle into the port trace (only while a capture runs)

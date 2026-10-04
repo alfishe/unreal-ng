@@ -9,7 +9,8 @@ come the ISA slots and the network cards (section 3).
 
 - **Pass done 2026-10-03** ([demo-status.md](demo-status.md)): all 76 programs below `DEMOS/` verdicted with the
   fixed demo runner (the earlier "15 of 21 run" came from a runner bug that called every program running). They run,
-  except: GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred);
+  except: ~~GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred)~~ - **done
+  2026-10-03**, they run on the Game module ([game-configuration.md](game-configuration.md));
   BUYAN/20X20 stops with interrupts off (open, compare with MAME); WILDSND needs the ISA Wild Sound card;
   FBIRD and NOTHENG run after the CTC fix.
 - dontBlink freezes at 5:05-5:10 (the "flowers" part) with BIOS 3.07: a race in the demo, not an emulation fault
@@ -19,7 +20,10 @@ come the ISA slots and the network cards (section 3).
 - scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
   reproduce (likely cured by the PS/2 overrun fix).
 
-## 2. Spectrum (ZX) mode
+## 2. Spectrum (ZX) mode - doubtful (owner, 2026-10-03)
+
+The owner marked every item of this section as **doubtful**: kept for the record, not scheduled, not to be
+deleted. Take one only on the owner's request.
 
 - Border against a Pentagon: 8 ZX pixels less border at each side (blank squares in the launcher's mode
   table? check against MAME) and a border color change 8 lines off in the bottom border.
@@ -43,8 +47,9 @@ come the ISA slots and the network cards (section 3).
 
 - **Network first:** ISA slots (I1, **done 2026-10-03**, branch `sprinter-isa-network`), then NE2000 Ethernet and
   the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
-  zero-window probes, PIO IRQ lines I4; the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
-  on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, must be supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
+  zero-window probes; PIO IRQ lines I4 **done 2026-10-03** (branch `sprinter-isa-i4`); the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
+  on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, **done 2026-10-03**, branch `sprinter-esp-sn3`: `[ISA] Slot1=SPRINTERESP`, the ESP kit's `NETUP` / `PING` / `WGET` / `UNETESP.DLL` end to end
+  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line reaches PB0 since ISA I4), modem / SprinterSerial (SN4, ISA I4 built), 3C509B (SN5)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
   through the shared MouseManager.
@@ -68,3 +73,9 @@ come the ISA slots and the network cards (section 3).
   ([bios-versions.md](bios-versions.md) §5.3).
 - Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
 - Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.
+
+- **ISA I4 (2026-10-03), settled from the PLD source:** when the PIO port B (or any on-chip source) and the PLD's
+  `/INT` are pending together, the chip answers the acknowledge and the PLD presets its INT flip-flop on the same
+  `/M1` + `/IORQ` cycle (`SP2_1K30.TDF:744`, `INT_X = !DFF(GND, INTT & KEYS.int, , (/IO or /M1) & ...)`): the frame /
+  keyboard / Covox-Blaster INT pending at that moment ends there. `Z84C15Engine` now passes every acknowledge to the
+  board's INT logic (it kept the PLD's INT pending before).

@@ -100,7 +100,28 @@ The single-cause hypothesis below was only partly right:
    ENTER / N. The only hang left is O4 (ALEX_S, 48K, fast loading on). The P4 thresholds held:
    no case parked or froze a loader that was listening. Lesson: SPACE is BREAK for LD-BYTES, never
    a "press any key" key in a sweep.
-6. Close out; split O1–O3 into their own item if they survive.
+6. Close out; split O1–O3 into their own item if they survive. **Re-checked 2026-10-03** (headless sweep, 48K and Pentagon):
+   - **O1 KID__DR, 48K: cause found and fixed.** After block 2 the program waits for Y / N in a loop, then its own
+     loader reads the 6912-byte screen block. The loader, after the first pilot pulses, sits out `ld hl,#0415 / djnz`
+     (1045 passes of 3349 T = 3.5 million T = **50.07 frames**) and only then checks that the pilot goes on. The tape
+     paused after `TAPE_BLOCK_HOLD_FRAMES` = 50 silent frames and a pilot freeze rewinds the pilot, so after every delay
+     the loader found a fresh pilot and never locked (the position inside the block jumped back to 0 every time). A
+     pilot now waits `TAPE_PILOT_HOLD_FRAMES` = 100 frames (test `DelayInsidePilotLongerThanTheDataHoldDoesNotRewindIt`).
+     The 48K cases now run the tape to its end or past block 4 (cursor 4-6 of 6 instead of stuck at 2). The screen stays
+     black there: blocks 4 and 5 (41216 and 16384 bytes) do not fit a 48K, so this is most likely a 128K-only release like
+     ALEX_S (not proven: the loader's 48K / 128K check was not read).
+   - **O1 KID__DR, Pentagon: closed 2026-10-03 - copy/clone protection, not a defect.** The loader checks that ROM byte `#006D` is `#20`
+     (original Sinclair 48K ROM; at `#986B` and in every interrupt at `#5ECA`). The Pentagon ROM set uses `rom/48for128.rom`
+     with `#28` there, so the loader fills memory with `#15` (the runaway measured earlier). MAME's Pentagon has `#20` and
+     loads the tape. Listing and details: `docs/disasm/games/dizzy-x-kid-dr-loader/`. Decision (owner, 2026-10-03):
+     no ROM change; the protection is behaving as its authors intended and is documented as such.
+   - **O2 TIMOFEY, 48K:** unchanged (back to BASIC with the tape at block 2 of 5; blocks 3-5 hold 45568 bytes, more than a
+     48K takes, and it runs on Pentagon); very likely 128K-only, not proven.
+   - **O3 HACKER_SHURIK, Pentagon, fast off:** no longer reproduces: all Pentagon cases reach the end of the tape. The one
+     "dead" verdict (48K, signal, key every 500 frames) is the liveness check of the sweep (a screen that does not react to
+     0 / 1 / ENTER / SPACE / N), not a loader failure.
+   - Sweep before / after the threshold change (120 cases): only the four KID__DR 48K cases differ (better); `lphp`
+     48K signal flips OK to dead only through one stray pixel in the liveness check (final screens identical: "Bytes: main.tap").
 
 <details><summary>Original 2026-09-16 hypothesis (kept for history)</summary>
 

@@ -31,8 +31,8 @@ resource `unreal://machine/sprinter` is the one-page summary.
 > pipelines (policy: [_common/transports.md](../_common/transports.md)).
 > Shared patterns: [_common/machines.md](../_common/machines.md).
 
-Outputs below are real, from a build of branch `sprinter-automation`
-(2026-10-02), trimmed.
+Outputs below are real, from a build of the `sprinter-automation` work
+(2026-10-02, since merged to master), trimmed.
 
 ## MCP (preferred)
 
@@ -108,8 +108,9 @@ inspect_state {"aspects":["sprinter_text"]}          # poll until "B:\>"
 ```
 
 The shipped floppy's `SYSTEM.BAT` ends with `fn` (Flex Navigator, the DSS
-file manager), which does **not** run yet: it draws its logo and hangs. To get
-a usable prompt, boot a copy without that line (host-side, into `scratch/`):
+file manager), which runs (step 3a; see the status table). To stop at the
+`B:\>` prompt instead (the transcript above), boot a copy without that line
+(host-side, into `scratch/`):
 
 ```bash
 python3 - <<'EOF'
@@ -262,7 +263,74 @@ curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.sound.covox_blaster | 
 `zero_counts` grows by one per 20.48 ms frame; `count` is the live
 down-counter. MCP: `inspect_state {"aspects":["sprinter"]}`, the same
 `z84c15.ctc` tree (CLI `state sprinter`, Lua / Python `sprinter_state`).
-Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
+Checked live 2026-10-02 (the `sprinter-ctc-trg` work, since merged to master).
+
+### 3c. PLD configurations: Standard and Game (GAME_00, LDConf)
+
+A program can load other logic into the PLD (code `#2E`) - the machine then becomes another
+machine. The emulator picks a configuration module by the loaded bitstream's hash: **Standard**
+(the BIOS's own, any of the 3.04 / 3.06 / 3.07 ROM builds) or **Game** (`GAME_00.ACX` = LDConf's
+`GC.BIN`, full hash `#C0FA3055`): every square graphics 320 x 256 colors with a per-square grid
+offset, and cell `#EE` = `#41` so the BIOS returns into the program. A stream nobody knows runs
+Standard. Design: [game-configuration.md](../../docs/inprogress/2026-09-28-sprinter/game-configuration.md).
+
+On the MAME pack's disk (BIOS 3.07 or 3.06, `sp_hdd_sys.chd`, Flex Navigator on C:\ as in 3b),
+start a TTD recording first (the PLD reload restarts the machine; the recording shows how):
+
+```bash
+E=$BASE/emulator/$EMU_ID
+curl -s -X POST $E/ttd/start -H 'Content-Type: application/json' -d '{"history_limit_frames": 8820}'
+tap down; tap down; tap enter; sleep 2                                   # C:\DEMOS
+for i in 1 2 3 4 5 6 7 8 9; do tap down; done; tap enter; sleep 2        # GAME_00
+tap down; tap down; tap enter; sleep 10                                  # GAME_00.EXE
+curl -s $E/state/sprinter | jq -c '.pld | {state, module, selected_by, why, cell_EE}'
+#   → {"state":"configured","module":"Game","selected_by":"full_hash",
+#      "why":"the bitstream's full hash C0FA3055 is the Game module's (GAME_00.ACX from #0100 = LDConf's GC.BIN = ...)",
+#      "cell_EE":"0x00"}                                                  # the BIOS read #41 and cleared it
+curl -s $E/state/sprinter | jq -c '.pld.game | {active, grid_offset, frame_start_offset}'
+#   → {"active":true,"grid_offset":"0x00","frame_start_offset":"0x00"}   # the blanking squares clear it each line
+curl -s "$E/state/sprinter/pld-journal?kinds=pld_load,pld_configured&limit=4" | jq -r '.events[] | "\(.frame) \(.text)"'
+#   → 164 PLD configured: module Standard (473720 writes, full hash 29641AB3, head hash 49861031): matched by the full hash
+#     978 code #2E: PLD reload requested (back to the loader)
+#     978 the PLD loads a configuration: the CPU runs the ROM loader into the sink
+#     1142 PLD configured: module Game (473720 writes, full hash C0FA3055, head hash 3861CFA4): matched by the full hash
+curl -s $E/state/sprinter/bios | jq -c '.pld | {module, selected_by}'   # the BIOS and ZX-mode reports too
+#   → {"module":"Game","selected_by":"full_hash"}
+curl -s $E/state/screen | jq -r .video_mode                              # the GUI status bar: "PLD Game: 320x256 256c"
+#   → Sprinter 320 lines, mode page 0, PLD configuration Game: every square graphics 320 x 256 colors with the per-square grid offset
+curl -s -X POST $E/ttd/stop
+```
+
+`TEST_005.EXE` / `TEST_010.EXE` (the same folder) load the same bitstream and scroll a landscape.
+LDConf's `START.BAT` loads `GC.BIN`, runs `SCROLL.EXE` on Game and, after a key, loads the ROM's
+bitstream again - the way back to Standard:
+
+```bash
+tap down; tap down; tap enter; sleep 2                                   # C:\DEMOS
+for i in $(seq 1 11); do tap down; done; tap enter; sleep 2              # LDCONF
+for i in $(seq 1 8); do tap down; done; tap enter; sleep 12              # START.BAT
+curl -s $E/state/sprinter | jq -c '.pld | {module, selected_by, cell_EE}'
+#   → {"module":"Game","selected_by":"full_hash","cell_EE":"0x00"}        # SCROLL.EXE runs (PC #8179, its HALT)
+tap space; sleep 12                                                      # SCROLL.EXE ends, LDConf reloads the ROM's stream
+curl -s $E/state/sprinter | jq -c '.pld | {module, selected_by, why}'
+#   → {"module":"Standard","selected_by":"full_hash",
+#      "why":"the bitstream's full hash 29641AB3 is the Standard module's (BIOS 3.07 BETA 1 ROM page #C)"}
+curl -s "$E/state/sprinter/pld-journal?kinds=pld_configured&limit=8" | jq -r '.events[] | "\(.frame) \(.text)"' | tail -2
+#   → 1288 PLD configured: module Game (473720 writes, full hash C0FA3055, head hash 3861CFA4): matched by the full hash
+#     1889 PLD configured: module Standard (473720 writes, full hash 29641AB3, head hash 49861031): matched by the full hash
+```
+
+Flex Navigator comes back (PC `#A441`, its idle `HALT`). The RESET button also goes back to Standard.
+The other surfaces carry the same
+fields: MCP `inspect_state {"aspects":["sprinter"]}` (`pld`), `["sprinter_bios"]` and
+`["sprinter_zx_mode"]` (`pld`: module and why); CLI `state sprinter`, `state sprinter bios`;
+Lua / Python `sprinter_state()`, `sprinter_bios()`, `sprinter_zx_mode()`. The demo runner
+([tools/machines/sprinter/demo-runner](../../tools/machines/sprinter/demo-runner/README.md)) reports
+it as `pld-reload` with `pld_module`, `pld_selected_by` and `after_reload`. Checked live 2026-10-03
+(branch `sprinter-pld-game`, BIOS 3.07 BETA 1): both runs above under a TTD recording, the recordings
+loaded and sought before, inside and after each reload (`/ttd/load`, `/ttd/seek`, `/state/sprinter`:
+Standard, `loading`, Game with cell `#EE` = `#41` while the BIOS restarts, Game with `#EE` = 0 in the
+program, Standard again).
 
 ### 4. Spectrum mode and TR-DOS
 
@@ -328,7 +396,7 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 
 | Block | Fields |
 |:--|:--|
-| `pld` | `state` (unconfigured / loading / configured), `module`, `bitstream` (writes, `full_hash`, `head_hash`, `fast_start`), `dcp_open` (the BIOS opened the port decoder), `dcp_opened_frame`, `dcp_opened_pc` |
+| `pld` | `state` (unconfigured / loading / configured), `module` (Standard / Game), `selected_by` + `why` (section 3c), `cell_EE`, `game` (the Game module's grid offset), `bitstream` (writes, `full_hash`, `head_hash`, `fast_start`), `dcp_open` (the BIOS opened the port decoder), `dcp_opened_frame`, `dcp_opened_pc` |
 | `decoder` | `map` (0-3, CNF bits 4-3), `cnf`, `dos` (TR-DOS on), `pn5`, `port_7ffd`, `port_1ffd` (after the CNF clean rules) |
 | `windows[4]` | `kind` (ROM, loader ROM, fast RAM, vROM, RAM, graphics, ISA, port table, RAM (reset page)), `page`, `writable`, `cell`, `note` |
 | `registers`, `cells` | ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD (mode page), HOLD, SCALE; cells `#C0-#FF` as hex rows |
@@ -530,7 +598,8 @@ and core reports as Lua.)
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Sound: one AY at 1.75 MHz (ABC), beeper, Covox, Covox-Blaster (ring, rates, INT, 16-bit stereo) | implemented (S6, [sprinter-sound.md](sprinter-sound.md)) |
 | Accelerator | implemented (S5, [sprinter-accelerator.md](sprinter-accelerator.md)) |
-| ISA cards (General Sound on the ZX-bus adapter, `PROPLAY.EXE` MODs) | not yet (S6b); the ISA view reads `#FF` |
+| ISA bus: two ISA-8 slots, default slot 2 = NE2000 (RTL8019AS), Ethernet gateway | implemented ([sprinter-isa.md](sprinter-isa.md), [sprinter-network.md](sprinter-network.md)) |
+| ZX-bus adapter with General Sound / NeoGS in slot 1 (`PROPLAY.EXE` MODs) | not yet (S6b); an empty slot reads `#FF` |
 | TTD (time travel) | implemented (S7, [analysis/sprinter-ttd.md](../analysis/sprinter-ttd.md)) |
 | Automation of video modes, palettes, video RAM, the change log, BIOS selection, mixer | implemented (automation audit 2026-10-02: step 1, step 6, [sprinter-sound.md](sprinter-sound.md)) |
 

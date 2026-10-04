@@ -91,6 +91,23 @@ namespace py = pybind11;
 /// Shared page-index validation for the page_* bindings: an invalid index
 /// must raise instead of silently returning zeros or touching memory outside
 /// the page (a negative cache/misc page reads before the buffer)
+
+/// How a direct run ended, for emu.step / emu.steps
+inline py::dict StepOutcome(const Emulator& emulator, unsigned executed)
+{
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    py::dict result;
+    result["executed"] = executed;
+    result["stopped"] = stop.hit;
+    if (stop.hit)
+    {
+        result["breakpoint_id"] = stop.breakpointId;
+        result["address"] = stop.address;
+        result["access"] = BreakpointHitKindName(stop.kind);
+    }
+    return result;
+}
+
 inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
 {
     int maxPage;
@@ -773,7 +790,15 @@ namespace PythonBindings
                     regs["de_"] = z80->alt.de;
                     regs["hl_"] = z80->alt.hl;
                     regs["i"] = z80->i;
-                    regs["r"] = (z80->r_hi << 7) | (z80->r_low & 0x7F);
+                    regs["r"] = Z80::RegisterR(z80);
+                    regs["memptr"] = z80->memptr;
+                    regs["im"] = z80->im;
+                    regs["iff1"] = z80->iff1 != 0;
+                    regs["iff2"] = z80->iff2 != 0;
+                    regs["halted"] = z80->halted != 0;
+                    regs["q"] = z80->q;
+                    regs["boundary"] = Z80::BoundaryName(z80->boundary);
+                    regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
                 }
                 return regs;
             }, "Get all registers as dictionary")
@@ -1137,12 +1162,18 @@ namespace PythonBindings
             }, "List all disk drives")
             
             // Execution control
+            // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
+            // (stopped: a breakpoint ended it - an execution one before its instruction)
             .def("step", [](Emulator& self, bool skipBreakpoints) {
                 self.RunSingleCPUCycle(skipBreakpoints);
-            }, "Execute single CPU instruction", py::arg("skip_breakpoints") = true)
+                const Emulator::BreakpointStop& stop = self.LastDirectStop();
+                return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
+            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
+               py::arg("skip_breakpoints") = true)
             .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
-                self.RunNCPUCycles(count, skipBreakpoints);
-            }, "Execute N CPU instructions", py::arg("count"), py::arg("skip_breakpoints") = false)
+                return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
+            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
+               py::arg("count"), py::arg("skip_breakpoints") = false)
             .def("stepover", &Emulator::StepOver, "Step over call instructions")
 
             // Frame stepping
@@ -1445,24 +1476,36 @@ namespace PythonBindings
                  "RZX playback status")
             
             // Breakpoint management
-            .def("bp", [](Emulator& self, uint16_t addr) -> int {
+            .def("bp", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return -1;
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                return bpm ? static_cast<int>(bpm->AddExecutionBreakpoint(addr)) : -1;
-            }, "Add execution breakpoint", py::arg("addr"))
-            .def("bp_read", [](Emulator& self, uint16_t addr) -> int {
+                if (!bpm) return -1;
+                std::string error;
+                const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_EXECUTE, page, error);
+                return id == BRK_INVALID ? -1 : static_cast<int>(id);
+            }, "Add execution breakpoint; page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
+               py::arg("addr"), py::arg("page") = "")
+            .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return -1;
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                return bpm ? static_cast<int>(bpm->AddMemReadBreakpoint(addr)) : -1;
-            }, "Add memory read breakpoint (watchpoint)", py::arg("addr"))
-            .def("bp_write", [](Emulator& self, uint16_t addr) -> int {
+                if (!bpm) return -1;
+                std::string error;
+                const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_READ, page, error);
+                return id == BRK_INVALID ? -1 : static_cast<int>(id);
+            }, "Add memory read breakpoint (watchpoint); page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
+               py::arg("addr"), py::arg("page") = "")
+            .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return -1;
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                return bpm ? static_cast<int>(bpm->AddMemWriteBreakpoint(addr)) : -1;
-            }, "Add memory write breakpoint (watchpoint)", py::arg("addr"))
+                if (!bpm) return -1;
+                std::string error;
+                const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_WRITE, page, error);
+                return id == BRK_INVALID ? -1 : static_cast<int>(id);
+            }, "Add memory write breakpoint (watchpoint); page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
+               py::arg("addr"), py::arg("page") = "")
             .def("bp_port_in", [](Emulator& self, uint16_t port) -> int {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return -1;
@@ -1499,6 +1542,19 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->DeactivateBreakpoint(id) : false;
             }, "Disable breakpoint", py::arg("id"))
+            .def("bp_note", [](Emulator& self, uint16_t id, const std::string& note) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                return bpm ? bpm->SetBreakpointNote(id, note) : false;
+            }, "Set a breakpoint's note (empty clears it); False for an unknown id", py::arg("id"), py::arg("note"))
+            .def("bp_group", [](Emulator& self, uint16_t id, const std::string& group) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                return bpm ? bpm->SetBreakpointGroup(id, group) : false;
+            }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name",
+               py::arg("id"), py::arg("group"))
             .def("bp_count", [](Emulator& self) -> size_t {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return 0;
@@ -1533,6 +1589,13 @@ namespace PythonBindings
                     result["active"] = info.active;
                     result["note"] = info.note;
                     result["group"] = info.group;
+                    if (!info.pageKind.empty())
+                    {
+                        py::dict page;
+                        page["kind"] = info.pageKind;
+                        page["page"] = info.pageNumber;
+                        result["page"] = page;
+                    }
                 }
                 return result;
             }, "Get last triggered breakpoint info (id, type, address, access)")
@@ -2106,7 +2169,7 @@ namespace PythonBindings
             // SprinterPortTable, SprinterPortLookup); map / dos / pn5 / rw omitted = the machine's current state
             .def("sprinter_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Sprinter(self.GetContext()));
-            }, "Sprinter Sp2000: PLD configuration, port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
+            }, "Sprinter Sp2000: PLD configuration (module Standard / Game, selected_by + why, the Game grid offset), port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
             .def("sprinter_text", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
             }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")
@@ -2293,7 +2356,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: the SprinterESP card's 16550 line), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -3311,7 +3374,7 @@ namespace PythonBindings
                     return info;
                 }
                 ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-                ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+                ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
                 info["state"]                    = ttd::TTDSessionStateToString(si.state);
                 info["session_start_frame"]      = py::cast(si.sessionStartFrame);
                 info["current_end_frame"]        = py::cast(si.currentEndFrame);
@@ -3438,11 +3501,11 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager)
                     throw std::runtime_error("TTD not available");
-                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
                 ctx->pTimeTravelManager->SetHistoryLimit(
                     framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
                     bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
-                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
                 return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
             }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
                "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
@@ -3569,7 +3632,7 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return markers;
                 const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-                for (const auto& e : journal.Events())
+                for (const auto& e : journal.SnapshotEvents())
                 {
                     py::dict marker;
                     marker["frame"]    = py::cast(e.time.frame);
@@ -3721,7 +3784,7 @@ namespace PythonBindings
                     result["error"] = err;
                     return result;
                 }
-                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
                 result["ok"] = true;
                 result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
                 result["session_start_frame"] = info.sessionStartFrame;
@@ -4017,7 +4080,7 @@ namespace PythonBindings
                     return d;
                 }
                 auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
+                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
                 ttd::TTDCoverageKindFromString(kindStr, kind);
                 std::optional<ttd::PhysPage> physPage;
@@ -4058,7 +4121,7 @@ namespace PythonBindings
                     return d;
                 }
                 auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
+                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 std::optional<ttd::TTDCoverageKind> optKind;
                 if (!kindObj.is_none())
                 {

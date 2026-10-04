@@ -23,7 +23,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 
 class Emulator;
-class Message;
+struct Message;
 
 class BreakpointDialog : public QDialog
 {

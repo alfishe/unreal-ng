@@ -76,6 +76,16 @@ public:
     void Reset() override;
     bool Irq() const override;
     void SetIrqListener(std::function<void()> changed) override;
+    /// The selected IRQ pin is driven while the chip may drive it: on the RTL8019AS only with CONFIG1.IRQEN set
+    /// (clear: high impedance), and only a pin an 8-bit slot has (IRQ 2/9, 3, 4, 5, 7: IRQ 10-15 sit on the
+    /// 16-bit connector)
+    bool IrqDriven() const override;
+    /// A transmit on the wire ends with PTX (ISR bit 1)
+    uint64_t NextIrqEventAt() const override;
+    void CatchUp() override { _chip.Advance(Now()); }
+    std::string IrqCause() const override;
+    /// The IRQ number the card selects now (RTL8019AS: CONFIG1.IRQS; the others: the jumper, Settings::irq)
+    int SelectedIrq() const;
     bool Stalled() const override { return _stalled; }
     void OnFrame() override;
     void Describe(StateNode& out) const override;
