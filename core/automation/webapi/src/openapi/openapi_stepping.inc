@@ -119,8 +119,8 @@
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["description"] =
         "Runs at full host speed and leaves the emulator paused. Host audio is held for the run (as for every "
         "direct run: run_frame, run_tstates, run_to_*, step): every sound device still computes its samples "
-        "(captures and recordings get them), the speakers get nothing; resume restores sound. GET /audio/mixer "
-        "host_output shows it.";
+        "(captures and recordings get them), the speakers get nothing; the hold ends with the run, and resume "
+        "drops any hold left without its reason. GET /audio/mixer host_output shows it (holders.direct_run).";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["required"] = true;

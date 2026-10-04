@@ -43,7 +43,8 @@ namespace
         PeerSerial,
         PeerEspnet,
         PeerAt,
-        PeerModem
+        PeerModem,
+        PeerPlug
     };
 
     ComPortSpec::Kind KindOf(int index)
@@ -56,6 +57,7 @@ namespace
             case PeerEspnet: return ComPortSpec::Kind::Espnet;
             case PeerAt: return ComPortSpec::Kind::At;
             case PeerModem: return ComPortSpec::Kind::Modem;
+            case PeerPlug: return ComPortSpec::Kind::Plug;
             default: return ComPortSpec::Kind::None;
         }
     }
@@ -70,6 +72,7 @@ namespace
             case ComPortSpec::Kind::Espnet: return PeerEspnet;
             case ComPortSpec::Kind::At: return PeerAt;
             case ComPortSpec::Kind::Modem: return PeerModem;
+            case ComPortSpec::Kind::Plug: return PeerPlug;
             default: return PeerNone;
         }
     }
@@ -98,12 +101,13 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
 
     _kind = new QComboBox(this);
     _kind->addItem(tr("Nothing connected"));
-    _kind->addItem(tr("Loopback plug (every byte comes back)"));
+    _kind->addItem(tr("Echo (every byte comes back, lines held active)"));
     _kind->addItem(tr("TCP: a host endpoint (BBS, test harness)"));
     _kind->addItem(tr("Serial: a host serial device (real ESP, modem)"));
     _kind->addItem(tr("ESP module, ESPNET firmware (NedoOS)"));
     _kind->addItem(tr("ESP module, AT firmware (Espressif)"));
     _kind->addItem(tr("Hayes modem (ATDT dials host:port or a phone book number)"));
+    _kind->addItem(tr("Loopback test plug (bytes back; RTS -> CTS, DTR -> DSR / DCD)"));
     layout->addWidget(_kind);
 
     _tcpRow = new QWidget(this);

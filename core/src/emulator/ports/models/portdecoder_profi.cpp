@@ -8,6 +8,7 @@
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "debugger/ttd/profi/ttdprofixtkbc.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "debugger/ttd/ttdppi8255.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tape.h"
@@ -45,6 +46,8 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
+    _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
     FitKeyboard();
 
     // The VG93 and the tape keep their own clocks while the CPU clock changes (turbo x2, hi-res 6/7 on v3 and
@@ -133,6 +136,7 @@ void PortDecoder_Profi::reset()
     state.border_attr = 0x07;
 
     ResetPalette();
+    _ppi.Reset();   // RESET reaches the 8255: every port an input
 
     // The RTC's battery-backed cells come from [PROFI] NvramFile once, at
     // power-on; a Z80 reset does not touch the chip. Only the v5 board has the clock
@@ -471,6 +475,15 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x001F;
         disp.wasHandledInline = true;
     }
+    // The 8255: #3F (B), #5F (C), #7F (control) outside the DOS / CP/M port set; #87 / #A7 / #C7 / #E7 in the
+    // extended map. Port A at #1F is the joystick arm above when one is fitted
+    else if (const uint8_t ppiReg = PpiRegister(port, dosPorts); ppiReg != 0xFF)
+    {
+        result = _ppi.Read(ppiReg);
+        _lastPortDecoded = true;
+        disp.decodedPort = port & 0xFF;
+        disp.wasHandledInline = true;
+    }
     else if (uint8_t mouseReg = 0; !dosPorts && Default_IsPort_KempstonMouse(port, mouseReg))
     {
         // Kempston mouse and joystick exist only outside the CP/M / DOS port sets
@@ -614,6 +627,12 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         {
             const uint8_t lowByte = static_cast<uint8_t>(port);
             const uint8_t lrBits = lowByte & kProfiCovoxExtLRMask;
+            if (const uint8_t ppiReg = PpiRegister(port, dosPorts); ppiReg != 0xFF)
+            {
+                _ppi.Write(ppiReg, value);
+                disp.decodedPort = lowByte;
+                disp.wasDecoded = true;
+            }
             if ((lowByte & kProfiCovoxExtMask) == kProfiCovoxExtMatch &&
                 (lrBits == kProfiCovoxExtLeftBits || lrBits == kProfiCovoxExtRightBits))
             {
@@ -631,10 +650,13 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     // Covox/SoundRive DAC: #5F (Left), #3F (Right). NORMAL mode only - the FDC/CP'M
     // port set (dosPorts above) takes priority when the disk interface is on the bus;
     // the CP/M-extended-mode aliases (#C7/#A7) are handled inside that branch instead.
-    else if (const uint8_t lowByte = port & 0xFF;
-             lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort)
+    else if (const uint8_t lowByte = port & 0xFF; PpiRegister(port, dosPorts) != 0xFF)
     {
-        if (_context->pSoundManager && _context->pSoundManager->hasCovox())
+        _ppi.Write(PpiRegister(port, dosPorts), value);
+        // The Covox DAC follows every write to B / C, whatever the 8255's mode (as Karabas Pro's covox.vhd latches
+        // it): the Profi Covox software never programs the 8255, and no BIOS sets it to output
+        if ((lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort) && _context->pSoundManager &&
+            _context->pSoundManager->hasCovox())
         {
             // Use the A ports, not B: computeStereoAmplitudes()'s mono-compatibility
             // fallback keys on LeftA/LeftB/RightA==0 and then substitutes RightB into
@@ -747,7 +769,7 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
     // The clock is on the v5 board only; the PROFI-XT controller when fitted
-    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging};
+    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ppi8255};
     if (_board.extendedPorts)
         ids.push_back(ttd::PeripheralId::Ds12887);
     if (_xtKbc)
@@ -759,6 +781,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDS
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDPpi8255>(const_cast<Ppi8255&>(_ppi)));
     if (_board.extendedPorts)
         serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
     if (_xtKbc)
@@ -786,6 +809,19 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
     static const uint16_t mask = 0b1010'0000'0000'0010;
     static const uint16_t match = 0b1000'0000'0000'0000;
     return (port & mask) == match;
+}
+
+uint8_t PortDecoder_Profi::PpiRegister(uint16_t port, bool dosPorts) const
+{
+    // The 8255's register (A6 A5 = A1 A0 of the chip) for an address it answers, else #FF. Outside the DOS / CP/M
+    // port set: #1F / #3F / #5F / #7F (the joystick read of #1F stays its own arm). In the extended map: the same
+    // registers at #87 / #A7 / #C7 / #E7 (A7 = 1, A2 = 1: decoder-prom.md, the v5 PROM)
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (!dosPorts && (low & 0x9F) == 0x1F)
+        return static_cast<uint8_t>((low >> 5) & 0x03);
+    if (dosPorts && (low & 0x9F) == 0x87 && IsExtMode())
+        return static_cast<uint8_t>((low >> 5) & 0x03);
+    return 0xFF;
 }
 
 bool PortDecoder_Profi::IsExtMode() const

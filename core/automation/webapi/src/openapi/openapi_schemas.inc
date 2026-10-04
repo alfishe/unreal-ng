@@ -152,6 +152,39 @@
     schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("supported");
     schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("unsupported");
 
+    schemas["MouseState"]["properties"]["mouse_fitted"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["mouse_fitted"]["description"] =
+        "Some mouse device the machine's ports read is fitted; false: input is refused with 409";
+    schemas["MouseState"]["properties"]["device"]["$ref"] = "#/components/schemas/MouseDevice";
+    schemas["MouseState"]["properties"]["device"]["nullable"] = true;
+    schemas["MouseState"]["properties"]["devices"]["type"] = "array";
+    schemas["MouseState"]["properties"]["devices"]["items"]["$ref"] = "#/components/schemas/MouseDevice";
+    schemas["MouseState"]["properties"]["queue"]["type"] = "object";
+    schemas["MouseState"]["properties"]["queue"]["description"] = "Automation input waiting behind a glide";
+    schemas["MouseState"]["properties"]["queue"]["properties"]["ops"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["queue"]["properties"]["glide_remaining"]["type"] = "object";
+
+    schemas["MouseDevice"]["type"] = "object";
+    schemas["MouseDevice"]["description"] = "One mouse device of the machine and what it gives the guest";
+    schemas["MouseDevice"]["properties"]["id"]["type"] = "string";
+    schemas["MouseDevice"]["properties"]["id"]["description"] = "kempston, sprinter, evo-ps2";
+    schemas["MouseDevice"]["properties"]["name"]["type"] = "string";
+    schemas["MouseDevice"]["properties"]["kind"]["type"] = "string";
+    for (const char* kind : {"kempston", "serial-microsoft", "ps2-avr"})
+        schemas["MouseDevice"]["properties"]["kind"]["enum"].append(kind);
+    for (const char* flag : {"fitted", "in_use", "wheel"})
+        schemas["MouseDevice"]["properties"][flag]["type"] = "boolean";
+    for (const char* number : {"buttons", "x", "y", "button_mask"})
+        schemas["MouseDevice"]["properties"][number]["type"] = "integer";
+    schemas["MouseDevice"]["properties"]["ports"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["ports"]["description"] = "What IN #FADF / #FBDF / #FFDF returns from it";
+    schemas["MouseDevice"]["properties"]["serial"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["serial"]["description"] =
+        "Serial mouse: line baud, the UART receiver's baud / in tune / enabled, the packet in flight, motion "
+        "pending, packets sent, bytes received, framing errors, the receive FIFO and overrun";
+    schemas["MouseDevice"]["properties"]["ps2"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["ps2"]["description"] = "PS/2 mouse on the AVR: connected, resolution";
+
     schemas["MouseStatus"]["description"] = "Response from GET /mouse/status";
     schemas["MouseStatus"]["allOf"][0]["$ref"] = "#/components/schemas/MouseState";
     schemas["MouseStatus"]["allOf"][1]["type"] = "object";
@@ -170,7 +203,10 @@
     schemas["MouseInjectResponse"]["properties"]["message"]["type"] = "string";
     schemas["MouseInjectResponse"]["properties"]["warning"]["type"] = "string";
     schemas["MouseInjectResponse"]["properties"]["warning"]["description"] =
-        "Set when the input cannot reach the guest (mouse or wheel not fitted)";
+        "Set when part of the input cannot reach the guest (no wheel fitted)";
+    schemas["MouseInjectResponse"]["properties"]["queued"]["type"] = "boolean";
+    schemas["MouseInjectResponse"]["properties"]["queued"]["description"] =
+        "Accepted behind a glide still in progress; applied in order at frame ends";
     schemas["MouseInjectResponse"]["properties"]["state"]["$ref"] = "#/components/schemas/MouseState";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 

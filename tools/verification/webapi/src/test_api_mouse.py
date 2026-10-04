@@ -234,3 +234,49 @@ class TestKeyboardUnknownKey:
     def test_known_key_still_200(self, api_client, active_emulator):
         resp = self._post(api_client, active_emulator, "tap", {"key": "a"})
         assert resp.status_code == 200, resp.text
+
+
+class TestMouseDevices:
+    """The machine's own mouse (docs/inprogress/2026-10-03-mouse-api-routing/design.md)."""
+
+    def test_status_names_the_machine_mouse(self, api_client, active_emulator):
+        st = status(api_client, active_emulator)
+        assert st["mouse_fitted"] is True
+        device = st["device"]
+        assert device["id"] in ("kempston", "sprinter", "evo-ps2")
+        assert device["fitted"] is True
+        assert set(device["ports"].keys()) == {"FADF", "FBDF", "FFDF"}
+        assert device["id"] in [d["id"] for d in st["devices"]]
+        assert st["queue"]["ops"] == 0
+
+    def test_status_device_query(self, api_client, active_emulator):
+        device_id = status(api_client, active_emulator)["device"]["id"]
+        resp = api_client.session.get(mouse_url(api_client, active_emulator, "status"), params={"device": device_id})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["device"]["id"] == device_id
+        resp = api_client.session.get(mouse_url(api_client, active_emulator, "status"), params={"device": "nope"})
+        assert_bad_request(resp, "Unknown mouse device 'nope'")
+
+    def test_glide_steps_and_queues_the_click(self, api_client, paused_emulator):
+        resp = post(api_client, paused_emulator, "glide", {"dx": 300})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["success"] is True
+        assert body.get("queued") is True, "300 is more than one step"
+        assert body["state"]["queue"]["glide_remaining"]["dx"] == 300 - 127
+        click = post(api_client, paused_emulator, "click", {"button": "left"})
+        assert click.status_code == 200, click.text
+        assert click.json().get("queued") is True
+        run_frames(api_client, paused_emulator, 40)
+        st = status(api_client, paused_emulator)
+        assert st["queue"]["ops"] == 0
+        assert st["x"] == (100 + 300) % 256
+        assert st["pending_click"] is None
+
+    @pytest.mark.parametrize("body,fragment", [
+        ({"dx": 5000}, "dx=5000 out of range -4096..4096"),
+        ({"dx": 0, "dy": 0}, "glide requires a non-zero dx or dy"),
+        ({}, "Missing 'dx' or 'dy'"),
+    ])
+    def test_glide_bad_request(self, api_client, active_emulator, body, fragment):
+        assert_bad_request(post(api_client, active_emulator, "glide", body), fragment)

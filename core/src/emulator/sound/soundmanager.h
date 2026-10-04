@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -40,6 +41,16 @@ struct GeneralSoundSlot
 
 class SoundManager
 {
+public:
+    /// Why the host audio output is held (see HostOutputHold below)
+    enum class HostHoldReason : uint8_t
+    {
+        DirectRun = 0,
+        TtdReplay,
+        Turbo,
+    };
+    static constexpr size_t kHostHoldReasons = 3;
+
     /// region <Fields>
 protected:
     EmulatorContext* _context;
@@ -288,9 +299,15 @@ protected:
     /// `soundhq` feature state; clearing the override restores the previous quality
     bool _turboLowQualityOverride = false;
 
-    /// Host output holds (holdHostOutput / releaseHostOutput). A depth, not a flag: an API fast run and a
-    /// TTD replay may nest. Separate from _mute (the user's master mute) so neither overwrites the other
-    std::atomic<int> _hostOutputHolds{0};
+    /// Host output holds, one depth per reason (HostOutputHold guards only). Separate from _mute (the user's
+    /// master mute): nothing but the user sets that one, so no hold can leave it changed
+    std::array<std::atomic<int>, kHostHoldReasons> _hostHolds{};
+    /// Generation per reason: reconcileHostOutputHolds bumps it when it drops a stale hold, so the guard that
+    /// took it releases nothing later (it would otherwise drop a newer, legitimate hold of the same reason)
+    std::array<std::atomic<uint32_t>, kHostHoldReasons> _hostHoldEpoch{};
+    /// Holds ever taken per reason, and stale holds dropped (lifetime; read by the audio mixer state)
+    std::array<std::atomic<uint64_t>, kHostHoldReasons> _hostHoldsTaken{};
+    std::atomic<uint64_t> _hostStaleHoldsCleared{0};
     /// Host output counters, in emulated frames (lifetime; read by the audio mixer state)
     std::atomic<uint64_t> _hostFramesDelivered{0};
     std::atomic<uint64_t> _hostFramesAudible{0};
@@ -331,27 +348,72 @@ public:
     /// ends every HUD nudge (AudioActivityIndicators::stop).
     void onEmulatorPaused();
 
-    /// Host output hold: while at least one hold is active, handleFrameEnd hands nothing to the host audio
-    /// callback - the frontend's ring sees exactly what it sees while the emulator is paused. For runs that are
-    /// not paced to real time (API run_frames / run_tstates / run_until / step, TTD seek and replay): their
-    /// frames would otherwise reach the speakers sped up. Only the host boundary changes: every device still
-    /// renders its samples (TTD determinism), and the recording / analyzer taps still get the real mix.
-    /// Holds nest; every holdHostOutput needs one releaseHostOutput. Any thread
-    void holdHostOutput() { _hostOutputHolds.fetch_add(1, std::memory_order_acq_rel); }
-    void releaseHostOutput()
+    /// Host output hold: while any hold is active, handleFrameEnd hands nothing to the host audio callback - the
+    /// frontend's ring sees exactly what it sees while the emulator is paused. For runs that are not paced to real
+    /// time: their frames would otherwise reach the speakers sped up. Only the host boundary changes: every device
+    /// still renders its samples (TTD determinism), the recording / analyzer taps still get the real mix, and the
+    /// user's master mute (mute / unmute) is never touched.
+    ///
+    /// Holds are taken only through a HostOutputHold guard, keyed by the reason that holds:
+    ///  - DirectRun: Emulator::DirectStepScope, for the duration of one direct run (run_frames, run_tstates,
+    ///    run_to_*, step, step_n...), on whatever thread runs it
+    ///  - TtdReplay: TimeTravelManager, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
+    ///  - Turbo: Core, EnableTurboMode .. DisableTurboMode (one hold per turbo span)
+    /// The guard releases exactly what it took, once (destructor, Release, or move-assign over it).
+    /// (HostHoldReason: declared at the top of the class)
+    /// "direct_run" / "ttd_replay" / "turbo" (the audio mixer state's keys)
+    static const char* HostHoldReasonName(HostHoldReason reason);
+
+    class HostOutputHold
     {
-        int holds = _hostOutputHolds.load(std::memory_order_acquire);
-        while (holds > 0 && !_hostOutputHolds.compare_exchange_weak(holds, holds - 1, std::memory_order_acq_rel))
-        {
-        }
+    public:
+        HostOutputHold() = default;
+        HostOutputHold(SoundManager* sound, HostHoldReason reason);
+        ~HostOutputHold() { Release(); }
+        HostOutputHold(HostOutputHold&& other) noexcept;
+        HostOutputHold& operator=(HostOutputHold&& other) noexcept;
+        HostOutputHold(const HostOutputHold&) = delete;
+        HostOutputHold& operator=(const HostOutputHold&) = delete;
+
+        /// Gives the hold back (no-op when nothing is held); any thread
+        void Release();
+        bool IsHeld() const { return _sound != nullptr; }
+
+    private:
+        SoundManager* _sound = nullptr;
+        HostHoldReason _reason = HostHoldReason::DirectRun;
+        uint32_t _epoch = 0;
+    };
+
+    bool isHostOutputHeld() const;
+    /// Active holds of one reason
+    int hostOutputHolds(HostHoldReason reason) const
+    {
+        return _hostHolds[static_cast<size_t>(reason)].load(std::memory_order_acquire);
     }
-    bool isHostOutputHeld() const { return _hostOutputHolds.load(std::memory_order_acquire) > 0; }
+    /// Holds of one reason taken since creation
+    uint64_t hostOutputHoldsTaken(HostHoldReason reason) const
+    {
+        return _hostHoldsTaken[static_cast<size_t>(reason)].load(std::memory_order_relaxed);
+    }
+    /// Holds dropped by reconcileHostOutputHolds since creation (each one a holder that never gave it back)
+    uint64_t hostOutputStaleHoldsCleared() const { return _hostStaleHoldsCleared.load(std::memory_order_relaxed); }
+    /// Drops every hold whose reason is not in effect right now - a direct run on some thread, a TTD replay,
+    /// turbo mode - and returns how many it dropped (logged as a warning: a holder leaked it). Emulator::Resume
+    /// calls it, so a resumed machine is always heard unless something really is holding it. Any thread
+    int reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive);
+
     /// Emulated frames handed to the host audio callback / of those, with any non-zero sample / withheld by a hold
     uint64_t hostFramesDelivered() const { return _hostFramesDelivered.load(std::memory_order_relaxed); }
     uint64_t hostFramesAudible() const { return _hostFramesAudible.load(std::memory_order_relaxed); }
     uint64_t hostFramesHeld() const { return _hostFramesHeld.load(std::memory_order_relaxed); }
 
-    /// Force low-quality DSP while turbo mode is on (audio is muted anyway, and the
+private:
+    uint32_t acquireHostHold(HostHoldReason reason);
+    void releaseHostHold(HostHoldReason reason, uint32_t epoch);
+
+public:
+    /// Force low-quality DSP while turbo mode is on (nothing reaches the host anyway, and the
     /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`
     /// feature itself is left untouched, so leaving turbo re-enables the previous state.
     void setTurboLowQualityOverride(bool enabled);

@@ -174,9 +174,10 @@ private:
 
     private:
         Emulator& _emulator;
-        /// The host audio hold this direct run takes (SoundManager::holdHostOutput): it is not paced to real
-        /// time, so its frames must not reach the speakers sped up
-        SoundManager* _heldSound = nullptr;
+        /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
+        /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
+        /// it unmarks it, so Resume's reconcile never sees this hold without its run
+        SoundManager::HostOutputHold _hostHold;
     };
 
     // Emulator state
@@ -637,6 +638,11 @@ public:
     /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another
     /// thread. False while the thread runs, or between a pause request and its confirmation
     bool IsEmulationParked();
+    /// Run `work` on the caller's thread while the emulation stays parked: a confirmed pause and no direct run on any
+    /// thread. Resume() waits for it (the pause flag cannot flip meanwhile), so the caller is the only thread driving
+    /// the machine. Returns false, without running `work`, when the machine is not parked. `work` must not pause,
+    /// resume or step this emulator
+    bool RunWhileParked(const std::function<void()>& work);
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
 

@@ -58,8 +58,8 @@ interrupts. SN5 (branch
   J1-J2 decode, AFR, J5 / J6), TTD blobs **48 / 49** for the second UART, guests 9 / 10; BC-Term 1.11 dials a scripted
   BBS through the phone book and talks over the ISA interrupt, TTD replay without the host; reports on all surfaces +
   Qt; recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md#isa-hayes-modem-and-sprinterserial)
-- [ ] SN4 follow-ups: owner questions Q12 (SprinterSerial COM1's floating modem inputs) and Q13 (both IRQ jumpers
-  fitted); BC-Term's file transfers (X / Y / Zmodem) over the modem not run yet; a modem on the ZX-Evo COM port is
+- [ ] SN4 follow-ups: ~~Q12 (SprinterSerial COM1's floating modem inputs)~~ decided 2026-10-04 (inactive as the hardware,
+  plus the `PLUG` loopback test plug); ~~Q13 (both IRQ jumpers fitted)~~ decided 2026-10-04 (high wins + a warning); BC-Term's file transfers (X / Y / Zmodem) over the modem not run yet; a modem on the ZX-Evo COM port is
   unit-tested (the peer), not run with a ZX program
 - [x] SN5 (2026-10-03, branch `sprinter-sn5-3c509b`, as built in [tdd.md](tdd.md) §18): `EtherLink3` (ID port
   isolation, EEPROM from the real boards, windows 0-6, FIFOs, status / IRQ, 10BASE-T link test, loopback, statistics,

@@ -9,10 +9,13 @@
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/emulatormanager.h"
+#include "base/featuremanager.h"
 #include "emulator/mainloop.h"
 #include "emulator/sound/soundmanager.h"
 #include "common/filehelper.h"
 #include <atomic>
+#include <stdexcept>
+#include <algorithm>
 #include <cctype>
 #include <utility>
 #include <vector>
@@ -22,6 +25,7 @@
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/testwaithelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include <memory>
 #include <thread>
 #include "emulator/notifications.h"
@@ -784,7 +788,7 @@ TEST(Emulator_DirectRunBreakpoint_Test, StepFromABreakpointPauseNeverParksTheCal
 /// region <Host audio during direct runs>
 
 /// API run_frames and every other direct run go at full host speed: on every machine, nothing reaches the host
-/// audio callback for their duration (SoundManager::holdHostOutput), and delivery resumes once they return.
+/// audio callback for their duration (a SoundManager::HostOutputHold), and delivery resumes once they return.
 /// Turbo mode holds it the same way, once however often it is enabled
 class EmulatorHostAudio_Test : public ::testing::TestWithParam<const char*>
 {
@@ -853,6 +857,209 @@ TEST_P(EmulatorHostAudio_Test, TurboHoldsHostOutputOnce)
     EXPECT_FALSE(sound->isMuted());
     _emulator->DisableTurboMode();
     EXPECT_FALSE(sound->isHostOutputHeld());
+}
+
+TEST_P(EmulatorHostAudio_Test, ExceptionInsideADirectRunReleasesTheHold)
+{
+    // A direct run that throws half-way (a predicate, a device) unwinds through its scope: the hold goes with it
+    SoundManager* sound = _context->pSoundManager;
+    unsigned steps = 0;
+    EXPECT_THROW(_emulator->RunUntilCondition(
+                     [&](const Z80State&) -> bool {
+                         EXPECT_TRUE(sound->isHostOutputHeld()) << "the run is not held while it runs";
+                         if (++steps == 3)
+                             throw std::runtime_error("predicate failed");
+                         return false;
+                     },
+                     _context->config.frame * 4),
+                 std::runtime_error);
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "an exception inside a direct run leaked its hold";
+    EXPECT_FALSE(_emulator->IsDirectStepping());
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
+
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(_calls, 1u) << "delivery did not resume after the failed run";
+}
+
+TEST_P(EmulatorHostAudio_Test, TurboNeverTouchesTheUserMute)
+{
+    // Turbo holds the host output; it used to mute() / unmute() the user's master mute as well, so leaving turbo
+    // unmuted a user who had muted, and a TTD replay that saved the mute during turbo restored it set for good
+    SoundManager* sound = _context->pSoundManager;
+    sound->mute();
+    _emulator->EnableTurboMode();
+    _emulator->DisableTurboMode();
+    EXPECT_TRUE(sound->isMuted()) << "leaving turbo unmuted the user";
+    sound->unmute();
+    _emulator->EnableTurboMode();
+    EXPECT_FALSE(sound->isMuted());
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::Turbo), 1);
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound->isHostOutputHeld());
+}
+
+namespace
+{
+/// The host audio callback as a frontend sees it: frames handed over, and of those, frames with any sound
+struct HostAudioSink
+{
+    std::atomic<uint64_t> calls{0};
+    std::atomic<uint64_t> audible{0};
+
+    static void Collect(void* obj, int16_t* samples, size_t count)
+    {
+        auto* sink = static_cast<HostAudioSink*>(obj);
+        sink->calls.fetch_add(1, std::memory_order_relaxed);
+        if (std::any_of(samples, samples + count, [](int16_t v) { return v != 0; }))
+            sink->audible.fetch_add(1, std::memory_order_relaxed);
+    }
+};
+
+/// DI; loop: OUT (#FE),#10; delay; OUT (#FE),#00; delay; JR loop - a beeper square wave, forever
+constexpr uint8_t kBeeperSquare[] = {0xF3, 0x3E, 0x10, 0xD3, 0xFE, 0x06, 0x40, 0x10, 0xFE,
+                                     0xAF, 0xD3, 0xFE, 0x06, 0x40, 0x10, 0xFE, 0x18, 0xEF};
+constexpr uint16_t kBeeperAt = 0x8000;
+}  // namespace
+
+/// The owner's report: a machine playing sound, paused via automation, resumed - and silent. Every pause / step /
+/// turbo / leak path, then a resume: the speakers get audible frames again. Drives the real, paced main loop:
+/// each check waits for a few emulated frames at 20 ms each (~0.5 s in all), the only way to see what a running
+/// machine hands the host
+class EmulatorHostAudioResume_Test : public ::testing::Test
+{
+protected:
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+    SoundManager* _sound = nullptr;
+    HostAudioSink _sink;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("host-audio-resume", "PENTAGON",
+                                                                            LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator);
+        _context = _emulator->GetContext();
+        _sound = _context->pSoundManager;
+        ASSERT_NE(_sound, nullptr);
+        for (size_t i = 0; i < sizeof(kBeeperSquare); i++)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kBeeperAt + i), kBeeperSquare[i]);
+        _emulator->GetZ80State()->pc = kBeeperAt;
+        _context->pAudioManagerObj.store(&_sink, std::memory_order_release);
+        _context->pAudioCallback.store(&HostAudioSink::Collect, std::memory_order_release);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _emulator->Stop();
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
+            _emulator.reset();
+        }
+    }
+
+    /// The speakers get sound: audible frames keep arriving, and nothing holds the output
+    void ExpectAudible(const char* after)
+    {
+        const uint64_t audible = _sink.audible.load();
+        EXPECT_TRUE(TestWait::For([&] { return _sink.audible.load() >= audible + 3; }, std::chrono::seconds(3)))
+            << "no sound after " << after << " (host frames " << _sink.calls.load() << ", audible "
+            << _sink.audible.load() << ", held " << _sound->isHostOutputHeld() << ")";
+        EXPECT_FALSE(_sound->isHostOutputHeld()) << after;
+        for (size_t i = 0; i < SoundManager::kHostHoldReasons; i++)
+            EXPECT_EQ(_sound->hostOutputHolds(static_cast<SoundManager::HostHoldReason>(i)), 0) << after;
+        EXPECT_FALSE(_sound->isMuted()) << after;
+    }
+};
+
+TEST_F(EmulatorHostAudioResume_Test, EveryPausePathThenResumePlaysAgain)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    const std::string id = _emulator->GetId();
+    _emulator->StartAsync();
+    ExpectAudible("start");
+
+    // WebAPI POST /pause, /resume and MCP emulator_control pause / resume (it forwards to them): EmulatorManager
+    ASSERT_TRUE(manager->PauseEmulator(id));
+    _emulator->RunNFrames(2);            // run_frames while paused
+    _emulator->RunSingleCPUCycle();      // step
+    _emulator->RunNCPUCycles(5);         // step_n
+    _emulator->RunTStates(1000);         // run_tstates
+    EXPECT_FALSE(_sound->isHostOutputHeld()) << "a direct run left the host output held";
+    ASSERT_TRUE(manager->ResumeEmulator(id));
+    ExpectAudible("WebAPI / MCP pause, steps, resume");
+
+    // CLI pause / resume and the GUI: Emulator::Pause / Resume
+    _emulator->Pause();
+    _emulator->RunFrame();
+    _emulator->Resume();
+    ExpectAudible("CLI / GUI pause, run_frame, resume");
+
+    // A step on a running machine pauses it itself; the resume after it plays again
+    _emulator->RunSingleCPUCycle();
+    ASSERT_TRUE(_emulator->IsPaused());
+    _emulator->Resume();
+    ExpectAudible("step on a running machine, resume");
+
+    // Turbo on and off while running, and across a pause
+    _emulator->EnableTurboMode();
+    EXPECT_TRUE(_sound->isHostOutputHeld());
+    _emulator->DisableTurboMode();
+    ExpectAudible("turbo on / off");
+    _emulator->Pause();
+    _emulator->EnableTurboMode();
+    _emulator->DisableTurboMode();
+    _emulator->Resume();
+    ExpectAudible("turbo on / off while paused, resume");
+
+    // A holder that leaked its hold (the regression): the resume finds it without its reason and drops it
+    _emulator->Pause();
+    auto leaked = std::make_unique<SoundManager::HostOutputHold>(_sound, SoundManager::HostHoldReason::DirectRun);
+    _emulator->Resume();
+    ExpectAudible("a leaked hold, resume");
+    EXPECT_EQ(_sound->hostOutputStaleHoldsCleared(), 1u);
+    leaked.reset();  // its late release takes nothing from anyone
+    EXPECT_FALSE(_sound->isHostOutputHeld());
+}
+
+TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
+{
+    // A TTD seek replays from a checkpoint at host speed under the replay hold; afterwards nothing holds the
+    // output and the user's mute is as it was
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* sound = context->pSoundManager;
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(4);
+    ttd->StopRecording();
+    const uint64_t replayHolds = sound->hostOutputHoldsTaken(SoundManager::HostHoldReason::TtdReplay);
+    ASSERT_TRUE(ttd->SeekTo({2, 1000}));
+    EXPECT_GT(sound->hostOutputHoldsTaken(SoundManager::HostHoldReason::TtdReplay), replayHolds)
+        << "the seek replayed without the replay hold";
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "the seek left the host output held";
+    EXPECT_FALSE(sound->isMuted()) << "the seek left the user's mute set";
+
+    size_t calls = 0;
+    context->pAudioManagerObj.store(&calls, std::memory_order_release);
+    context->pAudioCallback.store([](void* obj, int16_t*, size_t) { ++*static_cast<size_t*>(obj); },
+                                  std::memory_order_release);
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(calls, 1u) << "a frame after the seek did not reach the host";
+    context->pAudioCallback.store(nullptr, std::memory_order_release);
+    context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 /// endregion </Host audio during direct runs>

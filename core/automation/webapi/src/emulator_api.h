@@ -475,6 +475,7 @@ public:
 
     // region Mouse Injection (implementation: api/mouse_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::mouseMove, "/api/v1/emulator/{id}/mouse/move", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseGlide, "/api/v1/emulator/{id}/mouse/glide", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mousePress, "/api/v1/emulator/{id}/mouse/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseRelease, "/api/v1/emulator/{id}/mouse/release", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::mouseClick, "/api/v1/emulator/{id}/mouse/click", drogon::Post);
@@ -1467,6 +1468,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     // region Mouse Injection Methods (implementation: api/mouse_api.cpp)
     void mouseMove(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    void mouseGlide(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
     void mousePress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void mouseRelease(const drogon::HttpRequestPtr& req,

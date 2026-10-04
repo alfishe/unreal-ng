@@ -99,6 +99,7 @@ enum class PeripheralId : uint8_t
     SlotSerial2 = 47,     // the same for slot 2
     SlotSerial1B = 48,    // the second UART of the card in expansion slot 1 (SprinterSerial's COM2; network phase SN4)
     SlotSerial2B = 49,    // the same for slot 2
+    Ppi8255 = 50,         // an 8255 PPI (the ZX Profi's: joystick, printer / Covox): mode word and output latches (Ppi8255::State)
     // Future: SAA1099, GS512, etc.
     Count
 };

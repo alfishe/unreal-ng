@@ -232,7 +232,8 @@ local hex    = disk_read_sector_hex(0, 0, 1)      -- drive 0, track 0, sector 1
 > **Status**: ✅ Implemented (2026-09). Source: `core/automation/lua/src/emulator/lua_emulator.h`
 > (`mouse_*` functions; helpers `mouseIntArg`, `mouseStateTable`, `mouseResult`).
 
-Global functions that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands.
+Global functions that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands.
 Units, limits and reasoning: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 They act on the bound emulator, or on the selected one when the script is not bound to an
 instance (for example, a script started through the WebAPI interpreter).
@@ -242,6 +243,9 @@ The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right
 
 ```lua
 mouse_move(dx, dy)                 --> state | nil, err    (-127..127 each, not both 0)
+mouse_glide(dx, dy)                --> state | nil, err    (-4096..4096; one step per frame, later input queues)
+mouse_busy()                       --> true while a glide (and the input queued behind it) is in progress
+mouse_devices()                    --> { device, ... }      (the machine's mouse devices)
 mouse_press(button)                --> state | nil, err    ("left"/"right"/"middle" or "l"/"r"/"m")
 mouse_release(button)              --> state | nil, err
 mouse_click(button [, frames=2])   --> state | nil, err    (hold 1..65535 frames)
@@ -249,7 +253,7 @@ mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
 mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
 mouse_release_all()                --> state | nil, err
 mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
-mouse_status()                     --> state | nil, err
+mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2")
 mouse_click_pending()              --> true while a click is still holding its button
 mouse_button_names()               --> {"left","right","middle"}
 ```
@@ -257,9 +261,12 @@ mouse_button_names()               --> {"left","right","middle"}
 `state` is a table with the same key names as the WebAPI state object: `x`, `y`,
 `buttons = {left, right, middle}`, `button_mask` (active-low: 254 = left down), `wheel`,
 `wheel_enabled`, `present`, `ports = {FADF, FBDF, FFDF}`, `pending_click`
-(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`, plus
-`warning` when the change cannot reach the program (mouse not fitted, or a wheel step with no
-wheel fitted).
+(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`,
+`mouse_fitted`, `device` (the machine's mouse, absent when none is fitted: `id`, `name`, `kind`,
+`fitted`, `in_use`, `wheel`, `buttons`, `x`, `y`, `button_mask`, `ports`, and `serial` or `ps2` -
+the WebAPI `device` object), `devices`, `queue = {ops, glide_remaining = {dx, dy}}`, plus `warning`
+when a wheel step was sent with no wheel fitted. On a machine with no mouse fitted every changing
+function returns `nil, "no mouse fitted on this machine: ..."`.
 
 `mouse_status()` additionally carries `routing = {ports_decoded, note}` — the same live
 answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port read is decoded

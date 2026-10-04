@@ -1,6 +1,7 @@
 #pragma once
 
-/// Kempston Mouse CLI helpers: argument parsing and output formatting.
+/// Mouse CLI helpers: argument parsing and output formatting (the machine's mouse: Kempston,
+/// Sprinter serial, ZX-Evo PS/2).
 /// Header-only, no socket or CLIProcessor dependencies, so core-tests can unit-test them
 /// (automation-interfaces §4.5, §5.6). Range checks stay in DebugMouseManager; these
 /// functions only check that a token is an integer / a valid button name.
@@ -212,6 +213,69 @@ inline std::string FormatStatus(const MouseStateSnapshot& state, const std::stri
         text += "  Pending click: none" + newline;
     }
     text += std::string("  TTD journal: ") + (state.journalSupported ? "supported" : "unsupported") + newline;
+    return text;
+}
+
+/// One device of the machine (MouseDeviceStatus), the lines under "Machine mouse:"
+inline std::string FormatDevice(const MouseDeviceStatus& device, const std::string& newline = "\n")
+{
+    std::string text;
+    text += device.id + " (" + MouseDeviceStatus::KindName(device.kind) + ") [" +
+            (device.fitted ? "fitted" : "not fitted") + (device.inUse ? ", in use" : "") + "] - " + device.name +
+            newline;
+    text += "  X=" + std::to_string(device.x) + " Y=" + std::to_string(device.y) + " mask " +
+            Hex2(device.buttonMask) + (device.wheel ? " wheel" : " no wheel") + ", " +
+            std::to_string(device.buttons) + " buttons" + newline;
+    if (device.hasPorts)
+        text += "  Ports: #FADF=" + Hex2(device.portButtons) + " #FBDF=" + Hex2(device.portX) +
+                " #FFDF=" + Hex2(device.portY) + newline;
+    if (device.hasSerial)
+    {
+        const MouseDeviceStatus::Serial& serial = device.serial;
+        char baud[32];
+        std::snprintf(baud, sizeof(baud), "%.1f", serial.receiverBaud);
+        std::string packet;
+        for (int i = 0; i < 3; i++)
+            packet += (i ? " " : "") + Hex2(serial.packet[i]).substr(2);
+        std::string fifo;
+        for (uint8_t i = 0; i < serial.fifoCount && i < 3; i++)
+            fifo += (i ? " " : "") + Hex2(serial.fifo[i]).substr(2);
+        text += "  Serial: line " + std::to_string(serial.baud) + " baud, receiver " + baud + " baud (" +
+                (serial.receiverInTune ? "in tune" : "out of tune") + ", " +
+                (serial.receiverEnabled ? "enabled" : "disabled") + ")" + newline;
+        text += "  Packet: " + packet + " (" + std::to_string(serial.packetBytesSent) + "/3 sent" +
+                (serial.packetInFlight ? ", in flight" : "") + "), pending dx=" + SignedText(serial.pendingDx) +
+                " dy=" + SignedText(serial.pendingDy) + newline;
+        text += "  Line: " + std::to_string(serial.packetsSent) + " packets, " +
+                std::to_string(serial.bytesReceived) + " bytes received, " +
+                std::to_string(serial.framingErrors) + " framing errors; receiver FIFO [" + fifo + "]" +
+                (serial.overrun ? " overrun" : "") + newline;
+    }
+    if (device.hasPs2)
+        text += std::string("  PS/2: ") + (device.ps2.connected ? "connected" : "not connected") + ", resolution " +
+                std::to_string(device.ps2.resolution) + " (" + std::to_string(1 << device.ps2.resolution) +
+                " counts/mm)" + newline;
+    return text;
+}
+
+/// The machine's mouse after the Kempston block of "mouse status": the reported device, the
+/// other devices of the machine, the glide queue (design 2026-10-03)
+inline std::string FormatMachineMouse(const MouseStateSnapshot& state, const std::string& newline = "\n")
+{
+    std::string text;
+    if (state.device)
+        text += "Machine mouse: " + FormatDevice(*state.device, newline);
+    else
+        text += "Machine mouse: none fitted (mouse input is refused)" + newline;
+    std::string others;
+    for (const MouseDeviceStatus& device : state.devices)
+        if (!state.device || device.id != state.device->id)
+            others += (others.empty() ? "" : ", ") + device.id + (device.fitted ? "" : " (not fitted)");
+    if (!others.empty())
+        text += "Other devices: " + others + newline;
+    if (state.queuedOps > 0)
+        text += "Glide queue: " + std::to_string(state.queuedOps) + " op(s), remaining dx=" +
+                SignedText(state.glideRemainingDx) + " dy=" + SignedText(state.glideRemainingDy) + newline;
     return text;
 }
 

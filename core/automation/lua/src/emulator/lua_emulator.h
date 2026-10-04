@@ -286,6 +286,72 @@ protected:
         return results;
     }
 
+    /// One mouse device of the machine: same keys as the WebAPI `device` object
+    static sol::table mouseDeviceTable(sol::this_state s, const MouseDeviceStatus& device)
+    {
+        sol::state_view lua(s);
+        auto hexRow = [&lua](const uint8_t* bytes, size_t count) {
+            sol::table row = lua.create_table();
+            for (size_t i = 0; i < count; i++)
+            {
+                char text[4];
+                std::snprintf(text, sizeof(text), "%02X", bytes[i]);
+                row[i + 1] = std::string(text);
+            }
+            return row;
+        };
+        sol::table t = lua.create_table();
+        t["id"] = device.id;
+        t["name"] = device.name;
+        t["kind"] = MouseDeviceStatus::KindName(device.kind);
+        t["fitted"] = device.fitted;
+        t["in_use"] = device.inUse;
+        t["wheel"] = device.wheel;
+        t["buttons"] = static_cast<int>(device.buttons);
+        t["x"] = static_cast<int>(device.x);
+        t["y"] = static_cast<int>(device.y);
+        t["button_mask"] = static_cast<int>(device.buttonMask);
+        if (device.hasPorts)
+        {
+            sol::table ports = lua.create_table();
+            ports["FADF"] = static_cast<int>(device.portButtons);
+            ports["FBDF"] = static_cast<int>(device.portX);
+            ports["FFDF"] = static_cast<int>(device.portY);
+            t["ports"] = ports;
+        }
+        if (device.hasSerial)
+        {
+            const MouseDeviceStatus::Serial& serial = device.serial;
+            sol::table line = lua.create_table();
+            line["baud"] = serial.baud;
+            line["receiver_baud"] = serial.receiverBaud;
+            line["receiver_in_tune"] = serial.receiverInTune;
+            line["receiver_enabled"] = serial.receiverEnabled;
+            line["packet_in_flight"] = serial.packetInFlight;
+            line["packet"] = hexRow(serial.packet, 3);
+            line["packet_bytes_sent"] = static_cast<int>(serial.packetBytesSent);
+            sol::table pending = lua.create_table();
+            pending["dx"] = serial.pendingDx;
+            pending["dy"] = serial.pendingDy;
+            line["pending"] = pending;
+            line["packets_sent"] = static_cast<double>(serial.packetsSent);
+            line["bytes_received"] = static_cast<double>(serial.bytesReceived);
+            line["framing_errors"] = static_cast<double>(serial.framingErrors);
+            line["receiver_fifo"] = hexRow(serial.fifo, serial.fifoCount);
+            line["receiver_overrun"] = serial.overrun;
+            t["serial"] = line;
+        }
+        if (device.hasPs2)
+        {
+            sol::table ps2 = lua.create_table();
+            ps2["connected"] = device.ps2.connected;
+            ps2["resolution"] = static_cast<int>(device.ps2.resolution);
+            ps2["counts_per_mm"] = 1 << device.ps2.resolution;
+            t["ps2"] = ps2;
+        }
+        return t;
+    }
+
     /// State table: same keys as the WebAPI state object
     static sol::table mouseStateTable(sol::this_state s, const MouseStateSnapshot& state,
                                       const std::string& warning = "")
@@ -323,6 +389,21 @@ protected:
             t["pending_click"] = pending;
         }
         t["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+        // The machine's mouse (design 2026-10-03); `device` is absent (nil) when none is fitted
+        t["mouse_fitted"] = state.mouseFitted;
+        if (state.device)
+            t["device"] = mouseDeviceTable(s, *state.device);
+        sol::table devices = lua.create_table();
+        for (size_t i = 0; i < state.devices.size(); i++)
+            devices[i + 1] = mouseDeviceTable(s, state.devices[i]);
+        t["devices"] = devices;
+        sol::table queue = lua.create_table();
+        queue["ops"] = static_cast<int>(state.queuedOps);
+        sol::table remaining = lua.create_table();
+        remaining["dx"] = state.glideRemainingDx;
+        remaining["dy"] = state.glideRemainingDy;
+        queue["glide_remaining"] = remaining;
+        t["queue"] = queue;
         if (!warning.empty())
             t["warning"] = warning;
         return t;
@@ -1860,6 +1941,40 @@ public:
             return mouseResult(s, *mgr, mgr->Move(static_cast<int>(dx), static_cast<int>(dy)));
         });
 
+        // A long move (-4096..4096) in steps the program follows, one per frame; input sent meanwhile queues
+        lua.set_function("mouse_glide", [this](sol::this_state s, sol::object dxArg, sol::object dyArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            long long dx = 0;
+            long long dy = 0;
+            if (!mouseIntArg(dxArg, "dx", INT_MIN, INT_MAX, dx, error) ||
+                !mouseIntArg(dyArg, "dy", INT_MIN, INT_MAX, dy, error))
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->Glide(static_cast<int>(dx), static_cast<int>(dy)));
+        });
+
+        // The machine's mouse devices (table of device tables; empty when the machine has none)
+        lua.set_function("mouse_devices", [this](sol::this_state s) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            sol::state_view lua(s);
+            sol::table devices = lua.create_table();
+            const MouseStateSnapshot state = mgr->GetState();
+            for (size_t i = 0; i < state.devices.size(); i++)
+                devices[i + 1] = mouseDeviceTable(s, state.devices[i]);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, devices));
+            return results;
+        });
+
+        lua.set_function("mouse_busy", [this]() -> bool {
+            DebugMouseManager* mgr = mouseManager();
+            return mgr && mgr->IsBusy();
+        });
+
         lua.set_function("mouse_press", [this](sol::this_state s, sol::object buttonArg) {
             DebugMouseManager* mgr = mouseManager();
             if (!mgr)
@@ -1954,11 +2069,21 @@ public:
             return mouseResult(s, *mgr, mgr->SetCounters(static_cast<int>(x), static_cast<int>(y)));
         });
 
-        lua.set_function("mouse_status", [this](sol::this_state s) {
+        lua.set_function("mouse_status", [this](sol::this_state s, sol::object deviceArg) {
             DebugMouseManager* mgr = mouseManager();
             if (!mgr)
                 return mouseError(s, "mouse manager not available");
-            const MouseStateSnapshot state = mgr->GetState();
+            // mouse_status([device]): the machine's mouse, or the device named ("kempston", "sprinter", "evo-ps2")
+            std::string deviceId;
+            if (deviceArg.valid() && deviceArg.get_type() != sol::type::lua_nil)
+            {
+                if (deviceArg.get_type() != sol::type::string)
+                    return mouseError(s, "device must be a string (kempston, sprinter, evo-ps2)");
+                deviceId = deviceArg.as<std::string>();
+            }
+            if (const MouseInjectResult check = mgr->CheckDevice(deviceId); !check.ok())
+                return mouseError(s, check.message);
+            const MouseStateSnapshot state = mgr->GetState(deviceId);
             if (!state.available)
                 return mouseError(s, "Mouse device not available");
             sol::variadic_results results;
