@@ -574,6 +574,9 @@ page_write("ram", 5, 0x100, 0xFF)
 
 -- Block operations
 data = page_read_block("rom", 2, 0, 256)    -- Read 256 bytes from ROM page 2
+bytes = mem_read_bytes(0, 65536)            -- the whole CPU view as one Lua string (wraps at #FFFF)
+bytes = mem_read_bytes(0x1800, 768, "ram5") -- a page window ("ram5", "rom2", "cache0"; "ram" = all RAM pages)
+bytes, err = mem_read_bytes(0, 1, "ram9")   -- nil, "this machine has no page ram9"
 page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 
 -- Get memory configuration

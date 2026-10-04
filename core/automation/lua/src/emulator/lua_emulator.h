@@ -9,6 +9,7 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memoryread.h"
 #include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
@@ -828,6 +829,19 @@ public:
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
+        });
+
+        // mem_read_bytes(addr, len [, space]) -> the bytes as a Lua string (MemoryRead): the CPU view (wraps at #FFFF,
+        // up to 65536), a page "ram5" / "rom2" / "cache0" or "ram" (every RAM page back to back); nil, error on refusal
+        lua.set_function("mem_read_bytes", [this](sol::this_state s, uint32_t addr, uint32_t len,
+                                                  sol::optional<std::string> space) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), space.value_or(""), addr, len);
+            if (!read.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, read.error)};
+            return {sol::make_object(s, std::string(read.bytes.begin(), read.bytes.end())), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {

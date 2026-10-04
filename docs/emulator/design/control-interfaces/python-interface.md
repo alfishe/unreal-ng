@@ -732,6 +732,9 @@ emu.page_write("ram", 5, 0x100, 0xFF)
 
 # Block operations
 data = emu.page_read_block("rom", 2, 0, 256)  # Read 256 bytes from ROM page 2
+data = emu.mem_read_bytes(0, 65536)           # the whole CPU view as bytes (wraps at 0xFFFF)
+data = emu.mem_read_bytes(0x1800, 768, space="ram5")  # a page window; "ram" = all RAM pages back to back
+# ValueError with the reason on a bad space, address or length
 emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 
 # Get memory configuration

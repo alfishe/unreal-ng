@@ -4,9 +4,11 @@
 #include "cli-processor.h"
 #include "cli-memory-region.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/memory/memoryread.h"
 #include "debugger/search/memorysearch.h"
 
 #include <common/dumphelper.h>
+#include <common/filehelper.h>
 #include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -627,9 +629,40 @@ void CLIProcessor::HandleMemoryDump(const ClientSession& session, Memory* memory
 // memory save bank <N> <file>  OR  memory save <type> <page> <file>
 void CLIProcessor::HandleMemorySave(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
 {
+    // memory save <space>:<address>:<length> <file> - any window of any space (MemoryRead, the snapshot's syntax)
+    if (args.size() == 3 && args[1].find(':') != std::string::npos)
+    {
+        std::string space, error;
+        uint32_t address = 0, length = 0;
+        auto emulator = GetSelectedEmulator(session);
+        if (!emulator || !MemoryRead::ParseWindow(args[1], space, address, length, error))
+        {
+            session.SendResponse((emulator ? error : std::string("No emulator selected.")) + NEWLINE);
+            return;
+        }
+        const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), space, address, length);
+        if (!read.error.empty())
+        {
+            session.SendResponse("memory save: " + read.error + NEWLINE);
+            return;
+        }
+        std::ofstream file(FileHelper::ToFsPath(args[2]), std::ios::binary);
+        if (!file)
+        {
+            session.SendResponse("Failed to create file: " + args[2] + NEWLINE);
+            return;
+        }
+        file.write(reinterpret_cast<const char*>(read.bytes.data()), static_cast<std::streamsize>(read.bytes.size()));
+        std::ostringstream oss;
+        oss << "Saved " << read.bytes.size() << " bytes of " << read.space << " from 0x" << std::hex << std::uppercase
+            << read.address << " to " << args[2] << NEWLINE;
+        session.SendResponse(oss.str());
+        return;
+    }
     if (args.size() < 4)
     {
-        session.SendResponse("Usage: memory save bank <N> <file>  OR  memory save <type> <page> <file>" + std::string(NEWLINE));
+        session.SendResponse("Usage: memory save bank <N> <file>  OR  memory save <type> <page> <file>  OR  "
+                             "memory save <space>:<addr>:<len> <file>" + std::string(NEWLINE));
         return;
     }
 

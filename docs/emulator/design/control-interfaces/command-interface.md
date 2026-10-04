@@ -489,6 +489,7 @@ The `memory` command provides unified access to emulator memory with two address
 | `memory dump <type> <page>` | type + page | Dump entire 16KB page to stdout |
 | `memory save bank <N> <file>` | bank 0-3 + file | Save Z80 bank (16KB) to file |
 | `memory save <type> <page> <file>` | type + page + file | Save physical page (16KB) to file |
+| `memory save <space>:<addr>:<len> <file>` | window + file | Save any window (`cpu:0x8000:256`, `ram5:0x1800:768`, `ram:0x14000:4096`; at most 65536 bytes) to file |
 | `memory load bank <N> <file>` | bank 0-3 + file | Load file into Z80 bank |
 | `memory load <type> <page> <file> [--force]` | type + page + file | Load file into physical page |
 | `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
@@ -567,6 +568,8 @@ Save memory to binary file.
 > memory save bank 0 bank0.bin        # Save Z80 bank 0 (current mapping)
 > memory save ram 5 screen.bin        # Save RAM page 5
 > memory save rom 2 trdos.bin         # Save TR-DOS ROM
+> memory save cpu:0:65536 all.bin     # The whole CPU view as the CPU sees it now
+> memory save ram5:0x1800:768 attr.bin  # A window of a page, mapped or not
 ```
 
 **`memory load bank <N> <file>`** / **`memory load <type> <page> <file> [--force]`**

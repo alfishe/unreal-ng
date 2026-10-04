@@ -2,6 +2,7 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memoryread.h"
 #include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
@@ -947,6 +948,14 @@ namespace PythonBindings
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
             }, "Write 16-bit word to memory")
+            .def("mem_read_bytes", [](Emulator& self, uint32_t addr, uint32_t len, const std::string& space) -> py::bytes {
+                const MemoryRead::Result read = MemoryRead::Bytes(self.GetContext(), space, addr, len);
+                if (!read.error.empty())
+                    throw py::value_error(read.error);
+                return py::bytes(reinterpret_cast<const char*>(read.bytes.data()), read.bytes.size());
+            }, "Read raw bytes (MemoryRead): the CPU view (wraps at 0xFFFF, up to 65536), a page 'ram5' / 'rom2' / "
+               "'cache0' (stops at the page's end) or 'ram' (every RAM page back to back); ValueError with the reason",
+               py::arg("addr"), py::arg("len"), py::arg("space") = "cpu")
             .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len) -> py::bytes {
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");
