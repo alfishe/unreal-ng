@@ -3783,6 +3783,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         _shadowEvents.external = _externalEvents.Size();
         _shadowBusReads = _portReads.Size();
         _shadowBusWrites = _portWrites.Size();
+        _shadowJournalSeq = _writeJournal ? _writeJournal->SeqTail() : 0;   // the whole journal goes in
         _shadowLastLength = 0;
         _shadowRomSignature = ComputeRomSignature();   // the ROM set does not change within a session (D39)
         _shadowMediaKnown = false;
@@ -3910,6 +3911,14 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         MLOGWARNING("TimeTravelManager: shadow engine capture failed: %s", error.c_str());
         engine.EndSession();
         return;
+    }
+    // The write journal's new records and its spans (D40)
+    if (_writeJournal)
+    {
+        _shadowJournalSeq = std::max(_shadowJournalSeq, _writeJournal->SeqTail());
+        for (; _shadowJournalSeq < _writeJournal->SeqHead(); ++_shadowJournalSeq)
+            engine.Writes().Append(_writeJournal->RecordAt(_shadowJournalSeq));
+        engine.Writes().SetSegments(JournalSegments());
     }
     // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
     FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads);
@@ -5858,6 +5867,7 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
                 joined.push_back(s);
         }
         _journalSegments = std::move(joined);
+        ResetShadow();   // the shadow engine takes the rebuilt journal with its next session
     }
 
     // Back where the machine stood

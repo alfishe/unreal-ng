@@ -583,6 +583,7 @@ public:
             {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
             {"media_reads", h.mediaReads},   // v1 has no such journal: not in D33's sum
             {"bus_vectors", h.busVectors},   // nor this one
+            {"write_journal", h.writeJournal},
         };
     }
 

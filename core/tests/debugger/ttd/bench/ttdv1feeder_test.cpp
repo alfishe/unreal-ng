@@ -243,3 +243,28 @@ TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
     EXPECT_GT(busRecords, 0u) << "the corpus holds port journals";
     (void)net;
 }
+
+/// D40, J6: a v1 session's write journal and its segments go into the
+/// engine's write index (memory writes; files from before D40 also journaled
+/// port OUTs, which stay out)
+TEST_F(TTDV1Feeder_Test, EveryWriteJournalOfTheCorpusImportsIntoTheEngine)
+{
+    size_t withJournal = 0;
+    for (const fs::path& file : CorpusFiles())
+    {
+        SCOPED_TRACE(file.filename().string());
+        ASSERT_NO_FATAL_FAILURE(LoadIntoV1(file));
+        ttd::TimeTravelEngine engine;
+        std::string err;
+        ASSERT_TRUE(ttd::bench::FeedV1Session(*_v1, engine, err)) << err;
+        const ttd::TTDWriteJournal* journal = _v1->GetWriteJournal();
+        size_t memoryWrites = 0;
+        if (journal)
+            for (uint64_t seq = journal->SeqTail(); seq < journal->SeqHead(); ++seq)
+                memoryWrites += journal->RecordAt(seq).isIo ? 0 : 1;
+        EXPECT_EQ(engine.Writes().Size(), memoryWrites);
+        EXPECT_EQ(engine.Writes().Segments(), _v1->GetSessionInfo().writeJournalSegments);
+        withJournal += memoryWrites ? 1 : 0;
+    }
+    EXPECT_GT(withJournal, 0u) << "the corpus holds write journals";
+}

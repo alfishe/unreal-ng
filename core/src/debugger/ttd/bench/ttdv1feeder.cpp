@@ -244,6 +244,15 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
         for (; busWrites < v1.GetPortWriteJournal().Size() && v1.GetPortWriteJournal().Get(busWrites, r); ++busWrites)
             engine.AppendBusWrite(r);
     }
+    // The write journal (D40): its memory writes and the spans it covers; v1
+    // files written before D40 also journaled port OUTs (the port journal has them)
+    if (const TTDWriteJournal* journal = v1.GetWriteJournal())
+    {
+        for (uint64_t seq = journal->SeqTail(); seq < journal->SeqHead(); ++seq)
+            if (!journal->RecordAt(seq).isIo)
+                engine.Writes().Append(journal->RecordAt(seq));
+        engine.Writes().SetSegments(v1.GetSessionInfo().writeJournalSegments);
+    }
     // The session's events: input, network, markers (Phase 3, Step 1)
     TTDV1EventCursor cursor;
     local.events = FeedV1Events(engine, v1.GetInputJournal(), v1.GetExternalEvents(), cursor, UINT64_MAX,

@@ -276,4 +276,12 @@ private:
     uint64_t _seqTail = 0;               // absolute seq of oldest live record
 };
 
+/// The journal's block codec, shared by its file section and the engine's
+/// write index: up to 2,048 records transposed into columns (time deltas as
+/// varints, addresses, PCs, values, pages, port flags); the caller compresses.
+/// DecodeWriteBlock refuses anything inconsistent (false)
+std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count);
+bool DecodeWriteBlock(const std::vector<uint8_t>& raw, uint32_t count, std::vector<TTDWriteRecord>& out);
+constexpr uint32_t kWriteBlockRecords = 2048;
+
 } // namespace ttd

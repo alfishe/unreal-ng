@@ -509,6 +509,18 @@ Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileRe
 
 Checked live: a Pentagon session recorded without the journal had frames 130..170 built (41 frames, 1951 writes), and the analyzer reads the saved span. The analyzer has a README now.
 
+**As built, J6 (2026-10-04, engine side).**
+
+- **Storage.** `TimeTravelEngine::Writes()` is a `TTDWriteIndex` (`engine/ttdwriteindex.*`). It holds the memory writes in v1's file block format (2,048 records in columns, zstd level 1), with the codec now shared as `EncodeWriteBlock` / `DecodeWriteBlock`, plus the segments. `FindLastInRange` walks the block directory newest first and decodes only the blocks that meet the range; the last decoded block is cached.
+- **Feeding.** In shadow mode the engine takes v1's new journal records and its segments at each capture. A build by replay restarts the shadow session. The v1 feeder imports a file's journal (memory writes only) and its segments.
+- **Accounting.** `HeapBreakdown().writeJournal` counts it. D33's memory condition now includes the write journal on both sides: v1's raw ring against the engine's compressed blocks.
+- **File.** The segment table in the session file comes with Phase 4.
+- **Tests.**
+  - `TTDWriteIndex_Test`: queries across blocks match a brute-force scan; the index is compact.
+  - Shadow parity: the engine's journal is v1's up to the last capture, with the same segments.
+  - Corpus import.
+  - Three mutants caught.
+
 E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance

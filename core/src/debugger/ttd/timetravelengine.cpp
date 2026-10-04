@@ -341,6 +341,7 @@ void TimeTravelEngine::EndSession()
     _busWrites.Clear();
     _busVectors.Clear();
     _mediaReads.Clear();
+    _writes.Clear();
     _timeLines.clear();
     _timeFields.clear();
     _deviceRegionOf.fill(-1);
@@ -800,6 +801,7 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.portJournalSlack = _busReads.CompressedSlackBytes() + _busWrites.CompressedSlackBytes();
     h.mediaReads = _mediaReads.HeapBytes();
     h.busVectors = _busVectors.HeapBytes();
+    h.writeJournal = _writes.HeapBytes();
     return h;
 }
 

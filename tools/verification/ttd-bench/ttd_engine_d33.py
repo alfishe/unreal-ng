@@ -9,12 +9,13 @@ three deterministic conditions of decision 33 and the timings:
   the engine's RAM pieces + references + device blobs + device regions, less the
   regions v1 does not record at all (NeoGS RAM and flash, MoonSound wave RAM,
   the EEPROMs: bm3_device_regions_v1_lacks_bpf);
-- memory per frame, the parts both engines have (v1 also holds the write
-  journal and the coverage index, which the engine gets later in Phase 3): v1's
-  page store table, RAM payload and its slack, checkpoints, references, device
-  blobs, input journals and port journals against the engine's piece versions,
-  payload, reference tables, checkpoints, device blobs, frame table, event log
-  and bus journals, less the payload and the version
+- memory per frame, the parts both engines have (v1 also holds the coverage
+  index, which the engine does not keep yet): v1's page store table, RAM
+  payload and its slack, checkpoints, references, device blobs, input
+  journals, port journals and write journal (a raw 12-byte ring) against the
+  engine's piece versions, payload, reference tables, checkpoints, device
+  blobs, frame table, event log, bus journals and write journal (compressed
+  blocks, D40), less the payload and the version
   records of the regions v1 does not record. The engine's delta base (each
   region's latest contents) and its arena slack (at most one chunk) are fixed
   amounts, printed apart;
@@ -68,9 +69,11 @@ def check(v, x):
                     + g(x, "bm3_device_regions_bpf") - lacks)
     # Phase 3: the input / event journals and the port (bus) journals on both sides
     mem_v1 = heap(v, ["page_store_table", "ram_payload", "ram_payload_slack", "checkpoints", "page_refs",
-                      "device_blobs", "input_journals", "port_reads", "port_writes", "port_journal_slack"])
+                      "device_blobs", "input_journals", "port_reads", "port_writes", "port_journal_slack",
+                      "write_journal", "write_journal_slack"])
     mem_engine = (heap(x, ["piece_versions", "ram_payload", "reference_tables", "checkpoints", "device_blobs",
-                           "frame_table", "event_log", "port_reads", "port_writes", "port_journal_slack"])
+                           "frame_table", "event_log", "port_reads", "port_writes", "port_journal_slack",
+                           "write_journal"])
                   - lacks - g(x, "bm4_heap_piece_versions_bpf") * g(x, "bm3_versions_v1_lacks_share"))
 
     def work(b, exempt):

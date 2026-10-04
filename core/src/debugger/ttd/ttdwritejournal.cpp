@@ -242,7 +242,9 @@ uint64_t ReadVarint(const uint8_t* data, size_t size, size_t& pos, bool& ok)
 
 /// Transpose a run of records into columns. globalT is monotonic within the
 /// journal, so it is stored as deltas from the block's first value.
-std::vector<uint8_t> EncodeBlock(const TTDWriteRecord* recs, uint32_t count)
+}  // namespace
+
+std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count)
 {
     std::vector<uint8_t> gt, addr, m1pc, value, page, io;
     gt.reserve(count * 2);
@@ -291,9 +293,9 @@ std::vector<uint8_t> EncodeBlock(const TTDWriteRecord* recs, uint32_t count)
     return raw;
 }
 
-/// Inverse of EncodeBlock. Returns false on any inconsistency rather than
+/// Inverse of EncodeWriteBlock. Returns false on any inconsistency rather than
 /// producing partially-decoded records.
-bool DecodeBlock(const std::vector<uint8_t>& raw, uint32_t count,
+bool DecodeWriteBlock(const std::vector<uint8_t>& raw, uint32_t count,
                  std::vector<TTDWriteRecord>& out)
 {
     out.clear();
@@ -342,7 +344,6 @@ bool DecodeBlock(const std::vector<uint8_t>& raw, uint32_t count,
     return true;
 }
 
-}  // namespace
 
 bool TTDWriteJournal::Serialize(std::ostream& out) const
 {
@@ -382,7 +383,7 @@ bool TTDWriteJournal::Serialize(std::ostream& out) const
         for (uint32_t i = 0; i < n; ++i)
             scratch.push_back(_ring[SeqToIdx(seq + i)]);
 
-        const std::vector<uint8_t> rawBlock = EncodeBlock(scratch.data(), n);
+        const std::vector<uint8_t> rawBlock = EncodeWriteBlock(scratch.data(), n);
         std::vector<uint8_t> comp = codec::Compress(rawBlock.data(), rawBlock.size());
 
         BlockDirEntry e{};
@@ -465,7 +466,7 @@ bool TTDWriteJournal::Deserialize(std::istream& in, uint64_t count)
         if (!codec::Decompress(comp, dir[b].rawSize, rawBlock.data()))
             return false;
 
-        if (!DecodeBlock(rawBlock, dir[b].recordCount, recs))
+        if (!DecodeWriteBlock(rawBlock, dir[b].recordCount, recs))
             return false;
 
         for (const TTDWriteRecord& r : recs)

@@ -118,7 +118,7 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] J3 (2026-10-04) Automation: CLI, WebAPI + OpenAPI, MCP, Lua, Python (start option, `journal on|off|build|status`; `development`/`gaming` removed); command-interface.md, webapi/lua/python interface docs, MCP README, recipes
   - [x] J4 (2026-10-04) Qt: journal switch in the TTD panel, segments band on the scrubber, build for the selection; time-travel-ux.md
   - [x] J5 (2026-10-04) Python tool via WebAPI: load a .ttd, build a span, save; analyzer README
-  - [ ] J6 Engine: segments in TimeTravelEngine (shadow-fed), segment table in the Phase 4 file
+  - [x] J6 (2026-10-04, engine side; the file in Phase 4) Engine: segments in TimeTravelEngine (shadow-fed), segment table in the Phase 4 file
   - [x] Groundwork (2026-10-03): `SetWriteJournalCapacity` (sessions with their whole write history), `RegenerateFrameWrites` (a frame's writes by replay, equal to the journal's), TTDE7 benchmark; exactness 0 mismatching frames on 17 sessions x 200 frames
 - [ ] **On landing (merge master into ttd-engine):** master fixed the toolbar's cross-thread session summary crash its own way (1de1b07bc: `GetPublishedSessionInfo`, StopRecording parks the machine). Keep master's mechanism; drop this branch's `GetLatestSessionInfo` / `PublishSessionInfo` / `_infoMutex` and `timetravelmanager_sessioninfo_test.cpp` (5f18b937b)
 

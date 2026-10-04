@@ -38,6 +38,7 @@
 #include "debugger/ttd/engine/ttdregion.h"
 #include "debugger/ttd/engine/ttdstreamregistry.h"
 #include "debugger/ttd/engine/ttdtime.h"
+#include "debugger/ttd/engine/ttdwriteindex.h"
 
 namespace ttd
 {
@@ -128,11 +129,13 @@ struct TTDEngineHeapBreakdown
     size_t portJournalSlack = 0;    ///< allocated, not holding records
     size_t mediaReads = 0;          ///< sectors read from media images (v1 has no such journal)
     size_t busVectors = 0;          ///< interrupt vectors taken (v1 has no such journal)
+    size_t writeJournal = 0;        ///< the write journal (D40): compressed blocks and segments
 
     size_t Total() const
     {
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
-               frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads + busVectors;
+               frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads + busVectors +
+               writeJournal;
     }
 };
 
@@ -290,6 +293,10 @@ public:
     }
     /// Interrupt vectors the CPU took (machines with their own INT logic)
     TTDPortJournal& BusVectors() { return _busVectors; }
+    /// The write journal (D40): memory writes where it was recorded or built,
+    /// and the spans it covers
+    TTDWriteIndex& Writes() { return _writes; }
+    const TTDWriteIndex& Writes() const { return _writes; }
     const TTDPortJournal& BusVectors() const { return _busVectors; }
     /// The journals while they play (null when a journal has nothing left): the CPU's IN / OUT hooks
     TTDPortJournal* BusReadsForPlayback()
@@ -485,6 +492,7 @@ private:
     TTDPortJournal _busWrites{TTDPortJournal::Direction::Write};
     TTDMediaJournal _mediaReads;
     TTDPortJournal _busVectors{TTDPortJournal::Direction::Read};
+    TTDWriteIndex _writes;
     TTDStreamRegistry _streams;
     /// A deque: no growth reserve (a vector held up to twice the records), and
     /// records never move

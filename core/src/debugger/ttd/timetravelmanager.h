@@ -64,6 +64,7 @@
 #include "ttdinputjournal.h"
 #include "ttdv1events.h"
 #include "engine/ttdrestoreresult.h"
+#include "engine/ttdwriteindex.h"
 #include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
@@ -191,17 +192,6 @@ struct TTDHeapBreakdown
         return pageStoreTable + ramPayload + ramPayloadSlack + checkpoints + pageRefs + deviceBlobs + inputJournals +
                writeJournal + coverage + portReads + portWrites + frameCache;
     }
-};
-
-/// A span of a session in which every memory write is in the write journal
-/// (D40): machine times (GlobalT) after `from` up to and including `to`. The
-/// journal is recorded on demand: switched on and off at any instruction, each
-/// on-to-off span one segment
-struct TTDJournalSegment
-{
-    uint64_t from = 0;
-    uint64_t to = 0;
-    bool operator==(const TTDJournalSegment& o) const { return from == o.from && to == o.to; }
 };
 
 /// What BuildWriteJournal did
@@ -2067,6 +2057,7 @@ private:
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
     uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
     uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
+    uint64_t _shadowJournalSeq = 0;        ///< the write journal's next record for the shadow engine
     uint64_t _shadowRomSignature = 0;      ///< the ROM set's, hashed once per shadow session
     uint64_t _shadowMediaStamp = 0;        ///< IMediaHistory::VersionStamp at the last capture
     bool _shadowMediaKnown = false;        ///< _shadowMediaStamp is valid for this session
