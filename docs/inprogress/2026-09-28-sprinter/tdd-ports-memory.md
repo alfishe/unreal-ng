@@ -281,6 +281,8 @@ stateDiagram-v2
 
 ### 6.1 Configuration modules (`SprinterPldConfiguration`)
 
+Overview with the MAME comparison: [pld-configurations.md](pld-configurations.md).
+
 Review round 1 (Q6) made PLD configurations **modular**. The hardware can load a different
 bitstream at any time (the BIOS does it for some games), and each bitstream is, in effect, a
 different machine built on the same board. The emulator keeps one decoder and lets a

@@ -1,5 +1,7 @@
 # The "Game" PLD configuration (V10)
 
+How PLD configurations work in general, on the hardware, in MAME and here: [pld-configurations.md](pld-configurations.md).
+
 **Status:** implemented 2026-10-03 (branch `sprinter-pld-game`). Closes gap V10 of
 [mame-gap-analysis.md](mame-gap-analysis.md) and the GAME_00 / LDConf rows of [demo-status.md](demo-status.md).
 
