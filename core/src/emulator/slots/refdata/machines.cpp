@@ -237,7 +237,7 @@ constexpr PortClaim kAtmIdeClaims[] = {
 constexpr BuiltInDef kAtm450BuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kAy128Claims },
     { .id = "beta128", .name = "Beta-128 (1818VG93)", .functions = kBetaFunctions, .claims = kBetaClaims },
-    { .id = "covox", .name = "Covox / printer `#FB`", .claims = kCovoxFbClaims },
+    { .id = "covox", .name = "Covox / printer `#FB`", .kind = BuiltInKind::Switchable, .claims = kCovoxFbClaims },
     { .id = "adc", .name = "ADC `#7DFD`", .claims = kAtmAdcClaims },
 };
 constexpr BuiltInDef kAtm710BuiltIns[] = {
@@ -245,7 +245,7 @@ constexpr BuiltInDef kAtm710BuiltIns[] = {
       .functions = kAyFunctions, .claims = kAy128Claims },
     { .id = "beta128", .name = "Beta-128 (VG93)", .functions = kBetaFunctions, .claims = kBetaClaims },
     { .id = "ide", .name = "ATM IDE", .functions = kAtmIdeFunctions, .claims = kAtmIdeClaims },
-    { .id = "covox", .name = "Covox / printer `#FB`", .claims = kCovoxFbClaims },
+    { .id = "covox", .name = "Covox / printer `#FB`", .kind = BuiltInKind::Switchable, .claims = kCovoxFbClaims },
     { .id = "adc", .name = "ADC `#7DFD`", .claims = kAtmAdcClaims },
 };
 constexpr Src kAtm450Sources[] = { Src::AtmMicroArtManual, Src::AtmSchematicSheet6 };
@@ -358,7 +358,8 @@ constexpr BuiltInDef kAtm3BuiltIns[] = {
       .functions = kNemoIdeFunctions, .claims = kNemoIdeClaims },
     { .id = "rtc", .name = "RTC (AVR)", .functions = kRtcFunctions, .claims = kEvoRtcClaims },
     // Written internally and passed on to the slots: a Covox card on #FB plays as well (no exclusive function)
-    { .id = "covox", .name = "Covox `#FB` (passed to the slots)", .claims = kCovoxFbClaims },
+    { .id = "covox", .name = "Covox `#FB` (passed to the slots)", .kind = BuiltInKind::Switchable,
+      .claims = kCovoxFbClaims },
     { .id = "com", .name = "COM port (AVR 16550)", .functions = kSerialEfFunctions, .claims = kEvoComClaims },
 };
 constexpr BuiltInDef kTsconfBuiltIns[] = {
@@ -373,7 +374,8 @@ constexpr BuiltInDef kTsconfBuiltIns[] = {
       .functions = kNemoIdeFunctions, .claims = kNemoIdeClaims },
     { .id = "ts-registers", .name = "TS-Conf registers `#xxAF`", .claims = kTsconfRegisterClaims },
     // Hidden from the slots by porthit: a Covox card's #FB is dead (no exclusive function needed for that)
-    { .id = "covox", .name = "Covox `#FB` (hidden from the slots)", .claims = kCovoxFbClaims },
+    { .id = "covox", .name = "Covox `#FB` (hidden from the slots)", .kind = BuiltInKind::Switchable,
+      .claims = kCovoxFbClaims },
     { .id = "zifi", .name = "ZiFi (ESP8266 behind a 16550, `#00EF-#C9EF`, `#F8EF-#FFEF`)",
       .functions = kSerialEfFunctions, .claims = kZifiClaims },
 };
@@ -403,6 +405,12 @@ constexpr PortClaim kProfiPaletteClaims[] = {
     { .mask = 0x0081, .match = 0x0000, .dir = Dir::Out, .port = 0x007E },
 };
 constexpr Function kProfiIdeFunctions[] = { Function::IdeProfi };
+// The board Covox on the 8255's ports B / C: #5F left, #3F right (#C7 / #A7 in the CP/M extended map; Karabas Pro's
+// covox.vhd, unreal-ng's Profi decoder)
+constexpr PortClaim kProfiCovoxClaims[] = {
+    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out },
+    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::Out },
+};
 constexpr BuiltInDef kProfiBuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912 (optional socket)", .kind = BuiltInKind::Socketed, .socket = "ay-socket",
       .chip = "AY-3-8912", .functions = kAyFunctions, .claims = kAy128Claims },
@@ -412,6 +420,7 @@ constexpr BuiltInDef kProfiBuiltIns[] = {
     { .id = "palette", .name = "palette `#7E`", .functions = kPaletteFunctions, .claims = kProfiPaletteClaims },
     { .id = "rtc", .name = "RTC", .functions = kRtcFunctions },
     { .id = "ide", .name = "IDE (extended map)", .functions = kProfiIdeFunctions },
+    { .id = "covox", .name = "Covox `#5F` / `#3F`", .kind = BuiltInKind::Switchable, .claims = kProfiCovoxClaims },
 };
 constexpr BuiltInDef kProfi3BuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912 (optional socket)", .kind = BuiltInKind::Socketed, .socket = "ay-socket",
@@ -419,6 +428,7 @@ constexpr BuiltInDef kProfi3BuiltIns[] = {
     { .id = "beta128", .name = "VG93 FDC", .functions = kBetaFunctions, .claims = kBetaClaims },
     { .id = "ppi8255", .name = "8255 (Centronics, Kempston)", .functions = kKempstonFunctions,
       .claims = kKempstonClaims },
+    { .id = "covox", .name = "Covox `#5F` / `#3F`", .kind = BuiltInKind::Switchable, .claims = kProfiCovoxClaims },
 };
 constexpr Src kProfiSources[] = { Src::Insanity08Profi, Src::ZxReviewFedinProfi, Src::KarabasProPalette,
                                   Src::RepoProfi1024, Src::RepoSlotsResearchMachines };

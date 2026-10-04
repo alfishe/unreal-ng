@@ -723,17 +723,23 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             // attachToPorts): SD=1 registers the full mode-2 quad plus the
             // mode-1 primary quad, CovoxFB=1 alone registers #FB only; with
             // neither flag no device exists
+            // The SounDrive card's mode (ZX-bus slots option, sound.sdMode): 0 both sets, 1 / 2 one set
             if (_context->config.sound.sd)
             {
-                entries.push_back({0x00FB, 0x00F5, 0x00F1, "SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)", nullptr,
-                                   Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                const uint8_t sdMode = _context->config.sound.sdMode;
+                if (sdMode != 1)
+                    entries.push_back({0x00FB, 0x00F5, 0x00F1, "SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)", nullptr,
+                                       Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                else if (_context->config.sound.covoxFB)
+                    entries.push_back({0x00FB, 0xFFFF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
                 // Mode 1 (#0F/#1F/#4F/#5F) aliases the Beta128 FDC's wide
                 // mirror decode (bits 0,1=1, bit7=0) - PortDecoder_Pentagon128
                 // only routes these to SoundDrive once TR-DOS has released
                 // them, so the advertised row states that precedence
-                entries.push_back({0x001F, 0x00AF, 0x000F, "SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)",
-                                   "!CF_TRDOS (Beta128 FDC not paged in claims these addresses first)",
-                                   Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                if (sdMode != 2)
+                    entries.push_back({0x001F, 0x00AF, 0x000F, "SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)",
+                                       "!CF_TRDOS (Beta128 FDC not paged in claims these addresses first)",
+                                       Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
             }
             else if (_context->config.sound.covoxFB)
             {

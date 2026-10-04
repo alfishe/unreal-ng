@@ -50,7 +50,8 @@ constexpr uint32_t SlotGroupBit(SlotCardGroup group)
 
 /// The groups whose devices the slot set decides (the others still come from their legacy fields)
 constexpr uint32_t kSlotDecidedGroups =
-    SlotGroupBit(SlotCardGroup::Socket) | SlotGroupBit(SlotCardGroup::GeneralSound) | SlotGroupBit(SlotCardGroup::MoonSound);
+    SlotGroupBit(SlotCardGroup::Socket) | SlotGroupBit(SlotCardGroup::GeneralSound) | SlotGroupBit(SlotCardGroup::MoonSound) |
+    SlotGroupBit(SlotCardGroup::Covox);
 
 class SlotManager
 {

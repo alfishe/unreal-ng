@@ -130,11 +130,13 @@ constexpr Src kCovoxSources[] = { Src::ZxdnCovox, Src::DukeyusupovCovox, Src::Re
 
 // region <soundrive (research-cards.md §5.12): S1 mode switch; the emulator decode (BC IG #4's looser one unconfirmed)>
 
+// `both`: the decode emulators have always used (Unreal, Xpeccy: mode-1 and mode-2 ports at once), what the legacy
+// [SOUND] SD=1 key fits; the real card answers one set at a time (research-cards.md §5.12)
 constexpr OptionValue kSoundriveModeValues[] = {
-    { "1", "mode 1" }, { "2", "mode 2" },
+    { "1", "mode 1" }, { "2", "mode 2" }, { "both", "modes 1 + 2 (emulator decode)" },
 };
-constexpr When kMode1{ Opt::Mode, Bit(0) };
-constexpr When kMode2{ Opt::Mode, Bit(1) };
+constexpr When kMode1{ Opt::Mode, Bit(0) | Bit(2) };
+constexpr When kMode2{ Opt::Mode, Bit(1) | Bit(2) };
 
 constexpr PortClaim kSoundriveClaims[] = {
     { .mask = 0x00AF, .match = 0x000F, .dir = Dir::Out, .when = kMode1 },
@@ -148,7 +150,7 @@ constexpr FunctionUse kSoundriveFunctions[] = {
 
 constexpr OptionDef kSoundriveOptions[] = {
     { .key = Opt::Mode, .kind = OptionKind::Enum, .values = kSoundriveModeValues, .defaultBits = Bit(0),
-      .splitMatrixRows = true, .description = "S1 \"Soundrive / COVOX\" switch: one port set at a time" },
+      .splitMatrixRows = true, .description = "S1 \"Soundrive / COVOX\" switch: one port set at a time; `both` = the emulator decode of both sets" },
 };
 
 constexpr Src kSoundriveSources[] = { Src::City20Soundrive, Src::VelesoftDa, Src::BcIg4, Src::RepoSlotsResearchCards };

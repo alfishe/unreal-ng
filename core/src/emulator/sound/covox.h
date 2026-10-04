@@ -83,9 +83,12 @@ public:
 
     /// Fitment baked in at construction from config (mirrors Xpeccy's
     /// sdrvCreate(type) - the card itself knows what it is, not the
-    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1),
-    /// Mono answers only the exact #FB Covox port (CovoxFB=1, SD=0)
-    enum class Fitment { Mono, Quad };
+    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1, the
+    /// SounDrive card's mode=both), Mono answers only the exact #FB Covox port
+    /// (CovoxFB=1, SD=0), Mode1 / Mode2 one SounDrive port set (mode=1 / 2:
+    /// the real card's S1 switch), Mode1Mono the mode-1 set plus a Covox card's
+    /// #FB (two cards, one DAC module)
+    enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono };
 
     enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
 

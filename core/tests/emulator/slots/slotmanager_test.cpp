@@ -74,7 +74,12 @@ std::string DescribeFittedDevices(EmulatorContext* context)
         out << "gs " << (sound->getGeneralSound() != nullptr ? sound->generalSoundDeviceName() : std::string("none"))
             << "\n";
         out << "covox "
-            << (sound->hasCovox() ? (sound->getCovox()->fitment() == Covox::Fitment::Quad ? "quad" : "mono") : "none")
+            << (!sound->hasCovox()                                          ? "none"
+                : sound->getCovox()->fitment() == Covox::Fitment::Quad      ? "quad"
+                : sound->getCovox()->fitment() == Covox::Fitment::Mode1     ? "mode1"
+                : sound->getCovox()->fitment() == Covox::Fitment::Mode2     ? "mode2"
+                : sound->getCovox()->fitment() == Covox::Fitment::Mode1Mono ? "mode1+mono"
+                                                                            : "mono")
             << "\n";
     }
     out << "network.card " << static_cast<int>(context->config.network.card) << " comport "
@@ -680,6 +685,79 @@ TEST(SlotManager_Test, MoonSoundComesFromTheSlot)
         EXPECT_EQ(slot->find("state")->s, "disabled");
         EXPECT_NE(slot->find("reason")->s.find("palette"), std::string::npos) << slot->find("reason")->s;
     }
+}
+
+/// The Covox fitment SoundManager builds from a config's card fields: "none", "mono", "quad", ...
+std::string CovoxOf(const CONFIG& config)
+{
+    if (!config.sound.covoxFB && !config.sound.sd)
+    {
+        return "none";
+    }
+    if (!config.sound.sd)
+    {
+        return "mono";
+    }
+    return config.sound.sdMode == 1 ? (config.sound.covoxFB ? "mode1+mono" : "mode1")
+           : config.sound.sdMode == 2 ? "mode2"
+                                      : "quad";
+}
+
+std::string PlannedCovox(MEM_MODEL model, std::initializer_list<std::pair<std::string, std::string>> lines)
+{
+    auto config = MakeConfig(model);
+    SetSlots(*config, lines);
+    const SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
+    SlotManager::Apply(result, *config, kAllGroups);
+    return CovoxOf(*config);
+}
+
+/// Step 5: covox-fb and soundrive cards (the SounDrive mode switch an option) and the board Covox of the machines
+/// that have one, switched by builtin.covox
+TEST(SlotManager_Test, CovoxCardsAndTheBoardCovoxComeFromTheSlots)
+{
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "zxbus.1", "covox-fb" } }), "mono");
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "zxbus.1", "soundrive" } }), "mode1") << "the card's default: mode 1";
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "zxbus.1", "soundrive" }, { "zxbus.1.mode", "2" } }), "mode2");
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "zxbus.1", "soundrive" }, { "zxbus.1.mode", "both" } }), "quad");
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "zxbus.1", "soundrive" }, { "zxbus.2", "covox-fb" } }), "mode1+mono")
+        << "mode 1 leaves #FB to a Covox card";
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "zxbus.1", "soundrive" }, { "zxbus.1.mode", "2" }, { "zxbus.2", "covox-fb" } }),
+              "mode2") << "mode 2 is #FB too: the Covox card in the later slot is disabled";
+    EXPECT_EQ(PlannedCovox(MM_PENTAGON, { { "builtin.covox", "on" } }), "none") << "the Pentagon has no board Covox";
+
+    // The board Covox: on by default with [SLOTS], off by its switch
+    EXPECT_EQ(PlannedCovox(MM_ATM3, { { "zxbus.1", "neogs" } }), "mono");
+    EXPECT_EQ(PlannedCovox(MM_ATM3, { { "builtin.covox", "off" } }), "none");
+    EXPECT_EQ(PlannedCovox(MM_PROFI, { { "builtin.covox", "on" } }), "mono");
+    EXPECT_EQ(PlannedCovox(MM_TSL, { { "zxbus.1", "covox-fb" } }), "mono") << "TS-Conf: #FB is the board's, the card refused";
+
+    // Legacy keys: CovoxFB=1 alone switches the board Covox where there is one (TS-Conf), a card elsewhere
+    auto tsl = MakeConfig(MM_TSL);
+    tsl->sound.covoxFB = 1;
+    SlotManager::Result result = SlotManager::Plan(*tsl, kAllGroups);
+    ASSERT_NE(result.FindBuiltIn("covox"), nullptr);
+    EXPECT_EQ(result.FindBuiltIn("covox")->state, "active");
+    EXPECT_EQ(result.FindBuiltIn("covox")->source, "[SOUND] CovoxFB=1");
+    SlotManager::Apply(result, *tsl, kAllGroups);
+    EXPECT_EQ(CovoxOf(*tsl), "mono");
+    auto pentagon = MakeConfig(MM_PENTAGON);
+    pentagon->sound.covoxFB = 1;
+    pentagon->sound.sd = 1;
+    result = SlotManager::Plan(*pentagon, kAllGroups);
+    SlotManager::Apply(result, *pentagon, kAllGroups);
+    EXPECT_EQ(CovoxOf(*pentagon), "quad") << "SD=1: the SounDrive card in the emulator decode (mode=both)";
+}
+
+/// Step 5 on a machine: the SounDrive mode reaches the Covox module's decode (~25 ms)
+TEST(SlotManager_Test, SoundriveModeReachesTheCovox)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = soundrive\nzxbus.1.mode = 2");
+    ASSERT_TRUE(m.Ok());
+    ASSERT_TRUE(m.Context()->pSoundManager->hasCovox());
+    EXPECT_EQ(m.Context()->pSoundManager->getCovox()->fitment(), Covox::Fitment::Mode2);
+    EXPECT_FALSE(m.Context()->pSoundManager->getCovox()->tryClaimOut(0x001F, 0x55)) << "mode 1 port, card in mode 2";
+    EXPECT_TRUE(m.Context()->pSoundManager->getCovox()->tryClaimOut(0x00F1, 0x55));
 }
 
 TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)

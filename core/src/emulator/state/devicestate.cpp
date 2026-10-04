@@ -864,11 +864,16 @@ StateNode Covox(EmulatorContext* context)
     if (!covox)
         return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
 
-    const bool quad = covox->fitment() == ::Covox::Fitment::Quad;
+    const ::Covox::Fitment fitment = covox->fitment();
+    const bool mono = fitment == ::Covox::Fitment::Mono;
     StateNode ret = StateNode::Object();
     ret["available"] = true;
-    ret["device"] = quad ? "SoundDrive (4 x 8-bit DAC)" : "Covox (8-bit DAC on #FB)";
-    ret["fitment"] = quad ? "quad" : "mono";
+    ret["device"] = mono ? "Covox (8-bit DAC on #FB)" : "SoundDrive (4 x 8-bit DAC)";
+    ret["fitment"] = fitment == ::Covox::Fitment::Quad    ? "quad"
+                     : fitment == ::Covox::Fitment::Mode1 ? "mode1"
+                     : fitment == ::Covox::Fitment::Mode2 ? "mode2"
+                     : fitment == ::Covox::Fitment::Mode1Mono ? "mode1+mono"
+                                                              : "mono";
 
     // Ports: this model's decode, straight from its port map (the same rows
     // /ports and `ports` list), and the ones it shares with Beta-128

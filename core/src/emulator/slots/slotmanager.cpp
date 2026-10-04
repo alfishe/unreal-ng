@@ -34,6 +34,7 @@ struct CardFields
     bool moonSound = false;
     bool covoxFb = false;
     bool sd = false;
+    uint8_t sdMode = 0;         ///< the SounDrive card's port set: 0 both, 1, 2
     uint8_t zxBusNetwork = 0;   ///< networkspec::kCardZxNetUsb | kCardZxWifi
 
     static CardFields Read(const CONFIG& config)
@@ -44,6 +45,7 @@ struct CardFields
         fields.moonSound = config.sound.moonsound != 0;
         fields.covoxFb = config.sound.covoxFB != 0;
         fields.sd = config.sound.sd != 0;
+        fields.sdMode = config.sound.sdMode;
         fields.zxBusNetwork = static_cast<uint8_t>(config.network.card & ~networkspec::kCardAtm2IoEsp);
         return fields;
     }
@@ -59,7 +61,7 @@ struct CardFields
             case SlotCardGroup::MoonSound:
                 return moonSound == other.moonSound;
             case SlotCardGroup::Covox:
-                return covoxFb == other.covoxFb && sd == other.sd;
+                return covoxFb == other.covoxFb && sd == other.sd && (!sd || sdMode == other.sdMode);
             case SlotCardGroup::Network:
                 return zxBusNetwork == other.zxBusNetwork;
             case SlotCardGroup::Count:
@@ -86,6 +88,7 @@ struct CardFields
         {
             config.sound.covoxFB = covoxFb ? 1 : 0;
             config.sound.sd = sd ? 1 : 0;
+            config.sound.sdMode = sd ? sdMode : 0;
         }
         if (groups & SlotGroupBit(SlotCardGroup::Network))
         {
@@ -160,6 +163,20 @@ GSTypeKind GsKindOf(const std::string& card)
     return GSTypeKind::NONE;
 }
 
+/// The SounDrive mode of an options text ("mode=2"): 0 both, 1, 2; not given = the card's default, mode 1
+uint8_t SdModeOf(const std::string& options)
+{
+    const size_t at = options.find("mode=");
+    if (at == std::string::npos)
+    {
+        return 1;   // the card's default (refdata: mode 1)
+    }
+    const std::string value = options.substr(at + 5, options.find(' ', at) == std::string::npos
+                                                         ? std::string::npos
+                                                         : options.find(' ', at) - at - 5);
+    return value == "2" ? 2 : value == "both" ? 0 : 1;
+}
+
 /// The fields a slot configuration stands for without a machine (a missing AY socket = the machine's own chip)
 CardFields ProjectFields(const SlotConfig& slotConfig, const CONFIG& config)
 {
@@ -191,6 +208,7 @@ CardFields ProjectFields(const SlotConfig& slotConfig, const CONFIG& config)
         else if (entry.card == "soundrive")
         {
             fields.sd = true;
+            fields.sdMode = SdModeOf(entry.options);
         }
         else if (entry.card == "zxnetusb")
         {
@@ -523,7 +541,8 @@ SlotConfig SlotManager::TranslateLegacy(const CONFIG& config, uint32_t groups)
         }
         if (config.sound.sd)
         {
-            add("soundrive", "mode=both", "[SOUND] SD=1");
+            const uint8_t mode = config.sound.sdMode;
+            add("soundrive", mode == 1 ? "mode=1" : mode == 2 ? "mode=2" : "mode=both", "[SOUND] SD=1");
         }
         else if (config.sound.covoxFB && !board)
         {
@@ -916,9 +935,18 @@ void SlotManager::Apply(const Result& result, CONFIG& config, uint32_t decidedGr
         return s.entry.card == "covox-fb" && !s.entry.disabled;
     });
     fields.covoxFb = covoxCard || (boardCovox != nullptr && boardCovox->kind == BuiltInKind::Switchable && boardCovox->on);
-    fields.sd = std::any_of(result.entries.begin(), result.entries.end(), [](const Slot& s) {
-        return s.entry.card == "soundrive" && !s.entry.disabled;
-    });
+    fields.sd = false;
+    fields.sdMode = 0;
+    for (const Slot& s : result.entries)
+    {
+        if (s.entry.card == "soundrive" && !s.entry.disabled)
+        {
+            const CardDef* card = Planner().FindCard(s.entry.card);
+            const std::string mode = card != nullptr ? OptionValueId(*card, s.entry.options, Opt::Mode) : "both";
+            fields.sd = true;
+            fields.sdMode = mode == "1" ? 1 : mode == "2" ? 2 : 0;
+        }
+    }
 
     fields.zxBusNetwork = 0;
     for (const Slot& s : result.entries)
