@@ -658,6 +658,9 @@ while that page is mapped at the address - for example code in TS-Conf RAM page 
 whatever else is paged in there. 400 for a page the machine does not have. The list and
 `/breakpoints/status` (`last_triggered_page`) name it back the same way.
 
+`note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
+on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.
+
 ### Analyzers
 ```
 GET    /api/v1/emulator/{id}/analyzers                       # List all analyzers

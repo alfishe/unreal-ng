@@ -1217,3 +1217,24 @@ TEST_F(BreakpointManager_test, PageSpec_ParseNameAndMachinePages)
     EXPECT_EQ(BreakpointManager::PageSpecName(*_brkManager->GetAllBreakpoints().at(plain)), "")
         << "no page: the address in any page";
 }
+
+/// Note and group set after creation (WebAPI POST /breakpoints note / group, Lua / Python bp_note / bp_group, the
+/// CLI note); unknown ids and an empty group are refused
+TEST_F(BreakpointManager_test, SetNoteAndGroup)
+{
+    const uint16_t id = _brkManager->AddExecutionBreakpoint(0x8000);
+    ASSERT_NE(id, BRK_INVALID);
+    EXPECT_TRUE(_brkManager->SetBreakpointNote(id, "main loop"));
+    EXPECT_TRUE(_brkManager->SetBreakpointGroup(id, "game"));
+    const BreakpointDescriptor* bp = _brkManager->GetAllBreakpoints().at(id);
+    EXPECT_EQ(bp->note, "main loop");
+    EXPECT_EQ(bp->group, "game");
+    EXPECT_NE(_brkManager->GetBreakpointListAsString().find("main loop"), std::string::npos);
+    EXPECT_EQ(_brkManager->GetBreakpointsByGroup("game"), std::vector<uint16_t>{id});
+
+    EXPECT_FALSE(_brkManager->SetBreakpointNote(id + 100, "x"));
+    EXPECT_FALSE(_brkManager->SetBreakpointGroup(id, ""));
+    EXPECT_EQ(bp->group, "game") << "a refused group leaves the old one";
+    EXPECT_TRUE(_brkManager->SetBreakpointNote(id, ""));
+    EXPECT_TRUE(bp->note.empty());
+}

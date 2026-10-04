@@ -2253,6 +2253,22 @@ public:
             return bpm ? bpm->DeactivateBreakpoint(id) : false;
         });
 
+        lua.set_function("bp_note", [this](uint16_t id, const std::string& note) -> bool {
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            return bpm ? bpm->SetBreakpointNote(id, note) : false;
+        });
+
+        lua.set_function("bp_group", [this](uint16_t id, const std::string& group) -> bool {
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            return bpm ? bpm->SetBreakpointGroup(id, group) : false;
+        });
+
         lua.set_function("bp_count", [this]() -> size_t {
             if (!effectiveEmulator()) return 0;
             auto* ctx = effectiveEmulator()->GetContext();
