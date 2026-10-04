@@ -384,7 +384,7 @@ ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (tas
 cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
 r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer
 r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
-ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
+ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line with its tile graphics pages), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs (the register file #00-#47)
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
 sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
@@ -417,7 +417,7 @@ rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, registe
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
-ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"
+ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: the SprinterESP card's 16550 line; network_state().slots[n].esp shows the module, its AT session and exchanges)
 ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31); zifi="at" (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP, default "none"; network_state().zifi has the API registers and rings)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
@@ -459,10 +459,18 @@ success = emu:init()
 emu:reset()
 emu:pause()
 emu:resume()
-pc = emu:step()          -- Returns PC after step
-pc = emu:steps(count)    -- Returns PC after N steps
+r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
+r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run early
+-- r = {executed, stopped, breakpoint_id, address, access}: an execution breakpoint stops
+-- before its instruction, a memory / port one after it (.recipe/analysis/breakpoints-and-events.md)
 emu:run_frame()          -- Run exactly one video frame
 emu:run_frames(count)    -- Run exactly N video frames
+
+-- Registers (global functions, the bound or selected emulator)
+regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr im iff1 iff2 halted t frame
+-- r with bit 7 as last written; memptr = the internal WZ latch; t = CPU T-states since the frame's start
+v = get_register("memptr")        -- any name of the register table, nil when unknown
+ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1, iff2 > 1
 
 -- Properties
 id = emu:get_id()
@@ -568,31 +576,25 @@ info = memory_info()
 
 **Writes during a time-travel recording.** While a TTD recording runs, every memory write (`mem_write`, `mem_write_word`, `mem_write_block`), physical page write (`page_write`, `page_write_block`) and assembler write (`assemble` with write on) records a `debugger_edit` marker, a replay barrier, and briefly pauses a running emulator for the edit, so the recording sees the change. A write by Z80 address into a ROM bank leaves the ROM unchanged, as a CPU write would. No marker is written when no recording runs.
 
-### Breakpoint Manager
+### Breakpoints
+
+Global functions on the bound or selected emulator (breakpoints fire while debug mode is on; what
+stops where: [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```lua
-bp_mgr = emu:get_breakpoint_manager()
-
--- Add breakpoints
-bp_id = bp_mgr:add_execution_bp(0x8000)
-bp_id = bp_mgr:add_memory_read_bp(0x4000)
-bp_id = bp_mgr:add_memory_write_bp(0x5C00)
-bp_id = bp_mgr:add_port_in_bp(0xFE)
-bp_id = bp_mgr:add_port_out_bp(0xFE)
-
--- Remove breakpoints
-bp_mgr:remove_bp(bp_id)
-bp_mgr:clear_all_bps()
-
--- Activate/deactivate
-bp_mgr:activate_bp(bp_id)
-bp_mgr:deactivate_bp(bp_id)
-bp_mgr:activate_all()
-bp_mgr:deactivate_all()
-
--- Query
-count = bp_mgr:get_bp_count()
-bp_list = bp_mgr:get_all_bps()  -- Returns table of breakpoints
+id = bp(0x8000)                -- execution breakpoint, returns its id (-1 on failure)
+id = bp(0xC000, "ram:32")      -- only while RAM page 32 is mapped at #C000 ("rom:3", "cache:0")
+id = bp_read(0x4000)           -- memory read; bp_read(addr, "ram:5") bound to a page
+id = bp_write(0x5C00)          -- memory write; bp_write(addr, page) the same
+id = bp_port_in(0xFE)
+id = bp_port_out(0xFE)
+bp_remove(id); bp_clear()
+bp_enable(id); bp_disable(id)
+bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
+bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
+n = bp_count()
+print(bp_list())               -- the text table; a page breakpoint ends "in ram:32"
+st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, page}
 ```
 
 ### Analyzer Management

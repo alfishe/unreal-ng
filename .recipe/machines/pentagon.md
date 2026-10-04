@@ -70,8 +70,8 @@ curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq .
 
 `pentagon128k`/`pentagon512k` `unreal.ini` ships `TurboSound=FM` (TSFM in
 the TurboSound slot), `CovoxFB=1` (Pentagon-style Covox at `#FB`),
-`SD=1` (SoundDrive), `GSType=BASS` on master (`Z80` LLE on the
-`generalsound` branch). Changing any of these requires **editing the config
+`SD=1` (SoundDrive), `GSType=NGS` (NeoGS; `Z80` = classic General Sound, `BASS` is a
+deprecated alias of `LW`). Changing any of these requires **editing the config
 and creating a new instance** — no runtime switching. Details:
 [turbosound.md](../peripherals/turbosound.md),
 [covox-sounddrive.md](../peripherals/covox-sounddrive.md),

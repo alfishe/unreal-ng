@@ -134,6 +134,10 @@ for i in 1 2 3 4 5; do
 done
 ```
 
+For "when did the program read a key / write the AY / touch a port" without
+replaying, see `POST /ttd/port-events` (MCP `time_travel` `port_events`) in
+[ttd-recording.md](ttd-recording.md#inspect-a-file-search-port-journals-export-a-clip).
+
 ### Coverage index — which frames touched a range
 
 Three GET endpoints:

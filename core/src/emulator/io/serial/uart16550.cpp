@@ -233,6 +233,7 @@ void Uart16550::SetPeer(ISerialPeer* peer)
 
 void Uart16550::Reset()
 {
+    const bool out1 = Out1(), out2 = Out2();
     _ier = 0;
     _fcr = Evo() ? 0x01 : 0x00;
     _txc = false;
@@ -260,6 +261,8 @@ void Uart16550::Reset()
         _peer->OnModemLines(false, false);
         _peer->OnLineSettings(Line());
     }
+    if (onAuxLines && (out1 || out2))
+        onAuxLines(false, false);   // MR clears MCR: both pins inactive
 }
 
 void Uart16550::Rebase(uint64_t now)
@@ -591,6 +594,11 @@ bool Uart16550::InterruptActive() const
     return _params.interrupts && (_mcr & kMcrOut2) && !(Iir() & 0x01);
 }
 
+bool Uart16550::IntrPin() const
+{
+    return _params.interrupts && !(Iir() & 0x01);
+}
+
 uint8_t Uart16550::Read(uint8_t reg, uint64_t now)
 {
     if (Evo() && !_params.dataPath)
@@ -713,10 +721,15 @@ void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
             NotifyLine();
             break;
         case kMcr:
+        {
+            const bool out1 = Out1(), out2 = Out2();
             _mcr = static_cast<uint8_t>(value & _params.mcrMask);
             if (_peer && (Evo() || !(_mcr & kMcrLoop)))
                 _peer->OnModemLines(RtsAsserted(), (_mcr & kMcrDtr) != 0);
+            if (onAuxLines && (out1 != Out1() || out2 != Out2()))
+                onAuxLines(Out1(), Out2());
             break;
+        }
         case kLsr:
         case kMsr:
             break;   // read-only

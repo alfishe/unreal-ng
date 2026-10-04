@@ -1,6 +1,6 @@
 # TODO: ATM Turbo 2+ keyboard controller
 
-Status 2026-10-01 (K0-K3 and the controller's TTD blob on master da579f4d9; K4 on branch `esp-modules`):
+Status 2026-10-03: K0-K4 are done on master (MCS-51 core, `Atm2Kbc` on ATM710, host keyboard routing, PS/2 model, TTD blob, the COM port with the Qt Network window, NedoOS over the ATM2 COM; the `esp-modules` branch is merged). Left: K5 (the `atm2kbc` state report on every surface, A/B benchmark), the order-dependent CP/M timing difference, a ZXTERM end-to-end test. PLAN #55 and #78. History (2026-10-01, K0-K3 on `da579f4d9`):
 
 - K0 done: reference, TDD, the nine images in `data/rom/atm2kbc/` (origin and links in its
   README). The firmware archives and sources themselves are kept outside the repository; every

@@ -79,7 +79,7 @@ are ever synthesized:
 | Not TR-DOS format (CP/M, +3 DSK, MGT...) | Mount only |
 | Has a `boot.B` file | Quick reset + direct entry into TR-DOS, boots it |
 | No `.B` files at all | Mount only |
-| Exactly **one** `.B` file (no `boot`) | Quick reset + direct entry; a one-shot hook rewrites TR-DOS's cold-start `RUN "boot"` into `RUN "<name>"` — disk stays untouched |
+| Exactly **one** `.B` file (no `boot`) | Quick reset + direct entry; a one-shot hook rewrites TR-DOS's cold-start `RUN "boot"` into `RUN "<name>"` — disk stays untouched. If the loaded TR-DOS ROM lacks that cold-start hook, a generated one-line `boot.B` (`RUN "<name>"`) is injected into the image instead, so the image **is modified** (and the action degrades to mount only when the disk is full) |
 | Several `.B` files (no `boot`) | Injects the bundled Unreal commander as `boot.B` and boots it — you get a file menu on screen |
 
 "Direct entry" pages the TR-DOS ROM in at `PC=0` and runs it — that is why

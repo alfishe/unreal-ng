@@ -446,6 +446,13 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 - Uses a persistent target position to prevent cumulative drift
 - Resets target when other stepping commands are used
 
+**Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
+audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
+The machine computes the same samples as at normal speed (TTD determinism; captures and recordings still get
+them). TTD seek / replay and turbo mode hold the output the same way; `resume` restores sound. The mixer
+(`mixer`, `GET /audio/mixer`) reports it under `host_output`: `held`, `frames_delivered`, `frames_audible`,
+`frames_held`.
+
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision
 - Frequent stepping may impact overall emulation performance
@@ -457,7 +464,7 @@ Commands to view and analyze the internal state of the selected emulator instanc
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `registers` | `regs`, `r` | | Display complete Z80 CPU register state. Shows main registers (AF, BC, DE, HL, IX, IY, SP, PC), alternate register set (AF', BC', DE', HL'), special registers (I, R, IFF1, IFF2), and flags (S, Z, Y, H, X, P/V, N, C). Output formatted for readability with hex and decimal values. |
+| `registers` | `regs`, `r` | | Display complete Z80 CPU register state. Shows main registers (AF, BC, DE, HL, IX, IY, SP, PC), alternate register set (AF', BC', DE', HL'), special registers (I, R, MEMPTR, IFF1, IFF2, IM, HALT), flags (S, Z, Y, H, X, P/V, N, C), and the time (frame, CPU T-states since the frame's start). `registers <name> [value]` / `registers get|set` read or write one register: the table names, MEMPTR (alias WZ), IM (0-2), IFF1 / IFF2 (0-1). |
 | `debugmode <on\|off>` | | `on` or `off` | Enable or disable detailed memory access tracking. When ON, the emulator records every memory read/write for analysis via `memcounters`. **Warning**: Significant performance impact (~50% slower). Use only when analyzing specific memory access patterns. |
 | `memcounters [reset]` | `memstats` | `[reset]` | Display memory access statistics when debug mode is active. Shows: <br/>• Read/write/execute access counts per address<br/>• Hotspot identification (most frequently accessed)<br/>• Access type breakdown (code vs data)<br/>If `reset` is specified, clears all accumulated statistics. Requires `debugmode on` to collect data. |
 | `calltrace [depth]` | | `[max-entries]` | Display execution call trace history (CALL/RET tracking). Shows:<br/>• Call stack with return addresses<br/>• Function entry points<br/>• Nesting level<br/>• Symbolic names if loaded from .map file<br/>Default shows last 50 entries. Specify `depth` to override (max 1000). The trace buffer is circular and maintained during execution. |
@@ -873,8 +880,8 @@ Advanced debugging features for the selected emulator instance. The emulator sup
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bp <addr>` | `break`, `breakpoint` | `<address>` | Set an execution breakpoint at `<address>`. Emulation pauses when PC reaches this address. Address can be hex (0x8000) or decimal (32768). Returns breakpoint ID for future reference. |
-| `wp <addr> <type>` | `watchpoint` | `<address> <r\|w\|rw>` | Set a memory watchpoint at `<address>`:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>Useful for tracking when memory is accessed. |
+| `bp <addr>` | `break`, `breakpoint` | `<address> [ram:N\|rom:N\|cache:N] [note]` | Set an execution breakpoint at `<address>`. Emulation pauses when PC reaches this address. Address can be hex (0x8000) or decimal (32768). With a page (`bp 0xC000 ram:32`) it fires only while that page is mapped at the address. Returns breakpoint ID for future reference. |
+| `wp <addr> <type>` | `watchpoint` | `<address> <r\|w\|rw> [ram:N\|rom:N\|cache:N] [note]` | Set a memory watchpoint at `<address>`:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>With a page it fires only while that page is mapped at the address. Useful for tracking when memory is accessed. |
 | `bport <port> <type>` | `portbreak` | `<port> <in\|out\|both>` | Set an I/O port breakpoint:<br/>• `in` - break on port IN operation<br/>• `out` - break on port OUT operation<br/>• `both` - break on either IN or OUT<br/>Essential for debugging I/O operations (keyboard, sound, disk, ports). |
 | `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port<br/>• Active/Inactive<br/>• Group name<br/>• Optional annotation |
 | `bpclear [id\|all]` | `bc` | `[breakpoint-id \| all]` | Clear breakpoints:<br/>• No argument: clear ALL breakpoints and watchpoints<br/>• `<id>`: clear specific breakpoint by ID<br/>• `all`: explicitly clear all (same as no argument)<br/>**Warning**: This permanently deletes breakpoints. Use `bpoff` to temporarily disable instead. |

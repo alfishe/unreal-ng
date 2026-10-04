@@ -477,6 +477,40 @@
         </layout>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutWZ">
+         <item>
+          <widget class="QLabel" name="labelWZ">
+           <property name="text">
+            <string>wz: </string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="valWZ">
+           <property name="toolTip">
+            <string>MEMPTR (WZ): the internal address latch behind the undocumented flags of BIT n,(HL)</string>
+           </property>
+           <property name="text">
+            <string>0000</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacerWZ">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
         <layout class="QHBoxLayout" name="horizontalLayout_20">
          <item>
           <widget class="QLabel" name="label_46">
@@ -494,6 +528,40 @@
          </item>
          <item>
           <spacer name="horizontalSpacer_21">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutHALT">
+         <item>
+          <widget class="QLabel" name="labelHALT">
+           <property name="text">
+            <string>halt:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="valHALT">
+           <property name="toolTip">
+            <string>The CPU is halted (HALT executed, waiting for an interrupt)</string>
+           </property>
+           <property name="text">
+            <string>no</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacerHALT">
            <property name="orientation">
             <enum>Qt::Horizontal</enum>
            </property>

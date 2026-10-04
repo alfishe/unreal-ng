@@ -137,6 +137,6 @@ agree ([s6-sound-outcome.md](../../docs/inprogress/2026-09-28-sprinter/s6-sound-
 |---|---|
 | WAVPLAY sounds for half a second, then silence | `[SPRINTER] AccelIntSuspend=1`: the player refills the ring with accelerator copies in its INT handler; the default is 0 |
 | "Can't open file" | DSS starts in `C:\BIN`: give the player a full path (`c:\mission.wav`) |
-| "hard resync - dropped ... of overfilled audio" in the app log | `run_frames` produces frames faster than real time; the GUI's audio device drops the excess. Captures (step 5) and recordings (step 6) are in emulated time and unaffected |
+| No sound during `run_frames` | By design: a direct run goes at full host speed, so the host output is held for it (`GET /audio/mixer` -> `host_output.held`, `frames_held` grows); `resume` plays again. Captures (step 5) and recordings (step 6) are in emulated time and unaffected |
 | `PROPLAY.EXE` finds no General Sound | MOD files go to a GS card on the ISA ZX-bus adapter: not emulated yet (phase S6b) |
 | A MAME CHD boots on the first run only | MAME keeps the guest's writes in `diff/<name>.dif`; the capture script removes it before each run |

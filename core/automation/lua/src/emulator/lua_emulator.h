@@ -637,7 +637,14 @@ public:
                     regs["de_"] = z80->alt.de;
                     regs["hl_"] = z80->alt.hl;
                     regs["i"] = z80->i;
-                    regs["r"] = (z80->r_hi << 7) | (z80->r_low & 0x7F);
+                    regs["r"] = Z80::RegisterR(z80);
+                    regs["memptr"] = z80->memptr;
+                    regs["im"] = z80->im;
+                    regs["iff1"] = z80->iff1 != 0;
+                    regs["iff2"] = z80->iff2 != 0;
+                    regs["halted"] = z80->halted != 0;
+                    regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
+                    regs["frame"] = emulator->GetContext()->emulatorState.frame_counter;
                 }
             }
             return regs;
@@ -1314,14 +1321,36 @@ public:
         });
 
         // Execution control
-        lua.set_function("step", [this](sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
-            effectiveEmulator()->RunSingleCPUCycle(skipBP.value_or(true));
+        // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
+        // (stopped: a breakpoint ended it - an execution one before its instruction)
+        auto stepOutcome = [](sol::state_view state, Emulator& emulator, unsigned executed) {
+            const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+            sol::table result = state.create_table();
+            result["executed"] = executed;
+            result["stopped"] = stop.hit;
+            if (stop.hit)
+            {
+                result["breakpoint_id"] = stop.breakpointId;
+                result["address"] = stop.address;
+                result["access"] = BreakpointHitKindName(stop.kind);
+            }
+            return result;
+        };
+
+        lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            Emulator& emulator = *effectiveEmulator();
+            emulator.RunSingleCPUCycle(skipBP.value_or(true));
+            const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+            const unsigned executed = (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0 : 1;
+            return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("steps", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
-            effectiveEmulator()->RunNCPUCycles(count, skipBP.value_or(false));
+        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            Emulator& emulator = *effectiveEmulator();
+            const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
+            return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
         lua.set_function("stepover", [this]() {
@@ -2140,28 +2169,40 @@ public:
         });
 
         // Breakpoint management
-        lua.set_function("bp", [this](uint16_t addr) -> int {
+        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
+        lua.set_function("bp", [this](uint16_t addr, sol::optional<std::string> page) -> int {
             if (!effectiveEmulator()) return -1;
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddExecutionBreakpoint(addr)) : -1;
+            if (!bpm) return -1;
+            std::string error;
+            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_EXECUTE, page.value_or(""), error);
+            return id == BRK_INVALID ? -1 : static_cast<int>(id);
         });
 
-        lua.set_function("bp_read", [this](uint16_t addr) -> int {
+        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
+        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<std::string> page) -> int {
             if (!effectiveEmulator()) return -1;
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddMemReadBreakpoint(addr)) : -1;
+            if (!bpm) return -1;
+            std::string error;
+            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_READ, page.value_or(""), error);
+            return id == BRK_INVALID ? -1 : static_cast<int>(id);
         });
 
-        lua.set_function("bp_write", [this](uint16_t addr) -> int {
+        // Optional page ("ram:32", "rom:3", "cache:0"): only while that page is mapped at the address
+        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<std::string> page) -> int {
             if (!effectiveEmulator()) return -1;
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            return bpm ? static_cast<int>(bpm->AddMemWriteBreakpoint(addr)) : -1;
+            if (!bpm) return -1;
+            std::string error;
+            const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_WRITE, page.value_or(""), error);
+            return id == BRK_INVALID ? -1 : static_cast<int>(id);
         });
 
         lua.set_function("bp_port_in", [this](uint16_t port) -> int {
@@ -2212,6 +2253,22 @@ public:
             return bpm ? bpm->DeactivateBreakpoint(id) : false;
         });
 
+        lua.set_function("bp_note", [this](uint16_t id, const std::string& note) -> bool {
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            return bpm ? bpm->SetBreakpointNote(id, note) : false;
+        });
+
+        lua.set_function("bp_group", [this](uint16_t id, const std::string& group) -> bool {
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            return bpm ? bpm->SetBreakpointGroup(id, group) : false;
+        });
+
         lua.set_function("bp_count", [this]() -> size_t {
             if (!effectiveEmulator()) return 0;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2255,6 +2312,8 @@ public:
                 result["active"] = info.active;
                 result["note"] = info.note;
                 result["group"] = info.group;
+                if (!info.page.empty())
+                    result["page"] = info.page;
             }
             return result;
         });

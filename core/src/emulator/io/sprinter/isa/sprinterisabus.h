@@ -92,6 +92,8 @@ public:
     /// refused with the reason (shown in the report); the machine always starts
     void Configure(const sprinterisa::IsaConfig& config);
     const sprinterisa::SlotConfig& Configured(int slot) const { return _slots[slot & 1].config; }
+    /// A UART card's line changed at runtime (the card is fitted again by NetworkManager)
+    void SetConfiguredPeer(int slot, const std::string& peer);
 
     /// Put a card into a slot (the previous one leaves). `card` = nullptr empties it
     void Fit(int slot, std::unique_ptr<sprinterisa::IIsaCard> card);

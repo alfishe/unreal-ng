@@ -1,19 +1,29 @@
 # Recipe: General Sound (GS) Card
 
-The General Sound expansion — a sample/DAC card with its own Z80
-coprocessor. Two emulation modes, selected by the `[SOUND] GSType=` config
-key (new instance required, no runtime switch):
+The General Sound expansion: a sample/DAC card with its own Z80
+coprocessor. The card kind is set by the `[SOUND] GSType=` config key (read
+at instance creation) and can be swapped at runtime
+([personality switch](#mcp-preferred)):
 
-| Mode | Where | What |
-|:--|:--|:--|
-| `BASS` | `master` (default) | legacy HLE mode |
-| `Z80` | `generalsound` branch (default on GS-capable clones) | full LLE: Z80 copro (unreal-z80) @ 12 MHz, ROM + RAM, DACs, interrupt |
-| `NONE` | Sinclairs (branch) | card absent |
+| `GSType` | What |
+|:--|:--|
+| `Z80` | full LLE classic card: Z80 coprocessor (unreal-z80) @ 12 MHz, ROM + RAM, DACs, interrupt |
+| `LW` (alias `LIGHT`) | lightweight in-tree mod player driven by host commands (no coprocessor) |
+| `BASS` | deprecated alias of `LW` (logs a warning; no BASS library is linked) |
+| `NGS` | NeoGS FPGA card (`SoundChip_NeoGS`): SD slot, MP3 decoder, DMA |
+| `NONE` | card absent; the default when the key is missing (an unknown value warns and falls back to `NONE`) |
 
-Ground truth: `core/src/emulator/sound/chips/soundchip_gs.h`
-(generalsound branch — file not on master), design doc
-[docs/inprogress/2026-09-19-general-sound/gs-tdd.md](../../docs/inprogress/2026-09-19-general-sound/gs-tdd.md),
-firmware `data/rom/gs105a.rom` (branch default; `gs104.rom` also ships).
+The shipped configs under `data/configs/` all set `GSType=NGS`. Classic-card
+firmware `[ROM] GS=` defaults to `rom/gs105a.rom` (`gs104.rom` also ships);
+`bootGS.rom` and `rom/neogs/` hold the NeoGS flash image. Other keys:
+`GSVol` (0-8192 ini scale, shipped 8000), `GSReset=1` makes a ZX reset
+reinitialize the card too.
+
+Ground truth: `core/src/emulator/sound/chips/gs/soundchip_gs.h` (LLE),
+`soundchip_gslw.h` (lightweight), `generalsoundcard.h` (common card
+interface), `gsmailbox.h` (host mailbox), NeoGS in
+`core/src/emulator/sound/chips/neogs/soundchip_neogs.h`; design doc
+[docs/inprogress/2026-09-19-general-sound/gs-tdd.md](../../docs/inprogress/2026-09-19-general-sound/gs-tdd.md).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
 > `inspect_state` reads the card, `capture_media audio_capture` proves it
@@ -36,43 +46,74 @@ audio does not speed up with host turbo.
 ## MCP (preferred)
 
 ```text
-# On a generalsound-branch build (clones: PENTAGON/SCORPION/ATM710/ATM3/PROFSCORP):
 emulator_manage {"action":"create","model":"PENTAGON"}
 
 inspect_state {"aspects":["audio_gs"]}
-#   master  → stub (endpoint reserved)
-#   branch  → mailbox flags, MPAG page, per-channel DAC sample/volume,
-#             coprocessor core — 404 when the card is absent (GSType=NONE)
+#   mailbox flags, MPAG page, per-channel DAC sample/volume, coprocessor
+#   core; a "neogs" object (windows, clock, SD, MP3, DMA) on NeoGS;
+#   reports unavailable when no card is fitted. The card CPU's #4000-#7FFF
+#   window: WebAPI GET .../state/audio/gs?ram=1
 
-# Prove the card makes sound (works on both transports, both modes):
+# Prove the card makes sound (any kind), master mix or the card alone:
 capture_media {"action":"audio_capture","seconds":2}
-#   → analysis: sample_rate, duration_seconds, left/right {peak, rms},
+capture_media {"action":"audio_capture","seconds":2,"source":"gs"}      # "gs_mp3": NeoGS MP3 decoder
+#   -> analysis: sample_rate, duration_seconds, left/right {peak, rms},
 #     dominant_hz (zero-crossing estimate), zero_crossing_rate;
 #     "wav":true also exports the WAV (wav_path)
-
 capture_media {"action":"audio_status"}   # {complete: ...} while running
 ```
 
-For protocol-level debugging the branch adds a GS **port trace** (host-side
-`#B3/#BB/#33` traffic with GS-side context: HOST / GS / DAC / INT sides) —
-start it via `invoke_api` against the GS port-trace endpoint on the branch
-build, then read the ring buffer like any trace
-([port-trace.md](../analysis/port-trace.md)).
+Drive the card with `emulator_manage` (all `gs_*` actions go to
+`POST /control/audio/gs`; 404 when no card is fitted):
 
-### Reset semantics (branch)
+| Action | Fields | Effect |
+|:--|:--|:--|
+| `gs_reset` | | full power-on reset (mailbox, volumes **and** timing) |
+| `gs_reset_card` | | `#33` bit-7 pulse (CPU/banking/timing only; the mailbox survives) |
+| `gs_nmi` | | `#33` bit-6 pulse |
+| `gs_send_command` / `gs_send_data` | `value` 0-255 (required) | `OUT #BB` / `OUT #B3` semantics |
+| `gs_read_status` / `gs_read_data` | | side-effect-free peek: `IN #BB` value (status or `#7E`) / the card-to-ZX byte (bit 7 not cleared) |
+| `gs_switch_personality` | `personality`: `z80`/`lle`, `lw`/`lightweight`, `ngs`/`neogs` | swap the card at the next frame boundary; mailbox and counters survive, a module held by the lightweight card is replayed through fresh LLE firmware |
+| `gs_dump_module` | `path` (optional, relative, no `..`; default `gs-module-dump.mod`) | write the last completed COM30..D2 module upload; 404 if none |
+| `gs_sd_insert` / `gs_sd_eject` / `gs_flash_save` | `path` (insert: raw image) | NeoGS only; insert/eject refused while TTD records |
+| `gs_stereo_mode` | `mode`: `separated` (as on the board), `gs` (50% cross-feed), `mono` | NeoGS DAC mix, applied next frame |
 
-Two reset modes, both reachable via the GS state endpoint: `reset` — full
-power-on reset (mailbox, volumes **and** timing); `reset_card` — the
-`#33` bit-7 hardware pulse (CPU/banking/timing only; the mailbox survives).
-Pick deliberately when re-running a firmware boot test.
+The writes, resets and NMI are live input: applied at the next instruction
+boundary and journaled for TTD (409 while a TTD replay owns input). Pick
+`gs_reset` vs `gs_reset_card` deliberately when re-running a firmware boot
+test.
+
+Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
+starts a GS trace, runs the frames, stops it and returns the always-on
+activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`
+events (sides: host / gs / dac / interrupt / zxdma); no feature flag needed.
+Per-device level: `inspect_state {"aspects":["audio_mixer"]}`, WebAPI
+`GET /audio/mixer`.
 
 ## WebAPI
 
 ```bash
-# Card state (branch build)
+# Card state (add ?ram=1 for the card CPU's #4000-#7FFF window)
 curl -s "$BASE/emulator/$EMU_ID/state/audio/gs" | jq .
 
-# One-shot audio proof with offline analysis
+# Control: reset / reset_card / nmi / send_command / send_data / read_* ...
+curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
+     -H 'Content-Type: application/json' -d '{"action":"reset_card"}' | jq .
+curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
+     -H 'Content-Type: application/json' -d '{"action":"send_command","value":243}' | jq .
+#   -> {"status":"success","action":"send_command","note":"applied at the next instruction boundary"}
+curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
+     -H 'Content-Type: application/json' -d '{"action":"switch_personality","personality":"lw"}' | jq .
+#   -> {"personality":"lw","current":"...","requested":true,"note":"applied at the next frame boundary"}
+curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
+     -H 'Content-Type: application/json' -d '{"action":"stereo_mode","mode":"gs"}' | jq .
+
+# Port trace: counters + last N events; control start|stop|pause|resume|clear
+curl -s "$BASE/emulator/$EMU_ID/state/audio/gs/porttrace?events=32" | jq .
+curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs/porttrace" \
+     -H 'Content-Type: application/json' -d '{"action":"start"}' | jq .
+
+# One-shot audio proof with offline analysis ("source":"gs" for the card alone)
 curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" \
      -H 'Content-Type: application/json' -d '{"action": "start", "seconds": 2}' | jq .
 # ... let the machine run ~100 frames ...
@@ -83,17 +124,18 @@ curl -s "$BASE/emulator/$EMU_ID/audio/capture/result?wav=true" \
 
 ## Pitfalls
 
-- **`/state/audio/gs` on `master` returns `{"status":"not_implemented"}`** —
-  the card is emulated (BASS HLE) but has no introspection there. Don't
-  write assertions against GS state until `server.git_branch` says
-  `generalsound`.
-- **`GSType` is config-file only** — there is no API to switch modes;
-  edit `configs/<model>/unreal.ini` and create a new instance.
-- **GS silence on a real Sinclair model is policy**, not a bug — the branch
-  sets `GSType=NONE` there. Use a clone.
+- **`reset` / `reset_card` are control actions**, not state: they go through
+  `POST /control/audio/gs` (the state endpoint is read-only).
+- **`GSType` is read at creation; the runtime swap is `switch_personality`** —
+  it is refused (409) while a TTD recording runs, and takes effect at the
+  next frame boundary, so poll `GET /state/audio/gs` before asserting.
+- **GS silence on a real Sinclair model is policy, not a bug** — use a
+  clone, or `GSType=NONE` models report no card (404 / unavailable).
 - **Host turbo changes the mailbox race, not the card's clock** — if a
   firmware boot fails only under turbo, suspect ZX-side polling timing
   (`#BB` status), not GS-side synthesis.
-- **The firmware ROM matters** — the branch moved to `gs105a.rom`;
-  behavior differences between `gs104.rom` and `gs105a.rom` are real
-  firmware differences. Check the `GS=` path in the model config.
+- **The firmware ROM matters** — behavior differences between `gs104.rom`
+  and `gs105a.rom` are real firmware differences. Check the `GS=` path in
+  the model config.
+- **`dump_module` paths are sandboxed** — relative, no `..`; absolute paths
+  get 400.

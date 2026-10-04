@@ -263,10 +263,15 @@
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
         "Z80 address (0-65535) or port number (0-255)";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
+        "Optional for execution / read / write: 'ram:32', 'rom:3' or 'cache:0' (page decimal or 0x / # / $ hex). The "
+        "breakpoint fires only while that page is mapped at the address; 400 for a page the machine does not have";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
-    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] = "Optional group name";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] =
+        "Optional group name (created on use; default 'default'). Groups are switched on and off together";
 
     // Add Breakpoint Response
     schemas["AddBreakpointResponse"]["type"] = "object";
@@ -276,6 +281,10 @@
     schemas["AddBreakpointResponse"]["properties"]["id"]["description"] = "Assigned breakpoint ID";
     schemas["AddBreakpointResponse"]["properties"]["type"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["page"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["page"]["description"] = "The page condition, when one was given";
+    schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
 
     // Memory State schemas

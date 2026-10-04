@@ -1,4 +1,4 @@
-# TODO: machine waits not modeled yet
+# DONE: machine waits not modeled yet
 
 **Plan:** follow-up 4 of PLAN #61 · [requirements.md](requirements.md)
 
@@ -21,3 +21,8 @@
 | Scorpion: 3.5 MHz while /INT is active; SC15.3 as an option | done 2026-10-01: the decoder's machine step hook drops the clock inside the /INT pulse (instruction boundaries, `contention` feature on); `[MISC] ScorpionTurboLogic=SC15.1 / SC15.3` (SC15.3: fetches wait for the slot only, +1 T per I/O, no Even M1), shown in the contention report; the slot waits in closed form (one division per access, equal to the edge-by-edge rule at every clock of a frame) |
 | A test program for the turbo waits | Scorpion done 2026-10-01: [turbotest](../../../tools/verification/contention/turbotest/README.md) counts five bodies per frame at 3.5 MHz and in turbo and names the logic firmware; on the emulators with a Scorpion none models the turbo waits (MAME, ZXMAK2, Kozynax, xpeccy-plus: no turbo; Xpeccy: turbo without waits). ZX-Evo 14 MHz done 2026-10-01: recognized by its register readback, 14 MHz set through #xx77 with every other bit kept; unreal-ng's counts within 3 % of the research's figures; the other emulators' ZX-Evo has no register readback, so no turbo is tried there |
 | ATM710 turbo RAM waits (7 MHz) | **in progress 2026-10-02**: [2026-10-02-atm710-turbo-waits](../2026-10-02-atm710-turbo-waits/README.md); AC2 narrowed to ATM710 at 3.5 MHz |
+
+## Closed 2026-10-03
+
+Done except one deferred item (2026-10-03): the ZX-Evo 14 MHz and Scorpion Turbo+ memory waits, the overlay entry points, the TTD state, tests, A/B and the turbotest program are on master (`ff418ba2f`, `d5ef4ae5a`); the ATM710 7 MHz waits are done in [2026-10-02-atm710-turbo-waits](../2026-10-02-atm710-turbo-waits/TODO.md). Deferred: the ZX-Evo 48K / 128K rasters and their contention, moved to PLAN #55 (contention backlog C1). PLAN #61 follow-up 4.
+

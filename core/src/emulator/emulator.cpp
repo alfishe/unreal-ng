@@ -1318,11 +1318,20 @@ void Emulator::Pause(bool broadcast)
     {
         SetState(StatePaused);
 
-        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3)
+        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3),
+        // with its cause: a breakpoint (OnBreakpointHit set it just before) or a request
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StatePaused);
+        if (_pendingPauseCause.hit)
+        {
+            payload->pauseCause = PauseCause::Breakpoint;
+            payload->breakpointId = _pendingPauseCause.breakpointId;
+            payload->address = _pendingPauseCause.address;
+            payload->hitKind = _pendingPauseCause.kind;
+        }
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
+    _pendingPauseCause = BreakpointStop{};
 }
 
 /// @brief Resumes emulator execution after pause
@@ -1380,6 +1389,7 @@ void Emulator::Resume(bool broadcast)
         std::lock_guard<std::mutex> lock(_pauseWaitMutex);
         _isPaused = false;
     }
+    _stoppedAtExecBreakpoint = false;  // the run goes on from there
     _resumeCV.notify_all();  // Wake the CPU thread parked mid-frame at a breakpoint
     ResetLineStepAnchor();  // Full-speed run invalidates line-step anchor
     // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
@@ -2373,11 +2383,61 @@ void Emulator::CancelPendingStepOver()
     }
 }
 
+bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind)
+{
+    // Temporary breakpoints of step over / step out, and hidden ones, are not shown to the user
+    bool hidden = false;
+    if (_context && _context->pDebugManager)
+    {
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        const BreakpointDescriptor* bp = brk.GetBreakpointById(breakpointId);
+        hidden = bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints");
+    }
+
+    if (IsDirectStepping())
+    {
+        // Stepping on from the execution breakpoint the emulator is stopped at: its instruction runs
+        if (kind == BreakpointHitKind::Execute && _passExecBreakpointArmed && address == _passExecBreakpointPc)
+            return false;
+
+        if (!_directStop.hit)
+            _directStop = BreakpointStop{true, breakpointId, address, kind};
+        if (kind == BreakpointHitKind::Execute)
+        {
+            _stoppedAtExecBreakpoint = true;
+            _stoppedAtExecPc = address;
+        }
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
+                                                   new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
+        // Execution: stop before the instruction. Memory and ports: the instruction completes, the run ends
+        return kind == BreakpointHitKind::Execute;
+    }
+
+    // The emulator's own run: pause (with the cause), notify, park this thread until Resume()
+    if (kind == BreakpointHitKind::Execute)
+    {
+        _stoppedAtExecBreakpoint = true;
+        _stoppedAtExecPc = address;
+    }
+    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind};
+    Pause();
+    _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
+
+    MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
+                                               new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
+    WaitWhilePaused();
+    return false;
+}
+
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)
 {
     Z80& z80 = *_core->GetZ80();
 
+    // Leaving the instruction the emulator is stopped at (an execution breakpoint that fires
+    // again at this step sets it again); only the run's first instruction may pass that breakpoint
+    _stoppedAtExecBreakpoint = false;
     Z80::StepResult result = z80.StepInstruction(skipBreakpoints);
+    _passExecBreakpointArmed = false;
 
     const bool completed = z80.IsFrameComplete();
     if (completed)
@@ -2406,6 +2466,7 @@ void Emulator::RestartFrame()
 
 void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2425,16 +2486,39 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 
 Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
 {
-    _emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel);
+    if (_emulator._context && _emulator._context->pSoundManager)
+    {
+        _heldSound = _emulator._context->pSoundManager;
+        _heldSound->holdHostOutput();
+    }
+    if (_emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel) == 0)
+    {
+        // A new direct run: no breakpoint stop yet; its first instruction may leave the execution
+        // breakpoint the emulator is stopped at (nothing executed since it stopped there)
+        _emulator._directStop = BreakpointStop{};
+        const uint16_t pc = _emulator._core ? _emulator._core->GetZ80()->pc : 0;
+        _emulator._passExecBreakpointArmed = _emulator._stoppedAtExecBreakpoint && pc == _emulator._stoppedAtExecPc;
+        _emulator._passExecBreakpointPc = pc;
+    }
 }
 
 Emulator::DirectStepScope::~DirectStepScope()
 {
+    if (_heldSound)
+        _heldSound->releaseHostOutput();
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
-        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);  // the GUI's one refresh, now it may read
+    {
+        // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
+        auto* payload = new CpuStepPayload(_emulator.GetId());
+        payload->stopped = _emulator._directStop.hit;
+        payload->breakpointId = _emulator._directStop.breakpointId;
+        payload->address = _emulator._directStop.address;
+        payload->hitKind = _emulator._directStop.kind;
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP, payload, true);
+    }
 }
 
-void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
+unsigned Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
     DirectStepScope directStep(*this);
     CancelPendingStepOver();
@@ -2447,14 +2531,19 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
         Pause();  // Broadcast pause so debugger UI updates
     }
 
-    for (unsigned i = 0; i < cycles && !_stopRequested; i++)
+    unsigned executed = 0;
+    for (unsigned i = 0; i < cycles && !RunHalted(); i++)
     {
         ExecuteStep(skipBreakpoints);
+        // An execution breakpoint stops the run before its instruction
+        if (!(_directStop.hit && _directStop.kind == BreakpointHitKind::Execute))
+            executed++;
     }
 
     // Notify the debugger that a step has been performed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    return executed;
 }
 
 void Emulator::RunFrame(bool skipBreakpoints)
@@ -2489,16 +2578,16 @@ void Emulator::RunFrame(bool skipBreakpoints)
     // Phase 1: Run until frame counter increments (crosses one frame boundary)
     uint64_t startFrame = _context->emulatorState.frame_counter;
 
-    while (_context->emulatorState.frame_counter == startFrame && !_stopRequested)
+    while (_context->emulatorState.frame_counter == startFrame && !RunHalted())
     {
         ExecuteStep(skipBreakpoints);
     }
 
     // Phase 2: We're now at the start of a new frame (z80.t is small).
     // Single-step until we reach or pass targetPos.
-    if (targetPos > 0 && !_stopRequested)
+    if (targetPos > 0 && !RunHalted())
     {
-        while (z80.t < targetPos && !_stopRequested)
+        while (z80.t < targetPos && !RunHalted())
         {
             bool frameCompleted = false;
             ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -2551,7 +2640,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
-    while (elapsed < targetTStates && !_stopRequested)
+    while (elapsed < targetTStates && !RunHalted())
     {
         const unsigned prevT = z80.t;
         const unsigned limitBefore = z80._frameLimit;
@@ -2609,7 +2698,7 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 
     unsigned targetT = z80.t + tStates;
 
-    while (z80.t < targetT && !_stopRequested)
+    while (z80.t < targetT && !RunHalted())
     {
         const unsigned limitBefore = z80._frameLimit;
 
@@ -2659,14 +2748,14 @@ void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
     if (z80.t >= targetT)
     {
         bool frameCompleted = false;
-        while (!frameCompleted && !_stopRequested)
+        while (!frameCompleted && !RunHalted())
         {
             ExecuteStep(skipBreakpoints, &frameCompleted);
         }
     }
 
     // Now run to the target scanline
-    while (z80.t < targetT && !_stopRequested)
+    while (z80.t < targetT && !RunHalted())
     {
         ExecuteStep(skipBreakpoints);
     }
@@ -2726,7 +2815,7 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
     if (targetT <= z80.t)
         targetT += t_line;
 
-    while (z80.t < targetT && !_stopRequested)
+    while (z80.t < targetT && !RunHalted())
     {
         const unsigned limitBefore = z80._frameLimit;
 
@@ -2773,14 +2862,14 @@ void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
     {
         // After paper start or in paper area — complete frame first
         bool frameCompleted = false;
-        while (!frameCompleted && !_stopRequested)
+        while (!frameCompleted && !RunHalted())
         {
             ExecuteStep(skipBreakpoints, &frameCompleted);
         }
     }
 
     // Run to paper start (in the new frame when the one above was completed)
-    while (z80.t < paperStartT && !_stopRequested)
+    while (z80.t < paperStartT && !RunHalted())
     {
         ExecuteStep(skipBreakpoints);
     }
@@ -2808,7 +2897,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
     const unsigned safetyLimit = z80._frameLimit * 2;
     unsigned elapsed = 0;
 
-    while (!_stopRequested)
+    while (!RunHalted())
     {
         const unsigned prevT = z80.t;
         const unsigned limitBefore = z80._frameLimit;

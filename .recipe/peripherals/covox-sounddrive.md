@@ -32,8 +32,8 @@ Guide #4 port table ([zx-ports-full-table.md](../../docs/ports/zx-ports-full-tab
 pattern `1111B0A1`).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
-> `capture_media audio_capture` is the only reliable verification (the DACs
-> have no introspection endpoint yet). Use [WebAPI](#webapi) only inside
+> `inspect_state audio_covox` reports fitment and the latches, and
+> `capture_media audio_capture` proves the DAC sounds. Use [WebAPI](#webapi) only inside
 > host-side Python/bash pipelines or when MCP is unavailable (policy:
 > [_common/transports.md](../_common/transports.md)).
 
@@ -42,20 +42,29 @@ pattern `1111B0A1`).
 ```text
 emulator_manage {"action":"create","model":"PENTAGON"}   # CovoxFB=1, SD=1
 
+# Fitment, the ports this model decodes (and any shared with Beta-128)
+# and the four DAC latches:
+inspect_state {"aspects":["audio_covox"]}
+
 # Run anything that plays samples through the DAC (digital music, speech,
 # SFX demos), then:
 capture_media {"action":"audio_capture","seconds":2}
+capture_media {"action":"audio_capture","seconds":2,"source":"covox"}   # the DAC alone, before mute / volume
 #   → left/right {peak, rms}, dominant_hz, zero_crossing_rate
 #   flat zero peak = the card is muted/absent or the software never wrote it
 
+# Per-device level (all fitted devices, then the DAC):
+inspect_state {"aspects":["audio_mixer"]}
+invoke_api   {"method":"PUT","path":"/api/v1/emulator/{id}/audio/mixer/covox","body":{"gain_db":-6}}
+
 # Cross-check the channel mix the sound manager actually produced:
 inspect_state {"aspects":["audio_ay"]}          # AY silent while DAC plays?
-invoke_api   {"method":"GET","path":"/emulator/{id}/state/audio/channels"}
+invoke_api   {"method":"GET","path":"/api/v1/emulator/{id}/state/audio/channels"}
 ```
 
-There is no `/state/audio/covox` data yet — on `master` the route answers
-`{"status":"not_implemented"}` (reserved). Plan around capture analysis,
-port traces on the DAC ports, and `/state/audio/channels`.
+Read the state report first: it tells whether the card is fitted and which
+ports answer before any capture. Capture analysis and port traces on the
+DAC ports remain the proof that sound comes out.
 
 ## WebAPI
 
@@ -68,6 +77,16 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" \
 # ...run ~100 frames of the sample player...
 curl -s "$BASE/emulator/$EMU_ID/audio/capture/result" \
      | jq '{dominant_hz, left: {peak: .left.peak, rms: .left.rms}, right: .right.peak}'
+
+# Fitment, decoded ports and the four DAC latches
+curl -s "$BASE/emulator/$EMU_ID/state/audio/covox" | jq .
+
+# One device instead of the master mix, and its level in the mixer
+curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: application/json' \
+     -d '{"action":"start","seconds":2,"source":"covox"}' | jq -c '{armed, source}'
+curl -s "$BASE/emulator/$EMU_ID/audio/mixer" | jq .
+curl -s -X PUT "$BASE/emulator/$EMU_ID/audio/mixer/covox" -H 'Content-Type: application/json' \
+     -d '{"gain_db":-6}' | jq -c '.devices[] | select(.source == "covox") | {name, volume, gain_db}'
 
 # Channel-level view of what mixed into the frame
 curl -s "$BASE/emulator/$EMU_ID/state/audio/channels" | jq .
@@ -110,8 +129,9 @@ fitted"; use the port-trace/audio-capture checks below instead.
   `Covox::STALE_CHANNEL_FRAMES` (3) whole frames decays back to the 0x80
   midpoint automatically, restoring mono-centering — expect at most one
   brief click right at the switch, not a persistent imbalance.
-- **No register state exists for a DAC** — it's a latch, not a chip; don't
-  look for per-register endpoints. The write value *is* the output level.
+- **A DAC is a latch, not a chip** — there are no registers to decode;
+  `/state/audio/covox` reports the four latch values, and the write value
+  *is* the output level.
 - **Profi port arbitration silences the DAC by design** — during
   FDC/CMOS activity on `#3F/#5F` the Profi DAC goes quiet; don't file that
   as a regression mid-disk-operation.

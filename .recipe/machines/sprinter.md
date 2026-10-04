@@ -31,8 +31,8 @@ resource `unreal://machine/sprinter` is the one-page summary.
 > pipelines (policy: [_common/transports.md](../_common/transports.md)).
 > Shared patterns: [_common/machines.md](../_common/machines.md).
 
-Outputs below are real, from a build of branch `sprinter-automation`
-(2026-10-02), trimmed.
+Outputs below are real, from a build of the `sprinter-automation` work
+(2026-10-02, since merged to master), trimmed.
 
 ## MCP (preferred)
 
@@ -107,8 +107,9 @@ inspect_state {"aspects":["sprinter_text"]}          # poll until "B:\>"
 ```
 
 The shipped floppy's `SYSTEM.BAT` ends with `fn` (Flex Navigator, the DSS
-file manager), which does **not** run yet: it draws its logo and hangs. To get
-a usable prompt, boot a copy without that line (host-side, into `scratch/`):
+file manager), which runs (step 3a; see the status table). To stop at the
+`B:\>` prompt instead (the transcript above), boot a copy without that line
+(host-side, into `scratch/`):
 
 ```bash
 python3 - <<'EOF'
@@ -261,9 +262,12 @@ curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.sound.covox_blaster | 
 `zero_counts` grows by one per 20.48 ms frame; `count` is the live
 down-counter. MCP: `inspect_state {"aspects":["sprinter"]}`, the same
 `z84c15.ctc` tree (CLI `state sprinter`, Lua / Python `sprinter_state`).
-Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
+Checked live 2026-10-02 (the `sprinter-ctc-trg` work, since merged to master).
 
 ### 4. Spectrum mode and TR-DOS
+
+The shortest paths with the hard disk (native programs, SP / P128 / SC256 launcher modes, TR-DOS `RUN`):
+[sprinter-software.md](sprinter-software.md). This section boots from floppies.
 
 The community BIOS (3.06 / 3.07, the default) carries the ZX ROMs: ESC at its boot prompt starts the
 Spectrum 128 menu "Sprinter" directly. BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
@@ -330,7 +334,7 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `registers`, `cells` | ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD (mode page), HOLD, SCALE; cells `#C0-#FF` as hex rows |
 | `clock`, `frame` | turbo requested / front-panel switch, `ratio` 1 or 6, `mhz` 3.5 / 21; `lines` 320 / 312, `t_states` 71 680 / 69 888 |
 | `clock.waits` | the 21 MHz rule, `active`, `windows_waiting[4]` (main RAM waits, ROM and fast RAM not), the taken clocks |
-| `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `phase_t` (a placeholder until a board is measured), `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
+| `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `ct5_rise_t` 2 (frame T mod 4 of the CT5 rise = every INT edge), `waits_by_t1_from_int` `[0, 2, 1, 0]`, `phase_note`, `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
 | `tape` | `time_base`: `base_clock` - the tape input counts real time, so load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX); at 21 MHz the ROM loader fails, as on the board |
 | `video` | `picture_mode` (the dominant content kind of the 640 x 256 picture; `picture_mode_key`, e.g. `spectrum` in the Spectrum mode, `graphics_640` in Flex Navigator), `picture_mixed` (more than one content kind), `picture_brief` (the GUI status bar's words), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
 | `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |
@@ -526,7 +530,8 @@ and core reports as Lua.)
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Sound: one AY at 1.75 MHz (ABC), beeper, Covox, Covox-Blaster (ring, rates, INT, 16-bit stereo) | implemented (S6, [sprinter-sound.md](sprinter-sound.md)) |
 | Accelerator | implemented (S5, [sprinter-accelerator.md](sprinter-accelerator.md)) |
-| ISA cards (General Sound on the ZX-bus adapter, `PROPLAY.EXE` MODs) | not yet (S6b); the ISA view reads `#FF` |
+| ISA bus: two ISA-8 slots, default slot 2 = NE2000 (RTL8019AS), Ethernet gateway | implemented ([sprinter-isa.md](sprinter-isa.md), [sprinter-network.md](sprinter-network.md)) |
+| ZX-bus adapter with General Sound / NeoGS in slot 1 (`PROPLAY.EXE` MODs) | not yet (S6b); an empty slot reads `#FF` |
 | TTD (time travel) | implemented (S7, [analysis/sprinter-ttd.md](../analysis/sprinter-ttd.md)) |
 | Automation of video modes, palettes, video RAM, the change log, BIOS selection, mixer | implemented (automation audit 2026-10-02: step 1, step 6, [sprinter-sound.md](sprinter-sound.md)) |
 

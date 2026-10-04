@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "emulator/state/statenode.h"
 
@@ -78,6 +79,10 @@ public:
         return false;
     }
     virtual int IrqLine() const { return -1; }
+    /// The card answers I/O cycles with AEN = 1 (its decoder ignores AEN), and how it decodes in words (the slot
+    /// report; empty: "A9-A0, mirrored every #400")
+    virtual bool IgnoresAen() const { return false; }
+    virtual std::string DecodeNote() const { return {}; }
     /// The register a cycle reaches, for the access journal ("CR", "data port"; empty: unnamed). Asked before the
     /// cycle runs (a page switch in that cycle names the old page's register, as the card decoded it)
     virtual const char* RegisterName(bool io, uint32_t address, bool write) const

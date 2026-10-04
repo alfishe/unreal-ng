@@ -82,6 +82,10 @@ curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=scratch
 curl -s "$BASE/emulator/$EMU_ID/memory/read/0xC000?length=256&format=full" | jq '.data[:8]'
 ```
 
+For a whole range of frames, `POST /ttd/export-clip` writes a lossless clip in
+one call instead of a seek and a capture per frame (see
+[ttd-recording.md](ttd-recording.md#inspect-a-file-search-port-journals-export-a-clip)).
+
 ## Why record first instead of just pausing live
 
 - **Reproducibility.** `ttd/seek` to frame N always lands on the exact

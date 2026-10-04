@@ -321,8 +321,8 @@ Worked example: an `LD A,(#4000)` whose T2 (where the CPU samples /WAIT) falls o
 on alternating 2-T and 0-T waits: 1 T per read, what the zxtime program measures in unreal-ng
 (testdata/machines/sprinter/zx-timing). That is a **uniform slowdown**, not the ULA's frame-position pattern, so
 timing-exact multicolor effects do not match a real Spectrum either way. It is used by `ORIGIN.ZX`. MAME does not
-model it; unreal-ng does since 2026-10-02 (tdd-zx-mode §3.3, the phase relative to the frame is a placeholder until a
-board is measured). Whether the released bitstream was built from this `UPDATE` sheet is **unverified** (the
+model it; unreal-ng does since 2026-10-02 (tdd-zx-mode §3.3; the phase follows from the PLD: INT is a `CT5` rise, so an access
+waits 0, 2, 1, 0 T by its T1 from INT mod 4 - derived 2026-10-03, a board would still confirm it). Whether the released bitstream was built from this `UPDATE` sheet is **unverified** (the
 BIOS-TT changelog mentions the bit as `FN_SINC` bit 3): zxtime on a board answers it.
 
 ### 7.4 Sound
@@ -416,7 +416,7 @@ does not reset).
 | Tape input on `#FE` bit 6 | **works**: 48 BASIC `LOAD ""` loads a TAP at 3.5 MHz (P128.ZX) | `SprinterZxTimeModes_Test.Tape_LoadsAt35MhzNotInTurbo` |
 | Tape time base at 21 MHz | **real time** since 2026-10-02 (`Tape::SetBaseClockTimeBase`, Sprinter only): at 21 MHz the ROM loader fails as on the board | `core/src/emulator/io/tape/tape.cpp` |
 | Fast tape loading trap | would fire in ZX mode: all three 48 ROMs on the disk (`BASIC_48`, `SP__48`, `SC__48`) carry the LD-BYTES signature at `#0556` | `tapefastload.cpp:110-129` |
-| "Original waits" (ALL_MODE bit 2) | **built** 2026-10-02 (4-T CT5 period, phase placeholder) | `SprinterOrigWaits` (`sprinterwaits.h`) |
+| "Original waits" (ALL_MODE bit 2) | **built** 2026-10-02 (4-T CT5 period; phase derived from the PLD 2026-10-03) | `SprinterOrigWaits` (`sprinterwaits.h`) |
 | Snapshot loading | **wrong**: the SNA/Z80 loaders write physical RAM pages 0-7 (`loader_sna.cpp:657`, `memory.RAMPageAddress`), which on the Sprinter are system pages, not the Spectrum pages; nothing refuses a snapshot on the Sprinter (goals FR-51 asked for a refusal) | `core/src/loaders/snapshot/` |
 | ZX-mode state for automation | `registers.all_mode.zx_screen_shadow` (automation audit row 14); the picture: `picture_mode` `spectrum` (machine report, `/state/sprinter/video`, the GUI status bar "Spectrum 256x192, screen 5", 2026-10-02) | `sprinterdevicestate.cpp`, `SprinterPicture` |
 

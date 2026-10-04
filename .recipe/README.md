@@ -46,7 +46,7 @@ gotchas. The other machine files document different hardware and won't help — 
 them entirely. Don't know the model yet? `_common/machines.md` is the
 comparison table. Sound-card work (GS/MoonSound/TurboSound/Covox) is the
 same idea one level down: read the one matching `peripherals/*.md` file,
-skip the other three.
+skip the others.
 
 **Step 2 — what are you actually doing?** Pick the one row below that
 matches; it names the recipe(s) for that action.
@@ -57,11 +57,27 @@ matches; it names the recipe(s) for that action.
 | Loading a disk/tape/snapshot | the matching [media/](media/) file for that format | the other media files |
 | Making loaded software actually run (autostart/`RUN`/tape play) | the matching [run/](run/) file for the load path you used | machines/peripherals, unless the model itself matters |
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
+| Typing, key presses, key combos, macros, the host-keyboard gate | [input/keyboard.md](input/keyboard.md) | joystick, mouse |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
-| Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | everything else |
+| Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/keyboard.md](input/keyboard.md) | Keyboard injection: tap / type / press / release / combo / macro / abort, timing in frames, key names, the host-keyboard route gate, ZX-Evo PS/2 and the ATM2 controller path |
+| [input/mouse.md](input/mouse.md) | everything else |
+| Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
+| Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
+| Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
+| Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
+| Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
+| Searching, mapping or writing memory; named regions; ROM protect | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
+| Typing or reading back a BASIC program | [run/basic-inject-extract.md](run/basic-inject-extract.md) | media files |
+| Reading raw sectors, tracks, catalog of a loaded disk | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | tape, snapshot |
+| Per-device volume, mute, solo, recording a sound source | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | the card recipes unless the card matters |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
-| Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
+| Counting/mapping memory access | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | Pause / resume / reset / NMI, step / steps / step over / out, run frames / T-states / scanlines, run to scanline / pixel / interrupt, skip until, beam position |
+| [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | Call-trace, opcode and memory profilers, frame cost: start, run, read, stop; which one answers which question |
+| [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | Labels and symbols, sjasmplus listings, step / run to a source line, assemble into memory |
+| [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | Code coverage and its gaps, the analyzer framework (TR-DOS events, raw FDC), coverage over a TTD timeline |
+| [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | Memory find / map / info, named regions, write, ROM protect, paging state, disasm pages |
+| [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
@@ -80,7 +96,7 @@ call.
 |:--|:--|
 | [_common/setup.md](_common/setup.md) | Build, launch, kill stale instances, port discipline, model choice, instance lifecycle |
 | [_common/transports.md](_common/transports.md) | WebAPI vs MCP: when to use which, request idioms, `search_api`/`invoke_api` escape hatch, parity rule |
-| [_common/machines.md](_common/machines.md) | Model table (RAM options, creatability), create/identity patterns, per-machine introspection endpoints, branch matrix |
+| [_common/machines.md](_common/machines.md) | Model table (RAM options, creatability, variants, ZX-Poly), create/identity patterns, per-machine introspection endpoints, sound-card config keys |
 
 ### `media/` — getting software into the machine
 
@@ -88,13 +104,14 @@ call.
 |:--|:--|
 | [media/use-media-slots.md](media/use-media-slots.md) | Every media slot (floppy drives, SD card): list, insert a file or a **host folder**, `auto` slot choice, swap multi-disk software with save/export/discard, export the guest's writes |
 | [media/cd-audio.md](media/cd-audio.md) | CD audio in the ATAPI CD drive: CUE/BIN and CD CHD discs with audio tracks, play / pause / stop a track, the head (LBA, MSF, track, index), page 0Eh volume, the drive's mixer row; which machines have a CD drive |
-| [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`), drive A/B, blank disks, catalog/sysinfo inspection, Sprinter 1.44 MB floppies and the density latch |
+| [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .hfe .scp`, Hobeta), drives A-D, which formats upload by bytes, blank disks, catalog/sysinfo inspection, Sprinter 1.44 MB floppies and the density latch |
 | [media/insert-tape.md](media/insert-tape.md) | Load/eject tapes (`.tap/.tzx`), play/pause/seek/rewind, block catalog, fast-load plan, WAV import |
-| [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` load), verify a state took effect, snapshot round-trips |
+| [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` with automatic model switch), `force` on save, verify a state took effect, snapshot round-trips |
 | [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`): model switch, progress, desync diagnosis, conventions |
 | [media/author-udi-images.md](media/author-udi-images.md) | Creating proper UDI images: format capability matrix, host-side conversion/authoring, in-emulator formatting, weak-bit limits |
 | [media/video-recording.md](media/video-recording.md) | Record the screen to GIF/H.264/HEVC with an optional sound track (`audio: aac`) from MCP, WebAPI, CLI, Lua, Python; codec/container rules; ffprobe checks |
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
+| [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | Inspect a loaded disk: catalog, info, sysinfo, decoded and raw sectors and tracks, image download, create / eject |
 | [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
 
 ### `run/` — making software actually run
@@ -103,6 +120,7 @@ call.
 |:--|:--|
 | [run/autostart-disk.md](run/autostart-disk.md) | One-call disk boot (`autostart: true`), the boot decision table, what to assert |
 | [run/manual-trdos-run.md](run/manual-trdos-run.md) | Manual path: insert without autostart, read the catalog, enter TR-DOS, `RUN "NAME.B"` for a chosen file |
+| [run/basic-inject-extract.md](run/basic-inject-extract.md) | Inject a BASIC listing, RUN it, extract it back, editor mode, tokenized typing |
 | [run/tape-fastload.md](run/tape-fastload.md) | Tape loading: `LOAD ""` + play, block seeking, fast-load, detecting load completion |
 
 ### `input/` — driving the machine's input devices
@@ -118,6 +136,7 @@ call.
 |:--|:--|
 | [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, gaming vs development journal, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |
+| [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | Breakpoints and what they stop, `/step` / `/steps` with the stop reason, the `/api/v1/websocket` debugger events (subscribe, `paused` / `resumed` / `step_done` / `breakpoints_changed`), CLI / MCP / Lua / Python |
 | [analysis/port-trace.md](analysis/port-trace.md) | Port I/O tracing: feature gate, filters/presets, ring buffer, save `json/csv/bin/binz`, re-read server-side, internal port codes (ZX-Evo, Sprinter) |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | Memory access counters: profiler start/stop, per-page summaries, per-address counters, YAML export |
 | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | Detect custom loaders (port-PC attribution, fastdisk litmus, structural pre-scan), trace hangs and crashes |
@@ -141,14 +160,17 @@ call.
 | [machines/sprinter-accelerator.md](machines/sprinter-accelerator.md) | Sprinter Sp2000 block accelerator: run `ACCTEST.EXE` from a DSS floppy, check its picture in the graphics RAM, the accelerator state |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
+| [machines/sprinter-software.md](machines/sprinter-software.md) | Sprinter Sp2000: run software the shortest way - a native `.EXE` from Flex Navigator's command line, a Spectrum TRD in the SP (21 MHz) and P128 (3.5 MHz) launcher modes from the hard disk, the Scorpion SC256 mode from a floppy; TTD first |
 | [machines/sprinter.md](machines/sprinter.md) | Sprinter Sp2000 (`SPRINTER`): BIOS selection at create / runtime and full / fast start, DSS from a 1.44 MB floppy, typing DSS commands, Spectrum mode + TR-DOS, `state sprinter` (PLD, windows, accelerator, waits, Z84C15), video modes per square, palettes, video RAM (`vram` region), the video change log, digest / raw framebuffer, the port table and its codes, screen text |
 
 ### `peripherals/` — sound cards and DACs
 
 | Recipe | What it covers |
 |:--|:--|
-| [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: BASS HLE vs Z80 LLE (branch), `#B3/#BB/#33` mailbox, firmware ROMs, GS state/port-trace/reset modes, capture proof |
-| [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card (branch-only): `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, clone-only policy, hiss/HiFi known issues |
+| [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `GSType` Z80 / LW / NGS, runtime personality switch, `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
+| [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card: `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, per-model `MoonSound=` defaults, state and capture sources, known issues |
+| [peripherals/neogs.md](peripherals/neogs.md) | NeoGS card (`GSType=NGS`, the shipped default): SD slot `sd.ngs`, flash save, stereo mode, personality switch, MP3 path |
+| [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | Per-device mixer (gain, mute, solo), audio capture by source, analyzing a capture |
 | [peripherals/turbosound.md](peripherals/turbosound.md) | TurboSound slot: `AY` pair vs TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
 | [peripherals/covox-sounddrive.md](peripherals/covox-sounddrive.md) | CovoxFB/CovoxDD/SoundDrive toggles, quad-DAC ports `#F1-#FB`, mono compat mode, capture+trace verification |
 | [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
@@ -171,7 +193,7 @@ call.
   per-model decoders: `core/src/emulator/ports/models/`; model configs:
   `data/configs/*/unreal.ini`
 - Sound stack: `core/src/emulator/sound/` (AY/TurboSound/TSFM/Covox chips);
-  branch designs: `docs/inprogress/2026-09-19-general-sound/`,
+  designs: `docs/inprogress/2026-09-19-general-sound/`,
   `docs/inprogress/2026-09-13-moonsound/`, `docs/inprogress/2026-09-21-profi/`
 - MCP tool catalog: [docs/features/mcp/README.md](../docs/features/mcp/README.md),
   implementation `core/automation/mcp/README.md`

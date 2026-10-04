@@ -205,6 +205,7 @@ public:
         bool active = false;        // Current enable state
         std::string note;           // User annotation
         std::string group;          // Group name
+        std::string page;           // "ram:32" for a breakpoint bound to a page, "" otherwise
     };
 
     /// Get structured info about the last triggered breakpoint
@@ -245,6 +246,18 @@ public:
                                                MemoryBankModeEnum pageType,
                                                const std::string& owner = OWNER_INTERACTIVE);
 
+    /// A page condition as every automation surface writes it: "ram:32", "rom:3", "cache:0" (the page in
+    /// decimal or as 0x.. / #.. / $..). False with the reason in `error` for anything else
+    static bool ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType, std::string& error);
+    /// "ram:32" for a breakpoint bound to a page, "" for one that matches the address in any page
+    static std::string PageSpecName(const BreakpointDescriptor& breakpoint);
+    /// Whether this machine has the page (RAM: config ramsize; ROM, cache: the emulator's page ceilings)
+    bool HasPage(uint8_t page, MemoryBankModeEnum pageType) const;
+    /// A memory breakpoint (memoryType: BRK_MEM_* bits) at the address, bound to `pageSpec` when it is not
+    /// empty. BRK_INVALID with the reason in `error` for a bad or missing page
+    uint16_t AddMemoryBreakpointInPageSpec(uint16_t z80address, uint8_t memoryType, const std::string& pageSpec,
+                                           std::string& error);
+
     // Breakpoint listing
     const BreakpointMapByID& GetAllBreakpoints() const;
     std::string FormatBreakpointInfo(uint16_t breakpointID) const;
@@ -272,6 +285,8 @@ public:
     // Breakpoint group management
     uint16_t AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName);
     bool SetBreakpointGroup(uint16_t breakpointID, const std::string& groupName);
+    /// The breakpoint's annotation (empty clears it); false for an unknown id
+    bool SetBreakpointNote(uint16_t breakpointID, const std::string& note);
     std::vector<std::string> GetBreakpointGroups() const;
     std::vector<uint16_t> GetBreakpointsByGroup(const std::string& groupName) const;
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
@@ -305,6 +320,8 @@ protected:
     /// Rebuild hot-path filter state from current breakpoint set.
     /// Called after every mutation (add/remove/activate/deactivate).
     void RebuildFilters();
+    /// NC_BREAKPOINTS_CHANGED for this emulator (WebAPI event breakpoints_changed)
+    void NotifyBreakpointsChanged();
 
     // endregion </Helper methods>
 };

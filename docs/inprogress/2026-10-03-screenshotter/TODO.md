@@ -17,12 +17,9 @@ Done (owner decisions 1-7 in [design.md](design.md)):
 - Checked on a running app: WebAPI (all words, statuses, save, FT812 1024x768 by default), CLI, Lua, live on a running
   and a paused machine, recording sizes (Pentagon 256x192, TS-Conf 640x480).
 
-Not verified:
-- Python `capture_screen`: Python automation is OFF in this build; it was only syntax-checked against the vendored
-  pybind11 (three older warnings in `python_emulator.h`, lines 316 / 2601 / 2604, fail a `-Werror` Python build and are
-  not from this work).
-- The Qt Tools > Save Screenshot As dialog was built, not clicked.
-- The ZX-Poly composed screenshot is covered by a test, not run in the app.
+Dropped by the owner (2026-10-03): live runs of the Python `capture_screen`, the Qt "Save Screenshot As" dialog and the
+ZX-Poly composed screenshot, and `Gif_Test` on Windows (all built and covered by tests, not exercised live). If one of
+them misbehaves it comes back as a bug.
 
 Follow-up tasks (owner: valid, one at a time; each is a suspicion from reading the code, to be confirmed first, then
 fixed with a test; none was reproduced yet):
@@ -43,10 +40,11 @@ fixed with a test; none was reproduced yet):
    windows); follow the current window and scale into the locked size with bars (tight crop, a jump of scale at every
    mode change, scaling cost per frame); document the limit. Start with a test that reproduces the cut picture (record
    from the 256x192 window, switch `V_CONFIG` to 360x288, compare the recorded frame with the screen), then choose.
-3. **`source=live` when the emulation thread serves no frame:** during a TTD replay (`ttdReplayActive` skips the serve
-   call) and under heavy turbo render decimation (`_renderThisFrame` false) the request waits out its 1 s timeout and
-   the answer is 409 `no-frame`. Confirm, then serve the request from those paths too (or answer at once with a
-   specific reason instead of waiting).
+3. **`source=live` when the emulation thread serves no frame: DONE 2026-10-03.** Checked by reading `MainLoop::OnFrameEnd`:
+   the request was served only on rendered, non-replay frames. A TTD seek needs no fix (the machine is parked, the buffer is read
+   directly); a throwaway replay pass is not a real frame and keeps waiting for the next one. Turbo render decimation was
+   the real wait (up to the next rendered frame, many at unlimited speed): a frame that was not rendered now serves the request
+   with the last rendered, finished frame (what the window shows). Not run live (port 8090 was held by another session's app).
 4. **GIF writer and non-ASCII paths (Windows): DONE 2026-10-03.** The vendored gif-h (`core/src/3rdparty/gif`) opened its
    file with the narrow `fopen`, which reads a path in the ANSI code page on Windows; the recording GIF encoder had the
    same exposure (`GifBegin(..., filename.c_str())` with a UTF-8 path). Owner allowed a local change: `GifBegin` takes a

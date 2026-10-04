@@ -17,6 +17,8 @@
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/io/network/pcserialcard.h"
+#include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
 #include "emulator/state/devicestate.h"
 
@@ -222,4 +224,247 @@ TEST_F(SprinterNetworkKit_Test, TtdReplaysTheFetchWithoutTheHost)
             ++first;
         EXPECT_EQ(first, a.size()) << "device " << int(key) << " differs from byte " << first << " after the replay";
     }
+}
+
+// The Sprinter ESP Network Kit (testdata/machines/sprinter/network/sprinter-esp-0.2.1, release 0.2.1) with the
+// SprinterESP card in ISA slot 1 (network tdd §15 T-NET-11): the kit's own programs drive the TL16C550C and the
+// emulated ESP-12F with ESP-AT 2.2.2 - NETUP joins the virtual access point (DHCP), PING resolves a name and pings
+// it, WGET fetches a file from a scripted HTTP server onto the hard disk byte for byte; a TTD replay of the session
+// without the host gives the same blobs. Same disk setup as the RTL kit: BIOS 3.06 HF2, the kit on a floppy (B:)
+class SprinterEspKit_Test : public SprinterZxSession_Test
+{
+protected:
+    static constexpr uint32_t kServer = NetIp(192, 0, 2, 10);
+
+    void ConfigureMachine(CONFIG& config) override
+    {
+        config.sprinter.isa.slot[0].kind = static_cast<uint8_t>(sprinterisa::CardKind::SprinterEsp);
+        config.network.espChip = static_cast<uint8_t>(EspFirmware());
+    }
+    virtual EspModule::Firmware EspFirmware() const { return EspModule::Firmware::Esp8266At222; }
+
+    void SetUp() override
+    {
+        SprinterZxSession_Test::SetUp();
+        if (IsSkipped() || HasFatalFailure())
+            return;
+        std::vector<KitFile> files = KitReleaseFiles("sprinter-esp-0.2.1");
+        ASSERT_FALSE(files.empty()) << "the ESP kit fixture is missing";
+        // The UNET DLL and its smoke test from the kit's tag 0.2.1 (the release archive has neither)
+        for (KitFile& f : KitReleaseFiles("sprinter-esp-0.2.1-unet"))
+        {
+            if (f.name != "LICENSE")
+                files.push_back(std::move(f));
+        }
+        // NETUP reads NET.CFG beside NETUP.EXE (the kit's template keys)
+        files.push_back({"NET.CFG", DosText({"SSID=UnrealNG", "PASS=", "DHCP=1", "IP=", "GATEWAY=", "NETMASK=", "DNS1=",
+                                             "DNS2=", "TZ=+0", "NTP=pool.ntp.org", "AUTOJOIN=1", "BAUD=115200"})});
+        const std::vector<uint8_t> floppy = BuildFat12Floppy(files);
+        _floppy = TestPathHelper::GetUniqueTestScratchPath("espkit.img");
+        std::ofstream(_floppy, std::ios::binary).write(reinterpret_cast<const char*>(floppy.data()),
+                                                      static_cast<std::streamsize>(floppy.size()));
+        std::string error;
+        ASSERT_TRUE(_emulator->LoadDisk(_floppy, 1, &error)) << error;
+        ASSERT_NE(_context->pVirtualNetwork, nullptr);
+
+        auto host = std::make_unique<ScriptedHostNet>();
+        _scripted = host.get();
+        _scripted->AddName("example.test", kServer);
+        _scripted->SetPingable(kServer);
+        _context->pVirtualNetwork->ReplaceHost(std::move(host));
+    }
+
+    void TearDown() override
+    {
+        SprinterZxSession_Test::TearDown();
+        if (!_floppy.empty())
+            std::remove(_floppy.c_str());
+    }
+
+    /// A kit program at the B:\ prompt, until the prompt is back (the ESP kit prints no RESULT line)
+    std::string Run(const std::string& command, int maxFrames = 3000)
+    {
+        WaitPrompt();
+        Dss("CLS");   // BIOS 3.06 HF2 does not scroll DSS text at the bottom line
+        WaitPrompt();
+        Dss(command);
+        WaitPrompt(maxFrames);
+        const std::string screen = Compact();
+        if (std::getenv("UNREAL_SPRINTER_NET_TRACE"))
+            std::printf("--- %s (frame %llu)\n%s", command.c_str(), static_cast<unsigned long long>(Frame()), screen.c_str());
+        return screen;
+    }
+
+    void WaitPrompt(int maxFrames = 1000)
+    {
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] {
+            const std::string text = Compact();
+            const size_t end = text.find_last_not_of('\n');
+            const size_t start = text.rfind('\n', end);
+            const size_t from = start == std::string::npos ? 0 : start + 1;
+            const std::string last = text.substr(from, end - from + 1);
+            return last.size() >= 4 && last.back() == '>' && last.find(":\\") == 1;
+        }, maxFrames, 2);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 25);
+    }
+
+    std::string Compact()
+    {
+        std::string out, line;
+        for (char ch : ScreenText())
+        {
+            if (ch != '\n')
+            {
+                line.push_back(ch);
+                continue;
+            }
+            if (line.find_first_not_of(' ') != std::string::npos)
+                out += line.substr(0, line.find_last_not_of(' ') + 1) + "\n";
+            line.clear();
+        }
+        return out;
+    }
+
+    /// The ESP's recent AT exchanges, for a failure message
+    std::string Exchanges()
+    {
+        std::string out;
+        if (PcSerialCard* card = _context->pCore->GetNetworkManager()->SerialCard("isa1"))
+        {
+            if (EspModule* esp = card->Esp())
+            {
+                for (const EspModule::Exchange& e : esp->RecentExchanges())
+                    out += "> " + e.request + "\n< " + e.reply + "\n";
+            }
+        }
+        return out;
+    }
+
+    std::string _floppy;
+    ScriptedHostNet* _scripted = nullptr;
+};
+
+TEST_F(SprinterEspKit_Test, NetupPingWgetThroughTheEsp)
+{
+    std::vector<uint8_t> body(5000);
+    for (size_t i = 0; i < body.size(); ++i)
+        body[i] = static_cast<uint8_t>((i * 37) ^ (i >> 5));
+    _scripted->AddHttp({kServer, 80}, {{"/f.bin", body}});
+
+    BootToPrompt();
+    Dss("B:", 150);
+    std::string screen = Run("NETUP", 4000);
+    ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
+    EXPECT_NE(screen.find("ESP firmware profile: 2.2.2."), std::string::npos) << screen;
+    EXPECT_NE(screen.find("10.0.2.15"), std::string::npos) << "the DHCP lease\n" << screen;
+
+    screen = Run("PING example.test", 3000);
+    EXPECT_NE(screen.find("Reply time:"), std::string::npos) << screen << Exchanges();
+    size_t lookups = 0;
+    for (const FakeHostNet::Command& c : _scripted->commands)
+        lookups += c.op == "dns" ? 1 : 0;
+    EXPECT_GE(lookups, 1u) << "the name went to the host resolver";
+
+    screen = Run("WGET http://example.test/f.bin -o C:\\F.BIN -y", 6000);
+    EXPECT_NE(screen.find("Downloaded: 5000"), std::string::npos) << screen << Exchanges();
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(Disk().Read("/F.BIN", got)) << screen;
+    EXPECT_EQ(got, body);
+
+    // The automation view: the slot row shows the ESP's session and the card's counters
+    const StateNode net = DeviceState::Network(_context);
+    const StateNode& row = net.find("slots")->items[0];
+    EXPECT_EQ(row.find("card")->s, "sprinteresp");
+    EXPECT_EQ(row.find("esp")->find("wifi")->s, "got_ip");
+    EXPECT_EQ(row.find("esp")->find("ip")->s, "10.0.2.15");
+    EXPECT_GT(row.find("uart")->find("bytes_in")->i, 5000);
+}
+
+TEST_F(SprinterEspKit_Test, TtdReplaysTheSessionWithoutTheHost)
+{
+    _scripted->AddHttp({kServer, 80}, {{"/g.bin", std::vector<uint8_t>(3000, 0x5A)}});
+    BootToPrompt();
+    Dss("B:", 150);
+
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ASSERT_TRUE(ttd->StartRecording());
+    std::string screen = Run("NETUP", 4000);
+    ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
+    screen = Run("WGET http://example.test/g.bin -o C:\\G.BIN -y", 6000);
+    ASSERT_NE(screen.find("Downloaded: 3000"), std::string::npos) << screen << Exchanges();
+    // The recorded state, taken at the same frame phase the replay ends in (after the frame's network work: a
+    // checkpoint is captured before it, when the UART has not caught up with the frame end yet)
+    for (int f = 0; f < 5; ++f)
+        _emulator->RunNFrames(1, true);
+    const uint64_t endFrame = Frame();
+    std::unordered_map<uint8_t, std::vector<uint8_t>> recordedRaw;
+    ttd->GetPeripheralRegistry().CaptureAll(recordedRaw);
+    ttd->StopRecording();
+    ASSERT_GE(ttd->GetCheckpointCount(), 10u);
+    std::unordered_map<uint8_t, std::vector<uint8_t>> recorded;
+    for (auto& [key, blob] : recordedRaw)
+        recorded[key] = blob;
+    ASSERT_EQ(recorded.count(static_cast<uint8_t>(ttd::PeripheralId::SlotSerial1)), 1u) << "blob 46: the card's UART + ESP";
+
+    _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
+    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
+    _emulator->DisableTurboMode();
+    while (Frame() < endFrame)
+        _emulator->RunNFrames(1, true);
+    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
+    ttd->GetPeripheralRegistry().CaptureAll(live);
+    for (ttd::PeripheralId id : {ttd::PeripheralId::SlotSerial1, ttd::PeripheralId::ZxNetUsb, ttd::PeripheralId::SprinterIsa,
+                                 ttd::PeripheralId::EthernetNics})
+    {
+        const uint8_t key = static_cast<uint8_t>(id);
+        ASSERT_EQ(live.count(key), 1u) << int(key);
+        const std::vector<uint8_t> a = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
+        const std::vector<uint8_t> b = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
+        ASSERT_EQ(a.size(), b.size()) << "device " << int(key);
+        std::string diffs;
+        size_t count = 0;
+        for (size_t i = 0; i < a.size(); ++i)
+        {
+            if (a[i] != b[i] && count++ < 16)
+                diffs += " @" + std::to_string(i) + ":" + std::to_string(b[i]) + "->" + std::to_string(a[i]);
+        }
+        EXPECT_EQ(count, 0u) << "device " << int(key) << " differs in " << count << " bytes after the replay (recorded->replayed)"
+                             << diffs;
+    }
+}
+
+// UNETESP.DLL (the kit's UNET interface, the Gopher browser's and network games' path) through its own smoke test:
+// libman loads the DLL, NETINIT (it insists on NETUP's 2.2.2 profile), resolve, ping, CONNECT, SEND an HTTP HEAD,
+// RECV (2.2.2 passive receive: AT+CIPRECVDATA), CLOSE
+TEST_F(SprinterEspKit_Test, UnetDllThroughItsSmokeTest)
+{
+    _scripted->AddHttp({kServer, 80}, {});
+    BootToPrompt();
+    Dss("B:", 150);
+    std::string screen = Run("NETUP", 4000);
+    ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
+    screen = Run("UNETTEST example.test 80", 4000);
+    EXPECT_NE(screen.find("NETINIT ok"), std::string::npos) << screen << Exchanges();
+    EXPECT_NE(screen.find("192.0.2.10"), std::string::npos) << "resolve\n" << screen;
+    EXPECT_NE(screen.find("HTTP/1.0 404"), std::string::npos) << "the server's answer to HEAD /\n" << screen << Exchanges();
+    EXPECT_NE(screen.find("done."), std::string::npos) << screen;
+}
+
+// The ESP-AT 2.2.1 compatibility path: NETUP's AT+SYSSTORE? probe gets ERROR, the kit takes its 2.2.1 profile
+class SprinterEspKitAt221_Test : public SprinterEspKit_Test
+{
+protected:
+    EspModule::Firmware EspFirmware() const override { return EspModule::Firmware::Esp8266At221; }
+};
+
+TEST_F(SprinterEspKitAt221_Test, NetupSelectsThe221Profile)
+{
+    BootToPrompt();
+    Dss("B:", 150);
+    const std::string screen = Run("NETUP", 4000);
+    ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
+    EXPECT_NE(screen.find("ESP firmware profile: 2.2.1."), std::string::npos) << screen;
 }

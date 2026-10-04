@@ -598,7 +598,10 @@ types:
           45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000: u1 version 1,
           u1 card count, per card u1 key length, the key ("isa2.eth"), then the board: u1 version 1, u1 variant
           (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB packet RAM, 8 bytes
-          RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card).
+          RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card),
+          46 SlotSerial1 (the UART card in expansion slot 1, the Sprinter's SprinterESP: netstate::SerialPort as id
+          24 - the TL16C550C and its peer, an ESP module with its AT state, sockets and received bytes by journal
+          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

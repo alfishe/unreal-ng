@@ -34,6 +34,21 @@ public:
         Esp8266
     };
 
+    /// The firmware a module runs ([NETWORK] EspChip=; the numbers are config values: never renumber).
+    /// ESP32 AT 2.2.0; ESP8266 NonOS AT 1.7.4; ESP8266 ESP-AT 2.2.1 and 2.2.2 (RTOS SDK, what the Sprinter ESP
+    /// Network Kit expects; network tdd §8.3)
+    enum class Firmware : uint8_t
+    {
+        Esp32At220 = 0,
+        Esp8266NonOs174 = 1,
+        Esp8266At221 = 2,
+        Esp8266At222 = 3,
+    };
+    static Chip ChipOf(Firmware firmware) { return firmware == Firmware::Esp32At220 ? Chip::Esp32 : Chip::Esp8266; }
+    /// ESP32 | ESP8266 | ESP8266-AT221 | ESP8266-AT222 (case-insensitive; AT221 / AT222 / 2.2.1 / 2.2.2 accepted)
+    static bool ParseFirmware(const std::string& text, Firmware& out);
+    static const char* FirmwareName(Firmware firmware);
+
     /// Wi-Fi link state, as the ESPNET INFO byte numbers it
     enum class Wifi : uint8_t
     {
@@ -52,7 +67,8 @@ public:
     static constexpr size_t kRxBuffer = 4096;
 
     /// @param slots the firmware's socket count (ESPNET: 8 / 4 by chip; AT: 5 links)
-    EspModule(VirtualNetwork* network, Chip chip, int slots);
+    /// @param mac the station address (nullptr: the chip family's fixed one) - its DHCP lease follows it
+    EspModule(VirtualNetwork* network, Chip chip, int slots, const std::array<uint8_t, 6>* mac = nullptr);
     ~EspModule() override;
 
     // ISerialPeer
@@ -65,6 +81,7 @@ public:
     void OnLineSettings(const SerialLine& line) override;
     void OnFrame() override;
     void Reset() override {}   // a Z80 reset does not reach the module
+    bool HasModuleReset() const { return true; }
     std::string Target() const override;
     size_t Pending() const override { return _out.size(); }
     bool Connected() const override { return _wifi == Wifi::GotIp; }
@@ -78,8 +95,28 @@ public:
     const std::array<uint8_t, 6>& Mac() const { return _mac; }
     const std::string& Ssid() const { return _ssid; }
     uint32_t Baud() const { return _baud; }
-    /// The rate the module's firmware was built for (before the ZX changes it)
-    void SetFactoryBaud(uint32_t baud) { _baud = baud ? baud : 115200; }
+    /// The rate the module's firmware was built for (before the ZX changes it): a hardware reset returns to it
+    void SetFactoryBaud(uint32_t baud)
+    {
+        _baud = baud ? baud : 115200;
+        _factoryBaud = _baud;
+    }
+    uint32_t FactoryBaud() const { return _factoryBaud; }
+
+    // --- The module's own pins (a card that wires them: the SprinterESP's 16550 OUT1 / OUT2) -----------------
+
+    /// RST held low: the module is silent, its links and Wi-Fi drop, bytes to it are lost. Released: the chip
+    /// boots - into the firmware (its banner, "ready", the factory UART line) or, with GPIO0 low, into the ROM's
+    /// download mode (flashing is not emulated: silent until the next reset)
+    void SetResetPin(bool held);
+    /// GPIO0 pulled low (read by the boot ROM when RST is released)
+    void SetFlashPin(bool low) { _gpio0Low = low; }
+    bool ResetHeld() const { return _resetHeld; }
+    bool FlashPinLow() const { return _gpio0Low; }
+    bool DownloadMode() const { return _downloadMode; }
+    /// The firmware runs (not held in reset, not in download mode)
+    bool Running() const { return !_resetHeld && !_downloadMode; }
+    uint32_t HardwareResets() const { return _hardwareResets; }
     /// The ZX's UART does not run at the module's line (bytes are lost both ways)
     bool LineMismatch() const { return _lineMismatch; }
     EspStack& Stack() { return *_stack; }
@@ -109,6 +146,10 @@ protected:
     virtual void OnStackData(int slot) { (void)slot; }
     virtual void SaveFirmware(netstate::EspModuleState& out) const = 0;
     virtual void LoadFirmware(const netstate::EspModuleState& in) = 0;
+    /// RST went low: the firmware forgets its session (links, modes)
+    virtual void OnHardwareReset() {}
+    /// RST released with GPIO0 high: the firmware starts (its banner)
+    virtual void OnHardwareBoot() {}
 
     /// Queue a reply; it reaches the ZX after the turnaround
     void Send(const uint8_t* data, size_t length, uint64_t turnaroundUs = kTurnaroundUs);
@@ -151,6 +192,11 @@ private:
     uint32_t _ip = 0;
     uint64_t _wifiAt = 0;               ///< Connecting: the join finishes then
     uint32_t _baud = 115200;
+    uint32_t _factoryBaud = 115200;
+    bool _resetHeld = false;
+    bool _gpio0Low = false;
+    bool _downloadMode = false;
+    uint32_t _hardwareResets = 0;   ///< RST pulses (status; not TTD state)
     uint32_t _pendingBaud = 0;          ///< a line change waiting for its time
     uint64_t _pendingBaudAt = 0;
     SerialLine _zxLine;

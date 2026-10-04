@@ -142,6 +142,27 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         registry.Register(PeripheralId::EthernetNics, nics.get());
         ownedSerializers.push_back(std::move(nics));
     }
+    // UART cards in expansion slots (the Sprinter's SprinterESP): hardware, there with the network off too
+    if (context->pCore && context->pCore->GetNetworkManager())
+    {
+        NetworkManager* manager = context->pCore->GetNetworkManager();
+        for (int n = 0; n < 2; ++n)
+        {
+            const std::string slot = "isa" + std::to_string(n + 1);
+            if (!manager->SerialCard(slot))
+                continue;
+            const PeripheralId id = n == 0 ? PeripheralId::SlotSerial1 : PeripheralId::SlotSerial2;
+            auto serial = std::make_unique<TTDSerialPort>(
+                context,
+                [manager, slot]() {
+                    PcSerialCard* card = manager->SerialCard(slot);
+                    return card ? &card->Com() : nullptr;
+                },
+                id, n == 0 ? "SlotSerial1" : "SlotSerial2");
+            registry.Register(id, serial.get());
+            ownedSerializers.push_back(std::move(serial));
+        }
+    }
     if (context->pMachineSerialPeer)
     {
         auto peer = std::make_unique<TTDMachineSerialPeer>(context);

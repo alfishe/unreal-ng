@@ -963,6 +963,7 @@ uint8_t Core::GetHostSpeedMultiplier() const
 //
 void Core::EnableTurboMode(bool withAudio)
 {
+    const bool wasTurbo = _context->config.turbo_mode;
     _context->config.turbo_mode = true;
     _context->config.turbo_mode_audio = withAudio;
 
@@ -974,6 +975,9 @@ void Core::EnableTurboMode(bool withAudio)
     {
         _context->pSoundManager->mute();
         _context->pSoundManager->setTurboLowQualityOverride(true);
+        // Nothing reaches the host callback either (not even silence at turbo speed); one hold per turbo span
+        if (!wasTurbo)
+            _context->pSoundManager->holdHostOutput();
     }
 
     MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
@@ -990,6 +994,7 @@ void Core::EnableTurboMode(bool withAudio)
 //
 void Core::DisableTurboMode()
 {
+    const bool wasTurbo = _context->config.turbo_mode;
     _context->config.turbo_mode = false;
 
     // Restore audible output and the previous DSP quality
@@ -997,6 +1002,8 @@ void Core::DisableTurboMode()
     {
         _context->pSoundManager->unmute();
         _context->pSoundManager->setTurboLowQualityOverride(false);
+        if (wasTurbo)
+            _context->pSoundManager->releaseHostOutput();
     }
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");

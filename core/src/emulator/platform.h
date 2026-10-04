@@ -33,7 +33,8 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 // Subscribe when adopting an emulator, unsubscribe when releasing it.
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
-constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Single CPU step executed (debug mode only)
+constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
+constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
@@ -739,7 +740,9 @@ struct CONFIG
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
-		/// ESP module of ComPort=ESPNET / AT: 0 = ESP32 (8 sockets), 1 = ESP8266 (4 sockets)
+		/// ESP module of ComPort=ESPNET / AT (EspModule::Firmware): 0 = ESP32 (8 sockets, AT 2.2.0), 1 = ESP8266
+		/// (4 sockets, NonOS AT 1.7.4), 2 = ESP8266 ESP-AT 2.2.1, 3 = ESP8266 ESP-AT 2.2.2. The SprinterESP card's
+		/// ESP-12F takes an ESP8266 value from here, else 2.2.2 (the Sprinter ESP Network Kit's firmware)
 		uint8_t espChip;
 	} network;
 

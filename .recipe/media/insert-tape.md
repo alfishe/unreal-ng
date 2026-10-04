@@ -1,6 +1,6 @@
 # Recipe: Insert / Play / Inspect a Tape
 
-Goal: mount a tape image (`.tap`/`.tzx`/`.spc`/`.sta`/`.ltp`/`.zxt`) or a
+Goal: mount a tape image (`.tap`/`.tzx`/`.csw`/`.wav`/`.spc`/`.sta`/`.ltp`/`.zxt`) or a
 host folder built into a tape, understand its block layout, drive playback,
 and know when loading is done. The tape is the media manager's slot `tape`:
 `media insert tape <path>` / `media eject tape` do the same as `tape load` /
@@ -45,7 +45,12 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/tape/load" \
 # → {"status":"success"}
 ```
 
-Multipart upload (`-F "file=@game.tap"`) works too, as does MCP:
+Multipart upload (`-F "file=@game.tap"`) works too, as does MCP. Upload by bytes
+takes only `.tap .tzx .csw .wav`; `.spc .sta .ltp .zxt` are rejected with
+"Unrecognized file extension", so load those by a path the emulator can read
+(`tape/load` with `{"path":...}` or `media insert tape <path>`). The MCP
+`load_software` tool accepts `.tap .spc .sta .ltp .zxt .tzx`; for `.csw` / `.wav` use
+`tape/load`, `media insert` or `tape/import` (below):
 
 ```bash
 curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d '{

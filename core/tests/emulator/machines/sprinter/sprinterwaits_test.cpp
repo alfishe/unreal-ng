@@ -4,6 +4,8 @@
 #include "sprinterfixture.h"
 
 #include "emulator/memory/sprinter/sprinterwaits.h"
+#include "emulator/video/sprinter/sprinterintsource.h"
+#include "emulator/video/sprinter/sprintervideoram.h"
 
 class SprinterWaits_Test : public SprinterFixture
 {
@@ -61,20 +63,51 @@ TEST_F(SprinterWaits_Test, Turbo_RamSlowerThanFastRam)
 
 /// region <Original waits (ZX mode, ALL_MODE bit 2 = 0 at 3.5 MHz; tdd-zx-mode.md §3.3, T-ZX-9)>
 
-// The rule: T2 = T1 + 1 sampled against the 4-T CT5 period (low for two T, high for two): 2, 1, 0, 0 by T2 mod 4
+// The rule by T1 from INT (tdd-zx-mode §3.3, Q1 derived from the PLD): INT sits on the CT5 rise, the next two T are
+// CT5 high, the two after low; an access samples /WAIT in T2, so T1 at INT + 1 waits 2 T, at INT + 2 1 T, else none
 TEST_F(SprinterWaits_Test, OrigWaits_PhaseTable)
 {
-    static_assert(SprinterOrigWaits::kPhase == 0, "the table below is for the placeholder phase");
-    const uint32_t expected[4] = {1, 0, 0, 2};  // by T1 mod 4: T2 mod 4 = 1, 2, 3, 0
+    static_assert(SprinterOrigWaits::kCt5RiseT == 2, "INT at T 14 + 4a of its line (SprinterIntSource)");
+    const uint32_t fromInt[4] = {0, 2, 1, 0};
+    for (uint32_t d = 0; d < 4; d++)
+        EXPECT_EQ(SprinterOrigWaits::kWaitsFromRise[d], fromInt[d]) << d;
+    // By frame T1 mod 4 (INT at 2 mod 4): 1, 0, 0, 2
+    const uint32_t byFrameT[4] = {1, 0, 0, 2};
     for (uint32_t start = 1000; start < 1008; start++)
-        EXPECT_EQ(SprinterOrigWaits::Rule(start), expected[start % 4]) << start;
-    // The worked example of the header: T1 = 1 000 waits 1 T, T1 = 1 003 waits 2 T; 0.75 T on average
-    EXPECT_EQ(SprinterOrigWaits::Rule(1000), 1u);
+        EXPECT_EQ(SprinterOrigWaits::Rule(start), byFrameT[start % 4]) << start;
+    // The worked example of the header: T1 = 1 003 waits 2 T, 1 004 waits 1 T, 1 005 / 1 006 none; 0.75 T on average
     EXPECT_EQ(SprinterOrigWaits::Rule(1003), 2u);
+    EXPECT_EQ(SprinterOrigWaits::Rule(1004), 1u);
+    EXPECT_EQ(SprinterOrigWaits::Rule(1005), 0u);
+    EXPECT_EQ(SprinterOrigWaits::Rule(1006), 0u);
     // 224 T per line and 71 680 / 69 888 T per frame are multiples of the period: the same phase on every line
     EXPECT_EQ(224u % SprinterOrigWaits::kPeriod, 0u);
     EXPECT_EQ(71680u % SprinterOrigWaits::kPeriod, 0u);
     EXPECT_EQ(69888u % SprinterOrigWaits::kPeriod, 0u);
+}
+
+// Every INT the mode table can produce (any row, any square after a blank + INT run, both frame heights) sits on
+// the CT5 rise the rule counts from: frame T mod 4 = kCt5RiseT. The waits and the INT share the PLD's CT counter
+TEST_F(SprinterWaits_Test, OrigWaits_EveryIntOnTheCt5Rise)
+{
+    size_t checked = 0;
+    for (uint16_t lines : {uint16_t(320), uint16_t(312)})
+    {
+        for (uint8_t b = 0; b < lines / 8; b++)
+        {
+            for (uint8_t end = 1; end < 50; end += 7)  // the run ends before square `end` (scr_a = a + 6 < 56)
+            {
+                SprinterVideoRam vram;
+                vram.Write(SprinterVideoRam::ModeAddress(static_cast<uint8_t>(end - 1), b, 0), 0xFD);
+                const auto positions = SprinterIntSource::ComputePositions(vram, 0, lines);
+                ASSERT_EQ(positions.size(), 1u) << "row " << int(b) << " square " << int(end);
+                EXPECT_EQ(positions[0] % SprinterOrigWaits::kPeriod, SprinterOrigWaits::kCt5RiseT)
+                    << "row " << int(b) << " square " << int(end) << " lines " << lines;
+                checked++;
+            }
+        }
+    }
+    EXPECT_EQ(checked, (40u + 39u) * 7u);
 }
 
 // The windows of the PLD equation: #4000-#7FFF always, #C000-#FFFF while #7FFD bit 2 is set (Spectrum pages 4-7)
@@ -169,6 +202,84 @@ TEST_F(SprinterWaits_Test, OrigWaits_ScreenReadsWait)
     Out(kAllModePort, 0xFA);
     Out(kSysPort, 0x03);  // 21 MHz: the turbo waits apply instead, the original ones do not
     ASSERT_FALSE(_decoder->OrigWaitsActive());
+}
+
+// T-ZX-9, the exact pattern from INT on the real CPU: a live INT from the mode table, then for T1 = INT + d (d = 0..3)
+// at the INT itself, in the top border, in the paper and in the bottom border, each cycle kind that can wait - the
+// M1 fetch, an operand-free data read, a data write, window 3 with #7FFD bit 2 - costs its plain T plus 0, 2, 1, 0;
+// window 2 and window 3 without bit 2 never wait
+TEST_F(SprinterWaits_Test, OrigWaits_ExactPatternFromInt)
+{
+    OpenDcp();
+    SetCode(kAllModePort, false, 0xC3);
+    SetCode(k7ffdPort, false, 0xC1);
+    Out(kAllModePort, 0xFA);  // ORIGIN.ZX
+    ASSERT_TRUE(_decoder->OrigWaitsActive());
+
+    // A live frame INT: row 36, square 20 ends a blank + INT run -> the PLD's edge on the CT5 rise
+    SprinterVideoRam& vram = _decoder->GetVideoRam();
+    vram.Write(SprinterVideoRam::ModeAddress(19, 36, 0), 0xFD);
+    SprinterIntSource& source = _decoder->GetIntSource();
+    source.Invalidate();
+    ASSERT_EQ(source.Positions().size(), 1u);
+    const uint32_t intT = source.Positions()[0];
+    ASSERT_EQ(intT % 4, SprinterOrigWaits::kCt5RiseT);
+    EXPECT_TRUE(source.IsIntAsserted(intT));
+    EXPECT_FALSE(source.IsIntAsserted(intT - 1));
+    _z80->iff1 = _z80->iff2 = 0;  // the timing, not the handler
+
+    constexpr uint32_t kFromInt[4] = {0, 2, 1, 0};
+    constexpr uint32_t kLine = 224;
+    // Anchors in T1 from the frame start, each congruent to INT mod 4: the INT, the top border (line 3), the paper
+    // (line 120, mid-line), the bottom border (line 300, at its start)
+    const uint32_t anchors[] = {intT, intT % 4 + 3 * kLine, intT % 4 + 120 * kLine + 100, intT % 4 + 300 * kLine};
+
+    // One instruction at `pc` with T1 of its waiting cycle at `t1` (`lead` T after the instruction starts)
+    auto cost = [&](uint16_t pc, uint32_t t1, uint32_t lead) {
+        _z80->pc = pc;
+        _z80->t = t1 - lead;
+        const uint32_t start = _z80->t;
+        Step();
+        return static_cast<uint32_t>(_z80->t - start);
+    };
+    auto put = [&](uint16_t addr, std::initializer_list<uint8_t> bytes) {
+        uint16_t a = addr;
+        for (uint8_t v : bytes)
+            _memory->DirectWriteToZ80Memory(a++, v);
+    };
+    put(0x4100, {0x00});              // NOP in window 1: the M1 fetch waits
+    put(0x8100, {0x3A, 0x00, 0x40});  // LD A,(#4000): data read at +10
+    put(0x8110, {0x32, 0x00, 0x40});  // LD (#4000),A: data write at +10
+    put(0x8120, {0x3A, 0x00, 0xC0});  // LD A,(#C000)
+    put(0x8130, {0x32, 0x00, 0xC0});  // LD (#C000),A
+    put(0x8140, {0x3A, 0x00, 0x80});  // LD A,(#8000): window 2
+
+    for (uint32_t anchor : anchors)
+    {
+        for (uint32_t d = 0; d < 4; d++)
+        {
+            const uint32_t t1 = anchor + d;
+            const uint32_t w = kFromInt[d];
+            SCOPED_TRACE(::testing::Message() << "T1 " << t1 << " = INT + " << (t1 - intT) % 4 << " (mod 4)");
+            EXPECT_EQ(cost(0x4100, t1, 0), 4u + w) << "M1 in window 1";
+            EXPECT_EQ(cost(0x8100, t1, 10), 13u + w) << "read #4000";
+            EXPECT_EQ(cost(0x8110, t1, 10), 13u + w) << "write #4000";
+            EXPECT_EQ(cost(0x8140, t1, 10), 13u) << "window 2 never waits";
+
+            Out(k7ffdPort, 0x05);  // bit 2: page 5 in window 3 waits
+            EXPECT_EQ(cost(0x8120, t1, 10), 13u + w) << "read #C000, #7FFD bit 2";
+            EXPECT_EQ(cost(0x8130, t1, 10), 13u + w) << "write #C000, #7FFD bit 2";
+            Out(k7ffdPort, 0x03);  // bit 2 clear: window 3 does not wait
+            EXPECT_EQ(cost(0x8120, t1, 10), 13u) << "read #C000 without bit 2";
+            EXPECT_EQ(cost(0x8130, t1, 10), 13u) << "write #C000 without bit 2";
+        }
+    }
+
+    // A frame's worth of T1 values: the waits sum to 0.75 T per access on average, border lines included
+    uint32_t sum = 0;
+    for (uint32_t t1 = 0; t1 < 69888; t1++)
+        sum += SprinterOrigWaits::Rule(t1);
+    EXPECT_EQ(sum, 69888u / 4 * 3);
 }
 
 /// endregion </Original waits>

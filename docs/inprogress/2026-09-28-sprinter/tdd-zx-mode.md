@@ -99,14 +99,32 @@ and high for 24: a **48-clock = 4-T period**, 56 periods per 224-T line, one per
 64 clocks = 5.33 T, missed the mod-6 counter).
 
 ```text
-sample  = (accessStartT + 1 + kPhase) mod 4      // T2, where the CPU samples /WAIT; frameT in 3.5 MHz T
-wait    = sample == 0 ? 2 : sample == 1 ? 1 : 0  // the first / second low T of CT5, or the high half
+fromInt = (accessStartT - kCt5RiseT) mod 4       // T1 of the access, counted from the INT edge (= a CT5 rise)
+wait    = {0, 2, 1, 0}[fromInt]                  // T2 on the first / second CT5-low T, or on the high half
 ```
 
-Where the CT period sits relative to the frame start must be measured once (Q1); until then `kPhase` = 0, in one
-constant (`SprinterOrigWaits::kPhase`). The measurement program is `testdata/machines/sprinter/zx-timing/`
-(zxtime): it prints the average extra T of screen reads, which tells whether a board has the waits at all and
-whether the 4-T model holds (LD A,(nn) every 13 T settles on alternating 2 T / 0 T waits: 1.000 T per read).
+**The phase follows from the PLD (Q1 closed 2026-10-03, "derived from the PLD").** INT and the waits come from the
+same counter, so the phase needs no frame-relative measurement:
+
+| Step | PLD source | Consequence |
+|---|---|---|
+| `CT[2..0]` counts 0, 1, 2, 4, 5, 6; `CT[5..3]` steps on 6 -> 0 (`CT[5..3].ena = DFF(CT0 & CT2)`) | `VIDEO2.TDF:284-298` | `CT5` edges fall on the 6 -> 0 step, every 24 clocks; `CT5` low 24, high 24 |
+| `CLK_Z80 = DFF(TFF(!CT2 & CT1) ...)`, clocked by `!CLK42` | `DCP.TDF:275` | at 3.5 MHz the toggle flips on `CT` = 2 (one per 6 clocks: a 12-clock T); no reset on the toggle or on `CT[2..0]` (both power up at 0), so every T starts 3.5 clocks after a 6 -> 0 step: a `CT5` edge is always 3.5 clocks (83 ns) before a T boundary |
+| `INTT = DFF(..., CT5)`; `INT_X` set by the rising edge of `INTT` | `VIDEO2.TDF:394`, `SP2_ACEX.TDF:744` | the INT edge is a `CT5` rise: the first two T after it are `CT5` high, the next two low |
+| `WAIT_ORIG = /MR or CT5 or ...`; the CPU samples /WAIT at the falling clock edge of T2 and of each wait state | `SP2_ACEX.TDF:558-559` | T1 at INT + 1 puts T2 on the first low T: 2 T; INT + 2: 1 T; INT + 0, + 3: none |
+
+The sync-copy logic (`COPY_SINC_H`, `SP2_ACEX.TDF:814`) can clear `CT5` asynchronously; it never moves a `CT5` rise
+off the 24-clock grid of `CT[4..3]`, so INT stays on a rise and the table holds. It only acts when the external
+`SINC_1` input (`XA2` with `SXA` = 1) pulses.
+
+A Verilator run of these lines transcribed to Verilog (the Sprinter verification package of 2026-10-03,
+`orig_phase.csv`: every T of a 69 888-T frame as T1, read / M1 / window-3 cycles) gives the same 0, 2, 1, 0 over the
+whole frame, the border included. In unreal-ng every INT the mode table can produce sits at frame T 14 + 4a of its
+line (`SprinterIntSource`: square a read at T 12 + 4a, `CT5` 2 T later), i.e. frame T mod 4 = `kCt5RiseT` = 2;
+`SprinterOrigWaits` counts from that one constant (by frame T1 mod 4: 1, 0, 0, 2 - the table the `kPhase` = 0
+placeholder already had, so no program changes behavior). Left for a board: whether the released bitstream has
+`WAIT_ORIG` at all (zxtime's average: 1.000 T per `LD A,(nn)` every 13 T if it does) and the one-T question of
+where the Z84C15 samples INT against the 83 ns edge - an INT-relative probe would confirm the whole table.
 
 Gate: the rule is a `MemoryWaitOverlay` (`SprinterOrigWaits`, `sprinterwaits.h`) that the decoder installs only
 while it applies (`PortDecoder_Sprinter::ApplyOrigWaits`, called on ALL_MODE writes, turbo changes, resets and
@@ -150,7 +168,7 @@ at the same frame count after the load (the frame is 71 680 T in both).
 | Frame | 71 680 T (320 lines) or 69 888 T (312) | none (S1) |
 | INT | the mode table's blank + INT squares (`FN_SYNC`): line 287 T 192 (320 lines), line 295 T 192 (`/origin /lines312`) in MAME; the PLD's edge, which unreal-ng uses since 2026-10-03, is 10 T earlier (T 182; research-zx-mode §7.1) | none (S1) |
 | Contention | none | — |
-| "Original waits" | §3.3: 4-T CT5 period, phase placeholder | new: on with ALL_MODE bit 2 = 0 at 3.5 MHz |
+| "Original waits" | §3.3: 4-T CT5 period, waits 0, 2, 1, 0 by T1 from INT (phase derived from the PLD) | new: on with ALL_MODE bit 2 = 0 at 3.5 MHz |
 | 21 MHz | memory and port waits as built | none |
 | Turbo after a CPU reset | the PLD presets its turbo bit (`DCP.TDF:663`, `TB_SW.prn = /RESET`): Ctrl+Alt+Del or a page-`#A0` write brings the CPU back at 21 MHz (front-panel switch permitting) | new (§11) |
 | Tape | base-clock time base (§3.4) | new, Sprinter only |
@@ -173,6 +191,14 @@ byte-identical in every mode; the positions follow from the same rule (MAME `upd
 | SC256.ZX (`/turbo /7FFD /1FFD /sc-int /lines312`) | 21 both | 312 lines, not timed | **287, 192 both** (not 271: §11) | 50 / 0 both | 6 984 both | not timed |
 | ORIGIN.ZX (`/7FFD /origin /lines312`) | 3.5 both | 69 888, 50.08/s both | 295, 192 both | 50 / 0 both | — | **ours 996 / 996 / 0, MAME 0 / 0 / 0** (MAME has no original waits; PLD: §3.3) |
 | BIOS 3.06 ESC (own Spectrum mode) | 21 (ours) | — | 287, 192 | 50 / 0 | 7 164 | not timed |
+
+**Re-run 2026-10-03** (unreal-ng only, branch `sprinter-origwait-demos`: INT at the PLD's CT5 edge since `a23aa1748`,
+the original waits' phase derived from the PLD, §3.3; `SprinterZxTimeModes_Test.LauncherModes` with
+`UNREAL_SPRINTER_HDD`): the INT column now reads **T 182** for unreal-ng in every mode (line 287; ORIGIN.ZX line
+295), 10 T before MAME's 192; zxtime's handler first fetch at T 206-207 at 3.5 MHz, T 188 at 21 MHz. Every other
+figure is unchanged: ORIGIN.ZX 69 888 T, 50 INTs / 0 repeats, **996 / 996 / 0** extra T x 1000 (`#4000` / `#C000`
+p5 / p1; counts 14 592 / 13 928 / 13 928 / 14 592); P128.ZX 71 680 T, 0 / 0 / 0. That is expected: the derived
+phase gives the same per-T table as the old placeholder, and `LD A,(nn)` every 13 T falls into alternating 2-T / 0-T waits (1 T per read) from any starting phase, so zxtime cannot see the phase.
 
 - The picture: the Spectrum screen of the 128 menu is pixel-identical in both (736 x 288; the same raster origin
   and border).
@@ -288,7 +314,7 @@ skip without the owner's disk):
 | Z1 table | `SprinterZxTimeModes_Test.LauncherModes` (§4.1) |
 | T-ZX-7 | `SprinterZxTimeModes_Test.Tape_LoadsAt35MhzNotInTurbo` (zxtime.tap through 48 BASIC's `LOAD ""`, fast load off) |
 | T-ZX-8 | `Tape_Test.BaseClockTimeBase_ScalesTheInFrameClock`, `SprinterZxTimeEsc_Test.Tape_BaseClockTimeBaseOnTheSprinter` |
-| T-ZX-9 | `SprinterWaits_Test.OrigWaits_*` (phase table, windows, the gate, LD A,(nn) timing) |
+| T-ZX-9 | `SprinterWaits_Test.OrigWaits_*` (phase table from INT, every mode-table INT on the CT5 rise, windows, the gate, LD A,(nn) timing, and `OrigWaits_ExactPatternFromInt`: per T1 = INT + 0..3 at the INT, in the top border, the paper and the bottom border, the M1 fetch, a read and a write of `#4000`, window 3 with and without `#7FFD` bit 2, window 2) |
 | T-ZX-10 | `BM_SprinterFrame_ScreenReads/0,1` and `BM_Sprinter*` before / after (§11) |
 | state | `SprinterDeviceState_Test.OriginalWaitsAndTapeAreReported` |
 | program files | `SprinterZxTimeFiles_Test.CommittedFilesMatchTheSource` |
@@ -299,7 +325,7 @@ skip without the owner's disk):
 |---|---|---|---|
 | **Z1** (done 2026-10-02, §11) | Faithful path verification: T-ZX-2..6 on unreal-ng against the MAME captures; fix what fails (expected: nothing new in the emulator; possibly DSS 1.71 / launcher behavior) | S | S3b, S4 (done) |
 | **Z2** (done 2026-10-02) | Tape: I5 test, the base-clock tape time base (Sprinter opt-in), T-ZX-7, T-ZX-8; one-line note in the shared tape docs | S-M | none; Q2 for other machines |
-| **Z3** (done 2026-10-02; Q1 measurement pending) | "Original waits": model, gate, T-ZX-9, A/B T-ZX-10; Q1 for the CT phase | M | none (real-board measurement for Q1 is a follow-up) |
+| **Z3** (done 2026-10-02; Q1 closed 2026-10-03) | "Original waits": model, gate, T-ZX-9, A/B T-ZX-10; Q1 the CT phase: derived from the PLD | M | none (a board measurement would confirm it) |
 | **Z4** | `SprinterZxMode` state + automation of the `zx` block on all five surfaces, OpenAPI, MCP resource text | S-M | the automation audit P1 branch (`sprinter-automation`) merged first, to extend its `state/sprinter` instead of forking it |
 | **Z5** | Snapshots: parse/apply split (SNA, Z80; SZX after), `SprinterZxSnapshot`, `SnapshotLauncher` routing and refusal, T-ZX-11, T-ZX-12, all surfaces. Done through the shared snapshot pipeline ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84): its steps P0-P3 first, then `SprinterZxSnapshot` is the Sprinter's commit policy (pipeline step P4) | M (+ P0-P3 of the pipeline, about M) | Z4; Q4 (decided 2026-10-02); PLAN #84 P0-P3 |
 | **Z6** | `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, T-ZX-13, T-ZX-14 (TTD) | M | Z1, Z4; S7-TTD (done) |
@@ -319,6 +345,12 @@ Z3 can run in parallel with Z1.
    README for people: what to run, what each line means, what to report). Its average-cost lines confirm or refute
    the 4-T model and the waits' presence; the phase itself needs a finer, INT-relative probe on the board (zxtime
    cannot see a 1-T shift: the Sprinter has no floating bus) - a follow-up once a board report confirms the waits.
+   **Closed 2026-10-03: derived from the PLD** (§3.3). INT is clocked by the same `CT5` the waits follow, and the
+   CPU clock's divider and `CT` both start at 0, so the waits are 0, 2, 1, 0 T by an access's T1 from INT (mod 4),
+   in the border too; a Verilator run of the transcribed PLD lines agrees over a whole frame.
+   `SprinterOrigWaits::kCt5RiseT` (= `SprinterIntSource::kCt5RiseT`, 2) replaced `kPhase`; T-ZX-9
+   (`SprinterWaits_Test.OrigWaits_ExactPatternFromInt`) checks the per-T table from a live INT. A board measurement
+   (an INT-relative probe) would still confirm it.
 2. **Q2 — base-clock tape time base for every turbo machine?** On ATM3 / ZX-Evo, Scorpion and ATM710 turbo
    the tape also speeds up with the CPU today. *Recommendation:* Sprinter-only opt-in now (as the WD1793
    was); a separate shared change for the others, because it moves their TTD fixtures.
@@ -351,7 +383,7 @@ Z3 can run in parallel with Z1.
 
 | Change | Where |
 |---|---|
-| `SprinterOrigWaits` (the PLD's WAIT_ORIG: 4-T CT5 period, `kPhase` placeholder, windows 1 and 3-with-`#7FFD`-bit-2) and the decoder's `ApplyOrigWaits` gate | `core/src/emulator/memory/sprinter/sprinterwaits.h`, `portdecoder_sprinter.{h,cpp}` |
+| `SprinterOrigWaits` (the PLD's WAIT_ORIG: 4-T CT5 period, `kPhase` placeholder (replaced 2026-10-03 by the derived `kCt5RiseT`, §3.3), windows 1 and 3-with-`#7FFD`-bit-2) and the decoder's `ApplyOrigWaits` gate | `core/src/emulator/memory/sprinter/sprinterwaits.h`, `portdecoder_sprinter.{h,cpp}` |
 | `Tape::ClockCount`, `SetBaseClockTimeBase` (the tape's one clock; base T under a hardware ratio); the Sprinter turns it on | `core/src/emulator/io/tape/tape.{h,cpp}`, the Sprinter decoder's constructor / destructor |
 | The turbo bit preset by a CPU reset of the running configuration (`TB_SW.prn = /RESET`): DSS comes back at 21 MHz after Ctrl+Alt+Del from a 3.5 MHz mode (it came back at 3.5 MHz and lost the first key typed at the DSS prompt). MAME keeps its `m_turbo` across a reset (a MAME gap now) | `PortDecoder_Sprinter::ResetPld` |
 | `clock.original_waits` and `tape` in the Sprinter state (one builder: WebAPI `/state/sprinter`, MCP `inspect_state sprinter`, CLI `state sprinter`, Lua `emu:sprinter()`, Python `emulator.sprinter()`); OpenAPI text, MCP summary line | `sprinterdevicestate.cpp`, `openapi_state.inc`, `mcp-tools.cpp` |
@@ -422,6 +454,15 @@ performance guidelines ask for below 12), so differences under ~5 % are noise.
 | `BM_SprinterFrame_Logo` (BIOS 3.04, ALL_MODE bit 2 set: no overlay) | 3 994 / 4 152 us | 4 218 / 4 059 us | equal within noise |
 | `BM_SprinterFrame_ScreenReads/0` (a frame of `LD A,(#4000)` at 3.5 MHz, waits off) | — | 2 612 us | the mode every program but ORIGIN.ZX runs in |
 | `BM_SprinterFrame_ScreenReads/1` (the same with the original waits on) | — | 2 768 us | +6 %, paid only in ORIGIN.ZX |
+
+**Re-run 2026-10-03 (the derived phase, commit `782b06784`):** `core-benchmarks` from `a42be6408` (before) and the
+branch (after), interleaved twice, `--benchmark_repetitions=3`, medians of CPU time, load average 11.9-12.9:
+
+| Benchmark | Before (round 1 / 2) | After (round 1 / 2) | Reading |
+|---|---|---|---|
+| `BM_SprinterFrame_Logo` (no overlay) | 3 547 / 3 605 us | 3 580 / 3 557 us | equal within noise |
+| `BM_SprinterFrame_ScreenReads/0` (waits off) | 2 034 / 2 034 us | 2 057 / 2 033 us | equal |
+| `BM_SprinterFrame_ScreenReads/1` (waits on) | 2 114 / 2 106 us | 2 122 / 2 102 us | equal: the rule is one table lookup either way |
 
 ## 12. As built: Z4, the ZX mode report and the PLD journal (2026-10-03, branch `sprinter-zx-mode-report`)
 

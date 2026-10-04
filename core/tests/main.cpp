@@ -1,6 +1,8 @@
 ﻿#include "gtest/gtest.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulatormanager.h"
@@ -37,8 +39,24 @@ private:
   }
 };
 
+/// The frozen real-time clocks (Ds12887::SetFixedTime) show the host's LOCAL civil time, and the golden pictures,
+/// RAM hashes and BCD expectations were recorded in US Eastern time (2026-01-01 12:00:30 UTC reads 07:00:30). Left
+/// to the host's zone the same tests fail on a UTC machine (the Linux Docker run, CI). Pin the zone for the whole
+/// process. A POSIX TZ rule, not an IANA name: it works with glibc, macOS and the MSVC runtime alike
+static void PinTimeZone()
+{
+#ifdef _WIN32
+  _putenv_s("TZ", "EST5EDT");
+  _tzset();
+#else
+  setenv("TZ", "EST5EDT", 1);
+  tzset();
+#endif
+}
+
 int main(int argc, char **argv)
 {
+  PinTimeZone();
   ::testing::InitGoogleTest(&argc, argv);
 
   // Sound devices (AY / TurboSound / TSFM, General Sound, MoonSound) are left
