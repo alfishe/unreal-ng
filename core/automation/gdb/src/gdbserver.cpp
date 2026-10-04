@@ -869,7 +869,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
 
             if (subcmd == "status")
             {
-                auto info = ttd->GetSessionInfo();
+                auto info = ttd->ReadSessionInfo();
                 std::ostringstream ss;
                 ss << "TTD state: " << ttd::TTDSessionStateToString(info.state) << "\n";
                 ss << "Session start frame: " << info.sessionStartFrame << "\n";
@@ -1106,7 +1106,7 @@ std::string GDBSession::handleWriteRegisters(const std::string& data)
     // Refuse writes in TTD detached state (read-only historical view)
     if (_context->pTimeTravelManager)
     {
-        auto state = _context->pTimeTravelManager->GetSessionInfo().state;
+        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";  // Read-only in detached state
@@ -1164,7 +1164,7 @@ std::string GDBSession::handleWriteRegister(const std::string& params)
     // Refuse writes in TTD detached state
     if (_context->pTimeTravelManager)
     {
-        auto state = _context->pTimeTravelManager->GetSessionInfo().state;
+        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";
@@ -1265,7 +1265,7 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
     // Refuse writes in TTD detached state
     if (_context->pTimeTravelManager)
     {
-        auto state = _context->pTimeTravelManager->GetSessionInfo().state;
+        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";
@@ -1563,7 +1563,7 @@ std::string GDBSession::handleBackwardStep()
     }
 
     auto* ttd = _context->pTimeTravelManager;
-    auto state = ttd->GetSessionInfo().state;
+    auto state = ttd->ReadSessionInfo().state;
 
     if (state == ttd::TTDSessionState::Idle)
     {
@@ -1600,7 +1600,7 @@ std::string GDBSession::handleBackwardContinue()
     }
 
     auto* ttd = _context->pTimeTravelManager;
-    auto state = ttd->GetSessionInfo().state;
+    auto state = ttd->ReadSessionInfo().state;
 
     if (state == ttd::TTDSessionState::Idle)
     {

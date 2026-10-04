@@ -538,6 +538,22 @@ public:
     TTDSessionInfo GetPublishedSessionInfo() const;
     static constexpr uint32_t kPublishIntervalMs = 100;
 
+    /// @brief The session summary for automation status reads, from any thread.
+    ///
+    /// Live (GetSessionInfo) when nothing else can be changing the session:
+    /// the caller is the machine's thread; or no thread executes the machine
+    /// and no other control operation is in progress (the control lock is
+    /// free) and the session is not recording (a recording machine could be
+    /// resumed by another thread mid-read). Otherwise the published snapshot,
+    /// which is exact for a parked recording (the machine's thread publishes
+    /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
+    /// a frame old while it runs. Never blocks, never pauses the machine.
+    TTDSessionInfo ReadSessionInfo() const;
+
+    /// @brief The machine's thread, about to park (pause): publish the
+    /// recording's summary so status reads while paused are exact
+    void OnMachineParking();
+
     /// @brief History limit: while recording, the oldest checkpoints are
     /// released once the timeline holds more than `maxFrames` checkpoints or
     /// more than `maxBytes` of checkpoint data (page store + device blobs).
@@ -667,11 +683,7 @@ public:
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
     /// report provenance; streams with no path leave it empty.
-    void SetSessionSourcePath(const std::string& path)
-    {
-        _sourcePath = path;
-        PublishSessionInfo();
-    }
+    void SetSessionSourcePath(const std::string& path);
 
     /// @brief In-memory capture/restore divergence self-test.
     ///
@@ -1912,12 +1924,35 @@ private:
     mutable std::mutex _publishedMutex;
     mutable TTDSessionInfo _published;
     mutable std::atomic<bool> _publishRequested{false};
-    /// Publishes when the enclosing operation returns, on every path
-    struct PublishOnExit
+    /// Every public operation that reads or changes the session holds one for
+    /// its whole run (TDD section 7.2, "control thread, emulator paused").
+    /// On the machine's own thread it does nothing but publish after a change.
+    /// On any other thread it
+    ///   - takes the control lock (_controlMutex): one control operation at a
+    ///     time, and ReadSessionInfo never computes beside one;
+    ///   - parks the machine while a session is active (Recording: its thread
+    ///     appends to the timeline and journals; Detached: it replays them),
+    ///     and resumes it afterwards if it parked it here;
+    ///   - after a Change, the outermost operation publishes the summary.
+    /// An Idle session is not touched by a running machine, so it is not parked.
+    class SessionOperation
     {
-        const TimeTravelManager& manager;
-        ~PublishOnExit() { manager.PublishSessionInfo(); }
+    public:
+        enum class Kind : uint8_t { Read, Change };
+        SessionOperation(const TimeTravelManager& manager, Kind kind);
+        ~SessionOperation();
+        SessionOperation(const SessionOperation&) = delete;
+        SessionOperation& operator=(const SessionOperation&) = delete;
+
+    private:
+        const TimeTravelManager& _manager;
+        Kind _kind;
+        bool _locked = false;
+        bool _parked = false;
     };
+    bool OnMachineThread() const;
+    mutable std::recursive_mutex _controlMutex;
+    mutable int _operationDepth = 0;  ///< nesting on the lock holder's thread (guarded by _controlMutex)
     std::chrono::steady_clock::time_point _lastPublish{};
     /// ROM signature of a live session, taken with its baseline (the ROM the
     /// recording relies on); GetSessionInfo no longer hashes the ROM per call
