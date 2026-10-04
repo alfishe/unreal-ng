@@ -176,8 +176,10 @@ public:
     std::string GetTopicByID(int id);
     void ClearTopics();
 
-    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
-    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
+    /// Post a message. By default the queue takes ownership of <obj> and deletes it after delivery
+    /// (or right away when the message cannot be queued). Pass autoCleanupPayload = false to keep ownership.
+    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
+    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
 
     // Drain barrier: blocks until the worker thread has dispatched every
     // message posted before this call, handlers included. Implemented with a
