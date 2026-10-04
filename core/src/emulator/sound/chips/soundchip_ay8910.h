@@ -465,10 +465,24 @@ public:
 
     // Emulate physical interface with ports #BFFD, #FFFD
     void setRegister(uint8_t regAddr);
+    /// What the CPU reads for the selected register (readRegisterOnBus)
     uint8_t readCurrentRegister();
     void writeCurrentRegister(uint8_t value);
 
-    // Logic-level interface
+    /// The value a bus read of register regAddr returns (IN #FFFD, the YM2203 data read).
+    /// An I/O port in input mode (R7 bit 6 for R14 / port A, bit 7 for R15 / port B, 0 = input)
+    /// reads its pins, not the latch: "when in the input mode, the contents of registers R16
+    /// and/or R17 will follow the signals applied to the I/O port(s)" (GI AY-3-8910 datasheet).
+    /// Nothing drives the pins in this emulator, so they read #FF through the on-chip pull-ups
+    /// ("all pins will read normally high"). Every other register, and a port in output mode,
+    /// reads the register file as before
+    uint8_t readRegisterOnBus(uint8_t regAddr) const;
+
+    /// The pin level an I/O port presents while it is an input: the on-chip pull-ups (#FF)
+    static constexpr uint8_t IO_PORT_INPUT_PINS = 0xFF;
+
+    // Logic-level interface: the register file itself (the latch for R14 / R15), for snapshot
+    // savers and debuggers
     uint8_t readRegister(uint8_t regAddr);
     /// latchRegister + applyRegister at once
     void writeRegister(uint8_t regAddr, uint8_t value);
