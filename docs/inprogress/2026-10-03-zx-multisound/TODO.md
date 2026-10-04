@@ -64,6 +64,16 @@ MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also 
 - [ ] CL-2 rest: real-program traces with reads and M1 context (TSFM players with status polling, VGMPLAY.WMF, GS MOD
   player, WC MIDI player, Ball Quest) once the card is on the bus (integration phase); one write-only trace (TFM Music
   Compiler player) is in the corpus
+- [x] `MultiSoundDacs` + `MultiSoundMixer` ([architecture.md](architecture.md) §4.4, §5 "as built", 2026-10-04, not
+  committed): four DAC channels from strobe events ordered by strobe end (F7) with the measured transfer (F9), blip
+  output 0-1 L / 2-3 R, Authentic 16.25 kHz RC, TTD blob (no PeripheralId); the mixer's schematic weights computed
+  from the component values (`multisoundanalog.h`), calibration through the TSFM FM measurement and volts, coupling
+  high-pass, Authentic SAA ladder; `MultiSoundAnalog_Test`, `MultiSoundDacs_Test`, `MultiSoundMixer_Test`
+- [ ] Mixer / DAC follow-ups for MS-1 / MS-4: `Ym2203Pair` must hand the mixer FM per chip (word / 32768) and SSG per
+  chip and channel (table level 0..1) instead of its own stereo mix; the card feeds `MultiSoundDacs` from the GS
+  memory / port hooks and `SoundriveSample` actions with strobe-end times and calls `Run` when both timelines reached
+  a time; the rows registered with SoundManager (MS-4); absolute SAA / SAM2695 levels against a real card (today
+  module conventions, hardware-reference §7)
 - [ ] MS-2 input from the RTL: GS INT 321 clocks of 12 MHz, port reads `#FF`, flag rules on any access, GS memory map
   incl. the ROM's A15 wiring (check `gma[15]` -> 27C512 A15 in the rev.A2 schematic)
 - [ ] MS-1 `Ym2203Pair` extraction (TSFM bit-identical)

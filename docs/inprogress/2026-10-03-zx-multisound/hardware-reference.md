@@ -245,8 +245,11 @@ AC-coupled (10 µF) and therefore inverted, except the external input (DC-couple
 | DAC 2, 3 (GS ch 3-4, SounDrive `#4F`, `#5F`) | 0 | 0.208 | 1-pole, about 16.3 kHz |
 | External input J3 (on-board header, not the edge) | 0.417 | 0.417 | none |
 
-- SSG stereo is **ACB with B in the center**, from 3.3k loads per channel (the ratios hold whatever the chip's output
-  impedance).
+- SSG stereo is A left, **B in the center**, C right (what the emulator calls ABC), from 3.3k loads per channel (the
+  ratios hold whatever the chip's output impedance).
+- SAA network, recomputed from the components for `MultiSoundMixer`: pass-band (DC) gain 10k / 12k = **0.833**; the
+  0.825 above is its value at 1 kHz; the -3 dB corner is **7.02 kHz** (-10.3 dB at 20 kHz).
+  DAC RC: 1 / (2 pi (1k || 47k) 10n) = 16.25 kHz.
 - GS stereo is **hard left / hard right** (channels 1-2 left, 3-4 right), no cross-feed - unlike our generic GS mix
   (50 % cross-feed).
 - Absolute levels of the SSG, SAA and SAM2695 outputs are not in the schematic; only the mixer weights are exact. The
