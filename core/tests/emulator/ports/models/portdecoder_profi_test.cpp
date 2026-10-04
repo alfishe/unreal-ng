@@ -254,11 +254,15 @@ TEST_F(ProfiPortDecoder_Test, FdcRegistersSilentOutsideDosAndCpm)
     // take it off the bus so this test sees the VG93 rule alone
     if (_context->pJoystick)
         _context->pJoystick->SetPresent(false);
-    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
+    // #1F..#7F select the board's 8255 on reads too (decoder-prom.md, CP/M off / TR-DOS off: bit 3 = 8255): after
+    // reset its ports are inputs with nothing driving them, so it reads #FF - never a VG93 register
+    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F })
     {
-        ReadPort(port);
-        EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded()) << std::hex << port;
+        EXPECT_EQ(ReadPort(port), 0xFF) << std::hex << port;
+        EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded()) << "the 8255 drives the bus, " << std::hex << port;
     }
+    ReadPort(0x00FF);
+    EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded()) << "no system port outside the DOS / CP/M set";
 }
 
 /// @brief "Modified" ports (ROM14=1 and CPM): #83/#A3/#C3/#E3 registers, #3F system port
@@ -460,8 +464,7 @@ TEST_F(ProfiPortDecoder_Test, KempstonJoystickAt1FInTheNormalPortSet)
 
     DosLatchOff();
     joystick.SetPresent(false);
-    ReadPort(0x001F);
-    EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded()) << "not fitted: nothing drives the bus";
+    EXPECT_EQ(ReadPort(0x001F), 0xFF) << "not fitted: the 8255's port A reads its idle input lines";
     _context->pJoystick = nullptr;
 }
 
@@ -558,13 +561,15 @@ TEST_F(ProfiV3PortDecoder_Test, NoPaletteMonochromeHiRes)
     EXPECT_TRUE(ProfiMonochromeHires(_context->config));
 }
 
-/// @brief TTD: the v3 board records its paging only (no Ds12887)
-TEST_F(ProfiV3PortDecoder_Test, TtdStateIsPagingOnly)
+/// @brief TTD: the v3 board records its paging and its 8255 (joystick, printer / Covox) - no Ds12887, no extended
+///        devices
+TEST_F(ProfiV3PortDecoder_Test, TtdStateIsPagingAndPpi)
 {
     const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 1u);
+    ASSERT_EQ(ids.size(), 2u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::ProfiPaging);
-    EXPECT_EQ(_context->pPortDecoder->CreateTTDSerializers().size(), 1u);
+    EXPECT_EQ(ids[1], ttd::PeripheralId::Ppi8255);
+    EXPECT_EQ(_context->pPortDecoder->CreateTTDSerializers().size(), 2u);
 }
 
 /// endregion </Profi v3 board (MM_PROFI3)>
@@ -807,6 +812,34 @@ TEST_F(ProfiPortDecoder_Test, ExtPortsInTheSysRomVariant)
     Out7FFD(0x10);   // ROM14 = 1, CP/M off: neither map's condition holds
     EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x00);
     _context->config.profi_ext_ports = 0;
+}
+
+/// docs/inprogress/2026-10-04-profi-plus/design.md: the 8255 answers at #3F / #5F / #7F outside the DOS / CP/M
+/// port set and at #87 / #A7 / #C7 / #E7 in the extended map - ROM BIOS Plus's parallel-port test reads PC2 and B back
+TEST_F(ProfiPortDecoder_Test, Ppi8255NormalAndExtendedAddresses)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+
+    // Normal map: no DOS latch, no CP/M
+    DosLatchOff();
+    WritePort(0x7F7F, 0x90);
+    WritePort(0x3F3F, 0x5A);
+    EXPECT_EQ(ReadPort(0x3F3F), 0x5A) << "port B reads its latch back";
+    WritePort(0x7F7F, 0x05);
+    EXPECT_EQ(ReadPort(0x5F5F) & 0x04, 0x04) << "PC2 set";
+
+    // Extended map: CP/M + ROM14
+    Out7FFD(0x10);
+    OutDFFD(0x20);
+    WritePort(0x00E7, 0x90);
+    WritePort(0x02A7, 0x02);
+    EXPECT_EQ(ReadPort(0x02A7), 0x02);
+    WritePort(0x05E7, 0x05);
+    EXPECT_EQ(ReadPort(0x05C7) & 0x04, 0x04);
+    WritePort(0x04E7, 0x04);
+    EXPECT_EQ(ReadPort(0x04C7) & 0x04, 0x00);
+    EXPECT_EQ(&decoder->GetPpi(), &decoder->GetPpi());
 }
 
 TEST_F(ProfiPortDecoder_Test, CpmSwitchHoldsDffdCleared)

@@ -612,7 +612,8 @@ types:
           reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2),
           48 SlotSerial1B (the second UART of the card in expansion slot 1: SprinterSerial's COM2; the same
           netstate::SerialPort; a Hayes modem peer keeps its command state in the record's ESP bytes, peer kind 6),
-          49 SlotSerial2B (the same for expansion slot 2).
+          49 SlotSerial2B (the same for expansion slot 2),
+          50 Ppi8255 (an 8255 PPI, the ZX Profi's: Ppi8255::State - u1 mode word, u1 port A, B, C output latches).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

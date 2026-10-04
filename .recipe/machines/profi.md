@@ -14,6 +14,13 @@ machines here
 | Extended ports (CP/M + ROM14), RTC, IDE | none | yes |
 | Frame (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
 
+**`PROFI-PLUS`** (alias `PROFIPLUS`, a machine variant, Machine menu in unreal-qt): a `PROFI` with Djoni's V0.03
+port decoder PROM (`[PROFI] ExtPorts=sys`: the extended ports also from the SYS ROM) running Vadim's ROM BIOS Plus
+0.41h1 (`rom/profi/bios-plus-041h1.rom`). It boots PQ-DOS from a floppy or an IDE disk (`ide0.master`) and runs DOS
+Navigator. Its start-up board test passes the FDC, drives, parallel port (8255), RTC and AY; the serial port (8253 +
+8251) is not emulated yet ("Serial interface: Fail"). PQ-DOS disks and a 2 GB HDD image: see
+`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`.
+
 `[PROFI] SyncProm=` picks another sync PROM: `0a1d`, `samx6`, `fb0579b6`
 (71680 T, INT 48 T before paper) or `v503`.
 
