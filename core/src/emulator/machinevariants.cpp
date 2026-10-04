@@ -45,12 +45,12 @@ constexpr const char* kProfiPlusRom = "rom\\profi\\bios-plus-041h1.rom";
 void ApplyProfiPlus(CONFIG& config)
 {
     std::snprintf(config.profi_rom_path, sizeof(config.profi_rom_path), "%s", kProfiPlusRom);
-    config.profi_ext_ports = 1;
+    config.profi_ext_ports = 2;
 }
 
 bool IsProfiPlus(const CONFIG& config)
 {
-    return config.mem_model == MM_PROFI && config.profi_ext_ports == 1 &&
+    return config.mem_model == MM_PROFI && config.profi_ext_ports == 2 &&
            std::string(config.profi_rom_path).find("bios-plus") != std::string::npos;
 }
 
