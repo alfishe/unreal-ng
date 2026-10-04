@@ -20,6 +20,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -29,6 +30,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
+#include "_helpers/ttdsyntheticsession.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/engine/ttdsessionfile.h"
@@ -635,3 +637,170 @@ TEST(TTDSessionWriterDeathTest, ACrashKeepsTheCompleteParts)
 }
 
 /// endregion </Writing as it records>
+
+/// region <Fixtures for the analyzer (QR-5)>
+
+namespace
+{
+/// The counts the analyzer must find in a fixture (testdata/ttd/v2/expected.json)
+struct FixtureCounts
+{
+    size_t checkpoints = 0, versions = 0, parts = 0, events = 0, busReads = 0, busWrites = 0;
+    bool finalized = false, converted = false;
+};
+
+FixtureCounts CountsOf(const std::vector<uint8_t>& bytes)
+{
+    FixtureCounts n;
+    TTDMemorySource source(bytes);
+    TTDContainerReader reader;
+    std::string error;
+    EXPECT_TRUE(reader.Open(source, error, [](uint16_t id) { return id < 0x100; })) << error;
+    n.parts = reader.Parts().size();
+    n.finalized = reader.Finalized();
+    TimeTravelEngine engine;
+    TTDSessionLoadReport report;
+    EXPECT_TRUE(TTDSessionFile::Load(engine, source, error, &report)) << error;
+    n.converted = report.convertedFromV1;
+    n.checkpoints = engine.CheckpointCount();
+    for (size_t i = 0; i < engine.CheckpointCount(); ++i)
+        for (const TTDEngineCheckpoint::RegionRefs& r : engine.Checkpoint(i)->regions)
+            n.versions += r.changeCount;
+    n.events = engine.Events().Count();
+    n.busReads = engine.BusReads().Size();
+    n.busWrites = engine.BusWrites().Size();
+    return n;
+}
+
+fs::path FixtureDir()
+{
+    return TestPathHelper::FindProjectRoot() / "testdata" / "ttd" / "v2";
+}
+
+/// A synthetic recording in segments, as the writer puts it on disk
+std::vector<uint8_t> SyntheticFixture()
+{
+    ttdtest::Session s(ttdtest::Growable(20));
+    TTDMemorySink sink;
+    TTDSessionWriter writer(false);
+    TTDSessionSaveParams params = Params(8);
+    std::string error;
+    s.Frame();
+    EXPECT_TRUE(writer.Begin(s.engine, sink, params, error)) << error;
+    for (int i = 1; i < 60; ++i)
+    {
+        s.Frame();
+        writer.Collect(s.engine);
+    }
+    EXPECT_TRUE(writer.Finish(s.engine));
+    return sink.bytes;
+}
+
+/// The same with a record of an ancillary stream this version does not know
+/// (id 0x0100, a frame-boundary stream to come): readers skip it
+std::vector<uint8_t> AncillaryFixture()
+{
+    const std::vector<uint8_t> base = SyntheticFixture();
+    TTDMemorySource source(base);
+    TTDContainerReader reader;
+    std::string error;
+    EXPECT_TRUE(reader.Open(source, error));
+    TTDContainerHeader header = reader.Header();
+    header.streams.push_back({0x0100, 1, TTDStreamKind::Ancillary, "screenshot"});
+    TTDMemorySink sink;
+    TTDContainerWriter writer;
+    EXPECT_TRUE(writer.Begin(sink, header, &error));
+    for (const TTDPartRef& part : reader.Parts())
+    {
+        std::vector<uint8_t> stored;
+        for (const TTDRecordRef& r : part.records)
+        {
+            EXPECT_TRUE(reader.ReadStored(r, stored));
+            writer.AddStoredRecord(r.streamId, r.flags, stored.data(), stored.size(), r.rawSize);
+        }
+        const std::vector<uint8_t> picture(64, static_cast<uint8_t>(part.index));
+        writer.AddRecord(0x0100, picture);
+        writer.EndPart({part.firstFrame, part.frameCount, part.branch, part.dependencies, part.extra});
+    }
+    EXPECT_TRUE(writer.Finalize());
+    return sink.bytes;
+}
+}  // namespace
+
+/// Writes testdata/ttd/v2/ (run by hand after a format change, then commit the
+/// files: *.ttd is git-ignored, add them with -f)
+TEST_F(TTDSessionFile_Test, DISABLED_WriteAnalyzerFixtures)
+{
+    fs::create_directories(FixtureDir());
+    std::map<std::string, std::vector<uint8_t>> files;
+    files["synthetic.ttd"] = SyntheticFixture();
+    {
+        // Cut inside the last part: an unfinished file (a crash)
+        std::vector<uint8_t> cut = files["synthetic.ttd"];
+        TTDMemorySource source(cut);
+        TTDContainerReader reader;
+        std::string error;
+        ASSERT_TRUE(reader.Open(source, error));
+        cut.resize(static_cast<size_t>(reader.Parts().back().records.back().offset) + 10);
+        files["synthetic-unfinished.ttd"] = cut;
+    }
+    files["synthetic-ancillary.ttd"] = AncillaryFixture();
+    {
+        TimeTravelEngine fed;
+        ASSERT_NO_FATAL_FAILURE(Feed(TestPathHelper::FindProjectRoot() / "testdata" / "ttd" / "active_demo.ttd", fed));
+        TTDMemorySink sink;
+        std::string error;
+        ASSERT_TRUE(bench::ConvertV1Session(*_v1, sink, error)) << error;
+        files["active-demo-converted.ttd"] = sink.bytes;
+    }
+    std::string json = "{\n";
+    for (const auto& [name, bytes] : files)
+    {
+        std::ofstream(FixtureDir() / name, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()),
+                                                                   static_cast<std::streamsize>(bytes.size()));
+        const FixtureCounts n = CountsOf(bytes);
+        json += "  \"" + name + "\": {\"checkpoints\": " + std::to_string(n.checkpoints) +
+                ", \"versions\": " + std::to_string(n.versions) + ", \"parts\": " + std::to_string(n.parts) +
+                ", \"events\": " + std::to_string(n.events) + ", \"bus_reads\": " + std::to_string(n.busReads) +
+                ", \"bus_writes\": " + std::to_string(n.busWrites) +
+                ", \"finalized\": " + (n.finalized ? "true" : "false") +
+                ", \"converted_from_v1\": " + (n.converted ? "true" : "false") + "},\n";
+    }
+    json.erase(json.size() - 2, 1);   // the last comma
+    json += "}\n";
+    std::ofstream(FixtureDir() / "expected.json") << json;
+}
+
+/// The committed fixtures still load with the counts they were written with:
+/// a format change that forgets to rewrite them fails here
+TEST_F(TTDSessionFile_Test, CommittedFixturesStillLoad)
+{
+    std::ifstream in(FixtureDir() / "expected.json");
+    ASSERT_TRUE(in.is_open()) << "testdata/ttd/v2/expected.json";
+    const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const char* name : {"synthetic.ttd", "synthetic-unfinished.ttd", "synthetic-ancillary.ttd",
+                             "active-demo-converted.ttd"})
+    {
+        SCOPED_TRACE(name);
+        std::ifstream f(FixtureDir() / name, std::ios::binary);
+        ASSERT_TRUE(f.is_open());
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const FixtureCounts n = CountsOf(bytes);
+        const size_t at = json.find(std::string("\"") + name + "\"");
+        ASSERT_NE(at, std::string::npos);
+        const std::string entry = json.substr(at, json.find('}', at) - at);
+        auto field = [&entry](const std::string& key) {
+            const size_t k = entry.find("\"" + key + "\": ");
+            return k == std::string::npos ? std::string() : entry.substr(k + key.size() + 4, entry.find_first_of(",}", k + key.size() + 4) - (k + key.size() + 4));
+        };
+        EXPECT_EQ(field("checkpoints"), std::to_string(n.checkpoints));
+        EXPECT_EQ(field("versions"), std::to_string(n.versions));
+        EXPECT_EQ(field("parts"), std::to_string(n.parts));
+        EXPECT_EQ(field("events"), std::to_string(n.events));
+        EXPECT_EQ(field("bus_reads"), std::to_string(n.busReads));
+        EXPECT_EQ(field("finalized"), n.finalized ? "true" : "false");
+        EXPECT_EQ(field("converted_from_v1"), n.converted ? "true" : "false");
+    }
+}
+
+/// endregion </Fixtures for the analyzer>

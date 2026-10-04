@@ -13,6 +13,25 @@ python3 -m pytest -q tests                  # its tests
 
 The file format: [ttd-v1-architecture-and-format.md](../../../docs/emulator/design/debugger/time-travel-debug/ttd-v1-architecture-and-format.md) and `core/src/debugger/ttd/ttd.ksy`.
 
+## Schema 2: the time-travel engine's session file
+
+The engine that replaces v1 (TTD v2, [migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/README.md)) writes another format: records in parts, every record checked by CRC32C, one file per segment of history ([phase-4 TDD](../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md), `core/src/debugger/ttd/engine/ttdsession.ksy`). `info` and `validate` tell the schemas apart by the header; `src/ttdcontainer.py` reads schema 2.
+
+```bash
+python3 -m src.main info ../../../testdata/ttd/v2/synthetic.ttd      # regions, segments, versions, bytes per stream
+python3 -m src.main validate ../../../testdata/ttd/v2/synthetic.ttd  # every CRC, every version decoded, dependencies
+python3 -m src.main parts ../../../testdata/ttd/v2/synthetic.ttd     # part by part: frames, bytes, dependencies
+python3 -m src.main recover ../../../testdata/ttd/v2/synthetic-unfinished.ttd   # what a crashed recording keeps
+```
+
+```
+part 0: frames 0+8, 4 records, depends on nothing, ok [file start]
+    pieces 861 B, checkpoints 145 B, events 57 B, bus-reads 67 B
+part 1: frames 8+8, 4 records, depends on [0], ok
+```
+
+`validate` checks what the emulator's reader checks (header, index and trailer, every record, complete parts, unknown required streams) and more: it decodes every piece version through its chain and compares its content CRC, and checks each part's dependency list against the parts it really needs. The fixtures in `testdata/ttd/v2/` are written by the C++ writer (`TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures`); `tests/test_ttdcontainer.py` finds in them the counts the C++ reader found (`expected.json`).
+
 `info` prints the write journal's spans when the session holds it only for part of its history (D40):
 
 ```

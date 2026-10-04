@@ -406,6 +406,13 @@ public:
 - **Conformance (QR-5):** a test writes files with the C++ writer (finished, unfinished, with an unknown ancillary stream) and runs `validate` on them; a Kaitai-generated parser parses the fixtures.
 - **Fuzz (QR-4):** random bit flips, truncation and oversized sizes in every stream, against the C++ reader and the analyzer: no crash, no allocation above the record's `rawSize` cap, and every flip in a CRC-covered byte reported by both, with the same location.
 
+**As built (2026-10-04).** Two changes from the text above:
+
+- **The schema-1 description keeps its name until the switch-over.** v1 files are the users' format until Phase 5, and dozens of documents cite `ttd.ksy` for them. The new description is `core/src/debugger/ttd/engine/ttdsession.ksy`; the renames (`ttd.ksy` → `ttdschema1.ksy`, `ttdsession.ksy` → `ttd.ksy`) come with Phase 5.
+- **Screenshots wait for Step 4.** `screenshot` is not an analyzer command yet; the fixture with an unknown ancillary stream (0x0100) checks that readers skip it.
+
+The analyzer's reader (`src/ttdcontainer.py`) is the machine-checked description: the C++ writer produces `testdata/ttd/v2/` (`TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures`) and records what its reader finds in `expected.json`; `tests/test_ttdcontainer.py` must find the same and validate every file, and `TTDSessionFile_Test.CommittedFixturesStillLoad` fails when a format change leaves the fixtures behind. Open: a Kaitai-generated parser run (no compiler on the build host) and the fuzz test (QR-4).
+
 ### 5.7 File-format consequences and fixtures
 
 - The fixture corpus (`testdata/ttd/`, [README](../../../testdata/ttd/README.md)) is re-recorded in schema 2 at the end of the phase. The schema-1 fixtures stay for the schema-1 reader and the oracle.

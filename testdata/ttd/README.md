@@ -218,3 +218,27 @@ recording:
   registers the generators actually use are appended). The TurboSound FM blob
   is v4, 2000 bytes: the render-cursor offset plus both chips' queues of
   pending timed writes.
+
+## Schema 2: the engine's session file (`v2/`)
+
+Files in the time-travel engine's format (TTD v2, Phase 4), written by the C++
+writer for the analyzer's conformance test:
+
+| Fixture | What |
+|---|---|
+| `v2/synthetic.ttd` | a synthetic 60-frame session in three segments, finished |
+| `v2/synthetic-unfinished.ttd` | the same, cut inside its last part (a crash while recording) |
+| `v2/synthetic-ancillary.ttd` | the same with records of an ancillary stream readers do not know (0x0100) |
+| `v2/active-demo-converted.ttd` | `active_demo.ttd` converted from schema 1 (D31) |
+| `v2/expected.json` | what the C++ reader finds in each: checkpoints, versions, parts, events, bus records, finished, converted |
+
+Write them again after a format change (then `git add -f`, `*.ttd` is ignored):
+
+```bash
+./cmake-build-agent-release/bin/core-tests --gtest_also_run_disabled_tests \
+    --gtest_filter='TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures'
+```
+
+`TTDSessionFile_Test.CommittedFixturesStillLoad` fails when they are stale;
+`tools/verification/ttd-analyzer/tests/test_ttdcontainer.py` checks the analyzer
+against them.
