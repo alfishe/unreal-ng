@@ -38,15 +38,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. Generate Docker tags (latest + qt6.9.3)
+      # 4. Generate Docker tags: the versioned tag the workflows use, and
+      #    'latest' only for builds from master
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
-            type=raw,value=qt6.9.3
+            type=raw,value=qt6.9.3-ubuntu24.04
+            type=raw,value=latest,enable={{is_default_branch}}
 
       # 5. Build and Push (Multi-Platform)
       - name: Build and push Docker image
@@ -59,6 +60,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Smart Caching to speed up rebuilds
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Layer cache in the registry (not in the 10 GB Actions cache quota)
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max

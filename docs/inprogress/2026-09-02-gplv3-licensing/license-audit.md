@@ -152,7 +152,7 @@ Legend for "Linkage": static = compiled into the core/app binaries; header-only;
 | lz4 / snappy / brotli / zlib (system) | `tools/poc/01-ttd-compression/cpp/CMakeLists.txt:73-108` (`find_library`) | system | BSD-2 / BSD-3 / MIT / zlib | PoC only, dynamic | Compatible |
 | Python packages | `tools/python/requirements.txt` (psutil BSD-3, Pillow MIT-CMU/HPND, pywin32 PSF, posix_ipc BSD); `tools/verification/ttd-analyzer/requirements.txt` (zstandard BSD-3, pillow); `tools/verification/ttd-scrubber/requirements.txt` (**PySide6 LGPL-3**, requests Apache-2.0); `tools/verification/webapi/requirements.txt` (requests, pytest MIT, openapi-spec-validator Apache-2.0, prance MIT, jsonschema MIT, faker MIT); `tools/verification/videowall/requirements.txt` (requests) | — | as listed | tool-only, not vendored, installed by the user | Compatible (nothing is redistributed) |
 | GitHub Actions | `.github/workflows/*.yml`: actions/checkout, upload/download-artifact, setup-python (MIT); docker/* actions (Apache-2.0); jurplel/install-qt-action (MIT); msys2/setup-msys2 (MIT); egor-tensin/vs-shell (MIT); softprops/action-gh-release (MIT) | — | — | CI only | N/A |
-| Docker base | `docker/Dockerfile*`: `debian:testing-slim`, ICU 56.1 source (ICU license, BSD-like), `aqtinstall` (MIT) | — | — | CI/build image only | N/A |
+| Docker base | `docker/Dockerfile.universal`: `ubuntu:24.04`, `aqtinstall` (MIT), linuxdeploy + linuxdeploy-plugin-qt (MIT, AppImage packaging) | — | — | CI/build image only | N/A |
 | vcpkg / conan | No `vcpkg.json` or `conanfile` in the tree. vcpkg is only *suggested* for MSVC OpenSSL (`cmake/DependencyCheck.cmake:7-49`). | — | — | — | N/A |
 
 ### 2.3 Things checked and NOT found

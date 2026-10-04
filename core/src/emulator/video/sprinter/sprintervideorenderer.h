@@ -20,8 +20,11 @@ class SprinterVideoRam;
 ///   a16 = (x - 48 - holdX) mod 896   a = a16 / 16   (column 0..55, 16 pixels)
 ///   b8  = (y - 16 - holdY) mod lines b = b8 / 8     (row 0..39, 8 lines)
 ///
-/// with HOLD (code #CB) = v: holdX = (7 - (v & #0F)) x 2, holdY = 7 - (v >> 4)
-/// (MAME sprinter.cpp:850-852; #77 = no shift).
+/// with HOLD (code #CB) = v: holdX = (7 - (v & #0F)) x 2, holdY = (7 - (v >> 4)) x 2
+/// (#77 = no shift). The horizontal step is MAME's (sprinter.cpp:850-851). The vertical step is 2 lines, not
+/// MAME's 1: the PLD preloads the vertical sync counter with (HOLD[7..4], 0) and counts one per line
+/// (SP2_ACEX.TDF:795-815), so a high-nibble unit is 2 lines. RRAID.EXE scrolls with that
+/// (it steps HOLD by 2 lines and puts the second mode page 1 line lower).
 ///
 /// A square (mode bytes m0 m1 m2 at row 1 + 2a + #80 x RGMOD.0, column #300 + 4b;
 /// the Line2 set one row lower) is drawn as (MAME draw_tile / draw_symbol,
@@ -73,11 +76,11 @@ struct SprinterVideoInputs
     };
     FontLatch fontLatch;
 
-    /// HOLD (code #CB) as picture offsets (MAME m_hold)
+    /// HOLD (code #CB) as picture offsets
     void SetHold(uint8_t hold)
     {
         holdX = (7 - static_cast<int32_t>(hold & 0x0F)) * 2;
-        holdY = 7 - static_cast<int32_t>(hold >> 4);
+        holdY = (7 - static_cast<int32_t>(hold >> 4)) * 2;
     }
 };
 

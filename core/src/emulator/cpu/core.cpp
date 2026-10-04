@@ -1089,10 +1089,16 @@ void Core::ApplyNetworkConfiguration()
         _networkManager->ApplyConfiguration();
 }
 
+void Core::OnNetworkFrameDevices()
+{
+    if (_networkManager)
+        _networkManager->OnFrameDevices();
+}
+
 void Core::OnNetworkFrame()
 {
     if (_networkManager)
-        _networkManager->OnFrame();
+        _networkManager->OnFrameHost();
 }
 
 void Core::RefitIde()

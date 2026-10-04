@@ -105,7 +105,7 @@ protected:
     }
 
 public:
-    /// Point a machine built from the shipped config (default firmware 3.07 BETA 1, bios-versions.md §6) at another
+    /// Point a machine built from the shipped config (default firmware 3.06 Hotfix 2, bios-versions.md §6) at another
     /// kept image in data/rom/sprinter and reload the flash; the caller resets. False when the file is missing or the
     /// load fails. Tests pinned to one BIOS (3.04's screens, timings, MAME captures) select it with this
     static bool SelectBios(EmulatorContext* context, const std::string& file)

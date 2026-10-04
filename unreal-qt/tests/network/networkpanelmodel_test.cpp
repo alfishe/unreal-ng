@@ -317,3 +317,75 @@ TEST(NetworkPanelModel_Test, SprinterEspRowAndItsLine)
     EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("esp_chip"), std::string("esp8266-at221"))),
               changes.end());
 }
+
+// SprinterSerial in a slot (network SN4): both lines in the row - COM1's peer, COM2's Hayes modem with its call and
+// DCD - and both editable (isaN_peer, isaN_peer_b); the modem phone book is a setting of its own
+TEST(NetworkPanelModel_Test, SprinterSerialRowWithAModemOnCom2)
+{
+    StateNode network = StateNode::Object();
+    StateNode slots = StateNode::Array();
+    StateNode card = StateNode::Object();
+    card["id"] = "isa1";
+    card["label"] = "ISA slot 1 (J6), page #D4";
+    card["configured"] = "dual16552";
+    card["card"] = "dual16552";
+    card["chip"] = "PC16552D";
+    card["base"] = "#3F8";
+    card["irq"] = 3;
+    card["peer_spec"] = "TCP:localhost:2323";
+    StateNode uart = StateNode::Object();
+    uart["baud"] = 57600;
+    uart["mcr"] = "#0B";
+    card["uart"] = uart;
+    StateNode peer = StateNode::Object();
+    peer["kind"] = "tcp";
+    peer["target"] = "localhost:2323";
+    card["peer"] = peer;
+    StateNode b = StateNode::Object();
+    b["base"] = "#2F8";
+    b["peer_spec"] = "MODEM";
+    b["uart"] = uart;
+    StateNode peerB = StateNode::Object();
+    peerB["kind"] = "modem";
+    b["peer"] = peerB;
+    StateNode modem = StateNode::Object();
+    modem["mode"] = "online";
+    StateNode call = StateNode::Object();
+    call["dialed"] = "bbs.test:23";
+    modem["call"] = call;
+    StateNode lines = StateNode::Object();
+    lines["dcd"] = true;
+    lines["ri"] = false;
+    modem["lines"] = lines;
+    modem["last_result"] = "CONNECT 57600";
+    b["modem"] = modem;
+    card["channel_b"] = b;
+    slots.push(card);
+    network["slots"] = slots;
+    StateNode settings = StateNode::Object();
+    settings["modem_phonebook"] = "5551234=bbs.test:23";
+    network["settings"] = settings;
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].line, "DUAL16552 PC16552D, I/O #3F8-#3FF, IRQ 3; COM1: 57600 baud, MCR #0B, tcp localhost:2323; "
+                            "COM2 #2F8: 57600 baud, MCR #0B, modem online bbs.test:23, DCD on, last CONNECT 57600");
+
+    const NetworkForm before = NetworkFormFromState(network);
+    EXPECT_TRUE(before.slotUart[0]);
+    EXPECT_TRUE(before.slotUartB[0]);
+    EXPECT_EQ(before.slotCard[0], "dual16552");
+    EXPECT_EQ(before.slotPeerB[0].ToString(), "MODEM");
+    EXPECT_EQ(before.modemPhonebook, "5551234=bbs.test:23");
+    EXPECT_TRUE(NetworkPeerIsModem(before.slotPeerB[0]));
+    NetworkForm after = before;
+    std::string error;
+    ASSERT_TRUE(ComPortSpec::Parse("modem,2323", after.slotPeerB[0], error));
+    after.modemPhonebook = "7=10.0.2.2:2323";
+    const auto changes = NetworkFormChanges(before, after);
+    EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("isa1_peer_b"), std::string("MODEM,2323"))),
+              changes.end());
+    EXPECT_NE(std::find(changes.begin(), changes.end(),
+                        std::make_pair(std::string("modem_phonebook"), std::string("7=10.0.2.2:2323"))),
+              changes.end());
+}

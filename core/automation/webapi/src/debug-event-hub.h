@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-class Message;
+struct Message;
 
 class DebugEventHub
 {

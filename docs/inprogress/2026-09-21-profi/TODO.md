@@ -26,6 +26,13 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 - [ ] IDE, rollout 2 (reconciliation T3) - **requires further investigation first** (design §7.3, §10, Q10): R2-0 investigation, then COW change layer + write journal, `PeripheralId::AtaChannel` TTD serializer, snapshot media references, folder commit-back
 - [x] RTC CMOS in TTD (reconciliation T1/T2) - `PeripheralId::Ds12887` (id 18) since PLAN #60(c), 2026-09-28
 - [ ] IDE open questions (design §13): Q1 `#06AB` read value, Q2 Karabas EXT-mode variant, Q5 SYS menu path to `#28CE`, Q6 real Profi CP/M HDD image, Q9 CD-reading guest software
-- [ ] Verify the BIOS menu entries boot (CP/M, TR-DOS 48K/128K, Sinclair 48/128); BIOS main menu itself is reached (fixed FDC BUSY visibility, technical-design.md section 14)
-- [ ] Hi-res real-hardware timing evidence (design section 12 Q3), real recordings for TTD v2 benchmark
-- [ ] Commit (only on explicit request): decide `testdata/machines/profi/` fixtures and `testdata/NOTICE.md` row
+- [x] Verify the BIOS menu entries boot - done in [2026-10-01-profi-v3-v5](../2026-10-01-profi-v3-v5/TODO.md): v5
+  `ProfiBoot_Test.MenuEntriesStartWhatTheyName` (TR-DOS 48K, Sinclair 48, Sinclair 128), `CpmBootsFromTheKondorSystemDisk`
+  and `SpDosBootsToItsShell` (CP/M); v3 `Profi3Boot_Test.KramisMenuSinclairStartsThe128Menu`,
+  `KramisMenuTrDosStartsTrDos503`, `SpDosBootsToItsShell` (Profi-DOS). Not covered by a test: the v5 "TR-DOS 128K" entry
+- [x] Hi-res real-hardware timing evidence - done in [2026-10-01-profi-v3-v5](../2026-10-01-profi-v3-v5/design-hires.md):
+  BIOS 2.0's hi-res speed test reads what a real 5.06 reads (1.50 / 2.45, `BiosSpeedTestReadsWhatARealBoardReads`).
+  Real recordings for a TTD v2 benchmark: none made
+- [x] Commit: the `testdata/machines/profi/` fixtures are decided (one disk per boot check, `cpm/README.md`; the
+  firmware in `data/rom/profi/`); no `testdata/NOTICE.md` row: it lists only fixtures with a known license, the
+  general third-party notice there covers these; continued in [2026-10-01-profi-v3-v5](../2026-10-01-profi-v3-v5/TODO.md)

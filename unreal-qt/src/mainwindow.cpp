@@ -149,6 +149,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _lastDirectory = settings.value("LastFileDirectory", QCoreApplication::applicationDirPath()).toString();
     _lastSaveDirectory = settings.value("LastSaveDirectory", QCoreApplication::applicationDirPath()).toString();
     _autostartDisks = settings.value("AutostartDisks", true).toBool();
+    // macOS Command key: "host" (default, never sent to the machine) | "gui" (the PC Win key)
+    KeyboardManager::setCommandKeyToGuest(
+        settings.value("Keyboard/MacCommandKey", "host").toString().compare("gui", Qt::CaseInsensitive) == 0);
     qDebug() << "Loading last directory from settings:" << _lastDirectory;
 
 #ifdef ENABLE_AUTOMATION
@@ -393,6 +396,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller, view->controller);
     });
     _menuManager->setAutostartDisksChecked(_autostartDisks);
+    _menuManager->setCommandKeyToGuestChecked(KeyboardManager::commandKeyToGuest());
+    connect(_menuManager, &MenuManager::commandKeyToGuestToggled, this, [](bool on) {
+        // A Command key held as the GUI key still goes up on its own release or the next focus change
+        KeyboardManager::setCommandKeyToGuest(on);
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("Keyboard/MacCommandKey", on ? "gui" : "host");
+    });
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);

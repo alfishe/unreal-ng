@@ -62,6 +62,8 @@ private:
     QWidget* _serialRow = nullptr;
     QComboBox* _espBaud = nullptr;
     QWidget* _espRow = nullptr;
+    QWidget* _modemRow = nullptr;      ///< MODEM: the guest port it answers calls on
+    QSpinBox* _modemPort = nullptr;
     QStringList _devices;
 };
 
@@ -117,8 +119,12 @@ private:
     QCheckBox* _atm2IoEsp = nullptr;
     QLabel* _atm2IoEspWhy = nullptr;
     SerialPeerEditor* _atm2IoEspPeer = nullptr;
-    SerialPeerEditor* _slotPeer[2] = {nullptr, nullptr};   ///< the SprinterESP's 16550 line, per ISA slot
+    SerialPeerEditor* _slotPeer[2] = {nullptr, nullptr};   ///< a UART card's (first) line, per ISA slot
     QWidget* _slotPeerRow[2] = {nullptr, nullptr};
+    QLabel* _slotPeerLabel[2] = {nullptr, nullptr};
+    SerialPeerEditor* _slotPeerB[2] = {nullptr, nullptr};  ///< SprinterSerial's COM2 line
+    QWidget* _slotPeerRowB[2] = {nullptr, nullptr};
+    QLineEdit* _modemPhonebook = nullptr;
     QComboBox* _atm2IoEspAddress = nullptr;
     QLabel* _zifiWhy = nullptr;
     SerialPeerEditor* _zifiPeer = nullptr;

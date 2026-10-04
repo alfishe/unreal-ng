@@ -2002,6 +2002,23 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
                                             << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
                                             << zifi["dropped"].asUInt64();
+                                    // A UART line at a glance: its peer, and a Hayes modem's mode, call and lines
+                                    auto uartLine = [](const Json::Value& ch, const std::string& name) {
+                                        std::string line = "; " + name + " " + ch["base"].asString() + ", UART " +
+                                                           std::to_string(ch["uart"]["baud"].asUInt64()) + " baud MCR " +
+                                                           ch["uart"]["mcr"].asString() + ", " + ch["peer"]["kind"].asString();
+                                        if (ch.isMember("modem"))
+                                        {
+                                            const Json::Value& m = ch["modem"];
+                                            line += " " + m["mode"].asString() + " " + m["call"]["dialed"].asString() + ", DCD " +
+                                                    (m["lines"]["dcd"].asBool() ? "on" : "off") +
+                                                    (m["lines"]["ri"].asBool() ? ", RINGING" : "") + ", last " +
+                                                    m["last_result"].asString();
+                                        }
+                                        else if (!ch["peer"]["target"].asString().empty())
+                                            line += " " + ch["peer"]["target"].asString();
+                                        return line;
+                                    };
                                     for (const Json::Value& slot : value["slots"])
                                         out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
                                             << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() +
@@ -2013,6 +2030,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                                           slot["esp"]["state"].asString() + ", Wi-Fi " + slot["esp"]["wifi"].asString() + " " +
                                                           slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
                                                           " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
+                                                    : std::string())
+                                            << (slot["card"].asString() == "modem" ? uartLine(slot, "line") : std::string())
+                                            << (slot["card"].asString() == "dual16552"
+                                                    ? uartLine(slot, "COM1") + uartLine(slot["channel_b"], "COM2")
                                                     : std::string());
                                     if (value.isMember("ethernet_gateway"))
                                     {

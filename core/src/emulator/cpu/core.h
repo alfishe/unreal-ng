@@ -127,7 +127,9 @@ public:
     /// machine runs on another thread)
     void ApplyNetworkConfiguration();
 
-    /// Frame boundary work of the network adapters (machine thread)
+    /// Frame boundary work of the network adapters (machine thread): the devices' own work before the TTD
+    /// checkpoint (OnNetworkFrameDevices), the host's journaled answers after it (OnNetworkFrame)
+    void OnNetworkFrameDevices();
     void OnNetworkFrame();
 
     NetworkManager* GetNetworkManager() { return _networkManager; }

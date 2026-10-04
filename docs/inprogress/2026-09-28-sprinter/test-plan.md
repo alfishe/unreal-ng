@@ -86,7 +86,7 @@ ACC-1 / R-2 in `sprintervideoboot_test.cpp`, ACC-2 / R-3 in `sprinter_boot_test.
 | T-VID-4 | border square, blank square | border color = text palette 0 index `border × 9`; blank = pen `#400` (text paper colour 0, S2) |
 | T-VID-5 | palette byte order | video RAM holds R, G, B: the BIOS CGA "blue" (`#A8,#00,#00` as B, G, R to function `#A4`) is `#00,#00,#A8` in video RAM and renders blue (decision HW §4.5, S2) |
 | T-VID-6 | RGMOD bit 0 flips mid-frame | lines after the beam use page 1 |
-| T-VID-7 | HOLD `#00` vs `#77` | picture offset 14 pixels, 7 lines |
+| T-VID-7 | HOLD `#00` vs `#77` | picture offset 14 pixels, 14 lines (2 lines per high-nibble unit) |
 | T-VID-8 | INT list from a hand-built mode page (run of `#FD` squares) | INT T-states match MAME's `update_int` on the same page |
 | T-VID-9 | 312 vs 320 lines | 69 888 / 71 680 T per frame; INT list recomputed |
 | T-VID-10 (ROM) | BIOS `FN_SINC` Pentagon / Scorpion / Spectrum | INT T-states equal the MAME captures (S0) |
@@ -168,7 +168,7 @@ callback period, interrupt vector. PIO: register file. Keyboard encoder: a press
 Location: `core/tests/emulator/machines/sprinter/`. Every test starts with fast start and
 `EnableTurboMode()` unless it checks pixels, stops as soon as its condition holds (`TestWait::For`),
 and skips with a message when the ROM or the image is missing. Each test runs on BIOS 3.04 and 3.06
-(review round 1, Q1), as two parameterized instances. Since 2026-10-02 the shipped default is 3.07 BETA 1
+(review round 1, Q1), as two parameterized instances. Since 2026-10-03 the shipped default is 3.06 Hotfix 2 (3.07 BETA 1 on 2026-10-02..03)
 ([bios-versions.md](bios-versions.md) §6.1): a test pinned to one BIOS selects it explicitly
 (`SprinterFixture::SelectBios`).
 

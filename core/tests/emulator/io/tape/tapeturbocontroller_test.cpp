@@ -63,17 +63,18 @@ void TapeTurboController_Test::TearDown()
 
 std::vector<uint8_t> TapeTurboController_Test::MakeTAPBlock(uint8_t flag, const std::vector<uint8_t>& payload)
 {
-    std::vector<uint8_t> block;
-    block.reserve(payload.size() + 2);
+    // Sized up front and filled by index: push_back after reserve trips a gcc 14
+    // false positive (-Wfree-nonheap-object) at -O2.
+    std::vector<uint8_t> block(payload.size() + 2);
 
     uint8_t checksum = flag;
-    block.push_back(flag);
-    for (const uint8_t byte : payload)
+    block[0] = flag;
+    for (size_t i = 0; i < payload.size(); i++)
     {
-        block.push_back(byte);
-        checksum ^= byte;
+        block[i + 1] = payload[i];
+        checksum ^= payload[i];
     }
-    block.push_back(checksum);
+    block.back() = checksum;
 
     return block;
 }
