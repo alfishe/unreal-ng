@@ -102,5 +102,30 @@ class DamageTest(unittest.TestCase):
             open_container(bytes(data))
 
 
+class FuzzTest(unittest.TestCase):
+    """QR-4: damaged files never crash the reader, and every damage is reported."""
+
+    def test_damage_is_always_reported(self):
+        import random
+        original = (FIXTURES / "synthetic.ttd").read_bytes()
+        rng = random.Random(7)
+        for round_ in range(400):
+            data = bytearray(original)
+            at = rng.randrange(len(data))
+            kind = round_ % 4
+            if kind == 0:
+                data[at] ^= 1 << rng.randrange(8)
+            elif kind == 1:
+                del data[at:]
+            elif kind == 2:
+                data[at:at + 4] = b"\xff" * len(data[at:at + 4])
+            else:
+                data[at:at + 16] = bytes(rng.randrange(256) for _ in range(len(data[at:at + 16])))
+            data = bytes(data)
+            problems = validate(data)    # must not raise
+            if data != original:
+                self.assertTrue(problems, f"round {round_}: damage at {at} not reported")
+
+
 if __name__ == "__main__":
     unittest.main()
