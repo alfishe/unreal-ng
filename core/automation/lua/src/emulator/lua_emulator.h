@@ -3195,6 +3195,10 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
         });
+        // The host adapters the bridge can use (ethernet_mode=bridge, network SN6)
+        lua.set_function("network_adapters", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, EthernetAccess::Adapters());
+        });
         lua.set_function("network_inject_frame", [this](sol::this_state s, const std::string& link, const std::string& hex) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");

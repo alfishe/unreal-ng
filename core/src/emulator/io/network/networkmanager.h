@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "common/network/hostframes.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
@@ -77,6 +78,8 @@ public:
         std::optional<uint8_t> atm2IoEspAddress;   ///< Atm2IoEspAddress=: its bus address (#F0 / #F8)
         std::optional<std::string> zifi;       ///< ZiFi= value (ComPortSpec): the TS AVR's ZiFi UART
         std::optional<std::string> modemPhonebook;   ///< ModemPhonebook=: "<number>=<host>[:<port>],..." (every MODEM peer)
+        std::optional<uint8_t> ethernetMode;           ///< EthernetMode=: 0 NAT, 1 BRIDGE (the frame cards, network SN6)
+        std::optional<std::string> bridgeAdapter;      ///< BridgeAdapter=: the host adapter for BRIDGE
         /// isa1_peer / isa2_peer ([ISA] SlotNPeer, ComPortSpec): what a UART card in that expansion slot is wired to;
         /// isa1_peer_b / isa2_peer_b ([ISA] SlotNPeerB): a two-UART card's second line. Keys "isa1", "isa1.b"
         std::vector<std::pair<std::string, std::string>> slotPeers;
@@ -97,7 +100,8 @@ public:
     /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0), zifi (ComPortSpec:
     /// what the TS AVR firmware's ZiFi UART is wired to, default none; at =
     /// the original ZiFi board's ESP-01), modem_phonebook (the Hayes modem's numbers:
-    /// "<number>=<host>[:<port>],...").
+    /// "<number>=<host>[:<port>],..."), ethernet_mode (nat | bridge: how the frame cards
+    /// reach the host, network SN6) and bridge_adapter (the host adapter for bridge).
     /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
@@ -131,6 +135,9 @@ public:
     static bool IsFrameCardKind(const std::string& kind) { return kind == "ne2000" || kind == "el3c509b"; }
     /// The switch + router of the frame-level cards (null without one, or with the network off)
     EthernetGateway* Gateway() const { return _gateway.get(); }
+    /// The host adapter of BRIDGE mode (tests: a fake instead of libpcap; set before the gateway is fitted)
+    void SetHostFrames(std::unique_ptr<IHostFrames> frames) { _hostFrames = std::move(frames); }
+    IHostFrames* HostFrames() const { return _hostFrames.get(); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -160,6 +167,8 @@ public:
             unsigned atm2IoEspAddress = 0xF0;
             std::string zifi;             ///< ComPortSpec text, NONE when empty
             std::string modemPhonebook;   ///< ModemPhonebook=
+            std::string ethernetMode;     ///< NAT | BRIDGE
+            std::string bridgeAdapter;    ///< BridgeAdapter=
             std::string dnsMode;          ///< HOST | PASS
             std::string hosts;
             std::string forwards;
@@ -232,7 +241,8 @@ public:
             StateNode details;            ///< the card's own report (chip, base, MAC, registers, counters)
         };
         std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro
-        /// The Ethernet gateway (EthernetGateway::Describe): ports, leases, ARP, TCP / UDP, counters
+        /// The Ethernet gateway (EthernetGateway::Describe): ports, leases, ARP, TCP / UDP, counters; in BRIDGE its
+        /// `bridge` part: adapter, open, error, library, counters
         StateNode ethernetGateway;
     };
     Status GetStatus() const;
@@ -322,6 +332,11 @@ private:
     /// network)
     std::vector<std::pair<std::string, Uart16550::State>> _serialKeep;
     std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
+    /// BRIDGE: the host adapter (network SN6); a test puts a fake in with SetHostFrames before the gateway is built
+    std::unique_ptr<IHostFrames> _hostFrames;
+    std::string _bridgeError;                    ///< why BRIDGE has no adapter open
+    void FitBridge();
+    void PumpBridge();
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

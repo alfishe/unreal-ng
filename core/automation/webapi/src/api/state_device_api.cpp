@@ -887,6 +887,16 @@ void EmulatorAPI::getNetworkFrames(const HttpRequestPtr& req, std::function<void
                callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/network/adapters - the host adapters for the bridge (core EthernetAccess::Adapters)
+void EmulatorAPI::getNetworkAdapters(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    (void)req;
+    if (!getEmulatorByIdOrIndex(id))
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(EthernetAccess::Adapters(), callback);
+}
+
 /// @brief POST /api/v1/emulator/{id}/network/frame {"link": "isa2.eth", "hex": "..."} - a frame towards a card
 void EmulatorAPI::postNetworkFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id) const

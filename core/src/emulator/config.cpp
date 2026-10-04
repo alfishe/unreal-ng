@@ -1170,6 +1170,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.modemPhonebook[0] = '\0';
 		}
 	}
+	// The frame cards' path to the host (network SN6): NAT (default) | BRIDGE, and the adapter for BRIDGE
+	netValue[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "EthernetMode", nullptr), netValue, sizeof netValue);
+	config.network.ethernetMode = 0;
+	if (StringHelper::CompareCaseInsensitive(netValue, "BRIDGE", strlen("BRIDGE")) == 0 && netValue[6] == '\0')
+		config.network.ethernetMode = 1;
+	else if (netValue[0] != '\0' && !(StringHelper::CompareCaseInsensitive(netValue, "NAT", 3) == 0 && netValue[3] == '\0'))
+		MLOGWARNING("Config: [NETWORK] EthernetMode=%s: NAT | BRIDGE - NAT used", netValue);
+	config.network.bridgeAdapter[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "BridgeAdapter", nullptr), config.network.bridgeAdapter,
+	                sizeof config.network.bridgeAdapter);
+
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");

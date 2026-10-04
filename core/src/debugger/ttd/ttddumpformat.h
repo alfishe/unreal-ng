@@ -152,7 +152,7 @@ constexpr uint16_t kFlagsHasPortJournals = 0x0100;
 constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
 
 /// Bit 10 of header.flags — a network-input section follows the port journals
-/// (network adapters TDD §6), written only when the session has NetEvents (a
+/// (network adapters TDD §6), written only when the session has NetEvents or NetFrames (a
 /// session without a network adapter keeps the older layout byte for byte).
 /// The input journal section keeps its fixed record size; NetEvents there
 /// carry only the common fields, and this section holds the rest. Layout:

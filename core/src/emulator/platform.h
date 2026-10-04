@@ -748,6 +748,10 @@ struct CONFIG
 		/// The Hayes modem's phone book (ComPortSpec MODEM, any serial port): "<number>=<host>[:<port>],..." (','
 		/// separates: ';' starts an INI comment); a number dialed with ATDT is looked up by its digits
 		char modemPhonebook[512];
+		/// [NETWORK] EthernetMode: how the frame-level cards (NE2000, 3C509B) reach the host - 0 NAT (the gateway's
+		/// router, no admin rights), 1 BRIDGE (frames on the host adapter BridgeAdapter=, network SN6)
+		uint8_t ethernetMode;
+		char bridgeAdapter[128];   ///< [NETWORK] BridgeAdapter: the host adapter for BRIDGE ("en0", "eth0", ...)
 	} network;
 
 	struct

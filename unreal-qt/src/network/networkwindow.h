@@ -138,6 +138,10 @@ private:
     QLineEdit* _hosts = nullptr;
     QLineEdit* _forwards = nullptr;
     QSpinBox* _timeout = nullptr;
+    QComboBox* _ethernetMode = nullptr;   ///< NAT | BRIDGE (the frame cards, network SN6)
+    QComboBox* _bridgeAdapter = nullptr;  ///< the host adapters (EthernetAccess::Adapters), editable
+    QLabel* _bridgeNote = nullptr;        ///< the packet library / permission state
+    void fillBridgeAdapters();
     QPushButton* _apply = nullptr;
     QPushButton* _revert = nullptr;
     QLabel* _message = nullptr;

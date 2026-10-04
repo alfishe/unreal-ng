@@ -113,6 +113,36 @@ Lua / Python: `network_state()`, `network_frames("isa2.eth", 8)`, `network_injec
 `network_frames_pcap()`), `isa_state()`, `isa_journal(8)`. MCP: `inspect_state` aspects `network` and `isa`; frames and
 the journal through `invoke_api`.
 
+## Bridge to the host LAN (verified 2026-10-04)
+
+The NE2000 or 3C509B can sit on the host's real LAN instead of behind the emulator's router: the LAN's DHCP gives
+it an address, other machines reach it. Design: [sn6-bridge-design.md](../../docs/inprogress/2026-10-02-sprinter-network/sn6-bridge-design.md).
+
+- Needs the packet library (macOS / Linux: libpcap, part of the system; Windows: [Npcap](https://npcap.com)) and the
+  host's permission: macOS read / write on `/dev/bpf*` (Wireshark's ChmodBPF, or for one session
+  `sudo chmod o+rw /dev/bpf*` until the next reboot), Linux `setcap cap_net_raw,cap_net_admin=eip` on the binary.
+- A **wired** adapter only (Wi-Fi access points drop the card's own MAC; Wi-Fi bridging is planned).
+- The host itself does not see the card on the same adapter (pcap's limit); other machines do.
+
+```bash
+curl -s $B/$ID/network/adapters | jq -c '{library, error, adapters: [.adapters[] | select(.bridgeable) | {name, ipv4}]}'
+#  {"library":"libpcap version 1.10.1","error":"","adapters":[{"name":"en0","ipv4":["172.16.17.10"]}, ...]}
+curl -s -X POST $B/$ID/network/config -H 'Content-Type: application/json' -d '{"ethernet_mode":"bridge","bridge_adapter":"en0"}'
+curl -s $B/$ID/state/network | jq -c '.ethernet_gateway | {mode, bridge}'
+#  {"mode":"bridge","bridge":{"adapter":"en0","open":true,"error":"","received":3,"sent":0,"filtered":54,...}}
+type 'B:'; type 'NETCFG -i'; type 'CLS'; type 'IFUP'
+#  DHCP: got OFFER 172.16.30.122 (server 172.16.16.1)  - the LAN's own router
+type 'CLS'; type 'PING -n 3 172.16.16.1'     # Reply from 172.16.16.1 ... Received = 3
+type 'CLS'; type 'NSLOOKUP example.com'      # Querying example.com at 172.16.16.1 ... Address: ...
+curl -s "$B/$ID/network/frames?last=6" | jq -r '.frames[] | "\(.direction) \(.port) \(.summary)"'
+#  lan_in lan ARP who-has 172.16.30.122 tell 172.16.16.1 / to_card isa2.eth ...
+```
+
+Back to NAT: `{"ethernet_mode":"nat"}`. CLI: `network adapters`, `network set ethernet_mode=bridge bridge_adapter=en0`;
+Lua / Python: `network_adapters()`, `network_configure{ethernet_mode="bridge", bridge_adapter="en0"}` /
+`network_configure(ethernet_mode="bridge", bridge_adapter="en0")`; Qt: Network window, "Ethernet cards". Every frame from the LAN is a TTD input (`NetFrame`): a
+recorded bridged session replays without the host.
+
 ## Time travel
 
 A TTD recording carries the card (blob 45 `EthernetNics`: the DP8390, the packet RAM, the EEPROM, the gateway's ARP /

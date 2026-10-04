@@ -28,6 +28,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/io/network/vnet/ethernetaccess.h"
 #include "emulator/state/devicestate.h"
 
 namespace
@@ -490,6 +491,22 @@ void NetworkWindow::buildUi()
     _timeout->setSuffix(tr(" ms"));
     netForm->addRow(tr("Connect timeout"), _timeout);
     page->addWidget(net);
+
+    // The frame-level cards (NE2000, 3C509B in ISA slots): the gateway's NAT, or their frames on a host adapter
+    auto* bridge = new QGroupBox(tr("Ethernet cards (NE2000, 3C509B)"), _settingsPage);
+    auto* bridgeForm = new QFormLayout(bridge);
+    _ethernetMode = new QComboBox(bridge);
+    _ethernetMode->addItem(tr("NAT through the emulator's router (10.0.2.2; no admin rights)"), QStringLiteral("NAT"));
+    _ethernetMode->addItem(tr("Bridge to a host adapter (the card on the real LAN)"), QStringLiteral("BRIDGE"));
+    bridgeForm->addRow(tr("Path"), _ethernetMode);
+    _bridgeAdapter = new QComboBox(bridge);
+    _bridgeAdapter->setEditable(true);
+    _bridgeAdapter->setToolTip(tr("The host adapter for the bridge: a wired adapter (Wi-Fi is not bridgeable yet)"));
+    bridgeForm->addRow(tr("Host adapter"), _bridgeAdapter);
+    _bridgeNote = new QLabel(bridge);
+    _bridgeNote->setWordWrap(true);
+    bridgeForm->addRow(QString(), _bridgeNote);
+    page->addWidget(bridge);
     page->addStretch(1);
 
     // --- Status ---
@@ -525,8 +542,9 @@ void NetworkWindow::buildUi()
     connect(_revert, &QPushButton::clicked, this, &NetworkWindow::onRevert);
     for (QCheckBox* box : {_zxNetUsb, _zxWifi, _atm2IoEsp, _modemLines, _hostAccess})
         connect(box, &QCheckBox::toggled, this, &NetworkWindow::onEdited);
-    for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _atm2IoEspAddress, _espChip, _dnsMode})
+    for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _atm2IoEspAddress, _espChip, _dnsMode, _ethernetMode})
         connect(combo, &QComboBox::currentIndexChanged, this, &NetworkWindow::onEdited);
+    connect(_bridgeAdapter, &QComboBox::currentTextChanged, this, &NetworkWindow::onEdited);
     for (QLineEdit* edit : {_hosts, _forwards, _modemPhonebook})
         connect(edit, &QLineEdit::textEdited, this, &NetworkWindow::onEdited);
     connect(_timeout, &QSpinBox::valueChanged, this, &NetworkWindow::onEdited);
@@ -556,6 +574,7 @@ void NetworkWindow::setBinding(EmulatorBinding* binding)
 void NetworkWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    fillBridgeAdapters();
     refresh();
     _timer->start();
     emit visibilityChanged(true);
@@ -680,7 +699,46 @@ void NetworkWindow::loadForm(const NetworkForm& form)
     if (_forwards->text() != Q(form.forwards))
         _forwards->setText(Q(form.forwards));
     _timeout->setValue(static_cast<int>(form.connectTimeoutMs));
+    _ethernetMode->setCurrentIndex(std::max(0, _ethernetMode->findData(Q(form.ethernetMode))));
+    if (_bridgeAdapter->currentText() != Q(form.bridgeAdapter))
+        _bridgeAdapter->setCurrentText(Q(form.bridgeAdapter));
     _loading = false;
+}
+
+void NetworkWindow::fillBridgeAdapters()
+{
+    // The packet library lists the adapters (loaded at run time: missing on a host without libpcap / Npcap)
+    const StateNode report = EthernetAccess::Adapters();
+    const QString current = _bridgeAdapter->currentText();
+    const bool loading = _loading;
+    _loading = true;
+    _bridgeAdapter->clear();
+    if (const StateNode* adapters = report.find("adapters"))
+    {
+        for (const StateNode& a : adapters->items)
+        {
+            QString label = Q(a.find("name")->s);
+            QStringList ips;
+            for (const StateNode& ip : a.find("ipv4")->items)
+                ips << Q(ip.s);
+            if (!ips.isEmpty())
+                label += QStringLiteral(" (") + ips.join(QStringLiteral(", ")) + QStringLiteral(")");
+            if (a.find("wireless")->b)
+                label += tr(" - Wi-Fi, not bridgeable yet");
+            else if (a.find("loopback")->b)
+                label += tr(" - loopback");
+            _bridgeAdapter->addItem(label, Q(a.find("name")->s));
+        }
+    }
+    const int index = _bridgeAdapter->findData(current);
+    if (index >= 0)
+        _bridgeAdapter->setCurrentIndex(index);
+    else
+        _bridgeAdapter->setCurrentText(current);
+    _loading = loading;
+    const std::string error = report.find("error") ? report.find("error")->s : std::string();
+    const std::string library = report.find("library") ? report.find("library")->s : std::string();
+    _bridgeNote->setText(error.empty() ? tr("Packet library: %1").arg(Q(library)) : Q(error));
 }
 
 NetworkForm NetworkWindow::readForm() const
@@ -712,6 +770,12 @@ NetworkForm NetworkWindow::readForm() const
     form.hosts = S(_hosts->text());
     form.forwards = S(_forwards->text());
     form.connectTimeoutMs = static_cast<unsigned>(_timeout->value());
+    form.ethernetMode = S(_ethernetMode->currentData().toString());
+    // The list shows "en0 (192.168.1.5)": the adapter is the item's data; a typed name is taken as it is
+    const int adapter = _bridgeAdapter->findText(_bridgeAdapter->currentText());
+    form.bridgeAdapter = adapter >= 0 && _bridgeAdapter->itemData(adapter).isValid()
+                             ? S(_bridgeAdapter->itemData(adapter).toString())
+                             : S(_bridgeAdapter->currentText());
     return form;
 }
 

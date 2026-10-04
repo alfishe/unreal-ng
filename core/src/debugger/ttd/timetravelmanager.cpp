@@ -4468,7 +4468,7 @@ bool ReadNetInputSection(std::istream& in, std::vector<TTDInputEvent>& events, s
             return false;
         }
         if (index >= events.size() || static_cast<int64_t>(index) <= lastIndex ||
-            events[index].kind != TTDInputKind::NetEvent)
+            !HasNetRecord(events[index].kind))
         {
             err = "network input " + std::to_string(i) + ": bad event index " + std::to_string(index);
             return false;
@@ -4508,7 +4508,7 @@ bool ReadNetInputSection(std::istream& in, std::vector<TTDInputEvent>& events, s
     }
     for (const TTDInputEvent& ev : events)
     {
-        if (ev.kind == TTDInputKind::NetEvent && ev.netIndex == 0)
+        if (HasNetRecord(ev.kind) && ev.netIndex == 0)
         {
             err = "a network event without its network record";
             return false;
@@ -5682,7 +5682,7 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     {
         for (const TTDInputEvent& ev : stagedInputs)
         {
-            if (ev.kind == TTDInputKind::NetEvent)
+            if (HasNetRecord(ev.kind))
             {
                 err = "network events without the network-input section";
                 return false;

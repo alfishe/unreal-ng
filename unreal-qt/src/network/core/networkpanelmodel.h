@@ -55,6 +55,8 @@ struct NetworkForm
     bool slotUartB[2] = {false, false}; ///< a second UART (SprinterSerial's COM2)
     ComPortSpec slotPeerB[2];           ///< default NONE
     std::string modemPhonebook;         ///< [NETWORK] ModemPhonebook: "<number>=<host>[:<port>],..."
+    std::string ethernetMode = "NAT";   ///< [NETWORK] EthernetMode: NAT | BRIDGE (the frame cards, network SN6)
+    std::string bridgeAdapter;          ///< [NETWORK] BridgeAdapter: the host adapter for BRIDGE
 
     // Virtual network
     bool hostAccess = true;

@@ -20,6 +20,8 @@
 #include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/state/devicestate.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/io/network/vnet/ethernetgateway.h"
 
 class SprinterNetwork_Test : public ::testing::Test
 {
@@ -464,3 +466,113 @@ TEST_F(SprinterNetwork_Test, IrqLines_PioArmingRules)
 }
 
 /// endregion
+
+// --- Bridge mode (network SN6) --------------------------------------------------------------------------------------
+
+namespace
+{
+/// The host adapter without a host: what the cards send is kept, what the "LAN" sends is queued by the test
+class FakeHostFrames : public IHostFrames
+{
+public:
+    std::vector<HostAdapter> Adapters(std::string&) override { return {HostAdapter{"fake0", "fake", {}, false, false, true, true}}; }
+    bool Open(const std::string& adapter, std::string& error) override
+    {
+        if (adapter != "fake0")
+        {
+            error = "no host adapter '" + adapter + "'";
+            return false;
+        }
+        open = true;
+        return true;
+    }
+    void Close() override { open = false; }
+    bool IsOpen() const override { return open; }
+    std::string Adapter() const override { return open ? "fake0" : ""; }
+    void SetStations(const std::vector<Mac>& s) override { stations = s; }
+    void Send(const uint8_t* frame, size_t length) override { sent.emplace_back(frame, frame + length); }
+    void Drain(std::vector<std::vector<uint8_t>>& out) override
+    {
+        for (auto& f : incoming)
+            out.push_back(std::move(f));
+        incoming.clear();
+    }
+    Counters GetCounters() const override { return {}; }
+    std::string LastError() const override { return {}; }
+    std::string Library() const override { return "fake"; }
+
+    bool open = false;
+    std::vector<Mac> stations;
+    std::vector<std::vector<uint8_t>> sent;
+    std::vector<std::vector<uint8_t>> incoming;
+};
+}  // namespace
+
+/// ethernet_mode=bridge on the Sprinter's NE2000: the gateway turns into a switch on the host adapter, the adapter
+/// learns the card's MAC, a frame from the LAN reaches the card as a journaled NetFrame input (so a TTD replay needs no
+/// host), the report shows the bridge; back to nat the router answers again and the adapter closes
+TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
+{
+    Create();
+    auto fake = std::make_unique<FakeHostFrames>();
+    FakeHostFrames* host = fake.get();
+    Network()->SetHostFrames(std::move(fake));
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"ethernet_mode", "bridge"}, {"bridge_adapter", "fake0"}}, change, error)) << error;
+    ASSERT_TRUE(Network()->RequestChange(change, error)) << error;
+    Network()->OnFrame();
+    ASSERT_NE(Network()->Gateway(), nullptr);
+    EXPECT_EQ(Network()->Gateway()->GetMode(), EthernetGateway::Mode::Bridge);
+    EXPECT_TRUE(host->open);
+    ASSERT_EQ(host->stations.size(), 1u) << "the adapter keeps the card's frames";
+    EXPECT_EQ(host->stations[0][5], 0x02);
+
+    ttd::TimeTravelManager* ttm = _context->pTimeTravelManager;
+    ASSERT_NE(ttm, nullptr);
+    ASSERT_TRUE(ttm->StartRecording());
+    std::vector<uint8_t> frame(60, 0x5A);
+    std::copy(host->stations[0].begin(), host->stations[0].end(), frame.begin());
+    const uint8_t lan[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    std::copy(lan, lan + 6, frame.begin() + 6);
+    frame[12] = 0x08;
+    host->incoming.push_back(frame);
+    Network()->OnFrame();
+    EXPECT_EQ(Network()->Gateway()->GetLanCounters().in, 1u);
+    EXPECT_EQ(Network()->Gateway()->GetCounters().framesToCards, 1u) << "the NE2000 took it";
+    bool journaled = false;
+    for (const ttd::TTDInputEvent& ev : ttm->GetInputJournal().Events())
+    {
+        if (ev.kind != ttd::TTDInputKind::NetFrame)
+            continue;
+        const ttd::TTDNetInput* net = ttm->GetInputJournal().NetOf(ev);
+        ASSERT_NE(net, nullptr);
+        ASSERT_EQ(net->payloadLength, frame.size());
+        EXPECT_EQ(std::vector<uint8_t>(ttm->GetInputJournal().PayloadOf(*net),
+                                       ttm->GetInputJournal().PayloadOf(*net) + net->payloadLength),
+                  frame);
+        journaled = true;
+    }
+    EXPECT_TRUE(journaled) << "a frame from the LAN is an outside input";
+    ttm->StopRecording();
+
+    const StateNode report = DeviceState::Network(_context);
+    const StateNode* gateway = report.find("ethernet_gateway");
+    ASSERT_NE(gateway, nullptr);
+    EXPECT_EQ(gateway->find("mode")->s, "bridge");
+    ASSERT_NE(gateway->find("bridge"), nullptr);
+    EXPECT_EQ(gateway->find("bridge")->find("adapter")->s, "fake0");
+    EXPECT_TRUE(gateway->find("bridge")->find("open")->b);
+    EXPECT_EQ(report.find("settings")->find("ethernet_mode")->s, "BRIDGE");
+
+    NetworkManager::Change back;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"ethernet_mode", "nat"}}, back, error)) << error;
+    ASSERT_TRUE(Network()->RequestChange(back, error)) << error;
+    Network()->OnFrame();
+    EXPECT_EQ(Network()->Gateway()->GetMode(), EthernetGateway::Mode::Nat);
+    EXPECT_FALSE(host->open) << "the adapter closes with the bridge";
+
+    NetworkManager::Change bad;
+    EXPECT_FALSE(NetworkManager::ParseChange({{"ethernet_mode", "tap"}}, bad, error));
+    EXPECT_NE(error.find("nat | bridge"), std::string::npos);
+}

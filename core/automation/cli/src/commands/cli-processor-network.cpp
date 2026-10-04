@@ -85,11 +85,39 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
                 ss << "No frames captured yet (the capture keeps the last " << report.find("capacity")->i << ")" << NEWLINE;
             for (const StateNode& f : frames->items)
                 ss << "#" << f.find("index")->i << " frame " << f.find("frame")->i << " "
-                   << (f.find("direction")->s == "to_card" ? "-> " : "<- ") << f.find("port")->s << " "
+                   << (f.find("direction")->s == "to_card" || f.find("direction")->s == "lan_in" ? "-> " : "<- ")
+                   << f.find("port")->s << (f.find("direction")->s == "lan_out" ? " (to the LAN)" : "") << " "
                    << f.find("length")->i << " " << f.find("summary")->s << NEWLINE;
         }
         else
             ss << DeviceState::ToText(report);
+        session.SendResponse(ss.str());
+        return;
+    }
+    if (!args.empty() && args[0] == "adapters")
+    {
+        // network adapters - the host adapters the bridge can use (ethernet_mode=bridge, network SN6)
+        const StateNode report = EthernetAccess::Adapters();
+        std::stringstream ss;
+        const std::string library = report.find("library")->s;
+        const std::string error = report.find("error")->s;
+        ss << "Packet library: " << (library.empty() ? std::string("not loaded") : library) << NEWLINE;
+        if (!error.empty())
+            ss << "Error: " << error << NEWLINE;
+        for (const StateNode& a : report.find("adapters")->items)
+        {
+            ss << "  " << a.find("name")->s;
+            std::string ips;
+            for (const StateNode& ip : a.find("ipv4")->items)
+                ips += (ips.empty() ? "" : ",") + ip.s;
+            if (!ips.empty())
+                ss << " " << ips;
+            ss << (a.find("loopback")->b ? " loopback" : "") << (a.find("wireless")->b ? " wireless" : "")
+               << (a.find("up")->b ? " up" : " down") << (a.find("bridgeable")->b ? "" : " (not bridgeable)");
+            if (!a.find("description")->s.empty())
+                ss << " - " << a.find("description")->s;
+            ss << NEWLINE;
+        }
         session.SendResponse(ss.str());
         return;
     }
@@ -113,7 +141,7 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     }
     if (!args.empty() && args[0] != "state" && args[0] != "show")
     {
-        session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
+        session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network adapters | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
                              "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n "
                              "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's serial port; "
                              "an AT module's firmware esp32|esp8266|esp8266-at221|esp8266-at222 overrides esp_chip for it alone; "
@@ -123,6 +151,8 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
                              "isa1_peer=at|modem[,guest port]|loopback|tcp:host:port|serial:device[,baud] isa2_peer=... (Sprinter: what the UART card in that ISA slot "
                              "is wired to - SprinterESP default at, ISA modem default modem, SprinterSerial COM1 default none) isa1_peer_b= isa2_peer_b= "
                              "(SprinterSerial COM2) modem_phonebook=5551234=host:port,... (the numbers a Hayes modem peer dials with ATDT) "
+                             "ethernet_mode=nat|bridge bridge_adapter=en0 (the frame cards: the gateway's NAT, or their frames on a "
+                             "host adapter - see network adapters) "
                              "avr_firmware=baseconf|base2010|base2011-04|base2011-05|base2011-09|base2013|base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) "
                              "kbc_firmware=none|v22-7|v22-11|v22-12|v31-7|v31-11|v32-7|v32-11|v40|v41 (ATM Turbo 2+ keyboard controller) "
                              "atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) "

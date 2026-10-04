@@ -335,6 +335,7 @@ public:
     // Ethernet frames of the frame-level cards (core EthernetAccess)
     ADD_METHOD_TO(EmulatorAPI::getNetworkFrames, "/api/v1/emulator/{id}/network/frames", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNetworkFrame, "/api/v1/emulator/{id}/network/frame", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getNetworkAdapters, "/api/v1/emulator/{id}/network/adapters", drogon::Get);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -1140,6 +1141,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void postControlIsa(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIsaJournal(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/network/adapters - the host adapters the bridge can use (network SN6)
+    void getNetworkAdapters(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getNetworkFrames(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

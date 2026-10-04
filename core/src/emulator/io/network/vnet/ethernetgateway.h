@@ -35,6 +35,7 @@
 /// (0.0.0.0, 68) sends it to 255.255.255.255:67 -> DhcpServer offers 10.0.2.15 (by the card's MAC) -> at the frame
 /// boundary the OFFER leaves as a broadcast frame from 52:55:0A:00:02:02, 10.0.2.2:67 -> the card's ring.
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -68,6 +69,25 @@ public:
     /// them, so a host client of that port reaches that device, not an Ethernet card. Set before the first Attach
     void SetReservedGuestPorts(std::vector<uint16_t> ports) { _reservedGuestPorts = std::move(ports); }
 
+    /// NAT: the switch with the router behind it (above). BRIDGE (network SN6, sn6-bridge-design.md): the switch only -
+    /// the router, DHCP, DNS and TCP termination are off; a frame that is not for a local station (and every broadcast
+    /// or multicast) goes to the LAN output (the host adapter), and frames from the host LAN come in through FromLan
+    enum class Mode : uint8_t
+    {
+        Nat = 0,
+        Bridge = 1,
+    };
+    /// Switching closes every NAT connection (the router goes away or comes back)
+    void SetMode(Mode mode);
+    Mode GetMode() const { return _mode; }
+    /// BRIDGE: where frames for the LAN go (the host adapter). Unset: nowhere (a TTD replay sends nothing)
+    void SetLanOutput(std::function<void(const uint8_t*, size_t)> output) { _lanOutput = std::move(output); }
+    /// BRIDGE: a frame from the host LAN (the NetFrame input, applied at the frame boundary): queued for the station
+    /// it is addressed to (every station for a broadcast or multicast), delivered at once
+    void FromLan(const uint8_t* frame, size_t length);
+    /// The cards' station addresses (the bridge's capture filter)
+    std::vector<std::array<uint8_t, 6>> StationMacs() const;
+
     /// A card plugs into the switch (nullptr-safe detach with Detach)
     void Attach(IEthernetPort* port);
     void Detach(IEthernetPort* port);
@@ -99,12 +119,19 @@ public:
                  fragments = 0, badChecksum = 0, runts = 0, queueDrops = 0, ringFullWaits = 0;
     };
     const Counters& GetCounters() const { return _counters; }
+    /// BRIDGE: frames to and from the host LAN (observation only: not in the TTD state, unlike Counters)
+    struct LanCounters
+    {
+        uint64_t out = 0, in = 0;
+    };
+    const LanCounters& GetLanCounters() const { return _lanCounters; }
 
     struct CapturedFrame
     {
         uint64_t frame = 0;           ///< the machine frame it passed in
         uint64_t index = 0;           ///< running number
         bool toCard = false;          ///< true: gateway -> card; false: card -> network
+        bool lan = false;             ///< BRIDGE: crossed the host LAN (card -> LAN, or LAN -> the gateway, port "lan")
         std::string port;
         std::vector<uint8_t> bytes;
     };
@@ -238,4 +265,7 @@ private:
     Counters _counters;
     std::deque<CapturedFrame> _capture;
     uint64_t _captureIndex = 0;
+    Mode _mode = Mode::Nat;
+    LanCounters _lanCounters;
+    std::function<void(const uint8_t*, size_t)> _lanOutput;
 };

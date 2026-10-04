@@ -2061,6 +2061,8 @@ StateNode Network(EmulatorContext* context)
     set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
     set["zifi"] = st.settings.zifi;
     set["modem_phonebook"] = st.settings.modemPhonebook;   // the numbers a Hayes modem peer dials (ModemPhonebook=)
+    set["ethernet_mode"] = st.settings.ethernetMode;       // the frame cards: NAT | BRIDGE (network SN6)
+    set["bridge_adapter"] = st.settings.bridgeAdapter;
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;

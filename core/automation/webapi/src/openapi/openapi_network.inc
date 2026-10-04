@@ -101,7 +101,7 @@
             "host_access (true / false), dns_mode (\"host\" | \"pass\"), hosts (\"name=a.b.c.d,...\"), forwards "
             "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet[,<baud>]\" | \"at[,<firmware>][,<baud>]\" (an ESP module's firmware rate; without it the port's: 38400 on the ATM Turbo 2+ keyboard controller, 115200 elsewhere; <firmware> esp32 | esp8266 | esp8266-at221 | esp8266-at222 for this module alone, else esp_chip) | \"zifi-native[,<s3|esp01s>][,<baud>]\" (the 2026 ZiFi firmware: binary frames 5A CMD LEN DATA XOR; s3 = ESP32-S3-Zero s3-native-0.6.94, esp01s = ESP-01S native-0.2.2) | \"modem[,<guest port>]\" (a Hayes modem: ATDT dials host:port or a phone book number; with a guest port it also answers host clients of that port) | "
             "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"; the machine's own serial port: the ZX-Evo "
-            "AVR's, the ATM Turbo 2+ keyboard controller's RS-232), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\" (NonOS AT 1.7.4) | \"esp8266-at221\" | \"esp8266-at222\" (ESP-AT 2.2.1 / 2.2.2; the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222)), isa1_peer / isa2_peer (Sprinter: what the UART card in that ISA slot is wired to, com_port values; default \"at\" = the SprinterESP's ESP-12F, \"modem\" = the ISA modem card's own Hayes modem, \"none\" = SprinterSerial's COM1), isa1_peer_b / isa2_peer_b (SprinterSerial's COM2 at #2F8), modem_phonebook (\"<number>=<host>[:<port>],...\": the numbers a Hayes modem peer dials with ATDT; a dialed number with letters, '.' or ':' is a host itself), avr_firmware (ZX-Evo, the AVR firmware the COM port behaves like: "
+            "AVR's, the ATM Turbo 2+ keyboard controller's RS-232), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\" (NonOS AT 1.7.4) | \"esp8266-at221\" | \"esp8266-at222\" (ESP-AT 2.2.1 / 2.2.2; the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222)), isa1_peer / isa2_peer (Sprinter: what the UART card in that ISA slot is wired to, com_port values; default \"at\" = the SprinterESP's ESP-12F, \"modem\" = the ISA modem card's own Hayes modem, \"none\" = SprinterSerial's COM1), isa1_peer_b / isa2_peer_b (SprinterSerial's COM2 at #2F8), modem_phonebook (\"<number>=<host>[:<port>],...\": the numbers a Hayes modem peer dials with ATDT; a dialed number with letters, '.' or ':' is a host itself), ethernet_mode (\"nat\" = the gateway's router, default | \"bridge\" = the frame cards' frames on the host adapter bridge_adapter, network SN6; needs libpcap / Npcap and the host's permission, see GET .../network/adapters), bridge_adapter (the host adapter name, e.g. \"en0\"), avr_firmware (ZX-Evo, the AVR firmware the COM port behaves like: "
             "\"baseconf\" | \"base2010\" | \"base2011-04\" | \"base2011-05\" | \"base2011-09\" | \"base2013\" | \"base2023\" | \"ts\" | "
             "\"ts2013\" | \"ts2016-02\" | \"ts2016-04\"; a change restarts the AVR's UART), kbc_firmware (ATM Turbo 2+, the keyboard "
             "controller's firmware: \"none\" | \"v22-7\" | \"v22-11\" | \"v22-12\" | \"v31-7\" | \"v31-11\" | \"v32-7\" | "
@@ -134,7 +134,9 @@
         paths[kFrames]["get"]["tags"].append("Network");
         paths[kFrames]["get"]["description"] =
             "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000 or 3C509B), both ways. "
-            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card), port, "
+            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card; in "
+            "ethernet_mode=bridge also lan_out = a card's frame put on the host LAN and lan_in = a frame from the host LAN, "
+            "port \"lan\"), port, "
             "length, summary (\"ARP who-has 10.0.2.2 tell 10.0.2.15\", \"IPv4 10.0.2.15:1025 > 192.0.2.10:80 TCP S ...\"), "
             "hex; link=isa2.eth picks one card, last=N the newest N (default 64). format=pcap: a pcap file "
             "(LINKTYPE_ETHERNET, timestamps = machine frame x 20 ms) for Wireshark / tcpdump. 404 without a frame-level card.";
@@ -152,6 +154,21 @@
         }
         paths[kFrames]["get"]["responses"]["200"]["description"] = "The capture (JSON, or a pcap file)";
         paths[kFrames]["get"]["responses"]["404"]["description"] = "Emulator not found, or no frame-level card";
+
+        const char* kAdapters = "/api/v1/emulator/{id}/network/adapters";
+        paths[kAdapters]["get"]["summary"] = "List the host network adapters for the bridge";
+        paths[kAdapters]["get"]["tags"].append("Network");
+        paths[kAdapters]["get"]["description"] =
+            "The host adapters the packet library (libpcap / Npcap, loaded at run time) lists, for ethernet_mode=bridge "
+            "(network SN6): adapters[] with name (the bridge_adapter value), description, ipv4[], loopback, wireless, up, "
+            "running, bridgeable (wired adapters; Wi-Fi is not bridgeable yet), plus library and error (the library is "
+            "missing, or the host refuses access - the text says what to install or allow).";
+        paths[kAdapters]["get"]["parameters"][0]["name"] = "id";
+        paths[kAdapters]["get"]["parameters"][0]["in"] = "path";
+        paths[kAdapters]["get"]["parameters"][0]["required"] = true;
+        paths[kAdapters]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kAdapters]["get"]["responses"]["200"]["description"] = "The adapters (empty with error when unavailable)";
+        paths[kAdapters]["get"]["responses"]["404"]["description"] = "Emulator not found";
 
         const char* kFrame = "/api/v1/emulator/{id}/network/frame";
         paths[kFrame]["post"]["summary"] = "Inject an Ethernet frame towards a card";
