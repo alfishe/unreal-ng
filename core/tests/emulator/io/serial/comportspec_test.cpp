@@ -74,7 +74,7 @@ TEST(ComPortSpec_Test, EspModules)
     EXPECT_EQ(s.baud, 0u) << "no rate: the port's default";
     ASSERT_TRUE(ComPortSpec::Parse("AT", s, error));
     EXPECT_EQ(s.kind, ComPortSpec::Kind::At);
-    EXPECT_FALSE(ComPortSpec::Parse("modem", s, error));
+    EXPECT_FALSE(ComPortSpec::Parse("hayes", s, error));
 }
 
 TEST(ComPortSpec_Test, EspModuleRates)

@@ -176,7 +176,7 @@ compares with MAME and with the Pentagon's own `intstart` (`core/src/emulator/co
 |---|---|---|
 | RGMOD bit 0 | code `#C5` | switches the mode page (the whole screen) at the current beam position |
 | PORT_Y | code `#C4` | only affects where CPU writes go, not the display |
-| HOLD | code `#CB` | picture offset: x = `(7 − (v & #0F)) × 2`, y = `7 − (v >> 4)` (MAME `:850-852`) |
+| HOLD | code `#CB` | picture offset: x = `(7 − (v & #0F)) × 2`, y = `(7 − (v >> 4)) × 2` (x as MAME `:850-851`; y is **2 lines per unit**, MAME has 1: the PLD preloads the vertical sync counter with `(HOLD[7..4], 0)`, `SP2_ACEX.TDF:795-815`; found with RRAID.EXE, 2026-10-03) |
 | frame 320/312 | codes `#2C`/`#2D` | next frame |
 | border | code `#C2` | border squares |
 

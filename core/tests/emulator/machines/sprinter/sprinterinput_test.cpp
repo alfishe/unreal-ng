@@ -701,7 +701,7 @@ protected:
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->GetRtc().SetFixedTime(1767268830);
-        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // pinned to 3.04 (shipped default: 3.07 BETA 1)
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // pinned to 3.04 (shipped default: 3.06 Hotfix 2)
         _context->config.sprinter.fast_start = 1;
         _emulator->Reset();
         _emulator->EnableTurboMode();  // no assertion looks at pixels

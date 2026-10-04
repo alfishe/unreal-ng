@@ -93,7 +93,7 @@ public:
     void Configure(const sprinterisa::IsaConfig& config);
     const sprinterisa::SlotConfig& Configured(int slot) const { return _slots[slot & 1].config; }
     /// A UART card's line changed at runtime (the card is fitted again by NetworkManager)
-    void SetConfiguredPeer(int slot, const std::string& peer);
+    void SetConfiguredPeer(int slot, int channel, const std::string& peer);
 
     /// Put a card into a slot (the previous one leaves). `card` = nullptr empties it
     void Fit(int slot, std::unique_ptr<sprinterisa::IIsaCard> card);

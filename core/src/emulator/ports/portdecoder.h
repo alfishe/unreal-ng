@@ -915,14 +915,17 @@ public:
             std::string portKey;              ///< "isa2.eth" (a UART card: "isa1.uart0")
             bool macAuto = true;              ///< the MAC is the automatic one (a card picks its own family's form)
             uint8_t instance = 0;             ///< the emulator instance number in automatic MACs
-            std::string peer;                 ///< UART cards: ComPortSpec text of the line's other end ("" = AT)
+            std::string peer;                 ///< UART cards: ComPortSpec text of the (first) UART's line ("" = the card's default)
+            std::string peerB;                ///< two-UART cards (SprinterSerial): the second UART's line ("" = NONE)
+            uint8_t irqB = 0;                 ///< two-UART cards: the second UART's IRQ jumper (0 = open)
+            bool partialDecode = false;       ///< SprinterSerial: D3 not fitted (A15-A10 not decoded)
             /// Plug the device in (nullptr pulls it); false with the reason when the slot refuses it
             std::function<bool(IIoBusDevice* device, std::string& why)> fit;
             /// Why a configured card is not there (shown in the machine's own slot report)
             std::function<void(const std::string& why)> notFitted;
-            /// A runtime change of a UART card's line (automation's isaN_peer): the machine keeps it as the slot's
-            /// configured peer
-            std::function<void(const std::string& peer)> setPeer;
+            /// A runtime change of a UART card's line (automation's isaN_peer / isaN_peer_b): the machine keeps it as
+            /// the slot's configured peer of that UART (0 = the first)
+            std::function<void(int channel, const std::string& peer)> setPeer;
         };
         std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro, and the GUI includes this header
     };

@@ -27,7 +27,7 @@ All paths in this file are relative to the project root.
 | `demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | 100 |
 | `tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
 | [`../machines/tsconf/ttd/sprites.ttd`](../machines/tsconf/ttd/sprites.ttd) (`--only tsconf_sprites`) | TS-Conf | `testdata/machines/tsconf/spg/sprites.spg` (16C frame drawn by a DMA copy every frame), classic GS card swapped in | 50 |
-| [`../machines/sprinter/ttd/boot.ttd`](../machines/sprinter/ttd/boot.ttd) (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.07 BETA 1 at 21 MHz (re-recorded 2026-10-02 when the default moved from 3.04); classic GS card swapped in | 0 |
+| [`../machines/sprinter/ttd/boot.ttd`](../machines/sprinter/ttd/boot.ttd) (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.06 Hotfix 2 at 21 MHz (re-recorded 2026-10-03 when the default moved back from 3.07 BETA 1); classic GS card swapped in | 0 |
 
 Each fixture records 300 frames (301 checkpoints). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
@@ -171,6 +171,9 @@ write journal has no checksum of its own, so a corrupt zstd frame is caught
 but a flipped byte that still decodes is not.
 
 ## Status
+
+2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone on the new default BIOS 3.06 Hotfix 2 (back
+from 3.07 BETA 1, owner decision); the other fixtures are unchanged.
 
 2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone again: the default NE2000 in ISA slot 2 adds the
 Ethernet cards' blob (id 45, `EthernetNics`: DP8390, packet RAM, EEPROM, the Ethernet gateway) to every checkpoint;

@@ -7,7 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -18,6 +20,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/pcserialcard.h"
 #include "emulator/io/serial/esp/atmodule.h"
+#include "emulator/io/serial/hayesmodempeer.h"
 #include "emulator/io/sprinter/isa/isaaccess.h"
 #include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
@@ -229,4 +232,248 @@ TEST_F(PcSerialCard_Test, RuntimeChange_NewFirmwareSameUart)
     Send("hi");
     EXPECT_EQ(Drain(3), "hi") << "the line looped back";
     EXPECT_NE(Network()->EthernetCard("isa2.eth"), nullptr) << "the NE2000 in slot 2 is untouched";
+}
+
+// Presets MODEM and DUAL16552 (network phase SN4, T-NET-6 card part): the ISA Hayes modem at #3F8 (16550A at
+// 1.8432 MHz, A9-A3 with AEN, IRQ through the OUT2 tri-state driver) and SprinterSerial (PC16552D: COM1 #3F8 /
+// COM2 #2F8 by A8, A15-A10 decoded by D3 or not, AFR concurrent write, IRQ jumpers J5 / J6, unwired modem inputs)
+class PcSerialCardPresets_Test : public ::testing::Test
+{
+protected:
+    EmulatorManager* _manager = nullptr;
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+    PortDecoder_Sprinter* _decoder = nullptr;
+
+    void Make(sprinterisa::CardKind kind, const std::function<void(sprinterisa::SlotConfig&)>& tune = nullptr)
+    {
+        _manager = EmulatorManager::GetInstance();
+        _emulator = _manager->CreateEmulatorWithModelAndRAM(
+            "sprinter-uart", "SPRINTER", 4096, LoggerLevel::LogError, nullptr, [kind, tune](CONFIG& config) {
+                sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[0];
+                slot.kind = static_cast<uint8_t>(kind);
+                if (kind == sprinterisa::CardKind::Modem)
+                {
+                    slot.base = sprinterisa::kModemDefaultBase;
+                    slot.irq = sprinterisa::kModemDefaultIrq;
+                }
+                if (kind == sprinterisa::CardKind::Dual16552)
+                    slot.irq = sprinterisa::kSerialDefaultIrqA;
+                if (tune)
+                    tune(slot);
+            });
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
+        ASSERT_NE(_decoder, nullptr);
+    }
+
+    void TearDown() override
+    {
+        _emulator.reset();
+        if (_manager)
+        {
+            for (const auto& id : _manager->GetEmulatorIds())
+                _manager->RemoveEmulator(id);
+        }
+    }
+
+    NetworkManager* Network() { return _context->pCore->GetNetworkManager(); }
+    PcSerialCard* Card() { return Network()->SerialCard("isa1"); }
+
+    uint8_t Io(const std::string& action, uint32_t address, int value = -1)
+    {
+        StateNode result;
+        std::string error;
+        EXPECT_TRUE(IsaAccess::Execute(_context, action, 1, address, value, "test", result, error)) << error;
+        const StateNode* v = result.find("value");
+        return v ? static_cast<uint8_t>(std::strtoul(v->s.c_str() + 1, nullptr, 16)) : 0;
+    }
+
+    /// BC-Term's line setup at 57 600 (divisor 2 of 1.8432 MHz), FIFO on, DTR + RTS + OUT2
+    void InitUart(uint16_t base)
+    {
+        Io("io_write", base + 2, 0xC7);
+        Io("io_write", base + 3, 0x83);
+        Io("io_write", base + 0, 0x02);
+        Io("io_write", base + 1, 0x00);
+        Io("io_write", base + 3, 0x03);
+        Io("io_write", base + 4, 0x0B);
+    }
+
+    void Send(uint16_t base, const std::string& text)
+    {
+        for (char c : text)
+        {
+            while (!(Io("io_read", base + 5) & 0x20))
+                _emulator->RunNFrames(1, true);
+            Io("io_write", base, static_cast<uint8_t>(c));
+        }
+    }
+
+    std::string Drain(uint16_t base, int frames)
+    {
+        std::string out;
+        for (int f = 0; f < frames; ++f)
+        {
+            _emulator->RunNFrames(1, true);
+            while (Io("io_read", base + 5) & 0x01)
+                out.push_back(static_cast<char>(Io("io_read", base)));
+        }
+        return out;
+    }
+};
+
+TEST_F(PcSerialCardPresets_Test, Modem_DecodeWithAen_Out2GatesTheIrq_AtAnswers)
+{
+    Make(sprinterisa::CardKind::Modem);
+    ASSERT_NE(Card(), nullptr);
+    EXPECT_STREQ(_decoder->GetIsaBus().Card(0)->Kind(), "modem");
+    Io("io_write", 0x3FF, 0x5A);
+    EXPECT_EQ(Io("io_read", 0x3FF), 0x5A);
+    EXPECT_EQ(Io("io_read", 0x7FF), 0x5A) << "A15-A10 not decoded: mirrored every #400";
+    _decoder->GetIsaBus().WriteLatch(SprinterIsaBus::kLatchAen);
+    EXPECT_EQ(Io("io_read", 0x3FF), 0xFF) << "a PC card ignores AEN cycles";
+    _decoder->GetIsaBus().WriteLatch(0);
+
+    InitUart(0x3F8);
+    EXPECT_EQ(Card()->Com().Uart().Baud(), 57600u) << "1.8432 MHz / 16 / 2";
+    Io("io_write", 0x3FC, 0x2B);
+    EXPECT_EQ(Io("io_read", 0x3FC), 0x0B) << "a 16550A has no AFE: MCR bits 7-5 read 0";
+    Io("io_write", 0x3F9, 0x01);   // receive interrupt
+    Send(0x3F8, "AT\r");
+    EXPECT_EQ(Drain(0x3F8, 3), "AT\r\r\nOK\r\n");
+    Io("io_write", 0x3FC, 0x03);   // OUT2 clear: the IRQ driver is off, the slot line floats
+    Send(0x3F8, "AT\r");
+    _emulator->RunNFrames(2, true);
+    EXPECT_TRUE(Card()->Com().Uart().IntrPin());
+    EXPECT_FALSE(Card()->IrqDriven()) << "OUT2 clear: tri-state";
+    Io("io_write", 0x3FC, 0x0B);
+    EXPECT_TRUE(Card()->IrqDriven());
+    EXPECT_TRUE(Card()->Irq());
+
+    const StateNode isa = DeviceState::Isa(_context);
+    const StateNode& slot1 = isa.find("slots")->items[0];
+    EXPECT_EQ(slot1.find("resources")->find("io")->s, "#3F8-#3FF");
+    EXPECT_EQ(slot1.find("resources")->find("irq")->i, 4);
+    Network()->OnFrame();
+    const StateNode net = DeviceState::Network(_context);
+    const StateNode& row = net.find("slots")->items[0];
+    EXPECT_EQ(row.find("chip")->s, "16550A");
+    EXPECT_EQ(row.find("peer_spec")->s, "MODEM");
+    ASSERT_NE(row.find("modem"), nullptr);
+    EXPECT_EQ(row.find("modem")->find("mode")->s, "command");
+    EXPECT_EQ(row.find("modem")->find("last_result")->s, "OK");
+}
+
+TEST_F(PcSerialCardPresets_Test, Dual_ChannelsByA8_FullDecode_AfrConcurrentWrite_Jumpers)
+{
+    Make(sprinterisa::CardKind::Dual16552, [](sprinterisa::SlotConfig& slot) {
+        std::snprintf(slot.peer, sizeof(slot.peer), "LOOPBACK");
+        std::snprintf(slot.peerB, sizeof(slot.peerB), "MODEM");
+        slot.irqB = 4;
+    });
+    ASSERT_NE(Card(), nullptr);
+    EXPECT_EQ(Card()->Channels(), 2);
+    Io("io_write", 0x3FF, 0x11);
+    Io("io_write", 0x2FF, 0x22);
+    EXPECT_EQ(Io("io_read", 0x3FF), 0x11) << "A8 = 1: channel A (COM1)";
+    EXPECT_EQ(Io("io_read", 0x2FF), 0x22) << "A8 = 0: channel B (COM2)";
+    EXPECT_EQ(Io("io_read", 0x7FF), 0xFF) << "D3 decodes A15-A10";
+    _decoder->GetIsaBus().WriteLatch(SprinterIsaBus::kLatchAen);
+    EXPECT_EQ(Io("io_read", 0x3FF), 0x11) << "AEN is not connected";
+    _decoder->GetIsaBus().WriteLatch(0);
+    EXPECT_EQ(Io("io_read", 0x103FF), 0x11) << "A19-A16 are not connected";
+    EXPECT_EQ(Io("io_read", 0x43FF), 0xFF) << "A14 is decoded by D3";
+
+    // AFR (DLAB set, register 2): bit 0 writes both channels at once; reads stay per channel
+    Io("io_write", 0x3FB, 0x80);
+    Io("io_write", 0x2FB, 0x80);
+    Io("io_write", 0x3FA, 0x01);
+    EXPECT_EQ(Io("io_read", 0x2FA), 0x01) << "one AFR for both register sets";
+    Io("io_write", 0x3FF, 0x33);
+    EXPECT_EQ(Io("io_read", 0x2FF), 0x33) << "the concurrent write reached COM2";
+    Io("io_write", 0x2FA, 0x00);
+    Io("io_write", 0x3FB, 0x03);
+    Io("io_write", 0x2FB, 0x03);
+
+    // Unwired modem inputs: COM1 sees none (the CH340's pins are inputs too), COM2 only CTS
+    InitUart(0x3F8);
+    InitUart(0x2F8);
+    EXPECT_EQ(Io("io_read", 0x3FE) & 0xF0, 0x00) << "COM1: CTS, DSR, RI, DCD inactive";
+    EXPECT_EQ(Io("io_read", 0x2FE) & 0xF0, 0x10) << "COM2: CTS from the modem, nothing else";
+    Send(0x3F8, "hi");
+    EXPECT_EQ(Drain(0x3F8, 2), "hi") << "COM1's line (a loopback plug here)";
+    Send(0x2F8, "AT\r");
+    EXPECT_EQ(Drain(0x2F8, 3), "AT\r\r\nOK\r\n") << "an external modem on COM2's DB-9";
+
+    // J5 = IRQ 3 (COM1), J6 = IRQ 4 (COM2): on the Sprinter one line; both drive it
+    EXPECT_EQ(Card()->IrqLine(), 3);
+    EXPECT_TRUE(Card()->IrqDriven());
+    Io("io_write", 0x2F9, 0x01);
+    Send(0x2F8, "AT\r");
+    _emulator->RunNFrames(3, true);
+    EXPECT_TRUE(Card()->Irq());
+    EXPECT_TRUE(Card()->IrqContention()) << "COM1's INTR drives low, COM2's high, on one net";
+
+    Network()->OnFrame();
+    const StateNode net = DeviceState::Network(_context);
+    const StateNode& row = net.find("slots")->items[0];
+    EXPECT_EQ(row.find("chip")->s, "PC16552D");
+    EXPECT_EQ(row.find("port_key")->s, "isa1.uart0");
+    ASSERT_NE(row.find("channel_b"), nullptr);
+    EXPECT_EQ(row.find("channel_b")->find("port_key")->s, "isa1.uart1");
+    EXPECT_EQ(row.find("channel_b")->find("peer_spec")->s, "MODEM");
+    EXPECT_EQ(row.find("channel_b")->find("base")->s, "#2F8");
+    EXPECT_NE(row.find("channel_b")->find("modem"), nullptr);
+    EXPECT_TRUE(row.find("irq_contention")->b);
+}
+
+TEST_F(PcSerialCardPresets_Test, Dual_PartialDecodeMirrors_RuntimePeerB)
+{
+    Make(sprinterisa::CardKind::Dual16552, [](sprinterisa::SlotConfig& slot) { slot.partialDecode = 1; });
+    ASSERT_NE(Card(), nullptr);
+    Io("io_write", 0x3FF, 0x44);
+    EXPECT_EQ(Io("io_read", 0x7FF), 0x44) << "D3 left out, J1 + J2 closed: A15-A10 not decoded";
+    EXPECT_EQ(Io("io_read", 0x3BF), 0xFF) << "A6 is decoded";
+
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"isa1_peer_b", "loopback"}}, change, error)) << error;
+    ASSERT_TRUE(Network()->RequestChange(change, error)) << error;
+    ASSERT_NE(Card(), nullptr);
+    EXPECT_STREQ(Card()->Com(1).Peer()->Kind(), "loopback");
+    EXPECT_EQ(Card()->Com(0).Peer(), nullptr) << "COM1 stays unconnected";
+    EXPECT_EQ(Io("io_read", 0x3FF), 0x44) << "the same chip: its registers stay";
+}
+
+// A modem that answers calls owns its Forward= guest port: the Ethernet gateway of the slot-2 NE2000 does not listen
+// on it (else a host client of the port would reach whichever device waited first)
+TEST_F(PcSerialCardPresets_Test, Modem_AnswerPortIsNotTakenByTheEthernetGateway)
+{
+    Make(sprinterisa::CardKind::Modem, [](sprinterisa::SlotConfig& slot) {
+        std::snprintf(slot.peer, sizeof(slot.peer), "MODEM,2323");
+    });
+    ASSERT_NE(Card(), nullptr);
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"forwards", "tcp:23924:2323,tcp:8080:80"}}, change, error)) << error;
+    ASSERT_TRUE(Network()->RequestChange(change, error)) << error;
+    Network()->OnFrame();
+    const StateNode net = DeviceState::Network(_context);
+    const StateNode* gateway = net.find("ethernet_gateway");
+    ASSERT_NE(gateway, nullptr);
+    const StateNode* ports = gateway->find("forwarded_guest_ports");
+    ASSERT_NE(ports, nullptr);
+    ASSERT_EQ(ports->items.size(), 1u) << DeviceState::ToText(*gateway);
+    EXPECT_EQ(ports->items[0].i, 80) << "2323 is the modem's";
+    ASSERT_NE(Card()->Modem(), nullptr);
+    EXPECT_EQ(Card()->Modem()->ListenPort(), 2323);
+    const StateNode* servers = net.find("virtual_network")->find("guest_servers");
+    ASSERT_NE(servers, nullptr);
+    for (const StateNode& s : servers->items)
+    {
+        if (s.find("guest_port")->i == 2323)
+            EXPECT_EQ(s.find("waiting_sockets")->i, 1) << "only the modem waits on 2323";
+    }
 }

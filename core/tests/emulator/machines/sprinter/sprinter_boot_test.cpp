@@ -78,7 +78,7 @@ protected:
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
-        // These tests pin BIOS 3.04 (its screens, SETUP 1.58, IDE waits); the shipped default is 3.07 BETA 1
+        // These tests pin BIOS 3.04 (its screens, SETUP 1.58, IDE waits); the shipped default is 3.06 Hotfix 2
         ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));
 
         // The test default: skip the loader (FastStart=1); the full start is covered by

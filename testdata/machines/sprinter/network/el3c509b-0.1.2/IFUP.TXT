@@ -1,0 +1,78 @@
+IFUP.EXE
+
+IFUP brings the interface up. It uses only the environment published by
+NETCFG -i and never opens NET.CFG itself. Static mode checks the required
+address, card and link; DHCP mode obtains, renews or releases a lease.
+
+Usage
+
+IFUP
+IFUP -r
+IFUP -d
+IFUP /?
+
+| Form    | Meaning                                                        |
+|---------|----------------------------------------------------------------|
+| (plain) | Static check, or a fresh DHCP lease when NET_IP_SRC=DHCP.    |
+| -r    | Renew the active DHCP lease.                                   |
+| -d    | Release the active DHCP lease and clear the dynamic values.    |
+
+-r and -d reject static mode.
+
+Behaviour
+
+A plain DHCP run always performs a fresh DISCOVER/OFFER/REQUEST/ACK exchange,
+using bounded retry intervals of 4/8/16/16 seconds. An ACK commits the
+address, mask, gateway, up to two DNS servers, DHCP server and lease duration
+as one transaction.
+
+IFUP -r renews an active lease with three 5000 ms DHCPREQUEST attempts and
+ciaddr. Missing mask/gateway/DNS options and a zero yiaddr inherit the
+current lease; an ACK commits the complete result atomically. A renewal NAK
+clears dynamic address/DNS/server/lease values. Renewal timeout, malformed
+traffic, or cancellation preserves the old lease byte for byte.
+
+IFUP -d sends a best-effort DHCPRELEASE using the saved lease and then
+clears the dynamic values; repeating it without a lease succeeds without
+transmitting. There is no automatic static fallback and no hidden NET_STATE:
+a lease is active only when NET_IP_SRC=DHCP and NET_IP, NET_DHCP_SRV,
+and NET_LEASE_SEC are valid.
+
+Every successful run republishes NET_HW with the card's actual slot and
+base, the same self-healing NETCFG -i does. A pinned HW that no adapter
+answers falls back to auto-probing both slots instead of failing, and prints
+[W] HW=<old> not usable, probed <new> before continuing. A static run also
+drops a lease left over from an earlier DHCP run, which is inert once
+NET_IP_SRC=STATIC and is what NETCFG -i does too. In static mode the
+republish is best effort: it only refreshes values the environment already
+holds, so an environment that cannot be written leaves the previous
+configuration intact and does not fail an interface that is up. A DHCP lease
+is still published as one all-or-nothing transaction.
+
+The card is polling-only. Link and packet waits always finish with an explicit
+status; no ISA IRQ line is used. Esc or Ctrl-C cancels a DHCP wait with the
+cancelled exit code. Timeout diagnostics include the stage, elapsed interval,
+selected slot/base, controller status and DHCP destination.
+
+Examples
+
+NETCFG -i
+IFUP
+PING 8.8.8.8
+
+IFUP -r
+IFUP -d
+
+Exit codes
+
+| Code | Meaning                                                   |
+|------|-----------------------------------------------------------|
+| 0    | OK                                                        |
+| 1    | Usage error, or -r/-d in static mode                  |
+| 2    | 3C509B not detected                                       |
+| 3    | No link, DHCP timeout, or malformed DHCP traffic          |
+| 4    | NET_* environment missing or invalid; run NETCFG -i   |
+| 5    | Environment could not be written                          |
+| 7    | Cancelled with Esc or Ctrl+C                              |
+
+Every run ends with RESULT OK or RESULT FAIL code=N.

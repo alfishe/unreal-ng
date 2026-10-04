@@ -64,6 +64,10 @@ public:
     EthernetGateway(const EthernetGateway&) = delete;
     EthernetGateway& operator=(const EthernetGateway&) = delete;
 
+    /// Forward= guest ports another device answers (a Hayes modem's MODEM,<port>): the gateway does not listen on
+    /// them, so a host client of that port reaches that device, not an Ethernet card. Set before the first Attach
+    void SetReservedGuestPorts(std::vector<uint16_t> ports) { _reservedGuestPorts = std::move(ports); }
+
     /// A card plugs into the switch (nullptr-safe detach with Detach)
     void Attach(IEthernetPort* port);
     void Detach(IEthernetPort* port);
@@ -227,6 +231,7 @@ private:
     std::map<uint32_t, UdpFlow> _udp;
     std::map<uint32_t, IcmpFlow> _icmp;
     std::vector<Listener> _listeners;
+    std::vector<uint16_t> _reservedGuestPorts;
     uint32_t _nextId = 1;
     uint16_t _ipId = 1;
     uint32_t _issCounter = 0;
