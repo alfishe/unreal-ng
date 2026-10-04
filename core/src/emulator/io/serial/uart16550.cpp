@@ -518,6 +518,18 @@ void Uart16550::Advance(uint64_t now)
         }
     }
     UpdateModemStatus();
+    if (onAdvance)
+        onAdvance();
+}
+
+uint64_t Uart16550::NextEventAt() const
+{
+    uint64_t at = UINT64_MAX;
+    if (_txBusy)
+        at = _txDoneAt;
+    if (_rxInFlight && _rxArriveAt < at)
+        at = _rxArriveAt;
+    return at;
 }
 
 uint8_t Uart16550::LsrValue() const

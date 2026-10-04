@@ -468,3 +468,142 @@ TEST_F(SprinterEspKitAt221_Test, NetupSelectsThe221Profile)
     ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
     EXPECT_NE(screen.find("ESP firmware profile: 2.2.1."), std::string::npos) << screen;
 }
+
+// ISA I4, the interrupt-driven path shipped software uses: BC-Term 1.11 (MODEM/BCTERM.EXE on the system disk) probes
+// slot 1 (#D4) for a 16550 at #3F8, #3E8, ... and finds the SprinterESP's at #3E8. It sets IM 2 (I = #B5), programs
+// PIO port B for bit 0 (vector #00, #CF, #01, #B7, #FE, #83), the UART for the receive interrupt (IER 1, FCR #C1,
+// MCR #0B) and receives every byte in its interrupt handler: the ESP's boot lines and its echo of BC-Term's "ATZ"
+// arrive through IRQ3 -> PB0 -> IM 2. A TTD recording of the session replays to the same blobs.
+class SprinterBcTerm_Test : public SprinterZxSession_Test
+{
+protected:
+    void ConfigureMachine(CONFIG& config) override
+    {
+        config.sprinter.isa.slot[0].kind = static_cast<uint8_t>(sprinterisa::CardKind::SprinterEsp);
+        // BC-Term's rate table is for a 1.8432 MHz UART (divisors #C0 .. #01); at the SprinterESP's 14.7456 MHz its
+        // default "57600" (divisor 2) is 460 800 baud: an ESP whose firmware keeps UART_DEF 460800 (set once with
+        // AT+UART_DEF) answers it, as on the board
+        std::snprintf(config.sprinter.isa.slot[0].peer, sizeof(config.sprinter.isa.slot[0].peer), "AT,460800");
+        config.network.espChip = static_cast<uint8_t>(EspModule::Firmware::Esp8266At222);
+    }
+
+    std::string Exchanges()
+    {
+        std::string out;
+        if (PcSerialCard* card = _context->pCore->GetNetworkManager()->SerialCard("isa1"))
+        {
+            if (EspModule* esp = card->Esp())
+            {
+                for (const EspModule::Exchange& e : esp->RecentExchanges())
+                    out += "> " + e.request + "\n< " + e.reply + "\n";
+            }
+        }
+        return out;
+    }
+
+    std::string IrqJournal()
+    {
+        std::string out;
+        for (const SprinterIsaBus::JournalEntry& e : _decoder->GetIsaBus().IrqJournal())
+            out += std::to_string(e.frame) + ":" + std::to_string(e.t) + " " + e.what + "\n";
+        return out;
+    }
+
+    void Trace(const char* what)
+    {
+        if (!std::getenv("UNREAL_SPRINTER_NET_TRACE"))
+            return;
+        std::printf("--- %s (frame %llu)\n%s\n%s\nISA: %s\n", what, static_cast<unsigned long long>(Frame()),
+                    ScreenText().c_str(), Exchanges().c_str(),
+                    DeviceState::Isa(_context).find("irq_summary")->s.c_str());
+        const StateNode net = DeviceState::Network(_context);
+        std::printf("UART: %s\nJOURNAL:\n%s\n", DeviceState::ToText(*net.find("slots")->items[0].find("uart")).c_str(),
+                    DeviceState::ToText(DeviceState::IsaJournal(_context, 40)).c_str());
+        SaveScreen(std::string("bcterm-") + what + ".png");
+    }
+};
+
+TEST_F(SprinterBcTerm_Test, ReceivesTheEspsAnswerThroughTheIsaInterrupt)
+{
+    BootToPrompt();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ASSERT_TRUE(ttd->StartRecording());
+
+    Dss("C:\\MODEM\\BCTERM.EXE");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 300);
+    Trace("started");
+    const Z84Lib::Z84Pio::Port& b = _decoder->GetZ84().pio.GetPort(1);
+    ASSERT_EQ(b.mode, 3) << "BC-Term programs PIO port B in bit mode\n" << ScreenText();
+    EXPECT_EQ(b.mask & 0x01, 0) << "PB0 (slot 1) monitored";
+    EXPECT_TRUE(b.intControl & 0x80);
+    EXPECT_EQ(_context->pCore->GetZ80()->im, 2);
+
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 100);
+    Trace("running");
+
+    const SprinterIsaBus::Counters& c = _decoder->GetIsaBus().GetCounters(0);
+    EXPECT_GE(c.acknowledged, 1u) << IrqJournal();
+    EXPECT_EQ(c.acknowledged, c.serviceEnds) << "every service ended with RETI";
+    const StateNode net = DeviceState::Network(_context);
+    const StateNode* uart = net.find("slots")->items[0].find("uart");
+    ASSERT_NE(uart, nullptr);
+    EXPECT_GE(uart->find("bytes_in")->i, 40) << "the ESP's boot lines and the echo reached the 16550";
+    EXPECT_EQ(uart->find("rx_fifo")->i, 0) << "the handler emptied the FIFO";
+    EXPECT_EQ(uart->find("overruns")->i, 0);
+    // What BC-Term's interrupt handler received is on its screen: the ESP's boot lines (its RST released when
+    // BC-Term wrote MCR) and the echo of BC-Term's modem init string "ATZ" (CR-terminated: ESP-AT waits for CR LF,
+    // so it answers nothing more, as the firmware does)
+    EXPECT_TRUE(ScreenHas("WIFI GOT IP")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("ATZ")) << ScreenText();
+
+    // The session replays from its first checkpoint: at the same frame boundary the card's UART + ESP blob and the ISA
+    // blob equal the live ones byte for byte. Both sides stop exactly at the boundary (RunTStates stops once the clock
+    // reaches the frame end, the frame closes with the instruction that crosses it; RunNFrames runs a little past it)
+    // and are captured after the frame's network work (a checkpoint is taken before it)
+    Z80* z80 = _context->pCore->GetZ80();
+    auto runToBoundary = [&]() {
+        const uint64_t frame = Frame();
+        for (int guard = 0; guard < 4 && Frame() == frame; guard++)
+            _emulator->RunTStates(z80->t < z80->_frameLimit ? z80->_frameLimit - z80->t : 1u, true);
+    };
+    for (int f = 0; f < 6; ++f)
+        runToBoundary();
+    const uint64_t endFrame = Frame();
+    std::unordered_map<uint8_t, std::vector<uint8_t>> recorded;
+    ttd->GetPeripheralRegistry().CaptureAll(recorded);
+    ttd->StopRecording();
+    ASSERT_GE(ttd->GetCheckpointCount(), 2u);
+    const uint64_t acksLive = c.acknowledged;
+    const uint64_t servicesLive = c.serviceEnds;
+    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
+    _decoder->GetIsaBus().ClearJournal();
+    while (Frame() < endFrame)
+        runToBoundary();
+    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
+    ttd->GetPeripheralRegistry().CaptureAll(live);
+    for (ttd::PeripheralId id : {ttd::PeripheralId::SlotSerial1, ttd::PeripheralId::SprinterIsa})
+    {
+        const uint8_t key = static_cast<uint8_t>(id);
+        ASSERT_EQ(live.count(key), 1u) << int(key);
+        const std::vector<uint8_t> x = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
+        ASSERT_EQ(recorded.count(key), 1u) << int(key);
+        const std::vector<uint8_t> y = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
+        ASSERT_EQ(x.size(), y.size()) << "device " << int(key);
+        size_t count = 0;
+        std::string diffs;
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            if (x[i] != y[i] && count++ < 16)
+                diffs += " @" + std::to_string(i) + ":" + std::to_string(y[i]) + "->" + std::to_string(x[i]);
+        }
+        EXPECT_EQ(count, 0u) << "device " << int(key) << " differs after the replay (recorded->replayed)" << diffs;
+    }
+    // The replay took the interrupts again (the counters are observation: they count on)
+    EXPECT_GT(c.acknowledged, acksLive) << "the replay's interrupts";
+    EXPECT_NE(IrqJournal().find("INT acknowledged: PIO port B, IM 2 vector #00 -> table #B500"), std::string::npos)
+        << "the replay journals them (the interrupt ring keeps them while BC-Term polls MSR)\n" << IrqJournal();
+    EXPECT_EQ(c.acknowledged - acksLive, c.serviceEnds - servicesLive);
+}

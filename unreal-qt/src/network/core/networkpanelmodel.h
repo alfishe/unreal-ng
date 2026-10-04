@@ -104,4 +104,6 @@ struct NetworkSlotRow
     std::string label;   ///< "ISA slot 2 (J7), page #D6"
     std::string line;
 };
-std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network);
+/// `isa`: the ISA slot report (DeviceState::Isa) or null - each fitted slot then also shows its IRQ line ("IRQ line
+/// low -> PB1, interrupts the CPU, 3 acknowledged"; ISA phase I4)
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const StateNode* isa = nullptr);

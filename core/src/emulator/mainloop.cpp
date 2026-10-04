@@ -144,6 +144,11 @@ void MainLoop::Run(volatile bool& stopRequested)
         {
             MLOGINFO("Pause requested");
 
+            // Status reads while paused take the published TTD summary: make
+            // it exact before anyone can see this thread parked
+            if (_context->pTimeTravelManager)
+                _context->pTimeTravelManager->OnMachineParking();
+
             // Signal that we've entered paused state
             {
                 std::lock_guard<std::mutex> lock(_pauseMutex);

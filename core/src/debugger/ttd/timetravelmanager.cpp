@@ -138,14 +138,15 @@ TimeTravelManager::~TimeTravelManager()
 
 void TimeTravelManager::SetUnavailableReason(const std::string& reason)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (!reason.empty() && _state != TTDSessionState::Idle)
         InvalidateSession(reason.c_str());
     _unavailableReason = reason;
-    PublishSessionInfo();
 }
 
 bool TimeTravelManager::StartRecording()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
 
@@ -348,6 +349,7 @@ bool TimeTravelManager::StartRecording()
 
 void TimeTravelManager::StopRecording()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state != TTDSessionState::Recording)
     {
         // Compress whatever coverage is still accumulating, so size reporting
@@ -413,6 +415,7 @@ void TimeTravelManager::StopRecording()
 
 bool TimeTravelManager::BeginDebuggerLiveHistory()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Detached)
     {
         MLOGWARNING("TimeTravelManager::BeginDebuggerLiveHistory — refused: session is Detached "
@@ -446,6 +449,7 @@ bool TimeTravelManager::BeginDebuggerLiveHistory()
 
 void TimeTravelManager::EndDebuggerLiveHistory()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_recordMode != TTDRecordMode::DebuggerLive)
         return;  // Idempotent
 
@@ -459,7 +463,7 @@ void TimeTravelManager::EndDebuggerLiveHistory()
 
 void TimeTravelManager::InvalidateSession(const char* reason)
 {
-    const PublishOnExit publish{*this};
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     ClearFrameCache();
 
     if (_timeline.empty() && _state == TTDSessionState::Idle)
@@ -754,6 +758,94 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     return info;
 }
 
+void TimeTravelManager::SetSessionSourcePath(const std::string& path)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _sourcePath = path;
+}
+
+bool TimeTravelManager::OnMachineThread() const
+{
+    return _context && _context->pMainLoop && _context->pMainLoop->IsRunThread();
+}
+
+TimeTravelManager::SessionOperation::SessionOperation(const TimeTravelManager& manager, Kind kind)
+    : _manager(manager), _kind(kind)
+{
+    if (_manager.OnMachineThread())
+        return;  // the owner: nothing runs beside it
+    _manager._controlMutex.lock();
+    _locked = true;
+    ++_manager._operationDepth;
+
+    // An active session is read (Detached replay) or written (Recording) by a
+    // running machine: park it for the operation. Already paused - by the
+    // caller, an outer operation or a breakpoint - nothing to do
+    Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
+    if (emu && _manager._state.load() != TTDSessionState::Idle && emu->IsRunning() && !emu->IsPaused())
+    {
+        emu->Pause(false);
+        emu->WaitForPauseConfirmation(1000);
+        _parked = true;
+    }
+}
+
+TimeTravelManager::SessionOperation::~SessionOperation()
+{
+    if (_kind == Kind::Change)
+    {
+        // The outermost operation publishes, and only where reading the live
+        // session is safe: on the machine's thread, or with no machine
+        // executing a recording (an operation that resumed a recording
+        // machine itself - StartRecording - published before it did)
+        Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
+        const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsPaused() &&
+                                          _manager._state.load() == TTDSessionState::Recording;
+        if (!_locked || (_manager._operationDepth == 1 && !recordingMachineRuns))
+            _manager.PublishSessionInfo();
+    }
+    if (_parked)
+    {
+        if (Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr)
+            emu->Resume(false);
+    }
+    if (_locked)
+    {
+        --_manager._operationDepth;
+        _manager._controlMutex.unlock();
+    }
+}
+
+TTDSessionInfo TimeTravelManager::ReadSessionInfo() const
+{
+    if (OnMachineThread())
+        return GetSessionInfo();
+
+    // Another control operation in progress: it publishes when it ends
+    std::unique_lock<std::recursive_mutex> lock(_controlMutex, std::try_to_lock);
+    if (!lock.owns_lock())
+        return GetPublishedSessionInfo();
+
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    if (emu)
+    {
+        // Something drives the machine (its loop, or a control thread stepping it)
+        if (emu->IsDirectStepping() || (emu->IsRunning() && !emu->IsEmulationParked()))
+            return GetPublishedSessionInfo();
+        // Parked, but a Resume from any thread would let a recording run beside
+        // the read: the snapshot the machine published as it parked is exact
+        if (emu->IsRunning() && _state.load() == TTDSessionState::Recording)
+            return GetPublishedSessionInfo();
+    }
+    return GetSessionInfo();
+}
+
+void TimeTravelManager::OnMachineParking()
+{
+    if (_state.load() == TTDSessionState::Recording && !_inReplayMode)
+        PublishSessionInfo();
+}
+
 TTDSessionInfo TimeTravelManager::GetPublishedSessionInfo() const
 {
     // An observer is looking: the machine's thread publishes again at its next
@@ -785,6 +877,7 @@ void TimeTravelManager::MaybePublishAtFrameBoundary()
 
 bool TimeTravelManager::SetEnableWriteJournal(bool enable)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (enable == _enableWriteJournal)
         return true;
     if (!RecordingGuard(TTDGuardedAction::ChangeWriteJournal).empty())
@@ -2076,7 +2169,7 @@ void TimeTravelManager::DisarmInputPlayback()
 
 void TimeTravelManager::OnMachineReset()
 {
-    const PublishOnExit publish{*this};
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     DisarmInputPlayback();
     if (_portReads.GetMode() == TTDPortJournal::Mode::Play || _portWrites.GetMode() == TTDPortJournal::Mode::Play)
     {
@@ -2181,6 +2274,7 @@ void TimeTravelManager::SyncPortJournalHook()
 
 TTDPortSearchResult TimeTravelManager::SearchPortEvents(const TTDPortQuery& q) const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (!_portJournalValid)
     {
         TTDPortSearchResult result;
@@ -2206,6 +2300,7 @@ TTDPortSearchResult TimeTravelManager::SearchPortEvents(const TTDPortQuery& q) c
 
 void TimeTravelManager::RecordExternalEvent(TTDExternalEventKind kind, const char* reason)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (!_context)
         return;
 
@@ -2303,6 +2398,7 @@ void TimeTravelManager::RunToTInFrame(uint32_t targetTInFrame)
 
 TTDTimePoint TimeTravelManager::SessionEndPosition() const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (_timeline.empty())
         return TTDTimePoint{};
     return _timeline.back().time;
@@ -2310,7 +2406,7 @@ TTDTimePoint TimeTravelManager::SessionEndPosition() const
 
 bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
-    const PublishOnExit publish{*this};
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // Each new Detached window starts with a clean auto-pause signal.
     // The flag is set by OnFrameBoundary when execution runs past
     // SessionEndPosition(); clearing here means callers can poll
@@ -2363,6 +2459,7 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outRes
 bool TimeTravelManager::AddBookmark(const TTDTimePoint& time, const std::string& label,
                                     std::string* err)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // A bookmark into empty history dangles immediately — there is no
     // checkpoint to return to. Refuse at creation instead of at seek time.
     if (_timeline.empty())
@@ -2396,22 +2493,26 @@ bool TimeTravelManager::AddBookmark(const TTDTimePoint& time, const std::string&
 
 std::vector<TTDBookmark> TimeTravelManager::GetBookmarks() const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     return _bookmarks.Snapshot();
 }
 
 bool TimeTravelManager::FindBookmark(const std::string& label, TTDBookmark& out) const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     return _bookmarks.Find(label, out);
 }
 
 bool TimeTravelManager::RemoveBookmark(const std::string& label)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     return _bookmarks.Remove(label);
 }
 
 bool TimeTravelManager::SeekToBookmark(const std::string& label, TTDSeekResult* outResult,
                                        std::string* err)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDBookmark bookmark;
     if (!_bookmarks.Find(label, bookmark))
     {
@@ -2860,6 +2961,7 @@ void TimeTravelManager::PresentPosition(bool frameTarget)
 
 bool TimeTravelManager::StepBackFrame()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
     {
         MLOGWARNING("TimeTravelManager::StepBackFrame — rejected: session is Recording "
@@ -2890,6 +2992,7 @@ bool TimeTravelManager::StepBackFrame()
 
 bool TimeTravelManager::StepForwardFrame()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
     {
         MLOGWARNING("TimeTravelManager::StepForwardFrame — rejected: session is Recording "
@@ -2925,7 +3028,7 @@ bool TimeTravelManager::StepForwardFrame()
 
 bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
 {
-    const PublishOnExit publish{*this};  // the caller resumes the machine afterwards
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // Returning to live recording ends the browse scope: free the decode cache.
     ClearFrameCache();
 
@@ -3069,6 +3172,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
 
 bool TimeTravelManager::ResumeRecordingLive()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // Leaving the browse scope: free the decode cache.
     ClearFrameCache();
 
@@ -3168,27 +3272,14 @@ bool TimeTravelManager::ResumeRecordingLive()
 
 void TimeTravelManager::SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes)
 {
+    // A recording machine is parked by the operation (the Qt history combo
+    // calls this from the UI thread while it records): the eviction never
+    // runs beside its capture
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     _historyLimitFrames.store(maxFrames, std::memory_order_release);
     _historyLimitBytes.store(maxBytes, std::memory_order_release);
-    if (_state != TTDSessionState::Recording)
-    {
-        PublishSessionInfo();
-        return;
-    }
-
-    // While the loop runs, the recording belongs to the machine's thread:
-    // evicting from here would free checkpoints beside its capture (the Qt
-    // history combo calls this while recording). That thread enforces the new
-    // limit at its next frame boundary, as it does after every capture
-    const bool loopRunning = _context && _context->pEmulator && _context->pEmulator->IsRunning();
-    const bool onLoopThread = _context && _context->pMainLoop && _context->pMainLoop->IsRunThread();
-    if (loopRunning && !onLoopThread)
-    {
-        _publishRequested.store(true, std::memory_order_release);
-        return;
-    }
-    EnforceHistoryLimit();
-    PublishSessionInfo();
+    if (_state == TTDSessionState::Recording)
+        EnforceHistoryLimit();
 }
 
 uint64_t TimeTravelManager::BlobBytes(const TTDCheckpoint& cp)
@@ -3681,6 +3772,7 @@ bool ReadExternalEventSection(std::istream& in, std::vector<TTDExternalEvent>& e
 
 bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     // --- Resolve header metadata ---
     // cpu_state_size / chipset_state_size are written so a future C++ reader
     // can detect struct-layout drift between the writer and reader builds.
@@ -4110,6 +4202,7 @@ bool TimeTravelManager::TurboSoundSessionKindMatches(
 
 bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // A machine where time travel is not available at all (a ZX-Poly member)
     // loads no session; a file search (SearchPortEventsInFile) does not load
     // one, so it is not refused
@@ -4118,7 +4211,6 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
         err = _unavailableReason;
         return false;
     }
-    const PublishOnExit publish{*this};
     return DeserializeSessionImpl(in, err, nullptr);
 }
 
@@ -4994,6 +5086,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
                                   TTDExternalEvent* outBlockingMarker,
                                   TTDSearchWindow* outWindow)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     // ------------------------------------------------------------------
     // Guards — same shape as SeekTo.
     // ------------------------------------------------------------------
@@ -5258,6 +5351,7 @@ replay_fallback:
 
 bool TimeTravelManager::StepBackInstruction()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
     {
         MLOGWARNING("TimeTravelManager::StepBackInstruction — rejected: session is Recording");
@@ -5301,6 +5395,7 @@ bool TimeTravelManager::StepBackInstruction()
 
 bool TimeTravelManager::StepForwardInstruction()
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
     {
         MLOGWARNING("TimeTravelManager::StepForwardInstruction — rejected: session is Recording");
@@ -5529,6 +5624,7 @@ TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
 
 bool TimeTravelManager::ReverseStepInstructions(uint32_t n)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (n == 0)
     {
         MLOGWARNING("TimeTravelManager::ReverseStepInstructions — n=0 is a no-op");
@@ -5638,6 +5734,7 @@ bool TimeTravelManager::ReverseStepInstructions(uint32_t n)
 
 bool TimeTravelManager::ReverseStepTStates(uint64_t n)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // State guards.
     if (_state == TTDSessionState::Recording)
     {
@@ -5714,6 +5811,7 @@ bool TimeTravelManager::ReverseStepTStates(uint64_t n)
 TimeTravelManager::TTDReverseContinueResult
 TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDReverseContinueResult result;
 
     if (_state == TTDSessionState::Recording)
@@ -6304,6 +6402,7 @@ TTDCoverageProbeResult TimeTravelManager::QueryCoverageProbe(
     uint16_t addrTo,
     std::optional<PhysPage> physPage) const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     TTDCoverageProbeResult result;
     result.frame = frame;
     result.kind = kind;
@@ -6346,6 +6445,7 @@ TTDCoverageScanResult TimeTravelManager::QueryCoverageScan(
     std::optional<PhysPage> physPage,
     size_t limit) const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     TTDCoverageScanResult result;
     result.kind = kind;
     result.addrFrom = addrFrom;
@@ -6418,6 +6518,7 @@ TTDCoverageSummaryResult TimeTravelManager::QueryCoverageSummary(
     uint64_t bucketSize,
     size_t limit) const
 {
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
     TTDCoverageSummaryResult result;
     result.fromFrame = fromFrame;
     result.toFrame = toFrame;

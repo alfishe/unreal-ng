@@ -29,6 +29,7 @@
 #include "emulator/emulator.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterpldgame.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
 #include "emulator/ports/models/sprinter/sprinterzxports.h"
 #include "emulator/machineeventjournal.h"
@@ -241,6 +242,11 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
 
     StateNode v = StateNode::Object();
     v["mode_page"] = int(modePage);
+    // Whose rules draw the picture: the square kinds below are Standard's classification
+    v["renderer"] = decoder.ActiveModule().Descriptor().name;
+    if (decoder.BeamVideo())
+        v["renderer_note"] = "Game configuration: every square is graphics 320 with the grid offset (pld.game); the "
+                             "kinds below classify the mode bytes by the Standard rules";
     // The picture's mode by the summary the GUI status bar shows (SprinterPicture: border / blank squares
     // frame a picture, a Spectrum screen is its ZX-40 squares)
     const SprinterPicture shown = SprinterPicture::Of(vram.Data(), modePage);
@@ -577,6 +583,46 @@ StateNode OrigWaitsSummary(PortDecoder_Sprinter& decoder)
     return w;
 }
 
+/// The PLD configuration module that runs and why (the machine report, the BIOS report, the ZX-mode report)
+StateNode PldModule(PortDecoder_Sprinter& decoder)
+{
+    const SprinterPldState& pld = decoder.GetPldState();
+    const SprinterPldModuleDescriptor& module = decoder.ActiveModule().Descriptor();
+    StateNode m = StateNode::Object();
+    m["module"] = module.name;
+    m["module_index"] = int(pld.configModule);
+    std::string key, why;
+    decoder.ModuleSelection(key, why);
+    m["selected_by"] = key;
+    m["why"] = why;
+    m["full_hash"] = Hex32(pld.bitstreamHashFull);
+    m["head_hash"] = Hex32(pld.bitstreamHashHead);
+    m["cell_EE"] = Hex8(pld.Cell(0xEE));
+    m["cell_EE_note"] = "RET_PORT: the BIOS reads and clears it after every load and reset; non-zero = return to the "
+                        "program whose windows and address are in that page at #FFF0-#FFF5 (the Game bitstream sets #41)";
+    return m;
+}
+
+/// The Game configuration's picture state (its grid-offset register, sprintergamevideo.h); null node otherwise
+StateNode GameVideo(PortDecoder_Sprinter& decoder)
+{
+    StateNode g = StateNode::Object();
+    const auto* game = dynamic_cast<const SprinterPldGame*>(&decoder.ActiveModule());
+    g["active"] = game != nullptr && decoder.BeamVideo() != nullptr;
+    if (!game)
+        return g;
+    const SprinterGameVideoState& v = game->Video().State();
+    g["grid_offset"] = Hex8(v.offset);
+    g["grid_offset_x"] = int(v.offset & 0x0F);
+    g["grid_offset_y"] = int(v.offset >> 4);
+    g["frame_start_offset"] = Hex8(v.frameOffset);
+    g["beam_t"] = static_cast<uint64_t>(v.beamT);
+    g["picture"] = "every square graphics 320 x 256 colors from any byte corner of the 1024 x 256 virtual screen "
+                   "(Mode0 bits 1-0 + Mode1 = column, Mode2 = row, bits 7-6 = palette); Mode0 bit 2: Mode3 becomes the "
+                   "grid offset after the square (X bits 3-0 x 2 pixels, Y bits 7-4 lines); no text squares";
+    return g;
+}
+
 StateNode Bios(EmulatorContext* context)
 {
     StateNode b = StateNode::Object();
@@ -825,6 +871,14 @@ StateNode Sprinter(EmulatorContext* context)
         for (size_t i = 0; i < decoder->GetRegistry().Count(); i++)
             modules.push(decoder->GetRegistry().At(i).Descriptor().name);
         p["modules_known"] = modules;
+        {
+            std::string key, why;
+            decoder->ModuleSelection(key, why);
+            p["selected_by"] = key;
+            p["why"] = why;
+        }
+        p["cell_EE"] = Hex8(pld.Cell(0xEE));
+        p["game"] = GameVideo(*decoder);
         StateNode bitstream = StateNode::Object();
         bitstream["writes"] = static_cast<uint64_t>(pld.bitstreamCount);
         bitstream["writes_expected"] = static_cast<uint64_t>(SprinterPldConfig::kPldConfigurationWrites);
@@ -1082,6 +1136,7 @@ StateNode SprinterBios(EmulatorContext* context)
         return Unavailable("Not a Sprinter machine");
     StateNode ret = Bios(context);
     ret["available"] = true;
+    ret["pld"] = PldModule(*decoder);  // the configuration the BIOS runs on: Game, after a program reloaded it
     return ret;
 }
 
@@ -2195,6 +2250,7 @@ StateNode SprinterZxMode(EmulatorContext* context, bool deep)
 
     StateNode ret = StateNode::Object();
     ret["available"] = true;
+    ret["pld"] = PldModule(*decoder);  // the ZX mode needs the Standard configuration (its screen, ports, waits)
 
     const bool configured = pld.configState == SprinterConfigState::Configured;
     const bool vrom = configured && pld.romOff && !pld.cacheOn;

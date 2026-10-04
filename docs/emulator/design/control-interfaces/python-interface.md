@@ -156,7 +156,8 @@ class Emulator:
         written). available=False on other machines"""
 
     def sprinter_state(self) -> dict:
-        """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
+        """Sprinter Sp2000 report: pld (state, module Standard / Game, selected_by +
+        why, cell_EE, game grid offset, bitstream hashes), decoder (CNF
         map, DOS, PN5, #7FFD / #1FFD), windows (kind + physical page), registers,
         cells #C0-#FF, clock, frame, video (mode table summary), z84c15, fdc, cmos,
         ide, bios (images, how to select). available=False on other machines"""
@@ -268,7 +269,9 @@ class Emulator:
     def isa_state(self) -> dict:
         """ISA slots (Sprinter Sp2000): latch (the #9FBD byte: value, a19_a14, aen, reset), window
         (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
-        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters).
+        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters with the IRQ
+        counters, irq_line: the slot's IRQ line - level, driver, route to PIO port B bit 0 / 1, the
+        PIO's bit-mode setup, pending / under service, reaches_cpu), pio_port_b, irq_summary.
         available=False on other machines"""
 
     def isa_io_read(self, slot: int, address) -> int:
@@ -280,7 +283,9 @@ class Emulator:
 
     def isa_journal(self, last: int = 64) -> dict:
         """The ISA access journal: entries[] (frame, t, pc, slot, access, space, isa_address,
-        cpu_address, what = the card's register name, value)"""
+        cpu_address, what = the card's register name, value); interrupt events have event='irq'
+        (IRQ line edges with the card's cause, PIO port B requests, INT acknowledged, RETI), also
+        in irq_events (their own 128-entry ring, which a polled card does not flush)"""
 
     def network_frames(self, link: str = "", last: int = 32) -> dict:
         """The Ethernet gateway's frame capture (frame-level cards such as the Sprinter's NE2000):

@@ -276,6 +276,9 @@ No per-instruction cost: nothing runs between accesses.
 
 `Irq() = (ISR & IMR & #7F) != 0` (and CONFIG1.IRQEN on the RTL8019AS). The wrapper routes it to PIO port B bit 0 /
 1 once ISA phase I4 has the lines. No Sprinter program enables it today (the kits poll), so SN1 works without I4.
+*As built with ISA I4 (2026-10-03):* `IrqDriven()` = CONFIG1.IRQEN (RTL8019AS) and an 8-bit IRQ pin (2/9, 3, 4, 5,
+7); a floating pin reads high through the slot's pull-up; `NextIrqEventAt()` = the transmit's end (PTX); the DP8390's
+listener reports every ISR / IMR change ([ISA tdd §14 I4](../2026-10-02-sprinter-isa/tdd.md#i4-2026-10-03-branch-sprinter-isa-i4)).
 
 ## 7. The Ethernet gateway (host side for frame cards)
 
@@ -742,6 +745,9 @@ network cards ahead of ISA RAM if the owner agrees (Q7).
   GPIO0 low), `peer`, `esp` (firmware, running / reset held / download mode, hardware resets, Wi-Fi, IP, MAC, baud,
   flow control, `at_session` with the open links, the last 32 AT exchanges). MCP prints a one-line summary per slot;
   Qt: the slot line shows UART + ESP, an editor per UART slot sets its line, the chip box offers the 2.2.x presets.
+- **ISA I4 (2026-10-03):** the card's INTR reaches PB0 / PB1 (`IrqDriven` always, `NextIrqEventAt` = the 16550's next
+  character in or out, the listener = `Uart16550::onAdvance`); BC-Term 1.11 takes the ESP's lines through its IM 2
+  handler (ISA tdd §14 I4).
 - **Tests:** `pcserialcard_test.cpp` (decode / AEN / mirrors, reports, OUT1 reset and boot, OUT2 download mode, RESET
   DRV to MR, IRQ3 without OUT2, runtime change keeps the UART), `atmodule_test.cpp` (+6: the 2.2.x identities and the
   SYSSTORE probe, the commands the kit sends, 2.x passive receive, the reset / flash pins, the state round trip),

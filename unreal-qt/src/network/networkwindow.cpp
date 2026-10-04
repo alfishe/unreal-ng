@@ -544,7 +544,10 @@ void NetworkWindow::refresh()
     updateAvailability();
     updateStatusTree(network);
 
-    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    const StateNode isa = DeviceState::Isa(context);
+    const StateNode* isaAvailable = isa.find("available");
+    const std::vector<NetworkSlotRow> rows =
+        NetworkSlotRows(network, isaAvailable && isaAvailable->b ? &isa : nullptr);
     QStringList lines;
     for (const NetworkSlotRow& row : rows)
         lines << QStringLiteral("<b>%1</b>: %2").arg(Q(row.label).toHtmlEscaped(), Q(row.line).toHtmlEscaped());

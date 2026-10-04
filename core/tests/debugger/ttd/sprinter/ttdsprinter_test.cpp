@@ -58,6 +58,9 @@
 #include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/machines/sprinter/sprinterdssmedia.h"
 #include "emulator/machines/sprinter/sprinterfixture.h"
+#include "emulator/video/sprinter/sprintergamevideo.h"
+#include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterpldgame.h"
 
 namespace
 {
@@ -122,8 +125,9 @@ TEST_F(TTDSprinter_Test, Pld_RoundTripsThePldTheDecoderAndTheIntSource)
     acc.operations = 1234;
 
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 2 + sizeof(SprinterAccelState))
-        << "Standard brings no module state; the accelerator section";
+    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 +
+                                             sizeof(SprinterAccelState))
+        << "Standard brings no module state, the room is Game's (the largest); the accelerator section";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(saved[0], ttd::TTDSprinterPld::kVersion);
     const SprinterPldState pldBefore = pld;
@@ -182,8 +186,9 @@ TEST_F(TTDSprinter_Test, Pld_TheModuleTravelsByNameWithItsState)
     std::memcpy(stub->state, "\x11\x22\x33\x44", 4);
 
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 4 + 2 + sizeof(SprinterAccelState))
-        << "room for the largest module state";
+    EXPECT_EQ(serializer.TTDStateSize(),
+              ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 + sizeof(SprinterAccelState))
+        << "room for the largest module state (Game's 16 bytes, more than this module's 4)";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(saved.data()) + 139), "TtdStateModule");
 
@@ -1061,3 +1066,54 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_AcceleratorArmedAndInIntSuspendWind
 }
 
 /// endregion </Exact restore on the real BIOS>
+
+/// The Game PLD configuration (sprinterpldgame.h) in the TTD: the module and its 16-byte state travel in the PLD blob,
+/// every checkpoint holds beam_t 0 of its own frame (the frame start closed the frame before), and a replay ends every
+/// frame with the same blobs - with ScreenHQ off as recorded and with it on (the grid-offset register runs on every
+/// catch-up whether the frame is drawn or not). BIOS 3.04 runs its POST on the Game logic (it returns through page
+/// #41 into nothing, restarts and clears cell #EE): any deterministic program will do. Boot-bound: ~40 frames
+TEST_F(TTDSprinterMachine_Test, GameModule_ReplaysBitExactWithAnyRendering)
+{
+    PowerOn(true);
+    Skip(5);
+    // The Game bitstream's load: the sink one write before the end with the Game hashes (FNV-1a backwards with the
+    // inverse of its prime, as sprinterpldgame_test.cpp), the PLD's reset at the next instruction
+    _decoder->BeginLoading();
+    SprinterPldState& pld = _decoder->GetPldState();
+    pld.bitstreamCount = SprinterPldConfig::kPldConfigurationWrites - 1;
+    pld.bitstreamHashHead = SprinterPldGame::kHeadHash;
+    pld.bitstreamHashFull = (SprinterPldGame::kFullHash * 0x359C449Bu) ^ 0xFFu;
+    _decoder->OnConfigurationWrite(0xFF);
+    RunToBoundary();
+    ASSERT_EQ(_decoder->ActiveModule().Descriptor().name, "Game");
+    Skip(3);
+
+    StartRecording();
+    Record(20);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 21u);
+
+    // The blob: module name at 139, state room (u16) at 171, used (u16) at 173, the state from 175
+    // (offset, frame offset, 2 reserved, beam_t u32, frame u64)
+    for (size_t idx = 0; idx < _ttd->GetCheckpointCount(); idx++)
+    {
+        const std::vector<uint8_t> blob = BlobOf(idx, ttd::PeripheralId::SprinterPld);
+        ASSERT_GT(blob.size(), 175u + sizeof(SprinterGameVideoState));
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(blob.data()) + 139), "Game") << "checkpoint " << idx;
+        SprinterGameVideoState state;
+        std::memcpy(&state, blob.data() + 175, sizeof(state));
+        EXPECT_EQ(state.beamT, 0u) << "checkpoint " << idx << ": the frame start closed the frame before";
+        EXPECT_EQ(state.frame, _ttd->GetCheckpoint(idx)->time.frame) << "checkpoint " << idx;
+    }
+    ExpectExactReplay(0, 20, "Game, ScreenHQ off as recorded");
+
+    // The beam-exact renderer on: different catch-ups, the same machine state at every boundary
+    _emulator->GetFeatureManager()->setFeature(Features::kScreenHQ, true);
+    _context->pMemory->UpdateFeatureCache();
+    ASSERT_TRUE(_ttd->SeekTo({_ttd->GetCheckpoint(0)->time.frame, 0}));
+    for (size_t idx = 1; idx < _ttd->GetCheckpointCount() && !HasFailure(); idx++)
+    {
+        RunToBoundary();
+        ExpectLiveMatchesCheckpoint(idx, "Game, ScreenHQ on: frame " + std::to_string(idx), false, false);
+    }
+}

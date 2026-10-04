@@ -199,10 +199,22 @@ def probe(emu, name, out_dir, seconds=8, step=2, journal_from=None):
               "picture_changes": len(set(digests)) - 1}
     reloads = emu.journal_since(journal_from, ("pld_load",)) if journal_from is not None else []
     if reloads:
-        # The program reloaded the PLD (code #2E: back to the ROM loader, e.g. a custom .acx bitstream): the
-        # machine restarts, so the picture and the PC say nothing about the program itself
+        # The program reloaded the PLD (code #2E: back to the ROM loader, e.g. a custom .acx bitstream): the machine
+        # restarted with the configuration the loaded bitstream chose (the PLD journal's pld_configured events name
+        # the module and why, e.g. "module Game ... matched by the full hash"); `after_reload` says what it did then
         result["verdict"] = "pld-reload"
         result["pld_load"] = [{k: e.get(k) for k in ("frame", "pc", "text")} for e in reloads[:2]]
+        configured = emu.journal_since(journal_from, ("pld_configured",))
+        result["pld_configured"] = [{k: e.get(k) for k in ("frame", "text")} for e in configured[:4]]
+        pld = emu.call("GET", "/state/sprinter").get("pld", {})
+        result["pld_module"] = pld.get("module")
+        result["pld_selected_by"] = pld.get("selected_by")
+        if pc == FN_IDLE_PC and len(set(pcs)) == 1:
+            result["after_reload"] = "exited-to-fn"
+        elif result["picture_changes"]:
+            result["after_reload"] = "running"
+        else:
+            result["after_reload"] = "static"
     elif pc == FN_IDLE_PC and len(set(pcs)) == 1:
         result["verdict"] = "exited-to-fn"
     elif opcode == 0x76 and len(set(pcs)) == 1 and result["picture_changes"] == 0:

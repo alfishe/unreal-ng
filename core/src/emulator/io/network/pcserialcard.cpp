@@ -44,6 +44,7 @@ PcSerialCard::PcSerialCard(EmulatorContext* context, Preset preset, std::unique_
 PcSerialCard::~PcSerialCard()
 {
     _com.Uart().onAuxLines = nullptr;
+    _com.Uart().onAdvance = nullptr;
 }
 
 EspModule* PcSerialCard::Esp() const
@@ -131,6 +132,23 @@ int PcSerialCard::IrqLine() const
 bool PcSerialCard::Irq() const
 {
     return _com.Uart().IntrPin();
+}
+
+std::string PcSerialCard::IrqCause() const
+{
+    // The 16550's priority order (IIR bits 3-1): line status, received data, character timeout, THRE, modem status
+    const Uart16550::View v = _com.Uart().GetView();
+    const char* what = "none pending";
+    switch (v.iir & 0x0F)
+    {
+        case 0x06: what = "line status (overrun)"; break;
+        case 0x04: what = "received data at the FIFO trigger level"; break;
+        case 0x0C: what = "received data below the trigger level (character timeout)"; break;
+        case 0x02: what = "transmitter holding register empty"; break;
+        case 0x00: what = "modem status"; break;
+        default: break;
+    }
+    return "IIR " + Hex(v.iir, 2) + " (" + what + "), IER " + Hex(v.ier, 2) + "; INTR wired to IRQ3, OUT2 does not gate it";
 }
 
 const char* PcSerialCard::RegisterName(uint16_t offset, bool write) const

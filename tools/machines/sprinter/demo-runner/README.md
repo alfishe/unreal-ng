@@ -22,7 +22,7 @@ Each program goes through three steps:
 | `static` | the picture does not change and the CPU is not parked in a `HALT` |
 | `waits-for-int` | parked in a `HALT` with no picture change; with IM 2 the result lists the vectors the program installed, so an interrupt source nobody raises shows up at once |
 | `exited-to-fn` | back in Flex Navigator's idle loop |
-| `pld-reload` | the program reloaded the PLD (code `#2E`, seen in the PLD journal): the machine restarted with another logic configuration, e.g. the "Game" bitstream `GAME_00.ACX` / `GC.BIN`; the picture and the PC no longer say anything about the program |
+| `pld-reload` | the program reloaded the PLD (code `#2E`, seen in the PLD journal): the machine restarted with the configuration the loaded bitstream chose. The result names it: `pld_module` / `pld_selected_by` (from `/state/sprinter`: `Game` by `full_hash` for `GAME_00.ACX` / `GC.BIN`, `Standard` by `unknown_bitstream` for a stream nobody knows), the journal's `pld_configured` events, and `after_reload` (`running`, `static`, `exited-to-fn`: what the machine did on the new configuration) |
 
 A `running` verdict means only that the picture changes: look at the screenshots (the contact sheet)
 before calling a program good.
