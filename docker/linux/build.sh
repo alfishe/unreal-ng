@@ -75,8 +75,20 @@ done
 BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
 [ "$CLEAN" = 1 ] && rm -rf "$ROOT/$BUILDDIR"
 
+# Git worktrees: their .git file points at the main repository's .git by absolute path
+# (gitdir: <common>/worktrees/<name>). Mount that directory at the same path, read-only, so
+# git - CMake's build fingerprint - works in the container from any worktree. The main
+# checkout's .git already is inside $ROOT. GIT_OPTIONAL_LOCKS=0: git never writes to it.
+MOUNTS=()
+GIT_COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+case "$GIT_COMMON" in
+  ""|"$ROOT"/*) ;;
+  *) MOUNTS+=(-v "$GIT_COMMON:$GIT_COMMON:ro") ;;
+esac
+
+# ${MOUNTS[@]+...}: an empty array under set -u fails in macOS's bash 3.2
 docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
-  -v "$ROOT":/src -w /src/unreal-qt \
+  -v "$ROOT":/src -w /src/unreal-qt ${MOUNTS[@]+"${MOUNTS[@]}"} -e GIT_OPTIONAL_LOCKS=0 \
   --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
   -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \
