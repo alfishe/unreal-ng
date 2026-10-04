@@ -284,14 +284,22 @@
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["summary"] = "Search memory for a byte pattern";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["description"] =
-        "Scans Z80 memory for a byte pattern. Body: {pattern_hex: \"AF 32 0E\" or "
-        "pattern: [175, 50, 14], start: 0, end: 65535, max: 64, alignment: 1}.";
+        "Scans memory for a byte pattern (MemorySearch, the same as CLI find, Lua / Python mem_find, MCP find_bytes). "
+        "Body: {pattern_hex: \"CD ?? 00\" (?? = any byte, A? = any low nibble) or pattern: [205, 22, 0], mask_hex: "
+        "\"FF 00 FF\" (optional, 1 bits must match; replaces the wildcards), space: \"cpu\" (default: what the CPU "
+        "sees now) | \"ram\" (every RAM page) | a page \"ram5\" / \"rom2\" / \"cache0\", start, end (in the space; "
+        "default the whole space), max: 64, alignment: 1 | 2}. Each match: address (cpu) or page {kind, page} + offset, "
+        "context_start and context (4 bytes before, the match, 4 after).";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["pattern_hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["mask_hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["space"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["start"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
@@ -301,4 +309,4 @@
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["alignment"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["responses"]["200"]["description"] =
-        "Match addresses (count, matches[]), truncated flag";
+        "space, count, matches[] (address or page + offset, context_start, context), truncated, range";

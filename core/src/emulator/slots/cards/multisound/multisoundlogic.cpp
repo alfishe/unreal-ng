@@ -165,10 +165,10 @@ uint8_t MultiSoundLogic::GsStatus() const
     return static_cast<uint8_t>((_latches.dataFlag ? 0x80u : 0x00u) | 0x7Eu | (_latches.commandFlag ? 0x01u : 0x00u));
 }
 
-MultiSoundGsMapping MultiSoundLogic::GsMemoryMap(uint16_t address) const
+MultiSoundGsMapping MultiSoundLogic::GsMemoryMapFor(uint8_t gsPage, MultiSoundGsRam gsRam, uint16_t address)
 {
     // GS bus controller: grom_n, gram*_n, gma
-    const uint8_t page = _latches.gsPage & 0x7Fu;
+    const uint8_t page = gsPage & 0x7Fu;
     const bool upper = (address & 0x8000u) != 0;
 
     MultiSoundGsMapping mapping;
@@ -180,7 +180,7 @@ MultiSoundGsMapping MultiSoundLogic::GsMemoryMap(uint16_t address) const
         return mapping;
     }
 
-    if (_options.gsRam == MultiSoundGsRam::TwoMb)
+    if (gsRam == MultiSoundGsRam::TwoMb)
     {
         const uint8_t bank = upper ? static_cast<uint8_t>((page >> 4) & 0x03u) : uint8_t{ 0 };
         mapping.chip = static_cast<MultiSoundGsMapping::Chip>(static_cast<uint8_t>(MultiSoundGsMapping::Chip::Ram1) + bank);

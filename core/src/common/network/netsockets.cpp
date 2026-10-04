@@ -40,6 +40,7 @@ const char* NetStatusText(NetEventStatus status)
         case NetEventStatus::AddressInUse: return "address-in-use";
         case NetEventStatus::Denied: return "denied";
         case NetEventStatus::Error: return "error";
+        case NetEventStatus::TlsFailed: return "tls-failed";
     }
     return "?";
 }

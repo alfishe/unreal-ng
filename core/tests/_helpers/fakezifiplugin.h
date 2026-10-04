@@ -40,6 +40,8 @@ public:
     uint8_t failCmd = 0;     ///< answer this command with failStatus
     uint8_t failStatus = 0;
     uint8_t swallowCmd = 0;  ///< never answer this command (a lost frame)
+    uint8_t statMissing = 4; ///< STAT's status for a name that is not there (Wild Commander's plugin: 1)
+    bool move = true;        ///< FILEX MOVE_RENAME (5D); false answers FE like a plugin without it
     std::map<std::string, Node> files;   ///< "/A/B.TXT" -> node; "/" exists implicitly
     std::vector<uint8_t> commands;       ///< every request seen
 
@@ -221,6 +223,36 @@ public:
                 Mkdir(path);
                 return {{cmd, {0}}};
             }
+            case 0x59:
+            {
+                // RENAME: [flags][old path]\0[new name]\0 inside the same folder
+                const std::string from = Str(p, 1);
+                const std::string name = Str(p, 2 + from.size());
+                const std::string to = from.substr(0, from.rfind('/') + 1) + name;
+                if (!files.count(from))
+                    return {{cmd, {4}}};
+                if (files.count(to))
+                    return {{cmd, {8}}};
+                files[to] = files[from];
+                files.erase(from);
+                return {{cmd, {0}}};
+            }
+            case 0x5D:
+            {
+                // FILEX MOVE_RENAME: [flags: bit 0 replace][0x10 = folder][old path]\0[new path]\0
+                if (!move)
+                    return {{cmd, {0xFE}}};
+                const bool replace = (p[0] & 1) != 0;
+                const std::string from = Str(p, 2);
+                const std::string to = Str(p, 3 + from.size());
+                if (!files.count(from))
+                    return {{cmd, {4}}};
+                if (files.count(to) && !replace)
+                    return {{cmd, {8}}};
+                files[to] = files[from];
+                files.erase(from);
+                return {{cmd, {0}}};
+            }
             case 0x5B:
                 _pos = static_cast<size_t>(p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24));
                 return {{cmd, {0}}};
@@ -261,7 +293,7 @@ private:
     {
         auto it = files.find(path);
         if (it == files.end())
-            return {0x40, {4}};
+            return {0x40, {statMissing}};
         Frame f{0x40, {0, static_cast<uint8_t>(it->second.dir ? 1 : 0)}};
         Le32(f.data, static_cast<uint32_t>(it->second.data.size()));
         if (filex && path != "/")

@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 #include "3rdparty/unreal-z80/z80cpu.h"
 
@@ -76,12 +77,32 @@ public:
         _nextEvent = std::numeric_limits<int64_t>::max();
     }
 
+    /// `Policy` answers the two per-instruction questions: the time an
+    /// instruction took in card units (`static int64_t units(const Card*, int t)`)
+    /// and the INT line (`static bool intLine(const Card*)`). `void` (default)
+    /// asks the card (`unitsPerCycle()`, `intLine()`); a card whose answers
+    /// are fixed for a whole run (the classic GS profile: 1 unit per cycle,
+    /// INT held until accepted) passes its own policy so they compile to the
+    /// pre-profile code
+    template <class Policy = void>
     void runTo(int64_t target)
     {
         // Locals, not members, across the opaque CPU calls: the compiler must
         // otherwise reload them after every call
         Card* const card = _card;
         Z80CPU* const cpu = _cpu;
+        auto units = [card](int t) -> int64_t {
+            if constexpr (std::is_void_v<Policy>)
+                return static_cast<int64_t>(t) * card->unitsPerCycle();
+            else
+                return Policy::units(card, t);
+        };
+        auto intLine = [card]() -> bool {
+            if constexpr (std::is_void_v<Policy>)
+                return card->intLine();
+            else
+                return Policy::intLine(card);
+        };
         while (_now < target)
         {
             if constexpr (Card::kCanStall)
@@ -103,18 +124,18 @@ public:
                 const int t = Z80CpuNmi(cpu);
                 if (t > 0)
                 {
-                    _now += static_cast<int64_t>(t) * card->unitsPerCycle();
+                    _now += units(t);
                     card->onNmiAccepted();
                     continue;
                 }
             }
 
-            if (card->intLine())
+            if (intLine())
             {
                 const int t = Z80CpuInt(cpu);
                 if (t > 0)
                 {
-                    _now += static_cast<int64_t>(t) * card->unitsPerCycle();
+                    _now += units(t);
                     card->onIntAccepted();
                 }
             }
@@ -128,7 +149,7 @@ public:
             const int t = Z80CpuStep(cpu);
             if (t <= 0)
                 break; // defensive: a stuck core must not hang the emulator
-            _now += static_cast<int64_t>(t) * card->unitsPerCycle();
+            _now += units(t);
             card->onStep();
         }
     }

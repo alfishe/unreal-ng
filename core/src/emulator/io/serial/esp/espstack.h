@@ -116,8 +116,9 @@ public:
     /// The same in a given slot (AT link ids); -1 when the slot is taken
     int OpenAt(int slot, bool tcp);
 
-    /// Start a TCP connection; onDone(Connect) follows
-    void Connect(int slot, const NetEndpoint& to);
+    /// Start a TCP connection; onDone(Connect) follows. With `tlsServerName` the host does TLS to that name
+    /// (status TlsFailed when the handshake fails) and the slot carries plaintext
+    void Connect(int slot, const NetEndpoint& to, const std::string& tlsServerName = {});
     void Bind(int slot, uint16_t port) { _slots[static_cast<size_t>(slot)].localPort = port; }
     /// Make a TCP slot a server on its bound port (backlog = the slot count)
     void Listen(int slot);
@@ -134,6 +135,8 @@ public:
     void SendTo(int slot, const NetEndpoint& to, const uint8_t* data, uint32_t length);
     /// Up to `max` received TCP bytes
     std::vector<uint8_t> Read(int slot, uint32_t max);
+    /// The same with where each byte came from (a firmware that keeps a long body by journal reference)
+    std::vector<RxByte> ReadRx(int slot, uint32_t max);
     /// The oldest received UDP datagram (false when none)
     bool PopDatagram(int slot, Datagram& out);
     /// Free the slot (closing its sockets); -1 = every slot
@@ -143,6 +146,19 @@ public:
 
     /// Resolve a host name through the virtual network's DNS; onDone(Resolve) follows
     void Resolve(const std::string& name);
+    /// A second, independent lookup (a firmware task that resolves while the main one may too: the ZiFi S3's
+    /// WC updater); onDone(Resolve) with slot kAuxResolver
+    static constexpr int kAuxResolver = -2;
+    void ResolveAux(const std::string& name);
+    /// Its state (saved by the firmware that uses it, not in EspStackState)
+    struct AuxResolverState
+    {
+        uint16_t socket = 0, id = 0, seq = 0;
+        bool resolving = false;
+        std::string name;
+    };
+    const AuxResolverState& AuxResolver() const { return _aux; }
+    void RestoreAuxResolver(const AuxResolverState& state) { _aux = state; }
 
     /// ICMP echo to `to` (`request` = the whole echo message); onDone(Ping) follows if it answers
     void Ping(uint32_t to, const std::vector<uint8_t>& request);
@@ -188,6 +204,8 @@ private:
 
     uint16_t _pingSocket = 0;
     uint16_t _querySocket = 0;
+
+    AuxResolverState _aux;
 
     // DNS
     uint16_t _dnsSocket = 0;

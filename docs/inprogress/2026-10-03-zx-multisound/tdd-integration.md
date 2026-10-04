@@ -19,8 +19,8 @@ real software verified as a user runs it.
 
 | Step | Content | Depends on |
 |---|---|---|
-| MS-1 | `Ym2203Pair` extracted from `SoundChip_TurboSoundFM` with `masterClockHz` + ratio accumulator and the I/O port listener; TSFM bit-identical (golden digests before / after, A/B benchmark) | - |
-| MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical | - |
+| MS-1 | `Ym2203Pair` extracted from `SoundChip_TurboSoundFM` with `masterClockHz` + ratio accumulator and the I/O port listener; TSFM bit-identical (golden digests before / after, A/B benchmark). **Done 2026-10-04** (not committed): [architecture.md](architecture.md) §4.1 "As built"; `TsfmGolden_Test` digests identical before / after, TSFM suite + TTD corpus (`tsfm_tech_support` included) green, `Ym2203Pair_Test`. A/B `BM_TurboSoundFrame_*` (4 interleaved rounds x 3 repetitions, CPU-time medians, load average 85-125): Idle 2595 / 2621 us, PlayerLoad 2460 / 2473 us, PlayerLoad_Turbo 1195 / 1201 us before / after (+0.5-1.0 %, inside the 5 % round-to-round spread) | - |
+| MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical. **Done 2026-10-04** (not committed): `GSProfile` ([architecture.md](architecture.md) §4.2 "As built"), `SoundChip_GeneralSound_Profile_Test`, GS 1.05b in `data/rom/` | - |
 | MS-3 | `MultiSoundCard` (`ICard`, `CardType` entry `multisound`), `MultiSoundLogic` wired to `Ym2203Pair`, `Saa1099`, GS, `MultiSoundDacs`, `MidiLine`, `sam2695::Synth` | slots SL-4, card logic CL-1, SAA-1, SAM-1, ML-2 |
 | MS-4 | `MultiSoundMixer` (board weights) and the five `SoundManager` rows, HUD sources | MS-3 |
 | MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests | MS-3, slots SL-5 |
@@ -46,8 +46,15 @@ real software verified as a user runs it.
 
 ## 4. TTD
 
-- Blobs: `MultiSoundCard` (logic latches, DACs, YM pair, MIDI line), `Saa1099`, `Sam2695`, GS (id 5). New ids are taken
-  in landing order from the next free ones (48+ on master today; the ttd-engine branch's registry rules apply).
+- Blobs: `MultiSoundCard` (logic latches, DACs, YM pair, MIDI line), `Saa1099`, `Sam2695`, the board's GS. New ids are
+  taken in landing order from the next free ones (58+ on master today, 2026-10-04); the time-travel engine binds
+  devices by `PeripheralId` and regions by `TTDRegionId`, so the board's GS gets its own peripheral id and RAM region id
+  (17+) next to a classic GS card (architecture §4.2).
+- Engine contract (TTD v2): every device's `TTDDescribe` matches its blob (`CheckDeviceTable`) and the card joins
+  `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` once registered. Ready on the branch: the
+  YM pair's time fields (`Ym2203Pair::TTDTimeFields`) and sync check (`Ym2203Pair::TTDSyncedTime`), the GS profile's
+  descriptor and RAM region (architecture §4.1, §4.2). The card's blob places the pair's chips at a known offset and
+  passes it to `TTDTimeFields`; `runsBehindCpu` because the pair and the GS run behind the CPU.
 - The card's options and the bank SHA-256 are part of the session's configuration fingerprint; a session recorded with
   another bank or other options is refused with the difference (slots §8).
 - Tests (`core/tests/debugger/ttd/ttdmultisound_test.cpp`):
@@ -90,6 +97,6 @@ Each run as a user would run it, TTD recording on (rolling limit), results in th
 | Risk | Mitigation |
 |---|---|
 | `Ym2203Pair` extraction changes TSFM output | golden digests and the TSFM test suite unchanged before / after; one merge for the extraction alone |
-| GS RAM 1-2 MB in every TTD checkpoint | TTD v2 per-device dedup; GS RAM as a memory region is PLAN #45 |
+| GS RAM 1-2 MB in every TTD checkpoint | resolved by the time-travel engine: the GS RAM is a memory region of 4 KB pieces, only written pieces are stored |
 | MIDI bit-bang timing sensitive to contention and turbo | the line follows emulated time only; tests at several CPU speeds; a mismatch is a CPU timing bug, investigated as such |
 | Unknown absolute levels of SSG / SAA / SAM | calibrate per chip module from datasheets; owner measurement if available; weights between sources from the schematic are exact |

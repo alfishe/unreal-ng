@@ -59,6 +59,11 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index, double clockHz)
 
     const uint8_t* regs = chip->getRegisters();
 
+    // The register #FFFD last selected: the one IN / OUT on #BFFD and IN on #FFFD reach next
+    const uint8_t latched = chip->getCurrentRegister();
+    ret["latched_register"] = int(latched);
+    ret["latched_register_name"] = latched < 16 ? SoundChip_AY8910::AYRegisterNames[latched] : "";
+
     StateNode registers = StateNode::Object();
     for (int reg = 0; reg < 16; reg++)
         registers[SoundChip_AY8910::AYRegisterNames[reg]] = int(regs[reg]);
@@ -590,6 +595,8 @@ StateNode Ay(EmulatorContext* context)
     // The AY input clock the generators run at now: 1750000 except where the machine switches it (the Profi in
     // hi-res: 1500000, [PROFI] AyClock)
     ret["psg_clock_hz"] = static_cast<int64_t>(sm->GetPsgClock());
+    // The chip the ports talk to now (TurboSound / TSFM select one with #FF / #FE on #FFFD)
+    ret["active_chip"] = ts ? ts->getSelectedChip() : 0;
     if (ayCount == 0)
         ret["description"] = "No AY chips available";
     else if (ayCount == 1)
@@ -612,6 +619,7 @@ StateNode Ay(EmulatorContext* context)
             const uint8_t mixerReg = chip->getRegisters()[7];
             info["active_channels"] = (mixerReg & 0x3F) != 0x3F;
             info["envelope_active"] = chip->getEnvelopeGenerator().out() > 0;
+            info["latched_register"] = int(chip->getCurrentRegister());
         }
         info["sound_played_since_reset"] = false;
         chips.push(info);
@@ -628,7 +636,11 @@ StateNode AyChip(EmulatorContext* context, int chip)
     SoundChip_AY8910* ay = sm->getAYChip(chip);
     if (!ay)
         return Unavailable("AY chip not available");
-    return AyChipNode(ay, chip, double(sm->GetPsgClock()));
+    StateNode node = AyChipNode(ay, chip, double(sm->GetPsgClock()));
+    // Whether the ports talk to this chip now (a single AY always; TurboSound / TSFM: the selected one)
+    ITurboSoundDevice* ts = sm->getTurboSound();
+    node["selected"] = !ts || ts->getSelectedChip() == chip;
+    return node;
 }
 
 StateNode Fm(EmulatorContext* context)

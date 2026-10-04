@@ -66,13 +66,14 @@
             "ZIFR / ZOFR or RIFR / ROFR read decides), er, imr, isr, zibtr, zitor_ms, ribtr, ritor_ms, zifi_rx / zifi_tx "
             "and rs232_rx / rs232_tx (ring fill), the peer fields of its line to the ESP, bytes_in, bytes_out, dropped "
             "(bytes the full ring lost); its esp with a ZIFI-NATIVE module adds native_session (variant, activity, last_step, "
-            "last_error, client_open, time_zone, proxy, bad_checksums, resyncs, file_bridge: ftp (running, port, host_port: "
+            "last_error, client_open, time_zone, proxy, bad_checksums, resyncs, https (S3: host TLS or unavailable), file_bridge: ftp (running, port, host_port: "
             "where a host FTP client connects - 0 with host_port_note for a guest port below 1024 without a Forward= rule, "
             "passive_ports, sessions: session, client, logged_in, cwd, data_mode; command: the file command in progress, "
             "last_command, last_reply, bytes_sent, bytes_received, files_sent, files_received), vfs (pending: the VFS "
             "operation in progress, waiting_for: the frame awaited from the Z80, last_error, requests, bytes_read, "
             "bytes_written, timeouts, dropped_while_waiting: Z80 frames lost while the client waited), esp_clock_set "
-            "(the S3's SNTP clock)). card.kind is none when "
+            "(the S3's SNTP clock), wc_update (S3: the Wild Commander updater - running, activity, state: its last "
+            "state line, commit, files)). card.kind is none when "
             "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";

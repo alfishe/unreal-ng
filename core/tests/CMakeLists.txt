@@ -266,6 +266,19 @@ if (NOT TARGET ${PROJECT_NAME})
         $<$<BOOL:${ENABLE_VDAC2}>:eve::emu>
     )
 
+    # The host TLS tests run a loopback TLS server of their own (core/src/common/network/hosttls.h)
+    if (UNREAL_HOST_TLS AND NOT TARGET OpenSSL::SSL)
+        find_package(OpenSSL QUIET)
+        if (NOT OpenSSL_FOUND AND APPLE AND EXISTS "/opt/homebrew/opt/openssl")
+            set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
+            find_package(OpenSSL QUIET)
+        endif()
+    endif()
+    if (TARGET OpenSSL::SSL AND UNREAL_HOST_TLS)
+        target_link_libraries(${PROJECT_NAME} OpenSSL::SSL OpenSSL::Crypto)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE UNREAL_TEST_TLS=1)
+    endif()
+
     # Define ENABLE_GDB_AUTOMATION for compile-time guards
     if (ENABLE_GDB_AUTOMATION)
         target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_GDB_AUTOMATION)

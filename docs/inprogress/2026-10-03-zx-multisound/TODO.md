@@ -28,7 +28,8 @@ full decode sweep. Depends on the
 ## Order while the slots core is paused (owner decision 2026-10-04)
 
 The slots core (SL-3 and later) waits for `ttd-engine` to land. Meanwhile: libsam2695 SAM-3 / SAM-4 (done) and the
-MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also wait: `ttd-engine` changes the same modules.
+MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) were done before `ttd-engine` lands; the
+owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 
 ## Remaining
 
@@ -48,7 +49,7 @@ MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also 
   datasheet facts of the I/O port stage (input = `#FF`, push-pull output, reset = inputs), `IAyIoPortListener` on
   `SoundChip_AY8910` (pins, called on change only, one pointer test per register latch without a listener),
   `MidiLine` feeding `sam2695::Synth::WriteLine` with its TTD blob; `AyIoPort_Test` and `MidiLine_Test` in core-tests
-- [ ] ML follow-ups with the card: the YM2203 SSG drives the same listener (MS-1, `Ym2203Pair`), `MidiLine` wired to
+- [ ] ML follow-ups with the card: the YM2203 SSG drives the same listener (done in MS-1: `Ym2203Pair::setIoPortListener`), `MidiLine` wired to
   YM chip 1 and carried in the card's blob set, `MidiLine_Test.Chip2DoesNotDrive`, the program-level Z80 send-routine
   test under TTD, `Describe` on the automation surfaces
 - [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
@@ -69,15 +70,27 @@ MIDI line ML-0..2. MS-1 (`Ym2203Pair` from the TSFM) and MS-2 (GS profile) also 
   output 0-1 L / 2-3 R, Authentic 16.25 kHz RC, TTD blob (no PeripheralId); the mixer's schematic weights computed
   from the component values (`multisoundanalog.h`), calibration through the TSFM FM measurement and volts, coupling
   high-pass, Authentic SAA ladder; `MultiSoundAnalog_Test`, `MultiSoundDacs_Test`, `MultiSoundMixer_Test`
-- [ ] Mixer / DAC follow-ups for MS-1 / MS-4: `Ym2203Pair` must hand the mixer FM per chip (word / 32768) and SSG per
+- [ ] Mixer / DAC follow-ups for MS-4 (the `Ym2203Pair` side is done in MS-1: `renderChannels`): `Ym2203Pair` must hand the mixer FM per chip (word / 32768) and SSG per
   chip and channel (table level 0..1) instead of its own stereo mix; the card feeds `MultiSoundDacs` from the GS
   memory / port hooks and `SoundriveSample` actions with strobe-end times and calls `Run` when both timelines reached
   a time; the rows registered with SoundManager (MS-4); absolute SAA / SAM2695 levels against a real card (today
   module conventions, hardware-reference §7)
-- [ ] MS-2 input from the RTL: GS INT 321 clocks of 12 MHz, port reads `#FF`, flag rules on any access, GS memory map
-  incl. the ROM's A15 wiring (check `gma[15]` -> 27C512 A15 in the rev.A2 schematic)
-- [ ] MS-1 `Ym2203Pair` extraction (TSFM bit-identical)
-- [ ] MS-2 GS profile (16 MHz, 1-2 MB, no `#33`, DAC sink)
+- [x] MS-2 input from the RTL: GS INT 321 clocks of 12 MHz, port reads `#FF`, flag rules on any access, GS memory map;
+  the ROM's A15 wiring is moot (the 27C512 image is the 32 KB image twice)
+- [x] MS-1 `Ym2203Pair` extraction (TSFM bit-identical) ([architecture.md](architecture.md) §4.1 "As built", 2026-10-04,
+  not committed): `core/src/emulator/sound/chips/tsfm/ym2203pair.{h,cpp}` (chips, timers, busy, word / write queues,
+  `syncTo` with the `masterClockHz : hostTickRate` accumulator, bus interface, SSG I/O port listener, stereo output
+  stage for the TSFM, per-chip / per-channel outputs for the mixer, TTD pieces + own blob); `TsfmGolden_Test` digests
+  identical on the pre-extraction binary and after, TSFM suite and TTD corpus green, A/B within noise
+  ([tdd-integration.md](tdd-integration.md) MS-1 row); `Ym2203Pair_Test` (ratio, pitch, per-channel outputs, listener on
+  chip 1, TTD ratio phase)
+- [x] MS-2 GS profile (16 MHz, 1-2 MB, no `#33`, DAC sink) ([architecture.md](architecture.md) §4.2 "As built",
+  2026-10-04, not committed): `GSProfile` given to `SoundChip_GeneralSound` (classic default unchanged: GS suites,
+  golden digests and TTD tests green, A/B benchmark), MultiSound timing in 48 MHz units with the 33-clock INT pulse,
+  the CPLD map through `MultiSoundLogic::GsMemoryMapFor`, CPLD port rules, `IGSDacSink` implemented by
+  `MultiSoundDacs`; GS 1.05b boots on 1 MB and 2 MB (`SoundChip_GeneralSound_Profile_Test`)
+- [ ] MS-3 follow-ups from MS-2: one owner of the GS mailbox (the GS's own `#B3` / `#BB` latches or `MultiSoundLogic`'s);
+  SounDrive writes must also reach the GS's volume 3 (port `#0B` reads its bit 5); the GS is not yet a slot card
 - [ ] MS-3..MS-8 card, mixer, TTD, surfaces, real software, docs (after slots SL-4 / SL-5)
-- [ ] `data/midi/generaluser-gs.sf2` + license tracked (Q4); GS 1.05b ROM as `data/rom/gs105b.rom`
+- [ ] `data/midi/generaluser-gs.sf2` + license tracked (Q4); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research

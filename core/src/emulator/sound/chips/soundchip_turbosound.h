@@ -156,6 +156,8 @@ public:
     }
 
     // Chip access for monitoring purposes
+    int getSelectedChip() const override { return _currentChip == _chip1 ? 1 : 0; }
+
     SoundChip_AY8910* getChip(int index) const override
     {
         if (index == 0)

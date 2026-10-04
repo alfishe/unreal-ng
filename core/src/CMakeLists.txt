@@ -258,6 +258,26 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
 
+# Host-side TLS for emulated devices whose firmware speaks TLS itself (the ZiFi ESP32-S3's HTTPS):
+# common/network/hosttls.cpp with OpenSSL, the library the WebAPI already uses. Without OpenSSL (or with
+# UNREAL_HOST_TLS=OFF, e.g. release packages that drop the dependency) the device's TLS connect fails as on a
+# module whose server is unreachable. PRIVATE: only hosttls.cpp includes OpenSSL
+option(UNREAL_HOST_TLS "Host-side TLS for emulated TLS clients (needs OpenSSL)" ON)
+if (UNREAL_HOST_TLS)
+    find_package(OpenSSL QUIET)
+    if (NOT OpenSSL_FOUND AND APPLE AND EXISTS "/opt/homebrew/opt/openssl")
+        set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
+        find_package(OpenSSL QUIET)
+    endif()
+    if (OpenSSL_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE UNREAL_HOST_TLS=1)
+        message(STATUS "[core] host TLS: OpenSSL ${OPENSSL_VERSION}")
+    else()
+        message(STATUS "[core] host TLS: off (OpenSSL not found)")
+    endif()
+endif()
+
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)
 

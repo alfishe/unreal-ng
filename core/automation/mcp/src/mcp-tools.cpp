@@ -2061,6 +2061,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                                                                                  " (host " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["host_port"].asString() +
                                                                                                  "), " + std::to_string(zifi["esp"]["native_session"]["file_bridge"]["ftp"]["sessions"].size()) +
                                                                                                  " session(s)"
+                                                                                           : std::string()) +
+                                                                                      (zifi["esp"]["native_session"]["file_bridge"]["wc_update"]["running"].asBool()
+                                                                                           ? ", WC update: " + zifi["esp"]["native_session"]["file_bridge"]["wc_update"]["state"].asString()
                                                                                            : std::string())
                                                                                 : std::string()) +
                                                                            "]"

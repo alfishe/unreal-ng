@@ -32,6 +32,7 @@
 #include <string>
 
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/sound/chips/gs/gsdacsink.h"
 #include "emulator/slots/cards/multisound/multisoundanalog.h"
 #include "emulator/slots/cards/multisound/multisoundlogic.h"
 
@@ -52,7 +53,7 @@ enum class MultiSoundDacStrobe : uint8_t
     GsSample = 2
 };
 
-class MultiSoundDacs : public ttd::TTDSerializable
+class MultiSoundDacs : public ttd::TTDSerializable, public IGSDacSink
 {
 public:
     static constexpr int kChannels = 4;
@@ -83,9 +84,11 @@ public:
     /// Bus /RESET at time t: every channel {sample 0, volume 0} (the CPLD reset branch), pending events dropped
     void Reset(uint64_t t);
 
-    // Strobe events (any order; applied by Run in strobe-end order)
-    void GsSample(uint64_t strobeEnd, int channel, uint8_t value);
-    void GsVolume(uint64_t strobeEnd, int channel, uint8_t volume);
+    // Strobe events (any order; applied by Run in strobe-end order). GsSample / GsVolume are also the General Sound
+    // card's DAC sink (GSProfile::MultiSound): its times are host times, which is this axis when hostTickRate is the
+    // host's audio T-state rate
+    void GsSample(uint64_t strobeEnd, int channel, uint8_t value) override;
+    void GsVolume(uint64_t strobeEnd, int channel, uint8_t volume) override;
     void SoundriveWrite(uint64_t strobeEnd, int channel, uint8_t value);
     void Submit(const Event& event);
 

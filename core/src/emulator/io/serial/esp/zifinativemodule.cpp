@@ -8,8 +8,10 @@
 
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/serial/esp/zififtpserver.h"
+#include "emulator/io/serial/esp/zifihttpfetch.h"
 #include "emulator/io/serial/esp/zifistate.h"
 #include "emulator/io/serial/esp/zifiweather.h"
+#include "emulator/io/serial/esp/zifiwcupdater.h"
 #include "emulator/io/serial/esp/zifiwebdavserver.h"
 
 // Every behavior here is the firmware's (file:line in the two repositories named in the header):
@@ -20,6 +22,7 @@ namespace
 {
 constexpr uint64_t kWifiTimeoutUs = 10000000;     // kWifiTimeoutMs (S3 main.cpp:41, E01 main.cpp:23)
 constexpr uint64_t kConnectTimeoutUs = 8000000;   // NetClient::open: connect(host, port, 8000)
+constexpr uint64_t kTlsConnectTimeoutUs = 24000000;   // openTls: connect(host, port, 12000) + setHandshakeTimeout(12)
 constexpr uint64_t kHeaderTimeoutUs = 10000000;   // readHttpHeader: 10 s
 constexpr uint64_t kProbeTimeoutUs = 3000000;     // NetClient::probe: connect(host, port, 3000)
 constexpr uint64_t kNtpDnsTimeoutUs = 3000000;    // E01 ntp_client.cpp:38 hostByName(.., 3000)
@@ -33,6 +36,7 @@ constexpr size_t kPathMax = 384;                  // char path[384]
 constexpr uint32_t kNtpUnixOffset = 2208988800u;
 constexpr size_t kIniLine = 160;                  // IniConfig::parse: char line[160]
 constexpr size_t kIniEntries = 16, kIniKey = 24, kIniValue = 96;   // config.hpp
+constexpr uint64_t kWcuStopTimeoutUs = 20000000;   // main.cpp kWcuStopTimeoutMs
 constexpr size_t kEventQueue = 8;                 // S3 eventQueue_ = xQueueCreate(8, ...)
 constexpr uint64_t kWifiSignalIntervalUs = 2000000;   // S3 kWifiSignalIntervalMs
 constexpr size_t kTxLimit = 4096;                 // reply bytes queued for the UART before the rest waits
@@ -292,6 +296,10 @@ ZiFiNativeModule::ZiFiNativeModule(VirtualNetwork* network, Variant variant, con
     ZiFiBridgeHost& host = *this;
     _ftp = std::make_unique<ZiFiFtpServer>(host, variant == Variant::S3);
     _webdav = std::make_unique<ZiFiWebDavServer>(host);
+    _wcuFetch = std::make_unique<ZiFiHttpFetch>(Stack(), kWcuSlot);
+    _wcuFetch->now = [this]() { return Now(); };
+    _wcuFetch->micros = [this](uint64_t us) { return MicrosToT(us); };
+    _wcu = std::make_unique<ZiFiWcUpdater>(host, *_wcuFetch);
     // Silent at power-up: UART first, no boot text on the protocol line (S3 begin(), E01 begin()); the saved
     // zifi.ini joins the access point on its own
 }
@@ -306,7 +314,8 @@ bool ZiFiNativeModule::ClientOpen() const
 std::string ZiFiNativeModule::Activity() const
 {
     static const char* const kOps[] = {"idle", "wifi join", "net_open", "net_http_get", "net_ping", "net_ntp", "restart",
-                                       "deferred (an FTP command runs)", "weather"};
+                                       "deferred (an FTP command runs)", "weather",
+                                       "waiting for the WC updater to stop"};
     static const char* const kPhases[] = {"", " resolving", " connecting", " reading the header", " waiting for the AP",
                                           " probing the proxy", " waiting for the answer", " reading the body",
                                           " waiting to retry"};
@@ -654,6 +663,8 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
         }
         // The file bridge
         case kFtpStart:
+            if (s3 && !StopWcu(frameLength))
+                return;   // processFtpStart: the WC updater uses the VFS bridge, it stops first
             drop();
             return StartFtp(payload);
         case kFtpStop:
@@ -671,6 +682,8 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             Stack().Close(kClientSlot);
             _bodyActive = false;
             StopFileServers();
+            if (!StopWcu(frameLength))
+                return;
             return reply(0x8B, {0, 0, 0, 0}, "smb:not emulated");
         case kSmbStop: return reply(0x8C, {1}, {});
         case kOnlineUpdateCheck:
@@ -683,12 +696,27 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             _request.clear();
             Start(Op::Weather, Phase::None, zifiweather::kBudgetUs, frameLength);
             return StartWeather();
+        // The Wild Commander updater (WcUpdateService, S3 main.cpp processWcuStart / Apply / Stop / Sync)
         case kWcuStart:
+        {
+            Stack().Close(kClientSlot);   // netClient_.close()
+            _bodyActive = false;
             StopFileServers();
-            return reply(0xA5, {0}, wifi ? "wcu:not emulated" : "wcu:no wifi");
-        case kWcuApply: return reply(0xA6, {0}, {});
-        case kWcuStop: return reply(0xA7, {1}, {});
-        case kWcuSync: return reply(0xA8, {0}, {});
+            if (!StopWcu(frameLength))
+                return;
+            if (!wifi)
+                return reply(0xA5, {0}, "wcu:no wifi");
+            std::string error;
+            if (!_wcu->Start(payload, error))
+                return reply(0xA5, {0}, "wcu:" + error);
+            return reply(0xA5, {1}, {});
+        }
+        case kWcuApply: return reply(0xA6, {static_cast<uint8_t>(_wcu->Apply(payload) ? 1 : 0)}, {});
+        case kWcuStop:
+            if (!StopWcu(frameLength))
+                return;
+            return reply(0xA7, {1}, {});
+        case kWcuSync: return reply(0xA8, {static_cast<uint8_t>(_wcu->Sync() ? 1 : 0)}, {});
         default: break;
     }
     drop();
@@ -753,6 +781,7 @@ void ZiFiNativeModule::Finish(uint8_t respCmd, const std::vector<uint8_t>& data,
     _op = Op::None;
     _phase = Phase::None;
     _request.clear();
+    _httpTls = false;
     // ESP01S: the loop reads the UART again; what waited there reaches the parser now
     if (_variant == Variant::Esp01s)
         _lastByteAt = Now();
@@ -933,10 +962,13 @@ void ZiFiNativeModule::StartHttpGet(const std::vector<uint8_t>& payload)
     _httpPort = static_cast<uint16_t>(payload[next] | (payload[next + 1] << 8));
     Stack().Close(kClientSlot);
     _bodyActive = false;
-    // S3: port 443 is HTTPS (WiFiClientSecure); the virtual network has no TLS (the firmware's own failure)
-    if (_variant == Variant::S3 && _httpPort == 443)
-        return HttpFail("tls connect failed");
-    _viaProxy = _variant == Variant::S3 && _proxyStatus == 1 && !_proxyHost.empty();
+    // S3: port 443 is HTTPS (NetClient::httpGet: useTls = port == 443; a redirect decides itself). The host does
+    // the TLS (hosttls.h): the client slot carries plaintext. The proxy is never used for HTTPS
+    if (_redirects == 0)
+        _httpTls = _variant == Variant::S3 && _httpPort == 443;
+    if (_httpTls)
+        _opDeadline = Now() + MicrosToT(kTlsConnectTimeoutUs);
+    _viaProxy = _variant == Variant::S3 && !_httpTls && _proxyStatus == 1 && !_proxyHost.empty();
     _opPort = _viaProxy ? _proxyPort : _httpPort;
     const std::string target = _viaProxy ? _proxyHost : host;
     uint32_t addr = 0;
@@ -965,7 +997,7 @@ void ZiFiNativeModule::HttpConnect()
         text = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nUser-Agent: ZiFi (ZX Evo)\r\nAccept: */*\r\nConnection: close\r\n\r\n";
     else
     {
-        const bool otherPort = _httpPort != 80 && _httpPort != 0;
+        const bool otherPort = _httpPort != (_httpTls ? 443 : 80) && _httpPort != 0;
         const std::string hostField = otherPort ? host + ":" + port : host;
         if (_viaProxy)
             text = "GET http://" + hostField + path + " HTTP/1.0\r\nHost: " + hostField +
@@ -1073,9 +1105,17 @@ void ZiFiNativeModule::HttpHeader()
         CopyString(_request, 0, kHostMax, host, next, true);
         CopyString(_request, next + 2, kPathMax, path, after, false);
         uint16_t port = _httpPort;
+        // applyRedirect: https:// turns TLS on, http:// off (a downgrade from TLS is refused), // keeps it
+        const bool wasTls = _httpTls;
+        bool useTls = _httpTls;
         if (StartsNoCase(location, 0, "https://"))
-            return HttpFail("tls connect failed");
-        const bool absolute = StartsNoCase(location, 0, "http://") || location.rfind("//", 0) == 0;
+            useTls = true;
+        else if (StartsNoCase(location, 0, "http://"))
+            useTls = false;
+        if (wasTls && !useTls)
+            return HttpFail("redirect tls downgrade");
+        const bool absolute = StartsNoCase(location, 0, "http://") || StartsNoCase(location, 0, "https://") ||
+                              location.rfind("//", 0) == 0;
         if (absolute)
         {
             const size_t a = location.find("//") + 2;
@@ -1085,7 +1125,7 @@ void ZiFiNativeModule::HttpHeader()
             const std::string authority = location.substr(a, ae - a);
             const size_t colon = authority.rfind(':');
             host = colon == std::string::npos ? authority : authority.substr(0, colon);
-            port = 80;
+            port = useTls ? 443 : 80;
             if (colon != std::string::npos)
             {
                 const unsigned long p = std::strtoul(authority.c_str() + colon + 1, nullptr, 10);
@@ -1128,6 +1168,7 @@ void ZiFiNativeModule::HttpHeader()
             _held = static_cast<uint16_t>(frame.size());
         }
         _request = payload;
+        _httpTls = useTls;
         ++_redirects;
         _phase = Phase::Resolve;
         _opDeadline = Now() + MicrosToT(kConnectTimeoutUs);
@@ -1494,6 +1535,19 @@ void ZiFiNativeModule::SysInfo()
 
 void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
 {
+    // The WC updater's fetch: its own resolver and socket (a task of its own beside the network core's requests)
+    if (done.kind == EspStack::Done::Kind::Resolve && done.slot == EspStack::kAuxResolver)
+    {
+        _wcuFetch->OnResolve(done.addr);
+        _bridgePoll = true;
+        return;
+    }
+    if (done.kind == EspStack::Done::Kind::Connect && done.slot == kWcuSlot && _wcuFetch->Busy())
+    {
+        _wcuFetch->OnConnect(done.status == NetEventStatus::Ok);
+        _bridgePoll = true;
+        return;
+    }
     if (_sntpPhase && (_op == Op::None || _op == Op::Deferred))
     {
         // The background SNTP (S3)
@@ -1569,7 +1623,13 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
         Stack().Close(slot);
         if (Stack().OpenAt(slot, true) < 0)
             return;
-        Stack().Connect(slot, NetEndpoint{done.addr, _opPort});
+        std::string tlsName;
+        if (slot == kClientSlot && HttpOp() && _httpTls)
+        {
+            size_t next = 0;
+            CopyString(_request, 0, kHostMax, tlsName, next, true);   // the SNI and the certificate's name
+        }
+        Stack().Connect(slot, NetEndpoint{done.addr, _opPort}, tlsName);
         if (_phase == Phase::Resolve)
             _phase = Phase::Connect;
         return;
@@ -1597,7 +1657,8 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
         if (!ok)
         {
             Stack().Close(kClientSlot);
-            return _op == Op::Open ? Finish(0x90, {0}, "open:connect failed") : HttpFail("connect failed");
+            return _op == Op::Open ? Finish(0x90, {0}, "open:connect failed")
+                                   : HttpFail(_httpTls ? "tls connect failed" : "connect failed");
         }
         if (_op == Op::Open)
             return Finish(0x90, {1});
@@ -1655,7 +1716,7 @@ void ZiFiNativeModule::Timeout()
             return Finish(0x90, {0}, "open:connect failed");
         case Op::HttpGet:
             Stack().Close(kClientSlot);
-            return HttpFail(_phase == Phase::Header ? "header timeout" : "connect failed");
+            return HttpFail(_phase == Phase::Header ? "header timeout" : _httpTls ? "tls connect failed" : "connect failed");
         case Op::Weather:
             if (_phase == Phase::Retry)
                 return WeatherRequest();
@@ -1665,7 +1726,7 @@ void ZiFiNativeModule::Timeout()
                 return WeatherAttemptFailed("reply timeout", true);
             }
             Stack().Close(kClientSlot);
-            return HttpFail(_phase == Phase::Header ? "header timeout" : "connect failed");
+            return HttpFail(_phase == Phase::Header ? "header timeout" : _httpTls ? "tls connect failed" : "connect failed");
         case Op::Probe:
             Stack().Close(kProbeSlot);
             return Finish(0xA1, {0, 0, 0});
@@ -1684,6 +1745,7 @@ void ZiFiNativeModule::Timeout()
             if (!Ssid().empty())
                 Join(Ssid());   // the saved zifi.ini joins again (WiFi.begin at setup)
             return;
+        case Op::WcuStop: return WcuStopped(false);
         case Op::Deferred:
         case Op::None: return;
     }
@@ -1843,6 +1905,14 @@ uint16_t ZiFiNativeModule::HostPortFor(uint16_t guestPort) const
 void ZiFiNativeModule::BridgePoll()
 {
     _bridgePoll = false;
+    // The WC updater is a task of its own: it runs while the network core is in a request (or waits for it)
+    if (_wcu->Running() || _wcuFetch->Busy())
+    {
+        _wcu->Poll();
+        FlushEvents();
+    }
+    if (_op == Op::WcuStop && _wcu->Finished())
+        return WcuStopped(true);
     // S3: the network core runs the servers between its requests (a request in progress holds them); E01: the
     // loop is inside a blocking command
     if (_op != Op::None && _op != Op::Deferred)
@@ -1908,6 +1978,50 @@ void ZiFiNativeModule::StartFtp(const std::vector<uint8_t>& payload)
     SendFrame(0x86, {1, static_cast<uint8_t>(port), static_cast<uint8_t>(port >> 8)});
 }
 
+bool ZiFiNativeModule::StopWcu(size_t frameLength)
+{
+    if (!_wcu->Running())
+    {
+        _wcu->Release();
+        return true;
+    }
+    // requestStop + a STOP command; the service then waits up to kWcuStopTimeoutMs (main.cpp:55) with the
+    // request held, the updater finishing its VFS / network step
+    _wcu->RequestStop();
+    if (_wcu->Finished())
+    {
+        _wcu->Release();
+        return true;
+    }
+    Start(Op::WcuStop, Phase::None, kWcuStopTimeoutUs, frameLength);
+    return false;
+}
+
+void ZiFiNativeModule::WcuStopped(bool stopped)
+{
+    if (stopped)
+    {
+        // The held command runs again, the updater gone (its ACK went out when it came)
+        _wcu->Release();
+        if (_wcuFetch->Busy())
+            _wcuFetch->Cancel();
+        return RunDeferred();
+    }
+    // stop() timed out: the task stays in its exchange (the next stop frees it)
+    switch (_opCmd)
+    {
+        case kFtpStart: return Finish(0x86, {0, 0, 0}, "ftp:wc update stopping");
+        case kSmbStart: return Finish(0x8B, {0, 0, 0, 0}, "smb:wc update stopping");
+        case kWcuStart: return Finish(0xA5, {0}, "wcu:previous stopping");
+        default: return Finish(0xA7, {0}, {});
+    }
+}
+
+bool ZiFiNativeModule::BridgeEventRoom() const
+{
+    return _variant != Variant::S3 || _events.size() < kEventQueue;
+}
+
 void ZiFiNativeModule::StopFileServers()
 {
     if (_ftp->Running())
@@ -1920,6 +2034,8 @@ void ZiFiNativeModule::ForgetBridge()
 {
     _ftp->Forget();
     _webdav->Forget();
+    _wcu->Release();
+    _wcuFetch->Forget();   // its socket went with the restart, or the load restores it
     _vfs.Reset();
     _events.clear();
     _txBacklog.clear();
@@ -1951,7 +2067,7 @@ void ZiFiNativeModule::SaveFirmware(netstate::EspModuleState& out) const
     put16(_held);
     put8(_lastStep);
     put8(static_cast<uint8_t>((_bodyActive ? 1 : 0) | (_bodyLengthKnown ? 2 : 0) | (_viaProxy ? 4 : 0) | (_iniJoin ? 8 : 0) |
-                              (_softRestart ? 16 : 0) | (_passwordKnown ? 32 : 0)));
+                              (_softRestart ? 16 : 0) | (_passwordKnown ? 32 : 0) | (_httpTls ? 64 : 0)));
     put64(_opDeadline);
     put64(_opStart);
     put64(_lastByteAt);
@@ -2002,6 +2118,7 @@ void ZiFiNativeModule::LoadFirmware(const netstate::EspModuleState& in)
     _iniJoin = flags & 8;
     _softRestart = flags & 16;
     _passwordKnown = flags & 32;
+    _httpTls = flags & 64;
     _opDeadline = get64();
     _opStart = get64();
     _lastByteAt = get64();
@@ -2038,7 +2155,7 @@ void ZiFiNativeModule::ReloadRequest()
 
 namespace
 {
-constexpr uint8_t kBridgeVersion = 1;
+constexpr uint8_t kBridgeVersion = 2;   // 2: the WC updater
 
 /// Received bytes by run: a journal reference (kind 1) or, for bytes that never came through the journal (tests),
 /// the bytes themselves (kind 0)
@@ -2144,6 +2261,13 @@ void ZiFiNativeModule::SaveBridge(std::vector<uint8_t>& out) const
         }
         w.Bool(stack.RearmQueued(i));
     }
+    // The WC updater: its fetch, its resolver, the session (re-run from its log on load)
+    _wcuFetch->Save(w);
+    const EspStack::AuxResolverState& aux = stack.AuxResolver();
+    w.U16(aux.socket), w.U16(aux.id), w.U16(aux.seq);
+    w.Bool(aux.resolving);
+    w.Str(aux.name);
+    _wcu->Save(w);
     SavePlugins(w);   // keep last: the weather / zifi.ini / WebDAV section
 }
 
@@ -2204,6 +2328,13 @@ bool ZiFiNativeModule::LoadBridge(const uint8_t* data, size_t length, const EspS
                 stack.QueueRearm(i);
         }
     }
+    ok = _wcuFetch->Load(r, bytes) && ok;
+    EspStack::AuxResolverState aux;
+    aux.socket = r.U16(), aux.id = r.U16(), aux.seq = r.U16();
+    aux.resolving = r.Bool();
+    aux.name = r.Str(256);
+    stack.RestoreAuxResolver(aux);
+    ok = _wcu->Load(r, bytes) && ok;
     ok = LoadPlugins(r) && ok;   // keep last: the weather / zifi.ini / WebDAV section
     RebindSockets();
     return ok && r.Ok();

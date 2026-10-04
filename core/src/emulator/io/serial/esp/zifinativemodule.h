@@ -16,7 +16,8 @@
 ///    work runs on the other core: while one network command runs, the module still answers ECHO, PING,
 ///    GET_STEP, SYS_INFO and SYS_RESET; another network command gets its ACK, EE "network busy" and an empty
 ///    result. HTTP GET follows up to 4 redirects, refuses chunked bodies, ends the body at Content-Length, can go
-///    through the zifi.ini proxy; HTTPS (port 443) needs TLS, which the virtual network does not do
+///    through the zifi.ini proxy (not for HTTPS); HTTPS (port 443, a redirect to https://) is TLS done by the host
+///    (hosttls.h: the certificate checked against the name, as WiFiClientSecure with its CA bundle)
 ///  - ESP01S: ESP-01S (ESP8266), native-0.2.2 (https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project,
 ///    src/main.cpp): one loop - a command that waits for the network holds every later byte in the UART until
 ///    it is done. Plain HTTP only, no redirects, no proxy; FTP / OTA commands, no SMB / weather / GitHub update
@@ -54,6 +55,8 @@
 
 class ZiFiFtpServer;
 class ZiFiWebDavServer;
+class ZiFiHttpFetch;
+class ZiFiWcUpdater;
 
 class ZiFiNativeModule final : public EspModule, private ZiFiBridgeHost
 {
@@ -106,6 +109,10 @@ public:
     const ZiFiFtpServer& Ftp() const { return *_ftp; }
     /// ESP01S: the WebDAV server on port 80 (started and stopped with FTP)
     const ZiFiWebDavServer& WebDav() const { return *_webdav; }
+    /// S3: the Wild Commander updater (WCU_START / APPLY / STOP / SYNC)
+    const ZiFiWcUpdater& WcUpdater() const { return *_wcu; }
+    /// Its HTTPS fetch socket (free while FTP is stopped, which WCU_START does)
+    static constexpr int kWcuSlot = 10;
     /// The host port a guest port of this module is reachable on (0: none; ports below 1024 need a Forward= rule)
     uint16_t HostPortFor(uint16_t guestPort) const;
     /// The ESP's own time of day (S3: SNTP after the join; status)
@@ -171,6 +178,7 @@ private:
         Boot,       ///< SYS_RESET: the module restarts
         Deferred,   ///< S3: a network command waits for the FTP command in progress (the network core is in it)
         Weather,    ///< WEATHER_GET (S3): geocoder / zippopotam, then the forecast, each an HTTP GET with retries
+        WcuStop,    ///< S3: a command waits (up to 20 s) for the WC updater to stop, then runs (WCU_STOP / START, FTP / SMB start)
     };
     enum class Phase : uint8_t
     {
@@ -251,6 +259,7 @@ private:
     uint64_t BridgeNow() const override { return Now(); }
     uint64_t BridgeMicros(uint64_t us) const override { return MicrosToT(us); }
     void BridgeEvent(uint8_t cmd, const std::vector<uint8_t>& data) override;
+    bool BridgeEventRoom() const override;
     bool BridgeWifiUp() const override { return GetWifi() == Wifi::GotIp; }
     uint32_t BridgeIp() const override { return Ip(); }
     bool BridgeClock(int64_t& unixNow) const override;
@@ -270,6 +279,10 @@ private:
     /// S3: SNTP in the background after a join (configTime); the answer sets the ESP's clock
     void SntpTick();
     void RunDeferred();
+    /// WcUpdateService::stop(kWcuStopTimeoutMs) before `cmd`: true when the updater is not running (the command
+    /// goes on); false when the command now waits for it (Op::WcuStop)
+    bool StopWcu(size_t frameLength);
+    void WcuStopped(bool stopped);
     void SystemReset();
 
     Variant _variant = Variant::S3;
@@ -320,6 +333,7 @@ private:
     uint16_t _httpPort = 0;         ///< HttpGet: the server's port (the proxy is _opPort)
     uint8_t _redirects = 0;
     bool _viaProxy = false;
+    bool _httpTls = false;          ///< S3 HttpGet: HTTPS (port 443 or a redirect to https://), TLS done by the host
     bool _iniJoin = false;          ///< Join came from WIFI_INI (reply 83, then the proxy)
     std::vector<uint8_t> _request;  ///< the held request's payload (rebuilt from the buffer after a load)
     bool _softRestart = false;      ///< the last start was SYS_RESET (SYS_INFO "RST:")
@@ -328,6 +342,8 @@ private:
     ZiFiVfsBridge _vfs;
     std::unique_ptr<ZiFiFtpServer> _ftp;
     std::unique_ptr<ZiFiWebDavServer> _webdav;
+    std::unique_ptr<ZiFiHttpFetch> _wcuFetch;
+    std::unique_ptr<ZiFiWcUpdater> _wcu;
     std::deque<std::vector<uint8_t>> _events;   ///< S3: the 8-deep inter-core event queue
     std::deque<std::vector<uint8_t>> _txBacklog;   ///< frames waiting for room in the UART output
     bool _bridgePoll = false;

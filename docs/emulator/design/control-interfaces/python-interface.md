@@ -115,7 +115,8 @@ class Emulator:
     # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
     # return (command-interface.md section 3.3); dicts/lists/scalars
     def audio_ay_state(self, chip: int = -1) -> dict:
-        """AY/SSG report: overview (chip=-1) or one chip fully decoded"""
+        """AY/SSG report: overview (chip=-1; active_chip = the one the ports talk to) or one chip fully
+        decoded (latched_register = the register #FFFD last selected, selected = the ports talk to it)"""
 
     def audio_fm_state(self, chip: int = -1) -> dict:
         """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
@@ -1275,6 +1276,12 @@ emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budg
 emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 # or as a number
 emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
+emu.mem_find("CD ?? 00")             # ?? = any byte, "A?" = any low nibble
+emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
+emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
+emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match
+# Result: {space, count, truncated, matches: [{address | page, offset, context_start, context}]};
+# context = 4 bytes before, the match, 4 after; {"error": "..."} when refused
 
 # Screen state
 emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
@@ -1284,7 +1291,8 @@ emu.screen_digest(mode="active")     # hash the surface the video mode displays 
                                      # 'active_surface': {'video_mode': str, 'pages': [..]}
 emu.ports_map()                      # static port map + live routing flags (P1-5 + P1-2 tags):
                                      # {'model': str, 'entries': [{'port','mask','match','device','gate',
-                                     #                             'tags': ['memory','rom',...], 'latch'}],
+                                     #                             'tags': ['memory','rom',...], 'latch',
+                                     #                             'latch_value', 'latch_fields'}],  # e.g. pFE: border, mic, ear
                                      #  'live': {'trdos_active','mouse_ports_decoded',
                                      #           'mouse_routing_note','shadow_monitor_paged'}}
                                      # tags: semantic categories (keyboard/memory/rom/screen/storage/

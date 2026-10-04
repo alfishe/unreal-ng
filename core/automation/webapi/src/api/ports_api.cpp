@@ -90,6 +90,16 @@ void EmulatorAPI::getPortsMap(const HttpRequestPtr& req, std::function<void(cons
         item["tags"] = tagNames;
         const char* latchName = PagingLatchToString(entry.latch);
         item["latch"] = latchName ? Json::Value(latchName) : Json::Value(Json::nullValue);
+        if (latchName)
+        {
+            // The latch's value now, and decoded (PortDecoder::ReadPagingLatch / DecodePagingLatch)
+            const uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+            item["latch_value"] = value;
+            Json::Value fields(Json::objectValue);
+            for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+                fields[field.key] = field.isBool ? Json::Value(field.boolValue) : Json::Value(field.intValue);
+            item["latch_fields"] = fields;
+        }
 
         entries.append(item);
     }

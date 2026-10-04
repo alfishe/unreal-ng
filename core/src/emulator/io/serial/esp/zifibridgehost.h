@@ -22,6 +22,8 @@ public:
     virtual uint64_t BridgeMicros(uint64_t us) const = 0;
     /// An event frame to the Z80 (60 / 61 FTP, 66 Wi-Fi signal): S3 through its 8-deep queue, E01 at once
     virtual void BridgeEvent(uint8_t cmd, const std::vector<uint8_t>& data) = 0;
+    /// Room for one more event in the queue to the Z80 (the WC updater waits up to 5 s for it)
+    virtual bool BridgeEventRoom() const { return true; }
     virtual bool BridgeWifiUp() const = 0;
     virtual uint32_t BridgeIp() const = 0;
     /// The ESP's time of day (S3: SNTP after the Wi-Fi join); false while it is not set

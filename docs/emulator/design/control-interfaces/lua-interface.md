@@ -377,8 +377,8 @@ The same reports the WebAPI, Python, CLI and MCP return
 as Lua tables (arrays are 1-based sequences):
 
 ```lua
-ay  = audio_ay_state()      -- overview: available_chips, slot_device, psg_clock_hz, chips[]
-ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, psg_clock_hz, active_chip, chips[] (latched_register)
+ay0 = audio_ay_state(0)     -- one chip: registers, latched_register (+ name), selected, channels[3], envelope, noise, mixer, io_ports
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
@@ -1066,6 +1066,12 @@ emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
 emu.mem_find("AF 3C")                -- hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 -- or as a number
 emu.mem_find("AF 3C", 0x8000, 0xFFFF, 2, 32)  -- start, end, alignment, max matches
+emu.mem_find("CD ?? 00")             -- ?? = any byte, "A?" = any low nibble
+emu.mem_find("C3", nil, nil, 1, 64, "ram")         -- every RAM page: matches as page {kind, page} + offset
+emu.mem_find("C3 00 80", 0, 0x3FFF, 1, 64, "ram5") -- one page (offsets), also "rom2", "cache0"
+emu.mem_find("21 00 40", nil, nil, 1, 64, "cpu", "FF FF F0")  -- mask: 1 bits must match
+-- Result: {space, count, truncated, matches = {{address | page, offset, context_start, context}}};
+-- context = 4 bytes before, the match, 4 after; {error = "..."} when refused
 
 -- Screen state
 emu.screen_digest()                  -- digest screen area (0x4000-0x5AFF), border folded in
@@ -1075,7 +1081,8 @@ emu.screen_digest(nil, nil, nil, "active")      -- hash the surface the video mo
                                                -- result carries active_surface = {video_mode, pages}
 emu.ports_map()                      -- static port map + live routing flags (P1-5 + P1-2 tags):
                                      -- { model, entries = {{port, mask, match, device, gate?,
-                                     --                      tags = {"memory","rom",...}, latch?}},
+                                     --                      tags = {"memory","rom",...}, latch?,
+                                     --                      latch_value?, latch_fields?}},  -- e.g. pFE: {border, mic, ear}
                                      --   live = {trdos_active, mouse_ports_decoded,
                                      --           mouse_routing_note, shadow_monitor_paged?} }
                                      -- tags: semantic categories (keyboard/memory/rom/screen/storage/
