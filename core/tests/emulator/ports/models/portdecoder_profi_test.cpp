@@ -561,13 +561,15 @@ TEST_F(ProfiV3PortDecoder_Test, NoPaletteMonochromeHiRes)
     EXPECT_TRUE(ProfiMonochromeHires(_context->config));
 }
 
-/// @brief TTD: the v3 board records its paging only (no Ds12887)
-TEST_F(ProfiV3PortDecoder_Test, TtdStateIsPagingOnly)
+/// @brief TTD: the v3 board records its paging and its 8255 (joystick, printer / Covox) - no Ds12887, no extended
+///        devices
+TEST_F(ProfiV3PortDecoder_Test, TtdStateIsPagingAndPpi)
 {
     const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 1u);
+    ASSERT_EQ(ids.size(), 2u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::ProfiPaging);
-    EXPECT_EQ(_context->pPortDecoder->CreateTTDSerializers().size(), 1u);
+    EXPECT_EQ(ids[1], ttd::PeripheralId::Ppi8255);
+    EXPECT_EQ(_context->pPortDecoder->CreateTTDSerializers().size(), 2u);
 }
 
 /// endregion </Profi v3 board (MM_PROFI3)>
