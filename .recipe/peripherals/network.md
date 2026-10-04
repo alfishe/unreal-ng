@@ -25,6 +25,12 @@ virtual network through the **Ethernet gateway** (a switch + router at
 `slots` and `ethernet_gateway`, and `GET /network/frames` captures their
 frames. Recipe: [machines/sprinter-network.md](../machines/sprinter-network.md).
 
+Those frame cards can also be **bridged to a host adapter** instead (`ethernet_mode=bridge bridge_adapter=en0`):
+the card gets its address from the real LAN. It needs the host's permission to read and write raw frames; on macOS
+`sudo chmod o+rw /dev/bpf*` lasts **only until the next reboot** (Wireshark's ChmodBPF makes it permanent), on Linux
+`setcap` is lost when the binary is replaced, on Windows Npcap must be installed. Reference:
+[docs/features/network-bridge.md](../../docs/features/network-bridge.md).
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).

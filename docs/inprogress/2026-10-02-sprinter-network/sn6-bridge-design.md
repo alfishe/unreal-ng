@@ -88,10 +88,12 @@ the pcap loader serves macOS, Linux and Windows from one code path.
 
 ## 6. Host permissions (what the user has to do)
 
+The user-facing version with the checks: [docs/features/network-bridge.md](../../features/network-bridge.md#host-permissions).
+
 | Host | Needs | Report when missing |
 |---|---|---|
-| macOS | read / write on `/dev/bpf*` (root by default): Wireshark's **ChmodBPF** (group `access_bpf`) or run as root | "cannot open /dev/bpf: permission denied - install ChmodBPF (Wireshark) or ..." |
-| Linux | `CAP_NET_RAW` + `CAP_NET_ADMIN` on the binary (`setcap`), or root | the same, with the `setcap` line |
+| macOS | read / write on `/dev/bpf*` (root by default): Wireshark's **ChmodBPF** (group `access_bpf`, permanent), or `sudo chmod o+rw /dev/bpf*` (**until the next reboot**: macOS recreates the devices root-only at start), or run as root | "cannot open /dev/bpf: permission denied - install ChmodBPF (Wireshark) or ..." |
+| Linux | `CAP_NET_RAW` + `CAP_NET_ADMIN` on the binary (`setcap`; lost when the binary is replaced: a rebuild or an update), or root | the same, with the `setcap` line |
 | Windows | **Npcap** installed (WinPcap-compatible mode not needed) | "Npcap is not installed" with the download link |
 
 The development Mac: `en0` is wired Ethernet; `/dev/bpf*` is `crw------- root` (no ChmodBPF yet), so a live check
