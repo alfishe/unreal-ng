@@ -477,6 +477,10 @@ boards).*
 - **SprinterSerial** is the `DUAL16552` preset: two `ComPort`s, each with its own peer (`TCP:host:port` for a
   null-modem link to a host program, `SERIAL:/dev/tty...` for a real port).
 
+*As built (§18 SN4): the phone book separates entries with `,` (`;` starts an INI comment), the spec is
+`MODEM[,<guest port>]` (the port it answers calls on), SprinterSerial's facts come from its schematic and PCB
+netlist (rev 1.1.1), not from the PC convention.*
+
 ## 11. Not planned: SprinterNet, ZX-bus network cards
 
 - **SprinterNet** (W5100 card, research §5.6): no released hardware, only prototypes; its programs run in SprintEm
@@ -761,6 +765,88 @@ network cards ahead of ISA RAM if the owner agrees (Q7).
   server, `UNETTEST example.test 80` through `UNETESP.DLL` (libman load, NETINIT, resolve, CONNECT, SEND, passive
   RECV, CLOSE), `NETUP` on the 2.2.1 preset (the kit's 2.2.1 profile), and a TTD replay of NETUP + WGET without the
   host: blobs 46, 20, 33, 45 equal byte for byte.
+
+### SN4 (2026-10-03, branch `sprinter-sn4-modem`)
+
+- **`HayesModemPeer`** (`core/src/emulator/io/serial/hayesmodempeer.*`, ComPortSpec `MODEM[,<guest port>]`): a
+  Hayes modem as an `ISerialPeer`, so every machine's serial port takes it (ZX-Evo / TS-Conf COM port, ZX-WiFi,
+  ATM2IOESP, the ATM Turbo 2+ controller's RS-232, the Sprinter's cards). Command mode (`AT` + commands + S3, echo,
+  `A/`, BS editing, verbose / numeric / quiet results, X0-X4), `D` with the modifiers (T P W , @ ! ; L), `A`, `H`,
+  `O`, `Z`, `&F`, `E Q V X`, `Sn=` / `Sn?` (S0-S39; S0 auto-answer, S2 escape, S3-S5, S7 carrier wait, S12 guard),
+  `I0-I4`, `&C` (default 1: DCD follows the call), `&D` (default 2: DTR dropping hangs up), `&S`, `&V`; init-string
+  settings (L M B N W Y, `&K &Q &W` ..., `\N`, `%C`, `+...`) accepted without effect; anything else `ERROR`. Online:
+  bytes to the call, `+++` with S12 before and after (checked at the frame boundary) -> `OK`, the call held; `ATO`
+  resumes, `ATH` ends it. Results `OK CONNECT <rate> RING NO CARRIER ERROR NO DIALTONE BUSY NO ANSWER` (refused =
+  BUSY, a name that does not resolve or a connect that times out = NO ANSWER, S7 without a carrier = NO ANSWER).
+  The rate is the DTE rate the UART is programmed for. Lines: CTS always, DSR (`&S0`), DCD, RI while ringing
+  (2 s on, 4 s off). A remote hang-up delivers the call's last bytes, then `NO CARRIER`.
+- **Numbers**: letters, `.` or `:` in the dialed string make it a host (`ATDT bbs.example.org:2323`, port 23 by
+  default); digits (with `-`, `(`, `)`, spaces and the pause modifiers) are looked up in the phone book
+  `[NETWORK] ModemPhonebook=5551234=bbs.example.org:23,...` (runtime `modem_phonebook`; `,` separates entries, `;`
+  is an INI comment); an unknown number finds nobody (`NO CARRIER`).
+- **Reuse**: the call is a `StreamPeer` in a new **Dialer** form (idle until `Dial`, no retries, sockets owned by the
+  modem, `Adopt` for an answered call, `onLinkChange`), so DNS through the virtual network, the journaled host
+  events and the TTD byte references are the stream peer's. Inbound calls (`MODEM,<guest port>`): the modem listens
+  on that guest port (host clients arrive through `Forward=`), an accepted caller rings it, a caller while busy is
+  turned away; `VirtualNetwork::Reset` now keeps a kept guest's listener (the modem's, an ESP's server) listening.
+  The Ethernet gateway listens on every `Forward=` guest port for its cards (§7.3): it now leaves the guest ports a
+  modem answers on (`EthernetGateway::SetReservedGuestPorts`, from the plan), else a host client reached whichever
+  device waited first (found live with the default NE2000 in slot 2).
+- **Cards** (`PcSerialCard` presets, `[ISA] SlotN=`, create option `isa_slotN`):
+  - `MODEM` - an ISA internal modem: 16550A (MCR bits 7-5 read 0) at 1.8432 MHz, base `#3F8` / `#2F8` / `#3E8` /
+    `#2E8` (`SlotNBase`, default `#3F8`), IRQ 2 / 3 / 4 / 5 / 7 (`SlotNIrq`, default 4), the PC decode (A9-A3 with
+    AEN: mirrors every `#400`) and interrupt (MCR OUT2 enables the tri-state IRQ driver: `IrqDriven` = OUT2), the
+    modem's lines on the UART; peer `MODEM` by default (`SlotNPeer`).
+  - `DUAL16552` - **SprinterSerial rev 1.1.1** from its schematic and PCB netlist
+    ([romychs/SprinterSerial](https://github.com/romychs/SprinterSerial)): PC16552D at 1.8432 MHz; the 74ALS30 compares
+    A9, A7-A3 and (D3, 74ALS27) A15-A10, A8 is CHSEL (1 = channel A = COM1 `#3F8`, 0 = channel B = COM2 `#2F8`), AEN
+    and A19-A16 not connected; without D3 (`SlotNDecode=PARTIAL`, J1 + J2 closed) A15-A10 are not decoded. INTA ->
+    J5 -> IRQ 2 / 3, INTB -> J6 -> IRQ 2 / 4, push-pull, not gated (MF pins open): `SlotNIrq` (J5, default 3) and
+    `SlotNIrqB` (J6, default open). The AFR (DLAB set, register 2; `Uart16550::Params::afr`) is one register for
+    both channels, its bit 0 writes both channels at once. COM1 goes to a CH340 whose modem pins meet the UART's
+    straight (inputs on inputs, outputs on outputs): the UART's CTS / DSR / DCD / RI are driven by nothing; COM2's
+    MAX232 brings CTS only (`Uart16550::Params::msrWired` / `msrUnwired`: unwired inputs read inactive - open
+    question Q12). Peers `SlotNPeer` (COM1) / `SlotNPeerB` (COM2), default `NONE`; runtime `isaN_peer` /
+    `isaN_peer_b`. On the Sprinter every IRQ pin of a slot is one line: with both jumpers fitted and opposite INTR
+    levels the outputs fight (`irq_contention` in the report; modeled as the higher one winning - Q13).
+- **Frame order (generic fix, every machine)**: the network devices' own boundary work (`NetworkManager::
+  OnFrameDevices`: a pending refit, the NE2000s, the gateway, every serial port's UART catch-up and peer `OnFrame`)
+  now runs **before** the boundary's TTD checkpoint (MainLoop), the host's answers (`OnFrameHost`: `Pump`, the status
+  copy) after it. Before, the peers ran after `Pump`: live they saw an answer in the same boundary, a replay a
+  frame later (the journal applies it at the first instruction after the boundary) - the modem's dial diverged by
+  one frame of its DNS wait (found by the BC-Term replay); and work after the checkpoint was lost when a replay
+  started from that checkpoint (`TTDComPortName_Test`). The SN2 note "nothing order-dependent may run after Pump" is
+  now the structure.
+- **TTD**: the modem's state (`netstate::HayesModemState`: mode, settings, S-registers, command line, replies
+  waiting, timers, counters, the dial target) shares the ESP module's bytes of `netstate::Com` (a union: no blob
+  size changes), peer kind 6; the call is the record's stream link and byte runs. The second UART of a slot gets
+  blobs **48 `SlotSerial1B` / 49 `SlotSerial2B`** (46 / 47 stay channel A); guests 9 / 10 in the virtual network's
+  tables. ISA blob 33 records `modem` / `dual16552`.
+- **Reports**: `state/network` slot row (and `state/isa` through the card's `Describe`): `chip`, `base`, `irq`,
+  `peer_spec`, `uart` (registers incl. AFR, DTR / RTS / OUT2, CTS / DSR / DCD / RI as the UART sees them, FIFOs,
+  counters), `peer`, `modem` (`mode` command / dialing / online / online_command, `carrier`, `lines`, `call`
+  {dialed, link, remote, ringing, rings, held_bytes}, `last_result`, `settings`, `phonebook`, `counters` {dials,
+  connects, failures, escapes, rings, answered, bytes_to_line, bytes_from_line}, `journal` of commands / results -
+  filled again in a TTD replay); SprinterSerial adds `channel_b`, `irq_contention`, `decode_jumpers`,
+  `modem_inputs`. A modem on any other port shows as `com.modem` (plus `recent_exchanges`). `settings` lists
+  `modem_phonebook`. MCP prints one line per UART (mode, dialed, DCD, RINGING, last result); the Qt Network window
+  has the modem in every line editor (with the guest port it answers), a COM2 editor for SprinterSerial and the
+  phone book field; the slot rows show the call.
+- **BC-Term 1.11** (`SprinterBcTermModem_Test`, env `UNREAL_SPRINTER_HDD`, BIOS 3.06 HF2): finds the modem at `#3F8`
+  in slot 1, programs 57 600 baud (divisor 2) with OUT2, PIO port B for IM 2; its init `ATZ` -> `OK`; typed
+  `ATDT5551234` -> the phone book's `bbs.test:23` -> `CONNECT 57600`, DCD; the scripted BBS's banner arrives through
+  the receive interrupt; typed text reaches the BBS byte for byte and its echo is on the screen; `+++` -> `OK`, `ATH`
+  -> `OK`, DCD off; a TTD replay of the session without any host gives blobs 46 and 33 byte for byte. Live
+  (2026-10-04, WebAPI, recipe): the same against a real host TCP server, and an incoming call from `nc` through
+  `Forward=` (RING, `ATA`, data both ways, the caller's hang-up -> `NO CARRIER`). BC-Term reads the AT keyboard itself:
+  a short ENTER tap is lost (hold it 6 frames) and fast typing once switched it to its Russian layout - an input
+  pacing note for automation, not a modem matter.
+- **Tests**: `hayesmodempeer_test.cpp` (commands, dial by address / name / phone book, BUSY, NO ANSWER, abort, data
+  both ways, escape guard times, ATO / ATH, remote hang-up, inbound RING / RI / ATA, DTR, state round trip, spec and
+  phone book parsing), `pcserialcard_test.cpp` (+3: the modem card's decode / AEN / OUT2-gated IRQ / `AT`; SprinterSerial
+  channels by A8, D3 decode, AFR concurrent write, unwired modem inputs, a modem on COM2, J5 / J6 and the contention,
+  partial decode, runtime `isa1_peer_b`), `networkpanelmodel_test.cpp` (the SprinterSerial row with a call on COM2, its
+  editable lines and the phone book).
 
 ### SN5 (2026-10-03, branch `sprinter-sn5-3c509b`)
 

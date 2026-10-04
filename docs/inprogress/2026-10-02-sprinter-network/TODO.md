@@ -12,7 +12,9 @@ slot 2); maximum reuse of the shared network stack, no Sprinter-only parallel pa
 Built so far (branch `sprinter-isa-network`, as-built notes in [tdd.md](tdd.md) §18): ISA I1 (the bus the cards sit
 on), SN0, SN1, SN2 - the RTL8019AS kit runs end to end (`IFUP`, `PING`, `NSLOOKUP`, `WGET`); recipe
 [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md). SN3 (branch `sprinter-esp-sn3`):
-the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET`, `UNETESP.DLL`). SN5 (branch
+the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET`, `UNETESP.DLL`). SN4 (branch
+`sprinter-sn4-modem`): the Hayes modem peer, the ISA modem card and SprinterSerial - BC-Term dials and talks over
+interrupts. SN5 (branch
 `sprinter-sn5-3c509b`): the 3Com 3C509B - the 3C509B kit runs end to end (`IFUP`, `PING`, `NSLOOKUP`, `WGET`).
 
 ## Documents
@@ -20,7 +22,7 @@ the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET
 - [research.md](research.md): every network adapter for the Sprinter, software, activity, sources, glossary
 - [tdd.md](tdd.md): scoring, reuse map, generic extensions, NE2000 + Ethernet gateway, SprinterESP, 3C509B, modem,
   config, TTD, automation, tests, phases SN0-SN6
-- [open-questions.md](open-questions.md): Q1-Q11 with recommendations
+- [open-questions.md](open-questions.md): Q1-Q13 with recommendations (Q12, Q13 from SN4: SprinterSerial)
 
 ## Remaining
 
@@ -49,9 +51,16 @@ the SprinterESP Wi-Fi card - the ESP kit runs end to end (`NETUP`, `PING`, `WGET
   through `UNETESP.DLL`; ESPT / wterm from the MAME-pack disk; both `NET_ESP_FLOW` modes in a test (the kit picks 3 on
   the emulated ESP); ~~the IRQ3 line to the PIO (I4)~~ done with ISA I4 2026-10-03 (BC-Term receives the ESP through IRQ3 -> PB0); the ESP32 preset's `+PING` / `+CIPRECVDATA` forms are NonOS-style
   (ESP32 AT 2.x prints the 2.x forms); the ROM's 74 880-baud boot log and flashing in download mode are not modeled
-- [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - ISA I4 is built (2026-10-03): the
-  `MODEM` / `DUAL16552` presets only need `IrqDriven` = MCR.OUT2 (the PC tri-state buffer) and their jumpered IRQ;
-  BC-Term's interrupt path already runs against the SprinterESP (ISA tdd §14 I4)
+- [x] SN4 (2026-10-03, branch `sprinter-sn4-modem`, as built in [tdd.md](tdd.md) §18): `HayesModemPeer` (ComPortSpec
+  `MODEM[,<guest port>]`, shared by every machine's serial port; `[NETWORK] ModemPhonebook`, runtime
+  `modem_phonebook`; the call is a `StreamPeer` Dialer; inbound RING / RI / ATA), presets `MODEM` (ISA modem: 16550A
+  at a COM base, OUT2-gated IRQ) and `DUAL16552` (SprinterSerial rev 1.1.1 from its netlist: PC16552D, A8 = CHSEL, D3 /
+  J1-J2 decode, AFR, J5 / J6), TTD blobs **48 / 49** for the second UART, guests 9 / 10; BC-Term 1.11 dials a scripted
+  BBS through the phone book and talks over the ISA interrupt, TTD replay without the host; reports on all surfaces +
+  Qt; recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md#isa-hayes-modem-and-sprinterserial)
+- [ ] SN4 follow-ups: owner questions Q12 (SprinterSerial COM1's floating modem inputs) and Q13 (both IRQ jumpers
+  fitted); BC-Term's file transfers (X / Y / Zmodem) over the modem not run yet; a modem on the ZX-Evo COM port is
+  unit-tested (the peer), not run with a ZX program
 - [x] SN5 (2026-10-03, branch `sprinter-sn5-3c509b`, as built in [tdd.md](tdd.md) §18): `EtherLink3` (ID port
   isolation, EEPROM from the real boards, windows 0-6, FIFOs, status / IRQ, 10BASE-T link test, loopback, statistics,
   power) as an `IEthernetCard`, `[ISA] SlotN=EL3C509B` (`SlotNChip=TPO | TP`, base in steps of `#10`), blob 45 v2;

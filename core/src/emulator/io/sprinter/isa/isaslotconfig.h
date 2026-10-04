@@ -17,6 +17,15 @@
 /// Slot1=SPRINTERESP      ; the SprinterESP Wi-Fi card: TL16C550C at #3E8 (fixed), IRQ 3 (wired), an ESP-12F
 /// Slot1Peer=AT           ; what the 16550 is wired to (ComPortSpec): AT (default, the ESP), ESPNET, LOOPBACK,
 ///                        ; TCP:host:port, SERIAL:device[,baud] (a real ESP on a USB adapter), NONE
+/// Slot1=MODEM            ; an ISA Hayes modem: a 16550A at 1.8432 MHz behind an internal modem (network SN4)
+/// Slot1Base=0x3F8        ; MODEM: 0x3F8 | 0x2F8 | 0x3E8 | 0x2E8 (COM1-COM4)
+/// Slot1Irq=4             ; MODEM: 2 | 3 | 4 | 5 | 7 (on the Sprinter every IRQ pin of a slot is one line)
+/// Slot1Peer=MODEM        ; MODEM: the modem itself (default); MODEM,<guest port> also answers calls
+/// Slot1=DUAL16552        ; SprinterSerial: PC16552D, COM1 #3F8 (USB, CH340) + COM2 #2F8 (RS-232, MAX232)
+/// Slot1Peer=TCP:localhost:2323   ; COM1's line (default NONE); Slot1PeerB= COM2's (ComPortSpec, e.g. MODEM)
+/// Slot1Irq=3             ; DUAL16552: jumper J5 joins COM1's INTR to IRQ 3 (default) or 2; 0 = open
+/// Slot1IrqB=0            ; DUAL16552: jumper J6 joins COM2's INTR to IRQ 4 or 2; 0 = open (default)
+/// Slot1Decode=FULL       ; DUAL16552: FULL (D3 fitted: A15-A10 decoded) | PARTIAL (D3 left out, J1 + J2 closed)
 /// ```
 ///
 /// Slot numbers are 1 and 2 everywhere a person reads them (config, reports, automation), as on the board and in
@@ -67,7 +76,10 @@ struct SlotConfig
     uint8_t irq;         ///< the IRQ the card's configuration names (informational: one line per slot)
     uint8_t macAuto;     ///< 1: 02:53:50:00:<instance>:<slot>
     uint8_t mac[6];
-    char peer[64];       ///< UART cards (SPRINTERESP): ComPortSpec text of the line's other end; empty = AT
+    char peer[64];       ///< UART cards: ComPortSpec text of the (first) UART's line; empty = the card's default
+    char peerB[64];      ///< DUAL16552: COM2's line (ComPortSpec); empty = NONE
+    uint8_t irqB;        ///< DUAL16552: J6 (COM2's INTR): 4 | 2 | 0 open
+    uint8_t partialDecode;   ///< DUAL16552: 1 = D3 not fitted, J1 + J2 closed (A15-A10 not decoded)
 };
 
 /// The SprinterESP card's fixed resources (rev 1.0.5 schematic: 74HC30 + 74HC27 decode A13-A3 = #3E8 >> 3, INTR to
@@ -75,6 +87,20 @@ struct SlotConfig
 constexpr uint16_t kSprinterEspBase = 0x3E8;
 constexpr uint8_t kSprinterEspIrq = 3;
 constexpr uint32_t kSprinterEspUartClock = 14745600;
+
+/// The ISA Hayes modem (network tdd §10): a 16550A at a COM base, 1.8432 MHz, the PC convention for its
+/// interrupt (MCR OUT2 enables the tri-state IRQ driver)
+constexpr uint16_t kModemDefaultBase = 0x3F8;
+constexpr uint8_t kModemDefaultIrq = 4;
+constexpr uint32_t kPcUartClock = 1843200;
+
+/// SprinterSerial rev 1.1.1 (Roman Boykov, 2022-02-09; https://github.com/romychs/SprinterSerial): a PC16552D,
+/// a 74ALS30 compares A9, A7-A3 (and through the 74ALS27 D3 A15-A10) - A8 is the chip's CHSEL (1 = channel A =
+/// COM1 #3F8, 0 = channel B = COM2 #2F8); A19-A16 and AEN are not connected. INTA -> J5 -> IRQ2 | IRQ3,
+/// INTB -> J6 -> IRQ2 | IRQ4; the MF pins (OUT2) are not connected: nothing gates the interrupts
+constexpr uint16_t kSerialCom1Base = 0x3F8;
+constexpr uint16_t kSerialCom2Base = 0x2F8;
+constexpr uint8_t kSerialDefaultIrqA = 3;
 
 /// The configured slots ([ISA] section)
 struct IsaConfig
@@ -105,6 +131,12 @@ std::string SlotChipName(const SlotConfig& slot);
 bool ParseNe2000Base(const std::string& text, uint16_t& base);
 /// An I/O base for a card kind: NE2000 as above, EL3C509B #200..#3E0 in steps of #10
 bool ParseSlotBase(const std::string& text, CardKind kind, uint16_t& base);
+
+/// MODEM bases: #3F8, #2F8, #3E8, #2E8 (the same number forms)
+bool ParseModemBase(const std::string& text, uint16_t& base);
+/// The IRQ a card's configuration may name: MODEM 2/3/4/5/7 (8-bit pins), DUAL16552 J5 0/2/3, J6 0/2/4
+bool ValidModemIrq(uint8_t irq);
+bool ValidSerialJumper(int channel, uint8_t irq);
 
 /// "auto" or "aa:bb:cc:dd:ee:ff" (also '-' separated)
 bool ParseMac(const std::string& text, SlotConfig& slot);

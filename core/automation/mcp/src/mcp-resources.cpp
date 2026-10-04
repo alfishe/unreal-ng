@@ -320,7 +320,7 @@ aspects:["paging"]` reports `profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clo
 ## Known limitations
 The v5 turbo and hi-res wait rules are models of the 5.06 arbiter (M). The BIOS menu entries (TR-DOS, Sinclair, 128)
 are verified on both boards. CP/M boots on v5 from "Загрузка системы CP/M" (disks in testdata/machines/profi/cpm/v5); on v3
-Klug CP/M (cpm/v3) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2's TR-DOS 5.03 cannot load it.
+Klug CP/M 2.3 boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2's TR-DOS 5.03 cannot load it.
 SP-DOS (cpm/sp-dos, MicroDOS by V. Tereschenko) boots on both boards from the same CP/M entries to its hi-res shell.
 )md";
 
@@ -384,9 +384,9 @@ per 8 x 8 square from the mode table in video RAM), a block accelerator, an AY a
 `emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
 
 ## BIOS and start
-Images: 3.07 (`sp2k-3.07-beta1.rom`, the default), 3.06 (`sp2k-3.06-hf2.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
+Images: 3.06 (`sp2k-3.06-hf2.rom`, the default), 3.07 (`sp2k-3.07-beta1.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
 3.06+). At create: `emulator_manage action=create model=SPRINTER sprinter_bios=3.04 sprinter_fast_start=false`; on a running machine:
-`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.06","reset":true}` (the image loads at the reset).
+`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.07","reset":true}` (the image loads at the reset).
 `inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32), with its known issues
 ("KNOWN ISSUE:" lines; 3.07 BETA 1: DSS 1.71.57 cannot start programs from a floppy, use 3.06 or the DSS of the 3.07
 recovery disk). FastStart off (the

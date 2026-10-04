@@ -167,10 +167,13 @@ void SprinterIsaBus::Configure(const sprinterisa::IsaConfig& config)
     }
 }
 
-void SprinterIsaBus::SetConfiguredPeer(int slot, const std::string& peer)
+void SprinterIsaBus::SetConfiguredPeer(int slot, int channel, const std::string& peer)
 {
     sprinterisa::SlotConfig& c = _slots[slot & 1].config;
-    std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+    if (channel == 0)
+        std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+    else
+        std::snprintf(c.peerB, sizeof(c.peerB), "%s", peer.c_str());
 }
 
 void SprinterIsaBus::Fit(int slot, std::unique_ptr<IIsaCard> card)

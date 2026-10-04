@@ -188,6 +188,48 @@ the PLD (`SP2_1K30.TDF` "COVOX" section, `:1066-1166`) decided:
   divider, play / write index, request, the half that needs data, DAC words, counters); the shared Covox report
   (`/state/audio/covox` and its CLI / MCP / Lua / Python twins) shows the device when it holds the COVOX slot.
 
+### 2.2 The play-tick phase, and the dontBlink freeze at 5:10 (2026-10-03)
+
+**Phase.** The PLD clocks `CBL_CTX` from the video counter (`CBL_CTX[].clk = !CTH1`, `SP2_1K30.TDF:1079`) and
+never clears it: it free-runs from the configuration load, and `CBL_CNT` only clears while `CBL_MODE` is 0. The
+first INT after a control write therefore lands on the free-running tick grid, not exactly 64 ticks after the
+write. The emulator follows the PLD (ticks on the frame-start grid, §2.1). MAME restarts its timer at every control
+write (`sprinter.cpp:797-812`), so its INT phase follows the write. In dontBlink the two differ by about 550 CPU
+clocks (21 MHz) relative to the CTC tick, half a play tick.
+
+**The freeze.** deMarche's dontBlink (`C:\DEMOS\DNTBLINK`, BIOS 3.07 BETA 1, the default until 2026-10-03, launched from Flex Navigator)
+stops drawing about 305-310 s after start, in the "flowers" part (part code loaded at `#0700`). The music then
+loops one ring buffer. The cause is a race in the demo's own code, found in a TTD recording of the freeze (frames
+15681-15713, reverse steps and `find-last`):
+
+- The effect (`#07D8`) resets an "interrupted SP" log to `#0600` (`#031D` is the pointer). It points SP into its
+  data (`LD SP,#8006`), runs `POP`-driven with interrupts on, and leaves through
+  `#0D1E LD SP,#3F74 : LD A,IXH : OUT (#E2),A : #0D25 LD HL,(#031D) : EI`. It then repairs 4 bytes at every
+  logged SP from the backup page (`(D OR #C0):E`, page IXH). Both interrupt handlers log the interrupted SP
+  (`#0310` CBL, `#0125` CTC).
+- If an interrupt is taken between `LD SP,#3F74` and `LD HL,(#031D)` (a window of about 35 T), the log gets
+  `#3F72`. The repair then copies `#FF72..75` of the backup page over the live stack and destroys the return
+  address `#07CC` at `#3F74`. `RET` at `#0D4B` goes to `#FC01`, the CPU runs into the page table at `#0038` and
+  halts at `#003D` with the accelerator's `LD A,A` armed. The next CBL interrupt returns there, and its stores
+  (vertical copy) overwrite `#0302-#031E` with `#03`. After that the CPU halts with interrupts off, for good.
+- In frame 15712 the CBL INT (raised at 262 292 of 430 080 clocks) is taken right after `OUT (#E2),A`.
+  `LD SP,#3F74` ran at 262 241.
+
+**Why it is timing luck, not a device fault.** The demo's 4-frame main loop starts on the 48.83 Hz CTC tick. The
+end of its first effect call drifts by 100-200 clocks per loop with the data. The CBL INT sits at a fixed phase
+(seven per frame, since 21 875 Hz / 64 = 7 x 48.83 Hz). The drift sweeps the call's end across a CBL INT. Whether
+an INT then lands inside the 35-T window is chance, decided at clock level. MAME (same CHD, BIOS 3.06) runs past
+it: its loop timing matches the emulator's within 0.2% (13 596-13 644 clocks per effect iteration against
+13 632-13 650 here, the same CTC and disk-read pattern). At the same crossing its call ends 566 clocks before the
+CBL INT, because of the ~550-clock phase difference above. On a real board the tick phase depends on when the
+configuration loaded, and the disk reads in the CTC handler take real drive time, so the outcome depends on the
+board and the run. In the emulator the same demo with BIOS 3.06 Hotfix 2 (other disk-read timing) plays past the
+flowers to the end logo; 3.06 Hotfix 2 is the default again since 2026-10-03 ([bios-versions.md](bios-versions.md) §6.1), so the default
+plays dontBlink to the end. Nothing the demo does is emulated wrongly here. The race is the demo's (its own SP log
+cannot tell a data SP from the real stack). Evidence: TTD file
+`scratch/dntblink-freeze/dntblink-307-freeze-f15681-15713.ttd` (not committed), MAME debugger logs (breakpoints
+`#0125/#0310/#07D8/#07EB/#0D1E` with `totalcycles`).
+
 ## 3. Keyboard
 
 ### 3.1 One key event, two outputs

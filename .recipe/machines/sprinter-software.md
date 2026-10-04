@@ -3,7 +3,7 @@
 The shortest verified paths on a `SPRINTER` machine with the MAME-pack hard disk (DSS 1.71, Flex Navigator 1.15,
 the Spectrum launcher in `C:\ZX`): a native Sprinter program, and a Spectrum TRD in the three launcher modes
 SP (21 MHz), P128 (Pentagon 128, 3.5 MHz) and SC256 (Scorpion ZS 256). Verified 2026-10-03 on BIOS 3.07 BETA 1
-(the default) through the WebAPI; the MCP tools take the same steps (`emulator_manage` create, `load_software` /
+(the default until 2026-10-03; the default is now 3.06 Hotfix 2) through the WebAPI; the MCP tools take the same steps (`emulator_manage` create, `load_software` /
 media insert, `type_input` type / tap, `inspect_state`). Machine details: [sprinter.md](sprinter.md); the hard
 disk: [../media/sprinter-hdd.md](../media/sprinter-hdd.md).
 

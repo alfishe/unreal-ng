@@ -1707,16 +1707,23 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
         uint8_t mac[6];
         sprinterisa::EffectiveMac(config, n, NetworkInstanceIndex(), mac);
         std::copy(mac, mac + 6, slot.mac.begin());
-        slot.portKey = slot.id + (kind == sprinterisa::CardKind::SprinterEsp ? ".uart0" : ".eth");
+        const bool uartCard = kind == sprinterisa::CardKind::SprinterEsp || kind == sprinterisa::CardKind::Modem ||
+                              kind == sprinterisa::CardKind::Dual16552;
+        slot.portKey = slot.id + (uartCard ? ".uart0" : ".eth");
         slot.macAuto = config.macAuto != 0;
         slot.instance = NetworkInstanceIndex();
         slot.peer.assign(config.peer, strnlen(config.peer, sizeof(config.peer)));
+        slot.peerB.assign(config.peerB, strnlen(config.peerB, sizeof(config.peerB)));
+        slot.irqB = config.irqB;
+        slot.partialDecode = config.partialDecode != 0;
         if (kind == sprinterisa::CardKind::SprinterEsp)
         {
             // Fixed on the board (decoder and IRQ wiring): the config's Base / Irq do not apply
             slot.base = sprinterisa::kSprinterEspBase;
             slot.irq = sprinterisa::kSprinterEspIrq;
         }
+        if (kind == sprinterisa::CardKind::Dual16552)
+            slot.base = sprinterisa::kSerialCom1Base;   // COM1 #3F8 + COM2 #2F8, fixed by the decoder
         slot.fit = [this, n](IIoBusDevice* device, std::string& why) {
             (void)why;
             if (!device)
@@ -1728,10 +1735,13 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
             return true;
         };
         slot.notFitted = [this, n](const std::string& why) { _isaBus.SetRefusal(n, why); };
-        slot.setPeer = [this, n](const std::string& peer) {
-            _isaBus.SetConfiguredPeer(n, peer);
+        slot.setPeer = [this, n](int channel, const std::string& peer) {
+            _isaBus.SetConfiguredPeer(n, channel, peer);
             sprinterisa::SlotConfig& cfg = _context->config.sprinter.isa.slot[n];
-            std::snprintf(cfg.peer, sizeof(cfg.peer), "%s", peer.c_str());
+            if (channel == 0)
+                std::snprintf(cfg.peer, sizeof(cfg.peer), "%s", peer.c_str());
+            else
+                std::snprintf(cfg.peerB, sizeof(cfg.peerB), "%s", peer.c_str());
         };
         caps.expansionSlots.push_back(std::move(slot));
     }

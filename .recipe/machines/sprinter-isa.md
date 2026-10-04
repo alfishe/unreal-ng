@@ -33,9 +33,12 @@ population refuses to load on another).
   `SPRINTERESP` (the Wi-Fi card, built: `#3E8` and IRQ 3 fixed by the board) takes `SlotNPeer=AT` (its 16550's line)
   and `SlotNMac=`; it decodes A13-A3 without AEN, so `z80_access.io` reads "any #9FBD AEN" for it
   ([sprinter-network.md](sprinter-network.md#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit)).
+  `MODEM` (an ISA Hayes modem: 16550A, `SlotNBase=0x3F8|0x2F8|0x3E8|0x2E8`, `SlotNIrq=4`, `SlotNPeer=MODEM`) and
+  `DUAL16552` (SprinterSerial: COM1 `#3F8` + COM2 `#2F8`, `SlotNPeer=` / `SlotNPeerB=`, `SlotNIrq=3` / `SlotNIrqB=0`
+  for jumpers J5 / J6, `SlotNDecode=FULL|PARTIAL`): [sprinter-network.md](sprinter-network.md#isa-hayes-modem-and-sprinterserial).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
-- Built kinds: `NE2000`, `SPRINTERESP`. A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
+- Built kinds: `NE2000`, `SPRINTERESP`, `MODEM`, `DUAL16552`. A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
 ## WebAPI (verified)
 

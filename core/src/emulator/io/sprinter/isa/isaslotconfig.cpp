@@ -149,6 +149,59 @@ std::string SlotChipName(const SlotConfig& slot)
 
 namespace
 {
+bool ParseNumber(const std::string& text, unsigned long& value)
+{
+    std::string t;
+    for (char c : text)
+    {
+        if (c != ' ' && c != '\t')
+            t.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    int radix = 10;
+    if (!t.empty() && (t[0] == '#' || t[0] == '$'))
+    {
+        t.erase(0, 1);
+        radix = 16;
+    }
+    else if (t.size() > 2 && t[0] == '0' && t[1] == 'X')
+    {
+        t.erase(0, 2);
+        radix = 16;
+    }
+    else if (!t.empty() && t.back() == 'H')
+    {
+        t.pop_back();
+        radix = 16;
+    }
+    if (t.empty())
+        return false;
+    char* end = nullptr;
+    value = std::strtoul(t.c_str(), &end, radix);
+    return end && *end == '\0';
+}
+}  // namespace
+
+bool ParseModemBase(const std::string& text, uint16_t& base)
+{
+    unsigned long value = 0;
+    if (!ParseNumber(text, value) || (value != 0x3F8 && value != 0x2F8 && value != 0x3E8 && value != 0x2E8))
+        return false;
+    base = static_cast<uint16_t>(value);
+    return true;
+}
+
+bool ValidModemIrq(uint8_t irq)
+{
+    return irq == 2 || irq == 3 || irq == 4 || irq == 5 || irq == 7;
+}
+
+bool ValidSerialJumper(int channel, uint8_t irq)
+{
+    return irq == 0 || irq == 2 || irq == (channel == 0 ? 3 : 4);
+}
+
+namespace
+{
 bool ParseIoBase(const std::string& text, unsigned step, uint16_t& base)
 {
     std::string t = Upper(text);
@@ -261,8 +314,7 @@ bool KindAvailable(CardKind kind, std::string* why)
             break;   // network phase SN3: NetworkManager builds the PcSerialCard, the Sprinter fits it
         case CardKind::Modem:
         case CardKind::Dual16552:
-            reason = "the ISA modem and SprinterSerial cards are network phase SN4, not built yet";
-            break;
+            break;   // network phase SN4: NetworkManager builds the PcSerialCard, the Sprinter fits it
     }
     if (why && reason)
         *why = reason;

@@ -105,5 +105,5 @@ TEST(IsaSlotConfig_Test, El3c509b_ChipBaseAndAvailability)
 
     std::string why;
     EXPECT_TRUE(KindAvailable(CardKind::El3c509b, &why)) << why;
-    EXPECT_FALSE(KindAvailable(CardKind::Modem, &why));
+    EXPECT_TRUE(KindAvailable(CardKind::Modem, &why)) << "network phase SN4";
 }

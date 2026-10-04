@@ -11,6 +11,12 @@ StreamPeer::StreamPeer(VirtualNetwork* network, const ComPortSpec& spec, bool mo
     Open();
 }
 
+StreamPeer::StreamPeer(VirtualNetwork* network, const Dialer& dialer)
+    : _network(network), _dialer(true), _owner(dialer.owner)
+{
+    _spec.kind = ComPortSpec::Kind::Tcp;
+}
+
 StreamPeer::~StreamPeer()
 {
     CloseSockets();
@@ -81,7 +87,7 @@ void StreamPeer::Open()
     }
     if (_spec.kind == ComPortSpec::Kind::Serial)
     {
-        _socket = _network->Open(NetProto::Serial, this, kCookieLink);
+        _socket = _network->Open(NetProto::Serial, Guest(), kCookieLink);
         if (!_socket)
             return Fail("out of network sockets");
         _phase = Phase::Connecting;
@@ -94,7 +100,7 @@ void StreamPeer::Open()
     // A host name: ask the virtual network's DNS (Hosts= first, then the host
     // resolver); the answer is a journaled datagram like any other
     _resolvedAddr = 0;
-    _dnsSocket = _network->Open(NetProto::Udp, this, kCookieDns);
+    _dnsSocket = _network->Open(NetProto::Udp, Guest(), kCookieDns);
     if (!_dnsSocket)
         return Fail("out of network sockets");
     _dnsSeq = static_cast<uint16_t>(_dnsSeq + 1);
@@ -110,21 +116,62 @@ void StreamPeer::Open()
 
 void StreamPeer::StartConnect(uint32_t addr)
 {
-    _socket = _network->Open(NetProto::Tcp, this, kCookieLink);
+    _socket = _network->Open(NetProto::Tcp, Guest(), kCookieLink);
     if (!_socket)
         return Fail("out of network sockets");
     _phase = Phase::Connecting;
-    _network->Connect(_socket, NetEndpoint{addr, _spec.port});
+    _remote = NetEndpoint{addr, _spec.port};
+    _network->Connect(_socket, _remote);
 }
 
-void StreamPeer::Fail(const std::string& why)
+void StreamPeer::Fail(const std::string& why, NetEventStatus status)
 {
     // Sockets close at the frame boundary, not inside the network's delivery
     _lastError = why;
     _phase = Phase::Idle;
     _closePending = true;
     _connectPending = false;
-    _retryFrames = kRetryFrames;
+    _retryFrames = _dialer ? 0 : kRetryFrames;   // a dialed link is dialed again by its owner, if at all
+    if (_dialer && onLinkChange)
+        onLinkChange(_phase, status, why);
+}
+
+void StreamPeer::Dial(const ComPortSpec& spec)
+{
+    _spec = spec;
+    _rx.clear();
+    _tx.clear();
+    _lastError.clear();
+    _remote = NetEndpoint{};
+    Open();
+}
+
+void StreamPeer::HangUp()
+{
+    // At the frame boundary, like a failure: this may run inside the network's delivery
+    _phase = Phase::Idle;
+    _closePending = _socket != 0 || _dnsSocket != 0;
+    _connectPending = false;
+    _retryFrames = 0;
+    _waitFrames = 0;
+    _rx.clear();
+    _tx.clear();
+}
+
+void StreamPeer::Adopt(uint16_t socket, const NetEndpoint& peer)
+{
+    _socket = socket;
+    _dnsSocket = 0;
+    _closePending = false;
+    _connectPending = false;
+    _retryFrames = 0;
+    _waitFrames = 0;
+    _resolvedAddr = peer.addr;
+    _remote = peer;
+    _phase = Phase::Connected;
+    _lastError.clear();
+    _rx.clear();
+    _tx.clear();
 }
 
 void StreamPeer::SendLineAndLines()
@@ -195,7 +242,7 @@ void StreamPeer::OnFrame()
             StartConnect(_resolvedAddr);
     }
     if (_phase == Phase::Resolving && _waitFrames > 0 && --_waitFrames == 0)
-        Fail(_spec.host + ": no DNS answer");
+        Fail(_spec.host + ": no DNS answer", NetEventStatus::Timeout);
     if (_phase == Phase::Connected && !_tx.empty() && _network)
     {
         _network->Send(_socket, _tx.data(), static_cast<uint32_t>(_tx.size()));
@@ -227,9 +274,10 @@ void StreamPeer::OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus s
         if (!dns::ParseAnswer(data, length, _dnsId, addresses, rcode))
             return;   // not the answer to our query
         if (rcode == dns::kRcodeNxDomain)
-            return Fail(_spec.host + ": no such host");
+            return Fail(_spec.host + ": no such host", NetEventStatus::Unreachable);
         if (rcode != dns::kRcodeNoError || addresses.empty())
-            return Fail(_spec.host + ": the name did not resolve (DNS code " + std::to_string(rcode) + ")");
+            return Fail(_spec.host + ": the name did not resolve (DNS code " + std::to_string(rcode) + ")",
+                        NetEventStatus::Unreachable);
         _resolvedAddr = addresses.front();
         _connectPending = true;   // at the frame boundary: no socket changes inside the delivery
         return;
@@ -241,8 +289,12 @@ void StreamPeer::OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus s
             _phase = Phase::Connected;
             _lastError.clear();
             SendLineAndLines();
+            if (_dialer && onLinkChange)
+                onLinkChange(_phase, NetEventStatus::Ok, std::string());
             break;
         case NetEventType::Data:
+            if (_dialer && _phase != Phase::Connected)
+                break;   // a hung-up link: what was still in flight is gone with the call
             for (uint32_t i = 0; i < length && data; ++i)
             {
                 if (_rx.size() >= kMaxPending)
@@ -261,15 +313,15 @@ void StreamPeer::OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus s
             break;
         case NetEventType::ConnectFailed:
             if (data && length)
-                Fail(std::string(reinterpret_cast<const char*>(data), length));
+                Fail(std::string(reinterpret_cast<const char*>(data), length), status);
             else
-                Fail(std::string("connect failed: ") + NetStatusText(status));
+                Fail(std::string("connect failed: ") + NetStatusText(status), status);
             break;
         case NetEventType::PeerClosed:
-            Fail("closed by the other end");
+            Fail("closed by the other end", NetEventStatus::Ok);
             break;
         case NetEventType::Reset:
-            Fail(std::string("link lost: ") + NetStatusText(status));
+            Fail(std::string("link lost: ") + NetStatusText(status), status);
             break;
         default:
             break;
