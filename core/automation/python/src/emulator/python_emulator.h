@@ -2463,6 +2463,9 @@ namespace PythonBindings
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
+            .def("profi_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::ProfiPeripherals(self.GetContext()));
+            }, "ZX Profi board chips: port map in force, 8255, 8253 counters, 8251 and the #B3 latch; available=False on other machines")
             .def("rtc_read", [](Emulator& self, unsigned start, unsigned count) -> py::bytes {
                 std::vector<uint8_t> bytes;
                 std::string error;

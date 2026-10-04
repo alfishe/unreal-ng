@@ -77,6 +77,13 @@ StateNode Ide(EmulatorContext* context);
 /// reason, when the machine has no clock the guest can reach
 StateNode Rtc(EmulatorContext* context);
 
+/// The ZX Profi's board peripherals (v3 and v5; the PROFI-PLUS variant too): `ProfiPeripherals()` the board, which
+/// port map answers now (the `[PROFI] ExtPorts` rule, the DOS latch, CP/M, ROM14, hi-res), the 8255 (mode word, the
+/// direction and value of A, B and the two halves of C), the 8253 baud timer (per counter: mode, count, OUT, GATE;
+/// v5 only) and the 8251 USART (mode, command, status flags, baud, byte counters) with the `#B3` interrupt-enable
+/// latch. Peeked: reading changes nothing. Unavailable on a machine that is not a Profi
+StateNode ProfiPeripherals(EmulatorContext* context);
+
 /// Expansion slots of the ISA kind (the Sprinter's two ISA-8 slots, Sprinter ISA tdd §10): the #9FBD latch
 /// (A19-A14, AEN, RESET), what window 3 shows now (mapped, slot, space, page), and per slot the configured
 /// and fitted card, why a configured card is not fitted, the card's own report and cycle counters.

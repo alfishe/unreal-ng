@@ -317,6 +317,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postSprinterBios, "/api/v1/emulator/{id}/sprinter/bios", drogon::Post);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
+    // ZX Profi board chips: 8255, 8253, 8251 and the port map (implementation: api/state_device_api.cpp, core DeviceState::ProfiPeripherals)
+    ADD_METHOD_TO(EmulatorAPI::getStateProfi, "/api/v1/emulator/{id}/state/profi", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateProfiActive, "/api/v1/emulator/state/profi", drogon::Get);
     // Network adapters (implementation: api/state_device_api.cpp, core DeviceState::Network)
     ADD_METHOD_TO(EmulatorAPI::getStateNetwork, "/api/v1/emulator/{id}/state/network", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNetworkActive, "/api/v1/emulator/state/network", drogon::Get);
@@ -1120,6 +1123,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateRtc(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateProfi(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateProfiActive(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateRtcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getRtcCells(const drogon::HttpRequestPtr& req,
