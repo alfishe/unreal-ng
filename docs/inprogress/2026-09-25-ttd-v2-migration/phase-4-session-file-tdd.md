@@ -239,10 +239,18 @@ A recovered file opens **read-only**. "Repair" is an explicit action that trunca
 
 #### 5.2.7 Location, save and delete (D28, D30)
 
-- **Default location**: `scratch/ttd/<date-time>-<name>.ttd` under `FileHelper::GetWritablePath()` (`core/src/common/filehelper.h:36`), for example `scratch/ttd/2026-10-02-153012-pentagon.ttd`; `<name>` is the model's short name, `-2`, `-3` added on a collision. The UI passes another path at run time (the UI part is Phase 5, Step 3).
+- **Location (owner decision 2026-10-04).** A per-user folder on every system: `~/.unreal-ng/` (Windows: `%USERPROFILE%\.unreal-ng\`), with `ttd/` inside it:
+  - each recording writes into its own folder, `ttd/<date-time>-<name>/` (for example `ttd/2026-10-04-153012-pentagon/`); `<name>` is the model's short name, `-2`, `-3` added on a collision. A black box keeps its ring of segment files there (§5.3.5);
+  - finalized (saved) recordings are files in `ttd/` itself, `ttd/<date-time>-<name>.ttd`, unless the user picks another path (the UI part is Phase 5, Step 3).
+
+  Recording folders keep the disk tidy: everything one session wrote is in one place and goes with it.
+- **Cleanup (owner decision 2026-10-04).** A `CleanupManager` in `core/src/common/` runs registered cleanup steps asynchronously at startup, on a background thread, so start-up never waits for it. TTD's step is the first one; other subsystems add theirs.
+  - Every step catches its own errors and exceptions. A file that cannot be deleted (in use, permissions) is logged and skipped; the next run tries again.
+  - The manager records its last run per step, and runs each step at least once a week.
+  - TTD's step deletes the folders of crashed recordings (no footer, no live owner: a lock file with the writing process's id) once they are older than 7 days. Until then they are listed and can be opened or repaired.
 - **Save** = finalize, then rename to the chosen path. The writer closes its handle and every mapped view first, so the rename works on every platform; the read-only view is reopened at the new path. A rename across disks (`std::errc::cross_device_link`) falls back to a copy in the background with progress, then deletes the source. "Save" during a recording records the target name; the rename happens when the recording stops.
 - **Delete**: discarding a session closes and deletes its file.
-- **Leftovers**: a file without a footer found in `scratch/ttd/` at startup is a crashed recording; it is listed (status, and the UI in Phase 5) and can be opened, repaired or deleted.
+- **Leftovers**: a recording folder without a footer and without a live owner, found in `~/.unreal-ng/ttd/` at startup, is a crashed recording. It is listed (status, and the UI in Phase 5) and can be opened, repaired or deleted; the cleanup step removes it after 7 days.
 
 #### 5.2.8 Platform layer
 
@@ -479,8 +487,8 @@ Each item is a working state that passes the full gate (build with zero warnings
 |---|---|---|---|
 | 1 | Integrity and versioning (§5.1): what is checked, open-with-holes | **decided 2026-10-04: the recommendation in §5.1** (CRC32C per record, open with holes). No compatibility promise before the release (owner decision 2026-10-03): the format changes freely until then, the v1 → v2 converter is temporary | decided |
 | 2 | Default memory budget (512 MB proposed) and the black box's default window | measure the one-hour ZX-Evo run; propose numbers with it | **yes** |
-| 3 | Black box on disk: rolling segment files (proposed) or MemoryOnly with a time window and a file only on save | §5.3.5; rolling files bound disk use and survive a crash, MemoryOnly writes nothing until asked | **yes** |
-| 4 | `scratch/ttd/` grows: one file per recording, crashed leftovers, about 2 GB per hour of heavy content | proposal: keep saved files, delete unsaved ones at exit, cap leftovers by count and size | **yes** |
+| 3 | Black box on disk: rolling segment files (proposed) or MemoryOnly with a time window and a file only on save | **decided 2026-10-04: rolling segment files**, in a folder of their own per recording under `~/.unreal-ng/ttd/` (§5.2.7) | decided |
+| 4 | The TTD folder grows: one folder per recording, crashed leftovers, about 2 GB per hour of heavy content | **decided 2026-10-04**: per-recording folders under `~/.unreal-ng/ttd/`, saved recordings as files there; an asynchronous `CleanupManager` at startup (steps from any subsystem, errors caught per step, each step at least weekly) removes crashed recordings older than 7 days (§5.2.7) | decided |
 | 5 | Whether automation-started recordings are FileBacked like UI ones (they write files under `scratch/ttd/`) or MemoryOnly by default | proposal: FileBacked everywhere (D28), MemoryOnly as an explicit option for tests | **yes** |
 | 6 | Cold seeks touch many parts: a piece's chain can reach parts from long ago | read-ahead of the dependency list; `bm5_cold_us_*` against PR-8; if it fails, the writer re-anchors pieces whose base is many parts back (stores them Full), at a byte cost D33 must allow | no |
 | 7 | Windows: mapping a growing file, rename with open handles, other processes holding the file | 64 MB windows mapped only when durable; all handles closed before rename; retries; tested on Windows in CI, not only under Wine | no |

@@ -132,6 +132,7 @@ Design: [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md).
 
 - [x] Step 1 — Integrity and versioning decision (owner, 2026-10-04): CRC32C per record, header and index; open with holes (only frames depending on a damaged record are unreachable); no compatibility promise before the release
 - [ ] Step 2 — Written as it records: append-only, background writer, crash-safe
+  - Decided 2026-10-04 (owner): black box = rolling segment files; each recording in its own folder `~/.unreal-ng/ttd/<date-time>-<name>/` (Windows `%USERPROFILE%\.unreal-ng\`), saved recordings as files in `~/.unreal-ng/ttd/`; an asynchronous `CleanupManager` at startup (steps from any subsystem, errors and exceptions caught per step, each step at least weekly) removes crashed recordings older than 7 days
 - [ ] Step 3 — Memory as a cache: budget, eviction with rebasing, read-back on seek, accounting
 - [ ] Step 4 — Optional frame-boundary streams in the file (screenshot first)
 - [ ] Step 5 — v1 files read into the engine's format
