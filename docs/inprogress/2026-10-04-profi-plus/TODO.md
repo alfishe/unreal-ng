@@ -22,3 +22,8 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
   PROFI-PLUS in DOS Navigator: 704x576 at scale 2
 - [ ] P5 TTD, automation, recipe, docs
 - [x] P6 DOS Navigator: 2.0.16 runs from the PQ-DOS 2023 HDD image on PROFI-PLUS (BIOS Plus 0.41h1)
+- [x] Triage of the 116 programs on the PQ-DOS HDD image ([analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
+  SP.COM logo = program bug ([sp-demo](../../disasm/machines/profi-plus/sp-demo/README.md)); FLINES / WERT# / PINGVIN# need
+  BDOS 98, MAT hits BDOS 9 + NUL (both PQ-DOS behavior)
+- [ ] JAZZY (runs data as code under PQ-DOS) and COLUMNS (open of a missing file returns "found") root causes; `S_MIN'.COM`
+  by hand; confirm PQ-DOS findings with a second source
