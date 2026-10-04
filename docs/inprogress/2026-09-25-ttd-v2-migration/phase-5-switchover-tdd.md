@@ -277,7 +277,7 @@ Today B9 (`e175ff42`) refuses both switches while recording (`featuremanager.cpp
 4. The flag changes; the emulator resumes if it was running.
 5. Status reports `last_stop_reason: "feature-off:debugmode"` (additive field). The history stays browsable. With `timetravel` off the session is closed and can be reopened from its file; with `debugmode` off it stays in memory, and a later seek or resume switches debug mode back on, as `StartRecording` does today (TTM:183-197).
 
-Switching the **write journal** off or on during a recording no longer needs a refusal either: the journal is a derived index with a coverage window (D17, Phase 3, Step 7), so the switch ends or starts a window and reverse queries outside it replay. `TTDGuardedAction::ChangeWriteJournal` is removed.
+Switching the **write journal** off or on during a recording no longer needs a refusal either: the journal is recorded in segments (D40, Phase 3, Step 7), so the switch ends or starts a segment and queries outside the segments use the coverage index and one replayed frame. `TTDGuardedAction::ChangeWriteJournal` is removed.
 
 **Conflict with B9, to note in the migration docs.** [current-state.md](current-state.md) lists B9 as fixed by refusing these switches, and the command-interface rules say "Refused while recording". After Phase 5 they are not refused: they stop the recording. The B9 row gets a note "superseded by Phase 5, Step 1 (FR-17): clean stop instead of refusal", the refusal tests in `timetravelmanager_recordingguard_test.cpp` are rewritten as clean-stop tests, and the session-rules table moves the two rows from "refused" to "stops the recording". The B9 guarantee itself, "no corrupt history", is kept and tested (§6).
 
@@ -340,7 +340,7 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 | `LoadRom` | Allowed: new linked session |
 | `Invalidate` | Still refused while capturing (allowed while paused or stopped) |
 | `DisableTimeTravel`, `DisableDebugMode` | Allowed: clean stop (§4.2.7) |
-| `ChangeWriteJournal` | Removed: journal window (D17) |
+| `ChangeWriteJournal` | Removed: journal segments (D40) |
 | `SwitchGsCard` | Still refused while recording: the device set is fixed for a session (D38) |
 | `CdFrontPanel` | Allowed only if Phase 3 journals the front-panel action as an event; otherwise still refused |
 

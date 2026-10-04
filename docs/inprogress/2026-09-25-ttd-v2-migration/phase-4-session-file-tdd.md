@@ -71,7 +71,7 @@ An idle machine writes far less: ZX-Evo at the BASIC prompt 5.9 MB per minute, P
 
 - **Phase 1:** pieces with explicit dependencies (D5), a piece store not owned by a session (D22), exact-size allocation in an arena, copy-on-write reference blocks, regions, the frame table (D21) and positions with a branch.
 - **Phase 2:** device state versions with a stable type id, instance name and layout version (D23).
-- **Phase 3:** one event stream with payloads (D24), the configuration fingerprint and media versions (D25), the write journal as a derived index whose retention comes from E7 (D17).
+- **Phase 3:** one event stream with payloads (D24), the configuration fingerprint and media versions (D25), the write journal on demand, as segments, built by replay elsewhere (D40).
 
 Phase 4 does not change what is recorded. It decides where it is stored, how it gets there and how long it stays.
 
@@ -160,7 +160,7 @@ v1 files keep `schemaVersion = 1` and stay readable only by the schema-1 reader 
 | 4 | Device state versions | required | 2 |
 | 5 | Events with payloads (input, external events, markers, bus data, network), and `IN` values in RZX mode | required | 3 |
 | 6 | Configuration and media-version changes (the device set is fixed for a session, D38) | required | 3 |
-| 7 | Write journal | ancillary (derived, D17) | 3 |
+| 7 | Write journal: segments and their records | ancillary (derived, D40) | 3 |
 | 8–10 | Coverage: executed, written, read | ancillary (derived) | v1 format, carried over |
 | 11 | Port journal index | ancillary (derived) | 3 |
 | 12 | Bookmarks | ancillary | v1 format, carried over |
@@ -477,7 +477,7 @@ Each item is a working state that passes the full gate (build with zero warnings
 
 | # | Risk / question | Plan | User's decision? |
 |---|---|---|---|
-| 1 | Integrity and versioning (§5.1): what is checked, open-with-holes, when the compatibility promise starts | recommendation in §5.1 | **yes** |
+| 1 | Integrity and versioning (§5.1): what is checked, open-with-holes | recommendation in §5.1. No compatibility promise before the release (owner decision 2026-10-03): the format changes freely until then, the v1 → v2 converter is temporary | **yes** (integrity only) |
 | 2 | Default memory budget (512 MB proposed) and the black box's default window | measure the one-hour ZX-Evo run; propose numbers with it | **yes** |
 | 3 | Black box on disk: rolling segment files (proposed) or MemoryOnly with a time window and a file only on save | §5.3.5; rolling files bound disk use and survive a crash, MemoryOnly writes nothing until asked | **yes** |
 | 4 | `scratch/ttd/` grows: one file per recording, crashed leftovers, about 2 GB per hour of heavy content | proposal: keep saved files, delete unsaved ones at exit, cap leftovers by count and size | **yes** |
@@ -486,7 +486,7 @@ Each item is a working state that passes the full gate (build with zero warnings
 | 7 | Windows: mapping a growing file, rename with open handles, other processes holding the file | 64 MB windows mapped only when durable; all handles closed before rename; retries; tested on Windows in CI, not only under Wine | no |
 | 8 | `fsync` per part costs frame time on slow disks | it runs on the writer thread; BM-1 in FileBacked mode shows it; a setting can lower it to "on finalize only" for power-loss tolerance traded away | no |
 | 9 | zstd version changes break byte identity | the version is in the header; QR-2/QR-3 compare files from the same build; a zstd update re-records fixtures | no |
-| 10 | The write journal's retention (D17, E7) decides most of the file rate on active content | Phase 3, Step 7 settles it before this phase is measured; E6's rates assume the whole journal | no |
+| 10 | The write journal decides most of the file rate on active content | Settled by D40: off by default, kept only in the segments asked for | no |
 | 11 | Frame-boundary stream controls on every surface (D19) while the surfaces still drive v1 | engine API and tests in Phase 4; surfaces wired in Phase 5, Step 1 | no |
 
 ## 10. Sources

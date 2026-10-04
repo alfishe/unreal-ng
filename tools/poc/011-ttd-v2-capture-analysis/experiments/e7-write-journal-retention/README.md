@@ -1,6 +1,6 @@
 # E7 — Write journal retention
 
-Part of the [TTD v2 experiments](../README.md). Design under test: Phase 3, Step 7 of the [migration](../../../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-3-replay-inputs-tdd.md#48-step-7--the-write-journal-as-a-derived-index): the write journal as an index that a replay can rebuild, kept by a retention policy.
+Part of the [TTD v2 experiments](../README.md). Design under test: Phase 3, Step 7 of the [migration](../../../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-3-replay-inputs-tdd.md#48-step-7--the-write-journal-on-demand-in-segments-built-by-replay): the write journal as an index that a replay can rebuild, kept by a retention policy.
 
 Results and conclusions, in plain terms: [write-journal-e7.md](../../../../../docs/inprogress/2026-09-25-ttd-v2-migration/write-journal-e7.md). Full tables per session: [results.md](results.md).
 
@@ -13,6 +13,8 @@ Choose how much write journal the engine keeps. Candidate policies:
 - Window W: the records of the last W frames; W = 0 keeps none.
 
 Each is judged by memory and file bytes per minute against the time of the find-last-write queries it cannot answer itself.
+
+**Outcome (owner decision 2026-10-03, D40):** none of the policies. The journal is recorded on demand, in segments, and built by replay for any other span.
 
 ## Method
 

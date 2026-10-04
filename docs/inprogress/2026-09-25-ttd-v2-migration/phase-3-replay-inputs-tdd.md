@@ -87,7 +87,7 @@ So since the v1 amendments the input and the external events **are** saved (the 
  CPU table     main | gs.z80 (12 MHz) | ngs.z80 (10-24 MHz) | ... + clock map  Step 3
  checkpoint N  { regions, devices (Ph 1-2), bus cursors, CPU counters,
                  fingerprint id, media versions }                       Steps 1, 3, 4
- derived       write index (policy, E7) | coverage index (whole)        Step 7
+ derived       write journal (segments, built by replay) | coverage index (whole)   Step 7
 ```
 
 ### 4.2 Step 1 — One event stream
@@ -416,74 +416,47 @@ public:
 
 Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileReplaying`, `MediaManager_Test.FloppyWriteThroughWaitsWhileReplaying`, `TimeTravelManager_HostWrites_Test` (a guest writing a probe port sees host writes held during a v1 replay and only then). Each of the three mechanisms, removed, fails its test. Not covered: an SD card opened directly by `SdCardSpi::open` in persist mode, which only machines without a media manager do (bare test contexts).
 
-### 4.8 Step 7 — The write journal as a derived index
+### 4.8 Step 7 — The write journal: on demand, in segments, built by replay
 
-**Why it can be derived.** With a sealed replay (Steps 1-6), re-running a frame regenerates its writes exactly. Keeping the journal is a speed choice (D17).
+**Decision (owner, 2026-10-03; D40).** This replaces the retention policies (Ring / WholeHistory / Window) planned before experiment E7. E7's measurements and the reasons are in [write-journal-e7.md](write-journal-e7.md).
 
-**Record.** Memory writes only: port `OUT`s are already in the `OUT` bus journal, so the engine does not store them twice (v1 does, TTM:4776-). Columns, compressed as v1's file blocks:
+**What the journal is for.** It answers one question: who wrote memory address X last, and when. Scrubbing, restoring, stepping back, and reverse continue to a code or read breakpoint do not use it. "Who wrote port P last" is answered by the port journal (Step 1), which every session records. So the write journal holds memory writes only, no port OUTs.
 
-| Column | Width raw | Note |
+**Why it is optional.** On busy content the journal is 3 to 31 times the size of everything else a recording keeps. A replay rebuilds it exactly (E7: 3,400 frames, no difference). The recording therefore keeps it only where it was asked for.
+
+**How it works.**
+
+| Mechanism | What it does |
+|---|---|
+| Option at the start of a recording | "Record the write journal": off by default |
+| Switch at any moment | On or off at any instruction boundary, also inside a frame and from the emulation thread itself. Each on-to-off span is one segment |
+| Segments | The session keeps a list of time spans in which every memory write is in the journal. A query inside a segment answers from the journal at once |
+| Build by replay | For any span `[from, to]` of a session, recorded or loaded, the journal is rebuilt by replaying the frames: about 2-4 ms per frame, as slow as RZX playback, with progress and cancel. The new segment merges with its neighbors |
+| Query outside the segments | The coverage index (kept for the whole session) finds the newest frame that wrote the address; that one frame is replayed. Always correct, slower (E7: 2-6 ms typical, more on long histories) |
+| Session file | The header says whether a journal is present; a segment table lists the spans it covers. No segments: no journal. One segment from the session start to its end: the whole session |
+
+**Mechanisms for breakpoints.** Breakpoints with triggers come right after TTD and use these calls; TTD itself has no trigger logic:
+
+- `SetWriteJournal(on)`: callable from the emulation thread in the middle of a frame, so a breakpoint can start or stop the journal at the instruction that hit;
+- `BuildWriteJournal(from, to)`: rebuilds a span by replay;
+- the segment list and find-last with its source ("journal" or "replay").
+
+**The coverage index stays on.** It is what keeps searches outside the journal fast, and it is small (1-2 KB per frame). Its frame-time cost is measured on the engine; if it is high, the index is made cheaper rather than optional.
+
+**No file compatibility to keep.** TTD has not been released, so for users the engine is the first version. The v1 journal flags (`write_journal_complete`, the gap fields) and the `development` / `gaming` modes are replaced, not kept beside the new ones. The temporary v1 → v2 file converter may copy a v1 journal or rebuild it by replay.
+
+**Implementation plan.** Each step ships with its tests, all five automation surfaces, Qt where it applies, and its documentation. v1 gets the behavior first, because users run v1 until Phase 5; the engine takes the same model in the session file (Phase 4).
+
+| Step | Content | Documentation updated in the same step |
 |---|---|---|
-| machine-time delta | u32 | from the previous record |
-| region | u16 | region id (Phase 1): machine RAM, General Sound RAM, ... |
-| piece offset | u32 | offset in the region |
-| cpu | u16 | `TTDCpuId`: answers "which card instruction wrote this" (GS debugger D2) |
-| pc | u16 | of the writing instruction |
-| value | u8 | |
+| J1 | Core: segments; switching at any instruction, also mid-frame; find-last per segment, with the coverage index for writes outside them; port find-last from the port journal; journal off by default; status (present, segments); header flag and segment table; `ttdfileinfo`, the Python analyzer, `ttd.ksy` | `ttd-container-format.md`, `ttd-v1-architecture-and-format.md`, analyzer README |
+| J2 | Core: `BuildWriteJournal(from, to)` with progress and cancel; the built records equal recorded ones | — |
+| J3 | Automation: CLI `ttd start [--journal]`, `ttd journal on\|off\|build <from> <to>\|status`; WebAPI and OpenAPI; MCP `time_travel`; Lua; Python. The `development` / `gaming` modes are removed | `command-interface.md`, `webapi-interface.md` + OpenAPI (`openapi_ttd.inc`, `openapi_schemas.inc`), `lua-interface.md`, `python-interface.md`, `docs/features/mcp/README.md`, `.recipe/analysis/ttd-recording.md`, a new recipe for building a journal |
+| J4 | Qt: a "Write journal" switch in the TTD panel (before and during a recording); the segments as a band on the scrubber; "Build the write journal for the selection" with progress and cancel | `time-travel-ux.md` |
+| J5 | Python tool: a script that drives a running emulator through the WebAPI: load a `.ttd`, build the journal for a span, save. The offline analyzer reads files but cannot replay | `tools/verification/ttd-analyzer` README |
+| J6 | Engine: the journal as segments in `TimeTravelEngine`, fed from v1 in shadow mode; the segment table in the Phase 4 session file | Phase 4 TDD |
 
-A card's writes to its own memory go in with their CPU id. That is built in now and used when the card write hooks of Phase 1, Step 6 feed it.
-
-**Retention policies.**
-
-```cpp
-class ITTDWriteIndexPolicy
-{
-public:
-    virtual void OnBlockSealed(TTDWriteBlock&& block) = 0;         // capture
-    virtual void OnPositionChanged(uint64_t machineTime) = 0;      // seek / run
-    virtual TTDCoverageIntervals Covered() const = 0;              // what can be answered without replay
-};
-```
-
-| Policy | Keeps | Answers outside what it keeps by |
-|---|---|---|
-| `Ring` | the newest N bytes of blocks (v1's behavior, compressed) | replay |
-| `WholeHistory` | every block (E6's model) | — |
-| `Window` | blocks within ±W frames of the current position; older blocks dropped, or never written when W = 0 | regenerating the needed frames by replay, guided by the coverage index |
-
-- **Coverage intervals replace the single "complete" bit** (DF:76-83). The index records the machine-time intervals it holds: from journal switch-on to switch-off, minus what a ring dropped or a window released. Find-last answers inside a covered interval from the index, a "no match" there is final, and only the uncovered parts are replayed. This is the "coverage window" item that used to be Phase 5, Step 4 ([README §5](README.md#5-former-step-names)).
-- **Regeneration** replays frame by frame backwards from the query position, skipping every frame whose `Written` coverage set does not contain the address. Regenerated blocks may be kept by the policy, so repeated queries in the same area are fast.
-- **The coverage index's place.** It stays whole history under every policy:
-  - it is small (0.02-1.15 MB per minute in E6's model);
-  - it is what makes `Window` affordable, because it turns "replay every frame" into "replay the candidate frames";
-  - its keys gain the region id, so card memory is covered too (GS debugger D4).
-
-  It is a derived index as well and stays optional (switchable, one check per frame).
-- **Not sealed means no window.** A configuration whose replay is not sealed yet (a tap of Step 1 missing) cannot regenerate. It may only use `Ring` or `WholeHistory`, and says so in status.
-
-**E7 results (2026-10-03):** [write-journal-e7.md](write-journal-e7.md) — which operations use the journal (only "who wrote this last"), its size against the required part of a recording, the search time without it, and the open decision Q1.
-
-**Experiment E7 — choosing the default.** Run before Phase 4 (D17), as a model on recordings like E6, in `tools/poc/011-ttd-v2-capture-analysis/experiments/e7-write-journal-retention/`.
-
-- *Input:*
-  - the six real-use sessions of E6 (1 and 5 minutes), plus the matrix cases with the most writes (48K BASIC at 1,800 writes per frame, ATM450, ZX-Evo with GS512 + MoonSound + TSFM);
-  - recorded with a ring large enough not to wrap, so the full write history is known.
-- *Policies modeled:* `Ring` at v1's 8,388,608 records; `WholeHistory`; `Window` with W = 0, 50, 250 and 1,500 frames.
-- *Query workload:*
-  - find-last-write at 1,000 random positions per session;
-  - addresses drawn from three classes: written within the last frame, last written 1-60 seconds earlier, last written more than 60 seconds earlier or never;
-  - also reverse continue to a write watchpoint.
-- *What is computed per policy:*
-  - memory and file bytes per minute of history;
-  - frames replayed per query, using the coverage sets from the same files.
-- *Replay cost per frame:* measured, not assumed. BM-5's replay part on the same configurations (`core-benchmarks`), on an idle host (load < 12), run twice. The 1.3 ms per frame of ttdcoverageindex.h:7-9 is only the order of magnitude.
-- *Exactness check:* for 1,000 sampled frames per session, replaying the frame regenerates a write list byte-identical to the recorded one. Any difference is a determinism bug and blocks `Window` on that configuration.
-- *Success metric:* the policy with the fewest bytes per minute of history kept, subject to:
-  1. find-last p99 at or under the latency bound **L** (Q1);
-  2. "no match" answers as final as v1's;
-  3. frame overhead within PR-1 (W = 0 also removes the per-write capture cost; E7 reports by how much, from BM-1).
-
-  The result table goes into the experiment's README with the chosen default and the per-configuration exceptions.
+E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance
 
@@ -538,9 +511,9 @@ Every test is checked by mutation: it must fail when the mechanism it guards is 
 | 5 | Record, save, reload a day later, replay a program that prints the RTC: the same output | one session time base |
 | 5 | Two DS12887-style chips in one session read the same instant | one base for all clocks |
 | 6 | Replay history that writes a floppy, an SD card and a hard disk: image files, session write maps and the NeoGS flash file are byte-identical. Mutation: remove the gate → fails | FR-20 |
-| 7 | `Window` policy: find-last for an address last written outside the window returns the same answer as `WholeHistory` | regeneration is exact |
-| 7 | Journal off, on, off, on: find-last inside a covered interval answers without replay; in an uncovered one it replays | coverage intervals |
-| 7 | A wrapped ring: a query older than the ring edge replays only the uncovered part | no full replay after a wrap |
+| 7 | Journal on, off, on during a recording (also inside a frame): find-last inside a segment answers from the journal, outside it from the coverage index plus one replayed frame; both give the same answer | segments |
+| 7 | Build the journal for a span by replay; its records equal those recorded live for the same span; the merged segment table is saved and loaded | build by replay |
+| 7 | Port find-last answers from the port journal with the write journal off | ports without the write journal |
 
 **D33 comparison with v1.**
 - The oracle restores and replays every frame and points inside frames of the fixture corpus and of the real-use sessions on both engines. Results are byte-identical, including `ValueMismatches` and `Divergences`.
@@ -562,19 +535,19 @@ Each item lands as its own commits and passes the full gate:
 6. **Step 1, part 2:** vector and DMA taps, one machine per commit (Sprinter, TSConf, NeoGS, ZX Next); reset and edit events; cuts.
 7. **Step 2:** replay sources, RZX frame facts, the parity test against `RzxKeyframeStore`.
 8. **Step 4:** fingerprint, then media versions behind `IMediaHistory` (no barrier fallback: a medium without versions is reported until the storage manager's H1 / H5 land).
-9. **Step 7:** write index with the policy interface, coverage intervals, the default from E7.
+9. **Step 7:** the write journal on demand: segments, switching at any instruction, build by replay (J1-J6 in §4.8).
 10. Phase check: D33 on the matrix; store the Phase 3 baseline; write the results document.
 
 ## 8. Risks and open questions
 
 | # | Risk / question | Plan |
 |---|---|---|
-| Q1 | **User decision:** the find-last latency bound L that E7 must meet (it decides how small the window can be) | E7 reports bytes per minute against p99 latency for every W; the user picks L, or the knee of that curve is taken |
+| Q1 | ~~The find-last latency bound for a retention window~~ | Settled by D40: no retention policy. The journal is recorded where asked for and built by replay elsewhere |
 | Q2 | **User decision:** a card-CPU position inside a main-CPU instruction: inspect only (proposed), or also resume from there, which needs a resumable burst in every card emulation | Inspect only; resume from the main-CPU boundary after it |
 | Q3 | Media versions depend on the storage manager's change layer (H1, H5) | No barrier either way (sealed replay); until a kind of medium has versions, a controller's internal state where a replay stops may differ, and status says so |
 | Q4 | **User decision:** with always-on recording (D29) the RTC runs on emulated time almost always. After a long pause it is behind the host clock. Re-anchor to the host on resume of the live end (a cut, recorded), or stay on emulated time? | Proposed: re-anchor when the live end resumes after a pause, recorded as a `ClockChange` of the time base; replay reads the recorded base |
 | Q5 | The CPU still gets recorded `IN` values in `Events` mode, so a device restore bug can hide | The mismatch counter must be zero on the corpus (test above); a non-zero count fails the phase check |
-| Q6 | A configuration whose replay is not yet sealed cannot use `Window` | Policy refused with a reason; `Ring` or `WholeHistory` until its taps land |
+| Q6 | A configuration whose replay is not sealed cannot build its journal by replay | Building is refused with the reason; a live recording with the journal on still works |
 | Q7 | Event kind numbers collide with another branch | One fixed table, appended, first to master takes the number (the `PeripheralId` rule) |
 | Q8 | [Media history §3.2](../2026-09-28-storage-manager/media-history-design.md) still says the media layer truncates the future after a seek back and a write, against D7 | Aligned in that design (its owner): media branches follow TTD branches |
 | Q9 | DMA from a medium could be served from media versions instead of recorded bytes | Record the bytes (sealed in both modes); revisit if BM-3 shows DMA payloads large |

@@ -1,6 +1,6 @@
 # The write journal: what it serves, what it costs (experiment E7)
 
-Phase 3, Step 7 ([TDD §4.8](phase-3-replay-inputs-tdd.md#48-step-7--the-write-journal-as-a-derived-index)) treats the write journal as an index that can be rebuilt by replaying the recording. This document answers four questions with measurements (October 3, 2026):
+Phase 3, Step 7 ([TDD §4.8](phase-3-replay-inputs-tdd.md#48-step-7--the-write-journal-on-demand-in-segments-built-by-replay)) treats the write journal as an index that can be rebuilt by replaying the recording. This document answers four questions with measurements (October 3, 2026):
 
 1. Which operations depend on the journal?
 2. Why is it so large?
@@ -100,15 +100,17 @@ These times were measured on a loaded host (load average 20-40 against the usual
 
 On one-minute sessions a 30-second window covers half the history, so it cuts p99 more (ZX-Evo idle: 4.3 to 0.9 ms). That stops mattering as sessions get longer.
 
-## 5. Proposal and the open decision (Q1)
+## 5. Decision (owner, 2026-10-03; D40)
 
-- **Do not keep a write journal.** This saves up to 127 MB per minute of memory against v1, and 7-31 MB per minute of file on active content.
-- **Make the walk of the index skip whole blocks.** Add a short summary to every block of 50 frames: the addresses written anywhere in the block. A block whose summary lacks the address is skipped without reading its 50 frames. Estimated effect: the worst case on an hour of heavy history falls from about 1.5 s to tens of milliseconds. Measured by an A/B benchmark before it is kept.
+The question about an acceptable search time (Q1) was replaced by a simpler rule:
 
-**Owner decision Q1 (open):** the acceptable worst case for "who wrote this address last" on an hour of heavy history:
-
-| Choice | What it means |
+| What | How |
 |---|---|
-| About 1.5 s | No journal; the block summary goes to the ideas backlog |
-| Up to 50 ms (proposed) | No journal; the block summary is built now, with its A/B benchmark |
-| Under 1 ms | Keep the whole journal: 7-31 MB per minute of memory and file |
+| Default | The write journal is not recorded |
+| When it is wanted | Switched on and off at any moment of a recording (also mid-frame); each span is a segment kept in the session |
+| For a span recorded without it | Built by replaying that span: about 2-4 ms per frame, like RZX playback |
+| Outside the segments | Find-last still works: coverage index plus one replayed frame |
+| Port writes | Not in the write journal: the port journal, recorded in every session, has them |
+| Session file | The header says whether a journal is present; a segment table lists the spans |
+
+Breakpoints with triggers (start or stop the journal on a condition) come after TTD and use these mechanisms. Design and implementation steps: [Phase 3 TDD §4.8](phase-3-replay-inputs-tdd.md#48-step-7--the-write-journal-on-demand-in-segments-built-by-replay).

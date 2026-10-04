@@ -111,8 +111,15 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [ ] Show the check on every surface with the switchover (Phase 5)
 - [x] Step 5 — Emulated real-time clocks (2026-10-03): one session time base (host wall time + emulated time at the recording start, `PortDecoder::SessionWallMicros`) for every DS12887 user; emulated microseconds from the base T-states, each frame at its own length (Sprinter 320 / 312 lines never goes back)
 - [x] Step 6 — No writes outside the session during replay (2026-10-03): write-through block media held in memory and released to their files when the replay ends (`HostWriteHold`, `MediaManager::HoldHostWrites`, engaged by v1's replay); floppy write-through waits for the next live frame; VDAC2 bus capture and the video recording's audio skip replayed frames
-- [ ] Step 7 — Write journal as a derived index with a retention policy (experiment E7 first)
-  - [x] E7 groundwork (2026-10-03): `SetWriteJournalCapacity` (sessions with their whole write history), `RegenerateFrameWrites` (a frame's writes by replay, equal to the journal's), TTDE7 benchmark; exactness 0 mismatching frames on 17 sessions x 200 frames
+- [ ] Step 7 — The write journal on demand (D40, owner decision 2026-10-03 after E7; design: phase-3 TDD §4.8)
+  - [x] E7 (2026-10-03): which operations use the journal, its size against the rest of a recording, search time without it ([write-journal-e7.md](write-journal-e7.md))
+  - [ ] J1 Core: segments; switch at any instruction (also mid-frame, from the emulation thread); find-last per segment, coverage index for writes outside; port find-last from the port journal; off by default; status; header flag + segment table; ttdfileinfo, Python analyzer, ttd.ksy; format docs
+  - [ ] J2 Core: `BuildWriteJournal(from, to)` by replay, progress and cancel; built records equal recorded ones
+  - [ ] J3 Automation: CLI, WebAPI + OpenAPI, MCP, Lua, Python (start option, `journal on|off|build|status`; `development`/`gaming` removed); command-interface.md, webapi/lua/python interface docs, MCP README, recipes
+  - [ ] J4 Qt: journal switch in the TTD panel, segments band on the scrubber, build for the selection; time-travel-ux.md
+  - [ ] J5 Python tool via WebAPI: load a .ttd, build a span, save; analyzer README
+  - [ ] J6 Engine: segments in TimeTravelEngine (shadow-fed), segment table in the Phase 4 file
+  - [x] Groundwork (2026-10-03): `SetWriteJournalCapacity` (sessions with their whole write history), `RegenerateFrameWrites` (a frame's writes by replay, equal to the journal's), TTDE7 benchmark; exactness 0 mismatching frames on 17 sessions x 200 frames
 - [ ] **On landing (merge master into ttd-engine):** master fixed the toolbar's cross-thread session summary crash its own way (1de1b07bc: `GetPublishedSessionInfo`, StopRecording parks the machine). Keep master's mechanism; drop this branch's `GetLatestSessionInfo` / `PublishSessionInfo` / `_infoMutex` and `timetravelmanager_sessioninfo_test.cpp` (5f18b937b)
 
 ## Phase 4 — The session file
