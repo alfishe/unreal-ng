@@ -37,6 +37,13 @@ void CovoxBlaster::Reset()
     _s.intPending = 0;
     _s.levelL = 0x8000;
     _s.levelR = 0x8000;
+    // The statistics are the emulator's, not the PLD's: they count since the last reset, as the reports show them
+    // (int_requests, ticks, ring_writes, covox_writes). CBL_CTX (nextTick) and the ring have no reset term and keep
+    // their values
+    _s.ticks = 0;
+    _s.ringWrites = 0;
+    _s.covoxWrites = 0;
+    _s.intRequests = 0;
     _lastL = 0;
     _lastR = 0;
     if (_blipL)

@@ -53,8 +53,11 @@ the likely cure. TTD: `scroller/scroller-run.ttd`. Note for scripted runs: TR-DO
    **Closed 2026-10-03: a race in the demo** (below).
 2. ~~The "Game" PLD configuration (V10)~~ **done 2026-10-03** (branch `sprinter-pld-game`,
    [game-configuration.md](game-configuration.md)): GAME_00 (3 programs) and LDConf's `START.BAT` run on the Game module.
-3. Side observation: the Covox-Blaster `int_requests` counter in `/state/sprinter` survives a machine reset (it kept
-   counting across programs in the runner). Harmless for the picture; check whether the report should reset it.
+3. ~~Side observation: the Covox-Blaster `int_requests` counter in `/state/sprinter` survives a machine reset (it kept
+   counting across programs in the runner). Harmless for the picture; check whether the report should reset it.~~
+   **Fixed 2026-10-03** (branch `sprinter-small-fixes`): the statistics (`int_requests`, `ticks`, `ring_writes`,
+   `covox_writes`) are the emulator's, not the PLD's, and now restart at every reset (the PLD's `/RESET` path,
+   `CovoxBlaster::Reset`); the ring and the tick divider keep their values, as the PLD has no reset term for them.
 
 ## BUYAN/20X20: a race in the demo (2026-10-03)
 
