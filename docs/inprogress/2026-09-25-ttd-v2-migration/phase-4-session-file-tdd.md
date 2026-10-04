@@ -147,6 +147,8 @@ v1 files keep `schemaVersion = 1` and stay readable only by the schema-1 reader 
 - **Index** (finalized files): the part table (offset, size, first frame, frame count, branch, dependency list offset), the frame table (each frame's start in machine time, D21, and its part), per-stream totals. 12 bytes per frame in the frame table: 2.2 MB per hour at 50 frames per second (arithmetic).
 - **Trailer** (24 bytes, last in the file): index offset u64, index size u32, index CRC32C u32, magic `TTDX`, a u32 trailer CRC. A reader looks at the last 24 bytes first.
 
+**As built (2026-10-04), the container.** `core/src/debugger/ttd/engine/ttdcontainer.{h,cpp}` implements the layout above as written, with two simplifications: the part-end record is stored uncompressed (it is read at open), and the per-stream totals in the index are counts only (records, stored and raw bytes). File I/O goes through `core/src/platform/fileio.h` (append with `fsync` / `FlushFileBuffers`, read at an offset); no memory mapping (§5.3.1). The engine's streams go in next.
+
 #### 5.2.2 Streams
 
 | Id | Stream | Kind | Phase that defines the content |
