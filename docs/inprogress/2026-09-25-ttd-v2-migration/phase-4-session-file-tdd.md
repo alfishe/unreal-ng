@@ -79,7 +79,7 @@ Phase 4 does not change what is recorded. It decides where it is stored, how it 
 
 ### 5.1 Step 1 — Integrity and versioning decided
 
-**Needs the user's decision.** The options are those of [integrity-and-versioning.md](integrity-and-versioning.md); the recommendation follows from the container below. Until the user accepts or changes it, Steps 2–6 are built against the recommendation, which keeps the cost of a different choice local to the record header and the reader's checks.
+**Decided (owner, 2026-10-04): the recommendation below, "open with holes".** A CRC32C on every record, the header and the index; header, index and part ends checked at open, records on first access; a damaged record makes only the frames that depend on it unreachable (a seek there fails with the reason), damage in an ancillary stream disables that stream. The options were those of [integrity-and-versioning.md](integrity-and-versioning.md).
 
 **Integrity**
 
@@ -477,7 +477,7 @@ Each item is a working state that passes the full gate (build with zero warnings
 
 | # | Risk / question | Plan | User's decision? |
 |---|---|---|---|
-| 1 | Integrity and versioning (§5.1): what is checked, open-with-holes | recommendation in §5.1. No compatibility promise before the release (owner decision 2026-10-03): the format changes freely until then, the v1 → v2 converter is temporary | **yes** (integrity only) |
+| 1 | Integrity and versioning (§5.1): what is checked, open-with-holes | **decided 2026-10-04: the recommendation in §5.1** (CRC32C per record, open with holes). No compatibility promise before the release (owner decision 2026-10-03): the format changes freely until then, the v1 → v2 converter is temporary | decided |
 | 2 | Default memory budget (512 MB proposed) and the black box's default window | measure the one-hour ZX-Evo run; propose numbers with it | **yes** |
 | 3 | Black box on disk: rolling segment files (proposed) or MemoryOnly with a time window and a file only on save | §5.3.5; rolling files bound disk use and survive a crash, MemoryOnly writes nothing until asked | **yes** |
 | 4 | `scratch/ttd/` grows: one file per recording, crashed leftovers, about 2 GB per hour of heavy content | proposal: keep saved files, delete unsaved ones at exit, cap leftovers by count and size | **yes** |

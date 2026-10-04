@@ -130,7 +130,7 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 
 Design: [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md).
 
-- [ ] Step 1 — Integrity and versioning decision
+- [x] Step 1 — Integrity and versioning decision (owner, 2026-10-04): CRC32C per record, header and index; open with holes (only frames depending on a damaged record are unreachable); no compatibility promise before the release
 - [ ] Step 2 — Written as it records: append-only, background writer, crash-safe
 - [ ] Step 3 — Memory as a cache: budget, eviction with rebasing, read-back on seek, accounting
 - [ ] Step 4 — Optional frame-boundary streams in the file (screenshot first)
