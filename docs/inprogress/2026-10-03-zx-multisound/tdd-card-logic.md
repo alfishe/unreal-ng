@@ -165,7 +165,7 @@ All corrected in [hardware-reference.md](hardware-reference.md).
 | F7 | L14 "GS wins" holds only on an identical last clock edge; in general the later-ending strobe wins, and for the volume the SounDrive has priority | L14 reworded; the card orders events by strobe end |
 | F8 | GS INT is 12 MHz / **321** (37.383 kHz), low 33 clocks (2.75 µs), not / 320 | for MS-2 (GS profile); `architecture.md` §4.2 corrected |
 | F9 | DAC transfer: `0.5 + 0.5 x level/128 x gain/64`, level -127..+127 (two zeros: `#7F`, `#80`), gain = volume except 63 -> 64 | for `MultiSoundDacs`; `architecture.md` §4.4 corrected (it said `/ 63`) |
-| F10 | GS map: `#0000-#3FFF` = ROM with `gma = 1`, `#4000-#7FFF` = RAM 1 chip address `#C000-#FFFF`; page bit 6 makes a page non-zero (no ROM) but selects no RAM; 1 MB ignores page bit 5 | `GsMemoryMap`; the ROM's A15 wiring is to be checked in the schematic for MS-2 |
+| F10 | GS map: `#0000-#3FFF` = ROM with `gma = 1`, `#4000-#7FFF` = RAM 1 chip address `#C000-#FFFF`; page bit 6 makes a page non-zero (no ROM) but selects no RAM; 1 MB ignores page bit 5 | `GsMemoryMap` / `GsMemoryMapFor` (used by the GS profile, MS-2); the ROM's A15 wiring does not matter: the 64K ROM image is the 32K image twice |
 | F11 | The issue #11 patch was written against a revision with an inverted chip select | applied with the current non-inverted select |
 
 ## 8. Status and open items

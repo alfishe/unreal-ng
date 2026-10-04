@@ -19,8 +19,8 @@ real software verified as a user runs it.
 
 | Step | Content | Depends on |
 |---|---|---|
-| MS-1 | `Ym2203Pair` extracted from `SoundChip_TurboSoundFM` with `masterClockHz` + ratio accumulator and the I/O port listener; TSFM bit-identical (golden digests before / after, A/B benchmark) | - |
-| MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical | - |
+| MS-1 | `Ym2203Pair` extracted from `SoundChip_TurboSoundFM` with `masterClockHz` + ratio accumulator and the I/O port listener; TSFM bit-identical (golden digests before / after, A/B benchmark). **Done 2026-10-04** (not committed): [architecture.md](architecture.md) §4.1 "As built"; `TsfmGolden_Test` digests identical before / after, TSFM suite + TTD corpus (`tsfm_tech_support` included) green, `Ym2203Pair_Test`. A/B `BM_TurboSoundFrame_*` (4 interleaved rounds x 3 repetitions, CPU-time medians, load average 85-125): Idle 2595 / 2621 us, PlayerLoad 2460 / 2473 us, PlayerLoad_Turbo 1195 / 1201 us before / after (+0.5-1.0 %, inside the 5 % round-to-round spread) | - |
+| MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical. **Done 2026-10-04** (not committed): `GSProfile` ([architecture.md](architecture.md) §4.2 "As built"), `SoundChip_GeneralSound_Profile_Test`, GS 1.05b in `data/rom/` | - |
 | MS-3 | `MultiSoundCard` (`ICard`, `CardType` entry `multisound`), `MultiSoundLogic` wired to `Ym2203Pair`, `Saa1099`, GS, `MultiSoundDacs`, `MidiLine`, `sam2695::Synth` | slots SL-4, card logic CL-1, SAA-1, SAM-1, ML-2 |
 | MS-4 | `MultiSoundMixer` (board weights) and the five `SoundManager` rows, HUD sources | MS-3 |
 | MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests | MS-3, slots SL-5 |

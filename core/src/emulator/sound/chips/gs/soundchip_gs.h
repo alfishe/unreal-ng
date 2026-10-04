@@ -13,6 +13,7 @@
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/sound/chips/gs/gsmodulereplay.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"
+#include "emulator/sound/chips/gs/gsprofile.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
@@ -48,6 +49,13 @@ class EmulatorContext;
 /// (Covox pattern). Channel mixing follows Unreal Speccy: channels 1,2 -> L,
 /// 3,4 -> R with 50% cross-feed and the gs_vfx volume curve rebuilt from
 /// config gs_vol.
+///
+/// Board profile (gsprofile.h): the clocks, the INT divider, the RAM range,
+/// the host port set, the memory map, the GS-side port rules and an optional
+/// DAC sink come from a GSProfile given at construction. The default is the
+/// classic card above, unchanged; GSProfile::MultiSound is the ZX-MultiSound's
+/// GS (16 MHz, INT 12 MHz / 321 as a 33-clock pulse, 1-2 MB, no #33, DACs
+/// handed to the board's shared DAC block).
 class SoundChip_GeneralSound : public GeneralSoundCard
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -78,7 +86,8 @@ public:
     static constexpr size_t FIXED_WINDOW_RAM_PAGE = 1;
     static constexpr size_t RAM_SIZE_STANDARD_KB = 128; // stock card; 256/512 KB were expansions
 
-    explicit SoundChip_GeneralSound(EmulatorContext* context, size_t ramKB, size_t sampleRate = 44100);
+    explicit SoundChip_GeneralSound(EmulatorContext* context, size_t ramKB, size_t sampleRate = 44100,
+                                    const GSProfile& profile = GSProfile::Classic());
     ~SoundChip_GeneralSound() override;
 
     SoundChip_GeneralSound() = delete;
@@ -97,6 +106,9 @@ public:
     bool isSynthesisSuppressed() const override { return _synthesisSuppressed; }
 
     // Lifecycle
+    /// The board profile this card was built with
+    const GSProfile& profile() const { return _profile; }
+
     /// Full power-on reset (creation, ZX reset with GSReset=0): CPU, banking,
     /// mailbox, volumes, DAC levels and timing base
     void reset() override;
@@ -147,7 +159,7 @@ public:
     // Coprocessor capability: this is the LLE personality
     bool hasCoprocessor() const override { return true; }
     GSCardImplementation implementation() const override { return GSCardImplementation::LLE; }
-    std::string deviceDescription() const override { return "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"; }
+    std::string deviceDescription() const override;
 
     /// region <Diagnostics: activity counters + port/DAC trace>
     /// Cheap always-on counters - the first thing to check when triaging
@@ -241,37 +253,51 @@ private:
     template <class Card>
     friend GSModuleReplayResult gsReplayModuleUpload(Card&, const std::vector<uint8_t>&, bool, size_t*);
 
-    // GSCardRunner hooks. Card time is in 12 MHz cycles (one unit per cycle);
-    // the only event is the 320-cycle interrupt period boundary
+    // GSCardRunner hooks. Card time is in profile units (gsprofile.h; classic:
+    // 12 MHz cycles, one unit per cycle); the only event is the interrupt
+    // period boundary. A pulse profile (intLowUnits > 0) drops the request
+    // once the pulse is over: the line is sampled against the period start
     bool nmiPending() const { return _nmiPending; }
     void onNmiAccepted();
-    bool intLine() const { return _intPending; }
+    bool intLine() const { return _intPending && (_intLowUnits == 0 || _runner.now() < _gsCyclesAbs + _intLowUnits); }
     void onIntAccepted();
-    void scheduleNextPeriod() { _runner.setNextEvent(_gsCyclesAbs + GS_CYCLES_PER_INT); }
+    void scheduleNextPeriod() { _runner.setNextEvent(_gsCyclesAbs + _intPeriodUnits); }
     void runEvents(int64_t now);
-    static constexpr int64_t unitsPerCycle() { return 1; }
+    int64_t unitsPerCycle() const { return _unitsPerCycle; }
     static constexpr bool kCanStall = false; // no DMA on the classic card
     void onStep() { _activityCounters.cpuSteps++; }
 
     // GSModuleReplay hooks
     void replayRunFor(int64_t cycles) { runTo(totalGsCycles() + cycles); }
-    static constexpr int64_t replayByteStepUnits() { return 2 * GS_CYCLES_PER_INT; }
-    static constexpr int64_t replayMaxByteWaitUnits() { return 200 * 239602; } // one HSEND timeout is ~73 frames
+    int64_t replayByteStepUnits() const { return 2 * _intPeriodUnits; }
+    // one HSEND timeout is ~73 frames; 239602 = one Pentagon frame of 12 MHz cycles
+    int64_t replayMaxByteWaitUnits() const
+    {
+        return 200 * 239602 * static_cast<int64_t>(_profile.UnitsPerSecond() / GSClassicTiming::CLOCK_HZ);
+    }
 
     // Z80 bus callbacks (userData = this)
     static uint8_t gsMemRead(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
     static void gsMemWrite(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
     static uint8_t gsPortRead(Z80CPU* cpu, uint16_t port, void* userData);
     static void gsPortWrite(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
+    static uint8_t gsPortReadMultiSound(Z80CPU* cpu, uint16_t port, void* userData);
+    static void gsPortWriteMultiSound(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
     static uint8_t gsIntRead(Z80CPU* cpu, void* userData);
 
-    // GS-side port handlers (ports 0x00-0x0B)
+    // GS-side port handlers (ports 0x00-0x0B): classic, and the MultiSound
+    // CPLD's rules (GSPortRules), bound per profile at construction
     uint8_t gsIn(uint16_t port);
     void gsOut(uint16_t port, uint8_t value);
+    uint8_t gsInMultiSound(uint16_t port);
+    void gsOutMultiSound(uint16_t port, uint8_t value);
+    void volumeWrite(uint16_t port, uint8_t value);  // ports 6-9 (own mix or DAC sink)
 
     // Memory subsystem
     void applyBanking();              // rebuild _bankR/_bankW from _mpag
     void applyPort0A();               // status bit 7 <- NOT MPAG bit 0
+    void applyPort0B(int channel);    // status bit 0 <- bit 5 of that channel's volume
+    void applyMultiSoundBanking();    // MultiSound memory maps (MultiSoundLogic::GsMemoryMapFor)
     uint8_t readMem(uint16_t addr);    // includes DAC fetch trigger
     void writeMem(uint16_t addr, uint8_t value);
     void dacFetch(uint16_t addr, uint8_t value); // caller checks the 0x6000-0x7FFF window
@@ -280,15 +306,31 @@ private:
     void makeVolumeTable();            // rebuild _vfx from config gs_vol
     void emitSample();                 // recompute L/R, add blip deltas
     void computeStereo(int32_t& outL, int32_t& outR) const;
+    void sinkSample(int channel, uint8_t value);  // DAC sink path (profile.dacSink)
+    void sinkVolume(int channel, uint8_t volume);
+    uint64_t hostTimeNow() const;      // card time now -> host time (AudioTstate domain)
 
     // TTD serialization internals
     void serializeFixedState(uint8_t* dst) const;
 
     // Lazy sync core
     void flush();                      // run GS to the current ZX tact
-    void runTo(int64_t targetGsCycles) { _runner.runTo(targetGsCycles); }
+    void runTo(int64_t targetGsCycles)
+    {
+        // The classic timing (1 unit per cycle, INT held until accepted) runs
+        // its own policy: its per-instruction path is the pre-profile one
+        if (_classicTiming)
+            _runner.runTo<ClassicRunPolicy>(targetGsCycles);
+        else
+            _runner.runTo(targetGsCycles);
+    }
+    struct ClassicRunPolicy
+    {
+        static int64_t units(const SoundChip_GeneralSound*, int t) { return t; }
+        static bool intLine(const SoundChip_GeneralSound* card) { return card->_intPending; }
+    };
     int64_t totalGsCycles() const { return _runner.now(); }
-    int64_t frameGsLength() const;     // ZX frame -> GS cycles (12 MHz domain)
+    int64_t frameGsLength() const;     // ZX frame -> card units
 
     // replayModuleUpload internals (GSModuleReplay hooks)
     void replayDrainReply();    // consume one pending card->host byte
@@ -301,16 +343,26 @@ private:
 
     EmulatorContext* _context;
 
+    // Board profile and its derived timing (gsprofile.h)
+    const GSProfile _profile;
+    const double _unitsPerSecond;      // blip clock and host -> card conversion
+    const int64_t _unitsPerCycle;      // classic 1, MultiSound 3 (48 MHz units, 16 MHz CPU)
+    const int64_t _intPeriodUnits;     // classic 320, MultiSound 1284
+    const int64_t _intLowUnits;        // 0 = held until accepted (classic)
+    const bool _classicTiming;         // unitsPerCycle 1 and a held INT: GSCardRunner's constant policy
+    double _unitsPerZxTact = 0;        // the current frame's conversion (DAC sink times)
+
     // Dedicated GS Z80 (unreal-z80 library, callback bus - never the main
     // emulator CPU, design §4.3)
     Z80CPU* _cpu = nullptr;
     std::vector<uint8_t> _rom;   // 32 KB firmware
-    std::vector<uint8_t> _ram;   // 128-512 KB (stock 128 KB unless expanded via ctor)
+    std::vector<uint8_t> _ram;   // profile range: classic 128-512 KB, MultiSound 1-2 MB (512 KB chips in order)
     bool _romLoaded = false;
 
-    // Memory banking (§2.3 MPAG: 0 -> ROM pair, V>=1 -> RAM pair (V-1))
+    // Memory banking (§2.3 MPAG: 0 -> ROM pair, V>=1 -> RAM pair (V-1);
+    // the MultiSound map: MultiSoundLogic::GsMemoryMapFor)
     uint8_t _mpag = 0;
-    uint8_t _ramPairMask = 0;       // (ram_kb / 32) - 1
+    size_t _ramPairMask = 0;        // (ram_kb / 32) - 1 (classic map)
     const uint8_t* _bankR[4] = {};  // nullptr never happens for reads (ROM/RAM)
     uint8_t* _bankW[4] = {};        // nullptr -> write discarded (ROM windows)
 

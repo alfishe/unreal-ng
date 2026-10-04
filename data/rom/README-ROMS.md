@@ -26,6 +26,15 @@ that the emulator works out of the box, on the following basis:
   from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
   like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and
   `tools/neogs/pack_flash.py` checks the image against them.
+* **General Sound ROM 1.05b** (`gs105b.rom`): the firmware of the ZX-MultiSound card's General Sound
+  (`GSProfile::MultiSound`, `core/src/emulator/sound/chips/gs/gsprofile.h`), "Version 1.05b" (1.04 Beta with
+  bug fixes by psb and Evgeny Muchkin, 2007, 2015; sources: [psbhlw/gs-firmware](https://github.com/psbhlw/gs-firmware)).
+  Copied unchanged from `rom/gs105b.32K.rom` of the card repository
+  [UzixLS/zx-multisound](https://github.com/UzixLS/zx-multisound/tree/85656da/rom) (commit `85656da`, MIT license),
+  32 768 bytes, SHA-256 `9948ec9617365fb1913b0c56e00d5f6b6a36084875cca16debae270a4c6e6adf`. The repository's
+  `gs105b.64K.rom` (for a 27C512, SHA-256 `d03249af73741b775bb3719eaaf8a97f58a0863939e990240139b122fae0c517`) is
+  this image twice and is not included. General Sound firmware by Stinger (1997), distributed freely like the
+  other `gs*.rom` images above.
 * **Peters Plus Sprinter Sp2000 BIOS** (`sprinter/sp2k-3.04.rom`): BIOS 3.04 build 253 of 17.06.2003, the last
   Peters Plus build, 262 144 bytes, CRC32 `1729cb5c` (the value MAME's `sprinter` ROM set uses), SHA-256
   `e166d1557f699cedb65481e784e7f0f17c7b0cdbb6851bf2ed0c4dbf5448de95`. Copied unchanged from
