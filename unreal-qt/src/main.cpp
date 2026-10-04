@@ -12,6 +12,7 @@
 #include <QDir>
 #include <common/filehelper.h>
 #include <common/threadhelper.h>
+#include <emulator/startupcleanup.h>
 
 int fontID = -1;
 
@@ -105,6 +106,9 @@ int main(int argc, char *argv[])
 #endif
     QApplication app(argc, argv);
 
+    // Housekeeping (crashed TTD recordings, ...) in the background: start-up never waits for it
+    StartStartupCleanup();
+
     // Load non-system fonts before any GUI rendered
     registerFonts(app);
     setApplicationIcon(app);
@@ -134,6 +138,7 @@ int main(int argc, char *argv[])
 
     // Start application main loop
     int result =  app.exec();
+    StopStartupCleanup();
 
     // Unload non-system fonts
     unregisterFonts();
