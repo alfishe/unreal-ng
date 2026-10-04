@@ -113,7 +113,7 @@ The single-cause hypothesis below was only partly right:
    - **O1 KID__DR, Pentagon: closed 2026-10-03 - copy/clone protection, not a defect.** The loader checks that ROM byte `#006D` is `#20`
      (original Sinclair 48K ROM; at `#986B` and in every interrupt at `#5ECA`). The Pentagon ROM set uses `rom/48for128.rom`
      with `#28` there, so the loader fills memory with `#15` (the runaway measured earlier). MAME's Pentagon has `#20` and
-     loads the tape. Listing and details: `docs/disasm/software/dizzy-x-kid-dr-loader/`. Decision (owner, 2026-10-03):
+     loads the tape. Listing and details: `docs/disasm/games/dizzy-x-kid-dr-loader/`. Decision (owner, 2026-10-03):
      no ROM change; the protection is behaving as its authors intended and is documented as such.
    - **O2 TIMOFEY, 48K:** unchanged (back to BASIC with the tape at block 2 of 5; blocks 3-5 hold 45568 bytes, more than a
      48K takes, and it runs on Pentagon); very likely 128K-only, not proven.
