@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "emulator/io/network/virtualnetwork.h"
+#include "emulator/io/serial/esp/zifiweather.h"
 
 // Every behavior here is the firmware's (file:line in the two repositories named in the header):
 //  S3  = ZiFi-ESP32-S3-Zero 2e5ba83: src/main.cpp, src/net_client.cpp, src/ntp_client.cpp, src/config.cpp
@@ -134,6 +135,94 @@ bool FormatNtp(uint32_t ntpSeconds, int tz, std::string& out)
     return true;
 }
 
+using IniEntries = std::vector<std::pair<std::string, std::string>>;
+
+/// IniConfig::parse (S3 config.cpp:60, E01 the same): key: value lines, ';' / '#' comments, quotes, the last key
+/// wins, keys lower-cased, at most 16 keys
+bool ParseIniEntries(const std::vector<uint8_t>& data, IniEntries& entries, std::string& error)
+{
+    entries.clear();
+    size_t pos = data.size() >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF ? 3 : 0;
+    while (pos < data.size())
+    {
+        std::string line;
+        bool tooLong = false;
+        while (pos < data.size() && data[pos] != '\r' && data[pos] != '\n')
+        {
+            if (line.size() + 1 < kIniLine)
+                line.push_back(static_cast<char>(data[pos]));
+            else
+                tooLong = true;
+            ++pos;
+        }
+        while (pos < data.size() && (data[pos] == '\r' || data[pos] == '\n'))
+            ++pos;
+        if (tooLong)
+        {
+            error = "ini line too long";
+            return false;
+        }
+        size_t b = line.find_first_not_of(" \t");
+        if (b == std::string::npos || line[b] == ';' || line[b] == '#')
+            continue;
+        const size_t colon = line.find(':', b);
+        if (colon == std::string::npos)
+            continue;
+        size_t keyEnd = colon;
+        while (keyEnd > b && (line[keyEnd - 1] == ' ' || line[keyEnd - 1] == '\t'))
+            --keyEnd;
+        std::string key = line.substr(b, keyEnd - b);
+        if (key.empty())
+            continue;
+        bool ascii = true;
+        for (char& c : key)
+        {
+            if (static_cast<unsigned char>(c) >= 0x80)
+                ascii = false;
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (!ascii)
+            continue;
+        std::string value = line.substr(colon + 1);
+        const size_t v = value.find_first_not_of(" \t");
+        value = v == std::string::npos ? std::string() : value.substr(v);
+        if (!value.empty() && value[0] == '"')
+        {
+            const size_t quote = value.find('"', 1);
+            value = value.substr(1, quote == std::string::npos ? std::string::npos : quote - 1);
+        }
+        else
+        {
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+                value.pop_back();
+        }
+        if (key.size() >= kIniKey || value.size() >= kIniValue)
+        {
+            error = "too many/long ini keys";
+            return false;
+        }
+        auto it = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.first == key; });
+        if (it != entries.end())
+            it->second = value;
+        else if (entries.size() == kIniEntries)
+        {
+            error = "too many/long ini keys";
+            return false;
+        }
+        else
+            entries.emplace_back(key, value);
+    }
+    return true;
+}
+
+std::string IniGet(const IniEntries& entries, const char* key)
+{
+    for (const auto& e : entries)
+        if (e.first == key)
+            return e.second;
+    return {};
+}
+
 std::string Hex2(uint8_t v)
 {
     char buf[4];
@@ -197,9 +286,10 @@ bool ZiFiNativeModule::ClientOpen() const
 
 std::string ZiFiNativeModule::Activity() const
 {
-    static const char* const kOps[] = {"idle", "wifi join", "net_open", "net_http_get", "net_ping", "net_ntp", "restart"};
+    static const char* const kOps[] = {"idle", "wifi join", "net_open", "net_http_get", "net_ping", "net_ntp", "restart", "weather"};
     static const char* const kPhases[] = {"", " resolving", " connecting", " reading the header", " waiting for the AP",
-                                          " probing the proxy", " waiting for the answer"};
+                                          " probing the proxy", " waiting for the answer", " reading the body",
+                                          " waiting to retry"};
     std::string text = kOps[static_cast<int>(_op)];
     if (_op != Op::None)
         text += kPhases[static_cast<int>(_phase)];
@@ -341,6 +431,7 @@ void ZiFiNativeModule::Handle(uint8_t cmd, const std::vector<uint8_t>& payload, 
             _rx.clear();   // a request the network core held goes with the restart
             _held = 0;
             _request.clear();
+            ResetWeather();
             _op = Op::Boot;
             _phase = Phase::None;
             _opStart = Now();
@@ -410,6 +501,7 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             if (payload.empty() || payload.size() > maxIni || !ParseIni(payload, ssid, password, error))
                 return reply(kRespWifiIni, WifiResult(false), "ini:" + (error.empty() ? std::string("invalid") : error));
             _iniCrc = Crc32(payload.data(), payload.size());   // saved to flash: SYS_RESET keeps it
+            _iniText = payload;
             _request = payload;
             Start(Op::Join, Phase::Join, kWifiTimeoutUs, frameLength);
             return StartJoin(ssid, password, true);
@@ -519,7 +611,11 @@ void ZiFiNativeModule::Network(uint8_t cmd, const std::vector<uint8_t>& payload,
             return reply(0x8E, {0}, wifi ? "update-check:not emulated" : "update-check:no wifi");
         case kOnlineUpdate:
             return reply(0x8D, {0}, wifi ? "update:not emulated" : "update:no wifi");
-        case kWeatherGet: return reply(0xA4, {0, 1}, "weather:not emulated");
+        case kWeatherGet:
+            // WeatherService::get: the place from the saved zifi.ini, then the network
+            _request.clear();
+            Start(Op::Weather, Phase::None, zifiweather::kBudgetUs, frameLength);
+            return StartWeather();
         case kWcuStart: return reply(0xA5, {0}, wifi ? "wcu:not emulated" : "wcu:no wifi");
         case kWcuApply: return reply(0xA6, {0}, {});
         case kWcuStop: return reply(0xA7, {1}, {});
@@ -617,85 +713,10 @@ std::vector<uint8_t> ZiFiNativeModule::WifiResult(bool connected) const
 bool ZiFiNativeModule::ParseIni(const std::vector<uint8_t>& data, std::string& ssid, std::string& password,
                                 std::string& error)
 {
-    // IniConfig::parse (S3 config.cpp:60, E01 the same): key: value lines, ';' / '#' comments, quotes, the last
-    // key wins, keys lower-cased, at most 16 keys
-    std::vector<std::pair<std::string, std::string>> entries;
-    size_t pos = data.size() >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF ? 3 : 0;
-    while (pos < data.size())
-    {
-        std::string line;
-        bool tooLong = false;
-        while (pos < data.size() && data[pos] != '\r' && data[pos] != '\n')
-        {
-            if (line.size() + 1 < kIniLine)
-                line.push_back(static_cast<char>(data[pos]));
-            else
-                tooLong = true;
-            ++pos;
-        }
-        while (pos < data.size() && (data[pos] == '\r' || data[pos] == '\n'))
-            ++pos;
-        if (tooLong)
-        {
-            error = "ini line too long";
-            return false;
-        }
-        size_t b = line.find_first_not_of(" \t");
-        if (b == std::string::npos || line[b] == ';' || line[b] == '#')
-            continue;
-        const size_t colon = line.find(':', b);
-        if (colon == std::string::npos)
-            continue;
-        size_t keyEnd = colon;
-        while (keyEnd > b && (line[keyEnd - 1] == ' ' || line[keyEnd - 1] == '\t'))
-            --keyEnd;
-        std::string key = line.substr(b, keyEnd - b);
-        if (key.empty())
-            continue;
-        bool ascii = true;
-        for (char& c : key)
-        {
-            if (static_cast<unsigned char>(c) >= 0x80)
-                ascii = false;
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        if (!ascii)
-            continue;
-        std::string value = line.substr(colon + 1);
-        const size_t v = value.find_first_not_of(" \t");
-        value = v == std::string::npos ? std::string() : value.substr(v);
-        if (!value.empty() && value[0] == '"')
-        {
-            const size_t quote = value.find('"', 1);
-            value = value.substr(1, quote == std::string::npos ? std::string::npos : quote - 1);
-        }
-        else
-        {
-            while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
-                value.pop_back();
-        }
-        if (key.size() >= kIniKey || value.size() >= kIniValue)
-        {
-            error = "too many/long ini keys";
-            return false;
-        }
-        auto it = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.first == key; });
-        if (it != entries.end())
-            it->second = value;
-        else if (entries.size() == kIniEntries)
-        {
-            error = "too many/long ini keys";
-            return false;
-        }
-        else
-            entries.emplace_back(key, value);
-    }
-    const auto get = [&](const char* key) {
-        for (const auto& e : entries)
-            if (e.first == key)
-                return e.second;
-        return std::string();
-    };
+    IniEntries entries;
+    if (!ParseIniEntries(data, entries, error))
+        return false;
+    const auto get = [&](const char* key) { return IniGet(entries, key); };
     ssid = get("ssid");
     password = get("password");
     if (ssid.empty())
@@ -752,10 +773,17 @@ void ZiFiNativeModule::StartJoin(const std::string& ssid, const std::string& pas
     _iniJoin = ini;
     if (ssid.empty())
         return JoinDone(false);
-    // connectWifi: the same network, already up, keeps its sockets
-    if (GetWifi() == Wifi::GotIp && ssid == Ssid() && Fnv1a(password) == _passwordHash)
+    // connectWifi: the same network, already up, keeps its sockets. A module fresh from the box is already on the
+    // virtual access point (every emulated ESP is), as a module that booted from its saved zifi.ini would be: the
+    // first credentials for that network are the ones it joined with (no 1.5 s rejoin the plugins do not wait for)
+    if (GetWifi() == Wifi::GotIp && ssid == Ssid() && (!_passwordKnown || Fnv1a(password) == _passwordHash))
+    {
+        _passwordHash = Fnv1a(password);
+        _passwordKnown = true;
         return JoinDone(true);
+    }
     _passwordHash = Fnv1a(password);
+    _passwordKnown = true;
     Stack().Close(-1);   // the association drops (ESP01S: stopAllNetworkServices first)
     _bodyActive = false;
     Leave();
@@ -823,7 +851,7 @@ void ZiFiNativeModule::StartHttpGet(const std::vector<uint8_t>& payload)
     _bodyActive = false;
     // S3: port 443 is HTTPS (WiFiClientSecure); the virtual network has no TLS (the firmware's own failure)
     if (_variant == Variant::S3 && _httpPort == 443)
-        return Finish(0x94, std::vector<uint8_t>(7, 0), "get:tls connect failed");
+        return HttpFail("tls connect failed");
     _viaProxy = _variant == Variant::S3 && _proxyStatus == 1 && !_proxyHost.empty();
     _opPort = _viaProxy ? _proxyPort : _httpPort;
     const std::string target = _viaProxy ? _proxyHost : host;
@@ -870,7 +898,7 @@ void ZiFiNativeModule::HttpConnect()
 
 void ZiFiNativeModule::HttpHeader()
 {
-    if (_op != Op::HttpGet || _phase != Phase::Header || !Stack().Valid(kClientSlot))
+    if (!HttpOp() || _phase != Phase::Header || !Stack().Valid(kClientSlot))
         return;
     const EspStack::Slot& slot = Stack().GetSlot(kClientSlot);
     size_t end = 0;
@@ -889,12 +917,12 @@ void ZiFiNativeModule::HttpHeader()
         if (slot.rx.size() >= kHeaderMax)
         {
             Stack().Close(kClientSlot);
-            return Finish(0x94, none, "get:header too long");
+            return HttpFail("header too long");
         }
         if (slot.finSeen)
         {
             Stack().Close(kClientSlot);
-            return Finish(0x94, none, "get:closed in header");
+            return HttpFail("closed in header");
         }
         return;   // more to come
     }
@@ -925,7 +953,7 @@ void ZiFiNativeModule::HttpHeader()
             if (_variant == Variant::S3 && (e == v || e != eol))
             {
                 Stack().Close(kClientSlot);
-                return Finish(0x94, none, "get:bad content length");
+                return HttpFail("bad content length");
             }
             contentLength = static_cast<uint32_t>(parsed);
             lengthKnown = true;
@@ -953,16 +981,16 @@ void ZiFiNativeModule::HttpHeader()
         // Up to 4 redirects (kMaxRedirects = 5); the new target rewrites the held request
         Stack().Close(kClientSlot);
         if (location.empty())
-            return Finish(0x94, none, "get:redirect no location");
+            return HttpFail("redirect no location");
         if (_redirects >= 4)
-            return Finish(0x94, none, "get:too many redirects");
+            return HttpFail("too many redirects");
         std::string host, path;
         size_t next = 0, after = 0;
         CopyString(_request, 0, kHostMax, host, next, true);
         CopyString(_request, next + 2, kPathMax, path, after, false);
         uint16_t port = _httpPort;
         if (StartsNoCase(location, 0, "https://"))
-            return Finish(0x94, none, "get:tls connect failed");
+            return HttpFail("tls connect failed");
         const bool absolute = StartsNoCase(location, 0, "http://") || location.rfind("//", 0) == 0;
         if (absolute)
         {
@@ -978,11 +1006,11 @@ void ZiFiNativeModule::HttpHeader()
             {
                 const unsigned long p = std::strtoul(authority.c_str() + colon + 1, nullptr, 10);
                 if (p == 0 || p > 65535)
-                    return Finish(0x94, none, "get:redirect port");
+                    return HttpFail("redirect port");
                 port = static_cast<uint16_t>(p);
             }
             if (host.empty() || host.size() >= kHostMax)
-                return Finish(0x94, none, "get:redirect host");
+                return HttpFail("redirect host");
             path = ae < location.size() && location[ae] == '/' ? location.substr(ae)
                    : ae < location.size() && location[ae] == '?' ? "/" + location.substr(ae)
                                                                  : "/";
@@ -1000,18 +1028,21 @@ void ZiFiNativeModule::HttpHeader()
         if (path.empty())
             path = "/";
         if (path.size() >= kPathMax)
-            return Finish(0x94, none, "get:redirect path");
+            return HttpFail("redirect path");
         // The held frame becomes the new request: a checkpoint keeps it
         std::vector<uint8_t> payload(host.begin(), host.end());
         payload.push_back(0);
         Le16(payload, port);
         payload.insert(payload.end(), path.begin(), path.end());
         payload.push_back(0);
-        const std::vector<uint8_t> frame = Frame(kNetHttpGet, payload);
-        _rx.erase(_rx.begin(), _rx.begin() + _held);
-        _rx.insert(_rx.begin(), frame.begin(), frame.end());
-        _rxSeen = _rxSeen + frame.size() - _held;
-        _held = static_cast<uint16_t>(frame.size());
+        if (_op == Op::HttpGet)
+        {
+            const std::vector<uint8_t> frame = Frame(kNetHttpGet, payload);
+            _rx.erase(_rx.begin(), _rx.begin() + _held);
+            _rx.insert(_rx.begin(), frame.begin(), frame.end());
+            _rxSeen = _rxSeen + frame.size() - _held;
+            _held = static_cast<uint16_t>(frame.size());
+        }
         _request = payload;
         ++_redirects;
         _phase = Phase::Resolve;
@@ -1021,8 +1052,10 @@ void ZiFiNativeModule::HttpHeader()
     if (_variant == Variant::S3 && chunked)
     {
         Stack().Close(kClientSlot);
-        return Finish(0x94, none, "get:chunked unsupported");
+        return HttpFail("chunked unsupported");
     }
+    if (_op == Op::Weather)
+        return WeatherHeader(status, contentLength, lengthKnown);
     if (_variant == Variant::S3)
     {
         _bodyActive = true;
@@ -1117,6 +1150,233 @@ void ZiFiNativeModule::StartNtp()
     Stack().Resolve("pool.ntp.org");
 }
 
+// --- Weather (S3 weather_service.cpp) ---------------------------------------------------------------------------
+
+std::string ZiFiNativeModule::IniValue(const char* key) const
+{
+    IniEntries entries;
+    std::string error;
+    if (_iniText.empty() || !ParseIniEntries(_iniText, entries, error))
+        return {};
+    return IniGet(entries, key);
+}
+
+void ZiFiNativeModule::HttpFail(const std::string& reason)
+{
+    if (_op == Op::Weather)
+    {
+        Stack().Close(kClientSlot);
+        return WeatherAttemptFailed(reason, true);   // a failed httpGet is worth another try
+    }
+    Finish(0x94, std::vector<uint8_t>(7, 0), "get:" + reason);
+}
+
+void ZiFiNativeModule::WeatherFail(const std::string& reason)
+{
+    Stack().Close(kClientSlot);
+    _wxBody.clear();
+    Finish(0xA4, {0, zifiweather::kRecordVersion}, "weather:" + reason);
+}
+
+void ZiFiNativeModule::StartWeather()
+{
+    // WeatherService::get
+    const std::string city = IniValue("city");
+    const std::string country = IniValue("country");
+    const std::string zip = IniValue("zip");
+    const bool byCity = !city.empty();
+    if (!byCity && (zip.empty() || country.empty()))
+        return WeatherFail("no city in ini");
+    const std::string key = byCity ? "city:" + country + "/" + city : "zip:" + country + "/" + zip;
+    if (key.size() >= 96 * 2 + 8)   // char locationKey_[kIniValueSize * 2 + 8]
+        return WeatherFail("city too long");
+    if (key != _wxKey)
+    {
+        _wxKey = key;
+        _wxHaveCoords = false;
+        _wxUnknown = false;
+    }
+    if (_wxUnknown)
+        return WeatherFail(byCity ? "city: not found" : "zip: not found");
+    if (GetWifi() != Wifi::GotIp)
+        return WeatherFail("no wifi");
+    _wxBudgetEnd = Now() + MicrosToT(zifiweather::kBudgetUs);
+    _wxStage = _wxHaveCoords ? WeatherStage::Forecast : byCity ? WeatherStage::City : WeatherStage::Zip;
+    // The geocoder paths are built (and may not fit) before any download
+    std::string path;
+    if (_wxStage == WeatherStage::City && !zifiweather::CityPath(city, country, path))
+        return WeatherFail("city too long");
+    if (_wxStage == WeatherStage::Zip && !zifiweather::ZipPath(country, zip, path))
+        return WeatherFail("zip path too long");
+    _wxAttempt = 0;
+    WeatherRequest();
+}
+
+void ZiFiNativeModule::WeatherRequest()
+{
+    // download(): a spent budget starts no request at all
+    if (_wxAttempt == 0 && Now() >= _wxBudgetEnd)
+    {
+        _wxStatus = 0;
+        _wxAttempt = zifiweather::kHttpAttempts;
+        return WeatherAttemptFailed("timeout", false);
+    }
+    std::string host, path;
+    switch (_wxStage)
+    {
+        case WeatherStage::City:
+            host = zifiweather::kCityHost;
+            zifiweather::CityPath(IniValue("city"), IniValue("country"), path);
+            break;
+        case WeatherStage::Zip:
+            host = zifiweather::kZipHost;
+            zifiweather::ZipPath(IniValue("country"), IniValue("zip"), path);
+            break;
+        case WeatherStage::Forecast:
+            host = zifiweather::kMeteoHost;
+            path = zifiweather::ForecastPath(_wxLatitude, _wxLongitude);
+            break;
+    }
+    ++_wxAttempt;
+    _wxStatus = 0;
+    _wxBody.clear();
+    _wxContentLength = 0;
+    // The NET_HTTP_GET payload shape: host\0 port path\0 (the HTTP part reads it from _request)
+    _request.assign(host.begin(), host.end());
+    _request.push_back(0);
+    Le16(_request, zifiweather::kHttpPort);
+    _request.insert(_request.end(), path.begin(), path.end());
+    _request.push_back(0);
+    _redirects = 0;
+    _phase = Phase::Resolve;
+    _opDeadline = Now() + MicrosToT(kConnectTimeoutUs);
+    StartHttpGet(_request);
+}
+
+void ZiFiNativeModule::WeatherHeader(uint16_t status, uint32_t contentLength, bool lengthKnown)
+{
+    // downloadOnce: the status, then the body into a 4 KiB buffer
+    _wxStatus = status;
+    if (status < 200 || status >= 300)
+    {
+        Stack().Close(kClientSlot);
+        return WeatherAttemptFailed("http " + std::to_string(status), status >= 500 || status == 429);
+    }
+    const uint32_t length = lengthKnown ? contentLength : 0;
+    if (length >= zifiweather::kBodyCapacity)
+    {
+        Stack().Close(kClientSlot);
+        return WeatherAttemptFailed("reply too long", false);
+    }
+    _wxContentLength = length;
+    _bodyLengthKnown = lengthKnown;
+    _bodyExpected = contentLength;
+    _bodyReceived = 0;
+    _phase = Phase::Body;
+    _wxBodyEnd = Now() + MicrosToT(zifiweather::kBodyTimeoutUs);
+    _opDeadline = _wxBodyEnd;
+    WeatherBody();
+}
+
+void ZiFiNativeModule::WeatherBody()
+{
+    if (_op != Op::Weather || _phase != Phase::Body)
+        return;
+    while (true)
+    {
+        // NetClient::receive: Content-Length ends the body without waiting for the close
+        if (_bodyLengthKnown && _bodyReceived >= _bodyExpected)
+            return WeatherBodyDone();
+        const bool valid = Stack().Valid(kClientSlot);
+        const size_t have = valid ? Stack().GetSlot(kClientSlot).rx.size() : 0;
+        if (have == 0)
+        {
+            if (!valid || Stack().GetSlot(kClientSlot).finSeen)
+                return WeatherBodyDone();   // EOF
+            return;                         // more to come (or the 15 s timeout)
+        }
+        size_t wanted = std::min(have, zifiweather::kBodyCapacity - 1 - _wxBody.size());
+        if (_bodyLengthKnown)
+            wanted = std::min<size_t>(wanted, _bodyExpected - _bodyReceived);
+        const std::vector<uint8_t> data = Stack().Read(kClientSlot, static_cast<uint32_t>(wanted));
+        _wxBody.append(data.begin(), data.end());
+        _bodyReceived += static_cast<uint32_t>(data.size());
+        if (_wxBody.size() >= zifiweather::kBodyCapacity - 1)
+        {
+            Stack().Close(kClientSlot);
+            return WeatherAttemptFailed("reply too long", false);
+        }
+        if (_wxContentLength != 0 && _wxBody.size() >= _wxContentLength)
+            return WeatherBodyDone();
+    }
+}
+
+void ZiFiNativeModule::WeatherBodyDone()
+{
+    Stack().Close(kClientSlot);
+    if (_wxBody.empty())
+        return WeatherAttemptFailed("empty reply", true);
+    const std::string body = std::move(_wxBody);
+    _wxBody.clear();
+    std::string error;
+    zifiweather::GeoResult geo;
+    switch (_wxStage)
+    {
+        case WeatherStage::City:
+        {
+            bool notFound = false;
+            if (!zifiweather::ParseCitySearch(body, geo, notFound, error))
+            {
+                _wxUnknown = notFound;   // no such name: not asked again
+                return WeatherFail(error);
+            }
+            break;
+        }
+        case WeatherStage::Zip:
+            if (!zifiweather::ParseZippopotam(body, geo, error))
+                return WeatherFail(error);
+            break;
+        case WeatherStage::Forecast:
+        {
+            std::vector<uint8_t> record;
+            if (!zifiweather::ParseOpenMeteo(body, _wxPlace, record, error))
+                return WeatherFail(error);
+            return Finish(0xA4, record);
+        }
+    }
+    // setPlace, then the forecast (a new download: its own budget check, its own attempts)
+    _wxLatitude = geo.latitude;
+    _wxLongitude = geo.longitude;
+    _wxPlace = geo.place;
+    _wxHaveCoords = true;
+    _wxStage = WeatherStage::Forecast;
+    _wxAttempt = 0;
+    WeatherRequest();
+}
+
+void ZiFiNativeModule::WeatherAttemptFailed(const std::string& reason, bool retryable)
+{
+    // download(): up to three attempts, 1 s then 2 s apart, none started after the budget
+    if (retryable && _wxAttempt < zifiweather::kHttpAttempts && Now() < _wxBudgetEnd)
+    {
+        _phase = Phase::Retry;
+        _opDeadline = Now() + MicrosToT(1000000ull * _wxAttempt);
+        return;
+    }
+    switch (_wxStage)
+    {
+        case WeatherStage::City: return WeatherFail("city: " + reason);
+        case WeatherStage::Zip:
+            if (_wxStatus == 404)
+            {
+                _wxUnknown = true;   // the directory does not know the code: asking again will not help
+                return WeatherFail("zip: not found");
+            }
+            return WeatherFail("zip: " + reason);
+        case WeatherStage::Forecast: return WeatherFail("meteo: " + reason);
+    }
+}
+
 // --- System -----------------------------------------------------------------------------------------------------
 
 void ZiFiNativeModule::SysInfo()
@@ -1162,7 +1422,8 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
             switch (_op)
             {
                 case Op::Open: return Finish(0x90, {0}, "open:connect failed");
-                case Op::HttpGet: return Finish(0x94, none7, "get:connect failed");
+                case Op::HttpGet:
+                case Op::Weather: return HttpFail("connect failed");
                 case Op::Probe: return Finish(0xA1, {0, 0, 0});
                 case Op::Ntp: return Finish(kRespNetNtp, std::vector<uint8_t>(14, '0'), "ntp:ntp dns");
                 case Op::Join:
@@ -1213,7 +1474,7 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
         if (!ok)
         {
             Stack().Close(kClientSlot);
-            return _op == Op::Open ? Finish(0x90, {0}, "open:connect failed") : Finish(0x94, none7, "get:connect failed");
+            return _op == Op::Open ? Finish(0x90, {0}, "open:connect failed") : HttpFail("connect failed");
         }
         if (_op == Op::Open)
             return Finish(0x90, {1});
@@ -1238,9 +1499,12 @@ void ZiFiNativeModule::OnStackDone(const EspStack::Done& done)
 
 void ZiFiNativeModule::OnStackData(int slot)
 {
-    if (slot != kClientSlot || _op != Op::HttpGet)
+    if (slot != kClientSlot || !HttpOp())
         return;
-    HttpHeader();
+    if (_op == Op::Weather && _phase == Phase::Body)
+        WeatherBody();
+    else
+        HttpHeader();
     if (_op == Op::None)
         Process();   // ESP01S: the requests that waited behind it
 }
@@ -1263,7 +1527,17 @@ void ZiFiNativeModule::Timeout()
             return Finish(0x90, {0}, "open:connect failed");
         case Op::HttpGet:
             Stack().Close(kClientSlot);
-            return Finish(0x94, none7, _phase == Phase::Header ? "get:header timeout" : "get:connect failed");
+            return HttpFail(_phase == Phase::Header ? "header timeout" : "connect failed");
+        case Op::Weather:
+            if (_phase == Phase::Retry)
+                return WeatherRequest();
+            if (_phase == Phase::Body)
+            {
+                Stack().Close(kClientSlot);
+                return WeatherAttemptFailed("reply timeout", true);
+            }
+            Stack().Close(kClientSlot);
+            return HttpFail(_phase == Phase::Header ? "header timeout" : "connect failed");
         case Op::Probe:
             Stack().Close(kProbeSlot);
             return Finish(0xA1, {0, 0, 0});
@@ -1317,6 +1591,20 @@ void ZiFiNativeModule::OnHardwareReset()
     _lastStep = 0;
     _lastError.clear();
     _proxyStatus = 0;
+    ResetWeather();
+}
+
+void ZiFiNativeModule::ResetWeather()
+{
+    // WeatherService lives in RAM: a restart forgets the place (zifi.ini stays in flash)
+    _wxKey.clear();
+    _wxHaveCoords = false;
+    _wxUnknown = false;
+    _wxLatitude = _wxLongitude = 0.0f;
+    _wxPlace.clear();
+    _wxBody.clear();
+    _wxAttempt = 0;
+    _wxStatus = 0;
 }
 
 void ZiFiNativeModule::OnHardwareBoot()
@@ -1350,7 +1638,7 @@ void ZiFiNativeModule::SaveFirmware(netstate::EspModuleState& out) const
     put16(_held);
     put8(_lastStep);
     put8(static_cast<uint8_t>((_bodyActive ? 1 : 0) | (_bodyLengthKnown ? 2 : 0) | (_viaProxy ? 4 : 0) | (_iniJoin ? 8 : 0) |
-                              (_softRestart ? 16 : 0)));
+                              (_softRestart ? 16 : 0) | (_passwordKnown ? 32 : 0)));
     put64(_opDeadline);
     put64(_opStart);
     put64(_lastByteAt);
@@ -1399,6 +1687,7 @@ void ZiFiNativeModule::LoadFirmware(const netstate::EspModuleState& in)
     _viaProxy = flags & 4;
     _iniJoin = flags & 8;
     _softRestart = flags & 16;
+    _passwordKnown = flags & 32;
     _opDeadline = get64();
     _opStart = get64();
     _lastByteAt = get64();

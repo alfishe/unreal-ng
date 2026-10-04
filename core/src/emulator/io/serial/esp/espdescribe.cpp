@@ -95,6 +95,22 @@ void Describe(const EspModule& esp, StateNode& e)
             s["proxy"] = native->ProxyHost() + ":" + std::to_string(native->ProxyPort()) + " (" +
                          kProxy[native->ProxyStatus() % 3] + ")";
         }
+        s["zifi_ini_bytes"] = static_cast<uint64_t>(native->IniText().size());
+        if (!native->WeatherLocation().empty())
+        {
+            // WEATHER_GET (S3): the place the module looked up, kept until zifi.ini names another
+            StateNode w = StateNode::Object();
+            w["location"] = native->WeatherLocation();
+            w["found"] = native->WeatherHaveCoords();
+            w["unknown"] = native->WeatherUnknown();
+            if (native->WeatherHaveCoords())
+            {
+                w["place"] = native->WeatherPlace();
+                w["latitude"] = static_cast<double>(native->WeatherLatitude());
+                w["longitude"] = static_cast<double>(native->WeatherLongitude());
+            }
+            s["weather"] = w;
+        }
         s["bad_checksums"] = static_cast<uint64_t>(native->BadChecksums());
         s["resyncs"] = static_cast<uint64_t>(native->Resyncs());
         e["native_session"] = s;

@@ -91,6 +91,15 @@ public:
     const std::string& ProxyHost() const { return _proxyHost; }
     uint16_t ProxyPort() const { return _proxyPort; }
     uint8_t ProxyStatus() const { return _proxyStatus; }   ///< 0 off, 1 on (it answered), 2 unreachable
+    /// The saved zifi.ini (WIFI_INI), as the module keeps it in flash
+    const std::vector<uint8_t>& IniText() const { return _iniText; }
+    /// WEATHER_GET's place: "city:<country>/<name>" or "zip:<country>/<code>" (empty before the first call)
+    const std::string& WeatherLocation() const { return _wxKey; }
+    bool WeatherHaveCoords() const { return _wxHaveCoords; }
+    bool WeatherUnknown() const { return _wxUnknown; }   ///< the geocoder does not know it: not asked again
+    const std::string& WeatherPlace() const { return _wxPlace; }   ///< UTF-8
+    float WeatherLatitude() const { return _wxLatitude; }
+    float WeatherLongitude() const { return _wxLongitude; }
     /// Frames the parser dropped (status only, not TTD state)
     uint32_t BadChecksums() const { return _badChecksums; }
     uint32_t Resyncs() const { return _resyncs; }
@@ -119,6 +128,7 @@ private:
         Probe,      ///< NET_PING: a TCP connect to port 80
         Ntp,        ///< NET_NTP
         Boot,       ///< SYS_RESET: the module restarts
+        Weather,    ///< WEATHER_GET (S3): geocoder / zippopotam, then the forecast, each an HTTP GET with retries
     };
     enum class Phase : uint8_t
     {
@@ -129,6 +139,15 @@ private:
         Join,       ///< Join: waiting for the access point
         Proxy,      ///< Join (S3): probing the proxy
         Query,      ///< Ntp: the UDP answer
+        Body,       ///< Weather: the HTTP body
+        Retry,      ///< Weather: the pause before the next attempt
+    };
+    /// Weather: the request it runs
+    enum class WeatherStage : uint8_t
+    {
+        City,       ///< geocoding-api.open-meteo.com
+        Zip,        ///< api.zippopotam.us
+        Forecast,   ///< api.open-meteo.com
     };
 
     static constexpr int kClientSlot = 0;
@@ -156,6 +175,21 @@ private:
     void HttpHeader();
     void StartProbe(const std::string& host, uint16_t port, Op op);
     void StartNtp();
+    /// The HTTP GET of NET_HTTP_GET or of the weather failed before the body (`reason` as NetClient::httpGet words
+    /// it: "connect failed", "header timeout", ...)
+    void HttpFail(const std::string& reason);
+    bool HttpOp() const { return _op == Op::HttpGet || _op == Op::Weather; }
+    void StartWeather();
+    /// The current weather request: GET of its host / path (the held request becomes it)
+    void WeatherRequest();
+    void WeatherHeader(uint16_t status, uint32_t contentLength, bool lengthKnown);
+    void WeatherBody();
+    void WeatherAttemptFailed(const std::string& reason, bool retryable);
+    void WeatherBodyDone();
+    void WeatherFail(const std::string& reason);
+    void ResetWeather();
+    /// zifi.ini key (lower case) as the module saved it; empty when absent
+    std::string IniValue(const char* key) const;
     void NetRecv(const std::vector<uint8_t>& payload);
     void NetSend(const std::vector<uint8_t>& payload);
     void SysInfo();
@@ -173,10 +207,27 @@ private:
     std::string _lastError;
     int8_t _timeZone = 0;
     uint32_t _passwordHash = 0;     ///< FNV-1a of the joined network's password (a new one rejoins)
+    bool _passwordKnown = false;    ///< false: on the virtual AP since the box, the first password is taken as its own
     uint32_t _iniCrc = 0;           ///< CRC-32 of the saved zifi.ini (ESP01S SYS_INFO "CFG:")
     std::string _proxyHost;         ///< S3: proxy_ip / proxy_host
     uint16_t _proxyPort = 49281;
     uint8_t _proxyStatus = 0;
+    std::vector<uint8_t> _iniText;  ///< the saved zifi.ini (S3 ConfigStore: the whole file, kept in flash)
+
+    // Weather: the place (kept between commands until city: / country: / zip: change) and the running request
+    std::string _wxKey;             ///< "city:<country>/<city>" or "zip:<country>/<zip>"
+    bool _wxHaveCoords = false;
+    bool _wxUnknown = false;        ///< the geocoder does not know the place: not asked again
+    float _wxLatitude = 0.0f;
+    float _wxLongitude = 0.0f;
+    std::string _wxPlace;           ///< UTF-8
+    WeatherStage _wxStage = WeatherStage::City;
+    uint8_t _wxAttempt = 0;
+    uint16_t _wxStatus = 0;         ///< the HTTP status of the last attempt
+    uint64_t _wxBudgetEnd = 0;      ///< no new attempt after it
+    uint64_t _wxBodyEnd = 0;        ///< the body must be in by then
+    uint32_t _wxContentLength = 0;
+    std::string _wxBody;
 
     // The TCP client's HTTP body (S3: it ends at Content-Length)
     bool _bodyActive = false;
