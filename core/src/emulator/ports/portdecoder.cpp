@@ -1800,6 +1800,38 @@ uint8_t PortDecoder::NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsB
     return result;
 }
 
+/// ReadCycle, claimed port: the card's tap, the board's decode and the shared-bus rule R6 in one pass (see
+/// ReadCycle in portdecoder.h)
+uint8_t PortDecoder::ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrove)
+{
+    bool claimsBus = false;
+    _lastFullDecodeInPort = port;
+    const uint8_t cardValue = NotifyClaimedIn(port, cardDrove, claimsBus);
+
+    uint8_t result = DecodePortIn(port, pc);
+
+    // Shared read cycle, legacy-device priority (R6): when the board decode
+    // already handed the port to a device (ULA/AY/FDC...), that device's value
+    // IS the bus value - the card's data is discarded (its access side
+    // effects still happened above). Two exceptions drive the bus with the
+    // card's value: an otherwise-undecoded port (the floating bus is
+    // suppressed for it, so the card value replaces the 0xFF placeholder) and
+    // a CLAIMED port - an armed card overriding the legacy mirror
+    // (ZXM-MoonSound wave data at #7F once OPL4 NEW is set;
+    // MoonService-verified behaviour).
+    if (cardDrove && (claimsBus || !_lastPortDecoded))
+        result = cardValue;
+
+    return result;
+}
+
+/// WriteCycle, claimed port: the card sees the write first, then the board decodes it
+void PortDecoder::WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc)
+{
+    NotifyClaimedOut(port, value);
+    DecodePortOut(port, value, pc);
+}
+
 bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)
 {
     bool result = false;

@@ -468,6 +468,9 @@ protected:
     /// The claimed-port halves of the inline taps below (out of line: the unclaimed path stays one bit test)
     void NotifyClaimedOut(uint16_t port, uint8_t value);
     uint8_t NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsBus);
+    /// The claimed-port halves of ReadCycle / WriteCycle (out of line: the unclaimed path stays one bit test)
+    uint8_t ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrove);
+    void WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc);
     bool OverrideDecodeForClaimedPort(uint16_t rawPort, uint16_t& decodedPort, PortDecodeDisposition& disp,
                                       bool isRead);
 
@@ -1103,6 +1106,38 @@ public:
         _lastFullDecodeInValue = 0xFF;
         return 0xFF;
     }
+
+    /// region <Bus cycles (the Z80 I/O funnel)>
+
+    /// One I/O read cycle as the Z80 runs it (Z80::inFromBus): the claim table resolution and the board's decode in
+    /// one pass. A port no card claims is the board's alone (one bit test, then DecodePortIn). On a claimed port the
+    /// card sees the cycle first (its value is cached for the board's claim override), then the board decodes, and
+    /// the bus value follows the shared-bus rule R6: a port the board decoded keeps the board device's value unless
+    /// the card claims the read (portDeviceClaimsRead: an armed card); an otherwise-undecoded port is driven by the
+    /// card. cardDrove is true when a card drove the bus (the floating bus must not apply)
+    uint8_t ReadCycle(uint16_t port, uint16_t pc, bool& cardDrove)
+    {
+        if (!_fullDecodeClaims.IsClaimed(port)) [[likely]]
+        {
+            cardDrove = false;
+            return DecodePortIn(port, pc);
+        }
+        return ReadClaimedCycle(port, pc, cardDrove);
+    }
+
+    /// One I/O write cycle as the Z80 runs it (Z80::out): a claimed port's card sees the write first, then the board
+    /// decodes it (its claim override may stand down). A port no card claims costs one bit test
+    void WriteCycle(uint16_t port, uint8_t value, uint16_t pc)
+    {
+        if (_fullDecodeClaims.IsClaimed(port)) [[unlikely]]
+        {
+            WriteClaimedCycle(port, value, pc);
+            return;
+        }
+        DecodePortOut(port, value, pc);
+    }
+
+    /// endregion </Bus cycles (the Z80 I/O funnel)>
 
     /// Test hook: see slots::PortClaimTable::SetScanTrapForTests (rebuilds the table)
     void SetFullDecodeScanTrapForTests(PortDevice* trap);
