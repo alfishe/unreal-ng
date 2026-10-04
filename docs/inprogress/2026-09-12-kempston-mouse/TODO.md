@@ -1,7 +1,7 @@
 # TODO - Kempston Mouse
 
 **Status:** the Kempston mouse itself is done and on master (history below, formerly `DONE.md`). Reopened 2026-10-04
-for one research item: the K-Mouse Turbo (PLAN row #93).
+for one research item: the K-Mouse Turbo (PLAN row #94).
 
 ## Open
 
