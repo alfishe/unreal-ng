@@ -1,4 +1,6 @@
-# Recipe: Sprinter Ethernet (NE2000 in ISA slot 2) with the RTL8019AS network kit
+# Recipe: Sprinter networking - Ethernet (NE2000, RTL8019AS kit) and Wi-Fi (SprinterESP, ESP kit)
+
+The Wi-Fi card has its own part: [SprinterESP Wi-Fi with the Sprinter ESP Network Kit](#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit).
 
 The `SPRINTER` model has an NE2000-class Ethernet card fitted by default: a Realtek RTL8019AS at ISA I/O `#300`, IRQ 3,
 in ISA slot 2 (page `#D6`; owner decision 2026-10-02). It is cabled to the virtual network through the **Ethernet
@@ -123,3 +125,84 @@ A recording made with another slot population is refused at load ("ISA slot 2 mi
   does not reach ISA cards.
 - Ring full: frames wait in the gateway (a switch with a buffer) until the driver frees the ring - nothing is lost.
 - A TCP connection whose guest stops reading is reset after 256 KB of queued host data (no host-side pause yet).
+
+## SprinterESP Wi-Fi with the Sprinter ESP Network Kit
+
+The SprinterESP card (Roman Boykov, rev 1.0.5; network phase SN3) is a TL16C550C at ISA I/O `#3E8` with an ESP-12F
+(ESP8266) behind it. It is fitted on request - slot 1 is free until ISA phase I2's ZX-bus adapter; in slot 2 it
+replaces the default NE2000. The emulated ESP runs Espressif's AT firmware 2.2.2 (what the Sprinter ESP Network Kit
+expects) and joins the virtual access point `UnrealNG` (DHCP `10.0.2.15`, the same DNS, hosts table, forwards and host
+bridge as every network adapter). Kit 0.2.1 runs unchanged: `NETUP`, `PING`, `WGET`, and `UNETESP.DLL` (through the
+kit's `UNETTEST`).
+
+| What | Value (from the board's schematic) | Change it |
+|:--|:--|:--|
+| Slot | none by default | `[ISA] Slot1=SPRINTERESP`; create option `"sprinter": {"isa_slot1": "sprinteresp"}` |
+| UART | TL16C550C, 14.7456 MHz (divisor 8 = 115 200 baud), `#3E8-#3EF`, CPU `#C3E8-#C3EF` in window 3 (page `#D4` / `#D6`) | fixed; A13-A3 decoded, AEN and A19-A14 not (any `#9FBD` value reaches it) |
+| IRQ | INTR straight to IRQ3 (not gated by OUT2); the kit polls | fixed (the PIO line is ISA phase I4) |
+| ESP pins | MCR OUT1 (`#04`) holds the ESP in reset; OUT2 (`#08`) pulls GPIO0 low (download mode at the next reset release) | - |
+| Firmware | ESP-AT 2.2.2 | `[NETWORK] EspChip=ESP8266-AT221` (the kit's 2.2.1 profile) or `ESP8266` (NonOS 1.7.4); runtime `esp_chip` |
+| Line | `AT` = the card's own ESP | `[ISA] Slot1Peer=` / runtime `isa1_peer`: `loopback`, `tcp:host:port`, `serial:/dev/tty...,115200` (a real ESP on a USB adapter), `none` |
+| MAC | `5C:CF:7F:5A:<instance>:<slot>` | `Slot1Mac=` |
+
+The kit probes both slots for a 16550 at `#3E8` (IER high nibble 0, scratch register `#55` / `#AA`): no slot setting
+in `NET.CFG`.
+
+```bash
+# Disks as for the RTL kit (BIOS 3.06 HF2; see the BIOS 3.07 note above), the ESP kit on the floppy
+K=testdata/machines/sprinter/network
+mformat -C -i scratch/espkit.img -f 1440 ::
+for f in $K/sprinter-esp-0.2.1/*.EXE $K/sprinter-esp-0.2.1-unet/UNET*; do mcopy -i scratch/espkit.img "$f" ::; done
+printf 'SSID=UnrealNG\r\nPASS=\r\nDHCP=1\r\nDNS1=\r\nTZ=+0\r\nBAUD=115200\r\n' > scratch/NET.CFG
+mcopy -i scratch/espkit.img scratch/NET.CFG ::
+
+B=http://localhost:8090/api/v1/emulator            # UNREAL_WEBAPI_PORT moves the port
+ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' \
+       -d '{"model":"SPRINTER","sprinter":{"bios":"3.06","fast_start":true,"isa_slot1":"sprinteresp"}}' | jq -r .id)
+curl -s -X POST $B/$ID/pause
+curl -s -X POST $B/$ID/media/ide0.master/insert -H 'Content-Type: application/json' \
+     -d "{\"path\":\"$PWD/scratch/sp-net.img\",\"access\":\"session\"}"
+curl -s -X POST $B/$ID/media/fdd.b/insert -H 'Content-Type: application/json' -d "{\"path\":\"$PWD/scratch/espkit.img\"}"
+curl -s -X POST $B/$ID/reset
+# Record first (owner rule): a hang can then be rewound and read in the journals instead of re-run blind
+curl -s -X POST $B/$ID/ttd/start -H 'Content-Type: application/json' -d '{"history_limit_frames":30000}'
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"count":1500}'   # DSS: C:\>
+curl -s -X POST $B/$ID/resume
+
+type() { curl -s -X POST $B/$ID/keyboard/type -H 'Content-Type: application/json' -d "{\"text\":\"$1\\n\"}"; }
+type 'B:'; type 'NETUP'          # "ESP firmware profile: 2.2.2.", "UART speed set with RTS/CTS flow control.", "NETUP done."
+type 'CLS'; type 'PING 10.0.2.2' # "Reply time: 12 ms"
+type 'CLS'; type 'WGET http://127.0.0.1:18215/f.bin -o C:\\F.BIN -y'   # python3 -m http.server 18215 on the host
+type 'CLS'; type 'UNETTEST 127.0.0.1 18215'                           # NETINIT ok, resolve, ping, the HEAD reply
+curl -s $B/$ID/state/sprinter/text | jq -r '.lines[].text' | grep -v '^ *$'
+```
+
+Checked live (2026-10-03, own instance): `NETUP` -> 2.2.2 profile, flow 3, `10.0.2.15`; `PING 10.0.2.2` -> 12 ms;
+`PING example.com` resolves through the host (two DNS queries) but times out where the host may not send ICMP;
+`WGET` -> "Downloaded: 20000 bytes" from the host's HTTP server; `UNETTEST` -> NETINIT ok, the server's
+`HTTP/1.0 200 OK`. Wait for the prompt between commands: keys typed while a program runs are lost.
+
+What is plugged and what it is doing:
+
+```bash
+curl -s $B/$ID/state/isa | jq '{summary, slot1: .slots[0] | {card, resources, z80_access}}'
+# summary: "slot 1: sprinteresp I/O #3E8-#3EF IRQ 3; slot 2: ne2000 I/O #300-#31F IRQ 3"
+curl -s $B/$ID/state/network | jq '.slots[0] | {peer_spec, uart, pins, esp: (.esp | {firmware, state, wifi, ip, at_session})}'
+curl -s $B/$ID/state/network | jq -c '.slots[0].esp.exchanges[-4:][]'   # the last AT requests and replies
+# {"request":"AT+CWJAP=\"UnrealNG\",\"\"","reply":"WIFI DISCONNECT\r\nWIFI CONNECTED\r\nWIFI GOT IP\r\n\r\nOK\r\n"}
+curl -s "$B/$ID/state/isa/journal?last=4" | jq -c '.entries[] | {pc, access, cpu_address, what, value}'
+# {"pc":"#54CC","access":"read","cpu_address":"#C3ED","what":"LSR","value":"#61"}
+curl -s -X POST $B/$ID/ttd/stop
+curl -s -X POST $B/$ID/network/config -H 'Content-Type: application/json' -d '{"esp_chip":"esp8266-at221"}'
+# refused while recording ("a TTD recording is running ..."); afterwards the card is fitted again (UART registers kept)
+```
+
+CLI: `network` (slot rows), `network set esp_chip=esp8266-at221 isa1_peer=loopback`, `isa`, `isa journal 8`. Lua /
+Python: `network_state().slots[1].esp` / `network_state()["slots"][0]["esp"]`, `network_configure{isa1_peer="at"}` /
+`network_configure(isa1_peer="at")`. MCP: `inspect_state` aspect `network` prints one line per slot (UART baud, MCR,
+ESP firmware and state, Wi-Fi, IP, links, AT requests); changes through `invoke_api`. Qt: Tools > Network - the
+slot line, "Slot 1 SprinterESP: its 16550 is wired to", the chip box with the 2.2.x presets.
+
+TTD: blob 46 (`SlotSerial1`; slot 2: 47) holds the 16550 and the ESP module (AT state, sockets, received bytes by
+journal reference); a replay without the host reproduces the session byte for byte
+(`SprinterEspKit_Test.TtdReplaysTheSessionWithoutTheHost`).

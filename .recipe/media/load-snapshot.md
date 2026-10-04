@@ -22,7 +22,7 @@ load_software  {"path":"scratch/game.sna"}                    # load (local file
 invoke_api    {"method":"GET","path":"/api/v1/emulator/{id}/snapshot/info"}
 inspect_state {"aspects":["registers","screen_digest"]}     # PC landed where expected? same screen?
 invoke_api    {"method":"POST","path":"/api/v1/emulator/{id}/snapshot/save",
-               "body":{"path":"scratch/checkpoint-001.sna"}}
+               "body":{"path":"scratch/checkpoint-001.sna","force":true}}   # force: overwrite an existing file (else 409)
 ```
 
 Snapshot save has no smart tool — it rides the `invoke_api` router. The
@@ -43,7 +43,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/load" \
 # → {"status":"success", ...}
 ```
 
-Multipart upload (`-F "file=@game.sna"`) and MCP both work:
+Multipart upload (`-F "file=@game.sna"`) and MCP both work. Upload by bytes
+accepts only `.sna .z80 .szx .sp .snp .rzx` (others, `.spg` included, are
+rejected with "Unrecognized file extension"): for an `.spg` send a JSON `path` the emulator can read (`snapshot/load`
+with `{"path":...}`). `load_software` uploads a file it can read locally, so a local `.spg`
+is rejected that way: use `invoke_api` `POST /snapshot/load` with the path instead. An MCP example:
 
 ```bash
 curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d '{
@@ -85,8 +89,13 @@ Snapshot format notes:
   format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
   and cannot be saved as `.szx` yet.
 - `.spg` (TS-Conf "Spectrum Prog", the TS-Conf SDK's program format, v1.0 and
-  v1.1) — loads on the TS-Conf machine only (`TSL`; any other model refuses it
-  with "an SPG program runs on the TS-Conf machine"). Blocks may be MegaLZ or
+  v1.1) — runs on the TS-Conf machine only (`TSL`). `snapshot/load` takes
+  `switch_model` (default `true`): on another model the emulator switches to
+  `TSL` first and the reply carries a NEW `emulator_id` (plus `model_switched`,
+  `previous_emulator_id`, `model`); use that id from then on. With
+  `"switch_model": false` (or `?switch_model=false`) the load is refused with
+  HTTP 409 and `required_model`. `load_software` of an `.spg` behaves the same
+  (the answer's `emulator_id` is the new one). Blocks may be MegaLZ or
   Hrust packed. The machine is reset, BASIC-48 ROM at `#0000`, RAM 5 / 2 / the
   header's page, the header's PC, SP, CPU clock and INT enable; a corrupt file
   changes nothing. Load only - there is no SPG writer.
@@ -99,6 +108,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
      -d '{"path": "/abs/scratch/checkpoint-001.sna"}' | jq .
 ```
 
+Save refuses to overwrite: if the file exists the answer is HTTP 409 Conflict
+("File already exists. Use 'force: true' to overwrite."). Add `"force": true` to
+replace it, or use a new file name per save (`checkpoint-002.sna`).
+
 Save early, save often — they are the "known good" anchors for
 [bug-hunt workflows](../articles/bug-hunt-ttd.md). Saved snapshots land on the
 emulator host's filesystem; use `scratch/` paths.
@@ -107,10 +120,10 @@ emulator host's filesystem; use `scratch/` paths.
 
 ```bash
 # 1. Reach the interesting state (boot, load, play to a point)
-# 2. Anchor it:
+# 2. Anchor it (force: a re-run of this recipe finds anchor.sna already there → 409 without it):
 curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
      -H 'Content-Type: application/json' \
-     -d '{"path":"scratch/anchor.sna"}' >/dev/null
+     -d '{"path":"scratch/anchor.sna","force":true}' >/dev/null
 
 # 3. Let the machine diverge (run frames, inject input, ...)
 

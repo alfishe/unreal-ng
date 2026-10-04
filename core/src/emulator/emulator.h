@@ -27,6 +27,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
+#include "emulator/notifications.h"
 #include "emulator/rzx/rzxsession.h"
 
 
@@ -134,8 +135,35 @@ protected:
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
     /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
     std::atomic<int> _directStepDepth{0};
-    /// Marks a direct-stepping call for its duration; the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
-    /// skipped updates meanwhile refreshes once, at the end
+
+public:
+    /// A breakpoint stop: which breakpoint, where (PC, memory address or port) and on what access
+    struct BreakpointStop
+    {
+        bool hit = false;
+        uint16_t breakpointId = 0xFFFF;
+        uint16_t address = 0;
+        BreakpointHitKind kind = BreakpointHitKind::Execute;
+    };
+
+private:
+    /// The breakpoint that stopped the current / last direct run (OnBreakpointHit)
+    BreakpointStop _directStop;
+    /// A breakpoint's pause: Pause() puts it into its NC_EMULATOR_STATE_CHANGE payload, then clears it
+    BreakpointStop _pendingPauseCause;
+    /// The emulator is stopped at an execution breakpoint at this PC (nothing executed since)
+    bool _stoppedAtExecBreakpoint = false;
+    uint16_t _stoppedAtExecPc = 0;
+    /// The direct run's first instruction may pass the execution breakpoint the emulator is stopped at
+    bool _passExecBreakpointArmed = false;
+    uint16_t _passExecBreakpointPc = 0;
+    /// A direct run's loops end on a stop request or on a breakpoint stop
+    bool RunHalted() const { return _stopRequested || _directStop.hit; }
+    /// Marks a direct-stepping call for its duration and holds the host audio output meanwhile (a direct run is
+    /// never paced to real time: the machine computes the same samples, the speakers get nothing, as while
+    /// paused); the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
+    /// skipped updates meanwhile refreshes once, at the end. The first one in starts a new run: no breakpoint
+    /// stop yet, and the first instruction may leave the execution breakpoint the emulator is stopped at
     class DirectStepScope
     {
     public:
@@ -146,6 +174,9 @@ protected:
 
     private:
         Emulator& _emulator;
+        /// The host audio hold this direct run takes (SoundManager::holdHostOutput): it is not paced to real
+        /// time, so its frames must not reach the speakers sped up
+        SoundManager* _heldSound = nullptr;
     };
 
     // Emulator state
@@ -474,7 +505,8 @@ public:
 
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
-    void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
+    /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
+    unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
     void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
     void StepOver();                                              // Execute instruction, skip calls and subroutines
@@ -607,6 +639,18 @@ public:
     bool IsEmulationParked();
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
+
+    /// Every debugger breakpoint hit goes through here (the Z80's instruction start, memory reads and writes,
+    /// port reads and writes). On the emulator's own run it pauses, notifies and parks the emulation thread
+    /// until Resume(), as before. During a direct run (a control thread stepping a paused emulator: WebAPI,
+    /// CLI, DeZog, Lua, Python) it must not park - nothing would resume the caller - so it records the stop
+    /// (LastDirectStop), notifies, and the run ends after the current step. An execution breakpoint stops a
+    /// direct run before its instruction: the return value true tells the Z80 not to execute it. The
+    /// execution breakpoint the emulator is stopped at does not stop the run's first instruction (stepping
+    /// on from a breakpoint)
+    bool OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
+    /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked
+    const BreakpointStop& LastDirectStop() const { return _directStop; }
     bool IsDestroying();  // Thread-safe check for destruction state
     bool IsDebug();
     std::string GetStatistics();

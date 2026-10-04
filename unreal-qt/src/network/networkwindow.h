@@ -117,6 +117,8 @@ private:
     QCheckBox* _atm2IoEsp = nullptr;
     QLabel* _atm2IoEspWhy = nullptr;
     SerialPeerEditor* _atm2IoEspPeer = nullptr;
+    SerialPeerEditor* _slotPeer[2] = {nullptr, nullptr};   ///< the SprinterESP's 16550 line, per ISA slot
+    QWidget* _slotPeerRow[2] = {nullptr, nullptr};
     QComboBox* _atm2IoEspAddress = nullptr;
     QLabel* _zifiWhy = nullptr;
     SerialPeerEditor* _zifiPeer = nullptr;

@@ -246,6 +246,8 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::Vdac2, 43, "Vdac2"},
         {ttd::PeripheralId::ProfiXtKbc, 44, "ProfiXtKbc"},
         {ttd::PeripheralId::EthernetNics, 45, "EthernetNics"},
+        {ttd::PeripheralId::SlotSerial1, 46, "SlotSerial1"},
+        {ttd::PeripheralId::SlotSerial2, 47, "SlotSerial2"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 

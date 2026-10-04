@@ -5,8 +5,13 @@
     paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/step"]["post"]["description"] =
+        "Breakpoints are honored and never block the call: an execution breakpoint stops before its instruction "
+        "(executed = 0), a memory or port breakpoint after it. Stepping from the execution breakpoint the machine "
+        "is stopped at runs that instruction. `stop` tells how the step ended.";
     paths["/api/v1/emulator/{id}/step"]["post"]["responses"]["200"]["description"] =
-        "Instruction executed, returns new PC";
+        "pc, sp, state, executed (0 or 1) and stop {cpu, reason: step | breakpoint, breakpoint_id, address, access: "
+        "execute | read | write | port_in | port_out}";
 
     paths["/api/v1/emulator/{id}/steps"]["post"]["summary"] = "Execute N instructions";
     paths["/api/v1/emulator/{id}/steps"]["post"]["tags"].append("Debug Commands");
@@ -18,7 +23,23 @@
          ["count"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["count"]["description"] = "Number of instructions to execute";
-    paths["/api/v1/emulator/{id}/steps"]["post"]["responses"]["200"]["description"] = "Instructions executed";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["description"] =
+        "Runs up to `count` instructions; a breakpoint ends the run early (execution: before its instruction; "
+        "memory, port: after it). `stop` tells how the run ended.";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["responses"]["200"]["description"] =
+        "count (asked), executed (ran), pc, sp, state and stop {cpu, reason: step | breakpoint, breakpoint_id, "
+        "address, access}";
+
+    // The debugger events channel (OpenAPI describes the upgrade request only)
+    paths["/api/v1/websocket"]["get"]["summary"] = "Debugger events (WebSocket)";
+    paths["/api/v1/websocket"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/websocket"]["get"]["description"] =
+        "WebSocket upgrade. Send {\"op\":\"subscribe\",\"id\":\"s1\",\"emulator\":\"<id>\",\"topics\":[\"debug\"]} "
+        "(emulator and topics optional); the reply {\"op\":\"subscribed\",\"id\":\"s1\",\"seq\":N} is followed by "
+        "events {\"op\":\"event\",\"topic\":\"debug\",\"seq\":N,\"event\":\"paused\" | \"resumed\" | \"step_done\" | "
+        "\"breakpoints_changed\",\"emulator\":\"<id>\",\"cpu\":\"main\", reason, breakpoint_id, address, access}. "
+        "seq counts per emulator. {\"op\":\"unsubscribe\",\"id\":\"s1\"} ends a subscription.";
+    paths["/api/v1/websocket"]["get"]["responses"]["101"]["description"] = "Switching protocols to WebSocket";
 
     paths["/api/v1/emulator/{id}/stepover"]["post"]["summary"] = "Step over call instruction";
     paths["/api/v1/emulator/{id}/stepover"]["post"]["tags"].append("Debug Commands");
@@ -95,6 +116,11 @@
 
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["summary"] = "Run N complete video frames";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/run_frames"]["post"]["description"] =
+        "Runs at full host speed and leaves the emulator paused. Host audio is held for the run (as for every "
+        "direct run: run_frame, run_tstates, run_to_*, step): every sound device still computes its samples "
+        "(captures and recordings get them), the speakers get nothing; resume restores sound. GET /audio/mixer "
+        "host_output shows it.";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["required"] = true;

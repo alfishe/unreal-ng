@@ -91,6 +91,23 @@ namespace py = pybind11;
 /// Shared page-index validation for the page_* bindings: an invalid index
 /// must raise instead of silently returning zeros or touching memory outside
 /// the page (a negative cache/misc page reads before the buffer)
+
+/// How a direct run ended, for emu.step / emu.steps
+inline py::dict StepOutcome(const Emulator& emulator, unsigned executed)
+{
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    py::dict result;
+    result["executed"] = executed;
+    result["stopped"] = stop.hit;
+    if (stop.hit)
+    {
+        result["breakpoint_id"] = stop.breakpointId;
+        result["address"] = stop.address;
+        result["access"] = BreakpointHitKindName(stop.kind);
+    }
+    return result;
+}
+
 inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
 {
     int maxPage;
@@ -1137,12 +1154,18 @@ namespace PythonBindings
             }, "List all disk drives")
             
             // Execution control
+            // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
+            // (stopped: a breakpoint ended it - an execution one before its instruction)
             .def("step", [](Emulator& self, bool skipBreakpoints) {
                 self.RunSingleCPUCycle(skipBreakpoints);
-            }, "Execute single CPU instruction", py::arg("skip_breakpoints") = true)
+                const Emulator::BreakpointStop& stop = self.LastDirectStop();
+                return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
+            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
+               py::arg("skip_breakpoints") = true)
             .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
-                self.RunNCPUCycles(count, skipBreakpoints);
-            }, "Execute N CPU instructions", py::arg("count"), py::arg("skip_breakpoints") = false)
+                return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
+            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
+               py::arg("count"), py::arg("skip_breakpoints") = false)
             .def("stepover", &Emulator::StepOver, "Step over call instructions")
 
             // Frame stepping
@@ -2293,7 +2316,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: the SprinterESP card's 16550 line), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")

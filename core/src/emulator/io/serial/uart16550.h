@@ -142,6 +142,17 @@ public:
     /// The chip's interrupt output (IIR bit 0 clear and MCR OUT2 set, as on a
     /// PC card). ZX-WiFi only; the Evo AVR has none
     bool InterruptActive() const;
+    /// The INTR pin itself (an interrupt pending, whatever OUT2 says): a card that wires INTR straight to its bus
+    /// (the SprinterESP: INTR to ISA IRQ3, OUT2 drives the ESP's GPIO0)
+    bool IntrPin() const;
+
+    /// The -OUT1 / -OUT2 pins changed (true = asserted: the MCR bit set, outside loopback mode, where the chip
+    /// holds both pins inactive). A card wires them as it likes (the SprinterESP: OUT1 resets the ESP, OUT2 pulls
+    /// its GPIO0 low); a state restore does not call it
+    std::function<void(bool out1, bool out2)> onAuxLines;
+    /// The pins as they are now (same rule)
+    bool Out1() const { return !Evo() && (_mcr & (kMcrOut1 | kMcrLoop)) == kMcrOut1; }
+    bool Out2() const { return !Evo() && (_mcr & (kMcrOut2 | kMcrLoop)) == kMcrOut2; }
 
     /// The TS firmware's direct ring access (the ZiFi data register on the RS-232 rings, the ZiFi line itself:
     /// reference-zifi.md §2.3): no register side effects

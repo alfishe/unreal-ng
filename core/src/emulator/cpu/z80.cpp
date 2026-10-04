@@ -303,24 +303,9 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
             // Only pause for debugger breakpoints (not analyzer-owned)
             if (!isAnalyzerBreakpoint)
             {
-                bool isHidden = false;
-                auto* bp = brk.GetBreakpointById(breakpointID);
-                if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-                {
-                    isHidden = true;
-                }
-
-                // Pause emulator (single source of truth)
-                emulator.Pause();
-
-                // Broadcast notification - breakpoint triggered (instance-tagged)
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                BreakpointTriggeredPayload* payload =
-                    new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, pc, isHidden);
-                messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-                // Wait until emulator resumed externally (by debugger or scripting engine)
-                emulator.WaitWhilePaused();
+                // Pause and park, or during a direct run stop before this instruction
+                if (emulator.OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                    return true;
             }
         }
     }
