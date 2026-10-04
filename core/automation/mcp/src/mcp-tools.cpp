@@ -2014,7 +2014,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                     if (card["kind"].asString() != "none")
                                         out << "\n[network] " << card["kind"].asString() << (card["w5300_running"].asBool() ? " running" : " in reset")
                                             << (card["int_to_z80"].asBool() ? ", /INT low" : "") << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
-                                            << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
+                                            << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off")
+                                            << ", guest servers listen on " << net["listen_address"].asString()
+                                            << (net["remote_access"].asBool() ? " (remote access on)" : " (this computer only)");
                                     if (com["fitted"].asBool())
                                         out << "\n[com] " << com["flavor"].asString()
                                             << (com.isMember("avr_firmware") ? " (" + com["avr_firmware"].asString() + ")" : std::string())

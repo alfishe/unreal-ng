@@ -63,6 +63,7 @@ struct NetworkForm
     std::string dnsMode = "HOST";      ///< HOST | PASS
     std::string hosts;
     std::string forwards;
+    bool remoteAccess = true;          ///< [NETWORK] RemoteAccess: guest servers listen on 0.0.0.0 (off: 127.0.0.1)
     unsigned connectTimeoutMs = 10000;
 };
 
@@ -73,7 +74,7 @@ NetworkForm NetworkFormFromState(const StateNode& network);
 /// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, zifi, esp_chip, isa1_peer, isa2_peer, isa1_peer_b,
 /// isa2_peer_b, modem_phonebook, com_modem_lines,
 /// avr_firmware, kbc_firmware,
-/// host_access, dns_mode, hosts, forwards, connect_timeout_ms)
+/// host_access, dns_mode, hosts, forwards, remote_access, connect_timeout_ms)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after);
 
 /// Which controls the machine allows; a reason for each one it does not

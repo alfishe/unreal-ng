@@ -71,6 +71,12 @@ public:
     /// region <IInterruptSource>
     bool IsIntAsserted(uint32_t t) override;
     uint8_t AcknowledgeInterrupt(uint32_t t) override;
+    /// The frame INT pulse counts only CPU clocks without /WAIT ([V] zint.v: intctr counts on
+    /// `zpos && !wait_r`): a stretch of the clock freezes a running pulse, and a pulse that starts inside one
+    /// begins when it ends. Without it a long wait (the AVR UART's 400-clock accesses, DRAM waits) swallowed the
+    /// 32-clock pulse and the program missed the interrupt
+    bool ObservesWaits() const override { return true; }
+    void OnWait(uint32_t ttBefore, uint32_t ticks) override;
     /// endregion
 
     /// region <IMachineStepHook>

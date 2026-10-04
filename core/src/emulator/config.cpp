@@ -23,6 +23,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <initializer_list>
 
@@ -1091,6 +1092,24 @@ bool Config::ParseConfig(IniFile& inimanager)
 	CopyStringValue(inimanager.GetValue(network, "Hosts", nullptr), config.network.hosts, sizeof config.network.hosts);
 	config.network.forwards[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "Forward", nullptr), config.network.forwards, sizeof config.network.forwards);
+	// RemoteAccess=on|off (also 1|0, true|false, yes|no): on = host listeners bind 0.0.0.0, off = 127.0.0.1
+	{
+		const char* remote = inimanager.GetValue(network, "RemoteAccess", nullptr);
+		bool on = true;
+		if (remote && remote[0] != '\0')
+		{
+			std::string v(remote);
+			v.erase(v.find_last_not_of(" \t") + 1);
+			v.erase(0, v.find_first_not_of(" \t"));
+			for (char& c : v)
+				c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+			if (v == "off" || v == "0" || v == "false" || v == "no")
+				on = false;
+			else if (v != "on" && v != "1" && v != "true" && v != "yes")
+				MLOGWARNING("Config: [NETWORK] RemoteAccess=%s: on | off - on used", remote);
+		}
+		config.network.remoteAccess = on ? 1 : 0;
+	}
 	{
 		long timeout = inimanager.GetLongValue(network, "ConnectTimeoutMs", 10000);
 		config.network.connectTimeoutMs = static_cast<unsigned>(std::clamp(timeout, 500L, 120000L));

@@ -222,3 +222,94 @@ TEST_F(TsConfInterrupts_Test, CLK2_ClockSwitchKeepsRasterEvents)
     EXPECT_FALSE(Ints().IsIntAsserted(tact * 4 - 1));
     EXPECT_TRUE(Ints().IsIntAsserted(tact * 4)) << "the same raster tact at 4 clocks per tact";
 }
+
+/// INT-9: the frame pulse counts CPU clocks without /WAIT ([V] zint.v: intctr counts on zpos && !wait_r). The
+/// AVR UART's 400-clock access stretched the instruction an event fell in, the 32-clock pulse expired inside the
+/// stall and the program lost the interrupt (zifi.spg: every other frame, the screen jerked)
+TEST_F(TsConfInterrupts_Test, INT9a_AWaitFreezesARunningPulse)
+{
+    SetMultiplier(4);
+    // The reset event: raster tact 1, asserted from CPU clock 4. 16 clocks of the pulse are over at clock 20
+    ASSERT_TRUE(Ints().IsIntAsserted(20));
+    Ints().OnWait(20u << 8, 420u << 8);  // a 420-clock stall
+    EXPECT_TRUE(Ints().IsIntAsserted(440)) << "the stall did not use the pulse up";
+    EXPECT_TRUE(Ints().IsIntAsserted(455)) << "16 clocks were left";
+    EXPECT_FALSE(Ints().IsIntAsserted(456));
+}
+
+TEST_F(TsConfInterrupts_Test, INT9b_APulseThatStartsInsideAWaitBeginsWhenItEnds)
+{
+    SetMultiplier(4);
+    Reg(TsConfReg::VsIntL, 10);
+    Reg(TsConfReg::HsInt, 0);          // raster tact 2240 = CPU clock 8960
+    ASSERT_FALSE(Ints().IsIntAsserted(8940));
+    Ints().OnWait(8940u << 8, 100u << 8);  // the stall covers 8940..9040: the event is in it
+    EXPECT_TRUE(Ints().IsIntAsserted(9040)) << "without the freeze 80 clocks are gone, the pulse over";
+    EXPECT_TRUE(Ints().IsIntAsserted(9071));
+    EXPECT_FALSE(Ints().IsIntAsserted(9072)) << "32 clocks after the stall";
+}
+
+TEST_F(TsConfInterrupts_Test, INT9c_APulseThatIsOverStaysOver)
+{
+    SetMultiplier(4);
+    ASSERT_TRUE(Ints().IsIntAsserted(20));
+    ASSERT_FALSE(Ints().IsIntAsserted(100)) << "32 clocks from clock 4";
+    Ints().OnWait(200u << 8, 400u << 8);
+    EXPECT_FALSE(Ints().IsIntAsserted(600)) << "a stall later does not bring it back";
+}
+
+TEST_F(TsConfInterrupts_Test, INT9d_TheCpuTellsTheControllerAboutItsWaits)
+{
+    SetMultiplier(4);
+    Reg(TsConfReg::VsIntL, 10);
+    Reg(TsConfReg::HsInt, 0);
+    _z80->tt = 8940u << 8;
+    _z80->AddWaitStates(100);  // a device's /WAIT, as the UART access does
+    ASSERT_EQ(_z80->tt >> 8, 9040u);
+    EXPECT_TRUE(Ints().IsIntAsserted(_z80->tt >> 8));
+
+    // And the fractional waits of the DRAM (fclk ticks)
+    Reg(TsConfReg::VsIntL, 20);
+    _z80->tt = (17900u << 8);
+    _z80->AddWaitTicks(100u << 8);
+    EXPECT_TRUE(Ints().IsIntAsserted(_z80->tt >> 8));
+}
+
+TEST_F(TsConfInterrupts_Test, INT9e_OtherMachinesAreNotNotified)
+{
+    EXPECT_TRUE(Ints().ObservesWaits());
+    class Plain : public IInterruptSource
+    {
+    public:
+        bool IsIntAsserted(uint32_t) override { return false; }
+        uint8_t AcknowledgeInterrupt(uint32_t) override { return 0xFF; }
+    } plain;
+    EXPECT_FALSE(plain.ObservesWaits()) << "the default: a source that does not ask is never called on a wait";
+}
+
+/// INT-10: a /WAIT that straddles the frame end carries a rest into the new frame (Z80::t after the rebase); a
+/// frame INT whose event fell in that rest starts its pulse where the clock ran again. The first INT of the frame
+/// was lost whenever a 400-clock UART access straddled the frame end (zifi.spg's polling: every few frames)
+TEST_F(TsConfInterrupts_Test, INT10_AWaitAcrossTheFrameEndKeepsTheFirstPulse)
+{
+    SetMultiplier(4);
+    const uint32_t frameClocks = TsConfInterrupts::kFrameTacts * 4;
+    // The last wait of the frame: the CPU is at the end of it, 400 clocks into the new frame
+    _z80->tt = (frameClocks + 400u) << 8;  // the rebase has not happened yet ...
+    _z80->tt -= frameClocks << 8;          // ... and now has: Z80::t = 400
+    Ints().OnMachineFrameRollover(frameClocks);
+    EXPECT_TRUE(Ints().IsIntAsserted(400)) << "the new frame's INT (clock 4) fell inside the rest of the stall";
+    EXPECT_TRUE(Ints().IsIntAsserted(431));
+    EXPECT_FALSE(Ints().IsIntAsserted(432)) << "32 clocks after the stall";
+}
+
+TEST_F(TsConfInterrupts_Test, INT10b_AShortRestChangesNothing)
+{
+    SetMultiplier(4);
+    const uint32_t frameClocks = TsConfInterrupts::kFrameTacts * 4;
+    _z80->tt = 12u << 8;  // an ordinary instruction ran over the frame end by 12 clocks
+    Ints().OnMachineFrameRollover(frameClocks);
+    EXPECT_TRUE(Ints().IsIntAsserted(12));
+    EXPECT_TRUE(Ints().IsIntAsserted(35));
+    EXPECT_FALSE(Ints().IsIntAsserted(36)) << "the pulse is still 32 clocks from clock 4";
+}

@@ -28,7 +28,11 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
   checked by hand: PQ-DOS 2023 HDD image boots into DOS Navigator 2.0.16
 - [x] P4b `ProfiPlusBoot_Test`: the board test reports FDC, parallel, serial, RTC and the sound chip Ok (BIOS result
   byte `(IY + 2)`); the COM port in the network manager; a TTD seek replays the 8253 / 8251 exactly
-- [ ] P4c PQ-DOS boot tests from a floppy and from a hard disk (the HDD image is 2 GB - a cut-down image for tests)
+- [x] P4c PQ-DOS boot tests from a floppy and from a hard disk (2026-10-04): `ProfiPlusPqDos_Test.BootsFromTheFloppyToDosNavigator`
+  (BIOS Plus boots `pqdos1.fdi` to the PQ-DOS startup menu, the 30 s timeout runs DOS Navigator) and
+  `BootsFromTheHardDiskToDosNavigator` (`ide0.master`, straight into DOS Navigator on `C:\`, no menu). The 2 GB image is cut to
+  2.9 MB by `tools/machines/profi/pqdosimage` (root files, `DN`, `DOS` kept; the layout untouched); both disks are in
+  `testdata/machines/profi/pqdos/`
 - [x] Video recording of hi-res (512x240) frames came out stretched horizontally (1216x576 from the 608x288 buffer)
   and the other mode's frames were dropped after a switch; owner report 2026-10-04. Fixed: a full-frame Profi recording
   is the screen's 352:288 window x scale in both modes (`RecordingManager`, `RecordsProfiDisplay`;
@@ -45,5 +49,7 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
 - [x] Triage of the 116 programs on the PQ-DOS HDD image ([analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
   SP.COM logo = program bug ([sp-demo](../../disasm/machines/profi-plus/sp-demo/README.md)); FLINES / WERT# / PINGVIN# need
   BDOS 98, MAT hits BDOS 9 + NUL (both PQ-DOS behavior)
-- [ ] JAZZY (runs data as code under PQ-DOS) and COLUMNS (open of a missing file returns "found") root causes; `S_MIN'.COM`
-  by hand; confirm PQ-DOS findings with a second source
+- [x] COLUMNS root cause (2026-10-04): PQ-DOS's BDOS open (0Fh) returns A = 0 for a file that does not exist (zero size, current
+  date and time in the FCB, nothing created) while search first (11h) answers FF; the emulated disk path is fine (a probe
+  `.COM` on the PQ-DOS HDD image, table in [pqdos-hdd-programs](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md))
+- [ ] JAZZY (runs data as code under PQ-DOS) root cause; `S_MIN'.COM` by hand; confirm the PQ-DOS findings with a second source

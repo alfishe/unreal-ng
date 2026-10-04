@@ -55,9 +55,22 @@ struct VirtualNetworkConfig
     /// Names answered by the virtual network itself (tests, pinned names)
     std::map<std::string, uint32_t> hosts;
 
-    /// Guest server port -> host port on 127.0.0.1. Guest ports >= 1024 without
-    /// a rule use the same host port; lower ones need a rule.
+    /// Guest server port -> host port (on ListenAddress()). Guest ports >= 1024
+    /// without a rule use the same host port; lower ones need a rule.
     std::map<uint16_t, uint16_t> forwards;
+
+    /// [NETWORK] RemoteAccess: true (default) = the host listeners of guest
+    /// servers bind every host interface (another computer on the LAN can
+    /// connect); false = 127.0.0.1 only (this computer alone)
+    bool remoteAccess = true;
+
+    /// The host address every host listener binds (TCP Forward= rules and
+    /// guest servers now, UDP forwards with ZiFi phase B0): one setting for all.
+    /// A host-side fact only: the journal records the guest side, so a TTD
+    /// replay does not depend on it
+    uint32_t ListenAddress() const { return remoteAccess ? kListenAll : kListenLoopback; }
+    static constexpr uint32_t kListenAll = 0;   ///< 0.0.0.0
+    static constexpr uint32_t kListenLoopback = NetIp(127, 0, 0, 1);
 };
 
 class VirtualNetwork
@@ -174,6 +187,12 @@ public:
     const std::deque<Activity>& RecentActivity() const { return _activity; }
 
     const VirtualNetworkConfig& Config() const { return _config; }
+
+    /// [NETWORK] RemoteAccess changed at runtime: every host listener (Forward= rules, guest servers) listens again
+    /// on the new address (VirtualNetworkConfig::ListenAddress); the guest's sockets, its listeners and the host
+    /// connections already accepted stay. Nothing goes to the host while TTD replays (going live re-listens anyway:
+    /// ApplyLinkReset)
+    void SetRemoteAccess(bool on);
 
     /// The address of a station with this MAC (a DHCP lease, made now if needed)
     uint32_t LeaseFor(const DhcpServer::Mac& mac) { return _dhcp.Lease(mac); }

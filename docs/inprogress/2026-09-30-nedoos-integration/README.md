@@ -7,6 +7,7 @@ Two linked topics, both driven by running the full NedoOS card on ZX-Evo
 
 | Document | What it covers |
 |---|---|
+| [nedoos-overview-and-release.md](nedoos-overview-and-release.md) | What NedoOS is, where to download the release (nedoos.ru / kulich.su), what the archive contains, which kernel boots BaseConf, which players exist (no MoonSound one) |
 | [requirements-nedoos-layer.md](requirements-nedoos-layer.md) | NedoOS compatibility layer in the analyzers: tasks, memory pages, console, direct kernel calls, call trace, sockets, kernel health; on every automation surface |
 | POC [020-nedoos-layer](../../../tools/poc/020-nedoos-layer/) | Python prototype of the layer over the WebAPI; its results confirm the requirements on a live NedoOS |
 | [nedoos-kernel-reference.md](nedoos-kernel-reference.md) | Kernel memory model, symbols, structures and addresses, kernel-call mechanics; the zxdb hang read with a prototype of the layer; emulator gaps |

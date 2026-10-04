@@ -720,6 +720,9 @@ struct CONFIG
 		char hosts[1024];
 		/// Guest servers: "tcp:<hostport>:<guestport>,..."
 		char forwards[256];
+		/// [NETWORK] RemoteAccess: 1 (default) = the host listeners of guest servers bind 0.0.0.0 (every
+		/// interface: other computers on the LAN can connect); 0 = 127.0.0.1 (this computer only)
+		uint8_t remoteAccess;
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
 		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:

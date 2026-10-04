@@ -172,7 +172,15 @@ StateNode Adapters()
         n["wireless"] = a.wireless;
         n["up"] = a.up;
         n["running"] = a.running;
-        n["bridgeable"] = !a.loopback && !a.wireless;
+        // Wi-Fi bridges through MAC translation (its own MAC is needed); loopback has no LAN
+        n["bridgeable"] = !a.loopback && (!a.wireless || a.hasMac);
+        n["translation"] = a.wireless;
+        if (a.hasMac)
+        {
+            char mac[18];
+            std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", a.mac[0], a.mac[1], a.mac[2], a.mac[3], a.mac[4], a.mac[5]);
+            n["mac"] = std::string(mac);
+        }
         list.push(std::move(n));
     }
     ret["adapters"] = list;

@@ -898,6 +898,7 @@ Z80::RzxBoundary Z80::RzxFrameEnd(rzx::RzxPlayer& player)
 void Z80::SetInterruptSource(IInterruptSource* source)
 {
     _interruptSource = source;
+    _waitObserver = source && source->ObservesWaits() ? source : nullptr;
     _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
 }
 

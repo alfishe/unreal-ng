@@ -341,6 +341,8 @@ void NetworkManager::Refit()
             copy(net.hosts, sizeof(net.hosts), *change->hosts);
         if (change->forwards)
             copy(net.forwards, sizeof(net.forwards), *change->forwards);
+        if (change->remoteAccess)
+            net.remoteAccess = *change->remoteAccess ? 1 : 0;
         if (change->connectTimeoutMs)
             net.connectTimeoutMs = *change->connectTimeoutMs;
         if (change->comPort)
@@ -391,7 +393,14 @@ void NetworkManager::Refit()
             if (caps.reloadFirmware && !caps.reloadFirmware(why))
                 _firmwareNote = "kbc_firmware: " + why;
         }
-        _forceRefit = true;
+        if (change->OnlyRemoteAccess())
+        {
+            // A host-side setting: the listeners move to the new address, the devices and connections stay
+            if (_network)
+                _network->SetRemoteAccess(net.remoteAccess != 0);
+        }
+        else
+            _forceRefit = true;
     }
     Plan plan = MakePlan();
     if (!_firmwareNote.empty())
@@ -696,6 +705,7 @@ void NetworkManager::Unplug(bool keepSlotCards)
         _context->pEthernetGateway = nullptr;
     if (_hostFrames)
         _hostFrames->Close();   // the bridge's adapter goes with the gateway; the object stays (a test's fake)
+    _macTranslator.reset();
     _bridgeError.clear();
     for (SlotCard& card : _slotCards)
     {
@@ -750,6 +760,22 @@ void NetworkManager::Unplug(bool keepSlotCards)
     _card.reset();
     _network.reset();
     _plan = Plan();
+}
+
+bool NetworkManager::Change::Empty() const
+{
+    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort &&
+           !zxWifi && !comModemLines && !espChip && !avrFirmware && !kbcFirmware && !atm2IoEsp && !atm2IoEspAddress &&
+           !zifi && !modemPhonebook && !ethernetMode && !bridgeAdapter && slotPeers.empty();
+}
+
+bool NetworkManager::Change::OnlyRemoteAccess() const
+{
+    if (!remoteAccess)
+        return false;
+    Change rest = *this;
+    rest.remoteAccess.reset();
+    return rest.Empty();
 }
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
@@ -929,12 +955,24 @@ void NetworkManager::FitBridge()
         _bridgeError = error;   // in the network report (ethernet_gateway.bridge.error)
     }
     IHostFrames* frames = _hostFrames.get();
+    _macTranslator.reset();
+    if (frames->IsOpen() && frames->Translates())
+        _macTranslator = std::make_unique<MacTranslator>(frames->HostMac());
+    MacTranslator* translator = _macTranslator.get();
     EmulatorContext* context = _context;
-    _gateway->SetLanOutput([frames, context](const uint8_t* frame, size_t length) {
+    _gateway->SetLanOutput([frames, translator, context](const uint8_t* frame, size_t length) {
         // A TTD replay sends nothing: the recording did
         if (context->pTimeTravelManager && context->pTimeTravelManager->OwnsInput())
             return;
-        if (frames->IsOpen())
+        if (!frames->IsOpen())
+            return;
+        if (translator)
+        {
+            // Wi-Fi: the frame leaves with the host adapter's MAC
+            const std::vector<uint8_t> out = translator->Outbound(frame, length);
+            frames->Send(out.data(), out.size());
+        }
+        else
             frames->Send(frame, length);
     });
 }
@@ -944,11 +982,24 @@ void NetworkManager::PumpBridge()
     if (!_gateway || !_hostFrames || !_hostFrames->IsOpen() || _gateway->GetMode() != EthernetGateway::Mode::Bridge)
         return;
     _hostFrames->SetStations(_gateway->StationMacs());
+    if (_macTranslator)
+    {
+        _macTranslator->SetCards(_gateway->StationMacs());
+        _hostFrames->SetGuestIps(_macTranslator->GuestIps());
+    }
     std::vector<std::vector<uint8_t>> frames;
     _hostFrames->Drain(frames);
     ttd::TimeTravelManager* ttm = _context ? _context->pTimeTravelManager : nullptr;
-    for (const std::vector<uint8_t>& f : frames)
+    for (std::vector<uint8_t>& f : frames)
     {
+        // Wi-Fi: the card's MAC back in a frame for its address; the host's own traffic stays out. The journal keeps
+        // the frame as the card sees it, so a replay needs no translation
+        if (_macTranslator && !_macTranslator->Inbound(f))
+            continue;
+        // A wire never carries a frame under 60 bytes (the sender pads it), and the cards drop such runts. A host
+        // adapter can hand over shorter ones: Wi-Fi's 802.11-to-Ethernet conversion leaves the padding out
+        if (f.size() < 60)
+            f.resize(60, 0);
         // Every frame from the LAN is an outside input: journaled while recording, refused while the journal drives
         // the machine (a replay's frames come from the recording)
         ttd::TTDInputEvent ev;
@@ -1039,6 +1090,7 @@ void NetworkManager::UpdateStatus()
         s.forwards = net.forwards;
         s.comModemLines = net.comModemLines != 0;
         s.hostAccess = net.hostAccess != 0;
+        s.remoteAccess = net.remoteAccess != 0;
         s.connectTimeoutMs = net.connectTimeoutMs;
     }
     {
@@ -1234,6 +1286,24 @@ void NetworkManager::UpdateStatus()
                 error = _hostFrames->LastError();
             b["error"] = error;
             b["library"] = _hostFrames ? _hostFrames->Library() : std::string();
+            b["translation"] = _macTranslator != nullptr;
+            if (_macTranslator)
+            {
+                const MacTranslator::Mac& host = _macTranslator->HostMac();
+                char mac[18];
+                std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", host[0], host[1], host[2], host[3], host[4], host[5]);
+                b["host_mac"] = std::string(mac);
+                StateNode guests = StateNode::Array();
+                for (const auto& [ip, card] : _macTranslator->Guests())
+                {
+                    StateNode g = StateNode::Object();
+                    g["ip"] = NetIpToString(ip);
+                    std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", card[0], card[1], card[2], card[3], card[4], card[5]);
+                    g["card_mac"] = std::string(mac);
+                    guests.push(std::move(g));
+                }
+                b["guests"] = guests;
+            }
             if (_hostFrames)
             {
                 const IHostFrames::Counters c = _hostFrames->GetCounters();
@@ -1265,6 +1335,7 @@ VirtualNetworkConfig NetworkManager::BuildConfig(const EmulatorContext* context)
         return config;
     const auto& net = context->config.network;
     config.dnsMode = net.dnsPass ? VirtualNetworkConfig::DnsMode::Pass : VirtualNetworkConfig::DnsMode::Host;
+    config.remoteAccess = net.remoteAccess != 0;
 
     // Hosts=name=a.b.c.d,name=a.b.c.d (',' - ';' starts an INI comment)
     std::stringstream hosts(net.hosts);
@@ -1364,6 +1435,11 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         else if (key == "forwards" || key == "forward")
         {
             out.forwards = value;
+        }
+        else if (key == "remote_access" || key == "remoteaccess")
+        {
+            if (!flag(value, "remote_access", out.remoteAccess))
+                return false;
         }
         else if (key == "com_port" || key == "comport" || key == "com")
         {
@@ -1508,7 +1584,7 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         else
         {
             error = "unknown setting '" + rawKey +
-                    "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
+                    "' (card, host_access, dns_mode, hosts, forwards, remote_access, connect_timeout_ms, com_port, zx_wifi, "
                     "com_modem_lines, esp_chip, avr_firmware, kbc_firmware, atm2ioesp, atm2ioesp_address, zifi, isa1_peer, "
                     "isa2_peer, isa1_peer_b, isa2_peer_b, modem_phonebook, ethernet_mode, bridge_adapter)";
             return false;
