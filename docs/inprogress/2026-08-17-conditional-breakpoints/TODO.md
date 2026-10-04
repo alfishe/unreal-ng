@@ -14,6 +14,13 @@ engine itself (Phase 1) is not implemented.
   (SpecEmu/Spectaculator/Unreal/zx-m8xxx) in [research/](research/).
 - No `bpcondition.*` / condition code exists in `core/src` (verified 2026-09-16).
 
+- **Hot-path matching design (2026-10-03):** [hotpath-matching-design.md](hotpath-matching-design.md) -
+  exact addresses, ranges, physical / slot-bound pages, port masks, hit counts on painted tables and an L1
+  filter; measured in [PoC 022](../../../tools/poc/022-breakpoint-matching/README.md) (2026-10-04: CPU
+  addresses and ranges 0.42-0.54 ns above unarmed, flat to 10 000; today 1.6-3.7; filter `globalbits`).
+  Next: integrate into `BreakpointManager` with the inline call-site check, tests, A/B on the emulator. The `MapZ80AddressToPhysicalPage` cache-page prerequisite is fixed
+  (master 7eca03436).
+
 ## Remaining (value order)
 1. **Phase 1 slices 1a–1h** — expression-conditioned breakpoints: core engine
    (`bpcondition.{h,cpp}`), WebAPI + MCP + CLI + Lua/Python surfaces, debugger
