@@ -935,16 +935,17 @@ except RuntimeError as refusal:
     print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
 ```
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
 
 **Session lifecycle:**
 
 ```python
-emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (journal on by default)
-emu.ttd_start(mode='development')        # write journal on
-emu.ttd_start(mode='gaming')             # no write journal (smaller)
-emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
-emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
+emu.ttd_start(journal=True)              # also record the write journal
+emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
+emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all)
+# -> {'ok': True, 'error': None, 'cancelled': False, 'frames_built': 301, 'frames_covered': 0,
+#     'frames_refused': 0, 'records': ...}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
 emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
 emu.ttd_get_journal_enabled()            # -> bool
@@ -953,7 +954,7 @@ emu.ttd_invalidate()             # drop all history (reason defaults to 'python 
 emu.ttd_invalidate(reason='manual')
 ```
 
-`mode` is `'development'` (write journal on) or `'gaming'` (journal off, less memory); any other value raises `ValueError`. `enable_write_journal` wins over `mode`. With neither, `ttd_start()` keeps the choice made by `ttd_set_journal_enabled` (on by default). This matches the CLI (`ttd start --no-journal`), the WebAPI (`{"mode": "gaming"}`) and Lua (`ttd_start("gaming")`).
+The write journal answers "who wrote this address last" at once; without it the search replays one frame (same answer, slower). It is off by default, can be switched at any moment and built later for any span by replay (about 2-4 ms per frame) - see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules). This matches the CLI (`ttd start --journal`, `ttd journal on|off|build`), the WebAPI (`{"journal": true}`, `/ttd/journal`, `/ttd/journal/build`) and Lua (`ttd_start(true)`, `ttd_build_journal`).
 
 **Status:**
 
@@ -984,9 +985,9 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
-#   'write_journal_complete': True,   # False: write/io find-last replays history
-#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
-#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
+#   'write_journal_complete': True,   # one span over the whole session
+#   'write_journal_segments': [{'from_frame': 98, 'from_tinframe': 4, 'to_frame': 397, 'to_tinframe': 11}],
+#                                     # the spans it covers; outside them a write search replays one frame
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed

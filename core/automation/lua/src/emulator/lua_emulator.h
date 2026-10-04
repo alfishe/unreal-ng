@@ -3224,18 +3224,17 @@ public:
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
             info["write_journal_complete"]   = si.writeJournalComplete;
-            info["write_journal_wrapped"]    = si.writeJournalWrapped;
-            if (!si.journalGapReason.empty())
+            sol::table segments = lua_view.create_table();
+            for (size_t i = 0; i < si.writeJournalSpans.size(); ++i)
             {
-                sol::table gap = lua_view.create_table();
-                gap["reason"] = si.journalGapReason;
-                if (si.journalGapHasPosition)
-                {
-                    gap["frame"]    = si.journalGapAt.frame;
-                    gap["tinframe"] = si.journalGapAt.tInFrame;
-                }
-                info["write_journal_gap"] = gap;
+                sol::table span = lua_view.create_table();
+                span["from_frame"]    = si.writeJournalSpans[i].first.frame;
+                span["from_tinframe"] = si.writeJournalSpans[i].first.tInFrame;
+                span["to_frame"]      = si.writeJournalSpans[i].second.frame;
+                span["to_tinframe"]   = si.writeJournalSpans[i].second.tInFrame;
+                segments[i + 1] = span;
             }
+            info["write_journal_segments"] = segments;
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
             info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
@@ -3302,17 +3301,15 @@ public:
             return r;
         });
 
-        // ttd_start([mode]) - start recording
-        // mode: "gaming" (smaller files, no journal) or "development" (default, full journal)
-        lua.set_function("ttd_start", [this](sol::optional<std::string> modeOpt) -> bool {
+        // ttd_start([journal]) - start recording; journal = true also records the
+        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
+        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
-            // A mode overrides the journal choice; without one the choice made
-            // by ttd_set_journal_enabled stands (journal on by default)
-            if (modeOpt.has_value())
-                ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
+            if (journalOpt.has_value())
+                ctx->pTimeTravelManager->SetEnableWriteJournal(journalOpt.value());
             return ctx->pTimeTravelManager->StartRecording();
         });
 
@@ -3332,22 +3329,50 @@ public:
             return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
-        // ttd_set_journal_enabled(bool) - configure write journal capture
-        // ok, reason: refused while recording (a recording keeps its journal mode)
+        // ttd_set_journal_enabled(bool) - switch the write journal at any moment,
+        // also while recording: a journal segment starts or ends there (D40). ok, reason
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (ctx->pTimeTravelManager->SetEnableWriteJournal(enabled)) return {true, ""};
+            if (ctx->pTimeTravelManager->SwitchWriteJournal(enabled)) return {true, ""};
             return {false, "write journal not available"};
+        });
+
+        // ttd_build_journal([from_frame], [to_frame]) - build the write journal for
+        // frames from..to (default: the whole session) by replaying them, about
+        // 2-4 ms per frame; not while recording. Returns a table: ok, error,
+        // cancelled, frames_built, frames_covered, frames_refused, records
+        lua.set_function("ttd_build_journal", [this](sol::optional<uint64_t> fromOpt, sol::optional<uint64_t> toOpt) {
+            Emulator* emulator = effectiveEmulator();
+            sol::state_view lua_view(*_lua);
+            sol::table r = lua_view.create_table();
+            auto* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                r["ok"] = false;
+                r["error"] = "TTD not available";
+                return r;
+            }
+            const ttd::TTDJournalBuildResult b =
+                ctx->pTimeTravelManager->BuildWriteJournalFrames(fromOpt.value_or(0), toOpt.value_or(UINT64_MAX));
+            r["ok"] = b.ok;
+            if (!b.ok)
+                r["error"] = b.error;
+            r["cancelled"] = b.cancelled;
+            r["frames_built"] = b.framesBuilt;
+            r["frames_covered"] = b.framesCovered;
+            r["frames_refused"] = b.framesRefused;
+            r["records"] = b.records;
+            return r;
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return true;
+            if (!emulator) return false;
             auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return true;
+            if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->GetEnableWriteJournal();
         });
 

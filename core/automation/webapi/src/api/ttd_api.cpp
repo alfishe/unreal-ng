@@ -100,6 +100,31 @@ static bool PauseAndConfirm(const std::shared_ptr<Emulator>& emulator,
 /// in-place via RestoreCheckpoint -> Screen::RenderOnlyMainScreen() but do
 /// NOT run a MainLoop iteration, so the observers never see a frame event
 /// and keep displaying the pre-seek frame.
+/// The write journal's state (D40): on/off, the spans it covers, a build in
+/// progress. Shared by GET /ttd/status and the /ttd/journal endpoints
+static void AddWriteJournalJson(Json::Value& ret, const ttd::TTDSessionInfo& info, const ttd::TimeTravelManager& mgr)
+{
+    ret["write_journal_enabled"]  = info.writeJournalEnabled;
+    ret["write_journal_complete"] = info.writeJournalComplete;
+    Json::Value spans(Json::arrayValue);
+    for (const auto& [from, to] : info.writeJournalSpans)
+    {
+        Json::Value span;
+        span["from_frame"]    = Json::UInt64(from.frame);
+        span["from_tinframe"] = Json::UInt(from.tInFrame);
+        span["to_frame"]      = Json::UInt64(to.frame);
+        span["to_tinframe"]   = Json::UInt(to.tInFrame);
+        spans.append(span);
+    }
+    ret["write_journal_segments"] = spans;
+    const ttd::TimeTravelManager::JournalBuildState build = mgr.GetJournalBuildState();
+    Json::Value b;
+    b["active"] = build.active;
+    b["done"]   = Json::UInt64(build.done);
+    b["total"]  = Json::UInt64(build.total);
+    ret["write_journal_build"] = b;
+}
+
 static void NotifyFrameRefresh(Emulator& emulator)
 {
     EmulatorContext* context = emulator.GetContext();
@@ -371,20 +396,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     // Why time travel is not available for this machine at all (null when it is)
     ret["unavailable_reason"]   = info.unavailableReason.empty() ? Json::Value(Json::nullValue)
                                                                  : Json::Value(info.unavailableReason);
-    ret["write_journal_enabled"]    = info.writeJournalEnabled;
-    ret["write_journal_complete"]   = info.writeJournalComplete;
-    ret["write_journal_wrapped"]    = info.writeJournalWrapped;
-    if (!info.journalGapReason.empty())
-    {
-        Json::Value gap;
-        gap["reason"] = info.journalGapReason;
-        if (info.journalGapHasPosition)
-        {
-            gap["frame"]    = Json::UInt64(info.journalGapAt.frame);
-            gap["tinframe"] = Json::UInt(info.journalGapAt.tInFrame);
-        }
-        ret["write_journal_gap"] = gap;
-    }
+    AddWriteJournalJson(ret, info, *mgr);
         ret["ttd_available"]            = true;
     }
 
@@ -496,8 +508,7 @@ static ttd::TimeTravelManager* resolveTTD(
 ///
 /// Optional JSON body:
 /// {
-///   "mode": "gaming" | "development"   // gaming = no journal, development = full journal (default)
-///   "enable_write_journal": bool       // explicit override (takes precedence over mode)
+///   "journal": bool    // also record the write journal (default false, D40)
 /// }
 void EmulatorAPI::startTTD(const HttpRequestPtr& req,
                             std::function<void(const HttpResponsePtr&)>&& callback,
@@ -520,23 +531,11 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
         return;
     }
 
-    // Parse optional config from JSON body
-    bool enableWriteJournal = true;  // default: development mode
+    // Parse optional config from JSON body: the write journal is off unless asked for (D40)
+    bool enableWriteJournal = false;
     auto json = req->getJsonObject();
-    if (json)
-    {
-        if (json->isMember("enable_write_journal"))
-        {
-            enableWriteJournal = (*json)["enable_write_journal"].asBool();
-        }
-        else if (json->isMember("mode"))
-        {
-            const std::string mode = (*json)["mode"].asString();
-            if (mode == "gaming")
-                enableWriteJournal = false;
-            // "development" or any other value keeps the default (true)
-        }
-    }
+    if (json && json->isMember("journal"))
+        enableWriteJournal = (*json)["journal"].asBool();
 
     bool alreadyRecording = mgr->IsRecording();
     if (!alreadyRecording)
@@ -2280,3 +2279,91 @@ void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
 
 }  // namespace v1
 }  // namespace api
+
+/// @brief GET  /api/v1/emulator/{id}/ttd/journal - the write journal's state and spans
+///        POST /api/v1/emulator/{id}/ttd/journal {"enabled": bool} - switch it at any
+///        moment, also while recording (a segment starts or ends there, D40)
+void EmulatorAPI::journalTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+    if (req->method() == drogon::Post)
+    {
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("enabled") || !(*json)["enabled"].isBool())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "body: {\"enabled\": true | false}";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        mgr->SwitchWriteJournal((*json)["enabled"].asBool());
+    }
+    Json::Value ret;
+    AddWriteJournalJson(ret, mgr->GetSessionInfo(), *mgr);
+    ret["write_journal_records"] = Json::UInt64(mgr->GetSessionInfo().writeJournalRecords);
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/journal/build {"from_frame": n, "to_frame": n}
+/// Builds the write journal for frames from..to (default: the whole session) by
+/// replaying them, about 2-4 ms per frame. Answers when done; GET /ttd/journal
+/// shows the progress meanwhile, POST /ttd/journal/build/cancel stops it
+void EmulatorAPI::buildJournalTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
+    if (!mgr) return;
+    if (rejectIfRecording(mgr, callback)) return;
+
+    auto json = req->getJsonObject();
+    const uint64_t from = json && json->isMember("from_frame") ? (*json)["from_frame"].asUInt64() : 0;
+    const uint64_t to = json && json->isMember("to_frame") ? (*json)["to_frame"].asUInt64() : UINT64_MAX;
+
+    PauseAndConfirm(emulator);
+    const ttd::TTDJournalBuildResult r = mgr->BuildWriteJournalFrames(from, to);
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
+
+    Json::Value ret;
+    ret["ok"] = r.ok;
+    if (!r.ok)
+        ret["error"] = r.error;
+    ret["cancelled"]      = r.cancelled;
+    ret["frames_built"]   = Json::UInt64(r.framesBuilt);
+    ret["frames_covered"] = Json::UInt64(r.framesCovered);
+    ret["frames_refused"] = Json::UInt64(r.framesRefused);
+    ret["records"]        = Json::UInt64(r.records);
+    AddWriteJournalJson(ret, mgr->GetSessionInfo(), *mgr);
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    if (!r.ok)
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/journal/build/cancel - stop a running build
+/// after its current frame; what it built is kept
+void EmulatorAPI::cancelJournalBuildTTD(const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    (void)req;
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+    const bool active = mgr->GetJournalBuildState().active;
+    mgr->CancelJournalBuild();
+    Json::Value ret;
+    ret["cancelled"] = active;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}

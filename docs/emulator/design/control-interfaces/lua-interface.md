@@ -791,10 +791,13 @@ Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it
 **Session lifecycle:**
 
 ```lua
-ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled choice (journal on by default)
-ttd_start("development")     --> bool   -- write journal on
-ttd_start("gaming")          --> bool   -- no write journal (smaller)
-ttd_set_journal_enabled(b)             -- choose journal mode for the next start
+ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled choice (off by default)
+ttd_start(true)              --> bool   -- also record the write journal
+ttd_set_journal_enabled(b)   --> ok, reason  -- switch the write journal at any moment, also while recording
+                                       --   (each on-off span is a segment; status.write_journal_segments)
+ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_built, frames_covered,
+                                       --   frames_refused, records}: build it by replaying frames from..to
+                                       --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
                                        --   (0 = no limit, nil keeps a value; status: history_* fields)
 ttd_get_journal_enabled()    --> bool
@@ -830,9 +833,9 @@ local status = ttd_status()
 --
 -- Sections
 -- status.write_journal_enabled = true
--- status.write_journal_complete = true  -- false: write/io find-last replays history
--- status.write_journal_wrapped = false  -- true: a "no match" from the journal replays
--- status.write_journal_gap     = nil    -- when incomplete: {reason, frame, tinframe}
+-- status.write_journal_complete = true  -- one span over the whole session
+-- status.write_journal_segments = { {from_frame = 98, from_tinframe = 4, to_frame = 397, to_tinframe = 11} }
+--                                       -- the spans it covers; outside them a write search replays one frame
 -- status.bookmark_count        = 2
 -- status.write_journal_records = 729025
 -- status.write_journal_bytes   = 8748300

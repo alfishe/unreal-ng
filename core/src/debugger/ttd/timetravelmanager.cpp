@@ -889,13 +889,9 @@ TTDSessionInfo TimeTravelManager::ComputeSessionInfo() const
 
     info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
     info.writeJournalSegments = JournalSegments();
+    for (const TTDJournalSegment& s : info.writeJournalSegments)
+        info.writeJournalSpans.emplace_back(TimePointOf(s.from, FrameSpan()), TimePointOf(s.to, FrameSpan()));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
-    info.writeJournalWrapped = _writeJournal != nullptr && _writeJournal->HasEvictedRecords();
-    if (!info.writeJournalComplete && !_timeline.empty())
-        info.journalGapReason = info.writeJournalSegments.empty()
-                                    ? "no write journal: write searches replay"
-                                    : "the write journal covers " + std::to_string(info.writeJournalSegments.size()) +
-                                          " span(s) of the session: write searches outside them replay";
 
     return info;
 }
@@ -912,6 +908,21 @@ bool TimeTravelManager::SetWriteJournalCapacity(size_t bytes)
         _writeJournal.reset();   // allocated again, at this size, when a recording starts
     }
     return true;
+}
+
+bool TimeTravelManager::SwitchWriteJournal(bool enable)
+{
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    if (wasRunning)
+    {
+        emu->Pause(false);
+        emu->WaitForPauseConfirmation(1000);
+    }
+    const bool ok = SetEnableWriteJournal(enable);
+    if (wasRunning)
+        emu->Resume(false);
+    return ok;
 }
 
 bool TimeTravelManager::SetEnableWriteJournal(bool enable)
@@ -5730,6 +5741,16 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
     // journal is rebuilt below and must not claim them back
     _journalSegments = JournalSegments();
 
+    // Progress and cancel for other threads (GetJournalBuildState, CancelJournalBuild)
+    _journalBuildCancel.store(false);
+    _journalBuildDone.store(0);
+    _journalBuildActive.store(true);
+    struct ActiveFlag
+    {
+        std::atomic<bool>& flag;
+        ~ActiveFlag() { flag.store(false); }
+    } activeFlag{_journalBuildActive};
+
     // The frames to build: those overlapping (fromT, toT] that a segment does
     // not cover yet
     std::vector<size_t> frames;
@@ -5755,9 +5776,11 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
     };
     std::vector<BuiltFrame> built;
     std::vector<TTDSearchResult> hits;
+    _journalBuildTotal.store(frames.size());
     for (size_t k = 0; k < frames.size(); ++k)
     {
-        if (progress && !progress(k, frames.size()))
+        _journalBuildDone.store(k);
+        if ((progress && !progress(k, frames.size())) || _journalBuildCancel.load())
         {
             r.cancelled = true;
             break;
@@ -5788,8 +5811,12 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
         built.push_back(std::move(f));
         ++r.framesBuilt;
     }
-    if (!r.cancelled && progress)
-        progress(frames.size(), frames.size());
+    if (!r.cancelled)
+    {
+        _journalBuildDone.store(frames.size());
+        if (progress)
+            progress(frames.size(), frames.size());
+    }
 
     if (!built.empty())
     {
@@ -5841,6 +5868,27 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
     }
     r.ok = true;
     return r;
+}
+
+TTDJournalBuildResult TimeTravelManager::BuildWriteJournalFrames(uint64_t fromFrame, uint64_t toFrame,
+                                                                const TTDJournalBuildProgress& progress)
+{
+    // A frame runs from where its checkpoint's CPU stands to where the next
+    // one's does: the span is (start of fromFrame, start of toFrame + 1]
+    auto startOf = [this](uint64_t frame) -> uint64_t {
+        const auto it = std::lower_bound(_timeline.begin(), _timeline.end(), frame,
+                                         [](const TTDCheckpoint& cp, uint64_t f) { return cp.time.frame < f; });
+        return it == _timeline.end() ? UINT64_MAX : CheckpointStartT(*it);
+    };
+    const uint64_t fromT = startOf(fromFrame);
+    const uint64_t toT = toFrame == UINT64_MAX ? UINT64_MAX : startOf(toFrame + 1);
+    if (fromT == UINT64_MAX)
+    {
+        TTDJournalBuildResult r;
+        r.error = "frame " + std::to_string(fromFrame) + " is past the session's last frame";
+        return r;
+    }
+    return BuildWriteJournal(fromT, toT, progress);
 }
 
 std::optional<TTDSearchResult>

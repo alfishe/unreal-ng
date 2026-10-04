@@ -3188,18 +3188,17 @@ namespace PythonBindings
                 info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
                 info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
                 info["write_journal_complete"]   = py::cast(si.writeJournalComplete);
-                info["write_journal_wrapped"]    = py::cast(si.writeJournalWrapped);
-                if (!si.journalGapReason.empty())
+                py::list segments;
+                for (const auto& [from, to] : si.writeJournalSpans)
                 {
-                    py::dict gap;
-                    gap["reason"] = si.journalGapReason;
-                    if (si.journalGapHasPosition)
-                    {
-                        gap["frame"]    = py::cast(si.journalGapAt.frame);
-                        gap["tinframe"] = py::cast(si.journalGapAt.tInFrame);
-                    }
-                    info["write_journal_gap"] = gap;
+                    py::dict span;
+                    span["from_frame"]    = py::cast(from.frame);
+                    span["from_tinframe"] = py::cast(from.tInFrame);
+                    span["to_frame"]      = py::cast(to.frame);
+                    span["to_tinframe"]   = py::cast(to.tInFrame);
+                    segments.append(span);
                 }
+                info["write_journal_segments"] = segments;
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
                 info["input_event_count"]        = py::cast(static_cast<uint64_t>(si.inputEventCount));
                 info["external_event_count"]     = py::cast(static_cast<uint64_t>(si.externalEventCount));
@@ -3266,24 +3265,16 @@ namespace PythonBindings
             }, "Describe a .ttd file without loading it: header, sections and the recorded machine "
                "(model, ROM signature, General Sound card, devices)", py::arg("path"))
 
-            // mode: "development" (write journal on) or "gaming" (off); an explicit
-            // enable_write_journal wins over mode; with neither, the choice made
-            // by ttd_set_journal_enabled stands (journal on by default)
-            .def("ttd_start", [](Emulator& self, py::object modeObj, py::object journalObj) -> bool {
+            // journal=True also records the write journal; without it the
+            // ttd_set_journal_enabled choice stands (off by default, D40)
+            .def("ttd_start", [](Emulator& self, py::object journalObj) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return false;
-                if (!modeObj.is_none())
-                {
-                    const std::string mode = modeObj.cast<std::string>();
-                    if (mode != "development" && mode != "gaming")
-                        throw py::value_error("mode must be \"development\" or \"gaming\"");
-                    ctx->pTimeTravelManager->SetEnableWriteJournal(mode == "development");
-                }
                 if (!journalObj.is_none())
                     ctx->pTimeTravelManager->SetEnableWriteJournal(journalObj.cast<bool>());
                 return ctx->pTimeTravelManager->StartRecording();
-            }, "Start TTD recording",
-               py::arg("mode") = py::none(), py::arg("enable_write_journal") = py::none())
+            }, "Start TTD recording (journal=True also records the write journal)",
+               py::arg("journal") = py::none())
 
             .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
                 auto* ctx = self.GetContext();
@@ -3301,15 +3292,35 @@ namespace PythonBindings
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
                 auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SetEnableWriteJournal(enabled))
+                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SwitchWriteJournal(enabled))
                     throw std::runtime_error("write journal not available");
-            }, "Choose whether the next recording keeps a write journal (RuntimeError while recording)",
+            }, "Switch the write journal at any moment, also while recording: a journal segment starts or ends there",
                py::arg("enabled"))
 
             .def("ttd_get_journal_enabled", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
-                return !ctx || !ctx->pTimeTravelManager || ctx->pTimeTravelManager->GetEnableWriteJournal();
-            }, "Whether recordings keep a write journal")
+                return ctx && ctx->pTimeTravelManager && ctx->pTimeTravelManager->GetEnableWriteJournal();
+            }, "Whether the write journal is recorded (off by default)")
+
+            .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::dict {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                    throw std::runtime_error("TTD not available");
+                const ttd::TTDJournalBuildResult b = ctx->pTimeTravelManager->BuildWriteJournalFrames(
+                    fromObj.is_none() ? 0 : fromObj.cast<uint64_t>(),
+                    toObj.is_none() ? UINT64_MAX : toObj.cast<uint64_t>());
+                py::dict r;
+                r["ok"] = b.ok;
+                r["error"] = b.ok ? py::object(py::none()) : py::object(py::str(b.error));
+                r["cancelled"] = b.cancelled;
+                r["frames_built"] = b.framesBuilt;
+                r["frames_covered"] = b.framesCovered;
+                r["frames_refused"] = b.framesRefused;
+                r["records"] = b.records;
+                return r;
+            }, "Build the write journal for frames from_frame..to_frame (default: the whole session) by replaying "
+               "them, about 2-4 ms per frame; not while recording",
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none())
 
             .def("ttd_stop", [](Emulator& self) {
                 auto* ctx = self.GetContext();

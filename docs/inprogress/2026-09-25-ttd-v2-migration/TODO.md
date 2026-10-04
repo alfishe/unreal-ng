@@ -115,7 +115,7 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] E7 (2026-10-03): which operations use the journal, its size against the rest of a recording, search time without it ([write-journal-e7.md](write-journal-e7.md))
   - [x] J1 (2026-10-03) Core: segments; switch at any instruction (also mid-frame, from the emulation thread); find-last per segment, coverage index for writes outside; port find-last from the port journal; off by default; status; header flag + segment table; ttdfileinfo, Python analyzer, ttd.ksy; format docs
   - [x] J2 (2026-10-04) Core: `BuildWriteJournal(from, to)` by replay, progress and cancel; built records equal recorded ones
-  - [ ] J3 Automation: CLI, WebAPI + OpenAPI, MCP, Lua, Python (start option, `journal on|off|build|status`; `development`/`gaming` removed); command-interface.md, webapi/lua/python interface docs, MCP README, recipes
+  - [x] J3 (2026-10-04) Automation: CLI, WebAPI + OpenAPI, MCP, Lua, Python (start option, `journal on|off|build|status`; `development`/`gaming` removed); command-interface.md, webapi/lua/python interface docs, MCP README, recipes
   - [ ] J4 Qt: journal switch in the TTD panel, segments band on the scrubber, build for the selection; time-travel-ux.md
   - [ ] J5 Python tool via WebAPI: load a .ttd, build a span, save; analyzer README
   - [ ] J6 Engine: segments in TimeTravelEngine (shadow-fed), segment table in the Phase 4 file

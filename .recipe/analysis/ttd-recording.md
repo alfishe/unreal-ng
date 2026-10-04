@@ -1,8 +1,10 @@
 # Recipe: TTD — Turn Recording On/Off, Save/Load, Travel Through Time
 
 Time-Travel Debug records every frame (checkpoints + compressed dirty pages)
-plus, in development mode, a write journal of every memory/port write. You
-can then scrub, step and replay the machine backward and forward.
+and every port read and write. You can then scrub, step and replay the
+machine backward and forward. The write journal (every memory write, for
+instant "who wrote this last") is off by default: switch it on when you need
+it, or build it later for any span - [ttd-write-journal.md](ttd-write-journal.md).
 
 Reverse *queries* (`find-last`, `reverse-step/continue`) live in
 [ttd-reverse-debugging.md](ttd-reverse-debugging.md).
@@ -17,8 +19,8 @@ Reverse *queries* (`find-last`, `reverse-step/continue`) live in
 
 ```text
 # record
-time_travel   {"action":"start"}                               # development mode (write journal on)
-time_travel   {"action":"start","mode":"gaming"}               # or: no write journal
+time_travel   {"action":"start"}                               # record (write journal off)
+time_travel   {"action":"start","journal":true}                # or: also record the write journal
 time_travel   {"action":"status"}                              # state, journal size, coverage frames
 inspect_state {"aspects":["ttd"]}                              # status + position alongside other aspects
 time_travel   {"action":"stop"}                                # history retained → idle
@@ -62,24 +64,22 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" \
      -H 'Content-Type: application/json' -d '{}' | jq .
 ```
 
-Optional body selects the journal mode:
+Optional body:
 
 ```json
-{}                                        // development mode (default): full write journal
-{"enable_write_journal": false}           // gaming mode: ~90% smaller, no fast reverse queries
-{"mode": "gaming"}                        // same, by name
+{}                     // record; the write journal is off
+{"journal": true}      // also record the write journal (12 bytes per memory write)
 ```
 
-- **Development mode** — fast "where was X last written?" queries, 12 bytes
-  per write journaled. Use for debugging.
-- **Gaming mode** — small footprint, seek/step-back still work,
-  reverse-watchpoint queries fall back to slow checkpoint replay.
+The write journal only speeds up "who wrote address X last": with it the
+answer is instant, without it the search replays one frame (a few ms, same
+answer). Switch it during the recording or build it afterwards:
+[ttd-write-journal.md](ttd-write-journal.md).
 
 StartRecording **auto-enables** the `timetravel` and `debugmode` runtime
 features. On stop it turns `debugmode` back off if it was the one that
 enabled it; `timetravel` stays on. Idempotent: starting twice is a no-op
-(`already_active: true`, and the journal mode of the running recording is
-kept).
+(`already_active: true`).
 
 While recording (and while the machine sits in `detached`) the
 **acceleration lock** holds: host speed forced to 1x (2x-16x refused),
@@ -104,7 +104,8 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/status" | jq '{
 | `current_end_frame` | live head of the timeline |
 | `checkpoint_count` | frames captured |
 | `page_store_used_bytes` | compressed dirty-page budget in use |
-| `write_journal_records` | journal entries (0 in gaming mode) |
+| `write_journal_records` | write journal entries (0 when it was not recorded) |
+| `write_journal_segments` | the spans the write journal covers |
 | `history_limit_frames` / `history_limit_bytes` | the history limit (0 = none), see below |
 | `history_bytes` / `evicted_checkpoints` | checkpoint data held now / oldest checkpoints released by the limit |
 | `ttd_available` | `false` → build lacks TTD (treat status as capability probe) |

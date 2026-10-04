@@ -257,21 +257,16 @@ struct TTDSessionInfo
     double   compressionRatio = 1.0; ///< kPageSize / mean(payload) across live slots
     size_t   livePayloadBytes = 0;  ///< Sum of compressed payload bytes (live slots)
 
-    bool writeJournalEnabled = false;  ///< True if write journal is active (for FindLast)
-    /// The spans the write journal covers (D40), oldest first
+    /// The write journal is recorded now (while recording) or will be at the
+    /// next start (D40: off by default, switchable at any moment)
+    bool writeJournalEnabled = false;
+    /// The spans the write journal covers (D40), oldest first, in machine time...
     std::vector<TTDJournalSegment> writeJournalSegments;
-
-    /// The journal holds every write/port write of the session since its start,
-    /// so write/io find-last answers from it instead of replaying.
+    /// ...and as positions (frame, T-state): `from` excluded, `to` included
+    std::vector<std::pair<TTDTimePoint, TTDTimePoint>> writeJournalSpans;
+    /// One segment over the whole session: every write search answers from the
+    /// journal. Outside the segments a write search replays (same answer, slower)
     bool writeJournalComplete = false;
-    /// The journal ring dropped its oldest records: a "no match" from it is not
-    /// final and falls back to replay (a match is still exact).
-    bool writeJournalWrapped = false;
-    /// Why the journal stopped covering the session; empty while complete.
-    std::string journalGapReason;
-    /// Where it stopped (known for gaps made live; not for a loaded file).
-    bool journalGapHasPosition = false;
-    TTDTimePoint journalGapAt{};
 
     // --- Provenance -------------------------------------------------------
     //
@@ -627,6 +622,11 @@ public:
     /// and replays one frame. Switching it off with no session frees the
     /// pre-allocated journal.
     bool SetEnableWriteJournal(bool enable);
+    /// The same from a control thread (automation, UI) while the machine may
+    /// be running: pauses it, switches at the instruction it stopped on, and
+    /// resumes it. The emulation thread itself (a breakpoint handler) calls
+    /// SetEnableWriteJournal directly
+    bool SwitchWriteJournal(bool enable);
     bool GetEnableWriteJournal() const { return _enableWriteJournal; }
 
     /// @brief The write journal ring's size in bytes (0: the default, 64 MB,
@@ -1452,6 +1452,24 @@ public:
     /// to where it stood (positioned in history, as after any search).
     TTDJournalBuildResult BuildWriteJournal(uint64_t fromT, uint64_t toT,
                                             const TTDJournalBuildProgress& progress = nullptr);
+    /// The same by frame numbers: frames @p fromFrame to @p toFrame, both
+    /// included (UINT64_MAX: to the session end)
+    TTDJournalBuildResult BuildWriteJournalFrames(uint64_t fromFrame, uint64_t toFrame,
+                                                  const TTDJournalBuildProgress& progress = nullptr);
+    /// A build in progress, readable from any thread (surfaces poll it)
+    struct JournalBuildState
+    {
+        bool active = false;
+        uint64_t done = 0;    ///< frames built so far
+        uint64_t total = 0;   ///< frames to build
+    };
+    JournalBuildState GetJournalBuildState() const
+    {
+        return {_journalBuildActive.load(), _journalBuildDone.load(), _journalBuildTotal.load()};
+    }
+    /// Any thread: the running build stops after its current frame (what it
+    /// built is kept). No build running: nothing happens
+    void CancelJournalBuild() { _journalBuildCancel.store(true); }
 
     /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
     TTDCoverageProbeResult QueryCoverageProbe(
@@ -2263,6 +2281,10 @@ private:
     /// The write journal's segments (D40): closed spans, then the open one
     /// (to == kSegmentOpen) while writes reach the journal
     std::vector<TTDJournalSegment> _journalSegments;
+    std::atomic<bool> _journalBuildActive{false};
+    std::atomic<bool> _journalBuildCancel{false};
+    std::atomic<uint64_t> _journalBuildDone{0};
+    std::atomic<uint64_t> _journalBuildTotal{0};
     static constexpr uint64_t kSegmentOpen = UINT64_MAX;
     /// Writes reach the journal now: recording, journal on, capture features on
     bool JournalLive() const;

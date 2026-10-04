@@ -593,25 +593,56 @@
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["description"] =
-        "True when the write journal is active (for FindLast / reverse debugging). "
-        "Set via enable_write_journal on /ttd/start; false in 'gaming' mode.";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["type"] = "boolean";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["description"] =
-        "True while the journal holds every write/port write of the session, so write/io find-last answers from it; "
-        "false when it was off at the start or switched (journal, debug mode, time travel) during the session - "
-        "those searches then replay history";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["type"] = "boolean";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["description"] =
-        "True when the journal ring dropped its oldest records: a 'no match' from it falls back to replay";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["type"] = "object";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["description"] =
-        "Present when the journal does not cover the session: reason, and frame/tinframe where it stopped "
-        "(absent for a loaded file)";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["reason"]["type"] = "string";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["frame"]["type"] = "integer";
-    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["tinframe"]["type"] = "integer";
+    // The write journal (D40): the same fields in /ttd/status, /ttd/journal and the build response
+    {
+        Json::Value journal;
+        journal["write_journal_enabled"]["type"] = "boolean";
+        journal["write_journal_enabled"]["description"] =
+            "The write journal is recorded now (while recording) or will be at the next start. Off by default; "
+            "switched with POST /ttd/journal or `journal` on /ttd/start";
+        journal["write_journal_complete"]["type"] = "boolean";
+        journal["write_journal_complete"]["description"] =
+            "One span covers the whole session: every write search answers from the journal";
+        journal["write_journal_segments"]["type"] = "array";
+        journal["write_journal_segments"]["description"] =
+            "The spans the journal covers, oldest first: from (excluded) to (included), as frame and T-state. "
+            "Write searches inside them answer at once; outside they replay one frame (same answer)";
+        Json::Value& span = journal["write_journal_segments"]["items"];
+        span["type"] = "object";
+        for (const char* field : {"from_frame", "from_tinframe", "to_frame", "to_tinframe"})
+            span["properties"][field]["type"] = "integer";
+        journal["write_journal_build"]["type"] = "object";
+        journal["write_journal_build"]["description"] =
+            "A build by replay (POST /ttd/journal/build): active, frames done, frames to build";
+        journal["write_journal_build"]["properties"]["active"]["type"] = "boolean";
+        journal["write_journal_build"]["properties"]["done"]["type"] = "integer";
+        journal["write_journal_build"]["properties"]["total"]["type"] = "integer";
+        for (const std::string& name : journal.getMemberNames())
+            schemas["TTDStatusResponse"]["properties"][name] = journal[name];
+
+        schemas["TTDJournalResponse"]["type"] = "object";
+        schemas["TTDJournalResponse"]["description"] = "GET / POST /ttd/journal: the write journal's state";
+        for (const std::string& name : journal.getMemberNames())
+            schemas["TTDJournalResponse"]["properties"][name] = journal[name];
+        schemas["TTDJournalResponse"]["properties"]["write_journal_records"]["type"] = "integer";
+
+        schemas["TTDJournalBuildResponse"]["type"] = "object";
+        schemas["TTDJournalBuildResponse"]["description"] = "POST /ttd/journal/build: what was built, and the journal now";
+        for (const std::string& name : journal.getMemberNames())
+            schemas["TTDJournalBuildResponse"]["properties"][name] = journal[name];
+        Json::Value& b = schemas["TTDJournalBuildResponse"]["properties"];
+        b["ok"]["type"] = "boolean";
+        b["error"]["type"] = "string";
+        b["error"]["description"] = "Why the build was refused (ok false)";
+        b["cancelled"]["type"] = "boolean";
+        b["frames_built"]["type"] = "integer";
+        b["frames_covered"]["type"] = "integer";
+        b["frames_covered"]["description"] = "Already inside a span, left as they were";
+        b["frames_refused"]["type"] = "integer";
+        b["frames_refused"]["description"] = "Hold a v1 marker without its data: cannot be replayed";
+        b["records"]["type"] = "integer";
+        b["records"]["description"] = "Writes added";
+    }
 
     // ---------------------------------------------------------------------
     // POST /ttd/start response
@@ -633,8 +664,7 @@
     schemas["TTDStartResponse"]["properties"]["history_limit_bytes"]["description"] = "History limit in force (bytes, 0 = none)";
     schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["description"] =
-        "Whether write journal capture is enabled. false = gaming mode (smaller files), "
-        "true = development mode (fast reverse-watchpoint queries).";
+        "Whether the write journal is recorded (the `journal` option; off by default)";
 
     // ---------------------------------------------------------------------
     // POST /ttd/stop response

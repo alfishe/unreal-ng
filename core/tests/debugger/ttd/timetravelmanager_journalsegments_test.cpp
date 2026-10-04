@@ -11,11 +11,15 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <optional>
+#include <thread>
 #include <sstream>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
@@ -420,3 +424,84 @@ TEST(TimeTravelManager_JournalSegments_Test, BuildingIsRefusedWhileRecording_And
     EXPECT_EQ(r.framesBuilt, m.ttd->GetCheckpointCount() - 2);
     EXPECT_EQ(m.ttd->GetSessionInfo().writeJournalSegments.size(), 2u) << "around the refused frame";
 }
+
+// ===========================================================================
+// What the automation surfaces call (J3): CLI, WebAPI, MCP, Lua and Python
+// switch the journal and build it through these
+// ===========================================================================
+
+TEST(TimeTravelManager_JournalSegments_Test, SwitchingFromAnotherThreadWhileTheMachineRuns)
+{
+    Machine m;
+    ASSERT_NE(m.ttd, nullptr);
+    ASSERT_TRUE(m.ttd->StartRecording());
+    m.emulator->StartAsync();
+    const uint64_t& frame = m.emulator->GetContext()->emulatorState.frame_counter;
+    ASSERT_TRUE(TestWait::For([&] { return m.emulator->IsRunning() && frame > 3; }, std::chrono::seconds(10)));
+
+    // This thread is not the emulation thread: the switch pauses the machine,
+    // switches at the instruction it stopped on and resumes it
+    ASSERT_TRUE(m.ttd->SwitchWriteJournal(true));
+    const uint64_t on = frame;
+    ASSERT_TRUE(TestWait::For([&] { return frame > on + 3; }, std::chrono::seconds(10)));
+    ASSERT_TRUE(m.ttd->SwitchWriteJournal(false));
+    m.emulator->Stop();
+    m.ttd->StopRecording();
+
+    const ttd::TTDSessionInfo info = m.ttd->GetSessionInfo();
+    ASSERT_EQ(info.writeJournalSegments.size(), 1u);
+    ASSERT_EQ(info.writeJournalSpans.size(), 1u);
+    EXPECT_GE(info.writeJournalSpans[0].first.frame, on - 1);
+    EXPECT_GT(info.writeJournalRecords, 0u) << "the program's writes in the span";
+}
+
+TEST(TimeTravelManager_JournalSegments_Test, ABuildReportsProgressAndStopsFromAnotherThread)
+{
+    Machine m;
+    ASSERT_NE(m.ttd, nullptr);
+    ASSERT_TRUE(m.ttd->StartRecording());
+    m.Frames(12);
+    m.ttd->StopRecording();
+    EXPECT_FALSE(m.ttd->GetJournalBuildState().active);
+
+    std::atomic<bool> sawProgress{false};
+    std::thread observer([&] {
+        // A surface polls the state and asks to stop (WebAPI .../build/cancel)
+        TestWait::For([&] {
+            const auto state = m.ttd->GetJournalBuildState();
+            return state.active && state.done >= 3;
+        }, std::chrono::seconds(10));
+        const auto state = m.ttd->GetJournalBuildState();
+        sawProgress = state.active && state.total > state.done;
+        m.ttd->CancelJournalBuild();
+    });
+    const ttd::TTDJournalBuildResult r = m.ttd->BuildWriteJournalFrames(0, UINT64_MAX, [](uint64_t, uint64_t) {
+        std::this_thread::yield();   // the observer gets its turn between frames
+        return true;
+    });
+    observer.join();
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_TRUE(sawProgress.load());
+    EXPECT_TRUE(r.cancelled);
+    EXPECT_GE(r.framesBuilt, 3u);
+    EXPECT_LT(r.framesBuilt, m.ttd->GetCheckpointCount() - 1);
+    EXPECT_FALSE(m.ttd->GetJournalBuildState().active) << "over";
+}
+
+TEST(TimeTravelManager_JournalSegments_Test, BuildingByFrameNumbers)
+{
+    Machine m;
+    ASSERT_NE(m.ttd, nullptr);
+    ASSERT_TRUE(m.ttd->StartRecording());
+    m.Frames(10);
+    m.ttd->StopRecording();
+    const uint64_t first = m.ttd->GetCheckpoint(3)->time.frame;
+    const ttd::TTDJournalBuildResult r = m.ttd->BuildWriteJournalFrames(first, first + 2);
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_EQ(r.framesBuilt, 3u) << "frames first..first+2, both included";
+    const ttd::TTDSessionInfo info = m.ttd->GetSessionInfo();
+    ASSERT_EQ(info.writeJournalSpans.size(), 1u);
+    EXPECT_EQ(info.writeJournalSpans[0].first.frame, first);
+    EXPECT_EQ(info.writeJournalSpans[0].second.frame, first + 3) << "the third frame ends where the next begins";
+}
+

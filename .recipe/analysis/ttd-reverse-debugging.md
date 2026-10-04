@@ -1,7 +1,6 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
-Precondition: a recorded session (development mode for the fast journal) that
-is **stopped/detached** — see [ttd-recording.md](ttd-recording.md).
+Precondition: a recorded session that is **stopped/detached** — see [ttd-recording.md](ttd-recording.md).
 `find-last`, `reverse-step` and `reverse-continue` return `409` while
 recording is active; the coverage queries answer at any time. Session rules
 (states, what wipes history, markers):
@@ -174,10 +173,13 @@ Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
 
 ## Pitfalls
 
-- **Journal-off sessions** still answer these queries — via checkpoint
-  replay, orders of magnitude slower on long timelines. Prefer development
-  mode when you plan to ask questions.
-- **`find-last` `access:"io"`** matches port writes (value = byte out).
+- **Without the write journal** a write `find-last` still answers, the same
+  way: the coverage index finds the newest frame that wrote the address and
+  that frame is replayed (a few ms; a never-written address walks the whole
+  index). For instant answers over a span, record or build the journal there:
+  [ttd-write-journal.md](ttd-write-journal.md).
+- **`find-last` `access:"io"`** matches port writes (value = byte out); it
+  answers from the port journal, no replay.
 - **Z80 vs physical addresses**: `find-last` works in Z80 space, reports
   `phys_page` in the result, and takes an optional `phys_page` filter;
   coverage endpoints likewise take Z80 ranges plus an optional `phys_page`.

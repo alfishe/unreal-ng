@@ -479,6 +479,20 @@ Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileRe
 - **Limits.** Refused while recording. The machine returns to where it stood.
 - **Tests.** Built records equal those a twin machine recorded live, record for record. Also covered: a built span joining a segment that started mid-frame; a cancelled build; refusals. Four mutants are caught.
 
+**As built, J3 (2026-10-04).**
+
+- **Core.** `SwitchWriteJournal` for control threads: it pauses a running machine, switches at the instruction it stopped on and resumes it. `BuildWriteJournalFrames(from, to)` builds by frame numbers, from a checkpoint's CPU position to the next one's. `GetJournalBuildState` and `CancelJournalBuild` work from any thread. The status lists the segments as positions (`writeJournalSpans`). The v1 status fields `writeJournalWrapped` and `journalGap*` are removed.
+- **Surfaces.**
+  - CLI: `ttd start [--journal]` and `ttd journal [on|off|status|build [from] [to]]`; the status prints the spans.
+  - WebAPI: `POST /ttd/start {"journal"}`, `GET|POST /ttd/journal`, `POST /ttd/journal/build`, `POST /ttd/journal/build/cancel`; the status carries `write_journal_segments` and `write_journal_build`.
+  - MCP `time_travel`: `start` with `journal`, plus `journal_on`, `journal_off` and `journal_build`.
+  - Lua and Python: `ttd_start(journal)`, `ttd_set_journal_enabled` (any moment) and `ttd_build_journal`.
+  - The `development` / `gaming` modes are gone.
+  - Qt shows what the journal covers; the full UI is J4.
+  - The Python WebAPI client and the TTD scrubber tool are updated.
+- **Docs.** `command-interface.md` (a section on the write journal, with a real CLI example), `webapi-interface.md`, `lua-interface.md`, `python-interface.md`, the MCP README and OpenAPI (paths and the `TTDJournalResponse` / `TTDJournalBuildResponse` schemas). The recipes `ttd-recording.md` and `ttd-reverse-debugging.md` are updated, and `ttd-write-journal.md` is new.
+- **Tests.** Core contract tests: switching from another thread while the machine runs, a build observed and cancelled from another thread, and building by frame numbers. MCP: start with `journal`, `journal_on` and `journal_build` summaries, and a non-boolean `journal` rejected. Checked live on unreal-qt with its own ports (`UNREAL_WEBAPI_PORT`, `UNREAL_CLI_PORT`): record, switch mid-recording, build two spans that merge, find-last inside and outside the spans, and the CLI output.
+
 E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance

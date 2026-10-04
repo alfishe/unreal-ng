@@ -435,14 +435,14 @@ void TtdWidget::updateTelemetry()
         ? tr(" [Loaded: %1]").arg(QFileInfo(QString::fromStdString(info.sourcePath)).fileName())
         : QString();
 
-    // The journal was expected (enabled) but misses writes of this session:
-    // write searches will replay instead of answering from it. Say so, with
-    // the cause in the tooltip.
-    const bool journalGap = info.writeJournalEnabled && !info.writeJournalComplete && hasHistory;
-    provenanceStr += journalGap ? tr(" | Journal incomplete") : QString();
-    QString tooltip = journalGap
-        ? tr("The write journal does not cover this session (%1): write/port searches replay history.")
-              .arg(QString::fromStdString(info.journalGapReason))
+    // What the write journal covers (D40): searches for "who wrote this last"
+    // answer at once inside its spans and replay one frame elsewhere
+    if (hasHistory && !info.writeJournalSpans.empty())
+        provenanceStr += info.writeJournalComplete ? tr(" | Journal: whole session")
+                                                   : tr(" | Journal: %1 span(s)").arg(info.writeJournalSpans.size());
+    QString tooltip = hasHistory && !info.writeJournalSpans.empty() && !info.writeJournalComplete
+        ? tr("The write journal covers part of this session: write searches outside it replay one frame (same "
+             "answer, slower). Build it for more with 'ttd journal build'.")
         : QString();
     if (hasHistory)
     {
