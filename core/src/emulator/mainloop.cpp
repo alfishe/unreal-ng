@@ -137,6 +137,10 @@ void MainLoop::Run(volatile bool& stopRequested)
             }
         }
 
+        // Readers waiting for one coherent moment of the running machine (RunAtFrameBoundary)
+        if (_hasFrameTasks.load(std::memory_order_acquire))
+            RunFrameTasks();
+
         /// region <Handle Pause>
         // Check if Emulator has requested pause (Emulator is single source of truth)
         Emulator* emulator = _context->pEmulator;
@@ -317,6 +321,51 @@ void MainLoop::UpdateRealtimeScheduling()
     }
 
     _realtimeApplied = requested;
+}
+
+bool MainLoop::RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs)
+{
+    if (IsRunThread())
+    {
+        work();
+        return true;
+    }
+    auto task = std::make_shared<FrameTask>();
+    task->work = work;
+    std::unique_lock<std::mutex> lock(_frameTaskMutex);
+    _frameTasks.push_back(task);
+    _hasFrameTasks.store(true, std::memory_order_release);
+    _frameTaskCV.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&task]() { return task->done; });
+    if (task->done)
+        return true;
+    if (task->started)
+    {
+        _frameTaskCV.wait(lock, [&task]() { return task->done; });   // running now: it finishes soon
+        return true;
+    }
+    _frameTasks.erase(std::remove(_frameTasks.begin(), _frameTasks.end(), task), _frameTasks.end());
+    _hasFrameTasks.store(!_frameTasks.empty(), std::memory_order_release);
+    return false;
+}
+
+void MainLoop::RunFrameTasks()
+{
+    std::vector<std::shared_ptr<FrameTask>> tasks;
+    {
+        std::lock_guard<std::mutex> lock(_frameTaskMutex);
+        tasks.swap(_frameTasks);
+        _hasFrameTasks.store(false, std::memory_order_release);
+        for (auto& task : tasks)
+            task->started = true;
+    }
+    for (auto& task : tasks)
+        task->work();
+    {
+        std::lock_guard<std::mutex> lock(_frameTaskMutex);
+        for (auto& task : tasks)
+            task->done = true;
+    }
+    _frameTaskCV.notify_all();
 }
 
 bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)

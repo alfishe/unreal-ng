@@ -688,6 +688,9 @@ public:
     bool PreviousStopRegisters(Z80State& out) const;
     /// Why it stopped last
     DebugStop LastStop() const;
+    /// Run `work` on the emulation thread at the next frame boundary of a running machine (MainLoop::RunAtFrameBoundary);
+    /// false when no frame boundary came within `timeoutMs` (paused, stopped) - `work` then never runs
+    bool RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs);
 
     /// Every debugger breakpoint hit goes through here (the Z80's instruction start, memory reads and writes,
     /// port reads and writes). On the emulator's own run it pauses, notifies and parks the emulation thread

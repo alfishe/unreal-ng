@@ -3505,6 +3505,11 @@ void Emulator::NoteRunStart()
     NoteDebugChange();
 }
 
+bool Emulator::RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs)
+{
+    return _mainloop && _isRunning && _mainloop->RunAtFrameBoundary(work, timeoutMs);
+}
+
 Emulator::DebugStop Emulator::LastStop() const
 {
     std::lock_guard<std::mutex> lock(_prevStopMutex);
