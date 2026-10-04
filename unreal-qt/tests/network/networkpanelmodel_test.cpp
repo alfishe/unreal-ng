@@ -43,6 +43,20 @@ TEST(NetworkPanelModel_Test, TheFormFollowsTheState)
     EXPECT_EQ(f.comPort.port, 23);
     EXPECT_EQ(f.zxWifiPeer.kind, ComPortSpec::Kind::At);
     EXPECT_EQ(f.connectTimeoutMs, 10000u);
+    EXPECT_TRUE(f.remoteAccess) << "no remote_access in the report: the default, on";
+}
+
+/// [NETWORK] RemoteAccess: the checkbox follows the report and sends remote_access when it changes
+TEST(NetworkPanelModel_Test, RemoteAccessRoundTrip)
+{
+    StateNode state = State("none", true, "NONE", "NONE", "AT");
+    state["settings"]["remote_access"] = false;
+    const NetworkForm before = NetworkFormFromState(state);
+    EXPECT_FALSE(before.remoteAccess);
+    NetworkForm after = before;
+    after.remoteAccess = true;
+    const std::vector<std::pair<std::string, std::string>> expected = {{"remote_access", "on"}};
+    EXPECT_EQ(NetworkFormChanges(before, after), expected);
 }
 
 TEST(NetworkPanelModel_Test, OnlyTheChangedSettingsAreSent)

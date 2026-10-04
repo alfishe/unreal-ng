@@ -25,6 +25,12 @@ virtual network through the **Ethernet gateway** (a switch + router at
 `slots` and `ethernet_gateway`, and `GET /network/frames` captures their
 frames. Recipe: [machines/sprinter-network.md](../machines/sprinter-network.md).
 
+Those frame cards can also be **bridged to a host adapter** instead (`ethernet_mode=bridge bridge_adapter=en0`):
+the card gets its address from the real LAN. It needs the host's permission to read and write raw frames; on macOS
+`sudo chmod o+rw /dev/bpf*` lasts **only until the next reboot** (Wireshark's ChmodBPF makes it permanent), on Linux
+`setcap` is lost when the binary is replaced, on Windows Npcap must be installed. Reference:
+[docs/features/network-bridge.md](../../docs/features/network-bridge.md).
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).
@@ -41,6 +47,7 @@ HostAccess=1                   ; 0 = internal services only (DHCP, hosts table, 
 DnsMode=HOST                   ; HOST | PASS
 Hosts=next.zxart.ee=127.0.0.1  ; name=a.b.c.d,name=a.b.c.d
 Forward=tcp:8080:80            ; guest servers: tcp:<hostport>:<guestport>,...
+RemoteAccess=on                ; guest servers listen on 0.0.0.0 | off = 127.0.0.1 only
 ConnectTimeoutMs=10000
 ```
 
@@ -58,9 +65,43 @@ connection closes; refused while a TTD recording runs):
 CLI `network set card=zxnetusb host_access=on`, Lua
 `network_configure{card="zxnetusb"}`, Python `emu.network_configure(card="zxnetusb")`.
 
-Guest servers (a NedoOS program in `LISTEN`) are reachable on `127.0.0.1`:
+Guest servers (a NedoOS program in `LISTEN`) are reachable on the host:
 guest ports 1024 and up on the same host port, lower ones only through a
 `Forward=` rule.
+
+### Remote access
+
+`RemoteAccess` (runtime key `remote_access`, on by default) decides which host
+address those listeners bind - every `Forward=` rule and every guest server,
+on every card and ESP module (UDP forwards will follow the same setting):
+
+| Setting | Listeners bind | Who can connect |
+|:--|:--|:--|
+| `on` (default) | `0.0.0.0` | this computer, and any other computer that can reach it (your LAN, a Windows PC for the ZiFi FTP / SMB servers) |
+| `off` | `127.0.0.1` | this computer only |
+
+Security note: the emulated servers (ZiFi FTP / WebDAV, a NedoOS program in
+`LISTEN`, a modem that answers) have no real authentication. On an untrusted
+network (cafe Wi-Fi, a hotel) turn remote access off.
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"remote_access": false}}}
+```
+
+CLI `network set remote_access=off`, Lua `network_configure{remote_access=false}`,
+Python `emu.network_configure(remote_access=False)`, Qt: Network window,
+"Allow remote access (listen on all interfaces)". A change of `remote_access`
+alone moves the listeners at once and keeps every connection and the cards
+(other keys fit the devices again); like every network change it is refused
+while a TTD recording runs. It does not affect a TTD replay: the journal
+records the guest side, a replay opens no host listener.
+
+Check: `GET /state/network` -> `settings.remote_access`,
+`virtual_network.remote_access`, `virtual_network.listen_address`
+(`0.0.0.0` / `127.0.0.1`) and `guest_servers[].host_address`; on the host
+`lsof -nP -iTCP -sTCP:LISTEN | grep unreal` (Windows: `netstat -an`) shows
+`*:2121` or `127.0.0.1:2121`.
 
 ## COM port (16550 UART)
 

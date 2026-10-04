@@ -592,3 +592,31 @@ TEST_F(Config_Test, ScorpionTurboLogicDecidesEvenM1)
     ASSERT_TRUE(load("ScorpionTurboLogic=SC15.2\n"));
     EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC151) << "unknown: the default";
 }
+
+/// [NETWORK] RemoteAccess (PLAN #92 N0): on by default (host listeners on 0.0.0.0); off / 0 / false / no = 127.0.0.1;
+/// an unknown value keeps the default with a warning
+TEST_F(Config_Test, NetworkRemoteAccess)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("network_remote_access_config_test.ini");
+    auto load = [&](const std::string& network) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << "[NETWORK]\n" << network;
+        file.close();
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+
+    ASSERT_TRUE(load(""));
+    EXPECT_EQ(_context->config.network.remoteAccess, 1) << "default: on";
+    for (const char* off : {"off", "OFF", "0", "false", "no", " Off "})
+    {
+        ASSERT_TRUE(load(std::string("RemoteAccess=") + off + "\n"));
+        EXPECT_EQ(_context->config.network.remoteAccess, 0) << off;
+    }
+    for (const char* on : {"on", "1", "true", "yes", "lan"})
+    {
+        ASSERT_TRUE(load(std::string("RemoteAccess=") + on + "\n"));
+        EXPECT_EQ(_context->config.network.remoteAccess, 1) << on;
+    }
+    std::remove(path.c_str());
+}

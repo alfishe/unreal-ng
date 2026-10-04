@@ -1,6 +1,6 @@
 # Status: TODO
 
-ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branch `profi` (UnrealSpeccy feature parity).
+ZX Profi 1024 (`MM_PROFI`): design complete and implemented on master (UnrealSpeccy feature parity; the v3 / v5 split in [2026-10-01-profi-v3-v5](../2026-10-01-profi-v3-v5/TODO.md), the Profi+ in [2026-10-04-profi-plus](../2026-10-04-profi-plus/TODO.md)). What is left is below.
 
 ## Done
 - [x] Karabas-Pro FPGA analysis: [karabas-pro-hardware-analysis.md](karabas-pro-hardware-analysis.md) (clone board, not authoritative)

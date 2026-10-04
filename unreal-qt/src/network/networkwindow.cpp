@@ -480,6 +480,14 @@ void NetworkWindow::buildUi()
     _forwards = new QLineEdit(net);
     _forwards->setPlaceholderText(tr("tcp:<host port>:<guest port>,..."));
     netForm->addRow(tr("Guest servers"), _forwards);
+    _remoteAccess = new QCheckBox(tr("Allow remote access (listen on all interfaces)"), net);
+    _remoteAccess->setToolTip(tr("On: the guest servers (Forward= rules, an FTP / SMB / web server a ZX program runs) listen "
+                                 "on every network interface of this computer (0.0.0.0), so other computers on your LAN - "
+                                 "and anyone who can reach this computer - can connect to them. The emulated servers have "
+                                 "no real security: turn this off on an untrusted network.\n"
+                                 "Off: they listen on 127.0.0.1 only, reachable from this computer alone.\n"
+                                 "A change moves the listeners at once; open connections stay."));
+    netForm->addRow(QString(), _remoteAccess);
     _modemPhonebook = new QLineEdit(net);
     _modemPhonebook->setPlaceholderText(tr("5551234=bbs.example.org:23,5550000=10.0.2.2:2323"));
     _modemPhonebook->setToolTip(tr("Numbers a Hayes modem (peer MODEM, any serial port) dials with ATDT: "
@@ -540,7 +548,7 @@ void NetworkWindow::buildUi()
 
     connect(_apply, &QPushButton::clicked, this, &NetworkWindow::onApply);
     connect(_revert, &QPushButton::clicked, this, &NetworkWindow::onRevert);
-    for (QCheckBox* box : {_zxNetUsb, _zxWifi, _atm2IoEsp, _modemLines, _hostAccess})
+    for (QCheckBox* box : {_zxNetUsb, _zxWifi, _atm2IoEsp, _modemLines, _hostAccess, _remoteAccess})
         connect(box, &QCheckBox::toggled, this, &NetworkWindow::onEdited);
     for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _atm2IoEspAddress, _espChip, _dnsMode, _ethernetMode})
         connect(combo, &QComboBox::currentIndexChanged, this, &NetworkWindow::onEdited);
@@ -698,6 +706,7 @@ void NetworkWindow::loadForm(const NetworkForm& form)
         _hosts->setText(Q(form.hosts));
     if (_forwards->text() != Q(form.forwards))
         _forwards->setText(Q(form.forwards));
+    _remoteAccess->setChecked(form.remoteAccess);
     _timeout->setValue(static_cast<int>(form.connectTimeoutMs));
     _ethernetMode->setCurrentIndex(std::max(0, _ethernetMode->findData(Q(form.ethernetMode))));
     if (_bridgeAdapter->currentText() != Q(form.bridgeAdapter))
@@ -769,6 +778,7 @@ NetworkForm NetworkWindow::readForm() const
     form.dnsMode = S(_dnsMode->currentData().toString());
     form.hosts = S(_hosts->text());
     form.forwards = S(_forwards->text());
+    form.remoteAccess = _remoteAccess->isChecked();
     form.connectTimeoutMs = static_cast<unsigned>(_timeout->value());
     form.ethernetMode = S(_ethernetMode->currentData().toString());
     // The list shows "en0 (192.168.1.5)": the adapter is the item's data; a typed name is taken as it is

@@ -34,9 +34,9 @@ public:
         commands.push_back({"send", socket, {}, std::vector<uint8_t>(data, data + length)});
     }
     void TcpShutdownWrite(uint16_t socket) override { commands.push_back({"shutdown", socket, {}, {}}); }
-    void TcpListen(uint16_t socket, uint16_t hostPort) override
+    void TcpListen(uint16_t socket, const NetEndpoint& local) override
     {
-        commands.push_back({"listen", socket, NetEndpoint{0, hostPort}, {}});
+        commands.push_back({"listen", socket, local, {}});
     }
     void UdpSend(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length) override
     {

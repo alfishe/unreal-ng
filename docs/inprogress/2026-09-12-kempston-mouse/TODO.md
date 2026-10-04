@@ -1,4 +1,17 @@
-# DONE — Kempston Mouse emulation (2026-09-12)
+# TODO - Kempston Mouse
+
+**Status:** the Kempston mouse itself is done and on master (history below, formerly `DONE.md`). Reopened 2026-10-04
+for one research item: the K-Mouse Turbo (PLAN row #94).
+
+## Open
+
+- [ ] **K-Mouse Turbo (Velesoft):** verify the decode (A15 = master / slave, `#7EDF` / `#FEDF` detect; sources in
+      [hardware-reference.md](hardware-reference.md) §8) and **find software that uses it** - programs that read the
+      slave mouse or probe `#FEDF` (Velesoft's own tools, ZX-Evo / NedoOS / BGE / graphics editors, two-player
+      games). Only then decide whether and how to emulate a second mouse (owner, 2026-10-04: documentation first,
+      implementation after the software is found).
+
+## Done (history, the former DONE.md)
 
 **Status:** complete — implemented, tested and committed to master
 (`a8767455` "feat(input): add Kempston Mouse with host capture, automation and

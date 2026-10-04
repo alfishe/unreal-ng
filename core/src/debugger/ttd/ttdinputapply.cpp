@@ -11,7 +11,6 @@
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/network/virtualnetwork.h"
-#include "emulator/io/network/vnet/ethernetgateway.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
@@ -29,7 +28,6 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
     devices.joystick = context->pJoystick;
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
     devices.network = context->pVirtualNetwork;
-    devices.ethernetGateway = context->pEthernetGateway;
     devices.portDecoder = context->pPortDecoder;
     return devices;
 }
@@ -163,9 +161,9 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             break;
 
         case TTDInputKind::NetFrame:
-            if (!devices.ethernetGateway || !net || !payload)
+            if (!devices.network || !net || !payload)
                 return false;
-            devices.ethernetGateway->FromLan(payload, net->payloadLength);
+            devices.network->ApplyHostFrame(payload, net->payloadLength);
             break;
     }
     return true;

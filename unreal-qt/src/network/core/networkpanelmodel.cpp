@@ -108,6 +108,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
         form.ethernetMode = mode;
     form.bridgeAdapter = Text(set->find("bridge_adapter"));
     form.forwards = Text(set->find("forwards"));
+    form.remoteAccess = Flag(set->find("remote_access"), true);
     if (const StateNode* timeout = set->find("connect_timeout_ms"); timeout && timeout->kind == StateNode::Kind::Int)
         form.connectTimeoutMs = static_cast<unsigned>(timeout->i);
     return form;
@@ -166,6 +167,8 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
         out.emplace_back("hosts", after.hosts);
     if (before.forwards != after.forwards)
         out.emplace_back("forwards", after.forwards);
+    if (before.remoteAccess != after.remoteAccess)
+        out.emplace_back("remote_access", after.remoteAccess ? "on" : "off");
     if (before.connectTimeoutMs != after.connectTimeoutMs)
         out.emplace_back("connect_timeout_ms", std::to_string(after.connectTimeoutMs));
     return out;

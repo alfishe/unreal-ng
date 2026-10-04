@@ -1,7 +1,7 @@
 # Status: TODO
 
-Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 implemented on branch `profi-v3-v5`
-(worktree `scratch/wt-profi`); it goes to master after all phases and tests. Plan: [design.md](design.md) section 8.
+Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 implemented and **on master** (the branches
+`profi-v3-v5`, `profi-v3-v5-design`, `profi-xt-kbd` and `profi-ay-clock` are merged; the first three deleted). Plan: [design.md](design.md) section 8.
 
 ## Done
 - [x] Cross-check of every xpeccy-plus v3/v5 claim against the other emulators, Karabas-Pro, the Black_Cat table and
@@ -103,6 +103,6 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   decodes it; `[PROFI] ExtPorts=sys` adds that variant (default `cpm`, the 5.0 PROM, which BIOS 1.0 / 2.0 need).
   With it, BIOS Plus 0.32 finds the FDC, both drives, the RTC and the AY, and PQ-DOS 2.1 boots to `A:\>`
   ([software-zoo.md](software-zoo.md) sections 5, 6)
-- [ ] The extended-map 8255 (`#87..#E7`) and the COM port (`#8F..#EF`): not emulated, ROM BIOS Plus reports Fail
+- [x] The extended-map 8255 (`#87..#E7`) and the COM port (`#8F..#EF`): emulated 2026-10-04 (`Ppi8255`, `Pit8253`, `Usart8251`, [2026-10-04-profi-plus](../2026-10-04-profi-plus/TODO.md)); the board test reports Ok
 - [ ] PQ-DOS on `PROFI3` (its ROM-BIOS emulator): loops after programming the 8255 (`#52B0..#52C1`)
-- [ ] What the 5.06 / Profi+ periphery CPLD decodes in the SYS ROM state (decides the `ExtPorts` default for those boards)
+- [x] What the Profi+ decodes in the SYS ROM state: Djoni's V0.03 PROM opens the extended map there, the stock 5.06 CPLD does not ([2026-10-04-profi-plus](../2026-10-04-profi-plus/design.md) section 2.1); `PROFI-PLUS` uses `ExtPorts=v003`, the default stays `cpm`

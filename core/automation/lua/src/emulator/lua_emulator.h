@@ -3140,7 +3140,8 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
         });
-        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4"} -> true | nil, err
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} -> true | nil, err
+        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only)
         lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
             sol::variadic_results out;
             Emulator* emulator = effectiveEmulator();

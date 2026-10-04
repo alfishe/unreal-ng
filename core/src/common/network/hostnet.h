@@ -33,10 +33,12 @@ public:
     /// Half-close: send FIN after the queued bytes
     virtual void TcpShutdownWrite(uint16_t socket) = 0;
 
-    /// Listen on 127.0.0.1:hostPort for a guest server; every client arrives as
+    /// Listen on `local` (address:port) for a guest server; every client arrives as
     /// Accepted(listener = socket, new id in the payload). ListenFailed if the
-    /// port is taken.
-    virtual void TcpListen(uint16_t socket, uint16_t hostPort) = 0;
+    /// port is taken. The address is the virtual network's choice
+    /// (VirtualNetworkConfig::ListenAddress: [NETWORK] RemoteAccess): 0.0.0.0 =
+    /// every host interface, 127.0.0.1 = this computer only
+    virtual void TcpListen(uint16_t socket, const NetEndpoint& local) = 0;
 
     /// Send one UDP datagram (the host socket is opened on first use); replies
     /// arrive as Datagram events for the same socket

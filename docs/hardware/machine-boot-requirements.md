@@ -153,7 +153,7 @@ Ground truth: [.recipe/machines/profi.md](../../.recipe/machines/profi.md),
 
 ## ATM Turbo (`ATM710`, `ATM3`)
 
-Ground truth: [.recipe/machines/atm.md](../../.recipe/machines/atm.md) (the most detailed
+Ground truth: [.recipe/machines/atm/](../../.recipe/machines/atm/README.md) (the most detailed
 per-machine recipe — read it before automating anything ATM-specific).
 
 - **Firmware**:

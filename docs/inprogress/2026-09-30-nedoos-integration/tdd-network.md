@@ -346,8 +346,10 @@ static mask or gateway does not break outgoing connections.
 
 ### 5.3 Guest servers (port forwarding)
 
-A guest `LISTEN` on port P binds a host listener on `127.0.0.1` (never all
-interfaces unless configured): host port P when P >= 1024 and free, otherwise
+A guest `LISTEN` on port P binds a host listener on `0.0.0.0` (every interface;
+`RemoteAccess=off` = `127.0.0.1` only - owner decision 2026-10-04, PLAN #92 N0,
+[tdd-smb-online-update.md](../2026-10-02-tsconf-zifi/tdd-smb-online-update.md) §6 item 1):
+host port P when P >= 1024 and free, otherwise
 per `Forward=` rules (`Forward=tcp:8080:80` = host 8080 to guest 80). The
 actual host port is reported on every surface. Several emulator instances get
 separate listeners; a clash is reported, not silently remapped.
@@ -358,7 +360,8 @@ separate listeners; a clash is reported, not silently remapped.
   (host patterns, ports) for shared machines and CI.
 - Per-instance caps: sockets (W5300 has 8, ESPNET 4 or 8), bytes buffered per
   socket (backpressure through `RECV` window credit), DNS queries in flight.
-- Nothing listens beyond `127.0.0.1` unless the config says so.
+- Host listeners bind `0.0.0.0` by default; `RemoteAccess=off` keeps them on
+  `127.0.0.1` (§5.3).
 
 ## 6. TTD and determinism (NET-6)
 
@@ -526,6 +529,7 @@ Subnet=10.0.2.0/24
 DnsMode=HOST              ; HOST | PASS
 Hosts=                    ; name=ip,name=ip
 Forward=                  ; tcp:<hostport>:<guestport>,...
+RemoteAccess=on           ; host listeners on 0.0.0.0 | off = 127.0.0.1 only
 ConnectTimeoutMs=10000
 Allow=                    ; optional allow list
 ```

@@ -92,7 +92,7 @@ kernel images (`osatm2.trd`, `osatm3.trd`, `osp26.trd`, ...). Prefer `nedoos.ru`
 
 ## Booting it on BaseConf (`ATM3`)
 
-The recipe is in [`.recipe/machines/atm.md`](../../../.recipe/machines/atm.md)
+The recipe is in [`.recipe/machines/atm/atm3-zxevo-baseconf.md`](../../../.recipe/machines/atm/atm3-zxevo-baseconf.md)
 ("NedoOS from the SD card"). In short: put `sd_boot.$C` and `bin/` (at least
 `term.com`, `cmd.com`, `autoexec.bat`) into a host folder, insert the folder as
 the Z-Controller card (`sd.zc`), choose the SD boot in the ERS menu. The kernel

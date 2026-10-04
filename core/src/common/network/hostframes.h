@@ -21,8 +21,10 @@ struct HostAdapter
     std::string name;          ///< "en0", "eth0", "\\Device\\NPF_{...}"
     std::string description;   ///< the library's description (Windows: the adapter's friendly name)
     std::vector<std::string> ipv4;
+    std::array<uint8_t, 6> mac{};   ///< the adapter's own address (valid when hasMac)
+    bool hasMac = false;
     bool loopback = false;
-    bool wireless = false;     ///< Wi-Fi: a plain bridge does not work there (an access point drops foreign MACs)
+    bool wireless = false;     ///< Wi-Fi: bridged through MAC translation (an access point drops foreign MACs)
     bool up = false;
     bool running = false;
 };
@@ -56,6 +58,12 @@ public:
     /// The cards' station addresses: frames to them, broadcasts and multicasts come in; frames from them (the
     /// adapter's echo of what we sent) do not
     virtual void SetStations(const std::vector<Mac>& stations) = 0;
+
+    /// Wi-Fi (network SN6b): the frames leave with the adapter's own MAC (MacTranslator); the capture keeps group
+    /// frames and the unicasts to the host MAC that carry one of the guests' IPv4 addresses (SetGuestIps)
+    virtual bool Translates() const = 0;
+    virtual Mac HostMac() const = 0;
+    virtual void SetGuestIps(const std::vector<uint32_t>& ips) = 0;
 
     /// Put a frame on the wire (no preamble, no CRC)
     virtual void Send(const uint8_t* frame, size_t length) = 0;

@@ -49,7 +49,7 @@ public:
     void TcpConnectTls(uint16_t socket, const NetEndpoint& to, const std::string& serverName) override;
     void TcpSend(uint16_t socket, const uint8_t* data, uint32_t length) override;
     void TcpShutdownWrite(uint16_t socket) override;
-    void TcpListen(uint16_t socket, uint16_t hostPort) override;
+    void TcpListen(uint16_t socket, const NetEndpoint& local) override;
     void UdpSend(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length) override;
     void DnsQuery(uint16_t socket, const NetEndpoint& server, const uint8_t* query, uint32_t length) override;
     void IcmpEcho(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length) override;

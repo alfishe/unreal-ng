@@ -58,7 +58,7 @@ deleted. Take one only on the owner's request.
   the ISA modem card and SprinterSerial (SN4, BC-Term over the interrupt; Q12 = inactive inputs + the `PLUG` test plug,
   Q13 = high wins + a warning); 3Com 3C509B (SN5, the 3C509B kit). Each kit runs end to end with a TTD replay without
   the host. The kits run from a floppy only on BIOS 3.06 Hotfix 2 (the default), see §4.
-  Open: SN6b, Wi-Fi bridging (SN6a, the wired **bridge to the host LAN, built 2026-10-04**: the RTL kit gets a lease from the real router); the kits' other programs (FTP, NTP, TELNET, TFTP, WTERM,
+  The **bridge to the host LAN is built** (2026-10-04, wired and Wi-Fi: the RTL kit gets a lease from the real router). Open: the kits' other programs (FTP, NTP, TELNET, TFTP, WTERM,
   Gopher, `UNET509B.DLL`), BC-Term's file transfers over the modem; the gateway's host-side receive pause and TCP
   zero-window probes; ISA I3 (RAM card), `DACK`, the 16550 character timeout.
   ISA Plug and Play (I9, owner 2026-10-04: design and build after SN6; no PnP model on the bus today).
