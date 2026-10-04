@@ -508,7 +508,7 @@ public:
     /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
     unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
-    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
+    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames (64-bit T-state budget: TStateRunBudget)
     void StepOver();                                              // Execute instruction, skip calls and subroutines
     void StepOut();                                               // Run until the current subroutine returns (SP-tracking)
 
@@ -516,7 +516,7 @@ public:
     void CancelPendingStepOver();
 
     // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
-    void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
+    void RunTStates(uint64_t tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
     void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
@@ -524,7 +524,7 @@ public:
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
     /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
-    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0,
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
                            bool notifyDebugger = true);
 
     /// Start the current frame again after machine state was replaced from
