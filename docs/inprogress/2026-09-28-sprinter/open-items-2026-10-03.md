@@ -11,7 +11,8 @@ come the ISA slots and the network cards (section 3).
   fixed demo runner (the earlier "15 of 21 run" came from a runner bug that called every program running). They run,
   except: ~~GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred)~~ - **done
   2026-10-03**, they run on the Game module ([game-configuration.md](game-configuration.md));
-  BUYAN/20X20 stops with interrupts off (open, compare with MAME); WILDSND needs the ISA Wild Sound card;
+  ~~BUYAN/20X20 stops with interrupts off~~ - a race in the demo (its accelerator routine ends with `EI`; MAME and
+  other start moments confirm it, [demo-status.md](demo-status.md)), not our fault; WILDSND needs the ISA Wild Sound card;
   DNTBLINK is investigated separately. FBIRD and NOTHENG run after the CTC fix.
 - scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
   reproduce (likely cured by the PS/2 overrun fix).

@@ -149,7 +149,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
        ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference. **Pass done 2026-10-03:
-     [demo-status.md](demo-status.md)** (open: BUYAN/20X20). ~~The Game PLD configuration for GAME_00 / LDConf
+     [demo-status.md](demo-status.md)** (BUYAN/20X20: a race in the demo, closed 2026-10-03). ~~The Game PLD configuration for GAME_00 / LDConf
      START.BAT~~ **done 2026-10-03** (branch `sprinter-pld-game`, [game-configuration.md](game-configuration.md)): the
      Game module (selected by the bitstream's full hash `#C0FA3055`, cell `#EE` = `#41`, the per-square grid-offset
      picture), all five automation surfaces + the status bar, recipe, MAME captures, env-gated HDD tests.
