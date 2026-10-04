@@ -22,6 +22,7 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/ports/models/sprinter/sprinterpldstandard.h"
 #include "emulator/ports/models/sprinter/sprinterzxports.h"
 #include "common/stringhelper.h"
 #include <map>
@@ -31,14 +32,8 @@
 
 namespace
 {
-/// Cells after power-on (MAME sprinter.cpp machine_start, port_default):
-/// #Cx 0, #Dx = #10-#1F, #Ex mostly #41 (#E9 = 5, #EA = 2, #EC = #FF), #Fx = #00-#0F
-constexpr uint8_t kCellsPowerOn[64] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x00, 0x05, 0x02, 0x41, 0xFF, 0x00, 0x00, 0x41,
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-};
+/// Cells after power-on: the shipped bitstream's (SprinterPldStandard::kCells); the load sets them again
+constexpr const uint8_t (&kCellsPowerOn)[64] = SprinterPldStandard::kCells;
 
 /// "ACEX_30K_LOADING" at fast RAM #FEF0: the BIOS left a new bitstream at #1000 (loader 3.04 #003B)
 constexpr char kReloadSignature[16] = {'A', 'C', 'E', 'X', '_', '3', '0', 'K', '_', 'L', 'O', 'A', 'D', 'I', 'N', 'G'};
@@ -354,6 +349,7 @@ void PortDecoder_Sprinter::BeginLoading()
 {
     if (JournalOn())
         JournalEvent("pld_load", CpuPc(), -1, -1, -1, "the PLD loads a configuration: the CPU runs the ROM loader into the sink");
+    NoteModuleBeforeLoad();
     SprinterPldConfig::Begin(_pld);
     _pld.configModule = static_cast<uint8_t>(SprinterPldConfigurationRegistry::kStandardIndex);
     _pld.turbo = 0;
@@ -380,6 +376,7 @@ void PortDecoder_Sprinter::FastStart()
         z80->ix = 0xFFFD;
     }
 
+    NoteModuleBeforeLoad();
     SprinterPldConfig::Begin(_pld);
     LoadFastRamImage();
     FinishLoad(false);
@@ -444,12 +441,15 @@ void PortDecoder_Sprinter::FinishLoad(bool watchdog)
     _pld.configModule = static_cast<uint8_t>(index);
     if (JournalOn())
     {
+        const SprinterPldModuleDescriptor& module = _registry.At(static_cast<size_t>(index)).Descriptor();
+        const char* matched = watchdog ? "the load watchdog fired"
+                              : module.KnowsFullHash(_pld.bitstreamHashFull) ? "matched by the full hash"
+                              : module.headHash == _pld.bitstreamHashHead ? "matched by MAME's head hash only"
+                                                                          : "unknown bitstream, Standard runs";
         JournalEvent("pld_configured", CpuPc(), -1, static_cast<int>(index), -1,
-                     StringHelper::Format("PLD configured: module %s (%u writes, full hash %08X, head hash %08X)%s%s",
-                                          _registry.At(static_cast<size_t>(index)).Descriptor().name, _pld.bitstreamCount,
-                                          _pld.bitstreamHashFull, _pld.bitstreamHashHead,
-                                          watchdog ? ", the load watchdog fired" : "",
-                                          _context->config.sprinter.fast_start ? ", fast start" : ""));
+                     StringHelper::Format("PLD configured: module %s (%u writes, full hash %08X, head hash %08X): %s%s",
+                                          module.name, _pld.bitstreamCount, _pld.bitstreamHashFull, _pld.bitstreamHashHead,
+                                          matched, _context->config.sprinter.fast_start ? ", fast start" : ""));
     }
     RequestCpuReset(SprinterResetKind::Configured);
 }
@@ -483,6 +483,11 @@ void PortDecoder_Sprinter::PerformPendingReset()
     {
         case SprinterResetKind::Configured:
             _pld.configState = SprinterConfigState::Configured;
+            // The cells are the PLD's embedded RAM: a load brings the bitstream's contents (hook 5). Applied when the
+            // load changes the configuration: the emulator's RESET button reloads the running bitstream, and the
+            // launchers' reset intercept (cell #EE = #41, /ret-fn) survives that button (sprinterzxmode_test.cpp)
+            if (_pld.moduleBeforeLoad != _pld.configModule)
+                ApplyInitialCells();
             ActiveModule().OnActivate(_pld);
             ResetPld(kind);
             ResetCpu();
@@ -505,7 +510,63 @@ void PortDecoder_Sprinter::PerformPendingReset()
             break;
     }
     RefreshAccelerator();
+    if (kind == SprinterResetKind::Configured && _beamVideo)
+        _beamVideo->Start(_state->frame_counter, BaseTstate());  // the new configuration's picture runs from here
     RefreshStepHook();
+}
+
+void PortDecoder_Sprinter::NoteModuleBeforeLoad()
+{
+    _pld.moduleBeforeLoad = _pld.configState == SprinterConfigState::Configured ? _pld.configModule : kNoModule;
+}
+
+void PortDecoder_Sprinter::ApplyInitialCells()
+{
+    if (!ActiveModule().InitialCells(_pld.cells))
+        _registry.Standard().InitialCells(_pld.cells);
+}
+
+void PortDecoder_Sprinter::ModuleSelection(std::string& key, std::string& why) const
+{
+    if (_pld.configState == SprinterConfigState::Loading)
+    {
+        key = "loading";
+        why = StringHelper::Format("the PLD is loading a configuration (%u of %u writes)", _pld.bitstreamCount,
+                                   SprinterPldConfig::kPldConfigurationWrites);
+        return;
+    }
+    if (_pld.configState != SprinterConfigState::Configured)
+    {
+        key = "not_configured";
+        why = "the PLD has no configuration yet";
+        return;
+    }
+    const SprinterPldModuleDescriptor& module = ActiveModule().Descriptor();
+    if (_pld.bitstreamCount < SprinterPldConfig::kPldConfigurationWrites)
+    {
+        key = "watchdog";
+        why = StringHelper::Format("the load stopped after %u of %u writes (the watchdog ended it): %s runs",
+                                   _pld.bitstreamCount, SprinterPldConfig::kPldConfigurationWrites, module.name.c_str());
+    }
+    else if (const SprinterPldStream* stream = module.Stream(_pld.bitstreamHashFull); stream || module.fullHash == _pld.bitstreamHashFull)
+    {
+        key = "full_hash";
+        why = StringHelper::Format("the bitstream's full hash %08X is the %s module's%s%s%s", _pld.bitstreamHashFull,
+                                   module.name.c_str(), stream ? " (" : "", stream ? stream->source.c_str() : "",
+                                   stream ? ")" : "");
+    }
+    else if (module.headHash == _pld.bitstreamHashHead)
+    {
+        key = "head_hash";
+        why = StringHelper::Format("only MAME's head hash %08X matches the %s module (full hash %08X is not its %08X)",
+                                   _pld.bitstreamHashHead, module.name.c_str(), _pld.bitstreamHashFull, module.fullHash);
+    }
+    else
+    {
+        key = "unknown_bitstream";
+        why = StringHelper::Format("no module knows the bitstream (full hash %08X, head hash %08X): %s runs",
+                                   _pld.bitstreamHashFull, _pld.bitstreamHashHead, module.name.c_str());
+    }
 }
 
 /// endregion </Resets>
@@ -547,6 +608,8 @@ void PortDecoder_Sprinter::RefreshAccelerator()
     _activeAccelerator = accelerator;
     if (_cpuEngine)
         _cpuEngine->SetBusAgent(accelerator);
+    // The module's picture with state (hook 3) follows the module too; Standard has none
+    _beamVideo = _pld.configState == SprinterConfigState::Configured ? ActiveModule().BeamVideo() : nullptr;
 }
 
 /// The step hook runs only while a load is in progress (the watchdog) or a CPU

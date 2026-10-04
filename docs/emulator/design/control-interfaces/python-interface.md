@@ -156,7 +156,8 @@ class Emulator:
         written). available=False on other machines"""
 
     def sprinter_state(self) -> dict:
-        """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
+        """Sprinter Sp2000 report: pld (state, module Standard / Game, selected_by +
+        why, cell_EE, game grid offset, bitstream hashes), decoder (CNF
         map, DOS, PN5, #7FFD / #1FFD), windows (kind + physical page), registers,
         cells #C0-#FF, clock, frame, video (mode table summary), z84c15, fdc, cmos,
         ide, bios (images, how to select). available=False on other machines"""

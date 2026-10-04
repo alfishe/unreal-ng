@@ -421,6 +421,15 @@ or from a hard disk / CHD on `ide0.master` (recipe media/sprinter-hdd.md); Flex 
 sound block, `sprinter_sound_ring`, `audio_covox`). TTD records and replays the machine (recipe analysis/sprinter-ttd.md).
 Spectrum mode: DSS `SPECTRUM.EXE PENT128.ZX` (A:\ZX), then TR-DOS from drive A.
 
+## PLD configurations
+A program can load another logic bitstream into the PLD (code #2E, LDConf). The machine picks a configuration module by
+the loaded bitstream's hash: Standard (the BIOS's) or Game (`GAME_00.ACX` / LDConf's `GC.BIN`, full hash #C0FA3055, MAME's
+head hash #3861CFA4: every square graphics 320 with a per-square grid offset, cell #EE = #41 so the BIOS returns to the
+program). `inspect_state aspects:["sprinter"]` pld: `module`, `selected_by` (full_hash / head_hash / unknown_bitstream /
+watchdog), `why`, `game` (the grid-offset register); the PLD journal's `pld_configured` event says the same. An unknown
+bitstream runs Standard. A reload with the ROM's stream or the RESET button goes back to Standard (recipe
+machines/sprinter.md).
+
 ## Known limitations
 No ISA cards; the 21 MHz wait rule is MAME's (per-frame wait totals not reported); in the GUI F4 is bound to a speed
 shortcut.

@@ -281,14 +281,17 @@ stateDiagram-v2
 
 ### 6.1 Configuration modules (`SprinterPldConfiguration`)
 
+Overview with the MAME comparison: [pld-configurations.md](pld-configurations.md).
+
 Review round 1 (Q6) made PLD configurations **modular**. The hardware can load a different
 bitstream at any time (the BIOS does it for some games), and each bitstream is, in effect, a
 different machine built on the same board. The emulator keeps one decoder and lets a
 **configuration module** replace only the parts that a given bitstream changes.
 
-**Descriptor.** Each module registers `{ name, fullStreamHash, headHash }` (`headHash` = the hash of
-the first 4 096 writes). The registry is filled at start-up; v1 registers `Standard` only (plus the
-stub module in tests).
+**Descriptor.** Each module registers `{ name, fullStreamHash, headHash, streams }` (`headHash` = the hash of
+the first 4 096 writes; `streams` = every known build of the configuration with its source, e.g. the Standard builds
+in the BIOS 3.04 / 3.06 / 3.07 ROMs). The registry is filled at start-up: `Standard` (0) and, since 2026-10-03,
+`Game` (1, [game-configuration.md](game-configuration.md)), plus the stub module in tests.
 
 **Lookup after a load.**
 
@@ -314,6 +317,8 @@ every hook it does not override falls through to Standard:
 | 2 | Memory mapping | its own `UpdateModelBanks` rule and intercept flags | §5 |
 | 3 | Video | its own renderer and INT source ([tdd-video.md](tdd-video.md) §1, §5) | `ScreenSprinter`, `SprinterIntSource` |
 | 4 | Accelerator | its own accelerator behavior ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §1) | `SprinterAccelerator` |
+| 3b | Video with state | a picture whose state runs in beam order (`BeamVideo()`, `SprinterBeamVideo`: the Game module's grid offset) | none |
+| 5 | Initial cells | the cells `#C0-#FF` the bitstream's embedded RAM brings (`InitialCells`; set when a load changes the configuration, [game-configuration.md](game-configuration.md) §2) | `DCP.MIF`'s (`SprinterPldStandard::kCells`) |
 
 Everything else (Z84C15 devices, IDE, floppy, CMOS, AY, keyboard) is board hardware and is not a
 module concern.
@@ -331,20 +336,21 @@ module concern.
 interface is exercised by real code from day one, not only by a future Game module. A **stub test
 module** (tests only) proves the registry lookup, a renderer override and the TTD round-trip.
 
-Worked example: a game reloads the PLD with the "Thunder in the Deep" bitstream. The loader writes
-the stream; the head hash matches MAME's Game constant, but in v1 no Game module is registered, so
-the lookup falls back to Standard and the log says `unknown PLD bitstream, full hash …, head hash
-…`. When a Game module is added later, the same load finds it and the game gets its renderer; the
-decoder core does not change.
+Worked example: a game reloads the PLD with the "Thunder in the Deep" bitstream (GAME_00.ACX). The
+loader writes the stream; its full hash `#C0FA3055` is the Game module's, so Game runs: the cells
+come from its `InitialCells` (cell `#EE` = `#41`, the BIOS returns into the game) and the picture
+from its renderer. A stream nobody knows (LDConf's `STREAM.300`) falls back to Standard and the log
+says `unknown PLD bitstream, full hash A65B49FC, head hash D0953276, using Standard`; the reports
+say why (`pld.selected_by`). The decoder core did not change for Game.
 
-v1 ships **Standard only**. Game, DooM and Video become later modules after their bitstreams are
-analyzed against MAME (a follow-up task after v1).
+v1 shipped **Standard only**; Game followed on 2026-10-03. DooM and Video become later modules after
+their bitstreams are analyzed against MAME.
 
 ## 7. Reset kinds
 
 | Trigger | Effect |
 |---|---|
-| power-on | `configState = Unconfigured` (or fast start), RAM random/zero per config, cells per MAME defaults (`:1533-1546`); the active module gets `OnReset(PowerOn)` |
+| power-on | `configState = Unconfigured` (or fast start), RAM random/zero per config, cells per MAME defaults (`:1533-1546`); the active module gets `OnReset(PowerOn)`; a load that changes the configuration sets the cells from the chosen module (hook 5) |
 | RESET button / Ctrl+Alt+Del | same as power-on except RAM and fast RAM kept (the loader re-reads the flag) |
 | code `#2E` | same as RESET button; the active module is deactivated and the module is chosen again after the load (§6.1) |
 | write to page `#A0` | CPU reset only; PLD stays configured; BIOS sees its "RESTART" id in page `#FE` and takes the soft path (INC `SP2000.inc:915`) |

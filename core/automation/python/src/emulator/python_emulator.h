@@ -2169,7 +2169,7 @@ namespace PythonBindings
             // SprinterPortTable, SprinterPortLookup); map / dos / pn5 / rw omitted = the machine's current state
             .def("sprinter_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Sprinter(self.GetContext()));
-            }, "Sprinter Sp2000: PLD configuration, port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
+            }, "Sprinter Sp2000: PLD configuration (module Standard / Game, selected_by + why, the Game grid offset), port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
             .def("sprinter_text", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
             }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")

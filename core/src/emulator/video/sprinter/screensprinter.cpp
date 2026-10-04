@@ -65,6 +65,15 @@ void ScreenSprinter::InitRaster()
     ApplyFrameLines();
 }
 
+void ScreenSprinter::InitFrame()
+{
+    Screen::InitFrame();
+    // A picture with state in beam order (Game) closes the frame that ended: the register runs over its last
+    // squares here, at every frame start whether it was drawn or not, before the TTD checkpoint of the new frame
+    if (PortDecoder_Sprinter* decoder = Decoder(); decoder && decoder->BeamVideo() && _state)
+        decoder->BeamVideo()->CloseFrame(CurrentInputs(), _state->frame_counter);
+}
+
 void ScreenSprinter::SetVideoMode([[maybe_unused]] VideoModeEnum mode)
 {
     // One mode for every picture: the squares decide (tdd-video §1)
@@ -261,6 +270,17 @@ void ScreenSprinter::DrawTo(uint32_t now)
     const uint32_t frameEnd = _rasterState.maxFrameTiming;
     if (now > frameEnd)
         now = frameEnd;  // the frame's last instruction ends past the frame
+    // A picture with state in beam order (the Game configuration's grid offset): its state runs here on
+    // every catch-up, drawn or not, so it does not depend on how the emulator renders (it is machine state)
+    if (PortDecoder_Sprinter* decoder = Decoder(); decoder && decoder->BeamVideo())
+    {
+        const bool draw = !_turboRenderSkip && _feature_screenhq_enabled && FramebufferReady();
+        uint16_t* const planeB = draw ? PlaneB() : nullptr;
+        decoder->BeamVideo()->Advance(CurrentInputs(), _state ? _state->frame_counter : 0, now,
+                                      draw ? reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer) : nullptr, planeB);
+        _prevTstate = now;
+        return;
+    }
     if (now <= _prevTstate)
     {
         // A frame wrap without ResetPrevTstate starts over; a T-state behind
@@ -275,11 +295,23 @@ void ScreenSprinter::DrawTo(uint32_t now)
     _prevTstate = now;
 }
 
+bool ScreenSprinter::FramebufferReady() const
+{
+    return _framebuffer.memoryBuffer && _framebuffer.width == SprinterVideoRenderer::kVisibleWidth &&
+           _framebuffer.height == kVisibleLines;
+}
+
+uint16_t* ScreenSprinter::PlaneB()
+{
+    // ZX DLSS plane B (feature zxdlss): written in the same pass, the same size as the framebuffer
+    return (_planeBEnabled && _planeB.size() == static_cast<size_t>(_framebuffer.width) * _framebuffer.height) ? _planeB.data()
+                                                                                                           : nullptr;
+}
+
 void ScreenSprinter::DrawRange(uint32_t fromTstate, uint32_t toTstate)
 {
     PortDecoder_Sprinter* decoder = Decoder();
-    if (!decoder || !_framebuffer.memoryBuffer || _framebuffer.width != SprinterVideoRenderer::kVisibleWidth ||
-        _framebuffer.height != kVisibleLines)
+    if (!decoder || !FramebufferReady())
         return;
 
     const uint32_t visibleEnd = kVisibleLines * kLineTStates;
@@ -288,12 +320,15 @@ void ScreenSprinter::DrawRange(uint32_t fromTstate, uint32_t toTstate)
     toTstate = std::min(toTstate, visibleEnd - 1);
 
     const SprinterVideoInputs in = CurrentInputs();
-    const SprinterVideoRenderer& renderer = decoder->VideoRenderer();
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    // ZX DLSS plane B (feature zxdlss): written in the same pass, the same size as the framebuffer
-    uint16_t* const planeB =
-        (_planeBEnabled && _planeB.size() == static_cast<size_t>(_framebuffer.width) * _framebuffer.height) ? _planeB.data()
-                                                                                                             : nullptr;
+    uint16_t* const planeB = PlaneB();
+    // A picture with state (Game): drawn again from the frame start's state, which does not change
+    if (const SprinterBeamVideo* beam = decoder->BeamVideo())
+    {
+        beam->Redraw(in, fromTstate, toTstate + 1, fb, planeB);
+        return;
+    }
+    const SprinterVideoRenderer& renderer = decoder->VideoRenderer();
 
     // One span per raster line of the range
     for (uint32_t t = fromTstate; t <= toTstate;)
@@ -463,6 +498,17 @@ ScreenState ScreenSprinter::DescribeScreenState() const
                                        picture.Count(Kind::Spectrum), picture.Count(Kind::Border), picture.Count(Kind::Blank));
     // A few words for a status line ("Spectrum 256x192, screen 5", "text 80", "320x256 256c (mixed)")
     s.videoModeBrief = picture.Brief(in.textPage);
+
+    // Another PLD configuration draws by its own rules (the Game module: every square graphics 320 with the
+    // grid offset); the status bar and every screen report say which one
+    if (const PortDecoder_Sprinter* decoder = Decoder(); decoder && decoder->BeamVideo())
+    {
+        const std::string module = decoder->ActiveModule().Descriptor().name;
+        s.videoMode = StringHelper::Format("Sprinter %u lines, mode page %u, PLD configuration %s: every square graphics "
+                                           "320 x 256 colors with the per-square grid offset",
+                                           static_cast<unsigned>(_frameLines), static_cast<unsigned>(in.modePage), module.c_str());
+        s.videoModeBrief = "PLD " + module + ": 320x256 256c";
+    }
     return s;
 }
 
@@ -475,10 +521,16 @@ bool ScreenSprinter::IndexedFrame(std::vector<uint16_t>& pens, uint16_t& width, 
     width = static_cast<uint16_t>(SprinterVideoRenderer::kVisibleWidth);
     height = static_cast<uint16_t>(SprinterVideoRenderer::kVisibleLines);
     pens.resize(static_cast<size_t>(width) * height);
-    for (uint32_t y = 0; y < height; y++)
-        for (uint32_t x = 0; x < width; x++)
-            pens[static_cast<size_t>(y) * width + x] =
-                static_cast<uint16_t>(SprinterVideoRenderer::PenAt(in, x, y) & (SprinterVideoRam::kPens - 1));
+    const PortDecoder_Sprinter* decoder = Decoder();
+    if (const SprinterBeamVideo* beam = decoder ? decoder->BeamVideo() : nullptr)
+        beam->FramePens(in, pens.data());  // the Game picture: the whole frame from its start's grid offset
+    else
+    {
+        for (uint32_t y = 0; y < height; y++)
+            for (uint32_t x = 0; x < width; x++)
+                pens[static_cast<size_t>(y) * width + x] =
+                    static_cast<uint16_t>(SprinterVideoRenderer::PenAt(in, x, y) & (SprinterVideoRam::kPens - 1));
+    }
     encoding = "u16le pen per pixel: k x 256 + n (0-#3FF graphics palettes 0-3, #400-#7FF text paper / ink / flash); "
                "the colors: /state/sprinter/palette";
     return true;
