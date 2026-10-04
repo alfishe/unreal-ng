@@ -1,0 +1,114 @@
+#include "ttdwriteindex.h"
+
+#include "debugger/ttd/ttdcompression.h"
+
+namespace ttd
+{
+
+void TTDWriteIndex::Append(const TTDWriteRecord& rec)
+{
+    _open.push_back(rec);
+    ++_size;
+    if (_open.size() == kWriteBlockRecords)
+        Seal();
+}
+
+void TTDWriteIndex::Seal()
+{
+    if (_open.empty())
+        return;
+    Block b;
+    b.firstT = _open.front().globalT;
+    b.lastT = _open.back().globalT;
+    b.count = static_cast<uint32_t>(_open.size());
+    const std::vector<uint8_t> raw = EncodeWriteBlock(_open.data(), b.count);
+    b.rawSize = static_cast<uint32_t>(raw.size());
+    b.payload = codec::Compress(raw.data(), raw.size());
+    b.payload.shrink_to_fit();
+    _blocks.push_back(std::move(b));
+    _open.clear();
+}
+
+const std::vector<TTDWriteRecord>& TTDWriteIndex::Decode(size_t block) const
+{
+    if (_cachedBlock != static_cast<int64_t>(block))
+    {
+        const Block& b = _blocks[block];
+        std::vector<uint8_t> raw(b.rawSize);
+        _cached.clear();
+        if (codec::Decompress(b.payload, b.rawSize, raw.data()))
+            DecodeWriteBlock(raw, b.count, _cached);
+        _cachedBlock = static_cast<int64_t>(block);
+    }
+    return _cached;
+}
+
+std::optional<TTDWriteRecord> TTDWriteIndex::FindLastInRange(
+    uint64_t afterT, uint64_t upToT, const std::function<bool(const TTDWriteRecord&)>& pred) const
+{
+    if (upToT <= afterT)
+        return std::nullopt;
+    bool pastRange = false;
+    // The newest match in @p records within the range; pastRange once a record
+    // at or before afterT is seen (nothing older can be in range)
+    auto scan = [&](const std::vector<TTDWriteRecord>& records) -> std::optional<TTDWriteRecord> {
+        for (size_t k = records.size(); k > 0; --k)
+        {
+            const TTDWriteRecord& r = records[k - 1];
+            if (r.globalT > upToT)
+                continue;
+            if (r.globalT <= afterT)
+            {
+                pastRange = true;
+                return std::nullopt;
+            }
+            if (pred(r))
+                return r;
+        }
+        return std::nullopt;
+    };
+    // Newest first: the open block, then the sealed ones whose span meets the range
+    if (auto r = scan(_open))
+        return r;
+    for (size_t b = _blocks.size(); b > 0 && !pastRange; --b)
+    {
+        const Block& block = _blocks[b - 1];
+        if (block.lastT <= afterT)
+            break;
+        if (block.firstT > upToT)
+            continue;
+        if (auto r = scan(Decode(b - 1)))
+            return r;
+    }
+    return std::nullopt;
+}
+
+void TTDWriteIndex::ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const
+{
+    for (size_t b = 0; b < _blocks.size(); ++b)
+        for (const TTDWriteRecord& r : Decode(b))
+            visit(r);
+    for (const TTDWriteRecord& r : _open)
+        visit(r);
+}
+
+void TTDWriteIndex::Clear()
+{
+    _blocks.clear();
+    _open.clear();
+    _segments.clear();
+    _size = 0;
+    _cachedBlock = -1;
+    _cached.clear();
+}
+
+size_t TTDWriteIndex::HeapBytes() const
+{
+    size_t bytes = _blocks.capacity() * sizeof(Block) + _open.capacity() * sizeof(TTDWriteRecord) +
+                   _segments.capacity() * sizeof(TTDJournalSegment) + _cached.capacity() * sizeof(TTDWriteRecord);
+    for (const Block& b : _blocks)
+        bytes += b.payload.capacity();
+    return bytes;
+}
+
+}  // namespace ttd

@@ -11,6 +11,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/audio.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 class EmulatorContext;
 
@@ -79,7 +80,7 @@ static_assert(offsetof(MoonSoundTTDHeader, romHash) + sizeof(MoonSoundTTDHeader:
 ///   _tstateOrigin + AudioTstate(z80->t) * HostSpeedMultiplier()
 /// and every value handed to the library is clamped monotonic - a machine
 /// switch or hard reset mid-session must never move chip time backwards.
-class SoundChip_Moonsound : public PortDevice, public ttd::TTDSerializable
+class SoundChip_Moonsound : public PortDevice, public ttd::TTDSerializable, public ttd::ITTDRegionSource
 {
 public:
     // The card's fixed I/O addresses (2.1). CPLD decodes A0..A7 only; the two
@@ -182,7 +183,42 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return "MoonSound"; }
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::MoonSound; }
+    /// The wave ROM is not recorded: its content hash names it
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.firmwareFingerprint = _romHash;
+        d.runsBehindCpu = true;
+        // Clocks that advance with the chip time (the header, then libopl4's
+        // state at sizeof(MoonSoundTTDHeader)): the engine stores each as its
+        // residual from a line
+        constexpr uint16_t opl4 = sizeof(MoonSoundTTDHeader);
+        d.timeFields = {{16, 8},              // tstateOrigin
+                        {24, 8},              // lastChipTime
+                        {opl4 + 8, 8},        // masterPos
+                        {opl4 + 16, 8},       // hostTicks
+                        {opl4 + 48, 8},       // fmTicks
+                        {opl4 + 56, 8},       // outSteps
+                        {2695, 8},            // FM engine _egCnt
+                        {4354, 8}};           // PCM _egCnt
+        return d;
+    }
+
+    /// Synced: the chip has run to the current frame's start (the frame end
+    /// runs it there and folds the frame into the axis) and not past the CPU
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = static_cast<int64_t>(_lastChipTime - _tstateOrigin);
+        return _lastChipTime >= _tstateOrigin && _lastChipTime <= currentChipTime();
+    }
     uint64_t TTDHashState() const override;
+
+    /// Time-travel engine region (Phase 1, Step 6): the wave RAM (up to
+    /// 1 MiB, after the ROM in the wave memory), its writes taken from the
+    /// wave memory's own dirty bitmap before each capture
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override;
+    void TTDBeforeCapture() override;
 
 private:
     /// This frame's duration on the 3.5 MHz T-state axis, in audio time
@@ -216,6 +252,8 @@ private:
     // configured image at construction; a missing image leaves the
     // zero-filled region in place, which is the documented behaviour (D10).
     opl4::WaveMemory _waveMemory;
+    ttd::TTDRegionTracker _ramTracker;
+    bool _regionsArmed = false;
     opl4::Opl4 _opl4;
 
     // Wave ROM bytes actually loaded (diagnostics / tests)

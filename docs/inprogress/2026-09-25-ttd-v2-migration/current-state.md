@@ -80,8 +80,8 @@ start (`DropBefore`; port cursors stay absolute in memory and are rebased when s
 a file saved after a release loads and replays its remaining frames exactly
 (`timetravelmanager_historylimit_test.cpp`, `TTDVdac2_Test.HistoryLimitKeepsTheChipRight`).
 Every automation surface and the Qt TTD panel set it; the default is no limit. The engine
-must keep this behavior at switchover (memory as a cache, decision 28, replaces it for the
-file-backed session).
+must keep this behavior at switchover (the ring of segments, decision 41, replaces it for
+the file-backed session).
 
 ## 4. Seek and reverse
 

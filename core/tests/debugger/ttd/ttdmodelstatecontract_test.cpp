@@ -9,6 +9,10 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
+#include "_helpers/soundcardscope.h"
+#include "debugger/ttd/ttdmachineperipherals.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -254,6 +258,10 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::Pit8253, 51, "Pit8253"},
         {ttd::PeripheralId::Usart8251, 52, "Usart8251"},
         {ttd::PeripheralId::Saa1099, 53, "Saa1099"},
+        {ttd::PeripheralId::Smuc, 54, "Smuc"},
+        {ttd::PeripheralId::EvoAvrVolatile, 55, "EvoAvrVolatile"},
+        {ttd::PeripheralId::KeyboardMatrix, 56, "KeyboardMatrix"},
+        {ttd::PeripheralId::RzxPlayback, 57, "RzxPlayback"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 
@@ -276,5 +284,117 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         EXPECT_EQ(static_cast<uint8_t>(row.id), row.number) << row.name;
         const std::string entry = std::to_string(row.number) + " " + row.name;
         EXPECT_NE(flat.find(entry), std::string::npos) << "ttd.ksy does not document \"" << entry << "\"";
+    }
+}
+
+/// Phase 2, Step 4: every device of every creatable model, with every sound
+/// card fitted, matches its own descriptor, and the engine's device table
+/// builds from them (dependencies present, time fields inside the state).
+/// Creates 32 machine configurations (no ROM boot): above the 50 ms guideline,
+/// one contract check over every model
+TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
+{
+    SoundCardScope cards{TestSound::All};
+    size_t checked = 0;
+    for (const char* model : {"48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710",
+                              "ATM450", "ATM3", "PROFI", "PROFI3", "TSL", "TSL-VDAC2", "SPRINTER"})
+    {
+        for (GSTypeKind gs : {GSTypeKind::Z80, GSTypeKind::NGS})
+        {
+            SCOPED_TRACE(std::string(model) + (gs == GSTypeKind::NGS ? " + NeoGS" : " + GS"));
+            // TSFM in the TurboSound slot where the helper can stage it (it
+            // finds no config folder for the ATM models and machine variants:
+            // those keep their own slot)
+            Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(model, TurboSoundKind::FM);
+            if (emulator == nullptr)
+                emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+            if (emulator == nullptr)
+            {
+                ADD_FAILURE() << "cannot create " << model;
+                continue;
+            }
+            EmulatorContext* context = emulator->GetContext();
+            ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, gs));
+
+            ttd::TTDPeripheralRegistry registry;
+            std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
+            std::string error;
+            EXPECT_TRUE(ttd::RegisterMachinePeripherals(context, registry, owned, &error)) << error;
+            std::string tableError;
+            EXPECT_TRUE(registry.CheckDeviceTable(tableError)) << tableError;
+            EXPECT_EQ(registry.DeviceEntries().size(), registry.Count());
+            ++checked;
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
+    EXPECT_EQ(checked, 32u) << "every model is creatable in this build";
+}
+
+namespace
+{
+struct ContractDevice : ttd::TTDSerializable
+{
+    ttd::PeripheralId id = ttd::PeripheralId::Covox;
+    ttd::TTDDeviceDescriptor extra;
+    bool describeOther = false;
+    size_t TTDStateSize() const override { return 8; }
+    void TTDSaveState(uint8_t* dst) const override { std::memset(dst, 0, 8); }
+    void TTDLoadState(const uint8_t*) override {}
+    std::string TTDDeviceName() const override { return "Contract"; }
+    ttd::PeripheralId TTDPeripheralId() const override { return id; }
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.timeFields = extra.timeFields;
+        d.restoreAfter = extra.restoreAfter;
+        if (describeOther)
+            d.stateSize = 16;
+        return d;
+    }
+};
+}  // namespace
+
+/// The registration check names what does not match: a device registered
+/// under another id, a descriptor whose size is not the device's, a time field
+/// outside the state, a dependency on a device the machine lacks
+TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
+{
+    std::string error;
+    {
+        ContractDevice d;
+        ttd::TTDPeripheralRegistry registry;
+        registry.Register(ttd::PeripheralId::Covox, &d);
+        EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+    }
+    {
+        ContractDevice d;
+        ttd::TTDPeripheralRegistry registry;
+        registry.Register(ttd::PeripheralId::Tape, &d);
+        EXPECT_FALSE(registry.CheckDeviceTable(error));
+        EXPECT_NE(error.find("Contract"), std::string::npos) << error;
+    }
+    {
+        ContractDevice d;
+        d.describeOther = true;
+        ttd::TTDPeripheralRegistry registry;
+        registry.Register(ttd::PeripheralId::Covox, &d);
+        EXPECT_FALSE(registry.CheckDeviceTable(error));
+        EXPECT_NE(error.find("16 bytes"), std::string::npos) << error;
+    }
+    {
+        ContractDevice d;
+        d.extra.timeFields = {{4, 8}};
+        ttd::TTDPeripheralRegistry registry;
+        registry.Register(ttd::PeripheralId::Covox, &d);
+        EXPECT_FALSE(registry.CheckDeviceTable(error));
+        EXPECT_NE(error.find("time field"), std::string::npos) << error;
+    }
+    {
+        ContractDevice d;
+        d.extra.restoreAfter = {{ttd::TTDDeviceType::BetaDisk, "betadisk"}};
+        ttd::TTDPeripheralRegistry registry;
+        registry.Register(ttd::PeripheralId::Covox, &d);
+        EXPECT_FALSE(registry.CheckDeviceTable(error));
+        EXPECT_NE(error.find("betadisk"), std::string::npos) << error;
     }
 }

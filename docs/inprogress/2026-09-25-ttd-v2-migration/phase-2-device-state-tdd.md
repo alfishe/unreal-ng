@@ -20,7 +20,7 @@ The engine is `ttd::TimeTravelEngine`. Parts only the engine has live in `core/s
 | Instance name | Names one device of a type in a machine, as a dotted path: `zifi.uart`, `isa2.uart0`. Two UARTs share a type id and differ by name |
 | Layout version | Which arrangement of bytes a device's state uses. A device that adds a field gets a new layout version |
 | Device table | The list of device instances in a session: type, name, layout version, size, firmware fingerprint, dependencies |
-| Device set | Which devices the machine has at a given position. It can change during a session (a General Sound card personality switch) |
+| Device set | Which devices the machine has. Fixed for a session (D38): changing it starts a new session |
 | Version (of a device state) | One stored state of one device. A new version is stored only when the state changed |
 | Same as previous | A checkpoint stores nothing for a device whose state did not change; it inherits the previous version |
 | Changed ranges | A new version stored as the byte ranges that differ from the previous one: offset, length, new bytes |
@@ -122,11 +122,11 @@ FR-19 holds by call order only: `MainLoop::OnFrameEnd` (mainloop.cpp:431, 595) r
  └───────┴──────────────┴────────┴───────┴─────────────┴────────────┘
 
  device history (per instance): versions, each Full | Ranges | Xor, chained
- checkpoint N:   device set v1, changed: [2: Ranges 5 ranges, 57 B]
- checkpoint N+1: device set v1, changed: []          ← idle frame: 0 entries
+ checkpoint N:   changed: [2: Ranges 5 ranges, 57 B]
+ checkpoint N+1: changed: []          ← idle frame: 0 entries
 ```
 
-- **One device table per device-set version.** A checkpoint refers to its set by version number, shared until the set changes.
+- **One device table per session.** The device set is fixed for a session (D38).
 - **One history per device instance**, like a memory piece in Phase 1: a version is stored only when the state changed, as a difference from the previous version, with a chain length limit.
 - **One restore result** for the whole restore: CPU, devices, regions, and later configuration.
 
@@ -158,6 +158,8 @@ struct TTDDeviceKey
 - **Allocation rule.** A design names a device by its type name, never by a number. The number is assigned when the code lands on master, in the one table. That resolves the existing collisions: VDAC2 becomes `TTDDeviceType::Vdac2` with the next free number at landing; the Sprinter network's five blobs reuse existing types where the device is the same (`SerialPort` for each UART, with instance names) and take new numbers only for new kinds.
 - **Instances.** The three registrations of `TTDSerialPort` become one type `SerialPort` with instances `evo.uart` (today 24), `atm2ioesp.uart` (37), `zifi.uart` (39). For v1 compatibility their old ids stay valid as types: the v1 file reader maps 37 and 39 to `SerialPort` plus the instance name, and the engine stores the new form. Whether the old ids 37 and 39 are retired or kept as aliases forever is decided with file versioning (Phase 4, Step 1, V-7 in [integrity-and-versioning.md](integrity-and-versioning.md)).
 - **Slot personalities** stay separate types (TSFM is not a TurboSound, NeoGS is not a GS): a state never crosses to a different device kind.
+
+**As built (2026-10-03).** `TTDDeviceType` (u16) lists the 47 `PeripheralId`s with their numbers, one compile-time check each (`ttdserializable.h`). Instances so far: the WD1793 is `betadisk`, its command context `betadisk.context` (restored after it, the key taken from the controller's descriptor); the three 16550 serializers are one type, `SerialPort`, with instances `uart` (the machine's #xxEF port, v1 id 24), `atm2ioesp.uart` (37) and `zifi.uart` (39). Every other device keeps the default: its type is its v1 id, its instance its name in lower case. Restore ties follow v1's ascending blob id (`legacyId` in the descriptor), so the table's order equals v1's on every machine; the shadow model test checks it on the 10 large-memory models.
 
 #### 5.1.2 Descriptor
 
@@ -266,11 +268,11 @@ private:
 };
 ```
 
-A checkpoint holds, for devices, only:
-- the device-set version (u32, the same as the previous checkpoint's in almost every frame);
-- the list of (device index, version) pairs **for devices that changed**.
+A checkpoint holds, for devices, only the list of (device index, version) pairs **for devices that changed**.
 
 A checkpoint finds the version of an unchanged device by walking back to the last checkpoint that changed it. To keep a seek constant-time, the engine also keeps a copy-on-write "current versions" array per checkpoint, shared between checkpoints exactly like Phase 1's reference blocks (one pointer per checkpoint when nothing changed).
+
+**As built (2026-10-03), first version.** No new store: each device of the table gets a region of the engine's own (`TTDRegionId::DeviceStateFirst` + index) holding 4 bytes of length, then the state, padded to whole pieces. At each capture every device's state is laid out there and all its pieces are offered; the engine keeps only the pieces whose bytes changed, as Phase 1 does for memory: compressed XOR against the previous version, the chain limit K, change records and full tables every 64 checkpoints. A device without state in a frame stores length 0; state for a device the table lacks is listed in the checkpoint (`unclaimedDevices`). `TimeTravelEngine::DeviceState(index, id)` rebuilds a device's bytes at any checkpoint; `RestoreDevices` and every oracle use it. Live capture hands the engine the raw states the registry serialized (no compress and decompress); the v1 file feeder hands the v1 blobs, which the engine decodes. Measured (600 frames, device bytes per frame, v1 → engine, change records not included): 48K 528 → 165, Pentagon idle 949 → 269, Pentagon game 979 → 312, ZX-Evo 2,370 → 243, TS-Conf 1,839 → 341, Sprinter 12,312 → 183; D33 holds on all 46 configurations. The changed-ranges encoding and the time fields (anchors) are the next steps.
 
 #### 5.2.2 Capture algorithm, per device, per frame
 
@@ -304,6 +306,16 @@ What this means:
 - Some counters do advance with time, and declaring them as time fields removes them: 233 → 174 B per frame with XOR, 200 → 128 B per frame with the best of ranges and XOR (Pentagon idle).
 - Most of what remains is **not** a counter that can be derived from time. It is a CPU running code (NeoGS) and synthesizer counters that wrap at register-defined periods. Deriving them would mean running the device during a restore, which costs seek time (§9, question Q1).
 - E6's "storing the XOR of a changed blob saves only a quarter" was computed on the **wrapped, compressed** v1 blobs (`model.py:214-226` XORs `raw`). XOR of the decoded state gives 233 B per frame against E6's 677 B per frame (2.03 MB per minute). The design target below uses the decoded state.
+
+**Measured again with E8 (2026-10-03,** [E8](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e8-device-fields/README.md), 11 one-minute sessions on the current build): storing only changes gives 138–255 B per frame against v1's 528–2,380; deriving the time fields of MoonSound, NeoGS and TSFM gives 82–175 B per frame, 0.25–0.52 MB per minute. Every field of the three cards is mapped there (time / running / float). The ATM710's keyboard controller (73 B per frame) is the one large device not yet analyzed.
+
+**Decided and built (2026-10-03): time fields in the engine, devices unchanged.** Deriving the clocks inside the devices (anchors in MoonSound, NeoGS, TSFM) was set aside: it changes each device's state and v1's format, and it is exact only if every formula always holds (a register write that resets a counter would break it silently). Instead a device declares its clock fields (`TTDDeviceDescriptor::timeFields`) and the engine stores each as its residual from a line through an anchor: value, frame, step per frame, kept at the end of the device's state region. Restoring frame N gives anchor + (N − anchor frame) × step + residual, exact by construction whatever the field does; a field that jumps only starts a new line (costs bytes, never correctness). The step of a new line is the average over the line it replaces. The residual stays on the line within ±32,767 for 4- and 8-byte fields (±2,047 for 2-byte ones, any value for 1-byte ones): clocks quantized to a period that does not divide the frame (the NeoGS timers on a 48K frame step N or N − 1 periods) stay on their line. Declared: MoonSound (tstateOrigin, lastChipTime, libopl4's masterPos, hostTicks, fmTicks, outSteps, FM and PCM envelope counters), NeoGS (timer strobe, next DAC sample, card clock, next timer tick, VS10xx clock), TSFM (ymfm's envelope counter and clock count, per chip). Measured (600 frames, device bytes per frame, before → after): 48K 165 → 153, Pentagon idle 269 → 195, game 312 → 238, ZX-Evo 243 → 199, TS-Conf 341 → 267, Sprinter 183 → 160; no configuration got worse. Less than E8's lower bound because a changed 4 KB piece costs a compressed XOR with its fixed overhead even when four bytes changed: the changed-ranges encoding is next. A device that keeps its own anchor (the Z84C15 CTC) remains the better design for new device code.
+
+**As built (2026-10-03): the ATM2 keyboard controller, and what still changes every frame.** The controller (ATM710, ZX-Evo with KBC) runs its MCU every frame: 73 B per frame on ATM710 idle, a new version every frame. Its clocks are now time fields, with offsets taken from `Atm2Kbc::State` itself (`tBase`, `mcuBase`, `lastNow`, `answerClock`, `reads`, the MCU's clock and instruction count, its six `visibleAt` stamps, timers TL0 / TH0 / TL2 / TH2): 73 → 61 B per frame. A 1-byte time field had no residual limit, so its first line (step 0) was never replaced and it saved nothing; 1-byte fields now re-anchor beyond ±15 (TSFM's clock count benefits too). No configuration got worse; 128K-class, +2/+2A/+3 and ATM710 a little better; D33 on all 46. What remains changing every frame is state the devices really change, not clocks: the AY's and TSFM's noise generator (a shift register, pseudo-random, not on a line), TSFM's decimator phases (floating point), and the controller MCU's RAM and registers. This is the "state that devices running their own code really change" of Q1.
+
+**As built (2026-10-03): changed ranges, in the piece store.** Not a device-only format: the piece store has a fourth encoding, `Ranges`, so memory pieces benefit too. A difference from the previous version is first measured as runs of non-zero XOR bytes (runs closer than 4 zero bytes merged, split at 255 bytes; 3 bytes of header each: u16 offset, u8 length). Up to 64 bytes (`Params::rangesLimit`) the runs are stored as they are, nothing compressed; above that the XOR is compressed and the runs are kept when they are still smaller. Decoding XORs the runs onto the base, like any difference: the chain limit K, references and release are unchanged. Measured (600 frames, bytes per frame of memory + references + devices, v1 → time fields → + ranges): 48K 690 → 350 → 295, Pentagon idle 1,131 → 406 → 343, game 3,191 → 1,820 → 1,729, ZX-Evo 7,096 → 739 → 608, TS-Conf 6,008 → 557 → 466, Sprinter 18,244 → 1,498 → 1,097; device bytes 48K 138, Pentagon idle 150, Sprinter 116. Compressions per frame fall 2-8x (Sprinter 24.2 → 3.0), which shortens capture. No configuration got worse; D33 on all 46.
+
+**Device-side anchors first (2026-10-03, superseded above for existing devices).** Master's Z84C15 CTC (`6f6025e25`, Sprinter) shows the better fix where the device code is ours: the device stores the count at an anchor time and derives the live count from the clock, so its state does not change while it counts. Its blob then compares equal frame after frame with no engine rule at all, and the derivation is checked by the device's own tests. Order of preference: (1) anchors in the device, for devices in this repository (NeoGS timers and runner, MoonSound and TSFM origins, the WD1793 and tape clocks); (2) the engine-side time fields below, for state that comes from vendored libraries we do not change (ymfm, libopl4 internals). The measurement (step 1 of §8) lists which field goes which way.
 
 Each device declares its own time fields in its descriptor (offsets in its own layout). Declaring a field is safe even when the guess is wrong: a wrong prediction only costs bytes, never correctness, because the residual is always stored exactly.
 
@@ -350,7 +362,7 @@ enum class TTDRestoreIssueKind : uint8_t
     AfterRestoreFailed,
 };
 
-enum class TTDLiveStateAction : uint8_t { NotApplicable, KeptLive, ResetToPowerOn };
+enum class TTDLiveStateAction : uint8_t { NotApplicable, KeptLive };
 
 struct TTDRestoreIssue
 {
@@ -373,9 +385,13 @@ struct TTDRestoreResult
 ```
 
 - **Ordering:** `Exact < NotBitExact < Degraded < Damaged`; `quality` is the worst issue.
-- **What a device without state holds.** Today it keeps its live state silently. The engine resets it to its power-on state when the device can (`TTDResetToPowerOn`, optional), else keeps the live state; either way the issue names the action. Resetting makes the result repeatable: the same seek twice gives the same machine (Q2 asks the user to confirm).
+- **What a device without state holds.** It keeps its live state, and the issue says so. Within a session this does not happen: the device set is fixed (D38) and every checkpoint holds every device. It happens only when a session meets a machine whose devices differ, or on damage; both are reported, not repaired.
 - **Damaged range.** A damaged device version spoils every later version that chains from it, up to the next `Full`. The engine knows the dependencies (D5), so it reports the exact range. Phase 2 detects damage with the CRC32C per version (§5.2.1); Phase 4 adds the file-level checks and fills the same field.
 - **Branches (D7).** Resuming from a position starts a branch, and the branch's first checkpoint is captured from the live machine. If the restore was `Degraded`, that checkpoint would carry the unrestored device into the new history. The result is therefore available before a resume, and a resume from a degraded position is flagged on the branch's first checkpoint (the flag is part of the model now; the branch UI is PLAN #76).
+
+**As built (2026-10-03).** The engine's `TTDRestoreResult` carries the issues (`TTDRestoreIssue`: kind, severity, device key, what the device holds now, detail); its status is the worst. `TimeTravelEngine::RestoreDevices(index, context)` restores every device of the table in restore order after the memory regions, then calls each `TTDAfterRestore`. It reports a device without state (kept live), state for a device this machine lacks, a state that does not fit, and a different firmware (`NotBitExact`). A device whose state the engine keeps without its region memory (General Sound, Sprinter video and fast RAM, the VDAC2 memory) loads through `ITTDRegionSource::TTDLoadStateWithoutRegions`. The oracle: on the 10 large-memory models, v1 restores a checkpoint, the machine runs on, the engine restores the same checkpoint, and every device saves the same bytes as after v1's restore. Writing it found an engine bug: a region smaller than a piece (the SMUC EEPROM, 2 KB) was restored as a whole 4 KB piece, writing past the device's memory; the last partial piece is now decoded aside. Damage and `CheckSession` come with the device history (Step 2); the surfaces in Phase 5.
+
+**Q2 decided (2026-10-03), then withdrawn the same day:** resetting a device without state to its power-on state was dropped. The emulator has no true power-on per device (its hard reset leaves GS RAM, MoonSound wave RAM and the keyboard controller's RAM, never resets the mouse, joystick, ZiFi or the RTC, and several resets reach outside their device), and the case does not arise within a session (D38). A machine reset stops the recording (`Emulator::Reset`); recording again starts a new session. `TTDResetToPowerOn` is removed; a device without state keeps its live state and is reported.
 
 #### 5.3.2 Engine interface
 
@@ -407,7 +423,9 @@ Phase 2 builds and tests the engine API. Users are on v1 until Phase 5 ([phase-5
 
 The automation contract test (`ttdautomationcontract_test.cpp`) gains a case per surface.
 
-### 5.4 Step 4 — Sound devices on the contract; device set as a timeline event (D26, FR-4)
+**As built (2026-10-03), damage and the session check.** Every stored version (pieces and device states alike) carries its CRC32C in the piece store. A version that fails it is a `DataDamaged` issue with `firstFrame` / `lastFrame`: the checkpoints around the failing one whose version of that piece fails too (the same version, or differences built on it), so the range ends at the piece's next change that does not depend on it. A device state that fails is reported as `DataDamaged` with the device named (before, it read as "no state"), and the device keeps its live state, as for a missing state. `TimeTravelEngine::CheckSession()` checks the whole session without touching the machine: every version decoded once (walking the change records, not every checkpoint), damage ranges, frames in which a device had no state (`DeviceMissingState` with its frames), state for devices this machine lacks, and each live device's firmware; at most 64 issues listed, the rest counted. Tests: `TimeTravelEngine_Damage_Test` (a damaged piece and the frames it reaches; a device's damage and missing frames). Mutation: dropping the forward extension of the range fails them.
+
+### 5.4 Step 4 — Sound devices on the contract (FR-19); the device set fixed for a session (D38, FR-4)
 
 #### 5.4.1 Every device under the declare / implement check
 
@@ -423,28 +441,17 @@ Today the sound devices (TurboSound slot, Covox, GS / NeoGS, MoonSound) register
 - After a restore, the same check runs after the after-restore calls: a device left behind or ahead is an `AfterRestoreFailed` issue.
 - This turns the order in `MainLoop` (mainloop.cpp:431, 464) into a tested rule.
 
-#### 5.4.3 A change of the device set is an event
+**As built (2026-10-03), contract and sync.**
+- *Registration.* `RegisterMachinePeripherals` ends with `TTDPeripheralRegistry::CheckDeviceTable`: each registered device must name the id it is registered under, describe itself under that id and describe the state size it saves; then the engine's device table is built from the same entries (`DeviceEntries`, which the shadow session now uses too), so a missing dependency, a cycle or a time field outside the state refuses recording with the device named. Before, such a table made the engine refuse its session with only a log line (the WD1793 context's dependency name was such a case). The slot guards on load (TTM:4289-4378) stay with v1 until Phase 5.
+- *Sync (FR-19).* `TTDSerializable::TTDSyncedTime(offset)` answers whether a device's own clock stands where a frame boundary needs it; the offset is in the device's own units, for the report, so no device converts its clock into CPU T-states. TSFM: the core at the CPU's T-state (or adopting it at the next sync). MoonSound: the chip at or after the frame's start on its axis and not past the CPU. GS and NeoGS: the card at or after its frame base and less than a frame past it. Their descriptors set `runsBehindCpu`. The engine asks at every capture (a miss is counted in `SyncMissCount` / `SyncMisses`, the frame still recorded) and after `RestoreDevices`' after-restore calls (`AfterRestoreFailed`, device named). The capture already sees the next frame's start (the checkpoint convention), so the rule checked is "after the frame end and the next frame's start" rather than "at the frame end".
+- *Tests.* `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` (16 models x GS / NeoGS, MoonSound, TSFM where the helper fits it); `ADeviceNotMatchingItsDescriptorIsRefusedByName`; `TimeTravelManager_ShadowCards_Test` (Pentagon with TSFM, MoonSound and GS or NeoGS: no miss at any capture, every frame as v1, restores exact); `TimeTravelEngine_Sync_Test`. Mutations: capturing before the cards' frame start fails the cards test (TSFM 71,683 T-states from the frame start); dropping the table build from the registration check fails the refusal test.
 
-```cpp
-struct TTDDeviceSetChange           // payload of the event kind DeviceSetChanged (Phase 3, Step 1)
-{
-    uint32_t fromSetVersion;
-    uint32_t toSetVersion;
-    std::vector<TTDDeviceKey> removed;
-    std::vector<TTDDeviceDescriptor> added;   // each with a Full first version
-};
+#### 5.4.3 The device set is fixed for a session (D38)
 
-class ITTDDeviceSetProvider          // implemented by the emulator side (SoundManager, later the bus slots)
-{
-public:
-    virtual bool ApplyDeviceSet(const TTDDeviceTable& target, std::string* reason) = 0;
-};
-```
-
-- **When it happens.** A device-set change takes effect at a frame boundary. The engine closes frame N with the old set and records a `DeviceSetChanged` event at the start of frame N + 1, with the new table version and a `Full` first version of each added device. The event kind and its point of application belong to the event stream of Phase 3, Step 1 ([phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md)); Phase 2 defines its payload and what a seek does with it.
-- **Seek across it.** When the target's set version differs from the live one, the engine calls `ApplyDeviceSet` before restoring devices. The provider rebuilds the set (for the GS card: switch the personality, re-register ports) or says why it cannot. Failure is `DeviceSetDiffers` per device, and the devices that do exist are still restored.
-- **The first user: the GS personality switch.** In the engine it is recorded, not refused. v1 keeps refusing it (`SwitchGsCard`) until Phase 5 removes the guard together with v1.
-- **Not a device-set change:** a model switch. It starts a new session linked to its parent (D26), owned by Phase 5.
+*Changed 2026-10-03, owner decision.* This section first made a device-set change an event on the timeline (`DeviceSetChanged`, device-set versions, `ITTDDeviceSetProvider::ApplyDeviceSet`), with the GS personality switch as its first user. Dropped: with machine bus slots the machine declares its slots and the cards in them, and no one swaps a card while a session records. The set is therefore part of the machine:
+- a change of the set while recording is refused, as v1 does today (`TTDGuardedAction::SwitchGsCard`);
+- outside a recording it starts a new session linked to its parent, as a model switch does (Phase 5);
+- a session restored on a machine whose set differs reports `DeviceSetDiffers` or `DeviceNotPresent` per device (the generic rule of §5.4.1 replaces v1's two slot guards on load).
 
 ### 5.5 Built in now, used later
 
@@ -452,7 +459,6 @@ public:
 |---|---|
 | `TTDUpgradeState` slot in the descriptor | Phase 4, Step 1 decides whether layouts are upgraded or refused |
 | `ConfigurationDiffers`, `DataDamaged`, `damagedRange` | Phase 3, Step 4 (configuration fingerprint), Phase 4 (file integrity) |
-| Device-set versions and `ApplyDeviceSet` | Machine bus slots and hot-plugged cards; ZX-Poly groups (D22) |
 | Device-history versions with dependencies | Phase 4 eviction rebuilds a chain that reaches past the new start as `Full` (D5), as for pieces |
 | `TTDSyncedTime` in machine time | Phase 3, Step 3: several CPUs, a position on a card CPU (D20) |
 | Instance names | Several IDE channels, UARTs, ISA cards (Sprinter ISA, network) |
@@ -460,10 +466,9 @@ public:
 ### 5.6 File-format consequences (serialized in Phase 4)
 
 Phase 2 changes the in-memory model only. [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md) must serialize:
-- **Device tables**, one per set version: per entry type u16, instance (u8 length + bytes), layout version u16, state size u32, firmware fingerprint u64, dependency count u8 + indices u16, time-field count u8 + (offset u16, width u8), flags u8 (`runsBehindCpu`). Every width checked against its largest value before the format is fixed.
-- **Per checkpoint:** a set-version change (rare), then a count of changed devices (u16, zero on an idle frame) and per changed device: table index u16, encoding u8, depth u16, payload length u32, payload, CRC32C.
+- **The device table**, one per session: per entry type u16, instance (u8 length + bytes), layout version u16, state size u32, firmware fingerprint u64, dependency count u8 + indices u16, time-field count u8 + (offset u16, width u8), flags u8 (`runsBehindCpu`). Every width checked against its largest value before the format is fixed.
+- **Per checkpoint:** a count of changed devices (u16, zero on an idle frame) and per changed device: table index u16, encoding u8, depth u16, payload length u32, payload, CRC32C.
 - **No 64-bit mask** of device ids: the device table replaces it, so the limit of 64 ids goes away.
-- **The `DeviceSetChanged` event** in the event stream.
 - `ttd.ksy` and the Python analyzer gain these structures in Phase 4, Step 6.
 
 v1's format does not change in Phases 1–4.
@@ -476,7 +481,7 @@ v1's format does not change in Phases 1–4.
 | `memcmp` with the delta base | per frame, per device | state size: about 35 KB per frame on Pentagon with cards, mostly NeoGS's 21.5 KB |
 | Time-field prediction | per frame, per declared field | a few integer additions (about a dozen fields on Pentagon with cards) |
 | Ranges / XOR + zstd | per frame, per **changed** device | 3–4 devices on idle cards; v1 compresses all 9 |
-| Topological sort | per device-set change | once |
+| Topological sort | per session | once |
 | Restore: decode a version | per seek, per device | at most K − 1 range applications; restore time `bm6_restore_devices_us_p50` within PR-5 |
 | After-restore calls, sync check | per seek | one call per device |
 
@@ -507,8 +512,6 @@ Every new test is checked by mutation: it must fail when the mechanism it guards
 | 3 | `CheckSession` reports the same issues as a seek, without changing the machine | up-front report |
 | 4 | Every creatable model: every registered device has a descriptor that matches the live device (extends `ttdmodelstatecontract_test.cpp`) | all devices under the contract |
 | 4 | Every `runsBehindCpu` device reports the frame boundary at capture; mutation: capture before the sound frame end → test fails | FR-19 is a tested rule |
-| 4 | Record, switch the GS personality, record, seek back across the switch: device set and state of the target restored (FR-3, extends `ttdgeneralsoundswitch_test.cpp` and `ttdstatecompleteness_test.cpp`) | device-set change as an event |
-| 4 | Provider refuses the switch → `DeviceSetDiffers`, other devices restored | partial device sets are reported |
 | All | **D33 oracle:** every frame of the fixture corpus, the matrix sessions and the E6 sessions restores each device byte for byte as v1 | correctness against v1 |
 | All | **D33 matrix:** `bm3_device_blobs_bpf`, `bm2_work_device_blobs_bpf`, `bm2_work_compress_calls_opf`, `bm4_heap_device_blobs_bpf` not larger than v1 on any case; seek within PR-5 | the quality bar |
 
@@ -516,13 +519,13 @@ Every new test is checked by mutation: it must fail when the mechanism it guards
 
 Each item lands as its own commits, and each commit passes the full gate (build with zero warnings, `core-tests`, the oracle).
 
-1. **Measurement first:** add the field-level device measurement (§10) as experiment E8 next to E1–E7, so the numbers in §5.2.3 can be rerun. No engine code.
-2. **Step 1, identity and descriptors:** `TTDDeviceType`, `TTDDescribe` with defaults, the device table, restore order equal to v1's. The engine still stores every state whole. The oracle passes.
-3. **Step 3, restore result:** `TTDRestoreResult` from the device table's checks (missing, not present, layout, size, firmware). Tests with damaged and mismatched sessions.
+1. **Measurement first:** add the field-level device measurement (§10) as experiment E8 next to E1–E7, so the numbers in §5.2.3 can be rerun. No engine code. *Done 2026-10-03.*
+2. **Step 1, identity and descriptors:** `TTDDeviceType`, `TTDDescribe` with defaults, the device table, restore order equal to v1's. The engine still stores every state whole. The oracle passes. *Done 2026-10-03.*
+3. **Step 3, restore result:** `TTDRestoreResult` from the device table's checks (missing, not present, layout, size, firmware). Tests with damaged and mismatched sessions. *Done 2026-10-03, damage with Step 2.*
 4. **Step 2, history:** same as previous, then ranges / XOR, then the chain limit. Bytes drop; the oracle passes after each.
 5. **Step 2, time fields:** declared per device, one device per commit (MoonSound, NeoGS, TSFM, then the rest the measurement finds).
 6. **Step 4, contract and sync:** all devices through descriptors; `TTDSyncedTime` and its check.
-7. **Step 4, device-set events:** `DeviceSetChanged`, `ApplyDeviceSet`, the GS switch test.
+7. ~~**Step 4, device-set events**~~ — dropped 2026-10-03: the device set is fixed for a session (D38).
 8. Run the full matrix, store it as the Phase 2 baseline, write the results document.
 
 Step 3 comes before Step 2 so that every history change after it is checked by the same result reporting.
@@ -532,13 +535,13 @@ Step 3 comes before Step 2 so that every history change after it is checked by t
 | # | Risk / question | Plan | Needs the user's decision |
 |---|---|---|---|
 | Q1 | **PR-10 and running cards.** PR-10 asks ≤ 64 B for "a frame in which nothing changed, regardless of configuration". With NeoGS fitted, its Z80 runs its idle loop and something changes every frame (§5.2.3). Phase 2 meets PR-10 for device state only where no device runs by itself. Deriving a card's state by re-running it during a restore would remove the cost but add up to K frames of card emulation to a seek | Read PR-10 as "≤ 64 B plus the state that devices running their own code really change", and report that part per configuration | **yes** (recommendation: accept this reading) |
-| Q2 | A device without state at the target: reset it to power-on or keep the live state? | Reset when the device supports it (repeatable), keep live otherwise; both reported | **yes** (recommendation: reset) |
+| Q2 | A device without state at the target: reset it to power-on or keep the live state? | Reset when the device supports it (repeatable), keep live otherwise; both reported | *Decided 2026-10-03: no reset (withdrawn, see §5.3)* |
 | Q3 | Old ids 37 (`Atm2IoEsp`) and 39 (`ZiFiLine`) become instances of `SerialPort`: retire the numbers or keep them as aliases forever? | Decided with V-7 in Phase 4, Step 1 | yes, in Phase 4 |
 | Q4 | Store small firmware images (GS ROM 32 KB, keyboard controller ROM) in the session, so its replay is exact anywhere? | Phase 2 records the fingerprint only; storing images is a region question for Phase 4 | yes, in Phase 4 |
 | R1 | Enforcing the restore result exposes silent failures that exist today as visible errors | Land with the contract tests; triage each new report (migration-trajectory risk table) | — |
 | R2 | A declared time field that is not one costs bytes | Only bytes, never correctness; E8 lists the fields with their measured steps | — |
 | R3 | The time-field gain is a lower bound: residuals are not always zero (rational clocks: 72–504 of 3,000 frames) | The target in §5.2.4 has a margin above the lower bound; BM-3 decides | — |
-| R4 | Two personalities of a slot both register when the set changes inside a frame | A set change applies only at a frame boundary (§5.4.3); test with the GS switch | — |
+| R4 (moot, D38) | Two personalities of a slot both register when the set changes inside a frame | A set change applies only at a frame boundary (§5.4.3); test with the GS switch | — |
 | R5 | Device-history numbers come from v1 files fed to a model, not from the engine | The engine reproduces them through the v1 file reader; the matrix checks them | — |
 
 **Conflict with the decisions document, for the record:** D18's reason "idle cards cost 2 MB per minute" is the E6 model, which XORed the compressed v1 blobs. On the decoded state the same sessions give 0.66 MB per minute before any time-field rule. D18's conclusion stands, but the "2 MB" figure overstated what Phase 2 starts from. *Resolved 2026-10-02:* E6 now models the decoded state (0.8–0.9 MB per minute with a compressed XOR of the whole blob, the method of the model; this design's changed byte ranges give the 0.66 above), and D18 cites the corrected figures. D23's "`PeripheralId` is 0–41 full" means "taken": the hard limit is the 64-bit device mask in v1's file header (ids ≥ 64 dropped), not the byte.

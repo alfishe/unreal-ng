@@ -188,7 +188,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "unformatted or plus3 (floppies)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
-        "insert / swap on an IDE unit: disk or cdrom - swap the unit's drive first (the unit must be empty)";
+        "insert / swap on an IDE unit: disk, cdrom or cf (a CompactFlash card on an IDE adapter) - swap the unit's drive first (the unit must be empty)";
     schema["required"].append("action");
 
     registry.Register(

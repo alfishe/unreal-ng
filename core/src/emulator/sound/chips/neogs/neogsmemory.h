@@ -69,7 +69,11 @@ public:
         const int window = addr >> 14;
         uint8_t* p = _writePtr[window];
         if (p)
+        {
             p[addr & (PAGE_SIZE - 1)] = value;
+            if (_ramTracker)
+                _ramTracker->Mark(static_cast<size_t>(p - _ram.data()) + (addr & (PAGE_SIZE - 1)));
+        }
         else if (_windowFlash[window])
             writeFlash(window, addr, value, now);
         // else: write-protected RAM - dropped
@@ -91,6 +95,10 @@ public:
     /// Re-point the windows (after a flash mode change or a state restore)
     void rebuild();
 
+    /// Time-travel engine region (Phase 1, Step 6): RAM writes are marked in
+    /// @p tracker while it is set (null = not recording)
+    void setRamTracker(ttd::TTDRegionTracker* tracker) { _ramTracker = tracker; }
+
     // Raw register access for TTD
     void setPagesRaw(const uint8_t pages[4], uint8_t mpag, uint8_t cfg);
 
@@ -110,4 +118,5 @@ private:
     const uint8_t* _readPtr[4] = {};
     uint8_t* _writePtr[4] = {};
     bool _windowFlash[4] = {};
+    ttd::TTDRegionTracker* _ramTracker = nullptr;
 };

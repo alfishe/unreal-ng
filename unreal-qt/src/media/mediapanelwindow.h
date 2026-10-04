@@ -84,6 +84,7 @@ private slots:
     void onDiscard();
     void onProtect();
     void onCreate();
+    void onCompactFlash();
     void onFilesDropped(int row, const QStringList& paths);
 
 private:
@@ -117,6 +118,9 @@ private:
     QPushButton* _discard = nullptr;
     QPushButton* _protect = nullptr;
     QPushButton* _create = nullptr;
+    QPushButton* _compactFlash = nullptr;
+    std::map<std::string, bool> _cfChoice;  ///< empty IDE units: whether the next disk image is a CompactFlash card
+    bool WantsCompactFlash(const MediaPanelRow& row) const;
     QTimer* _timer = nullptr;
 
     /// Async folder insert (BUGS.md #3): one at a time, guarded by

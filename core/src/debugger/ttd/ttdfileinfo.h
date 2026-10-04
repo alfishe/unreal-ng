@@ -43,6 +43,10 @@ struct TTDRecordedMachine
     /// every checkpoint. The set the loader checks the live machine against.
     uint64_t peripheralMask = 0;
     std::vector<std::string> peripherals;  ///< Names of the fitted peripherals, ascending id
+    /// Bit i set: peripheral id i was fitted but is not recorded by design
+    /// (the lightweight General Sound; header flag kFlagsHasNotRecordedMask)
+    uint64_t notRecordedMask = 0;
+    std::vector<std::string> notRecorded;  ///< Their names, ascending id
 
     /// General Sound slot: NONE, Z80 (GS with its Z80), LW (lightweight), NGS (NeoGS)
     GSTypeKind generalSound = GSTypeKind::NONE;

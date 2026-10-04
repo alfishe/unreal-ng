@@ -39,7 +39,7 @@ A Sprinter (top clock ×6, so one 3.5 MHz T-state is 6 units; 224 T per line) re
 | Clock reading at frame 101's start | `PortDecoder::EmulatedMicroseconds` (portdecoder.cpp:237-255) = 101 × 19,968 = 2,016,768 µs, 31 ms before frame 100's start (2,048,000 µs) | from the frame table: 2,048,000 + 20,480 = **2,068,480 µs** past the session's time base |
 | The `IM2` vector of each interrupt | taken from the live device at replay (`IInterruptSource::AcknowledgeInterrupt`, z80.h:341); the port journal is refused for the machine (TTM:2077-2078) | recorded as bus data at the acknowledge; a replay reads it from the session |
 | The key press | input event, applied between instructions (TTM:1928-1945) | the same, as an event of kind `Key` in the one event stream |
-| The disk write at frame 103 | a replay barrier (`DiskWrite`, mediamanager.cpp:651-667): a seek stops before it | the checkpoint of frame 104 names the disk's new version; a seek restores it, a replay of frame 103 writes into the replay's own head, the image file is untouched |
+| The disk write at frame 103 | a replay barrier (`DiskWrite`, mediamanager.cpp:651-667): a seek stops before it | no barrier: a replay of frame 103 runs, the CPU reads from the controller what it read when recording (bus journals), the write goes into the held overlay (FR-20), the image file is untouched; the checkpoint of frame 104 names the disk's new version so the controller's own state matches too |
 | The session opened in an emulator with another audio rate | loads; a replay inside a frame silently differs | loads; status lists `audioCoreRate: recorded 44100, live 48000`, replay operations report **not bit-exact** |
 
 ## 3. How it works today
@@ -80,14 +80,14 @@ So since the v1 amendments the input and the external events **are** saved (the 
                          machine time (u64, top-clock units)
  frame table   |  f100 (430,080)  |  f101 (419,328)  |  f102  | ...         Phase 1
                |                  |                  |        |
- event log     .   Key            .   Reset->cut     .        .             Step 1 (sparse)
+ event log     .   Key            .   Edit           .        .             Step 1 (sparse)
  bus journals  ||||||||||||||||||||||||||||||||||||||||||||||||  IN, OUT,   Step 1 (dense)
                                                                vector, DMA
  payload store [net bytes][edit bytes][DMA bytes] <- refcounts from events and checkpoints
  CPU table     main | gs.z80 (12 MHz) | ngs.z80 (10-24 MHz) | ... + clock map  Step 3
  checkpoint N  { regions, devices (Ph 1-2), bus cursors, CPU counters,
                  fingerprint id, media versions }                       Steps 1, 3, 4
- derived       write index (policy, E7) | coverage index (whole)        Step 7
+ derived       write journal (segments, built by replay) | coverage index (whole)   Step 7
 ```
 
 ### 4.2 Step 1 — One event stream
@@ -106,9 +106,9 @@ enum class TTDEventKind : uint16_t   // stable: stored in files, appended, never
 {
     // 0x0000-0x00FF input: the value of TTDInputKind (Key = 0 ... FrontPanelSwitch = 15)
     // 0x0100-0x01FF markers: 0x0100 + TTDExternalEventKind
-    TapeControl = 0x0100, MediaWrite = 0x0101, DebuggerEdit = 0x0102, HardwareReset = 0x0103,
+    TapeControl = 0x0100, MediaWrite = 0x0101, DebuggerEdit = 0x0102, HardwareReset = 0x0103,   // HardwareReset: v1 import only (D39)
     // 0x0200-0x02FF frame-boundary cuts
-    SnapshotLoad = 0x0200, MediaChange = 0x0201, ConfigChange = 0x0202, DeviceSetChange = 0x0203,
+    SnapshotLoad = 0x0200, MediaChange = 0x0201, ConfigChange = 0x0202,   // 0x0203 reserved (was DeviceSetChange, D38)
     // 0x0300-0x03FF facts the machine produces itself
     ClockChange = 0x0300, FrameLengthChange = 0x0301, ReplaySourceChange = 0x0302, InterruptFrame = 0x0303,
     OtherMarker = 0x01FF,
@@ -125,7 +125,7 @@ struct TTDEvent
     uint32_t seq = 0;            // order among events at the same machineTime
     TTDEventKind kind;
     TTDCpuId cpu = TTDCpuId::Main;   // the CPU whose boundary applies it (Step 3)
-    uint8_t args[16] = {};       // kind-specific: a TTDInputEvent's fields, a clock rate, a reset type
+    uint8_t args[16] = {};       // kind-specific: a TTDInputEvent's fields, a clock rate
     TTDPayloadRef payload;       // network bytes, edit bytes, a reason string
 };
 
@@ -149,11 +149,11 @@ The kind ranges make the v1 mapping an identity: a v1 input kind keeps its numbe
 | `Key`, `PcKey`, mouse, `Joystick`, `FrontPanelSwitch`, `KeyboardReset` | Input | instruction boundary | — | input journal, same kind number |
 | `GSCommand`, `GSData`, `GSNmi`, `GSResetCard`, `GSReset` | Input | instruction boundary of the main CPU | — | input journal |
 | `NetEvent` (incl. `ModemLines`), `NetLinkReset` | Input | instruction boundary | received bytes | input journal + network section; `netIndex` / `journalIndex` become payload ids |
-| `TapeControl` | Input (with tape media versions) | instruction boundary | — | external event; a barrier until the tape is under media versions (Step 4) |
+| `TapeControl` | Input | instruction boundary | — | external event (the deck is part of the machine; what the CPU reads from the tape is EAR bits, bus data) |
 | `DebuggerEdit` | Input | instruction boundary | target + bytes (memory region and offset, register id, device register) | external event; a v1 edit has no data, so it imports as `Barrier` |
-| `MediaWrite` | Fact | — | slot id | external `DiskWrite`; a barrier until media versions exist (Step 4) |
-| `HardwareReset` | Cut | instruction boundary, then the frame ends | reset type | not emitted in v1 (a reset stops recording) |
-| `SnapshotLoad`, `MediaChange`, `ConfigChange`, `DeviceSetChange` | Cut | frame boundary | what changed | none: v1 ends or invalidates the session (D10, D26) |
+| `MediaWrite` | Fact | — | slot id | external `DiskWrite`; the replay writes again into the held overlay (FR-20) |
+| `HardwareReset` | — | — | — | not emitted: a reset ends the session (D39); the kind number stays for v1 files |
+| `SnapshotLoad`, `MediaChange`, `ConfigChange` | Cut | frame boundary | what changed | none: v1 ends or invalidates the session (D10, D26). The device set is fixed for a session (D38) |
 | `ClockChange`, `FrameLengthChange`, `InterruptFrame` | Fact | — | rate, length, RZX frame | none |
 | `ReplaySourceChange` | Fact | instruction boundary | source (Step 2) | none |
 | `IN` result | bus data | on access | — | port read journal, unchanged blocks |
@@ -166,7 +166,9 @@ What each role means for a replay:
 - **Bus data** is consumed by the access that asks for it, in order, and checked against the access's time, port and PC (as `PlayNext` does). D24 names two points; consumption "on access" is the third, needed because an `IN` happens inside an instruction.
 - **Fact** is produced by the emulation itself. A replay regenerates it and compares; facts feed indexes (clock map, frame table, RZX frame lookup) and queries.
 - **Cut** ends the frame early and is followed by a checkpoint. A replay never executes through a cut: crossing it means restoring the checkpoint after it. Reset and snapshot load therefore stop being the end of a session.
-- **Barrier** is what is left for effects the session cannot reproduce: a v1-imported edit, `OtherMarker`, a write to a medium with no versions. A seek stops before it and says why, as today.
+- **Barrier** exists only for records read from v1 files without their data: an edit without its bytes, a v1 reset, `OtherMarker`. A seek stops before it and says why. A v2 session has none.
+
+**A replay is sealed** (owner principle, 2026-09-29, restated 2026-10-03): during a replay the machine is cut off from the outside world and fed only what the session recorded - input events, network answers, and at the CPU's boundary every value it reads from outside (the bus journals: `IN` results, interrupt vectors, DMA into memory). Disks, tapes and network adapters keep working inside the replay exactly as when recording, until the replay ends; nothing they do reaches the host (Step 6). Media versions (Step 4) are not what makes the replay exact - the CPU already reads the recorded bytes - they keep the controllers' own state (an FDC's buffer, a hard disk's cache) equal to the recording where the replay stops.
 
 **Which events are bus data, and where they are recorded.**
 
@@ -184,11 +186,21 @@ With these, `PortJournalUnsupportedReason` (TTM:2050-2086) has no reason left on
 - References come from events and from checkpoints. A device that buffers received bytes (the virtual network's socket queues) names them by payload id in its state, as v1 does with `journalIndex`. Phase 2's device contract gains `CollectPayloadRefs(std::vector<TTDPayloadRef>&)`, so the engine knows each checkpoint's references (D5: every stored item records what it depends on).
 - A payload is kept while any kept event or kept checkpoint refers to it. When the start of history moves forward (Phase 4 eviction), events before the new start are dropped, but their payloads stay as long as a kept checkpoint still holds them.
 
+**Debugger edits as input — as built (2026-10-03).** `Emulator::EditMemoryFromTool` (every tool edit: Lua, Python, WebAPI memory and page writes, device memory, the RTC) brackets the edit with `TimeTravelManager::BeginToolEdit` / `EndToolEdit`. The tool's edit is an opaque function, so its bytes are taken from what it left behind: every machine RAM page and device-memory piece marked dirty since the last checkpoint (the edit's among them), whole, and every device state the edit changed. A replay reaches the edit with the same contents as the recording, so writing these is exactly the state after the edit; no new check on the memory write path. v1 keeps its marker (a barrier); the engine gets the bytes (`kEditCarriesData`) and its replay applies them and goes on. `TimeTravelManager_EngineSeek_Test.AToolEditReplaysWithItsBytes`: v1 stops at the edit, the engine lands on the recorded machine 10,000 T after it. Register edits from the debugger do not go through this path yet.
+
 **Debugger edits as input.** D9: an edit at the present is journaled. With its bytes in the payload, a replay re-applies it, so an edited session replays through the edit instead of stopping. An edit in the past starts a branch (Phase 5, [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md)). `Emulator::EditMemoryFromTool` (emulator.cpp:680-697) passes the edit's target and bytes, not only its source name.
 
-**Built in now, used later.** Events carry the branch through their position (Phase 1); per-branch event data is a separate stream in the file ([what-if §8](../2026-09-29-model-what-if/design.md)). `DeviceSetChange` content comes from Phase 2. `MediaChange` becomes exact with media versions (Step 4).
+**Built in now, used later.** Events carry the branch through their position (Phase 1); per-branch event data is a separate stream in the file ([what-if §8](../2026-09-29-model-what-if/design.md)). `MediaChange` becomes exact with media versions (Step 4).
 
 **File consequences (Phase 4).** An event-log stream (records grouped per frame, delta-coded times); a payload stream; the four bus journals in v1's block layout with one cursor per checkpoint each; a kind table in the header so a reader names kinds it does not know and treats unknown `Input` kinds as barriers.
+
+**As built (2026-10-03), the first full-scenario A/B.** The engine holds a session's events (`TTDEventLog`, `TTDPayloadStore`) and bus data (`IN` / `OUT` journals in v1's block format, a cursor per checkpoint), fed from v1 live in shadow mode and from v1 files. `TimeTravelManager::SetReplaySource(engine)` makes a seek restore from the engine's checkpoint (CPU, chipset, every memory region, every device), apply input from its event log and hand the CPU its recorded `IN` values; the replay loop is still v1's (Phase 5 moves it). A session fed from a file is bound to the live machine first (`TimeTravelEngine::BindLive`: regions by id and size, devices by v1 id; Phase 4's file reader needs the same). `TimeTravelManager_EngineSeek_Test` seeks to points inside frames twice, from v1's data and from the engine's, and compares the machine - CPU, all RAM, every device's state - on a live recording with key presses mid-frame and on the Dizzy X and Green Beret fixtures. Mutations: not restoring devices, not applying input, not playing the bus journals each fail it. Found on the way: a fed session's device table had no live devices, so the engine's restore skipped them (the cause of the first A/B failure); and on Green Beret's tape load the live tape answers differently from the recording during a replay (up to 3,444 value mismatches, v1 and engine alike; the CPU reads the recorded values), an open item for Q5.
+
+**As built (2026-10-03), media reads (owner decision: record at the sector read).** A code survey found three paths where data from outside reaches the machine without an `IN`: TS-Conf's DMA from the SD card and from IDE, and the NeoGS card's own SD reads (which the main CPU then sees through ZX-DMA). Interrupt vectors are all functions of captured device state. Instead of a tap per DMA engine, every block medium's stack now ends in `MediaReadTap` (emulator/io/storage/mediareadtap.h), bound by the media manager to its slot; `IMediaReadJournal` (emulator/media/mediareadjournal.h) is the media layer's interface. While recording, each sector read from an image goes into the engine's `TTDMediaJournal` (frame, T, slot, LBA, bytes; `mediaReadCursor` per checkpoint); a seek replaying from the engine hands the reads back in order, and a read the recording lacks (another slot or LBA: the execution left the recording) goes to the image and is counted. One tap covers the CPU's `IN`, both DMA paths and the card CPU, and a replay needs no image file. `TimeTravelManager_EngineSeek_Test.SectorReadsComeFromTheSessionNotTheImage`: a ZX-Evo program reads a sector from its SD card while recording, the image file is then changed; seeks from the engine's data land on the machine the original image gave (card buffer, RAM, CPU), seeks from v1's data do not. The ATAPI drive reads CD data past the block stack (`CdImage::ReadUser`, `ReadFrame`): those reads are journaled in `CdImage` itself, bound by the media manager like the tap (the block stack's own sector reads go by an unrecorded path, so nothing is recorded twice). CD audio samples (`ReadAudio`) are not recorded: they are the drive's output to the host (the renderer's cache is not machine state), and a replay is muted. D33 prints the journal apart (v1 has none).
+
+Found while closing it: the Green Beret value mismatches (Q5) were two bugs in the tape's restore - a restore into a deck whose blocks were not installed yet (the deck installs them lazily when it starts) left it empty, and a block whose edges had to be generated again (freed when the deck moved on, or freshly installed) restarted from its first pulse. With the session's tape in the deck the replay's devices now answer as recorded (`RecordedFixtures_EngineSeeksLandOnV1sMachine` checks zero mismatches on both engines; reverting either fix fails it). A session still does not carry its tape: that is media in the session (Step 4).
+
+**As built (2026-10-03), vectors and the bus data on every machine.** The engine's bus data came from v1's port journals, which v1 recorded only where its gate let its own replay play them: not on TS-Conf, the Sprinter, Scorpion, Profi or with NeoGS fitted. The journals are now recorded on every machine (`_portJournalRecorded`); the gate (`_portJournalValid`) only decides whether v1's replay plays them, so v1 replays as before. Every interrupt vector the CPU takes on a machine with its own INT logic (`IInterruptSource`: TS-Conf, Sprinter) goes into the engine's `BusVectors` journal (one record per acknowledge, port #FFFF; the hook sits in that branch of the CPU only, so other machines pay nothing); a replay from the engine hands the recorded vector back. Vectors are functions of captured state, so this is a check and a search key, and it keeps the replay sealed if a device ever answers otherwise. Tests: `TimeTravelManager_EngineSeekModels_Test` (Pentagon with NeoGS, TS-Conf, Sprinter, Scorpion, Profi, ZX-Evo booting their ROMs: engine seeks land on v1's machine; the engine holds every IN), `InterruptVectorsAreRecordedAndPlayedBack` (TS-Conf in IM 2). Removing the vector hook, or recording the journals only where v1 plays them, fails them. Cost: v1's memory grows on the formerly gated machines by its port journals; the engine stays below v1 on all 46 configurations.
 
 ### 4.3 Step 2 — Two replay modes
 
@@ -213,6 +225,33 @@ enum class TTDReplaySource : uint8_t { LiveInput, RzxPlayback };
 struct TTDReplayStats { uint64_t valueMismatches; uint64_t divergences; std::optional<TTDPosition> firstDivergence; };
 TTDReplayStats TimeTravelEngine::LastReplayStats() const;   // every surface shows it next to the seek result
 ```
+
+**As built (2026-10-04).** The step came down to one finding and two pieces.
+
+- **The finding.** TTD could record while an RZX played, but a seek back inside the playback went wrong. The replay ran with the RZX player where it stood (at the end of the session), took its `IN` values and frame ends from there and desynced it.
+- **Piece 1: the player's position is a device state.** `RzxPlayback` (id 57, `emulator/rzx/rzxttdstate.*`, 84 bytes) holds:
+  - the frames done, the fetches and the `IN` position in the current frame;
+  - the player state, the counters and the first desync;
+  - a fingerprint of the recording.
+
+  It is registered when a recording was played on the machine. A new playback cannot start while TTD records, so the device set stays fixed (D38). A restore puts the player there and installs or removes its hooks as they were at that point: a seek back across `rzx stop` plays the RZX again, a seek after it runs live. During the replay the player feeds the same values the port journal hands the CPU; in strict mode its own checks (`IN` count, fetch count) stop a replay that leaves the recording, as an RZX player does.
+- **Piece 2: RZX frames are facts.** At the end of each step that ends an RZX frame, with its interrupt or (IFF1 clear) without, the CPU reports the frames done (`TimeTravelManager::NoteRzxFrameEnd`). The shadow engine gets an `InterruptFrame` fact there (args: u64 frames done, u8 interrupt taken). The start and end of the playback are `ReplaySourceChange` facts (`TTDReplaySource`).
+  - `TimeTravelEngine::RzxFrameTime(n)` maps RZX frame N to machine time. A frame of 0 fetches has no end of its own; it maps to the next frame end, as the player's own seek does.
+  - `ReplaySourceAt(t)` names the source at a time.
+- **No separate replay mode was needed.** The mode follows from the recorded source. "`IN` values authoritative" is what the port journal already does on every replay. The "stop at a divergence" rule is the player's strict mode, now restored with its position.
+
+| Check | Result |
+|---|---|
+| Seek back inside a playback (ericfloaters, 120 frames, 4 points) | the straight play's machine, including the player's position |
+| Seek across `rzx stop` | inside: playback on, frame interrupt masked; after: live |
+| Facts | one per RZX frame end, consecutive frame numbers, interrupt count equal to the player's |
+| Seek to RZX frame N against `SeekRzx(N)` (the keyframe store) | equal (CPU, all RAM, `#7FFD`, player frame and fetches) on all 6 recordings in testdata: 48K ×2, 128K ×2, +2, Pentagon; from v1's data and from the engine's |
+
+Mutants caught: a restore that leaves the hooks alone; a restore that does nothing; facts only for frames ending with an interrupt (Garfield runs with interrupts off: no facts). The 16-recording corpus check runs with `UNREAL_RZX_CORPUS`.
+
+**Left for later:**
+- `rzx/seek` through the engine and the removal of `RzxKeyframeStore` come with the switch-over (Phase 5).
+- A session replayable without the RZX file comes with media in the session (Phase 4). Its forced interrupts would then come from the facts, as the tape's data will.
 
 ### 4.4 Step 3 — Several CPUs
 
@@ -266,10 +305,12 @@ computed with exact integer arithmetic (128-bit intermediate), in both direction
 
 **Variable frames.** Phase 1's frame table holds each frame's start. This step adds what ends a frame and what changes its length:
 - `FrameLengthChange` fact: a Sprinter `#2C` / `#2D` write takes effect at the next frame boundary;
-- a `HardwareReset` or another cut ends the frame early;
+- a cut ends the frame early (a reset ends the session, D39);
 - RZX frames are not video frames ([RZX design §6](../2026-09-29-rzx-replay/design.md)): they are `InterruptFrame` facts, not frame-table entries.
 
 Everything that turned a frame number into time - `GlobalT`, `EmulatedMicroseconds`, the write journal's `globalT` - uses the frame table instead.
+
+**As built (2026-10-03), the engine's frame table.** In shadow mode each frame's start is the last captured frame's start plus that frame's measured length: the base T-states the machine ran since (`emulatorState.t_states` grows by each closed frame) times `ttd_clock_units`, not the frame number times the current length. When a frame's length differs from the one before, a `FrameLengthChange` fact goes into the event log at the boundary (args: the closed frame's length in units, u32). `TimeTravelManager_FrameTable_Test` switches a Sprinter to 312 lines and back mid-recording: every frame is one of the two measured lengths and machine time never goes back; v1's frame x length fails it. v1's own `GlobalT` (its write journal, find-last) and `EmulatedMicroseconds` (the RTC) are unchanged; the RTC moves to the frame table with the session time base (Step 5).
 
 **File consequences.** A CPU table in the header; clock changes in the event log; per checkpoint, the CPU counter residuals (zero in nearly every frame).
 
@@ -308,9 +349,9 @@ std::vector<TTDFingerprintDiff> Compare(const TTDConfigFingerprint& recorded, co
 - A media slot table in the session: slot id (`fdd.a`, `sd.zc`, `ide0.master`), kind, the source's `ContentId`, format.
 - Each checkpoint lists the version of every medium **that changed since the previous checkpoint**; the change layer cuts a version at the frame boundary after a write ("at most one per medium per frame"; the media manager already marks the first write per frame, mediamanager.cpp:655).
 - A checkpoint depends on its versions (D5): the change layer keeps them while a checkpoint refers to them.
-- A seek sets each medium's head to the checkpoint's version. A replay then reads exactly what the machine read the first time, and `MediaWrite` is a fact instead of a barrier.
+- A seek sets each medium's head to the checkpoint's version, so a controller that reads the medium during the replay sees what it saw when recording, and its state where the replay stops matches the recording.
 - Inserts and ejects are `MediaChange` cuts (WI-6, D10).
-- **Until the change layer exists** (storage manager phases H1 and H5), a version is the source's `ContentId` plus a write count. A write keeps v1's barrier, so nothing becomes less honest than v1. Once versions exist, the barrier goes away for that kind of medium.
+- **Until the change layer exists** (storage manager phases H1 and H5), a version is the source's `ContentId` plus a write count; a medium without versions is reported in the session status (the CPU still reads the recorded bytes, so the replay stays exact; only the controller's state at the stop can differ). No barrier.
 
 ```cpp
 class IMediaHistory    // implemented by the media manager's change layer
@@ -318,9 +359,31 @@ class IMediaHistory    // implemented by the media manager's change layer
 public:
     virtual uint64_t CurrentVersion(uint16_t slot) const = 0;
     virtual bool SetHead(uint16_t slot, uint64_t version) = 0;   // seek
-    virtual bool HasVersions(uint16_t slot) const = 0;           // false: writes stay barriers
+    virtual bool HasVersions(uint16_t slot) const = 0;           // false: reported in status, no barrier
 };
 ```
+
+**As built (2026-10-03).**
+
+- **Fingerprint as named fields.** `TTDConfigFingerprint` (`engine/ttdconfigfingerprint.h`) is a list of named values instead of a fixed struct, so a model adds its board options without a format change and `Compare` names each difference with both values. `CaptureConfigFingerprint` (`ttdconfigcapture.h`) reads:
+  - `machine.model`, `machine.ram_kb` (these two change what a restore gives: Degraded);
+  - `timing.frame`, `.line`, `.int_start`, `.int_length`, `.frame_duration_us`, `.clock_units`;
+  - `sound.core_rate`, `.decimator_high_fidelity`, `.gs_ram_kb`, `render.sound_hq`, `.screen_hq`;
+  - `fdc.turbo_vg`; the board options from the model's own decoder (`PortDecoder::AddTTDBoardSettings`: the Sprinter's `fast_start` / `turbo_allowed` / `accel_int_suspend`, the Profi board switches), so shared code names no model (Sprinter isolation rule);
+  - `rom.signature`: FNV-1a of the whole ROM region, every model's ROM set, the Sprinter BIOS flash among them; hashed once per session (the ROM set cannot change within one, D39).
+  The device set and its firmware are not repeated: the device table compares them on every restore (Phase 2).
+- **Fingerprint table.** `TimeTravelEngine::SetConfiguration(frame, fp)` keeps the session's first entry; a capture whose settings differ adds an entry and a `ConfigChange` cut at that frame's start (args: entry index). `ConfigurationAt(checkpoint)` gives the settings a checkpoint was recorded with.
+- **Check, never refuse.** `CheckConfiguration(checkpoint, live, forReplay)` gives one `ConfigurationDiffers` issue per difference: for a replay every difference is `NotBitExact`; for a frame-aligned restore only the model and RAM size count. `TimeTravelManager::LastEngineCheck()` holds the check of the last seek from the replay engine: the restore check for every seek, the replay check when the seek replays inside the frame (kept across the display's own restores). v1's load still refuses another ROM set; that refusal goes with v1.
+- **Media versions, interim.** `IMediaHistory` (`emulator/media/mediahistory.h`) is implemented by `MediaManager`. A version is the source's `ContentId` plus the count of frames that wrote the medium (`NoteWrite`, at most one per frame); `SetHead` can only "set" the version the medium holds now. The engine keeps a media slot table (slot, format, has-versions, the checkpoints at which the version changed); the shadow capture reads the versions only when the media layer's stamp moved. A replay from a checkpoint whose medium has changed since then runs without a barrier; it reads the recorded sectors and reports `MediaVersionDiffers` naming the slot. When the storage manager's change layer (H1 / H5) lands, `SetHead` goes back and the report disappears for media that keep versions.
+- **Surfaces.** The check is a core API on the engine path only (shadow mode, A/B tests). WebAPI, MCP, CLI, Lua, Python and Qt show it when v2 becomes the user path (Phase 5); until then users see v1, which refuses another ROM set on load.
+- **Tests.**
+  - `TTDConfigFingerprint_Test`: 4 tests; `TTDConfigCapture_Test`: board options come from the model's decoder only.
+  - `TimeTravelEngine_Config_Test`: the settings table with its cut and both severities; media versions stored on change only.
+  - `TimeTravelManager_EngineSeek_Test`:
+    - `AnotherConfigurationIsReportedNotRefused`: another decimator and another ROM byte. The seek inside a frame runs and names exactly those two settings; a seek to the checkpoint itself is exact.
+    - `ASettingChangedWhileRecordingIsACut`.
+    - `AMediumWrittenSinceTheCheckpointIsReported`: ATM3 SD.
+  - Six compilable mutants, each caught.
 
 ### 4.6 Step 5 — Real-time clocks on an emulated time base
 
@@ -333,6 +396,14 @@ v1 already runs every DS12887 user on emulated time during a recording (§3.2). 
 5. **Outside a recording** the chip reads the host clock, as today (migration-trajectory risk for Phase 3). With always-on recording (D29) "outside a recording" becomes rare; see Q4.
 
 The clock's `Fixed` mode (tests and the benchmark's frozen RTC) is unchanged.
+
+**As built (2026-10-03).** One time base per session, no format change:
+
+- `TimeTravelManager::StartRecording` takes the host's wall time once (`Ds12887::HostCivilMicrosNow`, local civil microseconds) together with the machine's emulated microseconds at that moment (`EmulatorContext::ttdSessionWallMicros` / `ttdSessionEmulatedMicros`), after the emulator has paused.
+- `PortDecoder::SessionWallMicros()` gives that base moved by the emulated time since. Each clock chip gets it through `Ds12887::SetSessionWall` (ATM3 / ZX-Evo AVR, Profi, Scorpion SMUC, TS-Conf, Sprinter) and anchors at it in `EnterEmulatedTime`. Two chips entering emulated time at different moments read the same time; without a session (`kNoSessionWall`) a chip anchors at the host clock as before.
+- `PortDecoder::EmulatedMicroseconds` comes from the base T-states run since power-on (`emulatorState.t_states` x `ttd_clock_units` plus the position in the frame), each frame at its own length: exact integer split division, no 128-bit arithmetic. A Sprinter switching 320 -> 312 -> 320 lines gains 20,480 / 19,968 us per frame and never goes back (v1's frame x current duration jumped back).
+- Point 3 (the base survives save and load) needs nothing new: each chip's anchor is part of its state blob, so a loaded session or a branch restores the recorded anchors; a resume does not re-anchor.
+- Tests: `Ds12887_Test.ChipsAnchorAtTheSessionWallTime`, `TimeTravelManager_FrameTable_Test.EmulatedMicrosecondsFollowEveryFrameLength` and `.SessionTimeBaseIsOneInstantForEveryClock`. Each fails with its fix reverted (mutation check).
 
 ### 4.7 Step 6 — No writes outside the session during replay
 
@@ -364,72 +435,120 @@ public:
 - `ttdReplayActive` is the flag v1 already sets for every replay (TTM:1613-1671), so the gate also protects v1 from the day it lands.
 - **Test:** replay history that writes a floppy, an SD card and a hard disk; the image files, the session write maps and the flash file are byte-identical before and after (FR-20).
 
-### 4.8 Step 7 — The write journal as a derived index
+**As built (2026-10-03).** The paths that wrote a host file during a replay, found by a code survey: the write-through IDE / SD images (`RawImage::WriteSector`, the default for IDE), floppy write-through (written at the frame boundary by `MediaManager::ApplyPending`, which a replay crosses), the VDAC2 bus capture file and the audio of a video recording (its frames were already skipped). Already safe: NeoGS flash and SD changes (refused during a replay), the virtual network, the session write maps and NVRAM (saved only on an explicit save or at shutdown). What changed:
+- every write-through block stack ends in `HostWriteHold` (emulator/io/storage/hostwritehold.h). `MediaManager::HoldHostWrites(true)` holds the guest's sector writes in memory, where the replayed program reads them back; `HoldHostWrites(false)` writes them to the file. That is the retry of a refused persist "with the state of that moment" above; the overlay is not dropped, because the machine stands at the replay's target afterwards and its disk must match it. A medium inserted while held is held;
+- floppy write-through is skipped while held, the disk stays dirty, and the next live frame writes it;
+- `Vdac2Card::CaptureLive()` and `RecordingManager::CaptureAudio` skip replayed traffic;
+- `TimeTravelManager::EnterReplayMode` / `ExitReplayMode` hold and release, so v1 is covered now; `MediaWriteGate::HostWritesAllowed` (emulator/media/mediawritegate.h) is the shared rule.
 
-**Why it can be derived.** With a sealed replay (Steps 1-6), re-running a frame regenerates its writes exactly. Keeping the journal is a speed choice (D17).
+Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileReplaying`, `MediaManager_Test.FloppyWriteThroughWaitsWhileReplaying`, `TimeTravelManager_HostWrites_Test` (a guest writing a probe port sees host writes held during a v1 replay and only then). Each of the three mechanisms, removed, fails its test. Not covered: an SD card opened directly by `SdCardSpi::open` in persist mode, which only machines without a media manager do (bare test contexts).
 
-**Record.** Memory writes only: port `OUT`s are already in the `OUT` bus journal, so the engine does not store them twice (v1 does, TTM:4776-). Columns, compressed as v1's file blocks:
+### 4.8 Step 7 — The write journal: on demand, in segments, built by replay
 
-| Column | Width raw | Note |
+**Decision (owner, 2026-10-03; D40).** This replaces the retention policies (Ring / WholeHistory / Window) planned before experiment E7. E7's measurements and the reasons are in [write-journal-e7.md](write-journal-e7.md).
+
+**What the journal is for.** It answers one question: who wrote memory address X last, and when. Scrubbing, restoring, stepping back, and reverse continue to a code or read breakpoint do not use it. "Who wrote port P last" is answered by the port journal (Step 1), which every session records. So the write journal holds memory writes only, no port OUTs.
+
+**Why it is optional.** On busy content the journal is 3 to 31 times the size of everything else a recording keeps. A replay rebuilds it exactly (E7: 3,400 frames, no difference). The recording therefore keeps it only where it was asked for.
+
+**How it works.**
+
+| Mechanism | What it does |
+|---|---|
+| Option at the start of a recording | "Record the write journal": off by default |
+| Switch at any moment | On or off at any instruction boundary, also inside a frame and from the emulation thread itself. Each on-to-off span is one segment |
+| Segments | The session keeps a list of time spans in which every memory write is in the journal. A query inside a segment answers from the journal at once |
+| Build by replay | For any span `[from, to]` of a session, recorded or loaded, the journal is rebuilt by replaying the frames: about 2-4 ms per frame, as slow as RZX playback, with progress and cancel. The new segment merges with its neighbors |
+| Query outside the segments | The coverage index (kept for the whole session) finds the newest frame that wrote the address; that one frame is replayed. Always correct, slower (E7: 2-6 ms typical, more on long histories) |
+| Session file | The header says whether a journal is present; a segment table lists the spans it covers. No segments: no journal. One segment from the session start to its end: the whole session |
+
+**Mechanisms for breakpoints.** Breakpoints with triggers come right after TTD and use these calls; TTD itself has no trigger logic:
+
+- `SetWriteJournal(on)`: callable from the emulation thread in the middle of a frame, so a breakpoint can start or stop the journal at the instruction that hit;
+- `BuildWriteJournal(from, to)`: rebuilds a span by replay;
+- the segment list and find-last with its source ("journal" or "replay").
+
+**The coverage index stays on.** It is what keeps searches outside the journal fast, and it is small (1-2 KB per frame). Its frame-time cost is measured on the engine; if it is high, the index is made cheaper rather than optional.
+
+**No file compatibility to keep.** TTD has not been released, so for users the engine is the first version. The v1 journal flags (`write_journal_complete`, the gap fields) and the `development` / `gaming` modes are replaced, not kept beside the new ones. The temporary v1 → v2 file converter may copy a v1 journal or rebuild it by replay.
+
+**Implementation plan.** Each step ships with its tests, all five automation surfaces, Qt where it applies, and its documentation. v1 gets the behavior first, because users run v1 until Phase 5; the engine takes the same model in the session file (Phase 4).
+
+| Step | Content | Documentation updated in the same step |
 |---|---|---|
-| machine-time delta | u32 | from the previous record |
-| region | u16 | region id (Phase 1): machine RAM, General Sound RAM, ... |
-| piece offset | u32 | offset in the region |
-| cpu | u16 | `TTDCpuId`: answers "which card instruction wrote this" (GS debugger D2) |
-| pc | u16 | of the writing instruction |
-| value | u8 | |
+| J1 | Core: segments; switching at any instruction, also mid-frame; find-last per segment, with the coverage index for writes outside them; port find-last from the port journal; journal off by default; status (present, segments); header flag and segment table; `ttdfileinfo`, the Python analyzer, `ttd.ksy` | `ttd-container-format.md`, `ttd-v1-architecture-and-format.md`, analyzer README |
+| J2 | Core: `BuildWriteJournal(from, to)` with progress and cancel; the built records equal recorded ones | — |
+| J3 | Automation: CLI `ttd start [--journal]`, `ttd journal on\|off\|build <from> <to>\|status`; WebAPI and OpenAPI; MCP `time_travel`; Lua; Python. The `development` / `gaming` modes are removed | `command-interface.md`, `webapi-interface.md` + OpenAPI (`openapi_ttd.inc`, `openapi_schemas.inc`), `lua-interface.md`, `python-interface.md`, `docs/features/mcp/README.md`, `.recipe/analysis/ttd-recording.md`, a new recipe for building a journal |
+| J4 | Qt: a "Write journal" switch in the TTD panel (before and during a recording); the segments as a band on the scrubber; "Build the write journal for the selection" with progress and cancel | `time-travel-ux.md` |
+| J5 | Python tool: a script that drives a running emulator through the WebAPI: load a `.ttd`, build the journal for a span, save. The offline analyzer reads files but cannot replay | `tools/verification/ttd-analyzer` README |
+| J6 | Engine: the journal as segments in `TimeTravelEngine`, fed from v1 in shadow mode; the segment table in the Phase 4 session file | Phase 4 TDD |
 
-A card's writes to its own memory go in with their CPU id. That is built in now and used when the card write hooks of Phase 1, Step 6 feed it.
+**As built, J1 (2026-10-03).**
 
-**Retention policies.**
+- The write journal is off by default. `SetEnableWriteJournal` works at any moment; the journal's on/off state is synced at every session state change (`SetState`), at the switch itself and when the time-travel or debug-mode feature changes (`SyncJournalSegment`).
+- Segments are `(from, to]` in machine time. A segment closed at the instant the journal is switched back on continues instead of starting a new one. The ring's evicted records shrink the first segment; recording again from an earlier point clips the segments at the cut.
+- The "gap" state of v1 (`write_journal_gap`, `_journalGapless`) is gone. `writeJournalComplete` now means one segment over the whole session; the session status lists the segments (`writeJournalSegments`). The old status text fields stay until J3 replaces them on the automation surfaces.
+- Port OUTs are no longer written to the write journal; port find-last answers from the port journal.
+- Write find-last walks the frames backward:
+  - a run of frames inside one segment answers from the journal (`TTDWriteJournal::FindLastInRange`, a binary search, then a scan back to the run's start);
+  - any other frame uses the coverage index (now also for writes) and replays the frame.
+- Fixed on the way, a v1 bug: a replay answer could be a write made after the asked moment, because the replay finishes the instruction that crosses it. Late hits are now dropped.
+- File: bit 12 `kFlagsHasJournalSegments` and the segment table after the journal section; bit 4 means one segment over the whole session. Reader: the Python analyzer prints the spans; `ttd.ksy` and the format document describe bit 12.
+- CI gate rows updated: fewer journal records (no port OUTs), and 20 more bytes for the segment table.
+- Tests: `timetravelmanager_journalsegments_test.cpp` (7 tests). Two identical machines: the journal over the whole session against segments switched mid-frame; the answers are equal at every 7,919th T-state. Also: segments travel with the file, a run between stop and live resume is not covered, a resume from an earlier point cuts them, and inside a segment the journal answers without a replay. The port find-last test is rewritten for the port journal. Five compilable mutants are caught.
 
-```cpp
-class ITTDWriteIndexPolicy
-{
-public:
-    virtual void OnBlockSealed(TTDWriteBlock&& block) = 0;         // capture
-    virtual void OnPositionChanged(uint64_t machineTime) = 0;      // seek / run
-    virtual TTDCoverageIntervals Covered() const = 0;              // what can be answered without replay
-};
-```
+**As built, J2 (2026-10-04).** `TimeTravelManager::BuildWriteJournal(fromT, toT, progress)`:
 
-| Policy | Keeps | Answers outside what it keeps by |
-|---|---|---|
-| `Ring` | the newest N bytes of blocks (v1's behavior, compressed) | replay |
-| `WholeHistory` | every block (E6's model) | — |
-| `Window` | blocks within ±W frames of the current position; older blocks dropped, or never written when W = 0 | regenerating the needed frames by replay, guided by the coverage index |
+- **Which frames.** Every frame overlapping `(fromT, toT]` that no segment covers yet is replayed with `RegenerateFrameWrites`. Its writes join the journal in time order. A partly covered frame's records are replaced by the full frame.
+- **Segments.** The built frames join the segments, and touching spans merge into one.
+- **Progress and cancel.** The callback is called once per frame and once at the end. Returning `false` stops the build and keeps what is built.
+- **Not built.** The last frame of a session (no checkpoint after it) and frames holding a v1 marker without its data. Both are counted in the result.
+- **Limits.** Refused while recording. The machine returns to where it stood.
+- **Tests.** Built records equal those a twin machine recorded live, record for record. Also covered: a built span joining a segment that started mid-frame; a cancelled build; refusals. Four mutants are caught.
 
-- **Coverage intervals replace the single "complete" bit** (DF:76-83). The index records the machine-time intervals it holds: from journal switch-on to switch-off, minus what a ring dropped or a window released. Find-last answers inside a covered interval from the index, a "no match" there is final, and only the uncovered parts are replayed. This is the "coverage window" item that used to be Phase 5, Step 4 ([README §5](README.md#5-former-step-names)).
-- **Regeneration** replays frame by frame backwards from the query position, skipping every frame whose `Written` coverage set does not contain the address. Regenerated blocks may be kept by the policy, so repeated queries in the same area are fast.
-- **The coverage index's place.** It stays whole history under every policy:
-  - it is small (0.02-1.15 MB per minute in E6's model);
-  - it is what makes `Window` affordable, because it turns "replay every frame" into "replay the candidate frames";
-  - its keys gain the region id, so card memory is covered too (GS debugger D4).
+**As built, J3 (2026-10-04).**
 
-  It is a derived index as well and stays optional (switchable, one check per frame).
-- **Not sealed means no window.** A configuration whose replay is not sealed yet (a tap of Step 1 missing) cannot regenerate. It may only use `Ring` or `WholeHistory`, and says so in status.
+- **Core.** `SwitchWriteJournal` for control threads: it pauses a running machine, switches at the instruction it stopped on and resumes it. `BuildWriteJournalFrames(from, to)` builds by frame numbers, from a checkpoint's CPU position to the next one's. `GetJournalBuildState` and `CancelJournalBuild` work from any thread. The status lists the segments as positions (`writeJournalSpans`). The v1 status fields `writeJournalWrapped` and `journalGap*` are removed.
+- **Surfaces.**
+  - CLI: `ttd start [--journal]` and `ttd journal [on|off|status|build [from] [to]]`; the status prints the spans.
+  - WebAPI: `POST /ttd/start {"journal"}`, `GET|POST /ttd/journal`, `POST /ttd/journal/build`, `POST /ttd/journal/build/cancel`; the status carries `write_journal_segments` and `write_journal_build`.
+  - MCP `time_travel`: `start` with `journal`, plus `journal_on`, `journal_off` and `journal_build`.
+  - Lua and Python: `ttd_start(journal)`, `ttd_set_journal_enabled` (any moment) and `ttd_build_journal`.
+  - The `development` / `gaming` modes are gone.
+  - Qt shows what the journal covers; the full UI is J4.
+  - The Python WebAPI client and the TTD scrubber tool are updated.
+- **Docs.** `command-interface.md` (a section on the write journal, with a real CLI example), `webapi-interface.md`, `lua-interface.md`, `python-interface.md`, the MCP README and OpenAPI (paths and the `TTDJournalResponse` / `TTDJournalBuildResponse` schemas). The recipes `ttd-recording.md` and `ttd-reverse-debugging.md` are updated, and `ttd-write-journal.md` is new.
+- **Tests.** Core contract tests: switching from another thread while the machine runs, a build observed and cancelled from another thread, and building by frame numbers. MCP: start with `journal`, `journal_on` and `journal_build` summaries, and a non-boolean `journal` rejected. Checked live on unreal-qt with its own ports (`UNREAL_WEBAPI_PORT`, `UNREAL_CLI_PORT`): record, switch mid-recording, build two spans that merge, find-last inside and outside the spans, and the CLI output.
 
-**Experiment E7 — choosing the default.** Run before Phase 4 (D17), as a model on recordings like E6, in `tools/poc/011-ttd-v2-capture-analysis/experiments/e7-write-journal-retention/`.
+**As built, J4 (2026-10-04).**
 
-- *Input:*
-  - the six real-use sessions of E6 (1 and 5 minutes), plus the matrix cases with the most writes (48K BASIC at 1,800 writes per frame, ATM450, ZX-Evo with GS512 + MoonSound + TSFM);
-  - recorded with a ring large enough not to wrap, so the full write history is known.
-- *Policies modeled:* `Ring` at v1's 8,388,608 records; `WholeHistory`; `Window` with W = 0, 50, 250 and 1,500 frames.
-- *Query workload:*
-  - find-last-write at 1,000 random positions per session;
-  - addresses drawn from three classes: written within the last frame, last written 1-60 seconds earlier, last written more than 60 seconds earlier or never;
-  - also reverse continue to a write watchpoint.
-- *What is computed per policy:*
-  - memory and file bytes per minute of history;
-  - frames replayed per query, using the coverage sets from the same files.
-- *Replay cost per frame:* measured, not assumed. BM-5's replay part on the same configurations (`core-benchmarks`), on an idle host (load < 12), run twice. The 1.3 ms per frame of ttdcoverageindex.h:7-9 is only the order of magnitude.
-- *Exactness check:* for 1,000 sampled frames per session, replaying the frame regenerates a write list byte-identical to the recorded one. Any difference is a determinism bug and blocks `Window` on that configuration.
-- *Success metric:* the policy with the fewest bytes per minute of history kept, subject to:
-  1. find-last p99 at or under the latency bound **L** (Q1);
-  2. "no match" answers as final as v1's;
-  3. frame overhead within PR-1 (W = 0 also removes the per-write capture cost; E7 reports by how much, from BM-1).
+- **Controls.** The TTD panel has a **Journal** toggle in the top row (`SwitchWriteJournal`, before or during a recording) and a **Build Journal** menu button in the scrubber row (whole session / start to here / here to end). The scrubber draws the journal's spans as a band along its bottom edge (`JournalSpanSlider`).
+- **Build.** It runs on a worker thread behind a modal progress dialog that polls `GetJournalBuildState` and cancels with `CancelJournalBuild`. The panel stops reading the session while the build runs.
+- **Tests.** `unreal-qt-tests` `JournalSpanSlider_Test` checks the band's pixels; a mutant without the painting is caught. The dialog itself is not exercised by an automated test.
+- **Docs.** `time-travel-ux.md` §3.4a.
 
-  The result table goes into the experiment's README with the chosen default and the per-configuration exceptions.
+**As built, J5 (2026-10-04).** `tools/verification/ttd-analyzer/scripts/build_write_journal.py` drives a running emulator through the WebAPI:
+
+1. Reads the file's recorded machine (`/ttd/file-info`).
+2. Creates that model with its General Sound card and loads the session.
+3. Builds the journal for `--from`..`--to` (`/ttd/journal/build`).
+4. Saves the result (`/ttd/dump`) and removes the instance.
+
+Checked live: a Pentagon session recorded without the journal had frames 130..170 built (41 frames, 1951 writes), and the analyzer reads the saved span. The analyzer has a README now.
+
+**As built, J6 (2026-10-04, engine side).**
+
+- **Storage.** `TimeTravelEngine::Writes()` is a `TTDWriteIndex` (`engine/ttdwriteindex.*`). It holds the memory writes in v1's file block format (2,048 records in columns, zstd level 1), with the codec now shared as `EncodeWriteBlock` / `DecodeWriteBlock`, plus the segments. `FindLastInRange` walks the block directory newest first and decodes only the blocks that meet the range; the last decoded block is cached.
+- **Feeding.** In shadow mode the engine takes v1's new journal records and its segments at each capture. A build by replay restarts the shadow session. The v1 feeder imports a file's journal (memory writes only) and its segments.
+- **Accounting.** `HeapBreakdown().writeJournal` counts it. D33's memory condition now includes the write journal on both sides: v1's raw ring against the engine's compressed blocks.
+- **File.** The segment table in the session file comes with Phase 4.
+- **Tests.**
+  - `TTDWriteIndex_Test`: queries across blocks match a brute-force scan; the index is compact.
+  - Shadow parity: the engine's journal is v1's up to the last capture, with the same segments.
+  - Corpus import.
+  - Three mutants caught.
+
+E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance
 
@@ -470,7 +589,7 @@ Every test is checked by mutation: it must fail when the mechanism it guards is 
 | 1 | A payload referenced only by a checkpoint's network device state survives dropping the events before it; restore delivers the same bytes. Mutation: free on event drop → fails | payload retention by dependency |
 | 1 | Sprinter and TSConf: record, then seek into frames with interrupts and SD DMA; port journal on; zero divergences. Mutation: skip the vector tap → divergence | bus data beyond `IN` (FR-21) |
 | 1 | A debugger edit while recording, then a seek across it: the seek does not stop, memory after equals the recording | edits replay |
-| 1 | A reset while recording: the session continues; a seek into the frame before and after the reset is exact | reset is a cut, not an end |
+| 1 | A reset while recording ends the session (D39); with the setting on, a new session starts, linked to the one it ended | reset ends the session |
 | 2 | A session recorded while an RZX plays: seek to RZX frame N via the engine equals `RzxKeyframeStore` seek to N (registers, all RAM, `#7FFD`) on the 16 archive recordings | `InValues` mode; parity before the RZX store retires |
 | 2 | `Events` mode on the fixture corpus: `ValueMismatches` = 0 | devices and media are exact; the CPU feed hides nothing |
 | 2 | Branch from frame F with the parent's events: the branch continues past the end of recorded `IN` values without a desync | `Events` mode serves branches |
@@ -480,13 +599,13 @@ Every test is checked by mutation: it must fail when the mechanism it guards is 
 | 3 | An unchanged frame stores zero CPU residual bytes | PR-10 for CPUs |
 | 4 | Load a session with another audio rate, decimator and ROM: status lists exactly those fields; a frame-aligned restore is exact; a seek inside a frame reports `notBitExact` on every surface | fingerprint (FR-14) |
 | 4 | With media versions: write a sector in frame 103, seek to frame 102 and replay into 103: the read returns the old sector, then the new one | media versions per checkpoint |
-| 4 | Without media versions: the write is still a barrier | no regression in honesty |
+| 4 | Without media versions: a seek across a write runs (no barrier), the CPU reads the recorded bytes; status names the medium without versions | sealed replay without versions |
 | 5 | Record, save, reload a day later, replay a program that prints the RTC: the same output | one session time base |
 | 5 | Two DS12887-style chips in one session read the same instant | one base for all clocks |
 | 6 | Replay history that writes a floppy, an SD card and a hard disk: image files, session write maps and the NeoGS flash file are byte-identical. Mutation: remove the gate → fails | FR-20 |
-| 7 | `Window` policy: find-last for an address last written outside the window returns the same answer as `WholeHistory` | regeneration is exact |
-| 7 | Journal off, on, off, on: find-last inside a covered interval answers without replay; in an uncovered one it replays | coverage intervals |
-| 7 | A wrapped ring: a query older than the ring edge replays only the uncovered part | no full replay after a wrap |
+| 7 | Journal on, off, on during a recording (also inside a frame): find-last inside a segment answers from the journal, outside it from the coverage index plus one replayed frame; both give the same answer | segments |
+| 7 | Build the journal for a span by replay; its records equal those recorded live for the same span; the merged segment table is saved and loaded | build by replay |
+| 7 | Port find-last answers from the port journal with the write journal off | ports without the write journal |
 
 **D33 comparison with v1.**
 - The oracle restores and replays every frame and points inside frames of the fixture corpus and of the real-use sessions on both engines. Results are byte-identical, including `ValueMismatches` and `Divergences`.
@@ -507,20 +626,20 @@ Each item lands as its own commits and passes the full gate:
 5. **Step 5:** the session time base, on the frame table.
 6. **Step 1, part 2:** vector and DMA taps, one machine per commit (Sprinter, TSConf, NeoGS, ZX Next); reset and edit events; cuts.
 7. **Step 2:** replay sources, RZX frame facts, the parity test against `RzxKeyframeStore`.
-8. **Step 4:** fingerprint, then media versions behind `IMediaHistory`, with the barrier fallback until the storage manager's H1 / H5 land.
-9. **Step 7:** write index with the policy interface, coverage intervals, the default from E7.
+8. **Step 4:** fingerprint, then media versions behind `IMediaHistory` (no barrier fallback: a medium without versions is reported until the storage manager's H1 / H5 land).
+9. **Step 7:** the write journal on demand: segments, switching at any instruction, build by replay (J1-J6 in §4.8).
 10. Phase check: D33 on the matrix; store the Phase 3 baseline; write the results document.
 
 ## 8. Risks and open questions
 
 | # | Risk / question | Plan |
 |---|---|---|
-| Q1 | **User decision:** the find-last latency bound L that E7 must meet (it decides how small the window can be) | E7 reports bytes per minute against p99 latency for every W; the user picks L, or the knee of that curve is taken |
+| Q1 | ~~The find-last latency bound for a retention window~~ | Settled by D40: no retention policy. The journal is recorded where asked for and built by replay elsewhere |
 | Q2 | **User decision:** a card-CPU position inside a main-CPU instruction: inspect only (proposed), or also resume from there, which needs a resumable burst in every card emulation | Inspect only; resume from the main-CPU boundary after it |
-| Q3 | Media versions depend on the storage manager's change layer (H1, H5) | Fallback keeps v1's barrier; each kind of medium loses the barrier only when it has versions |
+| Q3 | Media versions depend on the storage manager's change layer (H1, H5) | No barrier either way (sealed replay); until a kind of medium has versions, a controller's internal state where a replay stops may differ, and status says so |
 | Q4 | **User decision:** with always-on recording (D29) the RTC runs on emulated time almost always. After a long pause it is behind the host clock. Re-anchor to the host on resume of the live end (a cut, recorded), or stay on emulated time? | Proposed: re-anchor when the live end resumes after a pause, recorded as a `ClockChange` of the time base; replay reads the recorded base |
 | Q5 | The CPU still gets recorded `IN` values in `Events` mode, so a device restore bug can hide | The mismatch counter must be zero on the corpus (test above); a non-zero count fails the phase check |
-| Q6 | A configuration whose replay is not yet sealed cannot use `Window` | Policy refused with a reason; `Ring` or `WholeHistory` until its taps land |
+| Q6 | A configuration whose replay is not sealed cannot build its journal by replay | Building is refused with the reason; a live recording with the journal on still works |
 | Q7 | Event kind numbers collide with another branch | One fixed table, appended, first to master takes the number (the `PeripheralId` rule) |
 | Q8 | [Media history §3.2](../2026-09-28-storage-manager/media-history-design.md) still says the media layer truncates the future after a seek back and a write, against D7 | Aligned in that design (its owner): media branches follow TTD branches |
 | Q9 | DMA from a medium could be served from media versions instead of recorded bytes | Record the bytes (sealed in both modes); revisit if BM-3 shows DMA payloads large |

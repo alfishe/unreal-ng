@@ -1865,7 +1865,7 @@ StateNode Ide(EmulatorContext* context)
             u["channel"] = channelIndex ? "secondary" : "primary";
             u["selected"] = ide->Channel(channelIndex).Selected() == unit;
         }
-        u["kind"] = cd ? "cdrom" : "disk";
+        u["kind"] = IdeController::UnitKindName(ide->KindOf(index));  // disk / cdrom / cf (a CompactFlash card)
         u["present"] = device->IsPresent();
 
         if (IBlockDevice* medium = device->Medium())

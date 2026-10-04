@@ -16,6 +16,7 @@
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
@@ -48,7 +49,7 @@ class EmulatorContext;
 /// (Covox pattern). Channel mixing follows Unreal Speccy: channels 1,2 -> L,
 /// 3,4 -> R with 50% cross-feed and the gs_vfx volume curve rebuilt from
 /// config gs_vol.
-class SoundChip_GeneralSound : public GeneralSoundCard
+class SoundChip_GeneralSound : public GeneralSoundCard, public ttd::ITTDRegionSource
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -227,6 +228,21 @@ public:
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::GeneralSound; }
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.runsBehindCpu = true;
+        d.firmwareFingerprint = _romHash;   // the 32 KB ROM: configuration, not recorded
+        return d;
+    }
+    /// Synced: as NeoGS - the card at or after its frame base (where its CPU
+    /// stood at the frame start, after the frame end ran it through the
+    /// frame) and less than a frame past it
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = totalGsCycles() - _frameStartGsCycles;
+        return offset >= 0 && (_frameGsCycles <= 0 || offset < _frameGsCycles);
+    }
     std::string TTDDeviceName() const override { return "GeneralSound"; }
     uint64_t TTDHashState() const override;
     /// endregion </TTDSerializable interface>
@@ -234,7 +250,20 @@ public:
     /// Fixed part of the TTD blob (everything except the RAM image)
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
 
+    /// Time-travel engine region (Phase 1, Step 6): the card RAM (128-512 KB);
+    /// the engine's blob is the fixed state only
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override { _ramTrackerArmed = on ? &_ramTracker : nullptr; }
+    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
+
 private:
+    /// The ROM file into _rom (loadROM then takes its fingerprint)
+    void readROM(const std::string& romPath);
+
+    /// TTD load, split around the RAM the engine restores as a region
+    void loadFixedState(const uint8_t* src);
+    void finishLoad(const uint8_t* src);
     // Shared catch-up loop and module replay drive the card through the
     // private hooks below (gscardrunner.h, gsmodulereplay.h)
     friend class GSCardRunner<SoundChip_GeneralSound>;
@@ -306,7 +335,10 @@ private:
     Z80CPU* _cpu = nullptr;
     std::vector<uint8_t> _rom;   // 32 KB firmware
     std::vector<uint8_t> _ram;   // 128-512 KB (stock 128 KB unless expanded via ctor)
+    ttd::TTDRegionTracker _ramTracker;
+    ttd::TTDRegionTracker* _ramTrackerArmed = nullptr;   // set while the engine records
     bool _romLoaded = false;
+    uint64_t _romHash = 0;   ///< ttd::FirmwareFingerprint of _rom, kept with every change of it
 
     // Memory banking (§2.3 MPAG: 0 -> ROM pair, V>=1 -> RAM pair (V-1))
     uint8_t _mpag = 0;

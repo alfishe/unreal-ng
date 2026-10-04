@@ -1,5 +1,6 @@
 #include <common/modulelogger.h>
 #include <emulator/emulator.h>
+#include <emulator/startupcleanup.h>
 #include "automation.h"
 
 // Automation became a singleton (protected constructor) — use the instance
@@ -60,6 +61,9 @@ int main(int argc, char *argv[])
 {
     // Register signal handler
     registerSignalHandler();
+
+    // Housekeeping (crashed TTD recordings, ...) in the background
+    StartStartupCleanup();
 
     // Get automation singleton (created on first access)
     Automation& automation = Automation::GetInstance();

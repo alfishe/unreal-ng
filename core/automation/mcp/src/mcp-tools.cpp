@@ -1049,6 +1049,24 @@ std::string FormatTtdFileInfo(const Json::Value& info)
     return out.str();
 }
 
+/// What the write journal covers (D40), from a status / journal response
+std::string DescribeJournalSegments(const Json::Value& status)
+{
+    const Json::Value& spans = status["write_journal_segments"];
+    if (!spans.isArray() || spans.empty())
+        return "covers nothing: write searches replay";
+    if (status["write_journal_complete"].asBool())
+        return "covers the whole session";
+    std::ostringstream out;
+    out << "covers " << spans.size() << " span(s):";
+    for (Json::ArrayIndex i = 0; i < spans.size() && i < 4; ++i)
+        out << (i ? "," : "") << " frames " << spans[i]["from_frame"].asUInt64() << ".." << spans[i]["to_frame"].asUInt64();
+    if (spans.size() > 4)
+        out << ", ...";
+    out << "; write searches outside replay";
+    return out.str();
+}
+
 std::string FormatTtdStatus(const Json::Value& status)
 {
     if (!status["ttd_available"].asBool())
@@ -1081,17 +1099,7 @@ std::string FormatTtdStatus(const Json::Value& status)
         }
     }
     out << ", write journal " << (status["write_journal_enabled"].asBool() ? "on" : "off");
-    if (status.isMember("write_journal_gap"))
-    {
-        // The journal misses writes of this session: write/io find-last replays
-        const Json::Value& gap = status["write_journal_gap"];
-        out << " (incomplete: " << gap["reason"].asString();
-        if (gap.isMember("frame"))
-        {
-            out << " at frame " << gap["frame"].asUInt64();
-        }
-        out << "; write searches replay)";
-    }
+    out << " (" << DescribeJournalSegments(status) << ")";
     if (status["bookmark_count"].asUInt64() > 0)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
@@ -3349,12 +3357,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit"})
+                               "history_limit", "journal_on", "journal_off", "journal_build"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; optional mode), "
+        "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; journal=true "
+        "also records the write journal), "
         "'stop' (end recording, history kept and browsable), 'invalidate' (drop all history), 'position' (current point + "
         "session end), 'markers' (replay barriers: tape control, disk writes, tool memory edits made while recording; "
         "the hardware_reset kind is reserved and never written - a reset stops the recording instead). "
@@ -3378,17 +3387,18 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
         "takes the same two fields. "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
-        "'coverage_summary' (bucketed activity heatmap).";
+        "'coverage_summary' (bucketed activity heatmap). "
+        "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
+        "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
+        "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
+        "recording). find_last works without it too: outside the journal it replays one frame.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
-    schema["properties"]["mode"]["type"] = "string";
-    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
-    schema["properties"]["mode"]["enum"].append("development");
-    schema["properties"]["mode"]["enum"].append("gaming");
-    schema["properties"]["mode"]["description"] =
-        "start: 'development' (default; keeps the write journal, so find_last is fast) or 'gaming' (no write journal, "
-        "less memory; find_last falls back to replay)";
+    schema["properties"]["journal"]["type"] = "boolean";
+    schema["properties"]["journal"]["description"] =
+        "start: also record the write journal (default false). find_last for writes then answers at once; without "
+        "it, it replays one frame";
     schema["properties"]["history_frames"]["type"] = "integer";
     schema["properties"]["history_frames"]["minimum"] = 0;
     schema["properties"]["history_frames"]["description"] =
@@ -3397,8 +3407,6 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["history_bytes"]["minimum"] = 0;
     schema["properties"]["history_bytes"]["description"] =
         "start / history_limit: keep the history's checkpoint data under this many bytes; 0 = no limit";
-    schema["properties"]["enable_write_journal"]["type"] = "boolean";
-    schema["properties"]["enable_write_journal"]["description"] = "start: explicit write-journal switch, overrides mode";
     schema["properties"]["reason"]["type"] = "string";
     schema["properties"]["reason"]["description"] = "invalidate: free-text reason echoed back and logged";
     schema["properties"]["label"]["type"] = "string";
@@ -3475,9 +3483,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_summary / port_events";
+        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build";
     schema["properties"]["to_frame"]["type"] = "integer";
-    schema["properties"]["to_frame"]["description"] = "Ending frame for coverage_scan / coverage_summary / port_events";
+    schema["properties"]["to_frame"]["description"] =
+        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build";
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
     schema["properties"]["addr_from"]["type"] = "string";
@@ -3540,24 +3549,30 @@ void RegisterTimeTravel(ToolRegistry& registry)
             std::string error;
             if (action == "start")
             {
-                if (args.isMember("mode"))
+                if (args.isMember("journal"))
                 {
-                    const std::string mode = args["mode"].asString();
-                    if (mode != "development" && mode != "gaming")
+                    if (!args["journal"].isBool())
                     {
-                        done(ToolResult::Error("'mode' must be 'development' or 'gaming'"));
+                        done(ToolResult::Error("'journal' must be true or false"));
                         return;
                     }
-                    (*body)["mode"] = mode;
-                }
-                if (args.isMember("enable_write_journal"))
-                {
-                    (*body)["enable_write_journal"] = args["enable_write_journal"].asBool();
+                    (*body)["journal"] = args["journal"].asBool();
                 }
                 if (args.isMember("history_frames"))
                     (*body)["history_limit_frames"] = args["history_frames"];
                 if (args.isMember("history_bytes"))
                     (*body)["history_limit_bytes"] = args["history_bytes"];
+            }
+            else if (action == "journal_on" || action == "journal_off")
+            {
+                (*body)["enabled"] = action == "journal_on";
+            }
+            else if (action == "journal_build")
+            {
+                if (args.isMember("from_frame"))
+                    (*body)["from_frame"] = args["from_frame"];
+                if (args.isMember("to_frame"))
+                    (*body)["to_frame"] = args["to_frame"];
             }
             else if (action == "history_limit")
             {
@@ -3701,6 +3716,32 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
                                 "Run the program now (control_execution), then 'stop' to browse the history.";
                         return text;
+                    }, done);
+                }
+                else if (action == "journal_on" || action == "journal_off")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/journal"), body.get(), caller, [id](const Json::Value& b) {
+                        return "TTD write journal on " + id + ": " +
+                               (b["write_journal_enabled"].asBool() ? "on" : "off") + ", " +
+                               DescribeJournalSegments(b);
+                    }, done);
+                }
+                else if (action == "journal_build")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/journal/build"), body.get(), caller, [id](const Json::Value& b) {
+                        if (!b["ok"].asBool())
+                            return "TTD write journal not built on " + id + ": " + b["error"].asString();
+                        std::ostringstream text;
+                        text << "TTD write journal built on " << id << " for " << b["frames_built"].asUInt64()
+                             << " frame(s), " << b["records"].asUInt64() << " writes";
+                        if (b["frames_covered"].asUInt64())
+                            text << "; " << b["frames_covered"].asUInt64() << " already covered";
+                        if (b["frames_refused"].asUInt64())
+                            text << "; " << b["frames_refused"].asUInt64() << " not replayable (a marker without its data)";
+                        if (b["cancelled"].asBool())
+                            text << "; cancelled";
+                        text << ". It " << DescribeJournalSegments(b) << ".";
+                        return text.str();
                     }, done);
                 }
                 else if (action == "history_limit")

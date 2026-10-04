@@ -26,6 +26,11 @@
             "Fitted devices by name, ascending id: turbosound, betadisk, tape, covox, tsfm, gs, scorpion-profrom, "
             "kempston-mouse, atm-paging, profi-paging, moonsound, gs-lw, neogs, plus3-paging, upd765, evo-sdcard, "
             "tsconf, ata, ds12887, evo-ps2, zxnetusb, evo-turbo-cache (idN for an id this build does not know)";
+        m["properties"]["not_recorded"]["type"] = "array";
+        m["properties"]["not_recorded"]["items"]["type"] = "string";
+        m["properties"]["not_recorded"]["description"] =
+            "Devices fitted but deliberately not recorded, by name (gs-lw: the lightweight General Sound runs live "
+            "through seeks); counted in general_sound";
         m["properties"]["general_sound"]["type"] = "string";
         for (const char* v : {"none", "z80", "lw", "ngs"})
             m["properties"]["general_sound"]["enum"].append(v);

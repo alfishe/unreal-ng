@@ -703,9 +703,12 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
         WaitForPauseConfirmation(1000);
     }
 
+    // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
     if (recording)
-        ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, source);
+        ttd->BeginToolEdit();
     edit();
+    if (recording)
+        ttd->EndToolEdit(source);
 
     if (park)
         Resume(false);
@@ -1892,6 +1895,12 @@ rzx::SessionStatus Emulator::GetRzxStatus() const
     // Not _rzxMutex: the status is read while a seek plays on (the GUI polls it)
     std::lock_guard<std::mutex> lock(_rzxSessionMutex);
     return _rzxSession ? _rzxSession->Status() : rzx::SessionStatus{};
+}
+
+rzx::RzxSession* Emulator::LoadedRzxSession()
+{
+    std::lock_guard<std::mutex> lock(_rzxSessionMutex);
+    return _rzxSession && _rzxSession->Status().loaded ? _rzxSession.get() : nullptr;
 }
 
 bool Emulator::IsRzxExtension(const std::string& ext)

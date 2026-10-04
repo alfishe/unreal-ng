@@ -419,6 +419,24 @@ TEST(TTDChipsetStateTest, CaptureRestore_ClockRatio)
     EXPECT_EQ(restored.hw_turbo_ratio_applied, 1);
 }
 
+/// The clock in Hz is derived from the restored multiplier: a seek across a
+/// turbo switch must not leave devices timing themselves from the live clock
+/// (the ATM2 keyboard controller's /VWR waits, the COM port's bit time)
+TEST(TTDChipsetStateTest, Restore_DerivesTheClockInHz)
+{
+    EmulatorState src = MakeCanonicalState();
+    src.current_z80_frequency_multiplier = 4;
+    src.next_z80_frequency_multiplier = 4;
+    const TTDChipsetState captured = CaptureChipsetState(src, 0);
+
+    EmulatorState restored{};
+    restored.base_z80_frequency = 3'500'000;
+    restored.current_z80_frequency = 7'000'000;   // the live machine ran at 2x
+    restored.current_z80_frequency_multiplier = 2;
+    RestoreChipsetState(captured, &restored);
+    EXPECT_EQ(restored.current_z80_frequency, 14'000'000u);
+}
+
 TEST(TTDChipsetStateTest, CaptureRestore_PaletteArrays)
 {
     // Confirm palette array contents round-trip exactly.

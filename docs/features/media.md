@@ -166,9 +166,13 @@ the machine's config, `[HDD] Scheme`:
 | `NONE` | no IDE | the other machines |
 
 Each unit is a **hard disk** unless the config says it is a **CD-ROM drive**: `CD0=1` / `CD1=1`,
-or an `.iso` or `.cue` configured as the unit's image. An empty unit changes its drive with the insert
-option `device=cdrom` / `device=disk` (the Qt media panel asks when you insert a CD image or a folder of
-music files into a disk unit, or a disk image into a CD drive);
+or an `.iso` or `.cue` configured as the unit's image. `CF0=1` / `CF1=1` (`CF2` / `CF3` for the Sprinter's
+second channel) make a disk unit a **CompactFlash card** on an IDE adapter: the same disk, but it answers
+IDENTIFY as a CF card does (word 0 = `#848A`, the CFA feature set, model `UNREAL-NG CF`) and takes the
+CF 8-bit transfer mode (SET FEATURES `#01` / `#81`). An empty unit changes its drive with the insert
+option `device=cdrom` / `device=disk` / `device=cf` (the Qt media panel asks when you insert a CD image or a
+folder of music files into a disk unit, or a disk image into a CD drive; its **CF Card** button makes the
+next disk image of an empty IDE unit a CompactFlash card);
 the change lasts for this machine's session (a reset keeps it; a new machine or a model switch starts
 from the config file). ZX-Evo ships with a CD drive in the slave position
 (`CD1=1`), where the ERS "D. CD boot" looks for it; the other machines ship without one, because

@@ -269,6 +269,7 @@ namespace
 {
     static std::string s_resourcesPathOverride;
     static std::string s_writablePathOverride;
+    static std::string s_userDataPathOverride;
 }
 
 void FileHelper::SetResourcesPathOverride(const std::string& readOnlyRoot)
@@ -349,12 +350,8 @@ std::string FileHelper::GetWritablePath()
 #endif
 }
 
-std::string FileHelper::ExpandPath(const std::string& path)
+std::string FileHelper::GetHomePath()
 {
-    // Only a leading "~" that is the whole path or is followed by a separator refers to the home directory
-    if (path.empty() || path[0] != '~' || (path.size() > 1 && !IsSep(path[1])))
-        return path;
-
 #ifdef _WIN32
     // Wide environment - the narrow getenv() would return the ANSI rendering of a non-ASCII user name
     const wchar_t* home = _wgetenv(L"USERPROFILE");
@@ -371,12 +368,64 @@ std::string FileHelper::ExpandPath(const std::string& path)
     std::string homeDir = home ? home : "";
 #endif
 
-    if (homeDir.empty())
-        return path;
-
     while (homeDir.size() > 1 && IsSep(homeDir.back()))
         homeDir.pop_back();
+    return homeDir;
+}
 
+std::string FileHelper::GetUserDataPath()
+{
+    if (!s_userDataPathOverride.empty())
+        return s_userDataPathOverride;
+    const std::string home = GetHomePath();
+    return home.empty() ? std::string() : PathCombine(home, ".unreal-ng");
+}
+
+std::string FileHelper::GetUserDataFolder(const std::string& relative)
+{
+    const std::string root = GetUserDataPath();
+    if (root.empty())
+        return {};
+    const std::string folder = relative.empty() ? root : PathCombine(root, relative);
+    return CreateFolders(folder) ? folder : std::string();
+}
+
+void FileHelper::SetUserDataPathOverride(const std::string& root)
+{
+    s_userDataPathOverride = root;
+}
+
+bool FileHelper::CreateFolders(const std::string& path)
+{
+    if (path.empty())
+        return false;
+    std::error_code ec;
+    const std::filesystem::path fsPath = ToFsPath(path);
+    std::filesystem::create_directories(fsPath, ec);
+    return std::filesystem::is_directory(fsPath, ec);
+}
+
+bool FileHelper::DeleteFolder(const std::string& path, std::string* error)
+{
+    std::error_code ec;
+    const std::filesystem::path fsPath = ToFsPath(path);
+    if (!std::filesystem::exists(fsPath, ec))
+        return true;
+    std::filesystem::remove_all(fsPath, ec);
+    if (ec && error)
+        *error = ec.message();
+    return !std::filesystem::exists(fsPath, ec);
+}
+
+std::string FileHelper::ExpandPath(const std::string& path)
+{
+    // Only a leading "~" that is the whole path or is followed by a separator refers to the home directory
+    if (path.empty() || path[0] != '~' || (path.size() > 1 && !IsSep(path[1])))
+        return path;
+
+    const std::string homeDir = GetHomePath();
+    if (homeDir.empty())
+        return path;
     return homeDir + path.substr(1);
 }
 
@@ -727,6 +776,12 @@ std::filesystem::path FileHelper::ToFsPath(const std::string& utf8Path)
 #else
     return std::filesystem::path(utf8Path);
 #endif
+}
+
+std::string FileHelper::FromFsPath(const std::filesystem::path& path)
+{
+    const auto u8 = path.u8string();
+    return std::string(u8.begin(), u8.end());
 }
 
 void FileHelper::CloseFile(FILE* file)

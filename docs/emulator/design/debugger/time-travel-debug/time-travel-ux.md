@@ -110,6 +110,18 @@ While detached (position < end):
 - State-editing controls (memory poke, register edit) are disabled with a tooltip "Read-only while viewing history — Resume from here to branch".
 - **Resume from here**: if the future being discarded is longer than a threshold (default 5 s), a confirmation dialog appears with a one-click escape hatch: *"Discard 543 frames of future history? [Save snapshot of 'now' first] [Discard & resume] [Cancel]"*. The snapshot option covers the branching use case rejected from the engine (TDD §4.2) at pure-UI cost.
 
+### 3.4a The write journal in the TTD panel (built, D40)
+
+The write journal answers "who wrote this address last" at once. It is off by default ([command-interface.md → The write journal](../../control-interfaces/command-interface.md#ttd-session-rules)). The TTD panel has three controls for it:
+
+| Control | Where | What it does |
+|---|---|---|
+| **Journal** (toggle button) | the top row, next to Clear | Switches the write journal on or off, before a recording and during it; each on-off span becomes a segment of the session |
+| The journal band | along the bottom edge of the timeline scrubber | The spans the journal covers, in the highlight color. A search for a write inside a band answers at once; outside it replays one frame |
+| **Build Journal** (menu button) | the scrubber row | Builds the journal by replaying frames: *Whole session*, *From the start to here*, *From here to the end*. A progress dialog shows the frames done and can cancel (what was built is kept). Disabled while the journal covers the whole session |
+
+The status line says `Journal: whole session` or `Journal: N span(s)`; its tooltip explains the band. Implementation: `unreal-qt/src/widgets/ttdwidget.cpp`, the band in `widgets/journalspanslider.cpp` (tested by `unreal-qt-tests`, `JournalSpanSlider_Test`).
+
 ### 3.5 Session Invalidation Feedback
 
 When a session-invalidating event occurs (TDD §4.2 — reset, snapshot load, disk write in v1, speed change), the timeline clears and a non-modal toast explains *why*: `TTD history cleared: disk write at frame 13,001 (see docs)`. The previous session's bookmarks are offered for export before clearing. Silent history loss is forbidden (Principle 2).
@@ -157,14 +169,14 @@ Invoked by `🔍`, by `Ctrl+Shift+F` in the debugger, or contextually (Section 5
 │   [ ] Exclude PC in  [ 0x8000 ] .. [ 0x9FFF ]  ("my code")  │
 │ Search: (•) backward from current   ( ) backward from end   │
 │                                                             │
-│ ⓘ journal covers last 03:12 — older ranges use replay scan │
+│ ⓘ journal covers 2 spans — elsewhere one frame is replayed │
 │                        [ Find last ]  [ Find all in range ] │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 - **Find last** seeks straight to the hit (the 90% case).
 - **Find all in range** populates the Event Inspector with every hit instead (Section 5.2).
-- The `ⓘ` line implements Principle 2: it states the journal coverage window and warns when the query will fall back to slow replay scanning, with a live progress bar + cancel during that scan.
+- The `ⓘ` line implements Principle 2: it states what the write journal covers (D40: it is recorded on demand, in spans) and warns when the query will replay instead, with a live progress bar + cancel during that scan.
 
 ### 5.2 Event Inspector (filtered/sorted event list)
 

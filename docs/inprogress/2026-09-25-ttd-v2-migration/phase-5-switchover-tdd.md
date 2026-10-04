@@ -151,7 +151,7 @@ public:
     // Running
     virtual void OnFrameBoundary() = 0;                         // MainLoop, once per frame
     virtual void ServiceInput() = 0;                            // Z80, only when kStepWorkTtdInput is set
-    virtual void OnMachineReset() = 0;                          // a reset is an event, recording goes on
+    virtual void OnMachineReset() = 0;                          // a reset ends the session; optionally a new one starts (D39)
 
     // Things that happen to the machine (D10, D25, D26): events, not the end of the session
     virtual void OnLoad(TTDLoadKind kind, const std::string& source) = 0;   // snapshot, tape, disk, disk create, media change
@@ -277,7 +277,7 @@ Today B9 (`e175ff42`) refuses both switches while recording (`featuremanager.cpp
 4. The flag changes; the emulator resumes if it was running.
 5. Status reports `last_stop_reason: "feature-off:debugmode"` (additive field). The history stays browsable. With `timetravel` off the session is closed and can be reopened from its file; with `debugmode` off it stays in memory, and a later seek or resume switches debug mode back on, as `StartRecording` does today (TTM:183-197).
 
-Switching the **write journal** off or on during a recording no longer needs a refusal either: the journal is a derived index with a coverage window (D17, Phase 3, Step 7), so the switch ends or starts a window and reverse queries outside it replay. `TTDGuardedAction::ChangeWriteJournal` is removed.
+Switching the **write journal** off or on during a recording no longer needs a refusal either: the journal is recorded in segments (D40, Phase 3, Step 7), so the switch ends or starts a segment and queries outside the segments use the coverage index and one replayed frame. `TTDGuardedAction::ChangeWriteJournal` is removed.
 
 **Conflict with B9, to note in the migration docs.** [current-state.md](current-state.md) lists B9 as fixed by refusing these switches, and the command-interface rules say "Refused while recording". After Phase 5 they are not refused: they stop the recording. The B9 row gets a note "superseded by Phase 5, Step 1 (FR-17): clean stop instead of refusal", the refusal tests in `timetravelmanager_recordingguard_test.cpp` are rewritten as clean-stop tests, and the session-rules table moves the two rows from "refused" to "stops the recording". The B9 guarantee itself, "no corrupt history", is kept and tested (§6).
 
@@ -318,10 +318,10 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 |---|---|---|
 | Snapshot load, RZX snapshot | `snapshot-load`, `rzx-snapshot` | `OnLoad`: an event, followed at once by a checkpoint of the loaded state. A seek before it replays up to it; a seek after it restores from that checkpoint; it is not a replay barrier |
 | Tape load, disk load, disk create, media change | `tape-load`, `disk-load`, `disk-create`, `media-change` | `OnLoad`: an event that switches the medium version the next checkpoints refer to (D25) |
-| GS card switch | `gs-card-switch` | `OnConfigurationChange`: a device-set change, restored by a seek (D26, FR-4, Phase 2, Step 4) |
+| GS card switch | `gs-card-switch` | The device set is fixed for a session (D38): refused while recording; otherwise a new session linked to its parent, as a model transfer |
 | ROM reload, model transfer | `rom-reload`, `state-transfer` | `OnModelTransfer`: a new session linked to its parent (D26). The parent stays openable |
 | Host speed multiplier change | `speed-multiplier-change` | An event, if Phase 3's configuration fingerprint shows the speed affects replay; otherwise nothing at all (open question 5) |
-| Reset | Stops the recording | An event; the recording goes on (Phase 3 reset marker) |
+| Reset | Stops the recording | Ends the session; recording again (a setting) starts a new session linked to it (D39) |
 
 "Invalidate" stays: it is the explicit discard of the session (FR-24 allows explicit deletion), still refused while capturing.
 
@@ -340,8 +340,8 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 | `LoadRom` | Allowed: new linked session |
 | `Invalidate` | Still refused while capturing (allowed while paused or stopped) |
 | `DisableTimeTravel`, `DisableDebugMode` | Allowed: clean stop (§4.2.7) |
-| `ChangeWriteJournal` | Removed: journal window (D17) |
-| `SwitchGsCard` | Allowed: device-set event, once Phase 2, Step 4 restores across it |
+| `ChangeWriteJournal` | Removed: journal segments (D40) |
+| `SwitchGsCard` | Still refused while recording: the device set is fixed for a session (D38) |
 | `CdFrontPanel` | Allowed only if Phase 3 journals the front-panel action as an event; otherwise still refused |
 
 The acceleration lock (host speed 1x, turbo and fast loaders off while recording or detached, [command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-session-rules)) is not changed by this step; its interaction with the black box is open question 1.

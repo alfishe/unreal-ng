@@ -18,6 +18,12 @@
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
+namespace ttd
+{
+class ITTDRegionSource;
+struct TTDConfigFingerprint;
+}
+
 // Opaque declaration (defined in emulator/memory/memory.h): the base decoder
 // interface only passes ROMModeEnum by value
 enum ROMModeEnum : uint8_t;
@@ -754,18 +760,37 @@ public:
     /// the Sprinter's video RAM), reached by name from every automation interface
     virtual void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) { (void)out; }
 
-    /// Emulated machine time in microseconds: whole frames at the model's
-    /// frame duration plus the position in the current frame (TTD time units,
-    /// so a hardware turbo switch mid-frame does not move it). Restored with
-    /// the frame counter by a TTD seek, which makes it the time base of
-    /// clocks that must replay deterministically (Ds12887 in emulated mode)
+    /// Emulated machine time in microseconds: the base T-states run since
+    /// power-on (every closed frame, whatever its length) plus the position in
+    /// the current frame (TTD time units, so a hardware turbo switch mid-frame
+    /// does not move it), at the CPU's rate. Restored with the chipset by a
+    /// TTD seek, which makes it the time base of clocks that must replay
+    /// deterministically (Ds12887 in emulated mode)
     uint64_t EmulatedMicroseconds() const;
+
+    /// The TTD session's wall time at the current emulated moment (host civil
+    /// microseconds; Ds12887::kNoSessionWall outside a session): the one time
+    /// base of every real-time clock of the machine (Phase 3, Step 5)
+    int64_t SessionWallMicros() const;
 
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
     {
         return {};
+    }
+
+    /// The board options of this model that change timing or decoding (TTD
+    /// configuration fingerprint, Phase 3, Step 4): "<model>.<option>" fields
+    /// added to @p fp. A replay on other options is reported, not refused
+    virtual void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const { (void)fp; }
+
+    /// Model devices whose memory the time-travel engine records as regions
+    /// but that are no serializer of their own (the ZX-Evo AVR EEPROM, the
+    /// SMUC EEPROM). They stay owned by the decoder
+    virtual void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out)
+    {
+        (void)out;
     }
     /// endregion </TTD model-specific state>
 

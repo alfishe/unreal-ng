@@ -145,7 +145,29 @@ bool CdImage::ReadStored(const StoredTrack& stored, uint32_t lba, uint8_t* dst, 
     return _sources[stored.source]->Read(at, dst, length);
 }
 
+template <typename Read>
+CdImage::ReadResult CdImage::Journaled(uint32_t lba, uint8_t* dst, uint32_t size, Read&& read)
+{
+    IMediaReadJournal* journal = _journal ? *_journal : nullptr;
+    if (journal && journal->Playing() && journal->Play(_journalSlot, lba, dst, size))
+        return ReadResult::Ok;
+    const ReadResult result = read();
+    if (journal && result == ReadResult::Ok && !journal->Playing())
+        journal->Record(_journalSlot, lba, dst, size);
+    return result;
+}
+
 CdImage::ReadResult CdImage::ReadFrame(uint32_t lba, uint8_t* frame)
+{
+    return Journaled(lba, frame, kFrameBytes, [&] { return ReadFrameStored(lba, frame); });
+}
+
+CdImage::ReadResult CdImage::ReadUser(uint32_t lba, uint8_t* user)
+{
+    return Journaled(lba, user, kUserBytes, [&] { return ReadUserStored(lba, user); });
+}
+
+CdImage::ReadResult CdImage::ReadFrameStored(uint32_t lba, uint8_t* frame)
 {
     const int index = TrackIndexAt(lba);
     if (index < 0)
@@ -190,7 +212,7 @@ CdImage::ReadResult CdImage::ReadFrame(uint32_t lba, uint8_t* frame)
     return ReadResult::Ok;
 }
 
-CdImage::ReadResult CdImage::ReadUser(uint32_t lba, uint8_t* user)
+CdImage::ReadResult CdImage::ReadUserStored(uint32_t lba, uint8_t* user)
 {
     const int index = TrackIndexAt(lba);
     if (index < 0)
@@ -220,7 +242,7 @@ CdImage::ReadResult CdImage::ReadAudio(uint32_t lba, int16_t* samples)
         return ReadResult::Ok;  // a data frame plays as silence (real drives mute it)
     }
     uint8_t frame[kFrameBytes];
-    const ReadResult result = ReadFrame(lba, frame);
+    const ReadResult result = ReadFrameStored(lba, frame);
     if (result != ReadResult::Ok)
         return result;
     for (uint32_t i = 0; i < kFrameBytes / 2; i++)
@@ -235,7 +257,7 @@ bool CdImage::ReadSector(uint64_t sector, uint8_t* dst)
         return false;
     if (static_cast<int64_t>(block) != _cachedBlock)
     {
-        if (ReadUser(static_cast<uint32_t>(block), _cache) != ReadResult::Ok)
+        if (ReadUserStored(static_cast<uint32_t>(block), _cache) != ReadResult::Ok)
         {
             _cachedBlock = -1;
             return false;

@@ -128,10 +128,15 @@ types:
           bookmarks section follows the coverage index (TD-4 agent
           bookmarks: u32 count, then per bookmark u64 frame, u32 tInFrame,
           u8 label_len, label bytes — labels are unique, non-empty and at
-          most 63 chars). Bit 4 = the write journal holds every write
-          of the session (journaling never paused, the ring never
-          overwrote a record): only then may a reader answer write/port
-          reverse queries from it instead of replaying. Bit 5 = every
+          most 63 chars). Bit 4 = the write journal covers the whole
+          session (one segment from the first checkpoint to the last).
+          Bit 12 = the write journal is followed by its segment table
+          (D40: the journal is recorded on demand): u32 count, then per
+          segment u64 from, u64 to - the machine-time spans, after `from`
+          up to and including `to`, in which every memory write is in the
+          journal. A reader answers write searches inside them from the
+          journal and replays elsewhere. Port OUTs are not in the write
+          journal (the port journals, bit 8, have them). Bit 5 = every
           in-frame position (tInFrame, journal globalT) counts T-states at
           the model's top CPU clock (B4); without it a model with a hardware
           turbo is refused, because its positions counted at the clock
@@ -190,7 +195,9 @@ types:
           u8 status, u32 addr, u16 port, u32 payload_offset,
           u32 payload_length; then u32 payload_size and the payload bytes
           (what the machine received from the host network).
-          Bits 11-15 reserved (must be 0).
+          Bit 11 (0x0800) = the header continues with `not_recorded_mask`
+          (devices fitted but deliberately not recorded); only when that mask
+          is not zero. Bits 12-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
@@ -270,6 +277,13 @@ types:
           state blob in the first checkpoint - the recorded machine's device
           set, readable without walking to the checkpoints. Without bit 9:
           zero (formerly reserved).
+      - id: not_recorded_mask
+        type: u8
+        if: (flags & 0x0800) != 0
+        doc: |
+          Bit N set = peripheral id N was fitted but time travel does not
+          record it (no blob in any checkpoint; it runs live through seeks):
+          the lightweight General Sound (11). A loader fits the same card.
   page_slot:
     doc: |
       One entry in the v2 codec page store. Encoded layout per slot:
@@ -335,8 +349,8 @@ types:
       alignment gaps are named members on the C++ side rather than implicit
       padding: these objects are copied by member-wise assignment (which does
       not copy padding) and then hashed byte-wise, so unnamed padding would
-      leak uninitialized bytes into the hash. Offset 31 is ``reserved0``
-      (always zero); offsets 35 and 43 now carry ``boundary`` and
+      leak uninitialized bytes into the hash. Offset 31 is ``nmi_pending``
+      (an NMI requested and not taken yet; zero in sessions recorded before it); offsets 35 and 43 now carry ``boundary`` and
       ``int_acked_in_pulse`` (zero in sessions recorded before them).
     seq:
       - id: pc
@@ -377,12 +391,12 @@ types:
         type: u1
       - id: halted
         type: u1
-      - id: reserved0
+      - id: nmi_pending
         type: u1
         doc: |
           Explicit filler aligning memptr (u2) to a 2-byte boundary after
-          the 7 u8 fields above (offset 31). Named in the C++ struct so
-          member-wise assignment copies it; always zero.
+          the 7 u8 fields above (offset 31), now carrying the pending NMI
+          (0 / 1; Z80::IsNmiPending). Zero in sessions recorded before it.
       - id: memptr
         type: u2
         doc: Undocumented MEMPTR / WZ register.
@@ -626,7 +640,22 @@ types:
           SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
           generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
           divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
-          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip).
+          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip),
+          54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
+          then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
+          u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
+          55 EvoAvrVolatile (the ZX-Evo AVR's volatile registers on TS-Conf, 4 bytes: u1 version 1, u1 extType,
+          u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode); the ATM3 carries them in 8),
+          56 KeyboardMatrix (the ZX keyboard, variable size: u1 version 1, u1 x 8 matrix rows, u1 pair count,
+          then (u1 ZXKeysEnum key, u1 pressed count) pairs in key order; key changes themselves are input events),
+          57 RzxPlayback (an RZX recording played while TTD records, 84 bytes: u1 version 1 (0: nothing played),
+          u1 player state (0 playing, 1 finished, 2 desynced, 3 stopped), u1 last IN value, u1 first desync kind,
+          u8 recording fingerprint (FNV-1a over the frames and IN values), u8 frames done, u4 fetches, u4 IN position,
+          u8 interrupts, u8 desyncs, u8 snapshots applied, s4 drift, s4 max drift, then the first desync: u4 block,
+          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session).
+          ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
+          Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
+          (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

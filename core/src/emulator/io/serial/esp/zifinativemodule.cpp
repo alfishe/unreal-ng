@@ -10,6 +10,7 @@
 #include "emulator/io/serial/esp/zififtpserver.h"
 #include "emulator/io/serial/esp/zifistate.h"
 #include "emulator/io/serial/esp/zifiweather.h"
+#include "emulator/io/serial/esp/zifiwebdavserver.h"
 
 // Every behavior here is the firmware's (file:line in the two repositories named in the header):
 //  S3  = ZiFi-ESP32-S3-Zero 2e5ba83: src/main.cpp, src/net_client.cpp, src/ntp_client.cpp, src/config.cpp
@@ -290,6 +291,7 @@ ZiFiNativeModule::ZiFiNativeModule(VirtualNetwork* network, Variant variant, con
     _vfs.sendFrame = [this](uint8_t cmd, const std::vector<uint8_t>& data) { SendFrame(cmd, data); };
     ZiFiBridgeHost& host = *this;
     _ftp = std::make_unique<ZiFiFtpServer>(host, variant == Variant::S3);
+    _webdav = std::make_unique<ZiFiWebDavServer>(host);
     // Silent at power-up: UART first, no boot text on the protocol line (S3 begin(), E01 begin()); the saved
     // zifi.ini joins the access point on its own
 }
@@ -372,8 +374,8 @@ void ZiFiNativeModule::Process()
         }
         if (Busy() && _variant == Variant::Esp01s)
             return;   // one loop: the command waits for the network, later bytes wait in the UART
-        if (_variant == Variant::Esp01s && _ftp->JobActive() && !_vfs.Waiting())
-            return;   // one loop: inside an FTP command the UART is read only by its VFS waits
+        if (_variant == Variant::Esp01s && (_ftp->JobActive() || _webdav->JobActive()) && !_vfs.Waiting())
+            return;   // one loop: inside an FTP command or a WebDAV request the UART is read only by its VFS waits
         const size_t pos = _held;
         while (_rx.size() > pos && _rx[pos] != kSync)
             _rx.erase(_rx.begin() + static_cast<std::ptrdiff_t>(pos));   // kWaitSync
@@ -1845,8 +1847,16 @@ void ZiFiNativeModule::BridgePoll()
     // loop is inside a blocking command
     if (_op != Op::None && _op != Op::Deferred)
         return;
-    if (_ftp->Running())
-        _ftp->Poll();
+    // E01 poll(): ftp_.poll() then webdav_.poll(), each handling a whole request: one never runs inside the other
+    if (_webdav->JobActive())
+        _webdav->Poll();
+    else
+    {
+        if (_ftp->Running())
+            _ftp->Poll();
+        if (_webdav->Running() && !_ftp->JobActive())
+            _webdav->Poll();
+    }
     FlushEvents();
     if (_op == Op::Deferred && !_ftp->JobActive())
         RunDeferred();
@@ -1886,7 +1896,13 @@ void ZiFiNativeModule::StartFtp(const std::vector<uint8_t>& payload)
         ReportError((_variant == Variant::S3 ? "ftp:" : "ftp/webdav:") + error);
         return SendFrame(0x86, {0, 0, 0});
     }
-    // ESP01S: the WebDAV server on port 80 starts with FTP here (webdav_.start; the zifi-plugins work)
+    // ESP01S: the old webdav_server.py listened on 80 and zifi.spg has no command for it: WebDAV starts with FTP
+    if (_variant == Variant::Esp01s && !_webdav->Start(ZiFiWebDavServer::kDefaultPort, error))
+    {
+        StopFileServers();
+        ReportError("ftp/webdav:" + error);
+        return SendFrame(0x86, {0, 0, 0});
+    }
     _nextSignalAt = Now();
     ClearError();
     SendFrame(0x86, {1, static_cast<uint8_t>(port), static_cast<uint8_t>(port >> 8)});
@@ -1896,12 +1912,14 @@ void ZiFiNativeModule::StopFileServers()
 {
     if (_ftp->Running())
         _ftp->Stop();
-    // ESP01S stopStorageServices: the WebDAV server stops here too (the zifi-plugins work)
+    if (_webdav->Running())
+        _webdav->Stop();   // ESP01S stopStorageServices
 }
 
 void ZiFiNativeModule::ForgetBridge()
 {
     _ftp->Forget();
+    _webdav->Forget();
     _vfs.Reset();
     _events.clear();
     _txBacklog.clear();
@@ -2126,7 +2144,7 @@ void ZiFiNativeModule::SaveBridge(std::vector<uint8_t>& out) const
         }
         w.Bool(stack.RearmQueued(i));
     }
-    SaveWeather(w);   // keep last: the weather / zifi.ini section
+    SavePlugins(w);   // keep last: the weather / zifi.ini / WebDAV section
 }
 
 bool ZiFiNativeModule::LoadBridge(const uint8_t* data, size_t length, const EspStack::ByteSource& bytes)
@@ -2186,13 +2204,14 @@ bool ZiFiNativeModule::LoadBridge(const uint8_t* data, size_t length, const EspS
                 stack.QueueRearm(i);
         }
     }
-    ok = LoadWeather(r) && ok;   // keep last: the weather / zifi.ini section
+    ok = LoadPlugins(r) && ok;   // keep last: the weather / zifi.ini / WebDAV section
     RebindSockets();
     return ok && r.Ok();
 }
 
-void ZiFiNativeModule::SaveWeather(ZiFiStateWriter& w) const
+void ZiFiNativeModule::SavePlugins(ZiFiStateWriter& w) const
 {
+    _webdav->Save(w);
     // The saved zifi.ini (flash), WeatherService's place (RAM) and a WEATHER_GET in progress
     w.Bytes(_iniText);
     w.Str(_wxKey);
@@ -2214,8 +2233,10 @@ void ZiFiNativeModule::SaveWeather(ZiFiStateWriter& w) const
     w.Bytes(_op == Op::Weather ? _request : std::vector<uint8_t>());   // the request is not the held frame
 }
 
-bool ZiFiNativeModule::LoadWeather(ZiFiStateReader& r)
+bool ZiFiNativeModule::LoadPlugins(ZiFiStateReader& r)
 {
+    if (!_webdav->Load(r))
+        return false;
     _iniText = r.Bytes(4096);
     _wxKey = r.Str(256);
     _wxHaveCoords = r.Bool();

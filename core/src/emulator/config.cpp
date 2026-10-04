@@ -695,6 +695,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			const std::string extension = image ? StringHelper::ToLower(FileHelper::GetFileExtension(image)) : std::string();
 			const bool cdImage = extension == "iso" || extension == "cue";
 			ide.cd = ((cd && std::atoi(cd) != 0) || cdImage) ? 1 : 0;
+			// A CompactFlash card on an IDE adapter: CFn=1 (a disk unit only)
+			const char* cf = inimanager.GetValue(hdd, ("CF" + n).c_str(), nullptr);
+			ide.cf = (!ide.cd && cf && std::atoi(cf) != 0) ? 1 : 0;
 		}
 	}
 

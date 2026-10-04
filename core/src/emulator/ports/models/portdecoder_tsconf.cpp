@@ -8,6 +8,7 @@
 
 #include <cstring>
 
+#include "debugger/ttd/atm/ttdevoavrvolatile.h"
 #include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
@@ -32,6 +33,7 @@
 PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(context)
 {
     _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _evoAvr.SetSessionWall([this]() { return SessionWallMicros(); });
 
     // SD card: the Z-Controller registers and the DMA share the board's SPI
     // master ([V] top.v:1168-1189); a guest write is a TTD replay barrier (the
@@ -1148,7 +1150,7 @@ std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
 {
     std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard,
                                           ttd::PeripheralId::Ds12887, ttd::PeripheralId::EvoPs2,
-                                          ttd::PeripheralId::EvoMouse};
+                                          ttd::PeripheralId::EvoMouse, ttd::PeripheralId::EvoAvrVolatile};
     // The VDAC2 card's FT812: its memory first, then the card and chip state (restore order = id order)
     if (_vdac2 && _vdac2->IsReady())
     {
@@ -1167,6 +1169,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(self->_evoAvr.Ps2Mouse()));
+    serializers.push_back(std::make_unique<ttd::TTDEvoAvrVolatile>(self->_evoAvr));
     if (self->_vdac2 && self->_vdac2->IsReady())
     {
         serializers.push_back(std::make_unique<ttd::TTDVdac2Memory>(*self->_vdac2));

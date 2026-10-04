@@ -384,6 +384,34 @@ TEST_F(AtModule_Test, PingThroughTheVirtualNetwork)
     EXPECT_NE(out.find("\r\n\r\nOK\r\n"), std::string::npos) << "the gateway answers";
 }
 
+/// The ZX side's line is state: a pending baud change compares against it
+/// when it lands, so a restore must not keep the live one
+TEST_F(AtModule_Test, StateCarriesTheZxLine)
+{
+    Init();
+    SerialLine line;
+    line.baud = 9600;
+    line.dataBits = 7;
+    line.parity = 'E';
+    line.stopBits = 2;
+    _esp->OnLineSettings(line);
+    auto state = std::make_unique<netstate::EspModuleState>();
+    _esp->SaveState(*state);
+
+    auto copy = std::make_unique<AtModule>(_net.get(), EspModule::Chip::Esp8266);
+    copy->SetClock([this]() { return _now; }, 3500000);
+    copy->OnLineSettings(SerialLine());
+    copy->LoadState(*state, nullptr);
+    EXPECT_TRUE(copy->ZxLine() == line);
+
+    state->zxLineFormat = 0;   // recorded before the field existed: the live line stays
+    auto old = std::make_unique<AtModule>(_net.get(), EspModule::Chip::Esp8266);
+    old->SetClock([this]() { return _now; }, 3500000);
+    old->OnLineSettings(SerialLine());
+    old->LoadState(*state, nullptr);
+    EXPECT_TRUE(old->ZxLine() == SerialLine());
+}
+
 TEST_F(AtModule_Test, StateRoundTrip)
 {
     Init();

@@ -21,7 +21,13 @@ namespace ttd
 struct Plus3PagingState
 {
     uint8_t p1FFD;
-    uint8_t reserved[3];
+    /// The +2A/+3 gate array's latch of the last contended memory byte
+    /// (UlaContention::GetLatchedByte): what an unattached port read returns,
+    /// software probes it. Recordings made before it read 0 here and keep the
+    /// live latch (flag below clear)
+    uint8_t floatingBus;
+    uint8_t flags;             ///< bit 0: floatingBus is valid
+    uint8_t reserved;
 };
 static_assert(sizeof(Plus3PagingState) == 4, "Plus3PagingState must be 4 bytes");
 
@@ -38,6 +44,8 @@ public:
     uint64_t TTDHashState() const override;
 
 private:
+    Plus3PagingState Snapshot() const;
+
     EmulatorContext* _context;
 };
 } // namespace ttd

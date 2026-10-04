@@ -1424,3 +1424,30 @@ TEST_F(FileHelper_Test, GetFileExtension_PathShapes)
 }
 
 /// endregion </Pure (no filesystem access) path-shape tests>
+/// @brief The per-user folder: <home>/.unreal-ng, overridable for tests; folders under it are created on
+/// demand, and CreateFolders / DeleteFolder / FromFsPath handle non-ASCII names
+TEST_F(FileHelper_Test, UserDataFolders)
+{
+    const std::string home = FileHelper::GetHomePath();
+    if (home.empty())
+        GTEST_SKIP() << "Home directory environment variable not set";
+    EXPECT_EQ(FileHelper::ExpandPath("~"), home);
+    EXPECT_EQ(FileHelper::GetUserDataPath(), FileHelper::PathCombine(home, ".unreal-ng"));
+
+    const std::string root = TestPathHelper::GetUniqueTestScratchPath("userdata-\xc3\xa9t\xc3\xa9");
+    FileHelper::SetUserDataPathOverride(root);
+    EXPECT_EQ(FileHelper::GetUserDataPath(), root);
+    const std::string ttd = FileHelper::GetUserDataFolder("ttd/2026-10-04-153012-pentagon");
+    FileHelper::SetUserDataPathOverride("");
+    ASSERT_FALSE(ttd.empty());
+    EXPECT_TRUE(FileHelper::FolderExists(ttd));
+    EXPECT_EQ(FileHelper::FromFsPath(FileHelper::ToFsPath(ttd)), ttd);
+
+    const std::string file = FileHelper::PathCombine(ttd, "segment.ttd");
+    { std::ofstream(FileHelper::ToFsPath(file)) << "x"; }
+    std::string error;
+    EXPECT_TRUE(FileHelper::DeleteFolder(root, &error)) << error;
+    EXPECT_FALSE(FileHelper::FolderExists(root));
+    EXPECT_TRUE(FileHelper::DeleteFolder(root)) << "already gone: nothing to do";
+    EXPECT_FALSE(FileHelper::CreateFolders(""));
+}
