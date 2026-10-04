@@ -191,6 +191,27 @@ bool TTDContainerWriter::AddRecord(uint16_t streamId, const uint8_t* data, size_
     return true;
 }
 
+bool TTDContainerWriter::AddStoredRecord(uint16_t streamId, uint16_t flags, const uint8_t* stored, size_t storedSize,
+                                         size_t rawSize)
+{
+    if (streamId == kContainerStream || !_sink || _failed)
+        return false;
+    const uint64_t offset = _sink->Size();
+    if (!WriteRecord(streamId, static_cast<uint16_t>(flags & kFlagCompressed), stored, storedSize, rawSize))
+        return false;
+    _partRecords.push_back(offset);
+    auto total = std::find_if(_totals.begin(), _totals.end(), [streamId](const auto& t) { return t.first == streamId; });
+    if (total == _totals.end())
+    {
+        _totals.push_back({streamId, {}});
+        total = std::prev(_totals.end());
+    }
+    total->second.records++;
+    total->second.stored += storedSize;
+    total->second.raw += rawSize;
+    return true;
+}
+
 bool TTDContainerWriter::EndPart(const TTDPartEnd& part, bool sync)
 {
     if (!_sink || _failed)
@@ -628,6 +649,22 @@ void TTDContainerReader::Scan()
         }
         _parts.push_back(std::move(part));
     }
+}
+
+bool TTDContainerReader::ReadStored(const TTDRecordRef& record, std::vector<uint8_t>& out, std::string* error)
+{
+    out.resize(record.storedSize);
+    std::string why;
+    if (!_source || !_source->ReadAt(record.offset + kRecordHeaderSize, out.data(), out.size()))
+        why = "cannot read the record at " + std::to_string(record.offset);
+    else if (codec::Crc32C(out.data(), out.size()) != record.payloadCrc)
+        why = "damaged record at " + std::to_string(record.offset) + " (CRC)";
+    if (why.empty())
+        return true;
+    MarkDamaged(record.partIndex, why);
+    if (error)
+        *error = why;
+    return false;
 }
 
 bool TTDContainerReader::ReadRecord(const TTDRecordRef& record, std::vector<uint8_t>& out, std::string* error)

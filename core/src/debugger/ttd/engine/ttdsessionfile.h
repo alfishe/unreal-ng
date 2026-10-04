@@ -53,6 +53,10 @@ namespace ttd
 
 class TimeTravelEngine;
 
+/// Part-end extra, bit 0: a file starts here (the loader restarts the
+/// numbering of versions and the journal positions)
+constexpr uint8_t kPartFileStart = 1;
+
 namespace sessionstream
 {
 constexpr uint16_t kPieces = 1;
@@ -114,12 +118,15 @@ public:
     TTDSessionWriter& operator=(const TTDSessionWriter&) = delete;
 
     /// Write the header (on this thread) and start the writer
+    /// @p first: the file's first checkpoint (default: the first one held)
     bool Begin(const TimeTravelEngine& engine, ITTDByteSink& sink, const TTDSessionSaveParams& params,
-               std::string& error, const Limits& limits = {});
+               std::string& error, const Limits& limits = {}, size_t first = SIZE_MAX);
     /// Queue every complete part; false once writing failed or fell too far behind (Error() says why)
     bool Collect(const TimeTravelEngine& engine);
-    /// Queue the rest (and the write journal), write the index, wait for the writer
-    bool Finish(const TimeTravelEngine& engine);
+    /// Queue the checkpoints up to @p end (all by default; a segment's file
+    /// ends at the next segment's baseline), the write journal with the
+    /// session's last part, write the index, wait for the writer
+    bool Finish(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
 
     bool Failed() const { return _failed.load(); }
     std::string Error() const;
@@ -156,6 +163,8 @@ private:
     uint32_t _part = 0;
     size_t _nextConfig = 0;
     bool _finished = false;
+    size_t _end = SIZE_MAX;   ///< the file's last checkpoint + 1 (known at Finish)
+    uint64_t _base[4] = {};   ///< the journals' positions at the file's start: IN, OUT, sectors, vectors
     std::string _buildError;   ///< the engine's thread only
 
     // The writer thread
@@ -177,8 +186,9 @@ public:
                      const TTDSessionSaveParams& params = {});
     /// Replace @p engine's session by the file's. False with the reason when
     /// nothing could be loaded (not a session file, damaged header or tables)
+    /// @p append: the next file of the same recording (the next segment), added to @p engine's session
     static bool Load(TimeTravelEngine& engine, const ITTDByteSource& source, std::string& error,
-                     TTDSessionLoadReport* report = nullptr);
+                     TTDSessionLoadReport* report = nullptr, bool append = false);
 
     /// The stream ids this version reads
     static bool KnownStream(uint16_t id);

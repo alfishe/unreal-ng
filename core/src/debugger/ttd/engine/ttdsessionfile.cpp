@@ -197,7 +197,7 @@ void TTDSessionWriter::Fail(const std::string& why)
 }
 
 bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, const TTDSessionSaveParams& params,
-                             std::string& error, const Limits& limits)
+                             std::string& error, const Limits& limits, size_t first)
 {
     if (!e._open)
     {
@@ -206,7 +206,7 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
     }
     _sink = &sink;
     _params = params;
-    _next = e._cpBase;
+    _next = first == SIZE_MAX ? e._cpBase : first;
     _limits = limits;
     _liveItem.assign(e._regions.size(), {});
     for (size_t r = 0; r < e._regions.size(); ++r)
@@ -253,7 +253,7 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
 bool TTDSessionWriter::Collect(const TimeTravelEngine& e)
 {
     const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
-    while (!Failed() && _next + perPart < e.CheckpointCount())
+    while (!Failed() && _next + perPart < std::min(_end, e.CheckpointCount()))
     {
         if (_queuedBytes.load() > _limits.lagHardBytes)
         {
@@ -272,16 +272,17 @@ bool TTDSessionWriter::Collect(const TimeTravelEngine& e)
     return !Failed();
 }
 
-bool TTDSessionWriter::Finish(const TimeTravelEngine& e)
+bool TTDSessionWriter::Finish(const TimeTravelEngine& e, size_t end)
 {
     if (_finished)
         return !Failed();
     _finished = true;
+    _end = std::min(end, e.CheckpointCount());
     Collect(e);
     const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
-    while (!Failed() && _next < e.CheckpointCount())
+    while (!Failed() && _next < _end)
     {
-        const size_t last = std::min(_next + perPart, e.CheckpointCount());
+        const size_t last = std::min(_next + perPart, _end);
         PartJob job;
         if (!BuildPart(e, _next, last, true, job))
         {
@@ -366,8 +367,22 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 {
     const TTDPieceStore& store = *e._store;
     const std::vector<TTDEvent>& events = e._events.Events();
-    const bool lastPart = final && last == e.CheckpointCount();
+    // The file's last part takes everything up to the next checkpoint after
+    // it (the next segment's baseline), or everything left at the session's end
+    const bool lastPart = final && last == _end;
+    const bool atSessionEnd = last >= e.CheckpointCount();
     const TTDEngineCheckpoint& head = e.CpAt(first);
+    const bool fileStart = _part == 0;
+    if (fileStart)
+    {
+        // Journal positions in the file count from its first record, so files
+        // load one after another into a session that starts anywhere
+        _base[0] = first == 0 ? 0 : head.busReadCursor;
+        _base[1] = first == 0 ? 0 : head.busWriteCursor;
+        _base[2] = first == 0 ? 0 : head.mediaReadCursor;
+        _base[3] = first == 0 ? 0 : head.busVectorCursor;
+        job.end.extra = {kPartFileStart};
+    }
     TTDByteWriter pieces, checkpoints;
     std::set<uint32_t> dependencies;
     checkpoints.Varint(last - first);
@@ -383,10 +398,10 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         checkpoints.Raw(&cp.chipset, sizeof(cp.chipset));
         checkpoints.Varint(cp.unclaimedDevices.size());
         checkpoints.Bytes(cp.unclaimedDevices.data(), cp.unclaimedDevices.size());
-        checkpoints.Varint(cp.busReadCursor);
-        checkpoints.Varint(cp.busWriteCursor);
-        checkpoints.Varint(cp.mediaReadCursor);
-        checkpoints.Varint(cp.busVectorCursor);
+        checkpoints.Varint(cp.busReadCursor - _base[0]);
+        checkpoints.Varint(cp.busWriteCursor - _base[1]);
+        checkpoints.Varint(cp.mediaReadCursor - _base[2]);
+        checkpoints.Varint(cp.busVectorCursor - _base[3]);
         uint64_t changedRegions = 0;
         for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
             changedRegions += refs.changeCount > 0;
@@ -441,13 +456,13 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 
     // Events up to the next part's start
     TTDMachineTime until = 0;
-    if (!lastPart)
+    if (!atSessionEnd)
         until = e.CpAt(last).start;
     TTDByteWriter ev;
     size_t count = 0;
     // By time, not by index: a ring drops old events, which shifts the indices
     const size_t eventsFrom = first == 0 ? 0 : e._events.CursorAt(head.start);
-    const size_t eventsTo = lastPart ? events.size() : e._events.CursorAt(until);
+    const size_t eventsTo = atSessionEnd ? events.size() : e._events.CursorAt(until);
     count = eventsTo - eventsFrom;
     ev.Varint(count);
     TTDMachineTime previousTime = 0;
@@ -471,7 +486,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 
     // Configuration entries starting in the part, media versions changing in it
     TTDByteWriter config;
-    const uint64_t frameUntil = lastPart ? UINT64_MAX : e.CpAt(last).position.frame;
+    const uint64_t frameUntil = atSessionEnd ? UINT64_MAX : e.CpAt(last).position.frame;
     const size_t configFrom = _nextConfig;
     while (_nextConfig < e._configs.size() && e._configs[_nextConfig].frame < frameUntil)
         ++_nextConfig;
@@ -506,7 +521,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 
     // Journals from this part's first checkpoint to the next part's
     auto range = [&](uint64_t TTDEngineCheckpoint::*cursor, uint64_t size) {
-        return Range{first == 0 ? 0 : head.*cursor, lastPart ? size : e.CpAt(last).*cursor};
+        return Range{first == 0 ? 0 : head.*cursor, atSessionEnd ? size : e.CpAt(last).*cursor};
     };
     TTDByteWriter reads, writes, vectors, mediaReads;
     const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._busReads.Size());
@@ -539,7 +554,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
               add(kBusVectors, vectors, vr.to == vr.from) && add(kMediaReads, mediaReads, mr.to == mr.from);
 
     // The write journal (derived, D40) goes whole with the last part
-    if (ok && lastPart && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
+    if (ok && lastPart && atSessionEnd && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
     {
         // In v1's column blocks of 2,048 records (EncodeWriteBlock)
         TTDByteWriter wj;
@@ -594,7 +609,7 @@ bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::st
 /// region <Load>
 
 bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std::string& error,
-                          TTDSessionLoadReport* reportOut)
+                          TTDSessionLoadReport* reportOut, bool append)
 {
     TTDSessionLoadReport report;
     TTDContainerReader reader;
@@ -643,12 +658,28 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         }
         devices.push_back(std::move(d));
     }
-    if (!e.BeginSession(regions, std::move(devices), error))
-        return false;
-    e.SetSnapshotInterval(interval);
+    if (append && e._open)
+    {
+        // The next file of the same recording: the same regions and devices
+        size_t memoryRegions = 0;
+        for (uint32_t r = 0; r < e._regions.size(); ++r)
+            memoryRegions += !e.IsDeviceStateRegion(r);
+        if (memoryRegions != regions.size() || e._devices.Entries().size() != devices.size())
+        {
+            error = "the file is not of the same recording (regions or devices differ)";
+            return false;
+        }
+    }
+    else
+    {
+        if (!e.BeginSession(regions, std::move(devices), error))
+            return false;
+        e.SetSnapshotInterval(interval);
+    }
 
     TTDPieceStore& store = *e._store;
     std::vector<TTDPieceId> items;   // number in the file -> store id
+    uint64_t base[4] = {};           // the journals' positions where the current file starts
     std::vector<TTDPortRecord> ports;
     auto stop = [&](size_t part, const std::string& why) {
         report.stoppedAt = "part " + std::to_string(part) + ": " + why;
@@ -687,6 +718,15 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                     return &bytes;
             return nullptr;
         };
+        if (!part.extra.empty() && (part.extra[0] & kPartFileStart))
+        {
+            // A file (or a joined segment) starts: its own numbering and positions
+            items.clear();
+            base[0] = e._busReads.Size();
+            base[1] = e._busWrites.Size();
+            base[2] = e._mediaReads.Size();
+            base[3] = e._busVectors.Size();
+        }
         const std::vector<uint8_t>* pieceBytes = find(kPieces);
         const std::vector<uint8_t>* cpBytes = find(kCheckpoints);
         if (!pieceBytes || !cpBytes)
@@ -713,6 +753,10 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
             frame += delta;
             cp.position.frame = frame;
             cp.baseline = (flags & 1) != 0;
+            cp.busReadCursor += base[0];
+            cp.busWriteCursor += base[1];
+            cp.mediaReadCursor += base[2];
+            cp.busVectorCursor += base[3];
             std::vector<TTDImportedChange> changes;
             for (uint64_t g = 0; ok && g < changedRegions; ++g)
             {

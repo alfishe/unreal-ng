@@ -5,6 +5,7 @@
 #include <system_error>
 
 #include "common/filehelper.h"
+#include "debugger/ttd/engine/ttdrecordingwriter.h"
 #include "platform/processinfo.h"
 
 namespace ttd
@@ -175,10 +176,7 @@ namespace ttd
             return false;
         }
         if (segments.size() > 1)
-        {
-            error = "joining several segments comes with the segment ring (Phase 4, Step 3)";
-            return false;
-        }
+            return JoinSessionFiles(segments, target, overwrite, error);
         std::error_code ec;
         const auto options = overwrite ? fs::copy_options::overwrite_existing : fs::copy_options::none;
         fs::copy_file(FileHelper::ToFsPath(segments.front()), FileHelper::ToFsPath(target), options, ec);

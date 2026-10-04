@@ -178,6 +178,8 @@ public:
     {
         return AddRecord(streamId, data.data(), data.size(), compress);
     }
+    /// Append a record as another file stored it (a join): payload, flags and raw size kept
+    bool AddStoredRecord(uint16_t streamId, uint16_t flags, const uint8_t* stored, size_t storedSize, size_t rawSize);
     /// Close the current part with its part-end record; @p sync makes it durable
     bool EndPart(const TTDPartEnd& part, bool sync = false);
     /// Write the index and the trailer (an open part is ended first only by the caller). @p indexExtra: the
@@ -255,6 +257,8 @@ public:
     /// Read one record's payload, checking its CRC and decompressing it. On a damaged payload the record's
     /// part is marked damaged (MarkDamaged) and false is returned with the reason
     bool ReadRecord(const TTDRecordRef& record, std::vector<uint8_t>& out, std::string* error = nullptr);
+    /// The record's payload as stored (CRC checked, not decompressed)
+    bool ReadStored(const TTDRecordRef& record, std::vector<uint8_t>& out, std::string* error = nullptr);
 
     void MarkDamaged(uint32_t partIndex, const std::string& reason);
     /// A part is reachable when neither it nor any part it depends on (transitively) is damaged
