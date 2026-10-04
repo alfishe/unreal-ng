@@ -375,7 +375,11 @@ then drawn like any tile ([V] `video_ts.v:202`). Pixel index =
 
 Pixel index = `{PAL, nibble}`. Descriptors are consumed sequentially: S0 runs
 until the first `LEAP`, S1 resumes after it until the next `LEAP`, S2 runs to
-descriptor 84. `LEAP` counts on inactive/invisible descriptors too
+the **third `LEAP`** or to descriptor 84, whichever comes first: the layer machine
+then has no layer left, so the descriptors behind the third `LEAP` are never
+processed (a program ends its list with a `LEAP` descriptor and may leave anything
+behind it). `LEAP` counts on inactive/invisible descriptors too, and the
+descriptor carrying it belongs to the layer it ends
 ([V] `video_ts.v:229-268,313-327`). **85 is a hard per-frame cap**; more
 sprites need mid-frame SFILE rewrites.
 
