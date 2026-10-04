@@ -3138,6 +3138,12 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Rtc(emulator->GetContext()));
         });
+        // ZX Profi board chips: port map, 8255, 8253, 8251 (DeviceState::ProfiPeripherals); available = false elsewhere
+        lua.set_function("profi_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::ProfiPeripherals(emulator->GetContext()));
+        });
         lua.set_function("rtc_read", [this](sol::this_state s, int start, sol::optional<int> count) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");

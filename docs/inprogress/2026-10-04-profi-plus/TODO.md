@@ -34,7 +34,13 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
   is the screen's 352:288 window x scale in both modes (`RecordingManager`, `RecordsProfiDisplay`;
   `RecordingManager_Test.ProfiFramesKeepTheScreensWindowInBothModes`), checked with a GIF and an H.264 recording of
   PROFI-PLUS in DOS Navigator: 704x576 at scale 2
-- [ ] P5 TTD, automation, recipe, docs
+- [ ] P5 TTD, automation, recipe, docs. Done in the branch: the `DeviceState::ProfiPeripherals` report (port map in force,
+  8255, 8253 counters, 8251, `#B3` latch) on CLI `state profi`, WebAPI `GET /state/profi` + OpenAPI, MCP aspect `profi`,
+  Lua / Python `profi_state()`, the interface docs. The recipe is checked live on the WebAPI and the CLI (MCP / Lua / Python built, not driven live). Open: the Qt panel (debugger plan)
+- [x] `profi.ext_ports` is in the TTD config fingerprint (`PortDecoder_Profi::AddTTDBoardSettings`, agreed with the TTD v2
+  session 2026-10-04, `ttd-engine` landed): a recording made under another ExtPorts value is refused at load. TTD v2 takes
+  PeripheralIds 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback): do not use them for new Profi chips (ours are
+  50 / 51 / 52)
 - [x] P6 DOS Navigator: 2.0.16 runs from the PQ-DOS 2023 HDD image on PROFI-PLUS (BIOS Plus 0.41h1)
 - [x] Triage of the 116 programs on the PQ-DOS HDD image ([analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
   SP.COM logo = program bug ([sp-demo](../../disasm/machines/profi-plus/sp-demo/README.md)); FLINES / WERT# / PINGVIN# need

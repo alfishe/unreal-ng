@@ -588,6 +588,29 @@ void EmulatorAPI::getStateRtc(const HttpRequestPtr& req, std::function<void(cons
     ReplyState(DeviceState::Rtc(emulator->GetContext()), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/profi - the ZX Profi board chips (DeviceState::ProfiPeripherals); 404 on other machines
+void EmulatorAPI::getStateProfi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::ProfiPeripherals(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateProfiActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/profi"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateProfi(req, std::move(callback), emulator->GetId());
+}
+
 void EmulatorAPI::getStateRtcActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
 {
     auto emulator = getEmulatorWithGlobalSelection();

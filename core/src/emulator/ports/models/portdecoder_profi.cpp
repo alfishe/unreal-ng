@@ -1157,6 +1157,7 @@ void PortDecoder_Profi::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
     fp.Add("profi.turbo", c.profi_turbo);
     fp.Add("profi.cpm", c.profi_cpm);
     fp.Add("profi.dffd_decode", c.profi_dffd_decode);
+    fp.Add("profi.ext_ports", c.profi_ext_ports);   // cpm / sys / v003: a recording made under another decode is refused
 }
 ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
 {
