@@ -72,7 +72,8 @@
             "last_command, last_reply, bytes_sent, bytes_received, files_sent, files_received), vfs (pending: the VFS "
             "operation in progress, waiting_for: the frame awaited from the Z80, last_error, requests, bytes_read, "
             "bytes_written, timeouts, dropped_while_waiting: Z80 frames lost while the client waited), esp_clock_set "
-            "(the S3's SNTP clock)). card.kind is none when "
+            "(the S3's SNTP clock), wc_update (S3: the Wild Commander updater - running, activity, state: its last "
+            "state line, commit, files)). card.kind is none when "
             "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";

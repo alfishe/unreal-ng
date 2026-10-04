@@ -13,7 +13,7 @@ EspStack::EspStack(VirtualNetwork* network, int slots) : _network(network), _slo
 EspStack::~EspStack()
 {
     Close(-1);
-    for (uint16_t id : {_dnsSocket, _pingSocket, _querySocket})
+    for (uint16_t id : {_dnsSocket, _pingSocket, _querySocket, _aux.socket})
     {
         if (_network && id)
             _network->Close(id);
@@ -271,6 +271,15 @@ std::vector<uint8_t> EspStack::Read(int slot, uint32_t max)
     return out;
 }
 
+std::vector<EspStack::RxByte> EspStack::ReadRx(int slot, uint32_t max)
+{
+    Slot& s = _slots[static_cast<size_t>(slot)];
+    const size_t n = std::min<size_t>(max, s.rx.size());
+    std::vector<RxByte> out(s.rx.begin(), s.rx.begin() + static_cast<std::ptrdiff_t>(n));
+    s.rx.erase(s.rx.begin(), s.rx.begin() + static_cast<std::ptrdiff_t>(n));
+    return out;
+}
+
 bool EspStack::PopDatagram(int slot, Datagram& out)
 {
     Slot& s = _slots[static_cast<size_t>(slot)];
@@ -346,6 +355,33 @@ void EspStack::Resolve(const std::string& name)
                      NetEndpoint{_network->Config().dnsServer, 53}, query.data(), static_cast<uint32_t>(query.size()));
 }
 
+void EspStack::ResolveAux(const std::string& name)
+{
+    if (!_network)
+    {
+        if (onDone)
+            onDone({Done::Kind::Resolve, kAuxResolver, NetEventStatus::Unreachable, 0, {}});
+        return;
+    }
+    if (_aux.socket)
+        CloseVnet(_aux.socket);
+    _aux.socket = OpenVnet(NetProto::Udp);
+    _aux.seq = static_cast<uint16_t>(_aux.seq + 1);
+    _aux.id = static_cast<uint16_t>(0xD500 ^ _aux.seq);
+    _aux.name = name;
+    const std::vector<uint8_t> query = dns::BuildQuery(_aux.id, name);
+    if (!_aux.socket || query.empty())
+    {
+        _aux.resolving = false;
+        if (onDone)
+            onDone({Done::Kind::Resolve, kAuxResolver, NetEventStatus::Unreachable, 0, {}});
+        return;
+    }
+    _aux.resolving = true;
+    _network->SendTo(_aux.socket, static_cast<uint16_t>(0xB000 | (_aux.seq & 0x0FFF)),
+                     NetEndpoint{_network->Config().dnsServer, 53}, query.data(), static_cast<uint32_t>(query.size()));
+}
+
 void EspStack::OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
                           const uint8_t* data, uint32_t length, uint32_t source)
 {
@@ -361,6 +397,23 @@ void EspStack::OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus sta
         done.data.assign(data, data + length);
         if (onDone)
             onDone(done);
+        return;
+    }
+
+    if (id == _aux.socket && _aux.socket)
+    {
+        if (type != NetEventType::Datagram || !_aux.resolving)
+            return;
+        std::vector<uint32_t> addresses;
+        uint8_t rcode = 0;
+        if (!dns::ParseAnswer(data, length, _aux.id, addresses, rcode))
+            return;
+        _aux.resolving = false;
+        CloseVnet(_aux.socket);
+        _aux.socket = 0;
+        if (onDone)
+            onDone({Done::Kind::Resolve, kAuxResolver, addresses.empty() ? NetEventStatus::Unreachable : NetEventStatus::Ok,
+                    addresses.empty() ? 0u : addresses.front(), {}});
         return;
     }
 
@@ -508,6 +561,7 @@ void EspStack::RebindAll()
             rebind(p.vnetId);
     }
     rebind(_dnsSocket);
+    rebind(_aux.socket);
     rebind(_pingSocket);
     rebind(_querySocket);
 }

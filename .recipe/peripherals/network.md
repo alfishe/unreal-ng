@@ -173,9 +173,11 @@ UnrealNG` (any password); another SSID ends in `EE "wifi timeout"` after
 10 s. The FTP server runs (`FTP_START`, the Wild Commander plugin `ZIFIFTP.WMF`;
 [demo below](#demo-the-zifi-ftp-server-host-client-to-the-zx-sd-card)): the ESP
 listens on the virtual network and turns every file command into VFS request
-frames to the Z80 (`40..5E`), which the plugin answers from the SD card. Not
+frames to the Z80 (`40..5E`), which the plugin answers from the SD card. The
+Wild Commander updater (`WCU_START`, `WCUPDATE.WMF`; [demo below](#demo-update-wild-commander-from-github))
+compares the WC files with GitHub and replaces the ones the user marks. Not
 emulated (they answer as when the service cannot start, `EE "smb:not
-emulated"` etc.): SMB, OTA, the online update, the WC updater. HTTPS (S3: port
+emulated"` etc.): SMB, OTA, the online update. HTTPS (S3: port
 443 and redirects to `https://`) is TLS done by the host with OpenSSL, the
 server's certificate checked against the host's trust store and the name
 (`SSL_CERT_FILE` / `SSL_CERT_DIR` point OpenSSL elsewhere); the program sees
@@ -354,6 +356,30 @@ Measured (2026-10-04, real time with TTD on): S3 RETR 100 000 bytes 8.8 KB/s, ST
 ESP-01S RETR 6.0 KB/s, STOR 2.6 KB/s; byte-exact both ways, passive and active, the ZiFi ring never overflowed.
 While the ESP waits for the Z80's VFS answer the UART serves only PING and SYS_RESET (other commands are lost, as
 on the firmware: `file_bridge.vfs.dropped_while_waiting`).
+
+#### Demo: update Wild Commander from GitHub
+
+`WCUPDATE.WMF` (S3, from [ZiFi-ESP32-S3-Zero](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero)) asks the
+ESP to compare the SD card's Wild Commander with
+[Wild-Commander-Improved](https://github.com/andrewinsidelazarev/Wild-Commander-Improved) (`main`, folder `exe`):
+the ESP reads every file through the plugin (VFS) and hashes it the way git does, fetches the list from
+api.github.com over HTTPS (TLS by the host), and writes each marked file through a checked copy.
+
+1. The SD folder of the FTP demo with `WCUPDATE.WMF` in `WC/` (and in `[PLUGINS]` of `WC/wc.ini`); TS-Conf with
+   `{"zifi": "zifi-native,s3", "host_access": true}`; insert the folder into `sd.zc`, reset: WC.
+2. TTD with a history limit: `POST /ttd/start`, `POST /ttd/history-limit {"frames":3000}`.
+3. F10, cursor to "ZiFi WC Update v1.0", Enter. After a few seconds: "N to update from GitHub f06f9c5" and the
+   list: `same`, `DIFFERS`, `NEW`, `SD only` (the card has it, GitHub not), `kept` (a protected file, `WC/wc.ini`:
+   never replaced). `inspect_state network`: `zifi.esp.native_session.file_bridge.wc_update` (`running`,
+   `activity`, `state`, `commit`, `files`).
+4. Space marks a line, A marks all, Enter updates the marked files: each line turns `UPDATED` (or `FAILED` with the
+   reason in the state line); "- restart WC" when WC's own files changed. Esc leaves (`WCU_STOP`).
+5. Check on the card: `POST /media/sd.zc/export {"path":"card.img"}`, `mcopy -i card.img ::/WC_todo.txt .`, compare
+   with `https://raw.githubusercontent.com/andrewinsidelazarev/Wild-Commander-Improved/<commit>/exe/WC_todo.txt`.
+
+Measured (2026-10-04): the check of 45 entries in a few seconds; a 2 KB file updated in 2.6 s (download, copy
+written and read back, MOVE, read back); all four updated files byte-exact. GitHub's API allows 60 unauthenticated
+requests an hour per address: more gives "GitHub API limit, retry later" (each check makes two).
 
 ### The Hayes modem
 

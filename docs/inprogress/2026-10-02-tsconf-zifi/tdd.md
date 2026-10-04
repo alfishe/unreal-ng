@@ -158,7 +158,7 @@ registers, TTD with peer kind 7).
 
 - Which "2.2.1" the kit's author has (the binary is not published); if it is Espressif's v2.2.1.0, the
   `ESP8266-AT221` preset should get `SYSSTORE`, passive receive and no `_CUR` (§7.1).
-- Z3b: SMB, TLS (HTTPS GET, redirects to HTTPS), WC Update, the online update (§7.5 "Open"). FTP is done (§7.5).
+- Z3b: SMB, the online update (§7.5 "Open"). FTP, HTTPS and WC Update are done (§7.5).
 - HTTPS for the S3's HTTP GET needs a TLS decision (reference-sprinter-wifi-driver open question 7).
 - `ERR CODE` extensions for parameter errors carry the parameter index where the module knows it, else 0
   (Espressif documents the layout, not every command's index).
@@ -221,6 +221,34 @@ error text is always "tls connect failed" (the firmware may add mbedTLS's own re
 trust store stands in for the firmware's bundle. Checked with the real S3 `zifi.spg` 0.733: "Demos:
 bbb.retroscene.org" (301 to `https://`, then the list over TLS 1.3) and a demo saved to the SD card byte-exact.
 
+**WC Update (S3).** `WCU_START` (`25`, `repo\0branch\0dir\0[protected path\0...]\0`), `WCU_APPLY` (`26`, file
+indices), `WCU_STOP` (`27`), `WCU_SYNC` (`28`); events `67` state (`[phase][current LE16][total LE16][percent][text]`)
+and `68` list line (`[index][status][flags][SD size LE24][GitHub size LE24][path tail]`). The firmware
+([src/wc_updater.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/wc_updater.cpp),
+[src/wc_update_service.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/wc_update_service.cpp),
+[src/main.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/main.cpp) `processWcu*`) runs
+a task of its own: the branch's commit and the recursive tree from api.github.com, the SD side listed and every
+common file hashed as a git blob (SHA-1 over VFS reads), then per marked file: download from
+raw.githubusercontent.com (3 attempts, length + SHA checked), a copy `WCUPD.TMP` written and read back for its SHA,
+FILEX `MOVE_RENAME` with REPLACE onto the name (or, plugin answering `FE`, the RENAME fallback through `WCUPD.OLD`),
+the result read back once more; protected files (`wc.ini`) only installed when missing. `ZiFiWcUpdater` keeps that
+control flow as a **C++20 coroutine** (the firmware's blocking calls become `co_await` of a *primitive*: a VFS
+request with the updater's own wait 15 / 70 / 190 s, an event with up to 5 s for queue room, a GitHub fetch, a
+download, the ring and SHA steps, the time, the stop flag, the next command). Every primitive's result is logged:
+the TTD state is WCU_START's payload + that log + the primitive in flight, and a load re-runs the coroutine against
+the log with no side effects, leaving it waiting where it was (saved in the bridge section before the plugins tail;
+`kBridgeVersion` 2). `ZiFiHttpFetch` is the firmware's `NetWcFetcher` (HTTP/1.0 GET over host TLS on socket slot 10,
+its own DNS lookup `EspStack::ResolveAux`, up to 4 redirects, header within 10 s / 2048 bytes, chunked refused,
+body to EOF or Content-Length, the body kept by journal reference). The service: WCU_START closes the TCP client and
+stops FTP; `wcu_.stop(20 s)` before WCU_START, FTP_START and SMB_START holds the request (`Op::WcuStop`) until the
+session ends (timeout: `wcu:previous stopping` / `ftp:wc update stopping` / `smb:wc update stopping`, `A7 [0]`);
+WCU_START's answer leaves before the session's first event and APPLY / SYNC are taken at the next poll (the
+plugin's `waitFor` drops any other frame). **Deviations** [inferred]: the session is polled at frame boundaries and
+on every VFS answer (the firmware's task runs as soon as it can); a downloaded file's buffer is dropped when the
+file is done (`DropDownload`), but a TTD checkpoint inside one file's processing whose download is older than the
+history limit cannot restore the session (it comes back idle). Checked with the real `WCUPDATE.WMF` v1.0 against
+GitHub (TODO.md Z5 table).
+
 **Open:** SMB (S3: the firmware is libsmb2 in server mode plus a 10 000-line adapter, NBNS / LLMNR / WS-Discovery),
-WC Update (HTTPS to GitHub, git SHA-1 over VFS reads), the online update (its check is a manifest over HTTPS; the
+the online update (its check is a manifest over HTTPS; the
 install would run a downloaded ESP32-S3 image, which an emulated module cannot).

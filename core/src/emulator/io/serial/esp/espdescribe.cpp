@@ -9,6 +9,7 @@
 #include "emulator/io/serial/esp/zififtpserver.h"
 #include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/io/serial/esp/zifivfsbridge.h"
+#include "emulator/io/serial/esp/zifiwcupdater.h"
 #include "emulator/io/serial/esp/zifiwebdavserver.h"
 
 namespace
@@ -192,6 +193,18 @@ void Describe(const EspModule& esp, StateNode& e)
             v["dropped_while_waiting"] = static_cast<uint64_t>(native->DroppedWhileWaiting());
             fb["vfs"] = v;
             fb["esp_clock_set"] = native->ClockSet();
+            if (native->GetVariant() == ZiFiNativeModule::Variant::S3)
+            {
+                // The Wild Commander updater (WCU_START .. WCU_STOP): GitHub over host TLS against the SD card
+                const ZiFiWcUpdater& wcu = native->WcUpdater();
+                StateNode w = StateNode::Object();
+                w["running"] = wcu.Running();
+                w["activity"] = wcu.Activity();
+                w["state"] = wcu.LastState();
+                w["commit"] = wcu.Commit();
+                w["files"] = static_cast<uint64_t>(wcu.FileCount());
+                fb["wc_update"] = w;
+            }
             s["file_bridge"] = fb;
         }
         e["native_session"] = s;
