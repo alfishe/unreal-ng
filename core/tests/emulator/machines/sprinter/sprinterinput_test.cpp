@@ -11,6 +11,7 @@
 #include "sprinterfixture.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
@@ -102,16 +103,19 @@ TEST_F(SprinterInput_Test, KeyReachesSioAAfterOneFrame)
     EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0xF0, 0x0C}));
 }
 
-// Nothing holds the keyboard off: a fourth byte into the 3-byte FIFO is an overrun (RR1 bit 5),
-// which SETUP's KEYSCAN checks (KEY.ASM Receiver_Overrun)
+// Nothing holds the keyboard off: a fourth byte into the 3-byte FIFO overwrites the newest character and flags it
+// (RR1 bit 5 once it reaches the top), which the community SETUP's KEYSCAN checks (KEY.asm Receiver_Overrun)
 TEST_F(SprinterInput_Test, FullFifoOverruns)
 {
     DrainA();
     Key(PcKey::Delete, true);   // E0 71
     Key(PcKey::Delete, false);  // E0 F0 71
     Wait(5 * kByteT);
+    EXPECT_EQ(Rr1() & 0x20, 0) << "the top character is good";
+    EXPECT_EQ(In(0x0018), 0xE0);
+    EXPECT_EQ(In(0x0018), 0x71);
     EXPECT_NE(Rr1() & 0x20, 0) << "overrun";
-    EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0xE0, 0x71, 0xE0}));
+    EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0x71})) << "the last #71 wrote over E0, then F0";
     EXPECT_EQ(Input().KeyboardOverruns(), 2u);
 }
 
@@ -182,28 +186,136 @@ TEST_F(SprinterInput_Test, HostKeyAlsoReachesTheZxMatrix)
     EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0x1C}));
 }
 
-// The PLD's keyboard block: Ctrl + Alt + Del pulls the CPU's /RESET (the configuration stays)
+// The PLD's keyboard block decodes the wire (KBD.TDF): Ctrl + Alt + Del pulls the CPU's /RESET when the #71 byte
+// ends its frame (the configuration stays)
 TEST_F(SprinterInput_Test, CtrlAltDelResetsTheCpu)
 {
-    Key(PcKey::LeftCtrl, true);
-    Key(PcKey::Delete, true);
+    Key(PcKey::LeftCtrl, true);  // 14
+    Key(PcKey::Delete, true);    // E0 71
+    Wait(3 * kByteT);
+    Input().Advance();
     EXPECT_EQ(Pld().resetPending, 0) << "Ctrl + Del alone is a key";
-    Key(PcKey::Delete, false);
-    Key(PcKey::LeftAlt, true);
-    Key(PcKey::Delete, true);
-    EXPECT_EQ(Pld().resetPending, static_cast<uint8_t>(static_cast<uint8_t>(SprinterResetKind::SoftReset) + 1));
+    Key(PcKey::Delete, false);  // E0 F0 71: a break is no reset
+    Key(PcKey::LeftAlt, true);  // 11
+    Wait(4 * kByteT);
+    Input().Advance();
+    EXPECT_EQ(Pld().resetPending, 0);
+    Key(PcKey::Delete, true);  // E0 71
+    EXPECT_TRUE(Input().NeedsStepHook()) << "the #71 must act on time";
+    Wait(kByteT);
+    _decoder->OnMachineStep(0);
+    EXPECT_EQ(Pld().resetPending, 0) << "E0 so far";
+    Wait(kByteT);
+    _decoder->OnMachineStep(0);
+    EXPECT_EQ(Pld().resetPending, static_cast<uint8_t>(static_cast<uint8_t>(SprinterResetKind::SoftReset) + 1))
+        << "at the end of the #71 frame";
 }
 
-// F12 alone flips the turbo switch (KB_F12 -> TURBO_HAND); with Shift it is a key
+// F12 (#07) flips the turbo switch when its make code ends its frame on the wire (KB_F12 -> TEST_SWITCH ->
+// TURBO_HAND); its break (F0 07) and Shift + F12 do not
 TEST_F(SprinterInput_Test, F12TogglesTheTurboSwitch)
 {
     const uint8_t before = Pld().turboHard;
     Key(PcKey::Function12, true);
+    EXPECT_EQ(Pld().turboHard, before) << "the byte is still on the wire";
+    EXPECT_TRUE(Input().NeedsStepHook()) << "the PLD acts on #07: the byte is delivered on time";
+    Wait(kByteT);
+    _decoder->OnMachineStep(0);
     EXPECT_EQ(Pld().turboHard, before ^ 1);
     Key(PcKey::Function12, false);
+    Wait(2 * kByteT);
+    _decoder->OnMachineStep(0);
+    EXPECT_EQ(Pld().turboHard, before ^ 1) << "F0 07 is a break";
     Key(PcKey::LeftShift, true);
     Key(PcKey::Function12, true);
+    Wait(2 * kByteT);
+    _decoder->OnMachineStep(0);
     EXPECT_EQ(Pld().turboHard, before ^ 1) << "Shift + F12 does not switch";
+    EXPECT_EQ(DrainA(), (std::vector<uint8_t>{0x07, 0xF0, 0x07}))
+        << "the SIO's view (the FIFO held three; the last two bytes, 12 07, overran it)";
+}
+
+// The PLD hears every #07 the keyboard sends: held past the typematic delay, F12 repeats and each repeat flips the
+// switch again, as on the board (the host's single press is not what the PLD sees)
+TEST_F(SprinterInput_Test, HeldF12RepeatsAndTogglesAgain)
+{
+    const uint8_t before = Pld().turboHard;
+    Ps2KeyboardStream& stream = Input().KeyboardStream();
+    Key(PcKey::Function12, true);
+    Wait(kByteT);
+    Input().Advance();
+    ASSERT_EQ(Pld().turboHard, before ^ 1);
+    EXPECT_TRUE(Input().NeedsStepHook()) << "a repeating F12 keeps the hook";
+    Wait(stream.TypematicDelayTStates());
+    Input().Advance();
+    EXPECT_EQ(Pld().turboHard, before) << "the first repeat";
+    Wait(stream.TypematicPeriodTStates());
+    Input().Advance();
+    EXPECT_EQ(Pld().turboHard, before ^ 1) << "the second repeat";
+    Key(PcKey::Function12, false);
+    Wait(2 * kByteT);
+    Input().Advance();
+    EXPECT_EQ(Pld().turboHard, before ^ 1);
+    EXPECT_FALSE(Input().NeedsStepHook());
+}
+
+// The owner's case: the CPU reads nothing for many frames (DI in a demo, a long ISR) while keys go down and up. The
+// SIO overruns and keeps two old characters plus the newest, as the chip does. The software then sees a wrong
+// stream (here a phantom F12 make: F0 07 lost its F0), but the PLD decodes the wire, not the SIO: no turbo switch.
+// The keyboard sends exactly the bytes of the host's keys - nothing repeats after the release
+TEST_F(SprinterInput_Test, OverrunWithTheCpuDeafLosesBytesButInventsNothing)
+{
+    constexpr uint64_t kFrame = 71680;  // one 3.5 MHz frame
+    const uint8_t turbo = Pld().turboHard;
+    Ps2KeyboardStream& stream = Input().KeyboardStream();
+    DrainA();
+
+    // Enter tapped, then Down held through the typematic delay, then released; then F12 pressed + released with Shift
+    Key(PcKey::Enter, true);
+    Wait(kFrame);
+    Key(PcKey::Enter, false);
+    Wait(kFrame);
+    Key(PcKey::Down, true);
+    Wait(stream.TypematicDelayTStates() + 2 * stream.TypematicPeriodTStates() + kByteT);
+    Key(PcKey::Down, false);
+    Wait(kFrame);
+    Key(PcKey::LeftShift, true);
+    Key(PcKey::Function12, true);
+    Wait(kFrame);
+    Key(PcKey::LeftShift, false);
+    Wait(kFrame);
+    Key(PcKey::Function12, false);  // F0 07
+    Wait(30 * kFrame);              // the CPU still deaf
+    Input().Advance();
+
+    EXPECT_FALSE(stream.Busy()) << "every byte sent, no key repeating";
+    EXPECT_FALSE(stream.IsHeld(PcKey::Down));
+    EXPECT_GT(Input().KeyboardOverruns(), 0u);
+    EXPECT_EQ(Pld().turboHard, turbo) << "Shift + F12, then F12's break: the PLD never switched";
+    EXPECT_EQ(Pld().resetPending, 0);
+
+    // What the CPU finds: the first two characters, and the newest one (the 07 of F12's break) in the third slot,
+    // flagged: RR1 bit 5 rises when it reaches the top
+    EXPECT_EQ(Rr1() & 0x20, 0x00);
+    EXPECT_EQ(In(0x0018), 0x5A);
+    EXPECT_EQ(In(0x0018), 0xF0);
+    EXPECT_NE(Rr1() & 0x20, 0x00) << "the overrun shows with the written-over character";
+    EXPECT_EQ(In(0x0018), 0x07) << "a phantom F12 make for the software; the board's turbo did not move";
+    EXPECT_EQ(Rr0() & 0x01, 0);
+
+    // Read in time again, the stream is whole
+    Out(0x0019, 0x30);  // Error Reset, as the community BIOS / DSS 1.71 do
+    Key(PcKey::Up, true);
+    Key(PcKey::Up, false);
+    std::vector<uint8_t> got;
+    for (int i = 0; i < 6; i++)
+    {
+        Wait(kByteT);
+        const std::vector<uint8_t> part = DrainA();
+        got.insert(got.end(), part.begin(), part.end());
+    }
+    EXPECT_EQ(got, (std::vector<uint8_t>{0xE0, 0x75, 0xE0, 0xF0, 0x75}));
+    EXPECT_EQ(Rr1() & 0x20, 0);
 }
 
 // The serial mouse: a move from the mouse manager (host, automation, TTD replay) arrives at SIO B as a
@@ -359,6 +471,160 @@ TEST_F(SprinterInput_Test, MouseButtonsMapping)
     manager.ApplyButtons(0xFF);
 }
 
+/// region <The automation mouse on the serial line (design 2026-10-03)>
+
+namespace
+{
+/// A Microsoft packet's motion: dx (+ right), dy (+ down), and its buttons (bit 5 left, bit 4 right)
+struct SerialPacket
+{
+    int dx;
+    int dy;
+    uint8_t buttons;
+};
+std::vector<SerialPacket> DecodePackets(const std::vector<uint8_t>& bytes)
+{
+    std::vector<SerialPacket> packets;
+    for (size_t i = 0; i + 2 < bytes.size(); i += 3)
+    {
+        EXPECT_EQ(bytes[i] & 0x40, 0x40) << "byte " << i << " starts a packet";
+        const uint8_t x = static_cast<uint8_t>(((bytes[i] & 0x03) << 6) | (bytes[i + 1] & 0x3F));
+        const uint8_t y = static_cast<uint8_t>(((bytes[i] & 0x0C) << 4) | (bytes[i + 2] & 0x3F));
+        packets.push_back({static_cast<int8_t>(x), static_cast<int8_t>(y), static_cast<uint8_t>(bytes[i] & 0x30)});
+    }
+    return packets;
+}
+}  // namespace
+
+// Packets from the automation API (DebugMouseManager: WebAPI / MCP / CLI / Lua / Python): a move and a press
+// become one Microsoft packet on SIO B, as the worked example in msserialmouse.h; the device status shows the
+// line (the packet, packets sent, the receiver in tune, bytes received)
+TEST_F(SprinterInput_Test, ApiMoveAndPressBecomeOnePacket)
+{
+    // The automation funnel on this bare machine (no DebugManager, no TTD): the input goes through the manager
+    DebugMouseManager funnel(_context);
+    DebugMouseManager* api = &funnel;
+    ProgramMouseClock();
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    In(0x001B);  // the reference sample
+
+    ASSERT_TRUE(api->Move(5, 3).ok());
+    ASSERT_TRUE(api->PressButton(MouseButton::Left).ok());
+    In(0x001B);  // the poll that starts the packet
+    Wait(3 * 26250);
+    std::vector<uint8_t> got;
+    while (In(0x001B) & 0x01)
+        got.push_back(In(0x001A));
+    EXPECT_EQ(got, (std::vector<uint8_t>{0x6C, 0x05, 0x3D})) << "5 right, 3 up, left: #6C #05 #3D";
+
+    const MouseStateSnapshot state = api->GetState();
+    ASSERT_TRUE(state.device.has_value());
+    EXPECT_EQ(state.device->id, "sprinter");
+    ASSERT_TRUE(state.device->hasSerial);
+    const MouseDeviceStatus::Serial& serial = state.device->serial;
+    EXPECT_EQ(serial.baud, 1200u);
+    EXPECT_TRUE(serial.receiverInTune);
+    EXPECT_FALSE(serial.packetInFlight);
+    EXPECT_EQ(serial.packet[0], 0x6C);
+    EXPECT_EQ(serial.packetsSent, 1u);
+    EXPECT_EQ(serial.bytesReceived, 3u);
+    EXPECT_EQ(serial.pendingDx, 0);
+    EXPECT_EQ(state.device->portX, 36) << "the PLD's Kempston view of the same counters";
+    ASSERT_TRUE(api->ReleaseAllButtons().ok());
+}
+
+// A glide of 900 right and 450 down reaches the program as packets of at most 127 each that add up exactly: the
+// 8-bit board counters never run more than a step ahead of the serial mouse, so nothing wraps. Two plain moves
+// of 127 + 127 without the program reading in between would have reached it as -2 (the counters wrap); a
+// click sent after the glide waits for it and arrives after the last motion packet
+TEST_F(SprinterInput_Test, GlideReachesTheProgramAsExactPacketsThenTheClick)
+{
+    // The automation funnel on this bare machine (no DebugManager, no TTD): the input goes through the manager
+    DebugMouseManager funnel(_context);
+    DebugMouseManager* api = &funnel;
+    ProgramMouseClock();
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    In(0x001B);  // the reference sample
+
+    // A frame is shorter than a packet (20 ms vs 22.5 ms): a step per frame without waiting for the line would
+    // run the 8-bit board counters ahead of the serial mouse until they wrap
+    std::vector<uint8_t> bytes;
+    const auto programReads = [&]() {
+        In(0x001B);  // DSS's poll: the serial mouse looks at the counters
+        Wait(20000);
+        while (In(0x001B) & 0x01)
+            bytes.push_back(In(0x001A));
+    };
+
+    ASSERT_TRUE(api->Glide(900, -450).ok());
+    const MouseInjectResult click = api->Click(MouseButton::Left, 2);
+    ASSERT_TRUE(click.ok());
+    EXPECT_TRUE(click.queued) << "the click waits behind the glide";
+    for (int frame = 0; frame < 200 && (api->IsBusy() || api->IsClickPending()); frame++)
+    {
+        programReads();
+        api->OnFrame();
+    }
+    for (int i = 0; i < 16; i++)
+        programReads();
+    EXPECT_FALSE(api->IsBusy());
+
+    const std::vector<SerialPacket> packets = DecodePackets(bytes);
+    int dx = 0, dy = 0;
+    size_t firstWithButton = packets.size();
+    for (size_t i = 0; i < packets.size(); i++)
+    {
+        EXPECT_LE(std::abs(packets[i].dx), 127);
+        EXPECT_LE(std::abs(packets[i].dy), 127);
+        if (packets[i].buttons && firstWithButton == packets.size())
+            firstWithButton = i;
+        if (firstWithButton == packets.size())
+        {
+            dx += packets[i].dx;
+            dy += packets[i].dy;
+        }
+        else
+            EXPECT_EQ(packets[i].dx, 0) << "packet " << i << ": no motion after the click started";
+    }
+    EXPECT_EQ(dx, 900) << "the glide arrives whole before the click";
+    EXPECT_EQ(dy, 450) << "450 down (the serial mouse counts down)";
+    ASSERT_LT(firstWithButton, packets.size()) << "no packet with the left button";
+    EXPECT_EQ(packets[firstWithButton].buttons, 0x20);
+    EXPECT_EQ(packets.back().buttons, 0x00) << "the click released";
+}
+
+// Capture only while polled: the board mouse is "in use" while a program reads it - SIO B (DSS 1.71's serial
+// driver) or the PLD's Kempston view (DSS 1.62.9x) - within the last kPolledWithinFrames frames; BIOS SETUP,
+// which reads neither, gets no capture
+TEST_F(SprinterInput_Test, BoardMouseInUseOnlyWhilePolled)
+{
+    MouseManager& manager = *_context->pMouseManager;
+    EXPECT_TRUE(manager.HasMouseDevice()) << "always fitted";
+    EXPECT_FALSE(Input().IsMouseInUse()) << "nobody read it yet";
+    EXPECT_FALSE(manager.IsMouseInUse());
+
+    In(0x001B);  // SIO B RR0: the serial driver's poll
+    EXPECT_TRUE(Input().IsMouseInUse());
+    EXPECT_TRUE(manager.IsMouseInUse());
+    _context->emulatorState.frame_counter += IMouseSink::kPolledWithinFrames + 1;
+    EXPECT_FALSE(Input().IsMouseInUse()) << "not read for a second";
+
+    SetCodeAll(0xFADF, true, 0x58);
+    OpenDcp();
+    In(0xFBDF);  // the PLD's Kempston view
+    EXPECT_TRUE(Input().IsMouseInUse());
+    _context->emulatorState.frame_counter += IMouseSink::kPolledWithinFrames + 1;
+    EXPECT_FALSE(Input().IsMouseInUse());
+    const MouseStateSnapshot state = DebugMouseManager(_context).GetState();
+    ASSERT_TRUE(state.device.has_value());
+    EXPECT_FALSE(state.device->inUse) << "a debug read (status) does not count as polling";
+    EXPECT_FALSE(Input().IsMouseInUse());
+}
+
+/// endregion
+
 // Every source reaches the board mouse through the emulator's MouseManager with [INPUT] Mouse=NONE: automation
 // (DebugMouseManager: WebAPI, MCP, CLI, Lua, Python), the host window's MC_MOUSE_* events (the GUI) and the host
 // buttons composed with automation's. No "mouse not present" warning: the board mouse reads the input
@@ -435,7 +701,7 @@ protected:
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->GetRtc().SetFixedTime(1767268830);
-        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // pinned to 3.04 (shipped default: 3.07 BETA 1)
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // pinned to 3.04 (shipped default: 3.06 Hotfix 2)
         _context->config.sprinter.fast_start = 1;
         _emulator->Reset();
         _emulator->EnableTurboMode();  // no assertion looks at pixels

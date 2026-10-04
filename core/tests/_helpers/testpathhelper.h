@@ -270,6 +270,20 @@ public:
     /// Creates the directory if it does not exist.
     static fs::path GetScratchDir()
     {
+        // UNREAL_TEST_SCRATCH_DIR moves the scratch directory off the project tree. The Linux Docker run needs it: on
+        // a macOS bind mount (virtiofs) creating a file with mode 0200 fails, and std::filesystem::copy_file creates
+        // its destination that way, so tests that copy test data into scratch fail with "Permission denied"
+        // (docker/linux/README.md). Unset: <project root>/scratch, as always
+        if (const char* override = std::getenv("UNREAL_TEST_SCRATCH_DIR"))
+        {
+            if (*override != '\0')
+            {
+                fs::path scratch(override);
+                std::error_code ec;
+                fs::create_directories(scratch, ec);
+                return scratch;
+            }
+        }
         fs::path scratch = FindProjectRoot() / "scratch";
         std::error_code ec;
         fs::create_directories(scratch, ec);

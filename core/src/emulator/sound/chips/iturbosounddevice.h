@@ -6,6 +6,7 @@
 
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
 
@@ -79,6 +80,26 @@ public:
     virtual size_t getCoreRate() const = 0;
     virtual void setHQEnabled(bool enabled) = 0;
     /// endregion </Rate / quality>
+
+    /// region <Chip clock>
+    /// The AY / SSG input clock in Hz, set by the machine at run time (the
+    /// Profi's video divider gives 1.5 MHz in hi-res, design-hires.md H2b).
+    /// Takes effect at the current CPU T-state on the device's render
+    /// timeline: register writes queued before it keep their timing. Returns
+    /// false when the device keeps its fixed clock: the TSFM's YM2203 core and
+    /// its FM decimators are built around the 1.75 MHz socket clock, so TSFM
+    /// stays at PSG_CLOCK_RATE (a follow-up, the Profi has no TSFM fitted)
+    virtual bool SetPsgClock(uint32_t hz)
+    {
+        return hz == PSG_CLOCK_RATE;
+    }
+    /// The clock the generators run at now (a requested switch still queued
+    /// on the render timeline is not reported until it is reached)
+    virtual uint32_t GetPsgClock() const
+    {
+        return static_cast<uint32_t>(PSG_CLOCK_RATE);
+    }
+    /// endregion </Chip clock>
 
     /// region <Frame buffers (interleaved int16 stereo)>
     /// Number of stereo sample pairs rendered into the frame buffers so far

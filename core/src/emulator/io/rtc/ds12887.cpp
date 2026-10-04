@@ -198,7 +198,10 @@ void Ds12887::SetFixedTime(time_t unixSeconds)
 {
     _rawValid = false;
     _mode = TimeMode::Fixed;
-    _fixedMicros = LocalCivilMicros(unixSeconds, 0);
+    // The frozen instant's UTC wall time: civil micros since 1970 in UTC are
+    // the Unix micros. Not the host's local time - a fixed clock has to read
+    // the same on every machine (tests, TTD benchmark), whatever its time zone
+    _fixedMicros = static_cast<int64_t>(unixSeconds) * kMicrosPerSecond;
     _secondValid = false;
 }
 

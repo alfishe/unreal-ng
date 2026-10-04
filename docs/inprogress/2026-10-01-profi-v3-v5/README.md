@@ -38,10 +38,12 @@ port table, the factory ROMs, and the board manuals and PROM dumps from
 | [research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) | E3: the v3.2 turbo wait rule, the HLD hold and the floating bus, read off the schematic |
 | [research-profi-v5-wait.md](research-profi-v5-wait.md) | E4: the v5 video WAIT, from a gate-level model of the 5.06 netlist |
 | [research-profi-v5-open-items.md](research-profi-v5-open-items.md) | phase 7: the palette gate, the CP/M switch, the #DFFD decode of 5.0 and 5.06, the third crystal |
+| [research-profi-keyboard.md](research-profi-keyboard.md) | the keyboards: X9 / KEYB per board, the PROFI-XT controller (8035 firmware, its reconstruction), how BIOS 2.0 reads EXT, other emulators; implemented in [design.md](design.md) section 9 |
 | [test-programs.md](test-programs.md) | the emulated test programs (Tact Meter, TEST 4.30, the border demos) and what they show against real boards |
-| [tools/machines/profi/](../../../tools/machines/profi/README.md) | the sync-PROM decoder (`syncprom/`), the port decoder PROM tool (`profidecoder/`), the v5 wait model (`waitmodel/`) and the v3 turbo model (`turbomodel/`) |
+| [tools/machines/profi/](../../../tools/machines/profi/README.md) | the sync-PROM decoder (`syncprom/`), the port decoder PROM tool (`profidecoder/`), the v5 wait model (`waitmodel/`), the v3 turbo model (`turbomodel/`) and the PROFI-XT 8035 simulator (`xtkbd/`) |
 | materials (not in the repository) | every file the analysis used: manuals, PROM and ROM dumps, articles, forum pages, other emulators' sources, working reports. Kept outside the repository by decision (2026-10-01), with its own index `materials/README.md`; every external file has its source URL there, and the public ones are linked from these documents |
 | [decoder-prom.md](decoder-prom.md) | both boards' port decoder PROMs: wiring, port map per mode, what they settle, and the check against unreal-ng (no difference) |
+| [software-zoo.md](software-zoo.md) | the BIOS families, boot conventions, port-decode variants (`ExtPorts`, `DffdDecode`) and which system boots with which: SP-DOS, Klug CP/M, Micco CP/M, PQ-DOS, ROM BIOS Plus; disks that fail by themselves |
 | [roms.md](roms.md) | the factory firmware (now in `data/rom/profi/`), which BIOS needs which board, our non-factory images |
 | [requirements.md](requirements.md) | goals, requirements per board with confidence, acceptance, open questions |
 | [design.md](design.md) | two models and one decoder with a board profile, ports, timing, turbo, TTD, automation, the phase plan |

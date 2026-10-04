@@ -173,6 +173,8 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFra
     dst.hw_turbo_ratio_applied = src.hw_turbo_ratio_applied;
     dst.current_z80_frequency_multiplier = src.current_z80_frequency_multiplier;
     dst.next_z80_frequency_multiplier = src.next_z80_frequency_multiplier;
+    dst.hw_clock_den = src.hw_clock_den > 1 ? src.hw_clock_den : 0;   // 0 = the usual 1: old captures keep their bytes
+    dst.hw_clock_den_applied = src.hw_clock_den_applied > 1 ? src.hw_clock_den_applied : 0;
 
     // Extended/model-specific ports handled via TTDPeripheralRegistry
 
@@ -221,6 +223,8 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     // from it (the ATM2 keyboard controller's /VWR waits, the COM port's bit
     // time) would otherwise run at the live machine's clock after a seek
     dst->current_z80_frequency = dst->base_z80_frequency * dst->current_z80_frequency_multiplier;
+    dst->hw_clock_den = src.hw_clock_den > 1 ? src.hw_clock_den : 1;
+    dst->hw_clock_den_applied = src.hw_clock_den_applied > 1 ? src.hw_clock_den_applied : 1;
 
     // Extended/model-specific ports handled via TTDPeripheralRegistry
 

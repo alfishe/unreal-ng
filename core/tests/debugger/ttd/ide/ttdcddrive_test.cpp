@@ -25,6 +25,7 @@
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/memory/memory.h"
 
 namespace
 {
@@ -230,4 +231,71 @@ TEST_F(TTDCdDrive_Test, FolderDiscReplaysIdenticallyAndAnotherDiscIsReported)
     ttd::TTDCdDrive other(_context);
     other.TTDLoadState(recorded.data());
     EXPECT_EQ(other.DiscMismatches(), 1u);
+}
+
+TEST_F(TTDCdDrive_Test, GuestEjectIsRecordedAndReplaysWithoutTouchingTheHost)
+{
+    // A guest program sends START STOP UNIT eject through the ZX-Evo's Nemo IDE ports while TTD records.
+    // The eject is a consequence of guest I/O, not an outside input: the recording goes on (no guard, no
+    // invalidation), the slot is emptied by the manager's normal eject at the frame boundary. A seek back
+    // before the eject replays it sealed: the drive state matches the recording, and the media manager is
+    // not touched again (the slot stays as the live run left it)
+    _emulator->RunNFrames(2);
+    const uint8_t program[] = {
+        0xF3,                    // di
+        0x3E, 0xB0, 0xD3, 0xD0,  // ld a,#B0 : out (#D0),a   device: the slave
+        0x3E, 0xA0, 0xD3, 0xF0,  // ld a,#A0 : out (#F0),a   PACKET
+        0xDB, 0xF0,              // wait: in a,(#F0)
+        0xE6, 0x08,              //       and 8               DRQ
+        0x28, 0xFA,              //       jr z,wait
+        0x21, 0x30, 0x80,        // ld hl,#8030
+        0x06, 0x06,              // ld b,6
+        0x23, 0x7E, 0xD3, 0x11,  // word: inc hl : ld a,(hl) : out (#11),a   the high byte first (Nemo)
+        0x2B, 0x7E, 0xD3, 0x10,  //       dec hl : ld a,(hl) : out (#10),a   the low byte: the word goes
+        0x23, 0x23,              //       inc hl : inc hl
+        0x10, 0xF4,              //       djnz word
+        0x18, 0xFE,              // jr $
+    };
+    const uint8_t eject[12] = {0x1B, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    Memory* memory = _context->pMemory;
+    for (uint16_t i = 0; i < sizeof(program); i++)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (uint16_t i = 0; i < sizeof(eject); i++)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8030 + i), eject[i]);
+    // The insert's UNIT ATTENTION, taken as a driver would (TEST UNIT READY), before the program runs
+    AtaChannel& channel = _context->pIdeController->Channel();
+    channel.WriteRegister(ata::DeviceHead, 0xB0);
+    channel.WriteRegister(ata::StatusCommand, ata::Command::Packet);
+    for (int i = 0; i < 6; i++)
+        channel.WriteData(0);
+    Cd().Audio().Play(166, 166 + 225);  // a play the eject stops
+    _emulator->RunNFrames(1);
+    ASSERT_TRUE(_context->pMediaManager->Info("ide0.slave")->present);
+    Z80State* z80 = _emulator->GetZ80State();
+    z80->pc = 0x8000;
+    z80->sp = 0xBF00;
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    const uint64_t startFrame = _ttd->GetCheckpoint(0)->time.frame;
+    _emulator->RunNFrames(4);
+    ASSERT_TRUE(_ttd->IsRecording()) << "the guest's eject does not end the recording";
+    ASSERT_EQ(z80->pc, 0x8020) << "the program sent the packet";
+    EXPECT_TRUE(Cd().TrayOpen());
+    EXPECT_EQ(Cd().Audio().Status(), CdAudioStatus::Idle);
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.slave")->present) << "the slot was emptied";
+    _emulator->RunNFrames(3);
+    _emulator->RunNCPUCycles(500);
+    const uint64_t endFrame = _context->emulatorState.frame_counter;
+    const uint32_t endT = _context->pCore->GetZ80()->t;
+    const std::vector<uint8_t> recorded = Blob();
+    const uint64_t revision = _context->pMediaManager->Revision();
+    _ttd->StopRecording();
+
+    // Back to the session start (disc in, tray closed, playing) and forward through the eject again
+    ASSERT_TRUE(_ttd->SeekTo({startFrame, 0}));
+    EXPECT_FALSE(Cd().TrayOpen()) << "restored: before the eject";
+    RunTo(endFrame, endT);
+    EXPECT_EQ(Blob(), recorded) << "the eject replays: tray, audio status, the empty drive";
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.slave")->present);
+    EXPECT_EQ(_context->pMediaManager->Revision(), revision) << "the replay did not touch the media manager";
 }

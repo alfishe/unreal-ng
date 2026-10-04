@@ -177,7 +177,8 @@ public:
 
     uint8_t ssg_read(uint32_t reg) override
     {
-        return _ssg.readRegister(uint8_t(reg & 0x0F));
+        // ymfm's data-port read: the bus value (input ports read their pins), as on #FFFD
+        return _ssg.readRegisterOnBus(uint8_t(reg & 0x0F));
     }
 
     void ssg_write(uint32_t reg, uint8_t v) override

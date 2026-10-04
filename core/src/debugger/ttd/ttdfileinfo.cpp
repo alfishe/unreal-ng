@@ -144,6 +144,16 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::CdDrive: return "cd-drive";
         case PeripheralId::Vdac2Memory: return "vdac2-memory";
         case PeripheralId::Vdac2: return "vdac2";
+        case PeripheralId::ProfiXtKbc: return "profi-xt-kbc";
+        case PeripheralId::Ppi8255: return "ppi-8255";
+        case PeripheralId::Pit8253: return "pit-8253";
+        case PeripheralId::Usart8251: return "usart-8251";
+        case PeripheralId::EthernetNics: return "ethernet-nics";
+        case PeripheralId::SlotSerial1: return "slot-serial-1";
+        case PeripheralId::SlotSerial2: return "slot-serial-2";
+        case PeripheralId::SlotSerial1B: return "slot-serial-1b";
+        case PeripheralId::SlotSerial2B: return "slot-serial-2b";
+        case PeripheralId::Saa1099: return "saa1099";
         case PeripheralId::Smuc: return "smuc";
         case PeripheralId::EvoAvrVolatile: return "evo-avr-volatile";
         case PeripheralId::KeyboardMatrix: return "keyboard-matrix";

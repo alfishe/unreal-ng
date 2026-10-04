@@ -100,7 +100,7 @@ namespace
 /// region <Constructors / destructors>
 
 ZXPolyGroup::ZXPolyGroup(std::string symbolicPrefix)
-    : _prefix(std::move(symbolicPrefix)), _workers(std::make_unique<ZXPolyWorkers>(MODULES - 1))
+    : _prefix(std::move(symbolicPrefix)), _interceptors{}, _workers(std::make_unique<ZXPolyWorkers>(MODULES - 1))
 {
 }
 
@@ -1736,8 +1736,35 @@ void ZXPolyGroup::ComposeDisplayFrame()
         }
     }
 
+    // The geometry of this frame: the master's picture at 2x, so its working picture doubles too
+    PictureGeometry geometry;
+    geometry.width = static_cast<uint16_t>(_displayWidth);
+    geometry.height = static_cast<uint16_t>(_displayHeight);
+    geometry.stride = _displayWidth * 4u;
+    const PictureRect window = screen->WorkingWindow();
+    geometry.screenWindow = PictureRect{static_cast<uint16_t>(window.x * 2), static_cast<uint16_t>(window.y * 2),
+                                      static_cast<uint16_t>(window.width * 2), static_cast<uint16_t>(window.height * 2)};
+    geometry.videoMode = screen->GetVideoMode();
+    geometry.source = FrameSource::Composed;
+    geometry.frameNumber = GetContext(0)->emulatorState.frame_counter;
+
     std::lock_guard<std::mutex> lock(_displayMutex);
     _displayFront.swap(_displayBack);
+    _displayGeometry = geometry;
+}
+
+bool ZXPolyGroup::SnapshotDisplay(FrameSnapshot& out)
+{
+    std::lock_guard<std::mutex> lock(_displayMutex);
+    const size_t size = _displayFront.size() * sizeof(uint32_t);
+    const PictureGeometry& g = _displayGeometry;
+    // Nothing composed yet, or a resize since the last composed frame (the geometry is of the old size)
+    if (size == 0 || g.width == 0 || static_cast<size_t>(g.stride) * g.height != size)
+        return false;
+    out.pixels.resize(size);
+    std::memcpy(out.pixels.data(), _displayFront.data(), size);
+    out.geometry = g;
+    return true;
 }
 
 bool ZXPolyGroup::CopyDisplay(uint8_t* dst, size_t dstSize)

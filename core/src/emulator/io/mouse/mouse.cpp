@@ -44,6 +44,7 @@ void Mouse::Reset()
     _buttons.store(0xFF, std::memory_order_relaxed);  // All buttons released (active-low)
     _wheel.store(0x00, std::memory_order_relaxed);
     _lastPollFrame.store(kNeverPolled, std::memory_order_relaxed);  // the program starts over
+    _unreadMotion.store(0, std::memory_order_relaxed);
 }
 
 bool Mouse::IsMouseInUse() const
@@ -85,6 +86,8 @@ uint8_t Mouse::ReadRegister(uint8_t selectRegister) const
 {
     if (_context)
         _lastPollFrame.store(_context->emulatorState.frame_counter, std::memory_order_relaxed);
+    if (selectRegister == 1 || selectRegister == 2)
+        _unreadMotion.fetch_and(static_cast<uint8_t>(~(1u << selectRegister)), std::memory_order_relaxed);
     return PeekRegister(selectRegister);
 }
 
@@ -131,6 +134,7 @@ void Mouse::Move(int dx, int dy)
     while (!_y.compare_exchange_weak(old, static_cast<uint8_t>(old + dy), std::memory_order_relaxed))
     {
     }
+    _unreadMotion.fetch_or(static_cast<uint8_t>((dx ? 0x02 : 0) | (dy ? 0x04 : 0)), std::memory_order_relaxed);
 }
 
 void Mouse::SetButtons(uint8_t mask)
@@ -150,6 +154,33 @@ void Mouse::SetCounters(uint8_t x, uint8_t y)
 {
     _x.store(x, std::memory_order_relaxed);
     _y.store(y, std::memory_order_relaxed);
+    _unreadMotion.store(0x06, std::memory_order_relaxed);
+}
+
+bool Mouse::IsWired() const
+{
+    return !(_context && _context->pPortDecoder && _context->pPortDecoder->HasMachineMouse());
+}
+
+MouseDeviceStatus Mouse::DescribeMouse() const
+{
+    MouseDeviceStatus status;
+    status.id = "kempston";
+    status.name = "Kempston mouse interface";
+    status.kind = MouseDeviceKind::Kempston;
+    status.wired = IsWired();
+    status.fitted = IsPresent();
+    status.inUse = IsMouseInUse();
+    status.wheel = IsWheelEnabled();
+    status.buttons = 3;
+    status.hasPorts = true;
+    status.portButtons = PeekRegister(0);
+    status.portX = PeekRegister(1);
+    status.portY = PeekRegister(2);
+    status.x = GetX();
+    status.y = GetY();
+    status.buttonMask = GetButtons();
+    return status;
 }
 
 /// region <TTD>

@@ -44,11 +44,12 @@ that the emulator works out of the box, on the following basis:
   * `sp2k-3.06-hf2.rom`: "Firmware v3.06 Hotfix 2", Release 19.01.2026, branch `master` commit `c14a8c5`, build
     date fixed to 2026-01-19; bitstream "Core 1K30 v3.05" taken from `Build/Bin/LOADER_K30.BIN` of commit
     `4c5d44a` (the tree itself has none). CRC32 `9aa7bb29`, SHA-256
-    `fc910ba4c32f42a8b130b804434f3b449f2f01ed710510a9e8340d8d3ae9a90a`.
+    `fc910ba4c32f42a8b130b804434f3b449f2f01ed710510a9e8340d8d3ae9a90a`. The shipped default of
+    `configs/sprinter/unreal.ini` (`[ROM] SPRINTER=`) since 2026-10-03.
   * `sp2k-3.07-beta1.rom`: "Firmware v3.07 BETA 1", branch `beta` commit `f546c4e` (2026-09-24), build date
     2026-09-24 12:00:00, its own bitstream. CRC32 `a06a1a02`, SHA-256
-    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`. The shipped default of
-    `configs/sprinter/unreal.ini` since 2026-10-02 (`[ROM] SPRINTER=`).
+    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`. It is the public head of the
+    upstream `beta` branch as of 2026-10-03. It was the shipped default from 2026-10-02 to 2026-10-03.
 
   No author's build of these versions is public to compare against; how they were made, the boot results and
   how to follow new builds: `docs/inprogress/2026-09-28-sprinter/bios-versions.md`.
@@ -67,7 +68,12 @@ that the emulator works out of the box, on the following basis:
   | `bios10-kondor504.rom` | v5 | as `bios10.rom`, read off a Kondor 5.04 board; the 48K page's NMI test at `#006D` is `JR Z` (`#28`), not `JR NZ` | `10DA289A` | `f4ab0dd91cd7d207879767d4fe5bf30e` | xpeccy-plus `profi-bios10.rom` |
   | `bios20.rom` | v5 | ROM Bios 2.0 of 17.04.94, TR-DOS 5.04T | `36F5F7BD` | `02877e403f22d10d12ef0296ccb96f60` | xpeccy-plus `profi-bios20.rom`, ZXMAK2 `PROF-M.ROM` |
   | `bios20-font.rom` | v5 | as `bios20.rom` with one glyph of the 48K font changed (`#3D99`-`#3D9A`) | `DA81DED7` | `2f7549cd9fff863f68867f7d944de2a1` | - |
+  | `bios-plus-041h1.rom` | v5 + V0.03 decoder (`PROFI-PLUS`) | not factory: ROM-BIOS PLUS 0.41h1 by Vadim (C) 1998-2025, "with patched RTC", for PQ-DOS; needs the extended ports in the SYS ROM (`[PROFI] ExtPorts=v003`; `sys` works too). From [Karabas-Pro](https://github.com/andykarpov/karabas-pro) `firmware/src/fpga/profi/rom/bios_pqdos.rom` (commit `0c1bd2f`, 2026-02-15) | `594E10FA` | `1246daf2605704131b5abb239c6115bb` | pico-spec `src/roms/profi/` |
 
+* **ZX Profi PROFI-XT keyboard controller** (`profixt/profi-xt-v1.27.rom`): firmware "JV KRAMIS (C) 28.10.1992
+  vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever
+  `PROFI_XT-9A8E2686.ROM`) never enables interrupts and so receives no key; 5 bytes at `02Eh`-`032h` are replaced.
+  The patch, why, and how it was checked: [`profixt/README.md`](profixt/README.md). CRC32 `59C7A98C`.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

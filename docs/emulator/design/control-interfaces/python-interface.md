@@ -148,12 +148,16 @@ class Emulator:
 
     def tsconf_state(self) -> dict:
         """TS-Conf machine report: memory (mem_config decoded, pages, lck128,
-        lock48, dos, vdos, cache, fm_window), video (mode, geometry, nogfx /
-        notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
-        line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
+        lock48, dos, vdos, cache, fm_window, fm_maps raw), video (mode, geometry,
+        nogfx / notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
+        line with t0_gpage / t1_gpage - the tile pages it is drawn with), interrupts,
+        dma (live and programmed_source / programmed_destination, ctrl decoded),
+        cpu_clock, sys_config, cache_en, sd, regs (the register file #00-#47 as last
+        written). available=False on other machines"""
 
     def sprinter_state(self) -> dict:
-        """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
+        """Sprinter Sp2000 report: pld (state, module Standard / Game, selected_by +
+        why, cell_EE, game grid offset, bitstream hashes), decoder (CNF
         map, DOS, PN5, #7FFD / #1FFD), windows (kind + physical page), registers,
         cells #C0-#FF, clock, frame, video (mode table summary), z84c15, fdc, cmos,
         ide, bios (images, how to select). available=False on other machines"""
@@ -181,8 +185,18 @@ class Emulator:
     def sprinter_sound_ring(self) -> dict:
         """The Covox-Blaster ring: 256 words, play / write index"""
 
+    def sprinter_zx_mode(self, deep=True) -> dict:
+        """The ZX (Spectrum) mode: active, config (options with evidence, best_match file and confidence), launcher
+        (its .ZX text in RAM), clock, frame / INT, rom, ports (#7FFD / #1FFD / #01FD ... decodes, ttd_query)"""
+
+    def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
+        """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
+
+    def sprinter_pld_journal_control(self, enabled=None, clear=False) -> dict:
+        """Switch or clear the PLD journal"""
+
     def sprinter_bios(self) -> dict:
-        """BIOS images, the one loaded (CRC-32), the configured one, start options"""
+        """BIOS images, the one loaded (CRC-32), its known_issues, the configured one, start options"""
 
     def sprinter_bios_select(self, bios=None, fast_start=None, accel_int_suspend=None, reset=True) -> dict:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
@@ -201,6 +215,12 @@ class Emulator:
 
     def framebuffer(self, format="rgba") -> dict:
         """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
+
+    def capture_screen(self, format="png", full=None, area="", path="", source="") -> dict:
+        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame). area="full" (default, the whole frame with border) or "screen" (the
+        working picture); format "png" (default) or "gif"; path writes the file on the machine running the
+        emulator. Returns {success, format, area, width, height, size, crop, screen_window, frame, data (base64)
+        | file} or {success: False, error, kind}. full= is a deprecated alias (True = "full", False = "screen")"""
 
     def audio_mixer(self) -> dict: ...
     def audio_mixer_set(self, source, muted=None, solo=None, volume=None, gain_db=None) -> dict: ...
@@ -225,10 +245,10 @@ class Emulator:
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
-        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
-        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()),
+        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' for this module alone) (the machine's own serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem 'modem', SprinterSerial COM1 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' on any machine), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
+        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state(); ZX Profi v5: the board's 8251, also machine_serial),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
-        atm2ioesp in network_state()), zifi=<com_port values> (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP,
+        atm2ioesp in network_state()), zifi=<com_port values> | 'zifi-native[,s3|esp01s]' (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP; 'at' = the original ESP-01 with NonOS AT 1.7.4 unless an ESP8266 build is named, 'at,esp8266-at222' = ESP-AT 2.2.2, 'zifi-native' = the 2026 firmware;
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
@@ -245,6 +265,40 @@ class Emulator:
         """Write CMOS cells like a guest write: the time registers set the clock (set B bit 7
         SET around a multi-register set, as a guest does), C and D are read-only, RAM cells
         are stored. The address latch is not touched. ValueError without a clock / bad range"""
+
+    def isa_state(self) -> dict:
+        """ISA slots (Sprinter Sp2000): latch (the #9FBD byte: value, a19_a14, aen, reset), window
+        (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
+        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters with the IRQ
+        counters, irq_line: the slot's IRQ line - level, driver, route to PIO port B bit 0 / 1, the
+        PIO's bit-mode setup, pending / under service, reaches_cpu; summary_line; the ZX-bus
+        adapter's zx_bus: the General Sound / NeoGS behind it - cards[0] personality, ports,
+        cpu_addresses, status, machine_reset - its reset_held / reset_pulses), pio_port_b,
+        irq_summary. A 3C509B
+        (card 'el3c509b') adds resources['id_port'] (its ID port range, how the Z80 reaches it, the
+        isolation state); network_state()['slots'][n] then shows its ID port, window, FIFOs, EEPROM,
+        statistics, link state, events and a one-line summary.
+        available=False on other machines"""
+
+    def isa_io_read(self, slot: int, address) -> int:
+        """One ISA I/O read cycle at a 20-bit ISA address (int or '#30A' text); an empty slot
+        reads 0xFF. Also isa_io_write(slot, address, value), isa_io_peek(slot, address) (no side
+        effect), isa_mem_read / isa_mem_write, isa_reset() (one RESET DRV pulse to both slots) and
+        isa_latch(value). A cycle with an effect is a tool edit while TTD records. ValueError for
+        a bad slot / address / value or on a machine without ISA slots"""
+
+    def isa_journal(self, last: int = 64) -> dict:
+        """The ISA access journal: entries[] (frame, t, pc, slot, access, space, isa_address,
+        cpu_address, what = the card's register name, value); interrupt events have event='irq'
+        (IRQ line edges with the card's cause, PIO port B requests, INT acknowledged, RETI), also
+        in irq_events (their own 128-entry ring, which a polled card does not flush)"""
+
+    def network_frames(self, link: str = "", last: int = 32) -> dict:
+        """The Ethernet gateway's frame capture (frame-level cards such as the Sprinter's NE2000):
+        frames[] (index, frame, direction to_card / from_card, port, length, summary, hex).
+        Also network_frames_pcap(link='') -> bytes (a pcap file) and
+        network_inject_frame(link, hex) (a frame towards the card at the next frame boundary;
+        ValueError without a gateway / bad hex / unknown link)"""
 
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
@@ -283,11 +337,25 @@ class Emulator:
     def resume(self):
         """Resume emulation"""
         
-    def step(self) -> int:
-        """Execute one instruction, return PC"""
+    def step(self, skip_breakpoints: bool = True) -> dict:
+        """Execute one instruction; returns {executed, stopped, breakpoint_id, address, access}
+        (with skip_breakpoints=False an execution breakpoint stops before its instruction)"""
         
-    def steps(self, count: int) -> int:
-        """Execute N instructions, return final PC"""
+    def steps(self, count: int, skip_breakpoints: bool = False) -> dict:
+        """Execute up to N instructions; a breakpoint ends the run early. Returns the same dict"""
+
+    def get_registers(self) -> dict:
+        """pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
+        (r with bit 7 as last written; memptr = the internal WZ latch; q = the flag capture
+        register; boundary = none / prefix_dd / prefix_fd / int_shadow / ld_a_ir / nmi_ack;
+        t = CPU T-states since the frame's start)"""
+
+    def get_register(self, name: str) -> int | None:
+        """Any name of the register table (a, hl, af', ir, memptr / wz, im, iff1, iff2, ...)"""
+
+    def set_register(self, name: str, value: int) -> bool:
+        """False for an unknown name or a value im (0-2) / iff1, iff2 (0-1) cannot hold;
+        8-bit registers take the low byte"""
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
@@ -432,7 +500,8 @@ emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
 
 ### Mouse Input
 
-`Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands
+`Emulator` methods that drive the machine's own mouse (Kempston interface, Sprinter serial mouse,
+ZX-Evo / TS-Conf PS/2 mouse), mirroring the CLI `mouse` commands
 and the WebAPI `/mouse/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
 Units, limits and the reasoning behind them: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
@@ -441,6 +510,9 @@ the program on the machine moves its own cursor by that much. `dy` positive = **
 
 ```python
 emu.mouse_move(dx, dy)                  # -127..127 each, not both 0
+emu.mouse_glide(dx, dy)                 # -4096..4096; one step per frame, later input queues behind it
+emu.mouse_busy()                        # True while a glide (and its queue) is in progress
+emu.mouse_devices()                     # the machine's mouse devices (list of device dicts)
 emu.mouse_press(button)                 # "left" | "right" | "middle" (or "l" | "r" | "m")
 emu.mouse_release(button)
 emu.mouse_click(button, frames=2)       # hold 1..65535 frames, then release on its own
@@ -448,7 +520,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status()                      # state dict (below)
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```
@@ -463,8 +535,9 @@ Every changing method returns the resulting **state dict**:
  'ports': {'FADF': 255, 'FBDF': 41, 'FFDF': 80},   # what IN returns now (integers, as in the WebAPI)
  'pending_click': None,       # or {'button': 'left', 'frames_left': 1}
  'ttd_journal': 'supported'}
-# plus 'warning': '...' when the change cannot reach the program
-# (mouse not fitted, or a wheel step with no wheel fitted)
+# plus the machine's mouse: 'mouse_fitted', 'device' (None when none is fitted; the WebAPI
+# device object: id, kind, fitted, in_use, ports, and 'serial' or 'ps2'), 'devices', 'queue'
+# plus 'warning': '...' when a wheel step was sent with no wheel fitted
 ```
 
 `mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
@@ -485,6 +558,8 @@ so a mistake is not silently ignored):
 |-------|-----------|
 | Out-of-range value, zero move/wheel, unknown button name | `ValueError` (message says which value and the allowed range) |
 | TTD replay in progress | `RuntimeError("TTD replay in progress; live mouse input refused")` |
+| No mouse fitted on the machine | `RuntimeError("no mouse fitted on this machine: ...")` |
+| `mouse_status(device=...)` names a device the machine does not have | `ValueError` (lists the ids it has) |
 | No mouse manager / device | `RuntimeError` |
 
 **Worked example** (paused, reproducible):
@@ -662,41 +737,29 @@ info = emu.memory_info()
 
 **Writes during a time-travel recording.** While a TTD recording runs, every memory write (`mem_write`, `mem_write_word`, `mem_write_block`), physical page write (`page_write`, `page_write_block`) and assembler write (`assemble` with write on) records a `debugger_edit` marker, a replay barrier, and briefly pauses a running emulator for the edit, so the recording sees the change. A write by Z80 address into a ROM bank leaves the ROM unchanged, as a CPU write would. No marker is written when no recording runs.
 
-### BreakpointManager Class
+### Breakpoints
+
+Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where:
+[.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```python
-class BreakpointManager:
-    """Breakpoint and watchpoint management"""
-    
-    def add_execution_breakpoint(self, address: int) -> int:
-        """Set execution breakpoint, return ID"""
-        
-    def add_memory_read_breakpoint(self, address: int) -> int:
-        """Set memory read watchpoint"""
-        
-    def add_memory_write_breakpoint(self, address: int) -> int:
-        """Set memory write watchpoint"""
-        
-    def add_port_in_breakpoint(self, port: int) -> int:
-        """Set port IN breakpoint"""
-        
-    def add_port_out_breakpoint(self, port: int) -> int:
-        """Set port OUT breakpoint"""
-        
-    def remove_breakpoint(self, bp_id: int) -> bool:
-        """Remove breakpoint by ID"""
-        
-    def clear_breakpoints(self):
-        """Remove all breakpoints"""
-        
-    def activate_breakpoint(self, bp_id: int) -> bool:
-        """Enable breakpoint"""
-        
-    def deactivate_breakpoint(self, bp_id: int) -> bool:
-        """Disable breakpoint"""
-        
-    def get_breakpoints(self) -> list:
-        """Get list of all breakpoints"""
+id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 when refused)
+id = emu.bp(0x8000, to=0x80FF)      # a range #8000-#80FF (one check per access, however many ranges)
+id = emu.bp(0x0038, hits="50")      # stop on the 50th hit only; ">=50" from the 50th on, "%50" every 50th
+id = emu.bp(0xC000, page="ram32")   # physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = emu.bp(0xC000, page="ram32", slot_only=True)  # only through slot 3 (#C000)
+id = emu.bp_read(0x4000)            # memory read; the same keyword arguments
+id = emu.bp_write(0x4000, to=0x57FF)  # memory write: the screen bitmap
+id = emu.bp_port_in(0xFE, mask=0x00FF)  # port IN on #FE with any high byte; mask= and hits=
+id = emu.bp_port_out(0x7FFD)
+emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp_remove(id); emu.bp_clear()
+emu.bp_enable(id); emu.bp_disable(id)
+emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
+emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
+emu.bp_count()
+print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
 ```
 
 ### DebugManager Class

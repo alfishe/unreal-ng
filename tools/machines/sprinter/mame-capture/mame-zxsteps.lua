@@ -3,7 +3,8 @@
 --          stop (stop the cassette), load (snapshot image path), end, kbd (list keyboards), state (log PLD state),
 --          reset / hardreset, dbg (a debugger command, e.g. bpset with a printf action; needs SPC_DEBUG=1),
 --          vram (the video RAM to <name>.bin: the mode table that places the INT),
---          fields (input fields held for 4 frames: "<port tag>/<field name>+...")
+--          fields (input fields held for 4 frames: "<port tag>/<field name>+..."),
+--          listfields (print the field names of the ports whose tag holds the argument, e.g. "ms_naturl")
 if zxk_started then return end
 zxk_started = true
 
@@ -111,6 +112,15 @@ zxk_sub = emu.add_machine_frame_notifier(function()
 					held[#held + 1] = { field = field, until_frame = frame + 4 }
 				else
 					print("zxsteps: no input field '" .. spec .. "'")
+				end
+			end
+		elseif s.action == "listfields" then
+			-- the input fields of every port whose tag holds the argument (names for "fields")
+			for tag, port in pairs(machine.ioport.ports) do
+				if string.find(tag, s.arg, 1, true) then
+					for name, _ in pairs(port.fields) do
+						print("zxsteps: field " .. tag .. "/" .. name)
+					end
 				end
 			end
 		elseif s.action == "vram" then

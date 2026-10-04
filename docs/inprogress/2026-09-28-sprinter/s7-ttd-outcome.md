@@ -18,7 +18,7 @@ reaches the machine only through the TTD input journal.
 | Video RAM, 256 KB | `SprinterVideoRam` | 28, 1 + 262 144 |
 | Z84C15 beside the registers: WCR / MWBR / CSBR / MCR, the wait generator (power-on M1 counter, the RETI rule's after-ED flag), watchdog, CTC, SIO (receive FIFOs), PIO, daisy chain IP / IUS | `Z84C15` (`Z84C15::SaveState`) | 29, 1 + 227 (v2 since 2026-10-02: the CTC counter mode - anchors, triggered timers, the CPU clock period - and the watchdog's folded clocks; v1 was 1 + 171) |
 | Fast RAM, 64 KB | `SprinterFastRam` | 30, 1 + 65 536 |
-| AT keyboard stream (bytes on the wire, typematic, held keys), serial mouse (packet in flight, last sample) | `SprinterInput` | 31, 88 (v2: + the board mouse counters) |
+| AT keyboard stream (bytes on the wire, typematic, held keys), serial mouse (packet in flight, last sample) | `SprinterInput` | 31, 89 (v2: + the board mouse counters; v3: + the PLD keyboard flags) |
 | WD1793 command in flight beyond the BetaDisk blob: queued steps (as tags), transfer pointers (drive, track, offset), byte cell, rotational delay, rate-retry search, read-track noise seed | `Wd1793Context` | 35, 1 + 112 |
 | CMOS, IDE (two channels, adapter latch), WD1793 + drives, AY / TSFM, Kempston mouse and joystick | shared serializers | 18, 17, 1, 0 / 4, 7, 23 |
 
@@ -107,5 +107,9 @@ it there or move it to id 32 with a PLD blob version bump.
   their fixtures are re-recorded next; until then a restore inside a floppy command on them still
   ends the command.
 - Video RAM and fast RAM to TTD v2 memory regions (Phase 1).
-- Port journals stay off on the Sprinter (its interrupt source supplies the IM2 vector; NeoGS when
-  fitted): replay runs against the live media.
+- ~~Port journals stay off on the Sprinter~~ **On since 2026-10-03** ([tdd-zx-mode.md](tdd-zx-mode.md) §12.3): the
+  IM2 vector (Z84C15 daisy chain, the PLD's INT) and the stepped engines follow the checkpointed state and the input
+  journal (`PortDecoder::TtdEnginesSealed`), and the unreachable NeoGS is no longer fitted (`PortDecoder::ZxBusPresent`
+  = false until the ISA ZX-bus adapter). `/ttd/port-events` answers on Sprinter recordings; replays feed the recorded
+  IN results with no divergence (`TTDSprinterMachine_Test.PortJournal_RecordsAndAnswersPortEvents` and every replay
+  test above). The corpus fixture `boot.ttd` was re-recorded without a GS card and with the journals.

@@ -13,10 +13,12 @@
 
 PortDecoder_Spectrum3::PortDecoder_Spectrum3(EmulatorContext* context) : PortDecoder(context)
 {
+    Spectrum128AyIoPort::Attach(_context, &_ayIoPort);
 }
 
 PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
 {
+    Spectrum128AyIoPort::Attach(_context, nullptr);
     MLOGDEBUG("PortDecoder_Spectrum3::~PortDecoder_Spectrum3()");
 }
 /// endregion </Constructors / Destructors>
@@ -218,6 +220,15 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
     {
         _context->pUPD765->writeData(value);
         disp.decodedPort = 0x3FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+
+    // Port #FE: border, tape MIC out and the beeper (A0=0, not claimed by the AY mirrors)
+    if (IsPort_FE(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+    {
+        Default_Port_FE_Out(port, value, pc);
+        disp.decodedPort = 0x00FE;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }

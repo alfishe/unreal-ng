@@ -1,0 +1,63 @@
+TELNET.EXE
+
+Interactive Telnet and raw TCP terminal for the 3Com 3C509B-TPO adapter. It
+uses the native DNS, ARP and polling TCP stack; no IRQ or UNET DLL is needed.
+
+Usage
+
+TELNET host[:port]
+TELNET host [port]
+TELNET /?
+
+The default port is 23. host can be an IPv4 address or DNS name. Run
+NETCFG -i or IFUP before connecting.
+
+Terminal
+
+TELNET switches DSS to 80x32 text mode. Rows 0..30 provide an ANSI/VT100
+terminal. The final row shows the clock, connection state, idle time, and
+remote endpoint. The original mode is restored on exit.
+
+It implements Telnet BINARY, ECHO, SGA, terminal type ANSI, and NAWS 80x31.
+For raw TCP services that do not send IAC bytes it sends no Telnet negotiation.
+
+- Alt+X closes the connection.
+- Arrow keys, Home, End, PgUp, PgDn and Del send ANSI sequences.
+- Esc, Tab, Backspace and other ASCII controls are sent unchanged.
+- Enter sends NVT CR/LF until BINARY is accepted, then CR.
+
+File transfer
+
+TELNET.EXE is a single file. It uses the same executable layout and loader
+protocol as Fido Editor: DSS preloads a small loader and leaves the EXE handle
+at PSP-3; the loader reads a WIN0 entry, resident WIN1 image and the Z/YMODEM
+overlay through that inherited handle. Its already mapped loader page becomes
+the terminal runtime page. There is no
+TELMOD.BIN or other companion file.  During a transfer only WIN0 changes to
+the internal modem page; the native 3Com TCP work page and terminal stack are
+never overlaid.
+
+- A ZMODEM header (** followed by ZDLE) starts transfer detection
+  automatically.
+- Alt+D starts YMODEM download; Alt+U starts YMODEM upload.
+- Alt+G starts YMODEM-G download.
+- During a transfer Esc cancels the transfer; once it returns to the
+  terminal, Esc is again sent to the remote host. Alt+X is always local
+  exit.
+
+ZMODEM uses CRC-16 and a bounded 2 KiB receive window. YMODEM uses CRC-16,
+128-byte metadata and 1 KiB data blocks. Every TCP and modem wait is finite.
+Fewer than three free DSS pages reports an error before the network stack opens.
+
+Known limitation
+
+Rapid consecutive terminal input can show noticeable latency. It is recorded
+as an open Stage 15 task; this iteration prioritizes transfer correctness.
+
+Exit codes
+
+| Code | Meaning |
+|---:|---|
+| 0 | User quit or normal remote close |
+| 1 | Invalid command line |
+| 3 | DNS, ARP, TCP or stream error |

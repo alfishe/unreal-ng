@@ -303,24 +303,9 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
             // Only pause for debugger breakpoints (not analyzer-owned)
             if (!isAnalyzerBreakpoint)
             {
-                bool isHidden = false;
-                auto* bp = brk.GetBreakpointById(breakpointID);
-                if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-                {
-                    isHidden = true;
-                }
-
-                // Pause emulator (single source of truth)
-                emulator.Pause();
-
-                // Broadcast notification - breakpoint triggered (instance-tagged)
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                BreakpointTriggeredPayload* payload =
-                    new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, pc, isHidden);
-                messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-                // Wait until emulator resumed externally (by debugger or scripting engine)
-                emulator.WaitWhilePaused();
+                // Pause and park, or during a direct run stop before this instruction
+                if (emulator.OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                    return true;
             }
         }
     }
@@ -594,6 +579,9 @@ void Z80::ApplyQueuedFrequencyMultiplier()
     // Always taken over, also when the product did not change (host 2x at ratio 1
     // -> host 1x at ratio 2): the audio descale must follow the ratio in effect
     state.hw_turbo_ratio_applied = ratio;
+    const uint8_t den = state.hw_clock_den > 1 ? state.hw_clock_den : 1;
+    const bool denChanged = den != (state.hw_clock_den_applied > 1 ? state.hw_clock_den_applied : 1);
+    state.hw_clock_den_applied = den;
 
     // Checked every frame regardless of whether this frame itself changed
     // anything: a guest that was oscillating and then settled needs a nudge
@@ -601,11 +589,11 @@ void Z80::ApplyQueuedFrequencyMultiplier()
     // showing a stale "lo<->hi" range forever once the flips stop
     SettleCpuFreqOscillationIfQuiet();
 
-    if (desiredMultiplier != state.current_z80_frequency_multiplier)
+    if (desiredMultiplier != state.current_z80_frequency_multiplier || denChanged)
     {
         uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
         state.current_z80_frequency_multiplier = desiredMultiplier;
-        state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+        state.current_z80_frequency = static_cast<uint32_t>(static_cast<uint64_t>(state.base_z80_frequency) * desiredMultiplier / den);
 
         // Reset rate to normal - counter represents actual t-states
         // Speed multipliers are handled by adjusting frame duration and timings
@@ -701,9 +689,10 @@ void Z80::RecomputeFrameTiming()
     const CONFIG& config = _context->config;
     const EmulatorState& state = _context->emulatorState;
 
-    _frameLimit = config.frame * state.current_z80_frequency_multiplier;
-    _intStart = config.intstart * state.current_z80_frequency_multiplier;
-    _intEnd = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+    // EmulatorState::BaseToCpuT: base T x the composed clock (a fraction for the Profi's hi-res clock)
+    _frameLimit = state.BaseToCpuT(config.frame);
+    _intStart = state.BaseToCpuT(config.intstart);
+    _intEnd = state.BaseToCpuT(config.intstart + config.intlen);
 
     // INT window crossing the frame end: its tail lives at the start of the
     // next frame (raised there by BeginFrame), so the in-frame end wraps
@@ -946,20 +935,25 @@ void Z80::ApplyHardwareTurboNow()
     const uint8_t ratio = state.hw_turbo_ratio ? state.hw_turbo_ratio : 1;
     uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier * ratio);
     uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
-    if (desiredMultiplier == oldMultiplier || oldMultiplier == 0)
+    const uint32_t desiredDen = state.hw_clock_den > 1 ? state.hw_clock_den : 1u;
+    const uint32_t oldDen = state.ClockDen();
+    if ((desiredMultiplier == oldMultiplier && desiredDen == oldDen) || oldMultiplier == 0)
         return;
 
     // Preserve the raster instant: the in-frame position is expressed in
     // scaled T-states, so it must be rescaled together with the multiplier
-    // (the same instant is 2x further into a 2x longer frame). haltpos is a
-    // frame position too
-    auto rescale = [&](uint32_t v) { return static_cast<uint32_t>(static_cast<uint64_t>(v) * desiredMultiplier / oldMultiplier); };
+    // (the same instant is 2x further into a 2x longer frame; 10/7 x for the
+    // Profi's 5 MHz hi-res clock). haltpos is a frame position too
+    auto rescale = [&](uint32_t v) {
+        return static_cast<uint32_t>(static_cast<uint64_t>(v) * desiredMultiplier * oldDen / (static_cast<uint64_t>(oldMultiplier) * desiredDen));
+    };
     cpu.t = rescale(cpu.t);
     cpu.haltpos = static_cast<uint16_t>(rescale(cpu.haltpos));
 
     state.current_z80_frequency_multiplier = desiredMultiplier;
-    state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+    state.current_z80_frequency = static_cast<uint32_t>(static_cast<uint64_t>(state.base_z80_frequency) * desiredMultiplier / desiredDen);
     state.hw_turbo_ratio_applied = ratio;
+    state.hw_clock_den_applied = static_cast<uint8_t>(desiredDen);
     cpu.rate = 256;
 
     // The running Z80FrameCycle loop reads these every iteration
@@ -2022,7 +2016,9 @@ static const Z80::RegisterInfo s_registers[] = {
     {"L", false, false, [](const Z80State* s) -> uint16_t { return s->l; }, [](Z80State* s, uint16_t v) { s->l = static_cast<uint8_t>(v); }},
     {"F", false, false, [](const Z80State* s) -> uint16_t { return s->f; }, [](Z80State* s, uint16_t v) { s->f = static_cast<uint8_t>(v); }},
     {"I", false, false, [](const Z80State* s) -> uint16_t { return s->i; }, [](Z80State* s, uint16_t v) { s->i = static_cast<uint8_t>(v); }},
-    {"R", false, false, [](const Z80State* s) -> uint16_t { return s->r_low; }, [](Z80State* s, uint16_t v) { s->r_low = static_cast<uint8_t>(v); }},
+    // R: bit 7 is kept apart (r_hi) from the counting bits 6:0 (LD R,A / LD A,R)
+    {"R", false, false, [](const Z80State* s) -> uint16_t { return Z80::RegisterR(s); },
+     [](Z80State* s, uint16_t v) { s->r_low = static_cast<uint8_t>(v); s->r_hi = static_cast<uint8_t>(v & 0x80); }},
     // 8-bit alternate registers
     {"A'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.a; }, [](Z80State* s, uint16_t v) { s->alt.a = static_cast<uint8_t>(v); }},
     {"B'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.b; }, [](Z80State* s, uint16_t v) { s->alt.b = static_cast<uint8_t>(v); }},
@@ -2046,7 +2042,14 @@ static const Z80::RegisterInfo s_registers[] = {
     {"IY", true, false, [](const Z80State* s) -> uint16_t { return s->iy; }, [](Z80State* s, uint16_t v) { s->iy = v; }},
     {"SP", true, false, [](const Z80State* s) -> uint16_t { return s->sp; }, [](Z80State* s, uint16_t v) { s->sp = v; }},
     {"PC", true, false, [](const Z80State* s) -> uint16_t { return s->pc; }, [](Z80State* s, uint16_t v) { s->pc = v; }},
-    {"IR", true, false, [](const Z80State* s) -> uint16_t { return s->ir_; }, [](Z80State* s, uint16_t v) { s->ir_ = v; }},
+    {"IR", true, false, [](const Z80State* s) -> uint16_t { return static_cast<uint16_t>((s->i << 8) | Z80::RegisterR(s)); },
+     [](Z80State* s, uint16_t v) { s->i = static_cast<uint8_t>(v >> 8); s->r_low = static_cast<uint8_t>(v); s->r_hi = static_cast<uint8_t>(v & 0x80); }},
+    // Internal: MEMPTR (WZ), the address latch behind the undocumented flags of BIT n,(HL)
+    {"MEMPTR", true, false, [](const Z80State* s) -> uint16_t { return s->memptr; }, [](Z80State* s, uint16_t v) { s->memptr = v; }},
+    // Interrupt state: mode 0-2 and the two enable flip-flops
+    {"IM", false, false, [](const Z80State* s) -> uint16_t { return s->im; }, [](Z80State* s, uint16_t v) { s->im = static_cast<uint8_t>(v); }, 2},
+    {"IFF1", false, false, [](const Z80State* s) -> uint16_t { return s->iff1 ? 1 : 0; }, [](Z80State* s, uint16_t v) { s->iff1 = static_cast<uint8_t>(v); }, 1},
+    {"IFF2", false, false, [](const Z80State* s) -> uint16_t { return s->iff2 ? 1 : 0; }, [](Z80State* s, uint16_t v) { s->iff2 = static_cast<uint8_t>(v); }, 1},
     // 16-bit alternate registers
     {"AF'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.af; }, [](Z80State* s, uint16_t v) { s->alt.af = v; }},
     {"BC'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.bc; }, [](Z80State* s, uint16_t v) { s->alt.bc = v; }},
@@ -2082,6 +2085,7 @@ const Z80::RegisterInfo* Z80::FindRegister(const std::string& name)
     if (normalized == "XL") return FindRegister("IXL");
     if (normalized == "YH") return FindRegister("IYH");
     if (normalized == "YL") return FindRegister("IYL");
+    if (normalized == "WZ") return FindRegister("MEMPTR");
 
     return nullptr;
 }
@@ -2100,9 +2104,29 @@ bool Z80::SetRegisterValue(Z80State* state, const std::string& name, uint16_t va
 {
     const RegisterInfo* info = FindRegister(name);
     if (!info) return false;
+    if (info->maxValue && value > info->maxValue) return false;  // IM 3 is no mode; 8-bit registers truncate
 
     info->setter(state, value);
     return true;
+}
+
+const char* Z80::BoundaryName(uint8_t boundary)
+{
+    switch (boundary)
+    {
+        case Z80_BOUNDARY_NONE: return "none";
+        case Z80_BOUNDARY_PREFIX_DD: return "prefix_dd";
+        case Z80_BOUNDARY_PREFIX_FD: return "prefix_fd";
+        case Z80_BOUNDARY_INT_SHADOW: return "int_shadow";
+        case Z80_BOUNDARY_LD_A_IR: return "ld_a_ir";
+        case Z80_BOUNDARY_NMI_ACK: return "nmi_ack";
+        default: return "unknown";
+    }
+}
+
+uint8_t Z80::RegisterR(const Z80Registers* state)
+{
+    return static_cast<uint8_t>((state->r_low & 0x7F) | (state->r_hi & 0x80));
 }
 
 /// endregion </Register Access API>

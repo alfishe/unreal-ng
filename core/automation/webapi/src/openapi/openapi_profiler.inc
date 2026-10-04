@@ -219,7 +219,7 @@
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["required"] = false;
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["description"] =
-        "Number of entries to return (default: 100)";
+        "Number of entries to return (default: 100). \"limit\" is accepted as a synonym";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["responses"]["200"]["description"] =
         "Call trace entries";

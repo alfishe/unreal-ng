@@ -19,6 +19,7 @@ option(BENCHMARKS "Enable benchmarks" OFF)
 # Enable testclient console app: -DBUILD_TESTCLIENT=ON -> then `ninja testclient`
 option(BUILD_TESTCLIENT "Build testclient console app" OFF)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
+option(UNREAL_BUNDLE_QT "Bundle a private Qt runtime in native Linux packages" OFF)
 option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
 option(BUILD_ZXDLSS_TOOLS "Build the ZX DLSS algorithm module and tools (tools/verification/zxdlss)" OFF)
 
@@ -131,6 +132,8 @@ message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 # Disable modern SDK warnings about insecurity for POSIX functions
 # Also define WIN32_LEAN_AND_MEAN and NOMINMAX to prevent winsock/windows.h conflicts
 if (MSVC)
+	# Sources and Unicode literals are UTF-8, regardless of the Windows locale.
+	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 	add_definitions(-DWIN32_LEAN_AND_MEAN)
 	add_definitions(-DNOMINMAX)
@@ -255,137 +258,8 @@ run_dependency_checks()
 # Qt Detection (for Qt-based applications)
 # ========================================
 if (BUILD_QT_APPS)
-    set(QT_FOUND_PATH "")
-
-    # Every component unreal-qt needs. Used to make sure "standard discovery" below
-    # never settles for a partial Qt6 install (e.g. a Homebrew Qt6 with no Multimedia
-    # module): checking file existence only, like the whitelist below always did,
-    # so this never calls find_package() speculatively - a speculative, only-partly-
-    # successful find_package(Qt6 COMPONENTS ...) call permanently registers IMPORTED
-    # targets for whichever components it did resolve, and nothing can undo that
-    # later in the same configure, even for the components that get re-resolved
-    # correctly afterwards.
-    set(_UNREALNG_QT_REQUIRED_COMPONENTS Core Gui Widgets Multimedia Svg OpenGL OpenGLWidgets)
-    function(_unrealng_qt6_prefix_is_complete prefix out_var)
-        set(${out_var} FALSE PARENT_SCOPE)
-        if (prefix STREQUAL "" OR NOT EXISTS "${prefix}/lib/cmake/Qt6/Qt6Config.cmake")
-            return()
-        endif()
-        foreach(_component ${_UNREALNG_QT_REQUIRED_COMPONENTS})
-            if (NOT EXISTS "${prefix}/lib/cmake/Qt6${_component}/Qt6${_component}Config.cmake")
-                return()
-            endif()
-        endforeach()
-        set(${out_var} TRUE PARENT_SCOPE)
-    endfunction()
-
-    # Try the standard CMake/Qt6 discovery locations first: CMAKE_PREFIX_PATH (set via
-    # -DCMAKE_PREFIX_PATH=... or a toolchain file), its environment-variable form
-    # (common in Docker/CI), and Qt6_DIR if the caller already pointed at one. Only
-    # fall back to our hardcoded whitelist of known install paths below if none of
-    # these resolve to a complete Qt6.
-    set(_UNREALNG_QT_STANDARD_CANDIDATES "")
-    if (DEFINED Qt6_DIR AND NOT Qt6_DIR STREQUAL "")
-        get_filename_component(_qt6_dir_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
-        list(APPEND _UNREALNG_QT_STANDARD_CANDIDATES "${_qt6_dir_prefix}")
-    endif()
-    foreach(_prefix ${CMAKE_PREFIX_PATH})
-        list(APPEND _UNREALNG_QT_STANDARD_CANDIDATES "${_prefix}")
-    endforeach()
-    if (DEFINED ENV{CMAKE_PREFIX_PATH} AND NOT "$ENV{CMAKE_PREFIX_PATH}" STREQUAL "")
-        string(REPLACE ":" ";" _qt_env_prefix_paths "$ENV{CMAKE_PREFIX_PATH}")
-        list(APPEND _UNREALNG_QT_STANDARD_CANDIDATES ${_qt_env_prefix_paths})
-    endif()
-
-    foreach(_candidate ${_UNREALNG_QT_STANDARD_CANDIDATES})
-        if (NOT _candidate STREQUAL "" AND NOT QT_FOUND_PATH)
-            _unrealng_qt6_prefix_is_complete("${_candidate}" _qt_candidate_complete)
-            if (_qt_candidate_complete)
-                set(QT_FOUND_PATH "${_candidate}")
-                message(STATUS "Found Qt6 via standard CMake discovery: ${QT_FOUND_PATH}")
-            endif()
-        endif()
-    endforeach()
-    unset(_UNREALNG_QT_STANDARD_CANDIDATES)
-
-    if (NOT QT_FOUND_PATH)
-        if (NOT DEFINED QT_INSTALL_PATH OR QT_INSTALL_PATH STREQUAL "")
-            # Check environment variable first (set by Docker container)
-            if(DEFINED ENV{QT_INSTALL_PATH} AND NOT "$ENV{QT_INSTALL_PATH}" STREQUAL "")
-                set(QT_INSTALL_PATH "$ENV{QT_INSTALL_PATH}" CACHE PATH "Qt install path from environment")
-                message(STATUS "QT_INSTALL_PATH from environment: $ENV{QT_INSTALL_PATH}")
-            endif()
-        endif()
-
-        if (NOT DEFINED QT_INSTALL_PATH OR QT_INSTALL_PATH STREQUAL "")
-            if (APPLE)
-                set(QT_POSSIBLE_PATHS
-                    "$ENV{HOME}/Qt/6.9.3/macos"
-                    "$ENV{HOME}/Qt/6.5.3/macos"
-                    "$ENV{HOME}/Qt/6.5.0/macos"
-                    "$ENV{QTDIR}"
-                )
-            elseif (UNIX AND NOT APPLE)
-                set(QT_POSSIBLE_PATHS
-                    "$ENV{HOME}/Qt/6.9.3/gcc_64"
-                    "$ENV{HOME}/Qt/6.5.3/gcc_64"
-                    "$ENV{HOME}/Qt/6.5.0/gcc_64"
-                    "$ENV{QTDIR}"
-                )
-            elseif (WIN32)
-                # Detect compiler type and search for matching Qt builds
-                if(MINGW)
-                    message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
-                    set(QT_POSSIBLE_PATHS
-                        "C:/Qt/6.9.3/mingw_64"
-                        "C:/Qt/6.5.3/mingw_64"
-                        "C:/Qt/6.5.0/mingw_64"
-                        "$ENV{QTDIR}"
-                    )
-                elseif(MSVC)
-                    message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
-                    set(QT_POSSIBLE_PATHS
-                        "C:/Qt/6.9.3/msvc2022_64"
-                        "C:/Qt/6.9.3/msvc2019_64"
-                        "C:/Qt/6.5.3/msvc2019_64"
-                        "C:/Qt/6.5.0/msvc2019_64"
-                        "$ENV{QTDIR}"
-                    )
-                else()
-                    message(FATAL_ERROR "Unknown Windows compiler. Only MinGW and MSVC are supported. CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}")
-                endif()
-            endif ()
-
-            foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
-                _unrealng_qt6_prefix_is_complete("${POSSIBLE_PATH}" _qt_candidate_complete)
-                if (_qt_candidate_complete)
-                    set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-                    message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
-                    break()
-                endif()
-            endforeach()
-        else ()
-            foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
-                string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
-                if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
-                    set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-                    message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
-                    break()
-                endif()
-            endforeach()
-        endif ()
-    endif ()
-
-    if(QT_FOUND_PATH)
-        list(APPEND CMAKE_PREFIX_PATH "${QT_FOUND_PATH}")
-        set(QT_INSTALL_PATH "${QT_FOUND_PATH}" CACHE PATH "Path to Qt installation")
-        message(STATUS "Qt6 configured at: ${QT_FOUND_PATH}")
-    else()
-        message(WARNING "Qt6 not found. Qt-based applications will not be built.")
-        message(WARNING "Set -DQT_INSTALL_PATH=/path/to/Qt6 or install Qt6.")
-        set(BUILD_QT_APPS OFF)
-    endif()
-endif ()
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/QtDiscovery.cmake)
+endif()
 
 # ========================================
 # zstd (embedded source; no network dependency)
@@ -630,10 +504,10 @@ if (BUILD_QT_APPS)
     
     # Windows: Combined ZIP with all apps, Qt dependencies, and shared resources
     if(WIN32)
-        # Find windeployqt6 in the Qt installation
-        find_program(WINDEPLOYQT_EXECUTABLE windeployqt6
+        # Qt's SDK calls this windeployqt; some distro/toolchain builds add '6'.
+        find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt windeployqt6
             HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
-            DOC "Path to windeployqt6 executable"
+            DOC "Path to windeployqt executable"
         )
 
         set(WIN_PACKAGE_COMMANDS
@@ -662,11 +536,25 @@ if (BUILD_QT_APPS)
             )
         endif()
 
+        set(_win_deploy_runtime_options)
+        if(MSVC)
+            # A portable ZIP must carry the compiler runtime, including on ARM64.
+            set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+            include(InstallRequiredSystemLibraries)
+            if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+                message(FATAL_ERROR "MSVC redistributable DLLs were not found")
+            endif()
+            set(_win_deploy_runtime_options --no-compiler-runtime)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} "${SUITE_STAGING_DIR}/")
+        endif()
+
         list(APPEND WIN_PACKAGE_COMMANDS
             # Run windeployqt on each executable to copy Qt DLLs and plugins
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations ${_win_deploy_runtime_options}
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations ${_win_deploy_runtime_options}
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations ${_win_deploy_runtime_options}
             
             # Copy shared resources (only once)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -713,13 +601,13 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libwinpthread-1.dll"
                     "${SUITE_STAGING_DIR}/"
-                # Copy OpenSSL DLLs (required for WebAPI/network features)
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${MINGW_BIN_DIR}/libcrypto-3-x64.dll"
-                    "${SUITE_STAGING_DIR}/"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${MINGW_BIN_DIR}/libssl-3-x64.dll"
-                    "${SUITE_STAGING_DIR}/"
+                # Any further DLLs the binaries import (e.g. OpenSSL when TLS is on)
+                COMMAND ${CMAKE_COMMAND}
+                    "-DSTAGING_DIR=${SUITE_STAGING_DIR}"
+                    "-DMINGW_BIN_DIR=${MINGW_BIN_DIR}"
+                    "-DQT_BIN_DIR=${QT_FOUND_PATH}/bin"
+                    "-DBUILD_BIN_DIR=${CMAKE_BINARY_DIR}/bin"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/CollectMinGWDependencies.cmake"
                 # Re-create ZIP with MinGW runtime DLLs included
                 COMMAND ${CMAKE_COMMAND} -E remove
                     "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
@@ -753,6 +641,9 @@ if (BUILD_QT_APPS)
     
     # Linux: Combined tarball with all apps and shared resources
     if(UNIX AND NOT APPLE)
+        if(UNREAL_BUNDLE_QT)
+            include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinuxPackaging.cmake)
+        endif()
         set(LINUX_PACKAGE_COMMANDS
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
@@ -807,9 +698,9 @@ if (BUILD_QT_APPS)
                 "${CMAKE_SOURCE_DIR}/unreal-videowall/install/linux/icons" "${SUITE_STAGING_DIR}/share/icons"
 
             # Create tarball
-            COMMAND ${CMAKE_COMMAND} -E tar "cfz"
-                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Linux.tar.gz"
-                "--" "${SUITE_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cfz" "UnrealNG-Suite-Linux.tar.gz"
+                "--" "UnrealNG-Suite"
         )
 
         add_custom_target(package_suite_linux

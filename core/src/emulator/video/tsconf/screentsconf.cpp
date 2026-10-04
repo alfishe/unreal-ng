@@ -9,6 +9,7 @@
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
+#include "emulator/video/videofamily.h"
 
 namespace
 {
@@ -109,6 +110,24 @@ void ScreenTSConf::InitRaster()
         SetVideoMode(mode);
 }
 
+PictureRect ScreenTSConf::WorkingWindow() const
+{
+    auto* decoder = _context ? dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder) : nullptr;
+    if (!decoder)
+        return Screen::WorkingWindow();
+
+    const TsConfState& ts = decoder->GetState();
+    const uint8_t vConfig = ts.regs[TsConfReg::VConfig];
+    const uint8_t tConfig = ts.regs[TsConfReg::TConfig];
+    // T_CONFIG[0]: the TSU works in the whole 360x288 window, and its layers (T_CONFIG[7:5]) show over the border
+    // unless V_CONFIG NOTSU hides them: that whole window is the picture then (the engine's own rule, RenderTsu)
+    const bool tsuOutside = (tConfig & 0x01) && (tConfig & 0xE0) && !(vConfig & 0x10);
+    const TsConfGeometry::Window& win = tsuOutside ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(vConfig);
+    return PictureRect{static_cast<uint16_t>((win.x0 - TsConfGeometry::kFirstVisibleDot) * 2),
+                     static_cast<uint16_t>(win.y0 - TsConfGeometry::kFirstVisibleLine),
+                     static_cast<uint16_t>(win.w * 2), win.h};
+}
+
 ScreenState ScreenTSConf::DescribeScreenState() const
 {
     ScreenState s = Screen::DescribeScreenState();
@@ -193,6 +212,20 @@ const void* ScreenTSConf::VideoFamilyView() const
 
 void ScreenTSConf::SetVideoMode(VideoModeEnum mode)
 {
+    // A mode change inside the TS family (ZX / 16C / 256C / TXT by V_CONFIG) is only a new label: every TS mode has
+    // the same 720x288 frame, raster and timing, and the hardware has no framebuffer to clear. Programs switch
+    // it mid-frame from line interrupts (zifi.spg: 256C header, TXT list, 256C status bar, every frame). The full
+    // path would clear the lines already drawn and the presented frames, and tell the GUI to re-attach its
+    // screen - twice a frame: a black picture with the last segment only, flickering
+    if (_framebuffer.memoryBuffer != nullptr && FamilyOf(_mode) == VideoFamily::TsConf &&
+        FamilyOf(mode) == VideoFamily::TsConf)
+    {
+        _mode = mode;
+        _drawCallback = _drawCallbacks[_mode];
+        _framebuffer.videoMode = mode;
+        return;
+    }
+
     // The raster state and framebuffer come from the descriptor; the ZX
     // renderer's tables are not used by this screen
     Screen::SetVideoMode(mode);

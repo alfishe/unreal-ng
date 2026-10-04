@@ -24,7 +24,7 @@ The check is `tools/verification/ttd-bench/ttd_engine_d33.py`. The baseline is `
 | 1. One event stream | The engine's event log and payload store take v1's input, network records and markers. `IN` / `OUT` bus journals have a cursor per checkpoint. Debugger edits carry their bytes, and a replay crosses them | `TTDEventLog`, `FeedV1Events`, `SetReplaySource(engine)` |
 | 1. Media reads | Every sector read from an image is journaled at the read (`MediaReadTap`), CD data reads too; a replay needs no image file | `TTDMediaJournal` |
 | 1. Vectors, port journals everywhere | Interrupt vectors are recorded on machines with their own INT logic. The port journals are recorded on every machine | `BusVectors`, `_portJournalRecorded` |
-| 2. RZX playback | TTD records while an RZX plays: the player's position is in every checkpoint (`RzxPlayback`, id 47), and RZX frame ends are facts; a seek to RZX frame N equals the RZX player's own seek | `TimeTravelEngine::RzxFrameTime` |
+| 2. RZX playback | TTD records while an RZX plays: the player's position is in every checkpoint (`RzxPlayback`, id 57), and RZX frame ends are facts; a seek to RZX frame N equals the RZX player's own seek | `TimeTravelEngine::RzxFrameTime` |
 | 3. Machine time | From the frame table: every frame at its measured length (Sprinter 320 / 312 lines) | `FrameLengthChange` facts |
 | 4. Configuration and media | A named-field fingerprint (model, RAM, timing, audio and render settings, board options, every ROM); media slot versions per checkpoint | `LastEngineCheck`, `IMediaHistory` |
 | 5. Real-time clocks | One session time base for every DS12887 user | `PortDecoder::SessionWallMicros` |

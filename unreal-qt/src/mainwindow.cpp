@@ -12,6 +12,7 @@
 #include <QGuiApplication>
 
 #include "emulator/mainloop.h"
+#include "emulator/video/screenshotter.h"
 
 #include "base/featuremanager.h"
 #include "widgets/ttdwidget.h"
@@ -148,6 +149,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _lastDirectory = settings.value("LastFileDirectory", QCoreApplication::applicationDirPath()).toString();
     _lastSaveDirectory = settings.value("LastSaveDirectory", QCoreApplication::applicationDirPath()).toString();
     _autostartDisks = settings.value("AutostartDisks", true).toBool();
+    // macOS Command key: "host" (default, never sent to the machine) | "gui" (the PC Win key)
+    KeyboardManager::setCommandKeyToGuest(
+        settings.value("Keyboard/MacCommandKey", "host").toString().compare("gui", Qt::CaseInsensitive) == 0);
     qDebug() << "Loading last directory from settings:" << _lastDirectory;
 
 #ifdef ENABLE_AUTOMATION
@@ -381,7 +385,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // unbinds one queued event later): both handlers go through a context lease
     connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
         if (const auto view = HostKeyboardMenu::Read(m_binding))
-            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller, view->controller);
     });
     connect(_menuManager, &MenuManager::hostKeyboardRouteRequested, this, [this](const QString& route) {
         std::string error;
@@ -389,9 +393,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (!error.empty())
             statusBar()->showMessage(tr("Host keyboard: %1").arg(QString::fromStdString(error)), 5000);
         if (view)
-            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller, view->controller);
     });
     _menuManager->setAutostartDisksChecked(_autostartDisks);
+    _menuManager->setCommandKeyToGuestChecked(KeyboardManager::commandKeyToGuest());
+    connect(_menuManager, &MenuManager::commandKeyToGuestToggled, this, [](bool on) {
+        // A Command key held as the GUI key still goes up on its own release or the next focus change
+        KeyboardManager::setCommandKeyToGuest(on);
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("Keyboard/MacCommandKey", on ? "gui" : "host");
+    });
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
@@ -408,6 +419,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
+    connect(_menuManager, &MenuManager::saveScreenshotRequested, this, &MainWindow::handleSaveScreenshotRequested);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::temporalEffectsRequested, this, &MainWindow::handleTemporalEffectsRequested);
@@ -4073,6 +4085,42 @@ void MainWindow::handleScreenshotRequested()
     // Copy to clipboard as PNG
     QGuiApplication::clipboard()->setImage(frame);
     statusBar()->showMessage(tr("Screenshot copied to clipboard"), 3000);
+}
+
+/// Save the whole presented frame (border included) to a PNG or GIF file: the core Screenshotter, the same
+/// picture the automation surfaces return for area=full
+void MainWindow::handleSaveScreenshotRequested()
+{
+    const std::shared_ptr<Emulator> emulator = activeEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context || !context->pScreen)
+    {
+        statusBar()->showMessage(tr("Screenshot: no emulator screen to capture"), 3000);
+        return;
+    }
+
+    const QString suggested = QDir(_lastDirectory.isEmpty() ? QDir::homePath() : _lastDirectory).filePath("screenshot.png");
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Screenshot"), suggested,
+                                                    tr("PNG image (*.png);;GIF image, 256 colors (*.gif)"));
+    if (filePath.isEmpty())
+        return;
+
+    ScreenshotOptions options;  // the whole frame
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    if (suffix == "gif")
+        options.format = ScreenshotFormat::Gif;
+    else if (suffix.isEmpty())
+        filePath += ".png";
+    options.saveTo = filePath.toStdString();
+
+    const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options);
+    if (!shot.ok)
+    {
+        statusBar()->showMessage(tr("Screenshot failed: %1").arg(QString::fromStdString(shot.errorMessage)), 5000);
+        return;
+    }
+    _lastDirectory = QFileInfo(filePath).absolutePath();
+    statusBar()->showMessage(tr("Screenshot saved to %1 (%2x%3)").arg(filePath).arg(shot.width).arg(shot.height), 5000);
 }
 
 void MainWindow::handleToolBarToggled(bool visible)

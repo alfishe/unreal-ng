@@ -29,7 +29,14 @@
 #include "emulator/emulator.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterpldgame.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/ports/models/sprinter/sprinterzxports.h"
+#include "emulator/machineeventjournal.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdportsearch.h"
+#include "emulator/video/sprinter/sprintervideorenderer.h"
+#include <cstdlib>
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
@@ -154,7 +161,8 @@ StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_
         {
             kind = "ISA";
             writable = false;
-            note = "ISA view (#1FFD bit 4, pages #D0-#D6): no card, reads #FF, writes ignored";
+            note = "ISA view (#1FFD bit 4, pages #D0-#D6): cycles of an ISA slot (page bit 1 = slot, bit 2 = I/O), "
+                   "address #9FBD bits 5-0 << 14 | A13-A0; an empty slot reads #FF (/state/isa)";
         }
         else if (window == 0 && (pld.sc & 0x01) && pld.ramSys)
         {
@@ -234,6 +242,11 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
 
     StateNode v = StateNode::Object();
     v["mode_page"] = int(modePage);
+    // Whose rules draw the picture: the square kinds below are Standard's classification
+    v["renderer"] = decoder.ActiveModule().Descriptor().name;
+    if (decoder.BeamVideo())
+        v["renderer_note"] = "Game configuration: every square is graphics 320 with the grid offset (pld.game); the "
+                             "kinds below classify the mode bytes by the Standard rules";
     // The picture's mode by the summary the GUI status bar shows (SprinterPicture: border / blank squares
     // frame a picture, a Spectrum screen is its ZX-40 squares)
     const SprinterPicture shown = SprinterPicture::Of(vram.Data(), modePage);
@@ -361,7 +374,8 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
         n["rx_enabled"] = (ch.wr[3] & 0x01) != 0;
         n["fifo_count"] = int(ch.fifoCount);
         n["fifo"] = HexRow(ch.fifo, ch.fifoCount);
-        n["overrun"] = ch.overrun != 0;
+        n["overrun"] = chip.sio.OverrunLatched(c);  // RR1 bit 5
+        n["overrun_in_fifo"] = (ch.overrun & 0x0E) != 0;  // a written-over character still waits to be read
         sio.push(n);
     }
     z["sio"] = sio;
@@ -555,13 +569,58 @@ StateNode OrigWaitsSummary(PortDecoder_Sprinter& decoder)
                 "waits while CT5 = 0 - 2 T when its T2 falls on the first low T of the 4-T CT5 period, 1 T on the second, "
                 "none on the high half (PLD WAIT_ORIG; ORIGIN.ZX)";
     w["period_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPeriod);
-    w["phase_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPhase);
-    w["phase_note"] = "placeholder until measured on a real board (testdata/machines/sprinter/zx-timing, tdd-zx-mode Q1)";
+    w["ct5_rise_t"] = static_cast<uint64_t>(SprinterOrigWaits::kCt5RiseT);
+    StateNode byT = StateNode::Array();
+    for (uint8_t waits : SprinterOrigWaits::kWaitsFromRise)
+        byT.push(static_cast<uint64_t>(waits));
+    w["waits_by_t1_from_int"] = byT;
+    w["phase_note"] = "derived from the PLD: INT and the 4-T CT5 wave share the CT5 rise (frame T mod 4 = ct5_rise_t); "
+                      "waits by an access's T1 from INT mod 4 (tdd-zx-mode Q1; a board measurement would confirm it)";
     StateNode windows = StateNode::Array();
     for (uint8_t window = 0; window < 4; window++)
         windows.push(active && SprinterOrigWaits::WindowWaits(window, pld.pn));
     w["windows_waiting"] = windows;
     return w;
+}
+
+/// The PLD configuration module that runs and why (the machine report, the BIOS report, the ZX-mode report)
+StateNode PldModule(PortDecoder_Sprinter& decoder)
+{
+    const SprinterPldState& pld = decoder.GetPldState();
+    const SprinterPldModuleDescriptor& module = decoder.ActiveModule().Descriptor();
+    StateNode m = StateNode::Object();
+    m["module"] = module.name;
+    m["module_index"] = int(pld.configModule);
+    std::string key, why;
+    decoder.ModuleSelection(key, why);
+    m["selected_by"] = key;
+    m["why"] = why;
+    m["full_hash"] = Hex32(pld.bitstreamHashFull);
+    m["head_hash"] = Hex32(pld.bitstreamHashHead);
+    m["cell_EE"] = Hex8(pld.Cell(0xEE));
+    m["cell_EE_note"] = "RET_PORT: the BIOS reads and clears it after every load and reset; non-zero = return to the "
+                        "program whose windows and address are in that page at #FFF0-#FFF5 (the Game bitstream sets #41)";
+    return m;
+}
+
+/// The Game configuration's picture state (its grid-offset register, sprintergamevideo.h); null node otherwise
+StateNode GameVideo(PortDecoder_Sprinter& decoder)
+{
+    StateNode g = StateNode::Object();
+    const auto* game = dynamic_cast<const SprinterPldGame*>(&decoder.ActiveModule());
+    g["active"] = game != nullptr && decoder.BeamVideo() != nullptr;
+    if (!game)
+        return g;
+    const SprinterGameVideoState& v = game->Video().State();
+    g["grid_offset"] = Hex8(v.offset);
+    g["grid_offset_x"] = int(v.offset & 0x0F);
+    g["grid_offset_y"] = int(v.offset >> 4);
+    g["frame_start_offset"] = Hex8(v.frameOffset);
+    g["beam_t"] = static_cast<uint64_t>(v.beamT);
+    g["picture"] = "every square graphics 320 x 256 colors from any byte corner of the 1024 x 256 virtual screen "
+                   "(Mode0 bits 1-0 + Mode1 = column, Mode2 = row, bits 7-6 = palette); Mode0 bit 2: Mode3 becomes the "
+                   "grid offset after the square (X bits 3-0 x 2 pixels, Y bits 7-4 lines); no text squares";
+    return g;
 }
 
 StateNode Bios(EmulatorContext* context)
@@ -607,12 +666,21 @@ StateNode Bios(EmulatorContext* context)
         n["loaded"] = loadedCrc == known.crc32;
         n["selected"] = selectedName == known.file;
         n["active"] = loadedCrc == known.crc32;  // kept for older clients: the image that runs
+        StateNode issues = StateNode::Array();
+        for (const std::string& issue : SprinterBios::KnownIssues(known.crc32))
+            issues.push(issue);
+        n["known_issues"] = issues;
         if (loadedCrc == known.crc32)
             loadedName = known.file;
         images.push(n);
     }
     b["images"] = images;
     b["loaded"] = loadedName.empty() ? std::string("not a shipped image (") + selectedName + ")" : loadedName;
+    // What a user should know about the image that runs (bios-versions.md §5.2); empty for the others
+    StateNode loadedIssues = StateNode::Array();
+    for (const std::string& issue : SprinterBios::KnownIssues(loadedCrc))
+        loadedIssues.push(issue);
+    b["known_issues"] = loadedIssues;
     b["reload_pending"] = context->pEmulator && context->pEmulator->RomReloadPending();
     StateNode options = StateNode::Object();
     options["fast_start"] = context->config.sprinter.fast_start != 0;
@@ -803,6 +871,14 @@ StateNode Sprinter(EmulatorContext* context)
         for (size_t i = 0; i < decoder->GetRegistry().Count(); i++)
             modules.push(decoder->GetRegistry().At(i).Descriptor().name);
         p["modules_known"] = modules;
+        {
+            std::string key, why;
+            decoder->ModuleSelection(key, why);
+            p["selected_by"] = key;
+            p["why"] = why;
+        }
+        p["cell_EE"] = Hex8(pld.Cell(0xEE));
+        p["game"] = GameVideo(*decoder);
         StateNode bitstream = StateNode::Object();
         bitstream["writes"] = static_cast<uint64_t>(pld.bitstreamCount);
         bitstream["writes_expected"] = static_cast<uint64_t>(SprinterPldConfig::kPldConfigurationWrites);
@@ -909,6 +985,13 @@ StateNode Sprinter(EmulatorContext* context)
     ret["video"] = VideoSummary(*decoder, context);
     ret["accelerator"] = AcceleratorSummary(*decoder, context);
     ret["sound"] = SoundSummary(*decoder, context);
+    // The ISA slots (Sprinter ISA tdd §10): the same report as /state/isa
+    {
+        StateNode isa = Isa(context);
+        if (const StateNode* available = isa.find("available"); available && available->b)
+            isa.members.erase(isa.members.begin());
+        ret["isa"] = isa;
+    }
     ret["z84c15"] = Z84Summary(*decoder, context);
 
     // Floppy: the WD1793 behind codes #10-#17
@@ -950,6 +1033,9 @@ StateNode Sprinter(EmulatorContext* context)
     }
 
     ret["bios"] = Bios(context);
+    // The ZX (Spectrum) mode: the launcher configuration in effect (SprinterZxMode, also /state/sprinter/zx-mode);
+    // the whole-RAM search for the launcher's option table is left to that view
+    ret["zx_mode"] = SprinterZxMode(context, false);
     return ret;
 }
 
@@ -1036,6 +1122,13 @@ StateNode SprinterText(EmulatorContext* context)
     return ret;
 }
 
+std::vector<std::string> SprinterBiosKnownIssues(EmulatorContext* context)
+{
+    if (!SprinterDecoder(context) || !context->pMemory || !context->pMemory->ROMBase())
+        return {};
+    return SprinterBios::KnownIssues(SprinterBios::Crc32(context->pMemory->ROMBase(), 16 * 0x4000));
+}
+
 StateNode SprinterBios(EmulatorContext* context)
 {
     PortDecoder_Sprinter* decoder = SprinterDecoder(context);
@@ -1043,6 +1136,7 @@ StateNode SprinterBios(EmulatorContext* context)
         return Unavailable("Not a Sprinter machine");
     StateNode ret = Bios(context);
     ret["available"] = true;
+    ret["pld"] = PldModule(*decoder);  // the configuration the BIOS runs on: Game, after a program reloaded it
     return ret;
 }
 
@@ -1569,6 +1663,1276 @@ StateNode SprinterPortLookup(EmulatorContext* context, uint16_t port, const Spri
         results.push(r);
     }
     ret["results"] = results;
+    return ret;
+}
+
+}  // namespace DeviceState
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ZX mode report and the PLD journal (tdd-zx-mode.md §12)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// The `.ZX` options the hardware shows
+struct ZxOptions
+{
+    bool turbo = false;
+    bool sprinter = false;
+    bool p7ffd = false;
+    bool p1ffd = false;
+    bool mem512 = false;
+    bool lines312 = false;
+    bool origin = false;
+};
+
+/// A known launcher mode file
+struct KnownZxMode
+{
+    const char* file;
+    const char* name;
+    const char* launcher;  ///< "community" (SPECTRUM.EXE v2.03, BIOS 3.06+) or "peters-plus" (2002)
+    ZxOptions options;
+    const char* romSet;    ///< "sprinter-community", "sprinter-pp", "original", "scorpion"
+    const char* optionLine;
+};
+
+/// The mode files on the MAME-pack disk (C:\ZX, launcher v2.03) and on the DSS 1.62 disk (\ZX, Peters Plus).
+/// /sc-int in SC256.ZX / SCORPION.ZX is not an option either parser knows (it reads `int-sc`): no INT change
+const KnownZxMode kKnownModes[] = {
+    {"SP.ZX", "Sprinter ZX", "community", {true, true, true, true, false, false, false}, "sprinter-community",
+     "/sprinter /turbo /7FFD /1FFD /ret-fn"},
+    {"P128.ZX", "Pentagon 128", "community", {false, false, true, false, false, false, false}, "sprinter-community",
+     "/7FFD /ret-fn"},
+    {"P512.ZX", "Pentagon 512", "community", {true, false, true, false, true, false, false}, "sprinter-community",
+     "/turbo /7FFD /mem512 /ret-fn"},
+    {"SC256.ZX", "Scorpion 256", "community", {true, false, true, true, false, true, false}, "scorpion",
+     "/turbo /7FFD /1FFD /sc-int /lines312 /ret-fn"},
+    {"ORIGIN.ZX", "Original ZX Spectrum", "community", {false, false, true, false, false, true, true}, "original",
+     "/7FFD /origin /lines312 /ret-fn"},
+    {"SPRINTER.ZX", "Sprinter ZX", "peters-plus", {true, true, true, true, false, false, false}, "sprinter-pp",
+     "/turbo /sprinter /7FFD /1FFD /ret-fn"},
+    {"PENT128.ZX", "Pentagon 128", "peters-plus", {true, false, true, false, false, false, false}, "sprinter-pp",
+     "/turbo /7FFD /ret-fn"},
+    {"PENT512.ZX", "Pentagon 512", "peters-plus", {true, false, true, true, true, false, false}, "sprinter-pp",
+     "/turbo /7FFD /1FFD /mem512 /ret-fn"},
+    {"SCORPION.ZX", "Scorpion 256", "peters-plus", {true, false, true, true, false, true, false}, "scorpion",
+     "/turbo /7FFD /1FFD /lines312 /sc-int /ret-fn"},
+    {"ORIGINAL.ZX", "ZX Spectrum", "peters-plus", {true, false, true, false, false, true, true}, "original",
+     "/turbo /7FFD /lines312 /origin /ret-fn"},
+};
+
+/// The CNF/SYS byte the launcher computes (spectrum.asm PARAMS: the "set" / "not set" bytes added up; the
+/// Peters Plus launcher leaves /7FFD out of it and writes #7FFD itself)
+uint8_t ExpectedCnf(const ZxOptions& o, bool community)
+{
+    return static_cast<uint8_t>((o.turbo ? 0x03 : 0x02) + (o.sprinter ? 0x04 : 0x0C) + (community && !o.p7ffd ? 0x30 : 0x00) +
+                                (o.p1ffd ? 0x00 : 0x40) + (o.mem512 ? 0x80 : 0x00));
+}
+
+/// A vROM image by its CRC-32
+struct KnownRom
+{
+    uint32_t crc;
+    const char* name;
+    const char* set;
+};
+const KnownRom kKnownRoms[] = {
+    {0xE509CC39, "SP_128 (Sprinter BASIC 128, menu \"Sprinter\"; also BIOS 3.06 / 3.07 flash page 2)", "sprinter-community"},
+    {0x0229DDE9, "SP__48 (BASIC 48; also BIOS 3.06 / 3.07 flash page 3)", "sprinter-community"},
+    {0xD9B613C5, "SP_TRD (Sprinter TR-DOS 7.03; also BIOS 3.06 HF2 flash page 4)", "sprinter-community"},
+    {0x51C21367, "SP_TRD (Sprinter TR-DOS 7.03, BIOS 3.07 beta 1 flash page 4)", "sprinter-community"},
+    {0x02BB12AC, "SP_128.BIN (Peters Plus 2002)", "sprinter-pp"},
+    {0x8F4EDB0F, "SP__48.BIN (Peters Plus 2002)", "sprinter-pp"},
+    {0x47F39C0D, "SP_TRD.BIN (Sprinter TR-DOS 7.01, Peters Plus 2002)", "sprinter-pp"},
+    {0xEA8E9F2F, "SP_EXP.BIN (Peters Plus 2002)", "sprinter-pp"},
+    {0xBB208860, "SP_EXP2.BIN (Peters Plus 2002)", "sprinter-pp"},
+    {0x124AD9E0, "BASIC128 (Sinclair 128 ROM 0)", "original"},
+    {0xB96A36BE, "BASIC_48 (Sinclair 48 ROM)", "original"},
+    {0xFCBF11E8, "TRD_4EM (TR-DOS 5.04Em)", "original"},
+    {0x10751ABA, "TRD503 (TR-DOS 5.03)", "original"},
+    {0x2334B8C6, "TRD504TM (TR-DOS 5.04T)", "original"},
+    {0x0EB40A09, "SC_128 (Scorpion ZS 256 BASIC 128)", "scorpion"},
+    {0x64D46229, "SC__48 (Scorpion BASIC 48)", "scorpion"},
+    {0xC5CA0423, "SC_TRD (Scorpion TR-DOS)", "scorpion"},
+    {0x60D40D28, "SC_EXP (Scorpion service ROM)", "scorpion"},
+};
+
+const KnownRom* FindRom(uint32_t crc)
+{
+    for (const KnownRom& r : kKnownRoms)
+        if (r.crc == crc)
+            return &r;
+    return nullptr;
+}
+
+const char* RomSetName(const std::string& set)
+{
+    if (set == "sprinter-community")
+        return "Sprinter ROMs, community build (SP_128 / SP__48 / SP_TRD 7.03)";
+    if (set == "sprinter-pp")
+        return "Sprinter ROMs, Peters Plus 2002 (SP_128 / SP__48 / SP_TRD 7.01)";
+    if (set == "original")
+        return "original Sinclair ROMs + TR-DOS 5.0x";
+    if (set == "scorpion")
+        return "Scorpion ROMs";
+    return "unknown";
+}
+
+/// The vROM cells (SP2000.inc ZX ROM cells): #E0 EXP, #E1 TR-DOS, #E2 BASIC 128, #E3 BASIC 48, +4 for the second set
+const char* VromRole(uint8_t cell)
+{
+    switch (cell)
+    {
+        case 0xE0: case 0xE4: return "expansion (#1FFD bit 1)";
+        case 0xE1: case 0xE5: return "TR-DOS";
+        case 0xE2: case 0xE6: return "BASIC 128";
+        case 0xE3: case 0xE7: return "BASIC 48";
+        case 0xEB: return "ZX BIOS 1";
+        case 0xEF: return "ZX BIOS 2";
+        default: return "vROM";
+    }
+}
+
+/// The cell window 0 shows in the ZX mode (SprinterMemory::StandardUpdateBanks, the vROM branch)
+uint8_t Window0Cell(const SprinterPldState& pld)
+{
+    const bool sc0 = (pld.sc & 0x01) != 0;
+    const bool ramSys = pld.ramSys != 0;
+    const bool scLc = !(sc0 && ramSys);
+    const uint8_t spr = (pld.sc & 0x02) ? 0 : static_cast<uint8_t>((pld.dos << 1) | (((pld.pn & 0x10) || !pld.dos) ? 1 : 0));
+    return static_cast<uint8_t>(0xC0 + (0x20 | ((sc0 || !ramSys) ? 0x08 : 0) | ((pld.arom16 && !(sc0 && ramSys)) ? 0x04 : 0) |
+                                        ((((spr & 0x02) && scLc) || !ramSys) ? 0x02 : 0) |
+                                        ((((spr & 0x01) && scLc) || !ramSys) ? 0x01 : 0)));
+}
+
+/// NUL-terminated lines at the start of a page (the launcher's copy of the .ZX text)
+std::vector<std::string> NulLines(const uint8_t* page, size_t maxLines)
+{
+    std::vector<std::string> lines;
+    size_t at = 0;
+    while (lines.size() < maxLines && at < 2048)
+    {
+        std::string line;
+        while (at < 2048 && page[at] != 0)
+        {
+            uint8_t c = page[at++];
+            if (c == '\r' || c == '\n')
+                continue;
+            if (c == '\t')
+                c = ' ';
+            if (c < 0x20 || c > 0x7E)
+                return {};  // not text
+            line.push_back(static_cast<char>(c));
+            if (line.size() > 128)
+                return {};
+        }
+        at++;
+        // trim
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t'))
+            line.pop_back();
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+/// The option line among a .ZX file's lines: the first one that starts with '/'
+std::string OptionLine(const std::vector<std::string>& lines)
+{
+    for (const std::string& l : lines)
+    {
+        size_t i = 0;
+        while (i < l.size() && l[i] == ' ')
+            i++;
+        if (i < l.size() && l[i] == '/')
+            return l.substr(i);
+    }
+    return std::string();
+}
+
+bool LineHasOption(const std::string& line, const std::string& option)
+{
+    const std::string needle = "/" + option;
+    for (size_t at = line.find(needle); at != std::string::npos; at = line.find(needle, at + 1))
+    {
+        const size_t end = at + needle.size();
+        if (end == line.size() || line[end] == ' ' || line[end] == '\t')
+            return true;
+    }
+    return false;
+}
+
+/// The launcher's option table (spectrum.asm PARAMS: DW name, DB current, DB "set"; set when the two bytes are
+/// equal). Found by the names' block ("turbo",#FF,0,"lines312",#FF,0,"sprinter",#FF,0 - the same in both
+/// launchers) and the words that point at each name
+struct LauncherParams
+{
+    bool found = false;
+    uint8_t page = 0;
+    uint16_t base = 0;  ///< the CPU address of the page's start in the launcher's map
+    std::vector<std::pair<std::string, bool>> flags;
+};
+
+const char* const kParamNames[] = {"turbo", "lines312", "sprinter", "7FFD", "1FFD", "mem512", "int-sc", "to-trdos",
+                                   "no-run", "origin", "ret-zx", "ret-fn", "load-pal", "RMD-Keep"};
+
+bool ParseParams(const uint8_t* page, uint8_t pageNumber, LauncherParams& out)
+{
+    // Bytes, not chars: #FF must compare as 255 with the page's bytes
+    auto bytes = [](const std::string& text) {
+        std::vector<uint8_t> out;
+        for (char c : text)
+            out.push_back(c == '|' ? 0xFF : (c == '~' ? 0x00 : static_cast<uint8_t>(c)));
+        return out;
+    };
+    const std::vector<uint8_t> signature = bytes("turbo|~lines312|~sprinter|");
+    const uint8_t* end = page + PAGE_SIZE;
+    const uint8_t* hit = std::search(page, end, signature.begin(), signature.end());
+    if (hit == end)
+        return false;
+
+    // Each name's offset (searched from the block on), then the word that points at it
+    std::map<uint16_t, int> baseVotes;
+    std::vector<std::pair<std::string, size_t>> nameAt;
+    for (const char* name : kParamNames)
+    {
+        const std::vector<uint8_t> pattern = bytes(std::string(name) + "|~");
+        const uint8_t* n = std::search(hit, end, pattern.begin(), pattern.end());
+        if (n == end)
+            continue;
+        nameAt.emplace_back(name, static_cast<size_t>(n - page));
+    }
+    std::vector<std::pair<std::string, size_t>> entryAt;  // name -> offset of its table entry
+    for (const auto& [name, offset] : nameAt)
+    {
+        for (size_t i = 0; i + 3 < PAGE_SIZE; i++)
+        {
+            const uint16_t w = static_cast<uint16_t>(page[i] | page[i + 1] << 8);
+            if ((w & 0x3FFF) != offset)
+                continue;
+            const uint16_t base = static_cast<uint16_t>(w - offset);
+            baseVotes[base]++;
+            entryAt.emplace_back(name, i);
+        }
+    }
+    if (baseVotes.empty())
+        return false;
+    uint16_t base = 0;
+    int best = 0;
+    for (const auto& [b, votes] : baseVotes)
+        if (votes > best)
+        {
+            best = votes;
+            base = b;
+        }
+    if (best < 4)
+        return false;
+    out.found = true;
+    out.page = pageNumber;
+    out.base = base;
+    for (const auto& [name, offset] : nameAt)
+    {
+        for (const auto& [ename, at] : entryAt)
+        {
+            if (ename != name)
+                continue;
+            const uint16_t w = static_cast<uint16_t>(page[at] | page[at + 1] << 8);
+            if (static_cast<uint16_t>(w - offset) != base)
+                continue;
+            out.flags.emplace_back(name, page[at + 2] == page[at + 3]);
+            break;
+        }
+    }
+    return true;
+}
+
+bool ParamFlag(const LauncherParams& p, const std::string& name, bool& value)
+{
+    for (const auto& [n, v] : p.flags)
+        if (n == name)
+        {
+            value = v;
+            return true;
+        }
+    return false;
+}
+
+std::string OptionText(const ZxOptions& o)
+{
+    std::string s;
+    auto add = [&](bool on, const char* text) {
+        if (!on)
+            return;
+        if (!s.empty())
+            s += ' ';
+        s += text;
+    };
+    add(o.sprinter, "/sprinter");
+    add(o.turbo, "/turbo");
+    add(o.p7ffd, "/7FFD");
+    add(o.p1ffd, "/1FFD");
+    add(o.mem512, "/mem512");
+    add(o.origin, "/origin");
+    add(o.lines312, "/lines312");
+    return s;
+}
+
+std::vector<std::string> OptionDifferences(const ZxOptions& want, const ZxOptions& have)
+{
+    std::vector<std::string> d;
+    auto cmp = [&](bool w, bool h, const char* name) {
+        if (w != h)
+            d.push_back(StringHelper::Format("%s %s here, %s in the file", name, h ? "on" : "off", w ? "on" : "off"));
+    };
+    cmp(want.turbo, have.turbo, "/turbo");
+    cmp(want.sprinter, have.sprinter, "/sprinter");
+    cmp(want.p7ffd, have.p7ffd, "/7FFD");
+    cmp(want.p1ffd, have.p1ffd, "/1FFD");
+    cmp(want.mem512, have.mem512, "/mem512");
+    cmp(want.lines312, have.lines312, "/lines312");
+    cmp(want.origin, have.origin, "/origin");
+    return d;
+}
+
+/// What a write to a configuration code does now (the CNF clean rules applied)
+std::string WriteEffect(uint8_t code, const SprinterPldState& pld)
+{
+    switch (code)
+    {
+        case 0x00: return "nothing (no device)";
+        case 0xC0: case 0xC8:
+            return (pld.cnf & 0x40) ? "stores cell #C0 only: CNF bit 6 'SC clean' keeps the #1FFD latch at 0 (/1FFD off)"
+                                    : "the #1FFD latch: Scorpion paging (bit 4: +8 pages in window 3, bit 1: expansion ROM, bit 0: RAM at 0)";
+        case 0xC1: case 0xC9:
+        {
+            std::string e = "the #7FFD latch";
+            if (pld.cnf & 0x20)
+                e += ": CNF bit 5 'PN clean' drops bits 4-0 (/7FFD off: no 128K paging)";
+            else if (!(pld.cnf & 0x80))
+                e += ": 128K paging, bits 7-6 cleaned (no /mem512)";
+            else
+                e += ": 128K paging with bits 7-6 (Pentagon 512, /mem512)";
+            return e;
+        }
+        case 0xC2: return "border, beeper, tape out";
+        case 0xC3: return "ALL_MODE";
+        case 0xC6: case 0xCE: return "CNF/SYS: turbo request, map, clean rules";
+        case 0x90: return "AY register select";
+        case 0x91: return "AY data";
+        default: break;
+    }
+    if (code >= 0x10 && code <= 0x14)
+        return "WD1793 / Beta 128";
+    if (code >= 0xF0)
+        return "the cell of the current Spectrum page";
+    return std::string();
+}
+
+std::string ReadEffect(uint8_t code)
+{
+    switch (code)
+    {
+        case 0x00: return "#FF (no device)";
+        case 0x40: return "keyboard matrix, tape in";
+        case 0x52: return "AY register read";
+        case 0x15: return "Kempston joystick (+ Beta DRQ / INTRQ)";
+        default: break;
+    }
+    if (code >= 0x10 && code <= 0x13)
+        return "WD1793";
+    if (code >= 0xC0 && code < 0xF0)
+        return "the cell reads back";
+    return std::string();
+}
+
+/// The ports (value, mask, 16 bits) that reach `codes` in the table for (map, pn5, dos, direction): the TTD
+/// port-events queries
+std::vector<std::pair<uint16_t, uint16_t>> PortsReaching(const uint8_t* table, uint8_t map, bool pn5, bool dosOn, bool isRead,
+                                                         const std::vector<uint8_t>& codes)
+{
+    std::set<uint16_t> points;
+    for (uint16_t bits = 0; bits < SprinterPortTable::kAddressCombinations; bits++)
+    {
+        const uint8_t code = table[SprinterPortTable::Index(map, pn5, !dosOn, isRead, SprinterPortTable::ExamplePort(bits))];
+        if (std::find(codes.begin(), codes.end(), code) != codes.end())
+            points.insert(bits);
+    }
+    std::vector<std::pair<uint16_t, uint16_t>> out;
+    for (const auto& [value, mask] : Cubes(points))
+        out.emplace_back(SprinterPortTable::ExamplePort(value), SprinterPortTable::ExamplePort(mask));
+    return out;
+}
+
+/// The configuration codes the journal follows, by the journal kind they make
+struct JournalCodes
+{
+    const char* kind;
+    const char* what;
+    std::vector<uint8_t> codes;
+};
+const std::vector<JournalCodes>& TrackedCodes()
+{
+    static const std::vector<JournalCodes> kCodes = {
+        {"cnf", "CNF/SYS (turbo request, map, clean rules)", {0xC6, 0xCE}},
+        {"port_1ffd", "#1FFD", {0xC0, 0xC8}},
+        {"port_7ffd", "#7FFD", {0xC1, 0xC9}},
+        {"all_mode", "ALL_MODE", {0xC3}},
+        {"rgmod", "RGMOD", {0xC5, 0xCD}},
+        {"hold", "HOLD", {0xCB}},
+        {"frame_lines", "frame length (#2C 320, #2D 312 lines)", {0x2C, 0x2D}},
+        {"pld_load", "PLD reload (#2E)", {0x2E}},
+    };
+    return kCodes;
+}
+
+StateNode TtdQueries(EmulatorContext* context, PortDecoder_Sprinter& decoder)
+{
+    const SprinterPldState& pld = decoder.GetPldState();
+    const uint8_t* table = context->pMemory->RAMPageAddress(SprinterMemory::kPortTablePage);
+    const uint8_t map = static_cast<uint8_t>((pld.cnf >> 3) & 3);
+    StateNode arr = StateNode::Array();
+    for (const JournalCodes& c : TrackedCodes())
+    {
+        StateNode q = StateNode::Object();
+        q["kind"] = c.kind;
+        q["what"] = c.what;
+        StateNode ports = StateNode::Array();
+        for (const auto& [port, mask] : PortsReaching(table, map, (pld.pn & 0x20) != 0, pld.dos == 0, false, c.codes))
+        {
+            StateNode p = StateNode::Object();
+            p["port"] = Hex16(port);
+            p["port_mask"] = Hex16(mask);
+            p["request"] = StringHelper::Format("POST /ttd/port-events {\"event\":\"out\",\"port\":\"0x%04X\",\"port_mask\":\"0x%04X\"}", port, mask);
+            ports.push(p);
+        }
+        q["ports"] = ports;
+        arr.push(q);
+    }
+    return arr;
+}
+
+StateNode EventNode(const MachineEvent& e)
+{
+    StateNode n = StateNode::Object();
+    n["seq"] = e.seq;
+    n["epoch"] = static_cast<uint64_t>(e.epoch);
+    n["frame"] = e.frame;
+    n["t"] = static_cast<uint64_t>(e.t);
+    n["line"] = static_cast<uint64_t>(e.t / SprinterIntSource::kLineTStates);
+    n["t_in_line"] = static_cast<uint64_t>(e.t % SprinterIntSource::kLineTStates);
+    n["pc"] = Hex16(e.pc);
+    n["kind"] = e.kind;
+    if (e.port >= 0)
+        n["port"] = Hex16(static_cast<unsigned>(e.port));
+    if (e.value >= 0)
+        n["value"] = e.kind == std::string("port_table") || e.kind == std::string("clock") || e.kind == std::string("frame_lines") ||
+                             e.kind == std::string("pld_configured") || e.kind == std::string("f12")
+                         ? StateNode(static_cast<int64_t>(e.value))
+                         : StateNode(Hex8(static_cast<unsigned>(e.value)));
+    if (e.previous >= 0)
+        n["previous"] = e.kind == std::string("clock") || e.kind == std::string("frame_lines") || e.kind == std::string("f12")
+                            ? StateNode(static_cast<int64_t>(e.previous))
+                            : StateNode(Hex8(static_cast<unsigned>(e.previous)));
+    n["text"] = e.text;
+    if (!e.details.empty())
+    {
+        StateNode d = StateNode::Array();
+        for (const std::string& line : e.details)
+            d.push(line);
+        n["details"] = d;
+    }
+    return n;
+}
+
+const char* const kJournalKinds[][2] = {
+    {"port_table", "page #40 written: one event per frame, the key ZX port decodes it changed"},
+    {"cnf", "CNF/SYS write that changed the turbo request or the CNF byte (map, clean rules)"},
+    {"clock", "the CPU clock changed (3.5 / 21 MHz) and why"},
+    {"port_7ffd", "#7FFD write (a new value or a latch change), the port used"},
+    {"port_1ffd", "#1FFD write (a new value or a latch change), the port used (#01FD is #1FFD to the PLD)"},
+    {"all_mode", "ALL_MODE change (ZX screen + keyboard, original waits)"},
+    {"rgmod", "RGMOD change (mode table page)"},
+    {"hold", "HOLD change (picture shift)"},
+    {"frame_lines", "frame length change (codes #2C / #2D)"},
+    {"pld_load", "the PLD loads a configuration (power-on, RESET, code #2E)"},
+    {"pld_configured", "the load finished: the module chosen, the bitstream hashes"},
+    {"f12", "the front-panel turbo switch (F12)"},
+    {"ctrl_alt_del", "Ctrl+Alt+Del: CPU reset by the PLD's keyboard block"},
+    {"reset", "power on, the RESET button, the page #A0 soft restart"},
+};
+/// The status line: the launcher's mode name from RAM, else the best-matching file, and the clock / paging facts
+DeviceState::SprinterZxBrief ZxBriefLine(EmulatorContext* context)
+{
+    DeviceState::SprinterZxBrief b;
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return b;
+    b.sprinter = true;
+    const SprinterPldState& pld = decoder->GetPldState();
+    b.active = pld.configState == SprinterConfigState::Configured && pld.romOff && !pld.cacheOn && (pld.allMode & 0x01) == 0;
+    if (!b.active)
+    {
+        b.text = "ZX: off";
+        b.details = "Not in the ZX (Spectrum) mode: the Sprinter runs its own software (DSS, the BIOS)";
+        return b;
+    }
+    std::string name;
+    for (const uint8_t page : {static_cast<uint8_t>(0xFF), static_cast<uint8_t>(0x41)})
+    {
+        const std::vector<std::string> l = NulLines(context->pMemory->RAMPageAddress(page), page == 0xFF ? 13 : 8);
+        if (l.size() >= 4 && !l[0].empty() && !OptionLine(l).empty())
+        {
+            name = l[0];
+            break;
+        }
+    }
+    ZxOptions hw;
+    hw.turbo = (pld.cnf & 0x01) != 0;
+    hw.sprinter = ((pld.cnf >> 3) & 1) == 0;
+    hw.p7ffd = !(pld.cnf & 0x20);
+    hw.p1ffd = !(pld.cnf & 0x40);
+    hw.mem512 = (pld.cnf & 0x80) != 0;
+    hw.lines312 = pld.frameLines != 0;
+    hw.origin = (pld.allMode & 0x04) == 0;
+    if (name.empty())
+    {
+        size_t bestDiffs = 100;
+        for (const KnownZxMode& m : kKnownModes)
+        {
+            size_t d = OptionDifferences(m.options, hw).size();
+            if ((pld.cnf & 0x04) && ExpectedCnf(m.options, std::string(m.launcher) == "community") != pld.cnf)
+                d++;
+            if (d < bestDiffs)
+            {
+                bestDiffs = d;
+                name = std::string(m.name) + (d ? "?" : "");
+            }
+        }
+    }
+    std::vector<std::string> parts;
+    const unsigned ratio = context->emulatorState.hw_turbo_ratio ? context->emulatorState.hw_turbo_ratio : 1;
+    if (pld.turbo)
+        parts.push_back("turbo req");
+    if (pld.turbo && !pld.turboHard)
+        parts.push_back("F12 3.5 MHz");
+    else
+        parts.push_back(ratio >= 6 ? "21 MHz" : "3.5 MHz");
+    if (hw.p1ffd)
+        parts.push_back("/1FFD");
+    if (hw.mem512)
+        parts.push_back("/mem512");
+    if (hw.lines312)
+        parts.push_back("312 lines");
+    if (hw.origin)
+        parts.push_back("orig waits");
+    std::string text = "ZX: " + name + " (";
+    for (size_t i = 0; i < parts.size(); i++)
+        text += (i ? ", " : "") + parts[i];
+    text += ")";
+    b.text = text;
+    return b;
+}
+}  // namespace
+
+namespace DeviceState
+{
+
+StateNode SprinterZxMode(EmulatorContext* context, bool deep)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterPldState& pld = decoder->GetPldState();
+    Memory& memory = *context->pMemory;
+    const EmulatorState& state = context->emulatorState;
+    const std::map<uint16_t, std::string> names = CodeNames(*decoder);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["pld"] = PldModule(*decoder);  // the ZX mode needs the Standard configuration (its screen, ports, waits)
+
+    const bool configured = pld.configState == SprinterConfigState::Configured;
+    const bool vrom = configured && pld.romOff && !pld.cacheOn;
+    const bool zxScreen = (pld.allMode & 0x01) == 0;
+    const bool active = vrom && zxScreen;
+    ret["active"] = active;
+    ret["active_rule"] = StringHelper::Format(
+        "window 0 shows a vROM page (system ROM out, fast RAM off: %s) and ALL_MODE bit 0 = 0 (ZX screen shadow + ZX "
+        "keyboard: %s)",
+        vrom ? "yes" : "no", zxScreen ? "yes" : "no");
+
+    // The picture
+    {
+        StateNode p = StateNode::Object();
+        const SprinterPicture shown = SprinterPicture::Of(decoder->GetVideoRam().Data(), pld.rgMod & 0x01);
+        p["mode"] = SprinterSquare::Name(shown.mode);
+        p["brief"] = shown.Brief(static_cast<uint8_t>((pld.pn >> 3) & 1));
+        ret["picture"] = p;
+    }
+
+    // The ROMs in the vROM cells
+    std::string romSet;
+    StateNode rom = StateNode::Object();
+    {
+        const uint8_t w0 = Window0Cell(pld);
+        StateNode cells = StateNode::Array();
+        std::map<std::string, int> sets;
+        for (uint8_t cell : {0xE2, 0xE3, 0xE1, 0xE0})
+        {
+            const uint8_t page = pld.Cell(cell);
+            const uint32_t crc = Crc32(memory.RAMPageAddress(page), PAGE_SIZE);
+            const KnownRom* known = FindRom(crc);
+            StateNode c = StateNode::Object();
+            c["cell"] = StringHelper::Format("#%02X", cell);
+            c["role"] = VromRole(cell);
+            c["page"] = Hex8(page);
+            c["crc32"] = Hex32(crc);
+            c["rom"] = known ? known->name : (page == 0x41 ? "none (the cell points at page #41: slot not loaded)" : "unknown image");
+            c["in_window_0"] = vrom && w0 == cell;
+            if (known && cell != 0xE0)
+                sets[known->set]++;
+            cells.push(c);
+        }
+        int best = 0;
+        for (const auto& [set, count] : sets)
+            if (count > best)
+            {
+                best = count;
+                romSet = set;
+            }
+        rom["window_0_cell"] = vrom ? StringHelper::Format("#%02X", w0) : std::string("system ROM / fast RAM (not a vROM)");
+        rom["window_0_role"] = vrom ? VromRole(w0) : "";
+        rom["set"] = romSet.empty() ? "unknown" : romSet;
+        rom["set_name"] = RomSetName(romSet);
+        rom["cells"] = cells;
+        rom["note"] = "vROM pages are RAM: the CRC-32 of each 16 KB page against the launchers' ROM files and the BIOS flash copies";
+    }
+
+    // The options as the hardware implements them
+    const bool cnfValid = (pld.cnf & 0x04) != 0;
+    ZxOptions hw;
+    hw.turbo = (pld.cnf & 0x01) != 0;
+    hw.sprinter = ((pld.cnf >> 3) & 1) == 0;
+    hw.p7ffd = !(pld.cnf & 0x20);
+    hw.p1ffd = !(pld.cnf & 0x40);
+    hw.mem512 = (pld.cnf & 0x80) != 0;
+    hw.lines312 = pld.frameLines != 0;
+    hw.origin = (pld.allMode & 0x04) == 0;
+
+    // The INT position
+    auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
+    const uint16_t lines = screen ? screen->FrameLines() : (pld.frameLines ? 312 : 320);
+    const std::vector<uint32_t> ints = SprinterIntSource::ComputePositions(decoder->GetVideoRam(), pld.rgMod & 0x01, lines);
+    std::string intKind = "none";
+    if (!ints.empty())
+    {
+        const uint32_t line = ints.front() / SprinterIntSource::kLineTStates;
+        intKind = line == 287 ? "pentagon" : line == 295 ? "spectrum (original)" : line == 271 ? "scorpion" : "other";
+    }
+
+    // The launcher's RAM
+    StateNode launcher = StateNode::Object();
+    std::string launcherName, launcherOptions;
+    bool launcherFound = false;
+    int retFn = -1;  // 1 = /ret-fn, 0 = /ret-zx (restart), -1 unknown
+    {
+        // The community launcher's .ZX text: SHARED_PAGE #FF from #0000, 13 NUL-terminated lines
+        // (spectrum.asm READ_FILE_1 into SHARED_PAGE); Peters Plus: page #41 from #0000, 8 lines
+        struct Source
+        {
+            uint8_t page;
+            size_t lines;
+            const char* who;
+        };
+        for (const Source& src : {Source{0xFF, 13, "community launcher (SPECTRUM.EXE v2.x): page #FF, the .ZX text it read"},
+                                  Source{0x41, 8, "Peters Plus launcher: page #41, the .ZX text it read"}})
+        {
+            const std::vector<std::string> l = NulLines(memory.RAMPageAddress(src.page), src.lines);
+            const std::string opts = OptionLine(l);
+            if (l.size() < 4 || l[0].empty() || opts.empty())
+                continue;
+            launcherFound = true;
+            launcherName = l[0];
+            launcherOptions = opts;
+            launcher["mode_text_source"] = src.who;
+            launcher["mode_name"] = launcherName;
+            launcher["option_line"] = launcherOptions;
+            StateNode roms = StateNode::Array();
+            for (size_t i = 1; i < l.size() && i < 4; i++)
+                roms.push(l[i]);
+            launcher["rom_files"] = roms;
+            break;
+        }
+        launcher["mode_text_found"] = launcherFound;
+
+        // The BIOS system page (community BIOS 3.06+ GOTO_SPECTRUM): #FE:#013A = the CNF byte, #013B = the start
+        const uint8_t* sys = memory.RAMPageAddress(0xFE);
+        StateNode bios = StateNode::Object();
+        bios["cnf"] = Hex8(sys[0x013A]);
+        bios["start"] = int(sys[0x013B]);
+        bios["vrom_block"] = int(sys[0x012E]);
+        bios["vram_block"] = int(sys[0x012F]);
+        bios["cnf_matches_pld"] = cnfValid && sys[0x013A] == pld.cnf;
+        bios["note"] = "community BIOS (3.06+) GOTO_SPECTRUM keeps its CNF and start arguments in the system page; the Peters "
+                       "Plus launcher does not write them";
+        launcher["bios_system_page"] = bios;
+
+        // The reset intercept: cell #EE (RET_PORT) = #41 and page #41 #FFF0-#FFF6
+        const uint8_t* p41 = memory.RAMPageAddress(0x41);
+        StateNode hook = StateNode::Object();
+        hook["cell_EE"] = Hex8(pld.Cell(0xEE));
+        hook["installed"] = pld.Cell(0xEE) == 0x41;
+        hook["launcher_pages"] = HexRow(p41 + 0x3FF0, 4);
+        hook["handler"] = Hex16(static_cast<unsigned>(p41[0x3FF4] | p41[0x3FF5] << 8));
+        hook["byte_FFF6"] = Hex8(p41[0x3FF6]);
+        hook["zx_mark"] = p41[0x3FFE] == 'Z' && p41[0x3FFF] == 'X';
+        launcher["reset_intercept"] = hook;
+
+        // The option table: the launcher's pages from the intercept first, then (deep) every page
+        LauncherParams params;
+        std::set<uint8_t> tried;
+        for (int i = 0; i < 4 && !params.found; i++)
+        {
+            const uint8_t page = p41[0x3FF0 + i];
+            if (tried.insert(page).second)
+                ParseParams(memory.RAMPageAddress(page), page, params);
+        }
+        std::vector<LauncherParams> all;
+        if (!params.found && deep)
+        {
+            for (unsigned page = 0; page < 256; page++)
+            {
+                if (tried.count(static_cast<uint8_t>(page)))
+                    continue;
+                LauncherParams p;
+                if (ParseParams(memory.RAMPageAddress(static_cast<uint8_t>(page)), static_cast<uint8_t>(page), p))
+                    all.push_back(p);
+            }
+            if (!all.empty())
+                params = all.back();
+        }
+        StateNode t = StateNode::Object();
+        t["found"] = params.found;
+        if (params.found)
+        {
+            t["page"] = Hex8(params.page);
+            t["address"] = Hex16(params.base);
+            if (all.size() > 1)
+                t["note"] = StringHelper::Format("%zu copies in RAM (earlier launches); the last page is shown", all.size());
+            StateNode flags = StateNode::Object();
+            for (const auto& [name, on] : params.flags)
+                flags[name] = on;
+            t["flags"] = flags;
+            bool fn = false, zx = false;
+            const bool haveFn = ParamFlag(params, "ret-fn", fn);
+            const bool haveZx = ParamFlag(params, "ret-zx", zx);
+            if (haveFn && haveZx)
+                retFn = (fn != zx) ? (fn ? 1 : 0) : -1;
+        }
+        else
+            t["searched"] = deep ? "the launcher's pages (#41:#FFF0-#FFF3) and all RAM" : "the launcher's pages (#41:#FFF0-#FFF3)";
+        launcher["option_table"] = t;
+        // Peters Plus: #41:#FFF6 = #41 with /ret-fn, 0 without (it never reads /ret-zx)
+        if (retFn < 0 && pld.Cell(0xEE) == 0x41 && p41[0x3FF6] == 0x41)
+            retFn = 1;
+        if (retFn < 0 && launcherFound)
+            retFn = LineHasOption(launcherOptions, "ret-fn") ? 1 : (LineHasOption(launcherOptions, "ret-zx") ? 0 : -1);
+    }
+
+    // Options with their evidence
+    StateNode config = StateNode::Object();
+    {
+        StateNode opts = StateNode::Array();
+        auto opt = [&](const char* name, bool on, std::string evidence) {
+            StateNode o = StateNode::Object();
+            o["option"] = name;
+            o["on"] = on;
+            o["evidence"] = std::move(evidence);
+            if (launcherFound)
+                o["in_launcher_line"] = LineHasOption(launcherOptions, name + 1);
+            opts.push(o);
+        };
+        opt("/turbo", hw.turbo, StringHelper::Format("CNF #%02X bit 0 (the launcher's turbo request); the live request is %s", pld.cnf,
+                                                     pld.turbo ? "on" : "off"));
+        opt("/sprinter", hw.sprinter, StringHelper::Format("CNF bits 4-3 = map %u: map 0 keeps the Sprinter ports reachable "
+                                                           "with TR-DOS off, map 1 only with TR-DOS on",
+                                                           (pld.cnf >> 3) & 3));
+        opt("/7FFD", hw.p7ffd, StringHelper::Format("CNF bit 5 'PN clean' = %u", (pld.cnf >> 5) & 1));
+        opt("/1FFD", hw.p1ffd, StringHelper::Format("CNF bit 6 'SC clean' = %u: %s", (pld.cnf >> 6) & 1,
+                                                    hw.p1ffd ? "#1FFD / #01FD writes reach the Scorpion latch"
+                                                             : "#1FFD / #01FD writes store the cell, the latch stays 0"));
+        opt("/mem512", hw.mem512, StringHelper::Format("CNF bit 7 = %u (1: #7FFD bits 7-6 kept, Pentagon 512)", (pld.cnf >> 7) & 1));
+        opt("/lines312", hw.lines312, StringHelper::Format("the PLD frame latch: %u lines", hw.lines312 ? 312 : 320));
+        opt("/origin", hw.origin, StringHelper::Format("ALL_MODE #%02X bit 2 = %u (original waits %s)", pld.allMode, (pld.allMode >> 2) & 1,
+                                                       hw.origin ? "on" : "off"));
+        opt("/int-sc", intKind == "scorpion", "the INT position from the mode table: " + intKind +
+                                                  " (SC256.ZX's '/sc-int' is not an option the launchers parse: its INT stays Pentagon)");
+        config["options"] = opts;
+        config["cnf"] = Hex8(pld.cnf);
+        config["cnf_valid"] = cnfValid;
+        config["all_mode"] = Hex8(pld.allMode);
+        std::string line = OptionText(hw);
+        if (retFn >= 0)
+            line += retFn ? " /ret-fn" : " /ret-zx";
+        config["option_line"] = line;
+        config["return"] = retFn < 0 ? "unknown" : (retFn ? "/ret-fn: Ctrl+Alt+Del returns to DSS" : "/ret-zx: Ctrl+Alt+Del restarts the Spectrum");
+
+        // The known mode files, best first
+        struct Scored
+        {
+            const KnownZxMode* mode;
+            std::vector<std::string> diffs;
+            int score;
+        };
+        std::vector<Scored> scored;
+        for (const KnownZxMode& m : kKnownModes)
+        {
+            Scored s{&m, OptionDifferences(m.options, hw), 0};
+            const bool community = std::string(m.launcher) == "community";
+            const uint8_t expected = ExpectedCnf(m.options, community);
+            if (cnfValid && expected != pld.cnf)
+                s.diffs.push_back(StringHelper::Format("CNF #%02X here, #%02X from the file", pld.cnf, expected));
+            if (!romSet.empty() && romSet != m.romSet)
+                s.diffs.push_back(std::string("ROMs: ") + RomSetName(romSet) + ", the file loads " + RomSetName(m.romSet));
+            if (launcherFound && !LineHasOption(launcherOptions, "sprinter") == m.options.sprinter)
+                s.diffs.push_back("the launcher's option line differs");
+            s.score = static_cast<int>(s.diffs.size());
+            if (launcherFound && launcherName.find(m.name) == std::string::npos)
+                s.score += 1;  // the name in RAM breaks ties (SPECTRUM.CFG names itself "Default (Sprinter ZX)")
+            scored.push_back(std::move(s));
+        }
+        std::stable_sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) { return a.score < b.score; });
+
+        const Scored& best = scored.front();
+        StateNode b = StateNode::Object();
+        b["file"] = best.mode->file;
+        b["name"] = best.mode->name;
+        b["launcher"] = best.mode->launcher;
+        b["option_line"] = best.mode->optionLine;
+        std::string confidence;
+        std::string why;
+        if (!active)
+        {
+            confidence = "none";
+            why = "the machine is not in the ZX mode now";
+        }
+        else if (!cnfValid)
+        {
+            confidence = "low";
+            why = "no CNF byte with bit 2 written since the reset: the options are not known";
+        }
+        else if (launcherFound && best.diffs.empty())
+        {
+            confidence = "certain";
+            why = "the launcher's mode text in RAM (\"" + launcherName + "\": " + launcherOptions + ") and the hardware agree";
+        }
+        else if (best.diffs.empty() && !romSet.empty())
+        {
+            confidence = "high";
+            why = "the CNF byte, ALL_MODE, the frame length and the ROM set all match the file";
+        }
+        else if (best.diffs.empty())
+        {
+            confidence = "medium";
+            why = "the options match; the ROM set is not identified";
+        }
+        else
+        {
+            confidence = "low";
+            why = "closest file, " + std::to_string(best.diffs.size()) + " difference(s)";
+        }
+        if (active && launcherFound && !best.diffs.empty())
+            why += "; the launcher's text in RAM says \"" + launcherName + "\" (" + launcherOptions + ")";
+        b["confidence"] = confidence;
+        b["explanation"] = why;
+        StateNode bd = StateNode::Array();
+        for (const std::string& d : best.diffs)
+            bd.push(d);
+        b["differences"] = bd;
+        config["best_match"] = b;
+
+        StateNode others = StateNode::Array();
+        for (size_t i = 1; i < scored.size() && i < 5; i++)
+        {
+            StateNode o = StateNode::Object();
+            o["file"] = scored[i].mode->file;
+            o["name"] = scored[i].mode->name;
+            o["launcher"] = scored[i].mode->launcher;
+            StateNode d = StateNode::Array();
+            for (const std::string& s : scored[i].diffs)
+                d.push(s);
+            o["differences"] = d;
+            others.push(o);
+        }
+        config["other_candidates"] = others;
+        if (launcherFound)
+        {
+            StateNode agree = StateNode::Array();
+            for (const char* name : {"turbo", "sprinter", "7FFD", "1FFD", "mem512", "lines312", "origin"})
+            {
+                const bool inLine = LineHasOption(launcherOptions, name);
+                const std::string key = std::string("/") + name;
+                bool hwOn = false;
+                if (key == "/turbo") hwOn = hw.turbo;
+                else if (key == "/sprinter") hwOn = hw.sprinter;
+                else if (key == "/7FFD") hwOn = hw.p7ffd;
+                else if (key == "/1FFD") hwOn = hw.p1ffd;
+                else if (key == "/mem512") hwOn = hw.mem512;
+                else if (key == "/lines312") hwOn = hw.lines312;
+                else hwOn = hw.origin;
+                if (inLine != hwOn)
+                    agree.push(StringHelper::Format("%s: %s in the launcher's line, %s in the hardware", key.c_str(), inLine ? "on" : "off",
+                                                    hwOn ? "on" : "off"));
+            }
+            launcher["hardware_disagrees"] = agree;
+        }
+    }
+    ret["config"] = config;
+    ret["launcher"] = launcher;
+
+    // Clock
+    {
+        StateNode c = StateNode::Object();
+        const unsigned ratio = state.hw_turbo_ratio ? state.hw_turbo_ratio : 1;
+        c["requested"] = pld.turbo != 0;
+        c["f12_switch"] = pld.turboHard != 0;
+        c["mhz"] = ratio >= 6 ? "21" : "3.5";
+        c["ratio"] = ratio;
+        std::string why;
+        if (pld.turbo && pld.turboHard)
+            why = "21 MHz: the CNF turbo request is on and the front-panel switch (F12) allows it";
+        else if (pld.turbo)
+            why = "3.5 MHz: turbo requested (CNF), but the front-panel switch (F12) is off";
+        else
+            why = std::string("3.5 MHz: no turbo request (CNF bit 0 = 0)") + (pld.turboHard ? "; F12 would allow it" : "; F12 is off too");
+        c["why"] = why;
+        ret["clock"] = c;
+    }
+
+    // Frame and INT
+    {
+        StateNode f = StateNode::Object();
+        f["lines"] = int(lines);
+        f["t_states"] = static_cast<uint64_t>(lines) * SprinterIntSource::kLineTStates;
+        StateNode i = StateNode::Object();
+        i["kind"] = intKind;
+        if (!ints.empty())
+        {
+            i["t_in_frame"] = static_cast<uint64_t>(ints.front());
+            i["line"] = static_cast<uint64_t>(ints.front() / SprinterIntSource::kLineTStates);
+            i["t_in_line"] = static_cast<uint64_t>(ints.front() % SprinterIntSource::kLineTStates);
+        }
+        i["count"] = static_cast<uint64_t>(ints.size());
+        i["note"] = "base T-states (3.5 MHz); the mode table's blank + INT squares place it (FN_SYNC: Pentagon line 287, "
+                    "original line 295, Scorpion line 271)";
+        f["int"] = i;
+        ret["frame"] = f;
+    }
+
+    ret["rom"] = rom;
+
+    // Paging
+    {
+        StateNode p = StateNode::Object();
+        p["port_7ffd"] = Hex8(pld.pn);
+        p["port_1ffd"] = Hex8(pld.sc);
+        p["cell_C0_raw_1ffd"] = Hex8(pld.Cell(0xC0));
+        p["cell_C1_raw_7ffd"] = Hex8(pld.Cell(0xC1));
+        p["map"] = int((pld.cnf >> 3) & 3);
+        p["dos"] = pld.dos == 0;
+        p["window_3_cell"] = StringHelper::Format("#%02X", 0xC0 + (pld.pg3 & 0x3F));
+        p["window_3_page"] = Hex8(pld.cells[pld.pg3 & 0x3F]);
+        p["spectrum_pages_F0_FF"] = HexRow(pld.cells + 0x30, 16);
+        ret["paging"] = p;
+    }
+
+    // The key ports through the live table
+    {
+        const uint8_t* table = memory.RAMPageAddress(SprinterMemory::kPortTablePage);
+        const uint8_t map = static_cast<uint8_t>((pld.cnf >> 3) & 3);
+        const bool pn5 = (pld.pn & 0x20) != 0;
+        StateNode ports = StateNode::Array();
+        for (const SprinterZxPorts::KeyPort& kp : SprinterZxPorts::kKeyPorts)
+        {
+            StateNode p = StateNode::Object();
+            p["port"] = Hex16(kp.port);
+            p["label"] = kp.label;
+            for (int dosOn = 0; dosOn < 2; dosOn++)
+            {
+                StateNode side = StateNode::Object();
+                const uint8_t w = table[SprinterPortTable::Index(map, pn5, dosOn == 0, false, kp.port)];
+                const uint8_t r = table[SprinterPortTable::Index(map, pn5, dosOn == 0, true, kp.port)];
+                StateNode out = StateNode::Object();
+                out["code"] = Hex8(w);
+                out["name"] = w ? CodeName(names, w) : std::string("None");
+                out["effect"] = WriteEffect(w, pld);
+                side["out"] = out;
+                StateNode in = StateNode::Object();
+                if (Z84Lib::Z84C15::Owns(static_cast<uint8_t>(kp.port)))
+                    in["answered_by"] = "Z84C15";
+                in["code"] = Hex8(r);
+                in["name"] = r ? CodeName(names, r) : std::string("None");
+                in["effect"] = ReadEffect(r);
+                side["in"] = in;
+                p[dosOn ? "tr_dos_on" : "tr_dos_off"] = side;
+            }
+            p["index_out"] = Hex16(SprinterPortTable::Index(map, pn5, pld.dos != 0, false, kp.port));
+            StateNode q = StateNode::Object();
+            q["port"] = Hex16(kp.port & SprinterZxPorts::kDecodedAddressMask);
+            q["port_mask"] = Hex16(SprinterZxPorts::kDecodedAddressMask);
+            p["ttd_query"] = q;
+            ports.push(p);
+        }
+        StateNode pt = StateNode::Object();
+        pt["map"] = int(map);
+        pt["pn5"] = pn5;
+        pt["dos_now"] = pld.dos == 0;
+        pt["decoded_bits"] = "A15 A14 A13 A7 A6 A5 A2 A1 A0: #01FD = #1FFD, #C0FD = #DFFD";
+        pt["rows"] = ports;
+        pt["ttd_note"] = "ttd_query: POST /ttd/port-events {\"event\":\"out\",\"port\":..,\"port_mask\":..} finds every spelling "
+                         "of the port in a recording";
+        ret["ports"] = pt;
+    }
+
+    ret["summary"] = ZxBriefLine(context).text;
+    return ret;
+}
+
+SprinterZxBrief SprinterZxModeBrief(EmulatorContext* context, bool details)
+{
+    SprinterZxBrief b = ZxBriefLine(context);
+    if (!b.sprinter || !b.active || !details)
+        return b;
+    // The tooltip: the report as text, without the RAM-wide search and the port rows
+    const StateNode full = SprinterZxMode(context, false);
+    StateNode trimmed = StateNode::Object();
+    for (const char* key : {"summary", "config", "clock", "frame", "rom", "paging", "launcher"})
+        if (const StateNode* n = full.find(key))
+            trimmed[key] = *n;
+    b.details = ToText(trimmed);
+    return b;
+}
+
+bool SprinterJournalQueryFromStrings(const std::string& kinds, const std::string& since, const std::string& from,
+                                     const std::string& to, const std::string& limit, const std::string& source,
+                                     SprinterJournalQuery& query, std::string& error)
+{
+    query = SprinterJournalQuery();
+    auto number = [&](const std::string& text, const char* name, int64_t& out) {
+        if (text.empty())
+            return true;
+        char* end = nullptr;
+        const long long v = std::strtoll(text.c_str(), &end, 10);
+        if (!end || *end || v < 0)
+        {
+            error = std::string(name) + " must be a non-negative number";
+            return false;
+        }
+        out = v;
+        return true;
+    };
+    query.kinds = kinds;
+    for (const std::string& k : MachineEventJournal::SplitKinds(kinds))
+    {
+        bool known = false;
+        for (const auto& entry : kJournalKinds)
+            known |= k == entry[0];
+        if (!known)
+        {
+            error = "unknown kind '" + k + "' (port_table, cnf, clock, port_7ffd, port_1ffd, all_mode, rgmod, hold, frame_lines, "
+                    "pld_load, pld_configured, f12, ctrl_alt_del, reset)";
+            return false;
+        }
+    }
+    int64_t s = 0, l = static_cast<int64_t>(query.limit);
+    if (!number(since, "since", s) || !number(from, "from", query.frameFrom) || !number(to, "to", query.frameTo) ||
+        !number(limit, "limit", l))
+        return false;
+    query.since = static_cast<uint64_t>(s);
+    query.limit = static_cast<size_t>(l);
+    if (source.empty() || source == "live")
+        query.ttd = false;
+    else if (source == "ttd")
+        query.ttd = true;
+    else
+    {
+        error = "source must be live or ttd";
+        return false;
+    }
+    return true;
+}
+
+StateNode SprinterJournal(EmulatorContext* context, const SprinterJournalQuery& query)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["source"] = query.ttd ? "ttd" : "live";
+    const std::vector<std::string> kinds = MachineEventJournal::SplitKinds(query.kinds);
+
+    if (!query.ttd)
+    {
+        MachineEventJournal::Filter f;
+        f.kinds = kinds;
+        f.sinceSeq = query.since;
+        f.frameFrom = query.frameFrom;
+        f.frameTo = query.frameTo;
+        f.limit = query.limit;
+        const MachineEventJournal::Snapshot snap = decoder->PldJournal().Read(f);
+        ret["enabled"] = snap.enabled;
+        ret["epoch"] = static_cast<uint64_t>(snap.epoch);
+        ret["held"] = static_cast<uint64_t>(snap.held);
+        ret["appended"] = snap.appended;
+        ret["dropped"] = snap.dropped;
+        ret["rewound"] = snap.rewound;
+        ret["matched"] = static_cast<uint64_t>(snap.matched);
+        ret["capacity"] = static_cast<uint64_t>(MachineEventJournal::kCapacity);
+        StateNode events = StateNode::Array();
+        for (const MachineEvent& e : snap.events)
+            events.push(EventNode(e));
+        ret["events"] = events;
+        ret["now"] = StringHelper::Format("frame %llu, T %u", static_cast<unsigned long long>(context->emulatorState.frame_counter),
+                                          decoder->BaseTstate());
+    }
+    else
+    {
+        ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+        StateNode events = StateNode::Array();
+        if (!mgr)
+            ret["error"] = "no TTD manager";
+        else
+        {
+            const SprinterPldState& pld = decoder->GetPldState();
+            const uint8_t* table = context->pMemory->RAMPageAddress(SprinterMemory::kPortTablePage);
+            const uint8_t map = static_cast<uint8_t>((pld.cnf >> 3) & 3);
+            const uint32_t units = context->emulatorState.ttd_clock_units ? context->emulatorState.ttd_clock_units : 1;
+            struct Hit
+            {
+                ttd::TTDPortHit hit;
+                const JournalCodes* codes;
+            };
+            std::vector<Hit> hits;
+            std::string error;
+            bool truncated = false;
+            for (const JournalCodes& c : TrackedCodes())
+            {
+                if (!kinds.empty() && std::find(kinds.begin(), kinds.end(), std::string(c.kind)) == kinds.end())
+                    continue;
+                for (const auto& [port, mask] : PortsReaching(table, map, (pld.pn & 0x20) != 0, pld.dos == 0, false, c.codes))
+                {
+                    ttd::TTDPortQuery q;
+                    q.direction = ttd::TTDPortJournal::Direction::Write;
+                    q.portValue = port;
+                    q.portMask = mask;
+                    if (query.frameFrom >= 0)
+                        q.from = ttd::TTDTimePoint{static_cast<uint64_t>(query.frameFrom), 0};
+                    if (query.frameTo >= 0)
+                        q.to = ttd::TTDTimePoint{static_cast<uint64_t>(query.frameTo), UINT32_MAX};
+                    q.limit = 100000;
+                    const ttd::TTDPortSearchResult r = mgr->SearchPortEvents(q);
+                    if (!r.ok)
+                    {
+                        error = r.error;
+                        break;
+                    }
+                    truncated |= r.truncated;
+                    for (const ttd::TTDPortHit& h : r.hits)
+                        hits.push_back({h, &c});
+                }
+                if (!error.empty())
+                    break;
+            }
+            if (!error.empty())
+                ret["error"] = error;
+            std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.hit.record.Time() < b.hit.record.Time(); });
+            // As the live journal: the writes that change something. A CNF/SYS write counts with bit 1 (the turbo
+            // request) or bit 2 (the CNF byte) set - #3C / #7C writes with neither switch the ROM / vROM set on
+            // every BIOS call; the other kinds count when the value differs from the kind's last write
+            {
+                std::map<std::string, int> last;
+                std::vector<Hit> kept;
+                for (const Hit& h : hits)
+                {
+                    const std::string kind = h.codes->kind;
+                    const uint8_t v = h.hit.record.value;
+                    if (kind == "cnf")
+                    {
+                        if (!(v & 0x06))
+                            continue;
+                        const int key = v;
+                        if (last.count(kind) && last[kind] == key)
+                            continue;
+                        last[kind] = key;
+                    }
+                    else if (kind != "pld_load")
+                    {
+                        if (last.count(kind) && last[kind] == v)
+                            continue;
+                        last[kind] = v;
+                    }
+                    kept.push_back(h);
+                }
+                hits.swap(kept);
+            }
+            if (query.limit && hits.size() > query.limit)
+                hits.erase(hits.begin(), hits.end() - static_cast<std::ptrdiff_t>(query.limit));
+            for (const Hit& h : hits)
+            {
+                const ttd::TTDPortRecord& r = h.hit.record;
+                const uint32_t t = r.tInFrame / units;
+                StateNode n = StateNode::Object();
+                n["frame"] = r.frame;
+                n["t"] = static_cast<uint64_t>(t);
+                n["line"] = static_cast<uint64_t>(t / SprinterIntSource::kLineTStates);
+                n["t_in_line"] = static_cast<uint64_t>(t % SprinterIntSource::kLineTStates);
+                n["pc"] = Hex16(r.pc);
+                n["kind"] = h.codes->kind;
+                n["port"] = Hex16(r.port);
+                n["value"] = Hex8(r.value);
+                n["text"] = StringHelper::Format("OUT (#%04X) <- #%02X: %s", r.port, r.value, h.codes->what);
+                events.push(n);
+            }
+            ret["truncated"] = truncated;
+            ret["decoded_with"] = StringHelper::Format("the port table as it is now: map %u, TR-DOS %s, PN5 %u (a recording that "
+                                                       "changed the map or wrote the table decodes with today's table)",
+                                                       map, pld.dos == 0 ? "on" : "off", (pld.pn >> 5) & 1);
+        }
+        ret["events"] = events;
+    }
+
+    ret["ttd_queries"] = TtdQueries(context, *decoder);
+    StateNode k = StateNode::Array();
+    for (const auto& entry : kJournalKinds)
+    {
+        StateNode n = StateNode::Object();
+        n["kind"] = entry[0];
+        n["about"] = entry[1];
+        k.push(n);
+    }
+    ret["kinds"] = k;
+    return ret;
+}
+
+StateNode SprinterJournalControl(EmulatorContext* context, int enable, bool clear)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+    if (enable >= 0)
+        decoder->SetPldJournalEnabled(enable != 0);
+    if (clear)
+        decoder->PldJournal().Clear();
+    const MachineEventJournal::Snapshot snap = decoder->PldJournal().Read(MachineEventJournal::Filter{{}, UINT64_MAX, -1, -1, 1});
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["enabled"] = snap.enabled;
+    ret["held"] = static_cast<uint64_t>(snap.held);
+    ret["appended"] = snap.appended;
+    ret["cleared"] = clear;
     return ret;
 }
 

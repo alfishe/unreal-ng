@@ -200,3 +200,238 @@ TEST(RecordingManager_Test, AacAudioTrack_SamplesFollowTheFramesAndVideoOnlyStay
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 #endif  // __APPLE__
+
+namespace
+{
+/// Keeps the size and a copy of every frame the recording manager hands to its encoder
+class FrameSinkEncoder : public EncoderBase
+{
+public:
+    struct Frame
+    {
+        uint16_t width = 0;
+        uint16_t height = 0;
+        std::vector<uint8_t> pixels;
+    };
+    explicit FrameSinkEncoder(std::vector<Frame>& frames) : _frames(frames) {}
+    bool Start(const std::string&, const EncoderConfig&) override
+    {
+        _recording = true;
+        return true;
+    }
+    void Stop() override { _recording = false; }
+    bool IsRecording() const override { return _recording; }
+    std::string GetType() const override { return "frames"; }
+    std::string GetDisplayName() const override { return "frame sink"; }
+    bool SupportsVideo() const override { return true; }
+    bool SupportsAudio() const override { return false; }
+    void OnVideoFrame(const FramebufferDescriptor& fb, double) override
+    {
+        Frame frame;
+        frame.width = fb.width;
+        frame.height = fb.height;
+        frame.pixels.assign(fb.memoryBuffer, fb.memoryBuffer + static_cast<size_t>(fb.width) * fb.height * 4);
+        _frames.push_back(std::move(frame));
+    }
+
+private:
+    std::vector<Frame>& _frames;
+    bool _recording = false;
+};
+
+/// A frame whose pixel (x, y) holds x in bytes 0-1 and y in bytes 2-3
+FramebufferDescriptor CoordinateFrame(std::vector<uint8_t>& storage, uint16_t width, uint16_t height, VideoModeEnum mode)
+{
+    storage.assign(static_cast<size_t>(width) * height * 4, 0);
+    for (uint16_t y = 0; y < height; y++)
+        for (uint16_t x = 0; x < width; x++)
+        {
+            uint8_t* p = storage.data() + (static_cast<size_t>(y) * width + x) * 4;
+            p[0] = static_cast<uint8_t>(x);
+            p[1] = static_cast<uint8_t>(x >> 8);
+            p[2] = static_cast<uint8_t>(y);
+            p[3] = static_cast<uint8_t>(y >> 8);
+        }
+    FramebufferDescriptor fb;
+    fb.videoMode = mode;
+    fb.width = width;
+    fb.height = height;
+    fb.memoryBuffer = storage.data();
+    fb.memoryBufferSize = storage.size();
+    return fb;
+}
+
+uint16_t SourceX(const FrameSinkEncoder::Frame& frame, uint32_t x, uint32_t y)
+{
+    const uint8_t* p = frame.pixels.data() + (static_cast<size_t>(y) * frame.width + x) * 4;
+    return static_cast<uint16_t>(p[0] | (p[1] << 8));
+}
+
+uint16_t SourceY(const FrameSinkEncoder::Frame& frame, uint32_t x, uint32_t y)
+{
+    const uint8_t* p = frame.pixels.data() + (static_cast<size_t>(y) * frame.width + x) * 4;
+    return static_cast<uint16_t>(p[2] | (p[3] << 8));
+}
+}  // namespace
+
+/// The ZX Profi shows its 352x288 Spectrum frame and its 608x288 hi-res frame in the same 352:288 window: a
+/// full-frame recording is that window at 704x576 for both, every frame scaled into it the way the screen does
+/// (owner report 2026-10-04: a hi-res recording came out 1216x576, stretched horizontally, and the frames of the
+/// other mode were dropped after a switch)
+TEST(RecordingManager_Test, ProfiFramesKeepTheScreensWindowInBothModes)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PROFI", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+
+    std::vector<FrameSinkEncoder::Frame> frames;
+    rm->SetScaleFactor(2);   // "Native 2x": the screen's window at 704x576
+    ASSERT_TRUE(rm->StartRecordingWithEncoder(TestPathHelper::GetUniqueTestScratchPath("rm-profi") + ".mp4",
+                                              std::make_unique<FrameSinkEncoder>(frames)));
+
+    std::vector<uint8_t> normal;
+    std::vector<uint8_t> hires;
+    rm->CaptureFrame(CoordinateFrame(normal, 352, 288, M_ZX48));
+    rm->CaptureFrame(CoordinateFrame(hires, 608, 288, M_PROFIHR));
+    rm->CaptureFrame(CoordinateFrame(normal, 352, 288, M_ZX48));
+    ASSERT_EQ(frames.size(), 3u) << "a mode switch keeps recording";
+    for (const auto& frame : frames)
+    {
+        EXPECT_EQ(frame.width, 704u);
+        EXPECT_EQ(frame.height, 576u);
+    }
+
+    // Spectrum frame: every pixel twice in each direction
+    EXPECT_EQ(SourceX(frames[0], 0, 0), 0u);
+    EXPECT_EQ(SourceX(frames[0], 703, 575), 351u);
+    EXPECT_EQ(SourceY(frames[0], 703, 575), 287u);
+    EXPECT_EQ(SourceX(frames[0], 351, 0), 175u);
+    // Hi-res frame: 608 columns across the same 704, each line twice
+    EXPECT_EQ(SourceX(frames[1], 0, 0), 0u);
+    EXPECT_EQ(SourceX(frames[1], 703, 0), 607u);
+    EXPECT_EQ(SourceX(frames[1], 352, 0), 304u) << "the middle stays the middle";
+    EXPECT_EQ(SourceY(frames[1], 0, 575), 287u);
+    EXPECT_EQ(SourceY(frames[1], 0, 1), 0u);
+
+    rm->StopRecording();
+    rm->SetScaleFactor(1);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+/// Width and height from the GIF header (logical screen descriptor, little endian)
+bool GifSize(const std::string& path, uint32_t& width, uint32_t& height)
+{
+    FILE* f = FileHelper::OpenFile(path, "rb");
+    if (!f)
+        return false;
+    uint8_t header[10] = {};
+    const size_t got = std::fread(header, 1, sizeof(header), f);
+    FileHelper::CloseFile(f);
+    if (got != sizeof(header))
+        return false;
+    width = header[6] | (header[7] << 8);
+    height = header[8] | (header[9] << 8);
+    return true;
+}
+}  // namespace
+
+/// The picture size of a recording follows its own capture region: a second recording on the same emulator
+/// must not inherit the size of the first (it did: the frames of the new size were dropped, an empty or
+/// black file). Only a size the caller sets explicitly is kept
+TEST(RecordingManager_Test, VideoSize_EachRecordingDerivesItsOwn)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    context->pFeatureManager->setFeature(Features::kRecording, true);
+    emulator->RunNFrames(2);
+
+    const PictureGeometry g = context->pScreen->DescribeCurrentFrame();
+    ASSERT_NE(g.screenWindow.width, g.width) << "the Pentagon window is smaller than its frame";
+
+    auto record = [&](VideoCaptureRegion region, const char* name, uint32_t& w, uint32_t& h) {
+        rm->SetCaptureRegion(region);
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name) + ".gif";
+        ASSERT_TRUE(rm->StartRecording(path, "gif"));
+        rm->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+        rm->StopRecording();
+        ASSERT_TRUE(GifSize(path, w, h)) << path;
+        std::remove(path.c_str());
+    };
+
+    uint32_t w = 0, h = 0;
+    record(VideoCaptureRegion::MainScreen, "rm-size-screen", w, h);
+    EXPECT_EQ(w, g.screenWindow.width);
+    EXPECT_EQ(h, g.screenWindow.height);
+
+    record(VideoCaptureRegion::FullFrame, "rm-size-full", w, h);
+    EXPECT_EQ(w, g.width) << "the second recording takes the full frame, not the first one's size";
+    EXPECT_EQ(h, g.height);
+
+    // An explicit size stays until it is cleared
+    rm->SetVideoResolution(100, 80);
+    record(VideoCaptureRegion::MainScreen, "rm-size-explicit", w, h);
+    EXPECT_EQ(w, 100u);
+    EXPECT_EQ(h, 80u);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+uint32_t PixelOf(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t x, uint32_t y)
+{
+    const uint8_t* p = rgba.data() + (static_cast<size_t>(y) * width + x) * 4;
+    return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+}  // namespace
+
+/// FitPicture: the largest picture of the source's aspect, centered, nearest pixel, opaque black bars
+TEST(RecordingManager_Test, FitPicture_SameSizeIsACopy)
+{
+    std::vector<uint8_t> src(4 * 3 * 4);
+    for (size_t i = 0; i < src.size(); i++)
+        src[i] = static_cast<uint8_t>(i * 7 + 1);
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 4, 3, 4, 3, out);
+    EXPECT_EQ(out, src);
+}
+
+TEST(RecordingManager_Test, FitPicture_NarrowSourceGetsBarsLeftAndRight)
+{
+    // 2x2 into 6x4: by height 4x4, one bar column each side
+    std::vector<uint8_t> src = {1, 0, 0, 0xFF, 2, 0, 0, 0xFF, 3, 0, 0, 0xFF, 4, 0, 0, 0xFF};
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 2, 2, 6, 4, out);
+    ASSERT_EQ(out.size(), static_cast<size_t>(6 * 4 * 4));
+    EXPECT_EQ(PixelOf(out, 6, 0, 1), 0xFF000000u) << "left bar";
+    EXPECT_EQ(PixelOf(out, 6, 5, 1), 0xFF000000u) << "right bar";
+    EXPECT_EQ(PixelOf(out, 6, 1, 0) & 0xFF, 1u);
+    EXPECT_EQ(PixelOf(out, 6, 2, 0) & 0xFF, 1u) << "each source pixel covers 2x2";
+    EXPECT_EQ(PixelOf(out, 6, 3, 0) & 0xFF, 2u);
+    EXPECT_EQ(PixelOf(out, 6, 1, 3) & 0xFF, 3u);
+    EXPECT_EQ(PixelOf(out, 6, 4, 3) & 0xFF, 4u);
+}
+
+TEST(RecordingManager_Test, FitPicture_WideSourceGetsBarsAboveAndBelow)
+{
+    // 4x2 into 4x4: by width 4x2, one bar line each side
+    std::vector<uint8_t> src(4 * 2 * 4, 0);
+    for (size_t i = 0; i < 8; i++)
+    {
+        src[i * 4] = static_cast<uint8_t>(10 + i);
+        src[i * 4 + 3] = 0xFF;
+    }
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 4, 2, 4, 4, out);
+    EXPECT_EQ(PixelOf(out, 4, 2, 0), 0xFF000000u) << "top bar";
+    EXPECT_EQ(PixelOf(out, 4, 2, 3), 0xFF000000u) << "bottom bar";
+    EXPECT_EQ(PixelOf(out, 4, 0, 1) & 0xFF, 10u);
+    EXPECT_EQ(PixelOf(out, 4, 3, 2) & 0xFF, 17u);
+}

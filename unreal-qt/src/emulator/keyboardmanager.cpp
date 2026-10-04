@@ -6,6 +6,9 @@
 #include "3rdparty/message-center/messagecenter.h"
 
 std::set<uint8_t> KeyboardManager::_heldPcKeys;
+std::multiset<uint8_t> KeyboardManager::_heldMatrixKeys;
+std::optional<bool> KeyboardManager::_macKeyboardOverride;
+bool KeyboardManager::_commandKeyToGuest = false;
 
 /// Populate mapping from Qt keycodes to unified emulator format
 std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
@@ -48,8 +51,11 @@ std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
     { Qt::Key_Y, ZXKEY_Y },
     { Qt::Key_Z, ZXKEY_Z },
 
-    { Qt::Key_Control, ZXKEY_SYM_SHIFT },   // Ctrl on PC keyboard
-    { Qt::Key_Meta, ZXKEY_SYM_SHIFT },      // Ctrl on Apple keyboard
+    // In PC terms (physicalQtKey): Key_Control is the Control key on every host; Key_Meta is the
+    // Windows / Super key (the macOS Command key never gets here unless passed as the GUI key, and then
+    // only to the PS/2 side: postHostKey)
+    { Qt::Key_Control, ZXKEY_SYM_SHIFT },
+    { Qt::Key_Meta, ZXKEY_SYM_SHIFT },
     { Qt::Key_Shift, ZXKEY_CAPS_SHIFT },
 
     { Qt::Key_Space, ZXKEY_SPACE },
@@ -88,6 +94,47 @@ KeyboardManager::KeyboardManager()
 KeyboardManager::~KeyboardManager()
 {
 
+}
+
+bool KeyboardManager::macKeyboard()
+{
+    if (_macKeyboardOverride)
+        return *_macKeyboardOverride;
+#if defined(Q_OS_MACOS)
+    return true;
+#else
+    return false;
+#endif
+}
+
+int KeyboardManager::physicalQtKey(int qtKey)
+{
+    if (!macKeyboard())
+        return qtKey;
+    if (qtKey == Qt::Key_Control)
+        return Qt::Key_Meta;
+    if (qtKey == Qt::Key_Meta)
+        return Qt::Key_Control;
+    return qtKey;
+}
+
+Qt::KeyboardModifiers KeyboardManager::physicalModifiers(Qt::KeyboardModifiers modifiers)
+{
+    if (!macKeyboard())
+        return modifiers;
+    const bool control = modifiers.testFlag(Qt::ControlModifier);
+    const bool meta = modifiers.testFlag(Qt::MetaModifier);
+    modifiers.setFlag(Qt::ControlModifier, meta);
+    modifiers.setFlag(Qt::MetaModifier, control);
+    return modifiers;
+}
+
+bool KeyboardManager::isCommandKey(const QKeyEvent* event, PcKey pcKey)
+{
+    if (!event || !macKeyboard())
+        return false;
+    // The native code (kVK_Command / kVK_RightCommand) or, without one, Qt's key
+    return pcKey == PcKey::LeftGui || pcKey == PcKey::RightGui || physicalQtKey(event->key()) == Qt::Key_Meta;
 }
 
 quint8 KeyboardManager::mapQtKeyToEmulatorKey(int qtKey)
@@ -139,6 +186,7 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(int qtKey, Qt::Keyboa
 
 PcKey KeyboardManager::mapQtKeyToPcKey(int qtKey)
 {
+    qtKey = physicalQtKey(qtKey);
     if (qtKey >= Qt::Key_A && qtKey <= Qt::Key_Z)
         return static_cast<PcKey>(static_cast<int>(PcKey::A) + (qtKey - Qt::Key_A));
     if (qtKey >= Qt::Key_F1 && qtKey <= Qt::Key_F12)
@@ -223,8 +271,33 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
     if (!event)
         return;
 
-    const quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
-    const PcKey pcKey = mapQtEventToPcKey(event);
+    quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(physicalQtKey(event->key()), event->modifiers());
+    PcKey pcKey = mapQtEventToPcKey(event);
+
+    // macOS: the Command key belongs to the host (docs/features/keyboard.md "Host keys on macOS")
+    bool hostChord = false;
+    if (isCommandKey(event, pcKey))
+    {
+        // Passed on (the option) as the PC Win / GUI key only: no Symbol Shift on the matrix
+        zxKey = ZXKEY_NONE;
+        if (pcKey != PcKey::RightGui)
+            pcKey = PcKey::LeftGui;
+        if (!_commandKeyToGuest)
+        {
+            // Never pressed; a release still lets go a GUI key pressed while the option was on
+            if (type == KEY_PRESSED)
+                return;
+            hostChord = true;
+        }
+    }
+    else if (macKeyboard() && !_commandKeyToGuest && physicalModifiers(event->modifiers()).testFlag(Qt::MetaModifier))
+    {
+        // A key pressed with Command held is an app shortcut (Cmd+Tab, Cmd+Q, Cmd+F...): the press stays
+        // with the host; a release lets go only what the machine saw pressed before Command went down
+        if (type == KEY_PRESSED)
+            return;
+        hostChord = true;
+    }
     if (zxKey == ZXKEY_NONE && pcKey == PcKey::None)
     {
         qDebug() << QString("postHostKey: no ZX or physical mapping for qtKey: 0x%1 (%2)")
@@ -243,6 +316,14 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
     else if (pcKey == PcKey::LeftShift)
         matrixKey = ZXKEY_CAPS_SHIFT;
 
+    if (hostChord)
+    {
+        if (!_heldPcKeys.count(static_cast<uint8_t>(pcKey)))
+            pcKey = PcKey::None;
+        if (!_heldMatrixKeys.count(matrixKey))
+            matrixKey = ZXKEY_NONE;
+    }
+
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     if (pcKey != PcKey::None)
     {
@@ -254,8 +335,14 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
                            new PcKeyEvent(static_cast<uint8_t>(pcKey), type, targetId));
     }
     if (matrixKey != ZXKEY_NONE)
+    {
+        if (type == KEY_PRESSED)
+            _heldMatrixKeys.insert(matrixKey);
+        else if (auto it = _heldMatrixKeys.find(matrixKey); it != _heldMatrixKeys.end())
+            _heldMatrixKeys.erase(it);
         messageCenter.Post(type == KEY_PRESSED ? MC_KEY_PRESSED : MC_KEY_RELEASED,
                            new KeyboardEvent(matrixKey, type, targetId));
+    }
 }
 
 void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
@@ -264,6 +351,9 @@ void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
     for (uint8_t pcKey : _heldPcKeys)
         messageCenter.Post(MC_PCKEY_RELEASED, new PcKeyEvent(pcKey, KEY_RELEASED, targetId));
     _heldPcKeys.clear();
+    for (uint8_t matrixKey : _heldMatrixKeys)
+        messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(matrixKey, KEY_RELEASED, targetId));
+    _heldMatrixKeys.clear();
 }
 
 bool KeyboardManager::machineOwnsKey(const QKeyEvent* event, const Keyboard* keyboard)

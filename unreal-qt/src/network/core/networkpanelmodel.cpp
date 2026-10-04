@@ -1,5 +1,6 @@
 #include "networkpanelmodel.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 
@@ -61,6 +62,25 @@ NetworkForm NetworkFormFromState(const StateNode& network)
         form.serialPort = Text(machine->find("serial_port"), "none");
         form.zifiMachine = Flag(machine->find("zifi"), false);
     }
+    if (const StateNode* slots = network.find("slots"))
+    {
+        for (const StateNode& slot : slots->items)
+        {
+            const std::string id = Text(slot.find("id"));
+            const int n = id == "isa1" ? 0 : id == "isa2" ? 1 : -1;
+            const std::string card = Text(slot.find("card"));
+            if (n < 0 || (card != "sprinteresp" && card != "modem" && card != "dual16552"))
+                continue;
+            form.slotUart[n] = true;
+            form.slotCard[n] = card;
+            form.slotPeer[n] = Peer(Text(slot.find("peer_spec")), card == "sprinteresp" ? "AT" : card == "modem" ? "MODEM" : "NONE");
+            if (const StateNode* b = slot.find("channel_b"))
+            {
+                form.slotUartB[n] = true;
+                form.slotPeerB[n] = Peer(Text(b->find("peer_spec")), "NONE");
+            }
+        }
+    }
     const StateNode* set = network.find("settings");
     if (!set)
         return form;
@@ -83,6 +103,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
     form.hostAccess = Flag(set->find("host_access"), true);
     form.dnsMode = Upper(Text(set->find("dns_mode"), "HOST"));
     form.hosts = Text(set->find("hosts"));
+    form.modemPhonebook = Text(set->find("modem_phonebook"));
     form.forwards = Text(set->find("forwards"));
     if (const StateNode* timeout = set->find("connect_timeout_ms"); timeout && timeout->kind == StateNode::Kind::Int)
         form.connectTimeoutMs = static_cast<unsigned>(timeout->i);
@@ -104,12 +125,26 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
     }
     if (before.zifiPeer.ToString() != after.zifiPeer.ToString())
         out.emplace_back("zifi", after.zifiPeer.ToString());
+    for (int n = 0; n < 2; ++n)
+    {
+        if (after.slotUart[n] && before.slotPeer[n].ToString() != after.slotPeer[n].ToString())
+            out.emplace_back(n == 0 ? "isa1_peer" : "isa2_peer", after.slotPeer[n].ToString());
+        if (after.slotUartB[n] && before.slotPeerB[n].ToString() != after.slotPeerB[n].ToString())
+            out.emplace_back(n == 0 ? "isa1_peer_b" : "isa2_peer_b", after.slotPeerB[n].ToString());
+    }
+    if (before.modemPhonebook != after.modemPhonebook)
+        out.emplace_back("modem_phonebook", after.modemPhonebook);
     if (before.comPort.ToString() != after.comPort.ToString())
         out.emplace_back("com_port", after.comPort.ToString());
     if (before.zxWifiPeer.ToString() != after.zxWifiPeer.ToString())
         out.emplace_back("zx_wifi", after.zxWifiPeer.ToString());
     if (Upper(before.espChip) != Upper(after.espChip))
-        out.emplace_back("esp_chip", Upper(after.espChip) == "ESP8266" ? "esp8266" : "esp32");
+    {
+        std::string chip = after.espChip;
+        for (char& c : chip)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        out.emplace_back("esp_chip", chip.empty() ? std::string("esp32") : chip);
+    }
     if (before.modemLines != after.modemLines)
         out.emplace_back("com_modem_lines", after.modemLines ? "on" : "off");
     if (Upper(before.avrFirmware) != Upper(after.avrFirmware))
@@ -173,8 +208,9 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
                                : "This keyboard controller firmware has no RS-232: choose V31 or later.";
         }
     }
-    else if (form.serialPort != "evo-avr")
+    else if (form.serialPort != "evo-avr" && form.serialPort != "profi-8251")
     {
+        // (the ZX Profi v5's 8251 takes a peer like the ZX-Evo's 16550)
         a.comPort = false;
         a.comPortWhy = "This machine has no serial port of its own: a ZX-WiFi card adds one.";
     }
@@ -209,7 +245,13 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
 
 bool NetworkPeerIsEsp(const ComPortSpec& peer)
 {
-    return peer.kind == ComPortSpec::Kind::Espnet || peer.kind == ComPortSpec::Kind::At;
+    return peer.kind == ComPortSpec::Kind::Espnet || peer.kind == ComPortSpec::Kind::At ||
+           peer.kind == ComPortSpec::Kind::ZiFiNative;
+}
+
+bool NetworkPeerIsModem(const ComPortSpec& peer)
+{
+    return peer.kind == ComPortSpec::Kind::Modem;
 }
 
 std::vector<std::pair<std::string, std::string>> NetworkAvrFirmwareChoices()
@@ -248,4 +290,173 @@ std::vector<std::pair<std::string, std::string>> NetworkKbcFirmwareChoices()
 std::vector<uint32_t> NetworkSerialBaudChoices()
 {
     return {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
+}
+
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const StateNode* isa)
+{
+    std::vector<NetworkSlotRow> rows;
+    const StateNode* slots = network.find("slots");
+    if (!slots)
+        return rows;
+    auto text = [](const StateNode& node, const char* key) {
+        const StateNode* v = node.find(key);
+        if (!v)
+            return std::string();
+        if (v->kind == StateNode::Kind::String)
+            return v->s;
+        if (v->kind == StateNode::Kind::Int)
+            return std::to_string(v->i);
+        return std::string();
+    };
+    for (const StateNode& slot : slots->items)
+    {
+        NetworkSlotRow row;
+        row.id = text(slot, "id");
+        row.label = text(slot, "label");
+        const std::string card = text(slot, "card");
+        // A card that is not a network card (the ZX-bus adapter with the GS / NeoGS): the ISA report's line for it
+        const StateNode* isaSlotsAll = isa ? isa->find("slots") : nullptr;
+        const size_t isaIndex = row.id == "isa1" ? 0 : row.id == "isa2" ? 1 : 2;
+        const StateNode* isaRow = isaSlotsAll && isaIndex < isaSlotsAll->items.size() ? &isaSlotsAll->items[isaIndex] : nullptr;
+        if ((card.empty() || card == "none") && isaRow && text(*isaRow, "card") != "none" && !text(*isaRow, "card").empty())
+        {
+            row.line = text(*isaRow, "summary_line");
+            if (row.line.empty())
+                row.line = text(*isaRow, "card");
+        }
+        else if (card.empty() || card == "none")
+        {
+            const std::string configured = text(slot, "configured");
+            const std::string why = text(slot, "not_fitted");
+            row.line = configured.empty() || configured == "none" ? "empty"
+                                                                  : configured + " not fitted" + (why.empty() ? "" : ": " + why);
+        }
+        else
+        {
+            std::string kind = card;
+            for (char& c : kind)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            row.line = kind;
+            const std::string chip = text(slot, "chip");
+            if (!chip.empty())
+                row.line += " " + chip;
+            const bool uartCard = card == "sprinteresp" || card == "modem" || card == "dual16552";
+            const std::string base = text(slot, "base");
+            if (!base.empty() && base.size() > 1)
+            {
+                const unsigned first = static_cast<unsigned>(std::strtoul(base.c_str() + 1, nullptr, 16));
+                char range[32];
+                // a 16550's 8 registers / the 3C509B's 16 / the NE2000's 32
+                const unsigned size = uartCard ? 0x07 : card == "el3c509b" ? 0x0F : 0x1F;
+                std::snprintf(range, sizeof(range), ", I/O #%03X-#%03X", first, first + size);
+                row.line += range;
+            }
+            const std::string irq = text(slot, "irq");
+            if (!irq.empty())
+                row.line += ", IRQ " + irq;
+            const std::string mac = text(slot, "mac");
+            if (!mac.empty())
+                row.line += ", MAC " + mac;
+            const std::string link = text(slot, "link");
+            if (!link.empty())
+                row.line += ", cable: " + link;
+            if (const StateNode* esp = slot.find("esp"))
+            {
+                // The SprinterESP: its UART line and the ESP's session at a glance
+                if (const StateNode* uart = slot.find("uart"))
+                    row.line += ", UART " + text(*uart, "baud") + " baud, MCR " + text(*uart, "mcr");
+                row.line += "; ESP " + text(*esp, "firmware") + " (" + text(*esp, "state") + "), Wi-Fi " + text(*esp, "wifi");
+                const std::string ip = text(*esp, "ip");
+                if (!ip.empty() && ip != "0.0.0.0")
+                    row.line += " " + ip;
+                if (const StateNode* session = esp->find("at_session"))
+                {
+                    if (const StateNode* links = session->find("links"))
+                        row.line += ", " + std::to_string(links->items.size()) + " link(s)";
+                }
+                row.line += ", MAC " + text(*esp, "mac");
+            }
+            if (card == "el3c509b")
+            {
+                // The 3C509B at a glance: its ID port and isolation state, the window, both FIFOs, the link
+                row.line += ", ID port " + text(slot, "id_port") + " (" + text(slot, "ids") + ")";
+                const StateNode* activated = slot.find("activated");
+                row.line += activated && activated->kind == StateNode::Kind::Bool && activated->b ? ", active" : ", not active";
+                row.line += ", window " + text(slot, "window");
+                if (const StateNode* fifo = slot.find("fifo"))
+                    row.line += ", TX FIFO " + text(*fifo, "tx_packets") + " pkt / " + text(*fifo, "tx_free") + " free, RX FIFO " +
+                                text(*fifo, "rx_packets") + " pkt / " + text(*fifo, "rx_free") + " free";
+                row.line += ", " + text(slot, "link_state");
+            }
+            // A UART card's line(s) at a glance: what is on it and, for a modem, the call
+            auto lineSummary = [&](const StateNode& channel, const char* name) {
+                std::string out = std::string("; ") + name + ": ";
+                if (const StateNode* uart = channel.find("uart"))
+                    out += text(*uart, "baud") + " baud, MCR " + text(*uart, "mcr") + ", ";
+                const StateNode* peer = channel.find("peer");
+                const std::string kind = peer ? text(*peer, "kind") : std::string();
+                out += kind.empty() ? std::string("none") : kind;
+                if (const StateNode* modem = channel.find("modem"))
+                {
+                    out += " " + text(*modem, "mode");
+                    if (const StateNode* call = modem->find("call"))
+                    {
+                        const std::string dialed = text(*call, "dialed");
+                        if (!dialed.empty())
+                            out += " " + dialed;
+                    }
+                    if (const StateNode* lines = modem->find("lines"))
+                    {
+                        const StateNode* dcd = lines->find("dcd");
+                        const StateNode* ri = lines->find("ri");
+                        out += std::string(", DCD ") + (dcd && dcd->kind == StateNode::Kind::Bool && dcd->b ? "on" : "off");
+                        if (ri && ri->kind == StateNode::Kind::Bool && ri->b)
+                            out += ", RINGING";
+                    }
+                    const std::string last = text(*modem, "last_result");
+                    if (!last.empty())
+                        out += ", last " + last;
+                }
+                else if (peer)
+                {
+                    const std::string target = text(*peer, "target");
+                    if (!target.empty())
+                        out += " " + target;
+                }
+                return out;
+            };
+            if (card == "modem")
+                row.line += lineSummary(slot, "line");
+            if (card == "dual16552")
+            {
+                row.line += lineSummary(slot, "COM1");
+                if (const StateNode* b = slot.find("channel_b"))
+                    row.line += lineSummary(*b, "COM2 #2F8");
+            }
+            if (!text(slot, "stalled").empty())
+                row.line += " - STALLED (the ISA cycle hangs until RESET)";
+            // The slot's IRQ line from the ISA report: level, PIO port B bit, whether it interrupts the CPU
+            const StateNode* isaSlots = isa ? isa->find("slots") : nullptr;
+            const size_t index = row.id == "isa1" ? 0 : row.id == "isa2" ? 1 : 2;
+            if (isaSlots && index < isaSlots->items.size())
+            {
+                const StateNode& isaSlot = isaSlots->items[index];
+                if (const StateNode* irq = isaSlot.find("irq_line"))
+                {
+                    const std::string reach = text(*irq, "reaches_cpu");
+                    row.line += "; IRQ line " + text(*irq, "line") + " -> " + text(*irq, "pio_bit") + ", " +
+                                (reach.rfind("yes", 0) == 0 ? std::string("interrupts the CPU")
+                                                            : reach.size() > 4 ? reach.substr(4) : std::string("-"));
+                    if (const StateNode* counters = isaSlot.find("counters"))
+                    {
+                        const StateNode* acks = counters->find("irq_acknowledged");
+                        if (acks && acks->kind == StateNode::Kind::Int && acks->i > 0)
+                            row.line += ", " + std::to_string(acks->i) + " acknowledged";
+                    }
+                }
+            }
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
 }

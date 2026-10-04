@@ -158,6 +158,32 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =
         "'create' with model SPRINTER: true skips the PLD loader (~1.7 s emulated); default [SPRINTER] FastStart";
+    for (const char* key : {"sprinter_isa_slot1", "sprinter_isa_slot2"})
+    {
+        schema["properties"][key]["type"] = "string";
+        schema["properties"][key]["description"] =
+            "'create' with model SPRINTER: the card in ISA slot 1 / 2 - none | ne2000 | zxbus | ram | el3c509b | "
+            "sprinteresp | modem | dual16552 (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
+            "refused in the slot report /state/isa); fixed for the instance's lifetime";
+    }
+    schema["properties"]["profi_keyboard"]["type"] = "string";
+    schema["properties"]["profi_keyboard"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* value : {"default", "matrix", "xt", "xttable"})
+        schema["properties"]["profi_keyboard"]["enum"].append(value);
+    schema["properties"]["profi_keyboard"]["description"] =
+        "'create' with model PROFI / PROFI3: the keyboard on the board's connector - xt (the PROFI-XT controller on its "
+        "reconstructed firmware: PC keys, F1-F10 / Home / End / PgUp / PgDn / Ins / Del as letter + EXT), xttable (the "
+        "same from its key table), matrix (the Spectrum matrix), default (v5 xt, v3 matrix). See unreal://machine/profi";
+    schema["properties"]["profi_zq3_mhz"]["type"] = "integer";
+    schema["properties"]["profi_zq3_mhz"]["description"] =
+        "'create' with model PROFI: the v5's third crystal, an even 16-24 MHz (default 20): the hi-res CPU clock is "
+        "ZQ3 / 4 (5 MHz), ZQ3 / 2 with TURBO";
+    schema["properties"]["profi_ay_clock"]["type"] = "string";
+    schema["properties"]["profi_ay_clock"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["profi_ay_clock"]["enum"].append("old");
+    schema["properties"]["profi_ay_clock"]["enum"].append("new");
+    schema["properties"]["profi_ay_clock"]["description"] =
+        "'create' with model PROFI: jumper SB7 - old = the AY at 1.5 MHz in hi-res (default), new = 1.75 MHz always";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -267,6 +293,16 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["sprinter"]["bios"] = args["sprinter_bios"].asString();
                 if (args.isMember("sprinter_fast_start") && args["sprinter_fast_start"].isBool())
                     body["sprinter"]["fast_start"] = args["sprinter_fast_start"].asBool();
+                if (args.isMember("sprinter_isa_slot1") && args["sprinter_isa_slot1"].isString())
+                    body["sprinter"]["isa_slot1"] = args["sprinter_isa_slot1"].asString();
+                if (args.isMember("sprinter_isa_slot2") && args["sprinter_isa_slot2"].isString())
+                    body["sprinter"]["isa_slot2"] = args["sprinter_isa_slot2"].asString();
+                if (args.isMember("profi_keyboard") && args["profi_keyboard"].isString())
+                    body["profi"]["keyboard"] = args["profi_keyboard"].asString();
+                if (args.isMember("profi_zq3_mhz") && args["profi_zq3_mhz"].isInt())
+                    body["profi"]["zq3_mhz"] = args["profi_zq3_mhz"].asInt();
+                if (args.isMember("profi_ay_clock") && args["profi_ay_clock"].isString())
+                    body["profi"]["ay_clock"] = args["profi_ay_clock"].asString();
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
@@ -521,7 +557,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["drive"]["type"] = "string";
     schema["properties"]["drive"]["default"] = "A";
-    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A or B)";
+    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A-D or 0-3; autostart needs A)";
     schema["properties"]["play"]["type"] = "boolean";
     schema["properties"]["play"]["default"] = false;
     schema["properties"]["play"]["description"] = "Start tape playback immediately after loading a tape";
@@ -706,7 +742,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list"})
+                               "bp_list", "bp_reset_hits"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -725,14 +761,36 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out";
+    schema["properties"]["address_end"]["type"] = "integer";
+    schema["properties"]["address_end"]["description"] = "Optional for bp_add: range end, inclusive (execution / read / write)";
+    schema["properties"]["slot_only"]["type"] = "boolean";
+    schema["properties"]["slot_only"]["description"] = "Optional for bp_add with page: only through the slot of address";
+    schema["properties"]["port_mask"]["type"] = "integer";
+    schema["properties"]["port_mask"]["description"] =
+        "Optional for bp_add of port_in / port_out: match (port & port_mask) == (address & port_mask); 255 catches #FE "
+        "on any high byte";
+    schema["properties"]["hits"]["type"] = "string";
+    schema["properties"]["hits"]["description"] =
+        "Optional for bp_add: stop on the Nth hit only ('5'), from the Nth on ('>=5') or every Nth ('%5'); every hit is "
+        "counted (bp_list shows hit_count)";
+    schema["properties"]["page"]["type"] = "string";
+    schema["properties"]["page"]["description"] =
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - a physical breakpoint on that "
+        "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
+        "address)";
+    schema["properties"]["note"]["type"] = "string";
+    schema["properties"]["note"]["description"] = "Optional annotation for bp_add";
+    schema["properties"]["group"]["type"] = "string";
+    schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
-    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable";
+    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
     schema["required"].append("action");
 
     registry.Register(
         "control_execution",
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
-        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list). "
+        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
         "Stepping actions automatically include the new register snapshot.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -797,6 +855,15 @@ void RegisterControlExecution(ToolRegistry& registry)
                     ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "Breakpoints of " + id, done);
                     return;
                 }
+                if (action == "bp_reset_hits")
+                {
+                    Json::Value body(Json::objectValue);
+                    if (args.isMember("bp_id"))
+                        body["id"] = args["bp_id"];
+                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset"), &body, caller,
+                                args.isMember("bp_id") ? "Hit counter reset" : "All hit counters reset", done);
+                    return;
+                }
                 if (action == "bp_clear")
                 {
                     ForwardCall("DELETE", Endpoint(id, "/breakpoints"), nullptr, caller, "Cleared all breakpoints on " + id, done);
@@ -812,6 +879,10 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
+                    for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
+                                            "note", "group"})
+                        if (args.isMember(key))
+                            body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
                     return;
                 }
@@ -889,6 +960,17 @@ void RegisterControlExecution(ToolRegistry& registry)
 
                     const Json::Value* bodyPtr = body.isNull() ? nullptr : &body;
                     caller.Call(method, path, bodyPtr, [summary, &caller, id, done](int status, Json::Value response) mutable {
+                        // A breakpoint that ended a step says so (the structured result carries `stop`)
+                        if (response.isObject() && response.isMember("stop") &&
+                            response["stop"].get("reason", "").asString() == "breakpoint")
+                        {
+                            const Json::Value& stop = response["stop"];
+                            char where[96];
+                            std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u (%s) at $%04X after %u instruction(s). ",
+                                          stop.get("breakpoint_id", 0).asUInt(), stop.get("access", "").asString().c_str(),
+                                          stop.get("address", 0).asUInt(), response.get("executed", 0).asUInt());
+                            summary = where;
+                        }
                         if (status < 200 || status >= 300)
                         {
                             std::string hint;
@@ -1088,10 +1170,10 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
-                               "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "memory_region", "video_changes",
-                               "audio_mixer"})
+                               "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
     {
         allowed.append(aspect);
     }
@@ -1117,14 +1199,31 @@ void RegisterInspectState(ToolRegistry& registry)
         "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
         "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
+        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers, the 3C509B with its ID port, window, FIFOs, EEPROM and link) and the "
+        "Ethernet gateway (ethernet_gateway: leases, ARP, TCP / UDP, counters); its frame capture and frame injection go "
+        "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
+        "/api/v1/emulator/{id}/network/frame {link, hex}, "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
+        "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
+        "fitted card - an NE2000's chip, base, MAC, registers; a 3C509B's also resources.id_port (#100-#1F0, its isolation "
+        "state); the ZX-bus adapter's 'zx_bus' object: the General Sound / "
+        "NeoGS behind it, its ports #B3 / #BB / #33 through ISA I/O #xxB3 / #xxBB / #xx33, its reset from ISA RESET DRV, "
+        "its mailbox status - and cycle counters; per slot 'irq_line': the IRQ line's level, "
+        "who drives it, its route to the Z84C15 PIO port B (PB0 / PB1), the PIO's bit-mode setup, pending / under service, "
+        "whether it reaches the CPU, and edge / request / acknowledge counters ('irq_summary' in one line); "
+        "unavailable on other machines - run an "
+        "ISA cycle with invoke_api POST /api/v1/emulator/{id}/control/isa {action: io_read|io_write|io_peek|mem_read|"
+        "mem_write|mem_peek|reset|latch, slot, address, value}; the access journal - who touched which card register, "
+        "frame / T / PC, with the interrupt events (event: irq - line edges, PIO requests, acknowledges, RETI; also in "
+        "irq_events, a ring that polling does not flush) - with "
+        "invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
         "dots per T) and framebuffer placement (works for ATM, Profi, AlCo modes too), 'video_text' = exact text of an ATM / "
         "ZX-Evo text mode (80x25 codes and attributes; unavailable in bitmap modes - use screen_ocr), 'mouse' = "
-        "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
+        "the machine's mouse (Kempston interface, Sprinter serial mouse, ZX-Evo PS/2: device, fitted, ports, serial line) incl. Kempston port routing, 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it). "
         "'tsconf' = the TS-Conf machine (memory map, video, TSU summary, interrupts, DMA, clock, SD), 'tsconf_tsu' = its TSU "
         "objects for debug views (tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells); both unavailable on "
@@ -1140,7 +1239,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/state/sprinter/video), 'sprinter_palette' = the palettes the picture uses (R, G, B per pen "
         "as video RAM holds them; ?k=0-7|all through invoke_api), 'sprinter_sound_ring' = the Covox-Blaster sample ring, "
         "'sprinter_bios' = the BIOS images, the one loaded (by CRC-32) and the start options (select: invoke_api POST "
-        "/api/v1/emulator/{id}/sprinter/bios {bios: 3.06, reset: true}); "
+        "/api/v1/emulator/{id}/sprinter/bios {bios: 3.06, reset: true}), 'sprinter_zx_mode' = the ZX (Spectrum) "
+        "mode report: active, the launcher configuration (each .ZX option from the hardware: CNF turbo / map / clean "
+        "bits, ALL_MODE, frame, INT; the launcher's own text and option table in RAM), the best-matching mode file "
+        "(SP.ZX, P128.ZX, ORIGIN.ZX ...) with confidence, the clock (CNF request, F12, MHz, why), the ROM set by CRC, "
+        "and the table decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F with each port's effect now, "
+        "'sprinter_pld_journal' = who changed the PLD setup and when (frame, T, PC): port table writes with the decodes "
+        "they changed, CNF / turbo, the clock, #7FFD / #1FFD by the port used, ALL_MODE, RGMOD, HOLD, frame length, the "
+        "PLD load, F12, Ctrl+Alt+Del, resets (pld_journal_kinds = 'cnf,port_1ffd' filters; pld_journal_source = 'ttd' "
+        "reads the TTD recording's OUTs to those codes instead); "
         "all unavailable on other machines. 'memory_region' = bytes of a device memory region outside the CPU's pages "
         "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list: invoke_api "
         "GET /api/v1/emulator/{id}/memory/regions; write: POST /memory/region/{name} {offset, hex}). 'video_changes' = "
@@ -1149,6 +1256,12 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_mixer' = the per-device mixer (source key, muted, solo, volume, gain_db, peak, active; set: invoke_api "
         "PUT /api/v1/emulator/{id}/audio/mixer/{source} {muted, solo, volume}; capture one device: capture_media "
         "audio_capture with source).";
+    schema["properties"]["pld_journal_kinds"]["type"] = "string";
+    schema["properties"]["pld_journal_kinds"]["description"] =
+        "'sprinter_pld_journal': comma list of kinds (port_table, cnf, clock, port_7ffd, port_1ffd, all_mode, rgmod, hold, "
+        "frame_lines, pld_load, pld_configured, f12, ctrl_alt_del, reset); empty = all";
+    schema["properties"]["pld_journal_source"]["type"] = "string";
+    schema["properties"]["pld_journal_source"]["description"] = "'sprinter_pld_journal': live (default) or ttd (the recording)";
     schema["properties"]["region"]["type"] = "string";
     schema["properties"]["region"]["default"] = "vram";
     schema["properties"]["region"]["description"] = "'memory_region': the region name (GET /memory/regions)";
@@ -1191,9 +1304,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
         "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
-        "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
+        "the machine's mouse device + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
-        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring). "
+        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
+        "sprinter_zx_mode, sprinter_pld_journal). "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -1217,14 +1331,15 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
+                    aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1247,12 +1362,18 @@ void RegisterInspectState(ToolRegistry& registry)
             unsigned maxBlocks = args.isMember("max_blocks") ? args["max_blocks"].asUInt() : 48u;
             if (maxBlocks < 1) maxBlocks = 1;
             const std::string region = args.isMember("region") && args["region"].isString() ? args["region"].asString() : "vram";
+            // The PLD journal query (sprinter_pld_journal)
+            std::string pldQuery = "?limit=40";
+            if (args.isMember("pld_journal_kinds") && args["pld_journal_kinds"].isString())
+                pldQuery += "&kinds=" + args["pld_journal_kinds"].asString();
+            if (args.isMember("pld_journal_source") && args["pld_journal_source"].isString())
+                pldQuery += "&source=" + args["pld_journal_source"].asString();
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -1545,7 +1666,7 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "sprinter" || aspect == "sprinter_ports" || aspect == "sprinter_text" ||
                                  aspect == "sprinter_video" || aspect == "sprinter_palette" || aspect == "sprinter_sound_ring" ||
-                                 aspect == "sprinter_bios")
+                                 aspect == "sprinter_bios" || aspect == "sprinter_zx_mode" || aspect == "sprinter_pld_journal")
                         {
                             // Core DeviceState::Sprinter / SprinterPortTable / SprinterText / SprinterVideo /
                             // SprinterPalette / SprinterSoundRing via the WebAPI; 404 = not a Sprinter
@@ -1555,6 +1676,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                                      : aspect == "sprinter_palette"  ? "/state/sprinter/palette"
                                                      : aspect == "sprinter_sound_ring" ? "/state/sprinter/sound/ring"
                                                      : aspect == "sprinter_bios"     ? "/state/sprinter/bios"
+                                                     : aspect == "sprinter_zx_mode"  ? "/state/sprinter/zx-mode"
+                                                     : aspect == "sprinter_pld_journal" ? "/state/sprinter/pld-journal" + pldQuery
                                                                                      : "/state/sprinter/text";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
@@ -1582,6 +1705,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Rtc via the WebAPI; 404 = no CMOS clock
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/rtc"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "isa")
+                        {
+                            // Core DeviceState::Isa via the WebAPI; 404 = no ISA slots
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/isa"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1823,9 +1957,9 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 out << "\n[breakpoints] " << value["count"].asUInt() << " active";
                             }
-                            else if (aspect == "screen_digest" && value.isMember("digest"))
+                            else if (aspect == "screen_digest" && value.isMember("combined"))
                             {
-                                out << "\n[screen_digest] " << value["digest"].asString();
+                                out << "\n[screen_digest] " << value["combined"].asString();
                             }
                             else if (aspect == "contention")
                             {
@@ -1876,7 +2010,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
                                     const Json::Value& machineSerial = value["machine_serial"];
                                     if (machineSerial["fitted"].asBool())
-                                        out << "\n[com] keyboard controller " << machineSerial["kbc_firmware"].asString() << " RS-232, "
+                                        out << (machineSerial["flavor"].asString() == "usart8251"
+                                                    ? std::string("\n[com] 8251 COM port, ")
+                                                    : "\n[com] keyboard controller " + machineSerial["kbc_firmware"].asString() + " RS-232, ")
                                             << machineSerial["peer"].asString()
                                             << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
                                             << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()
@@ -1901,8 +2037,67 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << zifi["rs232_rx"].asInt() << " / " << zifi["rs232_tx"].asInt() << "; line "
                                             << (zifi.isMember("peer") ? zifi["peer"].asString() : std::string("none"))
                                             << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
+                                            << (zifi.isMember("esp") ? " [" + zifi["esp"]["firmware"].asString() +
+                                                                           (zifi["esp"].isMember("native_session")
+                                                                                ? ", " + zifi["esp"]["native_session"]["activity"].asString() +
+                                                                                      (zifi["esp"]["native_session"]["last_error"].asString().empty()
+                                                                                           ? std::string()
+                                                                                           : ", last error \"" + zifi["esp"]["native_session"]["last_error"].asString() + "\"") +
+                                                                                      (zifi["esp"]["native_session"]["file_bridge"]["ftp"]["running"].asBool()
+                                                                                           ? ", FTP on " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["port"].asString() +
+                                                                                                 " (host " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["host_port"].asString() +
+                                                                                                 "), " + std::to_string(zifi["esp"]["native_session"]["file_bridge"]["ftp"]["sessions"].size()) +
+                                                                                                 " session(s)"
+                                                                                           : std::string())
+                                                                                : std::string()) +
+                                                                           "]"
+                                                                     : std::string())
                                             << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
                                             << zifi["dropped"].asUInt64();
+                                    // A UART line at a glance: its peer, and a Hayes modem's mode, call and lines
+                                    auto uartLine = [](const Json::Value& ch, const std::string& name) {
+                                        std::string line = "; " + name + " " + ch["base"].asString() + ", UART " +
+                                                           std::to_string(ch["uart"]["baud"].asUInt64()) + " baud MCR " +
+                                                           ch["uart"]["mcr"].asString() + ", " + ch["peer"]["kind"].asString();
+                                        if (ch.isMember("modem"))
+                                        {
+                                            const Json::Value& m = ch["modem"];
+                                            line += " " + m["mode"].asString() + " " + m["call"]["dialed"].asString() + ", DCD " +
+                                                    (m["lines"]["dcd"].asBool() ? "on" : "off") +
+                                                    (m["lines"]["ri"].asBool() ? ", RINGING" : "") + ", last " +
+                                                    m["last_result"].asString();
+                                        }
+                                        else if (!ch["peer"]["target"].asString().empty())
+                                            line += " " + ch["peer"]["target"].asString();
+                                        return line;
+                                    };
+                                    for (const Json::Value& slot : value["slots"])
+                                        out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
+                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() +
+                                                                            (slot.isMember("mac") ? ", MAC " + slot["mac"].asString() : std::string())
+                                                                      : std::string())
+                                            << (slot.isMember("esp")
+                                                    ? ", IRQ " + std::to_string(slot["irq"].asInt()) + ", UART " + std::to_string(slot["uart"]["baud"].asUInt64()) +
+                                                          " baud MCR " + slot["uart"]["mcr"].asString() + "; ESP " + slot["esp"]["firmware"].asString() + " " +
+                                                          slot["esp"]["state"].asString() + ", Wi-Fi " + slot["esp"]["wifi"].asString() + " " +
+                                                          slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
+                                                          " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
+                                                    : std::string())
+                                            << (slot.isMember("id_port") ? "; " + slot["summary"].asString() : std::string())
+                                            << (slot["card"].asString() == "modem" ? uartLine(slot, "line") : std::string())
+                                            << (slot["card"].asString() == "dual16552"
+                                                    ? uartLine(slot, "COM1") + uartLine(slot["channel_b"], "COM2")
+                                                    : std::string());
+                                    if (value.isMember("ethernet_gateway"))
+                                    {
+                                        const Json::Value& gw = value["ethernet_gateway"];
+                                        out << "\n[network] ethernet gateway " << gw["router_ip"].asString() << ": "
+                                            << gw["tcp"].size() << " TCP, " << gw["udp"].size() << " UDP flows, frames "
+                                            << gw["counters"]["frames_from_cards"].asUInt64() << " from / "
+                                            << gw["counters"]["frames_to_cards"].asUInt64() << " to the cards";
+                                        for (const Json::Value& port : gw["ports"])
+                                            out << "; " << port["port"].asString() << " lease " << port["dhcp_lease"].asString();
+                                    }
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
@@ -1912,6 +2107,50 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
                                             << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string())
                                             << (value["machine"]["zifi"].asBool() ? ", zifi " + set["zifi"].asString() : std::string());
+                                }
+                            }
+                            else if (aspect == "isa")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[isa] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[isa] latch " << value["latch"]["value"].asString()
+                                        << (value["window"]["mapped"].asBool() ? ", window 3 = slot " + std::to_string(value["window"]["slot"].asInt()) + " " + value["window"]["space"].asString() : std::string(", window 3 not mapped"));
+                                    for (const Json::Value& slot : value["slots"])
+                                        out << "; slot " << slot["slot"].asInt() << ": " << slot["card"].asString()
+                                            << (slot.isMember("not_fitted") ? " (" + slot["configured"].asString() + " not fitted: " + slot["not_fitted"].asString() + ")" : std::string());
+                                    // What each card uses and how the Z80 reaches it; conflicts; the access journal's size
+                                    for (const Json::Value& slot : value["slots"])
+                                    {
+                                        if (!slot["enabled"].asBool())
+                                            continue;
+                                        out << "\n[isa] slot " << slot["slot"].asInt() << " " << slot["card"].asString() << ": I/O "
+                                            << slot["resources"]["io"].asString() << ", memory " << slot["resources"]["memory"].asString()
+                                            << ", IRQ " << slot["resources"]["irq"].asString() << " (" << slot["resources"]["irq_route"].asString() << ")";
+                                        if (slot["z80_access"].isMember("io"))
+                                            out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
+                                        if (slot["resources"].isMember("id_port"))
+                                            out << "\n[isa]   ID port " << slot["resources"]["id_port"]["io"].asString() << " ("
+                                                << slot["resources"]["id_port"]["z80"].asString() << "): "
+                                                << slot["resources"]["id_port"]["note"].asString();
+                                        // The ZX-bus adapter: the card behind it, its ports and reset (ISA phase I2)
+                                        if (slot.isMember("zx_bus"))
+                                        {
+                                            out << "\n[isa]   " << slot["summary_line"].asString();
+                                            for (const Json::Value& card : slot["zx_bus"]["cards"])
+                                                out << "\n[isa]   " << card["device"].asString() << ": status "
+                                                    << card["status"].asString() << ", " << card["sound"].asString() << "; "
+                                                    << card["machine_reset"].asString();
+                                            if (slot["zx_bus"].isMember("empty"))
+                                                out << "\n[isa]   ZX-bus empty: " << slot["zx_bus"]["empty"].asString();
+                                        }
+                                    }
+                                    if (value.isMember("irq_summary"))
+                                        out << "\n[isa] irq: " << value["irq_summary"].asString();
+                                    for (const Json::Value& conflict : value["conflicts"])
+                                        out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
+                                    out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";
                                 }
                             }
                             else if (aspect == "rtc")
@@ -2067,6 +2306,47 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& image : value["images"])
                                         out << "\n  " << image["alias"].asString() << " " << image["file"].asString()
                                             << (image["present"].asBool() ? "" : " (not installed)") << (image["loaded"].asBool() ? " [loaded]" : "");
+                                    for (const Json::Value& issue : value["known_issues"])
+                                        out << "\n  KNOWN ISSUE: " << issue.asString();
+                                }
+                            }
+                            else if (aspect == "sprinter_zx_mode")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_zx_mode] " << value["description"].asString();
+                                else
+                                {
+                                    const Json::Value& best = value["config"]["best_match"];
+                                    out << "\n[sprinter_zx_mode] " << value["summary"].asString() << "; best match "
+                                        << best["file"].asString() << " (" << best["name"].asString() << ", " << best["launcher"].asString()
+                                        << "), confidence " << best["confidence"].asString() << ": " << best["explanation"].asString();
+                                    out << "\n  options " << value["config"]["option_line"].asString() << ", CNF "
+                                        << value["config"]["cnf"].asString() << ", ALL_MODE " << value["config"]["all_mode"].asString();
+                                    out << "\n  clock " << value["clock"]["why"].asString();
+                                    out << "\n  frame " << value["frame"]["lines"].asInt() << " lines, INT "
+                                        << value["frame"]["int"]["kind"].asString() << " line " << value["frame"]["int"]["line"].asInt()
+                                        << " T " << value["frame"]["int"]["t_in_line"].asInt() << "; ROMs " << value["rom"]["set_name"].asString();
+                                    if (value["launcher"]["mode_text_found"].asBool())
+                                        out << "\n  launcher RAM: \"" << value["launcher"]["mode_name"].asString() << "\" "
+                                            << value["launcher"]["option_line"].asString();
+                                    for (const Json::Value& row : value["ports"]["rows"])
+                                        out << "\n  OUT " << row["port"].asString() << " -> " << row["tr_dos_off"]["out"]["code"].asString() << " "
+                                            << row["tr_dos_off"]["out"]["name"].asString() << ": " << row["tr_dos_off"]["out"]["effect"].asString();
+                                }
+                            }
+                            else if (aspect == "sprinter_pld_journal")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_pld_journal] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_pld_journal] source " << value["source"].asString() << ", "
+                                        << value["events"].size() << " event(s)";
+                                    if (value.isMember("error"))
+                                        out << ": " << value["error"].asString();
+                                    for (const Json::Value& e : value["events"])
+                                        out << "\n  frame " << e["frame"].asUInt64() << " T " << e["t"].asUInt() << " PC " << e["pc"].asString()
+                                            << " " << e["kind"].asString() << ": " << e["text"].asString();
                                 }
                             }
                             else if (aspect == "sprinter_sound_ring")
@@ -2289,6 +2569,24 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[mouse] " << value["description"].asString();
+                                else if (value.isMember("device") && value["device"].isObject())
+                                {
+                                    // The machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2)
+                                    const Json::Value& device = value["device"];
+                                    out << "\n[mouse] " << device["id"].asString() << " (" << device["kind"].asString()
+                                        << ")" << (device["in_use"].asBool() ? ", in use" : "") << ", x "
+                                        << device["x"].asInt() << " y " << device["y"].asInt()
+                                        << (device["wheel"].asBool() ? ", wheel" : "");
+                                    if (device.isMember("serial"))
+                                        out << ", serial receiver " << device["serial"]["receiver_baud"].asDouble() << " baud"
+                                            << (device["serial"]["receiver_in_tune"].asBool() ? " (in tune)" : " (out of tune)")
+                                            << ", " << device["serial"]["packets_sent"].asUInt64() << " packets";
+                                    if (device["id"].asString() == "kempston" && value.isMember("routing"))
+                                        out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
+                                            << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                                else if (value.isMember("mouse_fitted") && !value["mouse_fitted"].asBool())
+                                    out << "\n[mouse] no mouse fitted (input refused)";
                                 else
                                 {
                                     out << "\n[mouse] " << (value["present"].asBool() ? "fitted" : "not fitted")
@@ -2593,23 +2891,30 @@ void RegisterMouseInput(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"move", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
+    for (const char* action : {"move", "glide", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Kempston mouse (relative device). 'move' shifts counters by dx/dy emulated pixels; 'click' presses a button for N "
-        "frames. Input is applied immediately; call control_execution run_frames to let the program react.";
+        "The machine's own mouse (relative device): Kempston interface, the Sprinter's serial mouse, the ZX-Evo / "
+        "TS-Conf PS/2 mouse; a machine without a mouse refuses with 409. 'move' shifts by dx/dy emulated pixels "
+        "(-127..127); 'glide' moves up to -4096..4096 in steps the program follows (one per frame; input sent "
+        "meanwhile queues behind it, so a click after a glide lands where it ended); 'click' presses a button for N "
+        "frames. Input is applied immediately; call control_execution run_frames to let the program react. 'status' "
+        "names the device and what it gives the guest (ports, serial line, PS/2).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["dx"]["type"] = "integer";
-    schema["properties"]["dx"]["minimum"] = -127;
-    schema["properties"]["dx"]["maximum"] = 127;
-    schema["properties"]["dx"]["description"] = "+ = right (move; optional pre-move for click)";
+    schema["properties"]["dx"]["minimum"] = -4096;
+    schema["properties"]["dx"]["maximum"] = 4096;
+    schema["properties"]["dx"]["description"] = "+ = right (move: -127..127; glide: -4096..4096; optional pre-move for click)";
     schema["properties"]["dy"]["type"] = "integer";
-    schema["properties"]["dy"]["minimum"] = -127;
-    schema["properties"]["dy"]["maximum"] = 127;
-    schema["properties"]["dy"]["description"] = "+ = UP (move; optional pre-move for click)";
+    schema["properties"]["dy"]["minimum"] = -4096;
+    schema["properties"]["dy"]["maximum"] = 4096;
+    schema["properties"]["dy"]["description"] = "+ = UP (move: -127..127; glide: -4096..4096; optional pre-move for click)";
+    schema["properties"]["device"]["type"] = "string";
+    schema["properties"]["device"]["description"] =
+        "status: report this device of the machine (kempston, sprinter, evo-ps2); default the first fitted one";
     Json::Value buttonEnum(Json::arrayValue);
     for (const char* button : {"left", "right", "middle"})
     {
@@ -2633,15 +2938,31 @@ void RegisterMouseInput(ToolRegistry& registry)
 
     registry.Register(
         "mouse_input",
-        "Send Kempston mouse input to the emulator: relative move (dx/dy), press/release/click buttons, set the exact "
-        "pressed set, wheel steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
+        "Send mouse input to the machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2): relative move (dx/dy), "
+        "glide (long moves the program can follow), press/release/click buttons, set the exact pressed set, wheel "
+        "steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/mouse/status", nullptr, caller, "Mouse status", done);
+                const std::string device = args.isMember("device") ? args["device"].asString() : std::string();
+                ResolveAndForward(args, "GET", device.empty() ? "/mouse/status" : "/mouse/status?device=" + device,
+                                  nullptr, caller, "Mouse status", done);
+                return;
+            }
+            if (action == "glide")
+            {
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    done(ToolResult::Error("glide requires 'dx' or 'dy'"));
+                    return;
+                }
+                Json::Value body;
+                body["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                body["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                ResolveAndForward(args, "POST", "/mouse/glide", &body, caller, "Mouse glide started", done);
                 return;
             }
             if (action == "release_all")
@@ -2717,13 +3038,16 @@ void RegisterMouseInput(ToolRegistry& registry)
                     return;
                 }
 
-                // Pre-move then click, in order; the click is skipped if the move fails
+                // Pre-move then click, in order; the click is skipped if the move fails. A pre-move beyond
+                // -127..127 glides: the click queues behind the glide and lands where it ended
                 Json::Value moveBody;
                 moveBody["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
                 moveBody["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                const auto beyondMove = [](const Json::Value& v) { return v.isInt() && (v.asInt() > 127 || v.asInt() < -127); };
+                const std::string moveSuffix = beyondMove(moveBody["dx"]) || beyondMove(moveBody["dy"]) ? "/mouse/glide" : "/mouse/move";
 
                 TargetResolver::ResolveFromArgs(
-                    args, caller, [&caller, moveBody, clickBody, okText, done](bool ok, const std::string& idOrError) {
+                    args, caller, [&caller, moveBody, moveSuffix, clickBody, okText, done](bool ok, const std::string& idOrError) {
                         if (!ok)
                         {
                             done(ToolResult::Error(idOrError));
@@ -2752,7 +3076,7 @@ void RegisterMouseInput(ToolRegistry& registry)
                         };
 
                         std::vector<SeriesStep> steps;
-                        steps.push_back(makeStep("move", "/mouse/move", moveBody));
+                        steps.push_back(makeStep("move", moveSuffix, moveBody));
                         steps.push_back(makeStep("click", "/mouse/click", clickBody));
 
                         RunSeries(std::move(steps), [done, okText, id](Json::Value acc) {
@@ -2911,31 +3235,6 @@ static std::string MakeSparkline(const std::vector<uint32_t>& values)
         spark += kBars[idx];
     }
     return spark;
-}
-
-/// Percent-encodes a path segment (RFC 3986 unreserved characters kept
-/// literal). Labels are free-form text ("umt entry"), so they must not be
-/// spliced raw into a URL path.
-std::string UrlEncodeSegment(const std::string& text)
-{
-    static const char* kHex = "0123456789ABCDEF";
-    std::string encoded;
-    encoded.reserve(text.size());
-    for (char c : text)
-    {
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (std::isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~')
-        {
-            encoded += c;
-        }
-        else
-        {
-            encoded += '%';
-            encoded += kHex[uc >> 4];
-            encoded += kHex[uc & 0xF];
-        }
-    }
-    return encoded;
 }
 
 /// Formats a TTD time point ({frame, tinframe}) as "frame F" or "frame F t=T".

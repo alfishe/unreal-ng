@@ -27,8 +27,8 @@ built.
 | ID | Requirement | v3 | v5 | Conf. | Evidence |
 |:--|:--|:--|:--|:--|:--|
 | R1 | Model ids: v5 keeps `PROFI` (`MM_PROFI`, alias `PROFI5`); v3 is a new `PROFI3` (`MM_PROFI3`, appended to the enum) | `PROFI3` | `PROFI` | - | design 2 |
-| R2 | Default system ROM | `rom/profi/kramis-v02.rom` | `rom/profi.rom` (unchanged) | H | roms.md |
-| R3 | The other factory images load through `[ROM] PROFI3=` / `PROFI=` | `kramis-v03.rom` | `bios10*.rom`, `bios20*.rom` | H | roms.md |
+| R2 | Default system ROM | `rom/profi/kramis-v03.rom` (V0.2 until 2026-10-03: its TR-DOS 5.03 cannot load Klug CP/M) | `rom/profi.rom` (unchanged) | H | roms.md |
+| R3 | The other factory images load through `[ROM] PROFI3=` / `PROFI=` | `kramis-v02.rom` | `bios10*.rom`, `bios20*.rom` | H | roms.md |
 | R4 | RAM: page = `((DFFD & 7) << 3) \| (7FFD & 7)`, wrapping on smaller boards | 512K default, 1024K allowed | 1024K default, 512K allowed | H | M1-M3 |
 | R5 | 256K and 768K v3 boards, with unfitted chip rows reading `#FF` | - | - | O | M4 (XP+ only) |
 | R6 | Reset enters the SYS ROM; ROM order SYS, DOS, 128, 48 | yes | yes | H | M5 |
@@ -50,6 +50,7 @@ built.
 | R20 | Mouse at `#FADF/#FBDF/#FFDF` with CP/M off | yes | yes | H | P15 |
 | R21 | Floating bus: the pixel byte the video latch holds, on an undecoded `IN` with A0 = 1 (design 4.4) | **yes** | none | M (form from the schematic, E3) | P16 |
 | R22 | PSG is an AY-3-8910 | yes | yes | H | P17 |
+| R23 | Keyboard (`[PROFI] Keyboard=`): the matrix, or the PROFI-XT controller running its firmware (or its key table); with the controller, `#FE` bit 5 is KD5 (EXT on half-row A14), a key held makes every read wait, Ctrl + Alt + Del resets (design 9) | matrix by default; XT allowed (EXT on bit 7) | PROFI-XT by default | H (research) / M (the 5 reconstructed firmware bytes) | research-profi-keyboard.md |
 
 ### 2.3 Video timing and CPU clock
 
@@ -94,6 +95,6 @@ built.
 | Q3 | ~~v3 floating-bus form~~ **settled** by E3: the pixel byte only, one tick ahead of the display, `IN` with A0 = 1 ([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) B, design 4.4) | - | - |
 | Q4 | ~~v3 turbo wait rule~~ **settled** by E3: RAM waits 2 / 3 7 MHz clocks by the start clock's parity, ROM none; reproduces the 88208 T Tact Meter figure (design 6.2) | - | - |
 | Q5 | ~~v5 palette gate~~ **settled**: DS80 alone, A7=0, A0=0; the manual's sentence contradicts its own schematic ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)) | - | - |
-| Q6 | ~~v5 front-panel CP/M switch~~ **settled** for the processor board: it holds #DFFD at #00 (built as `FrontPanelSwitch::Cpm`); whether it also changes the start ROM page (manual) is open - the periphery board or a BIOS trace would settle it | - | - |
+| Q6 | ~~v5 front-panel CP/M switch~~ **settled** for the processor board: it holds #DFFD at #00 (built as `FrontPanelSwitch::Cpm`); the manual's "pressed = Spectrum 128" comes from the BIOS, which cannot raise its hi-res menu with #DFFD held at #00 (checked on the emulated BIOS; no emulator models the switch) | - | - |
 | Q7 | ~~Does the SYS ROM see the extended map on v5 (Karabas)~~ **settled: no** ([decoder-prom.md](decoder-prom.md)) | - | - |
 | Q8 | 256K / 768K v3 boards | R5 | the v3.2 manual p6 memory map, the BOM |

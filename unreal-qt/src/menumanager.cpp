@@ -926,10 +926,21 @@ void MenuManager::createMachineMenu()
         _hostKeyboardGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, action] { emit hostKeyboardRouteRequested(action->data().toString()); });
     }
+#ifdef Q_OS_MACOS
+    // The Command key stays with the host unless asked for (QSettings Keyboard/MacCommandKey)
+    _hostKeyboardMenu->addSeparator();
+    _commandKeyToGuestAction = _hostKeyboardMenu->addAction(tr("Pass &Command as Win Key"));
+    _commandKeyToGuestAction->setStatusTip(
+        tr("Send the Command key to the machine as the PC Win (GUI) key; off, Command is a host key and "
+           "Command shortcuts send nothing to the machine"));
+    _commandKeyToGuestAction->setCheckable(true);
+    connect(_commandKeyToGuestAction, &QAction::triggered, this, &MenuManager::commandKeyToGuestToggled);
+#endif
     connect(_machineMenu, &QMenu::aboutToShow, this, &MenuManager::machineMenuAboutToShow);
 }
 
-void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller)
+void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller,
+                                       const QString& controller)
 {
     if (!_hostKeyboardGroup)
         return;
@@ -940,7 +951,17 @@ void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effe
         // Without a PS/2 controller only the matrix is there to choose
         action->setEnabled(ps2Controller || name == "auto" || name == "matrix");
     }
-    _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
+    // The controller by name when it has one (Profi: "PROFI-XT firmware 1.27" / "PROFI-XT table")
+    if (controller.isEmpty())
+        _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
+    else
+        _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1: %2)").arg(effective.toLower(), controller));
+}
+
+void MenuManager::setCommandKeyToGuestChecked(bool checked)
+{
+    if (_commandKeyToGuestAction)
+        _commandKeyToGuestAction->setChecked(checked);
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)
@@ -1172,8 +1193,14 @@ void MenuManager::createToolsMenu()
     // F12 must reach the machine (the ZX-Evo AVR turns its short press into a
     // Z80 reset, e.g. the TS-BIOS setup screen's "F12 - exit")
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
-    _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
+    _screenshotAction->setStatusTip(tr("Copy what the emulator window shows to the clipboard"));
     connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
+
+    // The whole frame (border included) to a PNG or GIF file: the same screenshot the WebAPI, MCP, CLI, Lua and
+    // Python take (core Screenshotter), whatever the window's viewport crop
+    _saveScreenshotAction = _toolsMenu->addAction(tr("Save Screenshot &As..."));
+    _saveScreenshotAction->setStatusTip(tr("Save the whole emulator frame, border included, to a PNG or GIF file"));
+    connect(_saveScreenshotAction, &QAction::triggered, this, &MenuManager::saveScreenshotRequested);
 
 #ifdef ENABLE_RECORDING
     // Recording (widget toggle)

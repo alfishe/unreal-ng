@@ -49,10 +49,9 @@ void registerFonts(QApplication& app)
     qDebug() << "Looking for font at:" << fontPath;
 
     QFile fontFile(fontPath);
-    if (fontFile.exists())
+    if (fontFile.open(QIODevice::ReadOnly))
     {
         qDebug() << "Font file found at:" << fontPath;
-        fontFile.open(QIODevice::ReadOnly);
         QByteArray fontdata = fontFile.readAll();
         if (!fontdata.isEmpty())
         {
@@ -68,7 +67,7 @@ void registerFonts(QApplication& app)
     }
     else
     {
-        qCritical() << "Font file not found at:" << fontPath;
+        qCritical() << "Unable to open font at:" << fontPath << fontFile.errorString();
     }
 
     QStringList fontFamilies = QFontDatabase::families();

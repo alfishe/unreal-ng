@@ -1275,9 +1275,9 @@ protected:
         const EmulatorState& state = _context->emulatorState;
         const uint64_t totalTime = state.t_states;
         uint64_t frameTime = _context->pCore->GetZ80()->t;
-        if (_baseClockTimeBase && state.hw_turbo_ratio_applied > 1)
+        if (_baseClockTimeBase && (state.hw_turbo_ratio_applied > 1 || state.hw_clock_den_applied > 1))
         {
-            frameTime /= state.hw_turbo_ratio_applied;
+            frameTime = state.AudioTstate(static_cast<uint32_t>(frameTime));   // ratio and the denominator (Profi hi-res)
         }
         _time = totalTime + frameTime;
     }

@@ -67,8 +67,30 @@
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["bios"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["fast_start"]["type"] = "boolean";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["accel_int_suspend"]["type"] = "boolean";
+    schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["isa_slot1"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["isa_slot2"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["description"] =
-        "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
+        "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
+
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["type"] = "object";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["type"] = "string";
+    for (const char* value : {"default", "matrix", "xt", "xttable"})
+        schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["enum"].append(value);
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["zq3_mhz"]["type"] = "integer";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["zq3_mhz"]["description"] =
+        "v5: the third crystal ZQ3, 16-24 MHz, even ([PROFI] ZQ3MHz, default 20): the hi-res CPU clock is ZQ3 / 4, "
+        "ZQ3 / 2 with TURBO";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["enum"].append("old");
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["enum"].append("new");
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["description"] =
+        "v5 jumper SB7 ([PROFI] AyClock): old = the AY at 1.5 MHz in hi-res (default), new = 1.75 MHz always";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["description"] =
+        "A PROFI / PROFI3's keyboard ([PROFI] Keyboard=): matrix (the 40-key Spectrum matrix), xt (the PROFI-XT "
+        "controller running its reconstructed firmware on the MCS-48 core: PC keys, F1-F10 / Home / End / PgUp / PgDn / "
+        "Ins / Del as a letter + EXT on #BFFE bit 5, a Z80 wait per read while a key is held), xttable (the same "
+        "controller from its key table, no MCU), default (the board's own: v5 xt, v3 matrix). The machine reports it as "
+        "paging.profi_keyboard and GET .../keyboard keyboard_controller. 400 on an unknown name";
 
     // Settings Management schemas
     schemas["SettingsResponse"]["type"] = "object";
@@ -130,6 +152,39 @@
     schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("supported");
     schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("unsupported");
 
+    schemas["MouseState"]["properties"]["mouse_fitted"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["mouse_fitted"]["description"] =
+        "Some mouse device the machine's ports read is fitted; false: input is refused with 409";
+    schemas["MouseState"]["properties"]["device"]["$ref"] = "#/components/schemas/MouseDevice";
+    schemas["MouseState"]["properties"]["device"]["nullable"] = true;
+    schemas["MouseState"]["properties"]["devices"]["type"] = "array";
+    schemas["MouseState"]["properties"]["devices"]["items"]["$ref"] = "#/components/schemas/MouseDevice";
+    schemas["MouseState"]["properties"]["queue"]["type"] = "object";
+    schemas["MouseState"]["properties"]["queue"]["description"] = "Automation input waiting behind a glide";
+    schemas["MouseState"]["properties"]["queue"]["properties"]["ops"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["queue"]["properties"]["glide_remaining"]["type"] = "object";
+
+    schemas["MouseDevice"]["type"] = "object";
+    schemas["MouseDevice"]["description"] = "One mouse device of the machine and what it gives the guest";
+    schemas["MouseDevice"]["properties"]["id"]["type"] = "string";
+    schemas["MouseDevice"]["properties"]["id"]["description"] = "kempston, sprinter, evo-ps2";
+    schemas["MouseDevice"]["properties"]["name"]["type"] = "string";
+    schemas["MouseDevice"]["properties"]["kind"]["type"] = "string";
+    for (const char* kind : {"kempston", "serial-microsoft", "ps2-avr"})
+        schemas["MouseDevice"]["properties"]["kind"]["enum"].append(kind);
+    for (const char* flag : {"fitted", "in_use", "wheel"})
+        schemas["MouseDevice"]["properties"][flag]["type"] = "boolean";
+    for (const char* number : {"buttons", "x", "y", "button_mask"})
+        schemas["MouseDevice"]["properties"][number]["type"] = "integer";
+    schemas["MouseDevice"]["properties"]["ports"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["ports"]["description"] = "What IN #FADF / #FBDF / #FFDF returns from it";
+    schemas["MouseDevice"]["properties"]["serial"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["serial"]["description"] =
+        "Serial mouse: line baud, the UART receiver's baud / in tune / enabled, the packet in flight, motion "
+        "pending, packets sent, bytes received, framing errors, the receive FIFO and overrun";
+    schemas["MouseDevice"]["properties"]["ps2"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["ps2"]["description"] = "PS/2 mouse on the AVR: connected, resolution";
+
     schemas["MouseStatus"]["description"] = "Response from GET /mouse/status";
     schemas["MouseStatus"]["allOf"][0]["$ref"] = "#/components/schemas/MouseState";
     schemas["MouseStatus"]["allOf"][1]["type"] = "object";
@@ -148,7 +203,10 @@
     schemas["MouseInjectResponse"]["properties"]["message"]["type"] = "string";
     schemas["MouseInjectResponse"]["properties"]["warning"]["type"] = "string";
     schemas["MouseInjectResponse"]["properties"]["warning"]["description"] =
-        "Set when the input cannot reach the guest (mouse or wheel not fitted)";
+        "Set when part of the input cannot reach the guest (no wheel fitted)";
+    schemas["MouseInjectResponse"]["properties"]["queued"]["type"] = "boolean";
+    schemas["MouseInjectResponse"]["properties"]["queued"]["description"] =
+        "Accepted behind a glide still in progress; applied in order at frame ends";
     schemas["MouseInjectResponse"]["properties"]["state"]["$ref"] = "#/components/schemas/MouseState";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 
@@ -238,13 +296,50 @@
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("write");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_in");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("rw");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port");
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
-        "Z80 address (0-65535) or port number (0-255)";
+        "Z80 address (0-65535) or port number (0-65535); with a page, its offset in the page is address & #3FFF";
+    schemas["AddBreakpointRequest"]["properties"]["address_end"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["address_end"]["description"] =
+        "Optional range end, inclusive (execution / read / write / rw). With a page the range stays inside one 16K "
+        "page. The hot path checks a range as fast as one address, however many there are";
+    schemas["AddBreakpointRequest"]["properties"]["slot_only"]["type"] = "boolean";
+    schemas["AddBreakpointRequest"]["properties"]["slot_only"]["description"] =
+        "With a page: fire only through the slot of 'address' (#0000/#4000/#8000/#C000), not wherever the page is "
+        "mapped";
+    schemas["AddBreakpointRequest"]["properties"]["port_mask"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["port_mask"]["description"] =
+        "Ports only: match when (port & port_mask) == (address & port_mask); default #FFFF (exact). #00FF catches #FE "
+        "on any high byte";
+    schemas["AddBreakpointRequest"]["properties"]["hits"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["hits"]["description"] =
+        "Hit policy as text: '5' (stop on the 5th hit only), '>=5' (from the 5th on), '%5' (every 5th); every "
+        "matching access counts (hit_count). Same as hit_mode + hit_target";
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("always");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("equal");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("at_least");
+    schemas["AddBreakpointRequest"]["properties"]["hit_mode"]["enum"].append("multiple");
+    schemas["AddBreakpointRequest"]["properties"]["hit_target"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["hit_target"]["description"] =
+        "The N of the hit policy (1 or more); alone it means hit_mode 'equal'";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "object";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("ram");
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("rom");
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("cache");
+    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["page"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
+        "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
+        "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
+        "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
-    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] = "Optional group name";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] =
+        "Optional group name (created on use; default 'default'). Groups are switched on and off together";
 
     // Add Breakpoint Response
     schemas["AddBreakpointResponse"]["type"] = "object";
@@ -254,6 +349,16 @@
     schemas["AddBreakpointResponse"]["properties"]["id"]["description"] = "Assigned breakpoint ID";
     schemas["AddBreakpointResponse"]["properties"]["type"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["page"]["type"] = "object";
+    schemas["AddBreakpointResponse"]["properties"]["page"]["description"] = "The page condition, when one was given";
+    schemas["AddBreakpointResponse"]["properties"]["address_end"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["slot_only"]["type"] = "boolean";
+    schemas["AddBreakpointResponse"]["properties"]["port_mask"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
 
     // Memory State schemas

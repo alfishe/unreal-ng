@@ -944,6 +944,23 @@ TEST_F(ScreenZX_Test, TransformTstateToFramebufferCoords_ModeWindows)
     ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(68, 9), &x, &y));
     EXPECT_EQ(x, 4) << "4 px per T in hires";
 
+    // Pentagon overscan stores 16 lines more on top: its first stored row is raster line 16, not 32, so the paper
+    // (raster line 80) is row 64; the Pentagon proper has row 48
+    _context->config.frame = 71680;
+    _context->config.mem_model = MM_PENTAGON;
+    _screenzx->SetVideoMode(M_PENTAGON128K);
+    EXPECT_EQ(_screenzx->FirstStoredRasterLine(), 32);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(80, 24), &x, &y));
+    EXPECT_EQ(x, 48);
+    EXPECT_EQ(y, 48);
+    _screenzx->SetVideoMode(M_P384);
+    EXPECT_EQ(_screenzx->FirstStoredRasterLine(), 16);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(80, 24), &x, &y));
+    EXPECT_EQ(x, 48);
+    EXPECT_EQ(y, 64) << "the paper's first row in the overscan frame";
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(16, 0), &x, &y)) << "the first stored line";
+    EXPECT_EQ(y, 0);
+
     _context->config.mem_model = MM_PROFI;
     _screenzx->SetVideoMode(M_PROFIHR);
     ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(48, 23), &x, &y));

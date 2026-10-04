@@ -1,129 +1,118 @@
 ##
-## How to Build the image: docker build -t unrealng-build:qt6.9.3 -f Dockerfile.universal .
+## Linux build image: CMake CI, the Linux release packages and docker/linux/build.sh
+## all build in this one environment.
 ##
-## Features:
-##   - Automatic platform detection (AMD64/ARM64)
-##   - Qt 6.9.3 with qtmultimedia and qt5compat modules
-##   - Debian testing base for GLIBC 2.38+ compatibility
-##   - OpenSSL, UUID, and Brotli libraries for webapi component
-##   - ICU 56 legacy support
+## Build: docker build -t unrealng-build:qt6.9.3-ubuntu24.04 -f docker/Dockerfile.universal .
+## Published by .github/workflows/docker-build.yml as
+##   ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04   (multi-arch: amd64 + arm64)
 ##
-## How to test compilation interactively:
-##   docker run -it --rm -v /path/to/unreal-ng:/workspace unrealng-build:qt6.9.3 /bin/bash
+## Contents:
+##   - Ubuntu 24.04 base: glibc 2.39 is the oldest system the AppImage/DEB support,
+##     so packages built here run there and on everything newer
+##   - gcc 14 / libstdc++ from the distribution (newest gcc whose runtime 24.04 has)
+##   - CMake 3.31.6 (pip), Ninja
+##   - Qt 6.9.3 SDK with qtmultimedia + qt5compat (aqtinstall; Qt brings its own ICU)
+##     in /opt/qt/current
+##   - linuxdeploy + linuxdeploy-plugin-qt, pinned and checksummed (AppImage packaging)
+##   - Qt runtime libraries for headless runs (QT_QPA_PLATFORM=offscreen)
 ##
-## Inside container:
-##   cd /workspace/unreal-qt
-##   mkdir -p cmake-build-docker && cd cmake-build-docker
-##   # For Qt6 detection, explicitly set paths:
-##   cmake -G Ninja .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=/opt/qt/current -DQt6_DIR=/opt/qt/current/lib/cmake/Qt6
-##   ninja unreal-qt
-##   # Check artifacts: ls -la bin/
-##   # Check build files: find . -name "*.o" -o -name "*.so" -o -name "unreal-qt" | head -10
-##   # Test headless: ./bin/unreal-qt -platform offscreen --help
+## Interactive use:
+##   docker run -it --rm -v "$PWD":/src -w /src ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04 bash
+##   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ##
 
+ARG UBUNTU=ubuntu:24.04@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd752c61b60
 
-# AUTOMATIC PLATFORM SELECTION
-# Use Debian testing for GLIBC 2.38+ compatibility with Qt 6.9.3
-FROM debian:testing-slim@sha256:03841df45ea063aaf5937b2931d3560d89fa5cd839382ebd5ab50348ebc1de37 AS dep-builder
-
+# ---- Qt SDK (download only, nothing is compiled) ----
+FROM ${UBUNTU} AS qt
 ARG QT_VERSION=6.9.3
-# Docker automatically passes this (amd64 or arm64)
+ARG AQT_VERSION=3.3.0
+# Docker passes this (amd64 or arm64)
 ARG TARGETARCH
-
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install builder tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget tar build-essential python3 python3-pip python3-venv ca-certificates \
+    python3 python3-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 1. Build ICU 56 (Legacy dependency)
-WORKDIR /tmp
-RUN wget -q https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz && \
-    tar -xzf icu4c-56_1-src.tgz && cd icu/source && \
-    ./configure --prefix=/usr/local --enable-static=no && \
-    make -j$(nproc) && make install
-
-# 2. Install Qt
-#
-# To explore available Qt versions and components, run these commands locally:
-#
-# List all available Qt versions for Linux desktop:
+# List versions / architectures / modules with:
 #   aqt list-qt linux desktop
-#
-# List available architectures for a specific Qt version:
 #   aqt list-qt linux desktop --arch 6.9.3
-#
-# List available modules for a specific Qt version and architecture:
 #   aqt list-qt linux desktop --modules 6.9.3 linux_gcc_64
-#
-# Example output for versions:
-#   5.15.2  6.2.4  6.5.3  6.6.3  6.7.3  6.8.2  6.9.3
-#
-# Example output for architectures (for Qt 6.9.3):
-#   linux_gcc_64  linux_gcc_arm64  linux_clang_arm64
-#
-# Example output for modules (for Qt 6.9.3 linux_gcc_64):
-#   qtmultimedia  qt5compat  qtcharts  qtdatavis3d  qtnetworkauth
-#   qtpurchasing  qtquick3d  qtremoteobjects  qtscxml  qtsensors
-#   qtserialbus  qtserialport  qtspeech  qtvirtualkeyboard  qtwebchannel
-#   qtwebengine  qtwebsockets  qtwebview
 RUN python3 -m venv /tmp/venv && \
-    /tmp/venv/bin/pip install aqtinstall && \
-    # --- LOGIC START ---
+    /tmp/venv/bin/pip install --no-cache-dir "aqtinstall==${AQT_VERSION}" && \
     if [ "$TARGETARCH" = "arm64" ]; then \
-      # ARM64: Host is 'linux_arm64', Arch in manifest is 'linux_gcc_arm64'
-      AQT_HOST="linux_arm64"; \
-      AQT_ARCH="linux_gcc_arm64"; \
+      AQT_HOST="linux_arm64"; AQT_ARCH="linux_gcc_arm64"; \
     else \
-      # AMD64: Host is 'linux', Arch in manifest is 'linux_gcc_64'
-      AQT_HOST="linux"; \
-      AQT_ARCH="linux_gcc_64"; \
+      AQT_HOST="linux"; AQT_ARCH="linux_gcc_64"; \
     fi && \
-    # --- LOGIC END ---
-    echo "Installing Qt ${QT_VERSION} for Host: $AQT_HOST / Arch: $AQT_ARCH" && \
-    /tmp/venv/bin/aqt install-qt $AQT_HOST desktop ${QT_VERSION} $AQT_ARCH -m qtmultimedia qt5compat --outputdir /opt/qt && \
-    # FIX 2: Use wildcard '*' instead of specific variable.
-    # On ARM, AQT_ARCH is 'linux_gcc_arm64' but the folder on disk is 'gcc_arm64'.
-    # The wildcard handles this mismatch automatically.
+    /tmp/venv/bin/aqt install-qt "$AQT_HOST" desktop "${QT_VERSION}" "$AQT_ARCH" \
+        -m qtmultimedia qt5compat --outputdir /opt/qt && \
+    # The folder name differs per architecture (gcc_64 / gcc_arm64)
     mv /opt/qt/${QT_VERSION}/* /opt/qt/current
 
-# --- Final Stage ---
-FROM debian:testing-slim@sha256:03841df45ea063aaf5937b2931d3560d89fa5cd839382ebd5ab50348ebc1de37 
-ARG QT_VERSION
+# ---- AppImage tools (pinned releases, checksummed) ----
+FROM ${UBUNTU} AS tools
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ARG LINUXDEPLOY_TAG=1-alpha-20251107-1
+ARG LINUXDEPLOY_QT_TAG=1-alpha-20250213-1
+RUN set -e; mkdir -p /out; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+      A=aarch64; \
+      LD_SHA=620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff; \
+      QT_SHA=bf1c24aff6d749b5cf423afad6f15abd4440f81dec1aab95706b25f6667cdcf1; \
+    else \
+      A=x86_64; \
+      LD_SHA=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d; \
+      QT_SHA=15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724; \
+    fi; \
+    curl -fsSL -o /out/linuxdeploy-$A.AppImage \
+      "https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_TAG}/linuxdeploy-$A.AppImage"; \
+    curl -fsSL -o /out/linuxdeploy-plugin-qt-$A.AppImage \
+      "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/${LINUXDEPLOY_QT_TAG}/linuxdeploy-plugin-qt-$A.AppImage"; \
+    echo "$LD_SHA  /out/linuxdeploy-$A.AppImage" | sha256sum -c -; \
+    echo "$QT_SHA  /out/linuxdeploy-plugin-qt-$A.AppImage" | sha256sum -c -; \
+    chmod +x /out/*.AppImage
 
-COPY --from=dep-builder /usr/local/lib/libicu* /usr/local/lib/
-COPY --from=dep-builder /usr/local/include/unicode /usr/local/include/unicode
-# Copy the standardized 'current' directory
-COPY --from=dep-builder /opt/qt/current /opt/qt/current
+# ---- Final image ----
+FROM ${UBUNTU}
+ARG QT_VERSION=6.9.3
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install CI tools + Python build dependencies
+COPY --from=qt /opt/qt/current /opt/qt/current
+COPY --from=tools /out/ /usr/local/bin/
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    build-essential cmake git ninja-build locales \
-    autoconf automake libtool pkg-config \
-    python3 python3-dev \
-    libffi-dev libsqlite3-dev libreadline-dev libncursesw5-dev liblzma-dev \
-    libgl1-mesa-dev libxkbcommon0 libx11-6 libx11-xcb1 libxcb1 \
-    libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-    libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libxcb-cursor0 libglib2.0-0 \
-    libssl-dev zlib1g-dev uuid-dev libbrotli-dev \
-    libfontconfig-dev libfreetype-dev libdbus-1-dev \
-    && rm -rf /var/lib/apt/lists/* && ldconfig
+    ca-certificates git curl file locales \
+    build-essential gcc-14 g++-14 ninja-build pkg-config \
+    python3 python3-pip python3-venv \
+    dpkg-dev patchelf desktop-file-utils \
+    libssl-dev zlib1g-dev uuid-dev \
+    libgl1-mesa-dev libegl1 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libx11-xcb1 libxcb1 \
+    libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+    libxcb-xinerama0 libxcb-shape0 libxcb-cursor0 libxcb-xkb1 libglib2.0-0 \
+    libfontconfig1 libfreetype6 libdbus-1-3 \
+    # needed by the Qt plugins the packages bundle (dpkg-shlibdeps / linuxdeploy
+    # must resolve them): multimedia FFmpeg backend, XCB and Wayland platforms
+    libpulse0 libxrandr2 libsm6 libice6 libwayland-cursor0 libwayland-egl1 \
+    && python3 -m pip install --no-cache-dir --break-system-packages cmake==3.31.6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && locale-gen C.UTF-8
 
-# Configure UTF-8 locale for Qt
-RUN locale-gen C.UTF-8 && update-locale LANG=C.UTF-8
-
-# Dynamic ENV paths
-# Because we renamed the folder to 'current' in the builder, these paths work for everyone.
+ENV CC=gcc-14
+ENV CXX=g++-14
 ENV QT_VERSION=${QT_VERSION}
-ENV PATH=/opt/qt/current/bin:$PATH
-ENV LD_LIBRARY_PATH=/opt/qt/current/lib:/usr/local/lib
-ENV Qt6_DIR=/opt/qt/current/lib/cmake/Qt6
-ENV CMAKE_PREFIX_PATH=/opt/qt/current/lib/cmake/Qt6:/opt/qt/current:$CMAKE_PREFIX_PATH
+ENV QT_ROOT_DIR=/opt/qt/current
 ENV QT_INSTALL_PATH=/opt/qt/current
+ENV Qt6_DIR=/opt/qt/current/lib/cmake/Qt6
+ENV CMAKE_PREFIX_PATH=/opt/qt/current
+ENV QMAKE=/opt/qt/current/bin/qmake
+ENV PATH=/opt/qt/current/bin:$PATH
+ENV LD_LIBRARY_PATH=/opt/qt/current/lib
+# AppImages (linuxdeploy) run without FUSE inside containers
+ENV APPIMAGE_EXTRACT_AND_RUN=1
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8

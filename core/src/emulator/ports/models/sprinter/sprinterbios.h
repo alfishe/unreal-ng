@@ -18,7 +18,8 @@ class EmulatorContext;
 /// A name is a shipped file ("sp2k-3.06-hf2.rom"), its version alias ("3.04", "3.06", "3.07"),
 /// "rom/sprinter/<file>", or the path of any other 256 KB image.
 ///
-/// The shipped config's default is 3.07 BETA 1 (owner decision 2026-10-02); 3.04 and 3.06 stay selectable.
+/// The shipped config's default is 3.06 Hotfix 2 (owner decision 2026-10-03: back from 3.07 BETA 1 until the BIOS
+/// author publishes his fixed head); 3.04 and 3.07 stay selectable.
 ///
 /// Worked example: select {bios: "3.04", fast_start: 0, reset: true} on a running SPRINTER sets
 /// [ROM] SPRINTER = rom/sprinter/sp2k-3.04.rom and FastStart = 0 for this instance, reloads
@@ -31,10 +32,16 @@ struct Image
     const char* alias;    ///< short version name
     const char* version;  ///< what it is
     uint32_t crc32;       ///< of the 256 KB file
+    const char* knownIssue;  ///< firmware behavior a user should know before relying on the image; nullptr = none
 };
 
 /// The shipped images (docs/inprogress/2026-09-28-sprinter/bios-versions.md)
 const std::vector<Image>& Known();
+
+/// The known issues of the image with this CRC-32 (empty for an image without any, or one that is not shipped).
+/// Worked example: 3.07 BETA 1 (#A06A1A02) -> one entry, the floppy driver's IY change that stops DSS 1.71.57
+/// from starting programs on a floppy (bios-versions.md §5.2)
+std::vector<std::string> KnownIssues(uint32_t crc32);
 
 /// A name -> the path [ROM] SPRINTER takes ("rom/sprinter/sp2k-3.06-hf2.rom" or the given path);
 /// false with `error` when nothing matches or the file is missing
@@ -47,7 +54,14 @@ struct Options
     int fastStart = -1;        ///< [SPRINTER] FastStart: 1 skips the PLD loader
     int accelIntSuspend = -1;  ///< [SPRINTER] AccelIntSuspend: an INT acknowledge blocks accelerator operations
     bool reset = true;         ///< runtime: reset now (else at the next reset)
+    /// [ISA] Slot1= / Slot2= at create (sprinterisa::CardKind; -1 = as configured). The population is fixed
+    /// for the instance's lifetime (ISA design Q5 = A): runtime selections refuse it
+    int isaSlot[2] = {-1, -1};
 };
+
+/// "none" | "zxbus" | "ram" | "ne2000" | ... (the [ISA] SlotN= names, any case) into options.isaSlot[slot]
+/// (0-based); empty = keep. False with `error`
+bool IsaSlotFromString(const std::string& text, int slot, Options& options, std::string& error);
 
 /// bios / fast_start / accel_int_suspend / reset as text ("1" / "0", on / off, true / false; empty = keep)
 bool OptionsFromStrings(const std::string& bios, const std::string& fastStart, const std::string& accelIntSuspend,

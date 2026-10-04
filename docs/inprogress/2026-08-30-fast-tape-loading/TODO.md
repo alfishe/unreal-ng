@@ -100,7 +100,20 @@ The single-cause hypothesis below was only partly right:
    ENTER / N. The only hang left is O4 (ALEX_S, 48K, fast loading on). The P4 thresholds held:
    no case parked or froze a loader that was listening. Lesson: SPACE is BREAK for LD-BYTES, never
    a "press any key" key in a sweep.
-6. Close out; split O1–O3 into their own item if they survive.
+6. Close out; split O1–O3 into their own item if they survive. **Re-checked 2026-10-03** (headless sweep, 48K and Pentagon):
+   - **O1 KID__DR, 48K and 128K: closed 2026-10-04, incompatible (owner decision).** After block 2 the program waits for
+     Y / N, then its own loader reads the 6912-byte screen block, and it never locks onto that pilot: at `#5DE1` the loader
+     has measured two pilot pulses as B = `#BF` (191) and needs more than `#C6` (198), so it counts it as no pilot and starts
+     over, for ever; the tape then plays to its end. Reproduced in unreal-ng 48K and 128K and, with the original ROM, in
+     MAME's `spectrum`, so it is not the tape manager. The loader's pulse counter loop (`#5E47`, 63 T per count) is tuned
+     for a machine without memory contention: a Pentagon-class one (hypothesis, not verified: the Pentagon with the original
+     48K ROM was not run). The sweep verdict is `dead` for every KID__DR case (`cursor=6/6, tape=ended` only means the tape
+     played past a loader that never read it). The 2026-10-03 note here that the 50-frame delay (`ld hl,#0415 / djnz`) and a
+     pilot rewind were the cause was wrong: the pause landing after the end of a short pilot (97 frames, shorter than
+     `TAPE_PILOT_HOLD_FRAMES`) was a real defect and is fixed (`520915269`, test
+     `ShortPilotIsPausedAndRewoundBeforeItRunsOut`), but it did not make this tape load.
+   - Sweep before / after the threshold change (120 cases): only the four KID__DR 48K cases differ (better); `lphp`
+     48K signal flips OK to dead only through one stray pixel in the liveness check (final screens identical: "Bytes: main.tap").
 
 <details><summary>Original 2026-09-16 hypothesis (kept for history)</summary>
 

@@ -4,6 +4,9 @@
 
 #include "sprinterfixture.h"
 
+#include <memory>
+#include <vector>
+
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 class SprinterMemory_Test : public SprinterFixture
@@ -206,8 +209,66 @@ TEST_F(SprinterMemory_Test, ResetPage_WriteRequestsSoftReset)
     EXPECT_EQ(_sprinterMemory->GetBankAction(3), SprinterMemory::BankAction::Plain);
 }
 
-// T-MEM-9: window 3 = #D2 with #1FFD bit 4: the ISA view reads #FF, writes are ignored
-TEST_F(SprinterMemory_Test, IsaView_ReadsFFWritesIgnored)
+namespace
+{
+/// An ISA card for the routing tests: I/O at #300-#30F answers the register number, writes are kept; 16 bytes of
+/// memory at #DC000; counts the real reads (peeks must not count)
+class RoutingCard : public sprinterisa::IIsaCard
+{
+public:
+    const char* Kind() const override { return "ne2000"; }
+    bool IoRead(const sprinterisa::IsaCycle& c, uint8_t& value) override
+    {
+        ++reads;
+        if ((c.address & 0x3F0) != 0x300)
+            return false;
+        value = static_cast<uint8_t>(c.address & 0x0F);
+        return true;
+    }
+    bool IoWrite(const sprinterisa::IsaCycle& c, uint8_t value) override
+    {
+        writes.push_back({c.address, value});
+        return true;
+    }
+    bool MemRead(const sprinterisa::IsaCycle& c, uint8_t& value) override
+    {
+        ++reads;
+        if (c.address < 0xDC000 || c.address >= 0xDC010)
+            return false;
+        value = ram[c.address - 0xDC000];
+        return true;
+    }
+    bool MemWrite(const sprinterisa::IsaCycle& c, uint8_t value) override
+    {
+        if (c.address < 0xDC000 || c.address >= 0xDC010)
+            return false;
+        ram[c.address - 0xDC000] = value;
+        return true;
+    }
+    bool IoPeek(uint32_t address, uint8_t& value) const override
+    {
+        if ((address & 0x3F0) != 0x300)
+            return false;
+        value = static_cast<uint8_t>(address & 0x0F);
+        return true;
+    }
+    bool MemPeek(uint32_t address, uint8_t& value) const override
+    {
+        if (address < 0xDC000 || address >= 0xDC010)
+            return false;
+        value = ram[address - 0xDC000];
+        return true;
+    }
+    void SetReset(bool) override {}
+
+    int reads = 0;
+    std::vector<std::pair<uint32_t, uint8_t>> writes;
+    uint8_t ram[16] = {};
+};
+}  // namespace
+
+// T-ISA-7 (was T-MEM-9): window 3 = #D2 with #1FFD bit 4 and empty slots: reads #FF, writes reach no RAM
+TEST_F(SprinterMemory_Test, IsaView_EmptySlotsReadFFWritesIgnored)
 {
     OpenDcp();
     Pld().sc = 0x10;
@@ -217,12 +278,57 @@ TEST_F(SprinterMemory_Test, IsaView_ReadsFFWritesIgnored)
     EXPECT_EQ(Peek(0xC010), 0xFF);
     Poke(0xC010, 0x12);
     EXPECT_EQ(Ram(0xD2, 0x0010), 0xD2);
+    EXPECT_EQ(_decoder->GetIsaBus().GetCounters(1).memReads, 1u) << "the read was a cycle of slot 2's memory space";
+    EXPECT_EQ(_decoder->GetIsaBus().GetCounters(1).memWrites, 1u);
 
     Pld().cells[Pld().pg3] = 0xD1;  // not an ISA pattern ((page & #F9) != #D0)
     _decoder->UpdateBanks();
     EXPECT_EQ(Peek(0xC010), 0xD1);
 }
 
+// T-ISA-7: window 3 in ISA mode routes CPU reads, writes and opcode fetches to the card of the slot the page names,
+// at the address #9FBD bits 5-0 << 14 | A13-A0; tool reads peek without side effects; no Spectrum shadow write
+TEST_F(SprinterMemory_Test, IsaView_RoutesCyclesToTheCard)
+{
+    OpenDcp();
+    auto owned = std::make_unique<RoutingCard>();
+    RoutingCard* card = owned.get();
+    _decoder->GetIsaBus().Fit(1, std::move(owned));
+
+    // Slot 2 I/O (#D6): the RTL8019AS kit's ID read at #C30A and a command write at #C300
+    Pld().sc = 0x10;
+    _decoder->UpdateBanks();  // window 3's cell index follows #1FFD
+    Pld().cells[Pld().pg3] = 0xD6;
+    _decoder->UpdateBanks();
+    EXPECT_EQ(Peek(0xC30A), 0x0A);
+    EXPECT_EQ(card->reads, 1);
+    Poke(0xC300, 0x21);
+    ASSERT_EQ(card->writes.size(), 1u);
+    EXPECT_EQ(card->writes[0].first, 0x00300u);
+    EXPECT_EQ(card->writes[0].second, 0x21);
+    EXPECT_EQ(Ram(0xD6, 0x0300), 0xD6) << "the RAM page under the view is not written";
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xC30B), 0x0B) << "a tool read peeks";
+    EXPECT_EQ(card->reads, 1) << "peeks have no side effect";
+    EXPECT_EQ(Peek(0xC10A), 0xFF) << "#00 10A is outside the card's window";
+
+    // Slot 2 memory (#D2) with #9FBD = #37: #C000 is ISA #DC000; code runs from it (opcode fetches are ISA cycles)
+    SetCodeAll(0x9FBD, false, SprinterCode::IsaControl);
+    Out(0x9FBD, 0x37);
+    EXPECT_EQ(_decoder->GetIsaBus().Latch(), 0x37) << "port-table code #1B";
+    Pld().cells[Pld().pg3] = 0xD2;
+    _decoder->UpdateBanks();
+    Poke(0xC000, 0x3E);  // LD A,#77 : RET
+    Poke(0xC001, 0x77);
+    Poke(0xC002, 0xC9);
+    EXPECT_EQ(card->ram[0], 0x3E);
+    _z80->a = 0;
+    _z80->sp = 0x9000;
+    RunCode({0xCD, 0x00, 0xC0});  // CALL #C000
+    EXPECT_EQ(_z80->a, 0x77) << "the CPU executed card memory";
+
+    Out(0x9FBD, 0x00);
+    _decoder->GetIsaBus().Fit(1, nullptr);
+}
 // Loader layout: before the PLD is configured the windows show ROM pages #C-#F;
 // the Z84C15's CS0 boundary gives the top to the fast RAM
 TEST_F(SprinterMemory_Test, LoaderLayout_RomPagesAndFastRamAboveCs0)
@@ -317,6 +423,17 @@ TEST_F(SprinterMemory_Test, ToolReads_MatchCpuReadsInEveryMapping)
     _decoder->UpdateBanks();
     ASSERT_EQ(_memory->GetMemoryBankMode(0), BANK_CACHE);
     expectAllMatch("fast RAM in window 0");
+    // The debugger's page of a fast RAM window (page-bound breakpoints key on it): the cache page the window
+    // points at, never an unset value
+    for (uint8_t fastPage = 0; fastPage < MAX_CACHE_PAGES; fastPage++)
+    {
+        _sprinterMemory->MapFastRamToBank(0, fastPage);
+        const MemoryPageDescriptor where = _memory->MapZ80AddressToPhysicalPage(0x1234);
+        EXPECT_EQ(where.mode, BANK_CACHE);
+        EXPECT_EQ(where.page, fastPage);
+        EXPECT_EQ(where.addressInPage, 0x1234);
+    }
+    _decoder->UpdateBanks();
     Pld().cacheOn = 0;
     Pld().romOff = 1;
     _decoder->UpdateBanks();

@@ -18,9 +18,14 @@ media verbs in [use-media-slots.md](use-media-slots.md). Verified 2026-10-02 on 
   `ide1.master`, `ide1.slave` (secondary). Alias `hd` = the first hard-disk unit. An empty unit
   has no device on the bus.
 - **Which BIOS** (`[ROM] SPRINTER=` in `configs/sprinter/unreal.ini`):
-  - `rom/sprinter/sp2k-3.07-beta1.rom` (the default since 2026-10-02) or
-    `rom/sprinter/sp2k-3.06-hf2.rom`: needed for **DSS 1.71** (the MAME pack's system disk boots to
+  - `rom/sprinter/sp2k-3.06-hf2.rom` (the default since 2026-10-03) or
+    `rom/sprinter/sp2k-3.07-beta1.rom`: needed for **DSS 1.71** (the MAME pack's system disk boots to
     Flex Navigator 1.15 on both); they probe all **four** units.
+  - **3.07 BETA 1 with DSS 1.71.57**: programs on a **floppy** do not start ("Invalid EXE file" /
+    "Bad command or file name") and a `copy` from the floppy writes a 0-byte file - the beta's floppy driver
+    returns with IY changed (firmware; MAME agrees). Hard-disk programs are not affected. Use 3.06 Hotfix 2 for
+    floppy work, or the DSS of the 3.07 recovery disk; `state/sprinter/bios` lists it under `known_issues`
+    ([bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md) §5.2).
   - `rom/sprinter/sp2k-3.04.rom` boots DSS 1.62 from a hard disk and probes the **primary**
     channel only; on it DSS 1.71 loads SYSTEM.DOS and stops with "Fatal error! Press RESET to
     restart." (MAME does the same).
@@ -61,7 +66,7 @@ emulator_manage {"action":"reset"}
 inspect_state {"aspects":["ide"]}
 #  -> [ide] SPRINTER, selected primary master, data latch #0
 #       ide0.master (disk): <image>, status #50, last READ SECTORS
-capture_media {"action":"screenshot","format":"png","mode":"full","filename":"scratch/sprinter-hdd.png"}
+capture_media {"action":"screenshot","format":"png","area":"full","filename":"scratch/sprinter-hdd.png"}
 ```
 
 - `media {"action":"targets","path":...}` lists the four IDE slots and the NeoGS SD card for a
@@ -85,7 +90,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/ide0.master/insert -H 'Content-Type
 curl -s -X POST $BASE/emulator/$EMU_ID/reset
 
 # ~10 s of emulated time later (on BIOS 3.04 the empty slave probe takes 5.7 s; tap F4 below)
-curl -s "$BASE/emulator/$EMU_ID/capture/screen?format=png&mode=full&path=$PWD/scratch/sprinter-hdd.png" | jq -c '{saved}'
+curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=$PWD/scratch/sprinter-hdd.png" | jq -c '{saved}'
 curl -s $BASE/emulator/$EMU_ID/state/ide | jq -c '{scheme, channels, selected_channel, adapter: .adapter.data_latch,
       units: [.units[] | {slot, present, status: .task_file.status, last: .command.name}]}'
 
@@ -123,7 +128,7 @@ media list
   file changes only on `save` (the CHD written again, unchanged hunks kept as stored). BIOS 3.06
   and 3.07 boot DSS 1.71 from `sp_hdd_sys.chd` directly (`RealHdd_Dss171BootsFromTheMamePackChd`).
 - **DSS 1.71 on BIOS 3.04 fails** with "Fatal error" after "Start from Hard disk...Ok": switch the
-  BIOS to 3.07 BETA 1 (the shipped default) or 3.06 Hotfix 2, not the disk.
+  BIOS to 3.06 Hotfix 2 (the shipped default) or 3.07 BETA 1, not the disk.
 - **No IDE wait for an empty channel**: it reads `#7F` (the ATA DD7 pull-down, BSY = 0), so every
   BIOS prints "None" for its units at once - no F4 for the secondary channel of 3.06 / 3.07. The one
   wait left is BIOS 3.04's absent slave next to a master (280 frames); tap F4 at its

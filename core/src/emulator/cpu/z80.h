@@ -902,12 +902,18 @@ public:
         bool isAlternate;
         uint16_t (*getter)(const Z80State*);
         void (*setter)(Z80State*, uint16_t);
+        uint16_t maxValue = 0;  ///< the largest value a write accepts (IM 2, IFF 1); 0: any (8-bit truncates)
     };
 
     static const RegisterInfo* GetRegisterInfo();
     static size_t GetRegisterCount();
     static const RegisterInfo* FindRegister(const std::string& name);
     static bool GetRegisterValue(Z80State* state, const std::string& name, uint16_t& value, bool& is16bit);
+    /// False for an unknown name or a value above the register's maxValue (IM, IFF1, IFF2)
     static bool SetRegisterValue(Z80State* state, const std::string& name, uint16_t value);
+    /// R as LD A,R reads it: bit 7 as last written, bits 6:0 the refresh counter
+    static uint8_t RegisterR(const Z80Registers* state);
+    /// Z80BoundaryEnum as the debugger protocol names it: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack
+    static const char* BoundaryName(uint8_t boundary);
     /// endregion </Register Access API>
 };

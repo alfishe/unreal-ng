@@ -468,3 +468,139 @@ TEST_F(ScreenTSConf_Test, TIM5_DmaCramWriteLandsAtItsDot)
     EXPECT_EQ(at(420, 99), blue) << "line 99 after the write";
     EXPECT_EQ(at(120, 100), blue);
 }
+
+/// GEOM-1: the frame's working window is the V_CONFIG graphics window in frame pixels, and the rendered
+/// picture agrees: the pixel inside each corner is the graphics, the pixel just outside is the border.
+/// One 720x288 frame for every mode (2 px per raster dot, 1 px per line), so a 256x192 window is
+/// 512x192 pixels; the table's "screen = the whole frame" for TS-Conf was not the picture
+TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x06);
+    // The border: green. The fixture's RAM is tagged (page 5 is all 0x05), so the ZX ink is color 5 and
+    // the paper 0: the border takes color 6, and nothing in the window is green
+    ts.cram[0xA6] = 0x03E0;
+    const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
+
+    struct Case
+    {
+        uint8_t vConfig;
+        PictureRect expected;
+    };
+    // Windows of hardware-spec §4.1, in frame pixels: x = (dot - 88) * 2, y = line - 32, width = dots * 2
+    const Case cases[] = {
+        {0x00, {104, 48, 512, 192}},  // 256x192
+        {0x40, {40, 44, 640, 200}},   // 320x200
+        {0x80, {40, 24, 640, 240}},   // 320x240
+        {0xC0, {0, 0, 720, 288}},     // 360x288: the whole frame
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(testing::Message() << "V_CONFIG " << int(c.vConfig));
+        Reg(TsConfReg::VConfig, c.vConfig);
+        PixelAfterFrame(0, 0);  // a whole frame with these registers
+        const PictureRect w = Screen()->WorkingWindow();
+        EXPECT_EQ(w.x, c.expected.x);
+        EXPECT_EQ(w.y, c.expected.y);
+        EXPECT_EQ(w.width, c.expected.width);
+        EXPECT_EQ(w.height, c.expected.height);
+
+        uint32_t* buffer = nullptr;
+        size_t size = 0;
+        Screen()->GetFramebufferData(&buffer, &size);
+        auto at = [&](int x, int y) { return buffer[y * 720 + x]; };
+        const int right = w.x + w.width - 1;
+        const int bottom = w.y + w.height - 1;
+        EXPECT_NE(at(w.x, w.y), border) << "top-left corner is graphics";
+        EXPECT_NE(at(right, bottom), border) << "bottom-right corner is graphics";
+        if (w.x > 0)
+        {
+            EXPECT_EQ(at(w.x - 1, w.y), border) << "left of the window is border";
+            EXPECT_EQ(at(right + 1, w.y), border) << "right of the window is border";
+        }
+        if (w.y > 0)
+        {
+            EXPECT_EQ(at(w.x, w.y - 1), border) << "above the window is border";
+            EXPECT_EQ(at(w.x, bottom + 1), border) << "below the window is border";
+        }
+    }
+}
+
+/// A program that changes the video mode mid-frame (zifi.spg: a 256C header, a TXT list, a 256C status bar, every
+/// frame) keeps what the beam already drew. All TS modes share one 720x288 frame and the hardware has no
+/// framebuffer to clear, so a V_CONFIG mode change must not wipe the lines above it (it did: only the last
+/// segment survived, a black screenshot with a status bar at the bottom)
+TEST_F(ScreenTSConf_Test, VID6_ModeChangeMidFrameKeepsTheDrawnLines)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x06);
+    ts.cram[0xA6] = 0x03E0;  // the border: green, nothing else in the picture is
+    const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
+    Reg(TsConfReg::VConfig, 0x00);
+
+    TsConfEngine& engine = _decoder->GetEngine();
+    engine.OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    Screen()->InitRaster();
+    Screen()->ResetPrevTstate();
+    auto runTo = [&](uint32_t line) {
+        const uint32_t t = line * TsConfEngine::kLineTacts;
+        _z80->t = t;
+        engine.CatchUp(t);
+        Screen()->UpdateScreen();
+    };
+    runTo(60);
+    Reg(TsConfReg::VConfig, 0x01);  // ZX -> 16C
+    runTo(90);
+    Reg(TsConfReg::VConfig, 0x03);  // 16C -> TXT
+    runTo(120);
+    Reg(TsConfReg::VConfig, 0x02);  // TXT -> 256C
+    runTo(150);
+
+    uint32_t* buffer = nullptr;
+    size_t size = 0;
+    Screen()->GetFramebufferData(&buffer, &size);
+    auto at = [&](uint32_t dot, uint32_t line) { return buffer[Fy(line) * 720 + Fx(dot)]; };
+    EXPECT_EQ(at(100, 40), border) << "a line drawn in the first mode";
+    EXPECT_EQ(at(100, 70), border) << "a line drawn in the second mode";
+    EXPECT_EQ(at(100, 100), border) << "a line drawn in the third mode";
+    EXPECT_EQ(at(100, 130), border) << "a line of the last mode";
+}
+
+/// GEOM-2: with T_CONFIG[0] the TSU works in the whole 360x288 window and its sprites and tiles show over the
+/// border. The picture then is that whole window, not the V_CONFIG graphics window (area=screen cut the sprites
+/// that sit on the border). Nothing to show beyond the V_CONFIG window when no TSU layer is on, or NOTSU hides it
+TEST_F(ScreenTSConf_Test, GEOM2_WorkingWindowIncludesTheTsuWindow)
+{
+    const PictureRect small{104, 48, 512, 192};  // V_CONFIG 256x192
+    const PictureRect whole{0, 0, 720, 288};
+    struct Case
+    {
+        uint8_t vConfig;
+        uint8_t tConfig;
+        PictureRect expected;
+        const char* why;
+    };
+    const Case cases[] = {
+        {0x00, 0x00, small, "no TSU layer, window bit off"},
+        {0x00, 0x01, small, "window bit on but no layer enabled: nothing to show outside"},
+        {0x00, 0x80, small, "sprites on, window bit off: the TSU stays in the graphics window"},
+        {0x00, 0x81, whole, "sprites on, 360x288 TS window"},
+        {0x00, 0x21, whole, "tile layer 0 on, 360x288 TS window"},
+        {0x00, 0x41, whole, "tile layer 1 on, 360x288 TS window"},
+        {0x10, 0x81, small, "NOTSU hides the TSU"},
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(c.why);
+        Reg(TsConfReg::VConfig, c.vConfig);
+        Reg(TsConfReg::TConfig, c.tConfig);
+        PixelAfterFrame(0, 0);
+        const PictureRect w = Screen()->WorkingWindow();
+        EXPECT_EQ(w.x, c.expected.x);
+        EXPECT_EQ(w.y, c.expected.y);
+        EXPECT_EQ(w.width, c.expected.width);
+        EXPECT_EQ(w.height, c.expected.height);
+    }
+}

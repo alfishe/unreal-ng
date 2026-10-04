@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <string>
 #include <vector>
 
 #include "common/stringhelper.h"
@@ -45,6 +47,204 @@ TEST_F(SoundChip_AY8910_Test, ToneGenerator)
 {
     ToneGeneratorCUT toneGenerator;
 }
+
+/// region <Reset state and I/O ports>
+
+// The /RESET (power-on, machine reset) state is the datasheets' one: every register is 0
+// (GI AY-3-8910: "applying logic 0 to the Reset pin will reset all registers to 0"; Yamaha
+// YM2149: "the contents of all registers in the array are reset to 0"; YM2203 /IC: "All the
+// content of register array become 0"). R7 = 0 makes both I/O ports inputs, whose pins read
+// #FF through the on-chip pull-ups ("when in the input mode, all pins will read normally
+// high"). The emulator used to reset R7 to #FF (both ports outputs with latch 0, tone and noise
+// off), which a reader of R14 / R15 saw as 0. Sources: docs/inprogress/2026-10-04-ay-reset/TODO.md
+
+namespace
+{
+/// A chip with every register and the selection moved away from the reset state
+void ScrambleRegisters(SoundChip_AY8910& chip)
+{
+    for (uint8_t reg = 0; reg < 16; reg++)
+        chip.writeRegister(reg, static_cast<uint8_t>(0xA5 ^ (reg * 0x11)));
+    chip.writeRegister(AY_MIXER_CONTROL, 0xFF);
+    chip.setRegister(AY_PORTB);
+}
+
+/// The datasheet reset state, checked through every view the emulator has of it
+void ExpectDatasheetResetState(SoundChip_AY8910& chip)
+{
+    const uint8_t* regs = chip.getRegisters();
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        EXPECT_EQ(regs[reg], 0) << "register file R" << int(reg);
+        EXPECT_EQ(chip.readRegister(reg), 0) << "readRegister R" << int(reg);
+    }
+    EXPECT_EQ(chip.getCurrentRegister(), 0) << "selected register";
+
+    // The generator start state is unchanged by the register fix (e4c3bbbaf, b852df9f3): tone and
+    // noise stay gated off until the program writes R7, fixed amplitude 0. Pinned in
+    // GeneratorStartAfterResetIsUnchanged; whether the gates should follow R7 = 0 is an open
+    // owner decision (docs/inprogress/2026-10-04-ay-reset/TODO.md)
+    for (uint8_t ch = 0; ch < 3; ch++)
+    {
+        const auto& tone = chip.getToneGenerators()[ch];
+        EXPECT_FALSE(tone.toneEnabled()) << "channel " << int(ch) << " tone gate";
+        EXPECT_FALSE(tone.noiseEnabled()) << "channel " << int(ch) << " noise gate";
+        EXPECT_EQ(tone.volume(), 0) << "channel " << int(ch) << " amplitude";
+        EXPECT_FALSE(tone.envelopeEnabled()) << "channel " << int(ch) << " envelope mode";
+    }
+
+    // Both ports are inputs: a bus read gives the pulled-up pins, not the zero latch
+    chip.setRegister(AY_PORTA);
+    EXPECT_EQ(chip.portDeviceInMethod(0xFFFD), 0xFF) << "IN #FFFD of R14 (port A input)";
+    EXPECT_EQ(chip.readCurrentRegister(), 0xFF) << "R14 bus read";
+    chip.setRegister(AY_PORTB);
+    EXPECT_EQ(chip.portDeviceInMethod(0xFFFD), 0xFF) << "IN #FFFD of R15 (port B input)";
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTB), 0xFF) << "R15 bus read";
+    chip.setRegister(0);
+}
+}  // namespace
+
+TEST_F(SoundChip_AY8910_Test, PowerOnStateIsTheDatasheetResetState)
+{
+    // Construction is power-on: the chip runs reset()
+    SoundChip_AY8910CUT chip(_context);
+    ExpectDatasheetResetState(chip);
+}
+
+TEST_F(SoundChip_AY8910_Test, ResetClearsAllRegisters)
+{
+    SoundChip_AY8910& chip = *_soundChip;
+    ScrambleRegisters(chip);
+    ASSERT_EQ(chip.getRegisters()[AY_MIXER_CONTROL], 0xFF);
+
+    chip.reset();
+    ExpectDatasheetResetState(chip);
+}
+
+TEST_F(SoundChip_AY8910_Test, ResetStateIsSilent)
+{
+    // Every amplitude is 0 after reset: no output at all
+    SoundChip_AY8910& chip = *_soundChip;
+    ScrambleRegisters(chip);
+    chip.reset();
+    for (int n = 0; n < 2000; n++)
+    {
+        chip.updateState(true);
+        ASSERT_EQ(chip.mixedLeft(), 0.0) << "tick " << n;
+        ASSERT_EQ(chip.mixedRight(), 0.0) << "tick " << n;
+    }
+}
+
+/// The generators' start after a reset is pinned bit for bit: the register fix (R7 #FF -> 0) must not
+/// move it. Tone counters at 0 with output low, the noise LFSR seeded with 1 (not #FFFFFFFF, see
+/// NoiseGenerator::reset), noise period 1 and output low; the first 256 generator ticks of the noise
+/// output and of tone A (period 1: toggles every tick) are the same as before the fix. Expected
+/// values recorded with the pre-fix reset (R7 = #FF) and re-checked after it
+TEST_F(SoundChip_AY8910_Test, GeneratorStartAfterResetIsUnchanged)
+{
+    SoundChip_AY8910& chip = *_soundChip;
+    ScrambleRegisters(chip);
+    for (int n = 0; n < 1000; n++)
+        chip.updateState(true);  // move every generator away from its start
+    chip.reset();
+
+    // TTD blob layout (soundchip_ay8910.cpp): tone n at 17 + 7n (period u16, counter u16, volume,
+    // flags, out), noise at 38 (period, counter u16, out, LFSR u32), envelope at 46
+    std::vector<uint8_t> blob(chip.TTDStateSize());
+    chip.TTDSaveState(blob.data());
+    for (size_t ch = 0; ch < 3; ch++)
+    {
+        const uint8_t* tone = blob.data() + 17 + 7 * ch;
+        const uint8_t expectedTone[7] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        EXPECT_EQ(0, std::memcmp(tone, expectedTone, 7)) << "tone " << ch << " start state";
+    }
+    const uint8_t expectedNoise[8] = {0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
+    EXPECT_EQ(0, std::memcmp(blob.data() + 38, expectedNoise, 8)) << "noise start state (period 1, LFSR seed 1)";
+
+    // Envelope: shape 8 (continuous sawtooth, 279eb3d4e - kept for software that never writes R13,
+    // although the register file reads R13 = 0), period 1, counter 0, segment 0, output 31
+    const uint8_t expectedEnvelope[11] = {0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F};
+    EXPECT_EQ(0, std::memcmp(blob.data() + 46, expectedEnvelope, 11)) << "envelope start state";
+    EXPECT_EQ(chip.readRegister(AY_ENVELOPE_SHAPE), 0x00) << "R13 reads 0 while the generator runs shape 8";
+
+    static const char* const kNoise =
+        "0000000000000000000000000000000001100000000000000000000000000110"
+        "0001100000000000000000000110000000000110000000000000011000011000"
+        "0110000110000000011000000000000000000000011001100001100000000000"
+        "0000011001111000000001100000000001100110000111100110000110000110";
+    std::string noise;
+    std::string toneA;
+    for (int n = 0; n < 256; n++)
+    {
+        chip.updateState(true);
+        chip.TTDSaveState(blob.data());
+        noise += blob[41] ? '1' : '0';  // noise out
+        toneA += blob[23] ? '1' : '0';  // tone A out
+        // Envelope output: a falling sawtooth 31..0, one step per tick (8 periods of 32 steps)
+        EXPECT_EQ(static_cast<int8_t>(blob[56]), 31 - (n % 32)) << "envelope output at tick " << n;
+    }
+    EXPECT_EQ(noise, kNoise) << "noise LFSR output after reset";
+    std::string expectedTone;
+    for (int n = 0; n < 256; n++)
+        expectedTone += (n % 2 == 0) ? '1' : '0';
+    EXPECT_EQ(toneA, expectedTone) << "tone A output after reset";
+
+    // LFSR after 128 shifts
+    chip.TTDSaveState(blob.data());
+    uint32_t lfsr = 0;
+    std::memcpy(&lfsr, blob.data() + 42, 4);
+    EXPECT_EQ(lfsr, 0x8126u);
+}
+
+TEST_F(SoundChip_AY8910_Test, OutputPortReadsItsLatchInputPortReadsPins)
+{
+    SoundChip_AY8910& chip = *_soundChip;
+    chip.reset();
+
+    // Latches written while both ports are inputs: the register file keeps them, the bus shows the pins
+    chip.writeRegister(AY_PORTA, 0x5A);
+    chip.writeRegister(AY_PORTB, 0x3C);
+    EXPECT_EQ(chip.readRegister(AY_PORTA), 0x5A) << "register file keeps the latch";
+    EXPECT_EQ(chip.readRegister(AY_PORTB), 0x3C) << "register file keeps the latch";
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTA), 0xFF);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTB), 0xFF);
+
+    // R7 bit 6: port A output - the latch appears, port B stays an input
+    chip.writeRegister(AY_MIXER_CONTROL, 0b0100'0000);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTA), 0x5A);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTB), 0xFF);
+
+    // R7 bit 7: port B output too
+    chip.writeRegister(AY_MIXER_CONTROL, 0b1100'0000);
+    chip.setRegister(AY_PORTA);
+    EXPECT_EQ(chip.portDeviceInMethod(0xFFFD), 0x5A);
+    chip.setRegister(AY_PORTB);
+    EXPECT_EQ(chip.portDeviceInMethod(0xFFFD), 0x3C);
+
+    // Only port B output; a later latch write shows at once on the output port
+    chip.writeRegister(AY_MIXER_CONTROL, 0b1000'0000);
+    chip.writeRegister(AY_PORTB, 0x81);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTA), 0xFF);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTB), 0x81);
+
+    // Back to inputs: pins again, the latch survives in the register file
+    chip.writeRegister(AY_MIXER_CONTROL, 0x00);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTA), 0xFF);
+    EXPECT_EQ(chip.readRegisterOnBus(AY_PORTB), 0xFF);
+    EXPECT_EQ(chip.readRegister(AY_PORTA), 0x5A);
+    EXPECT_EQ(chip.readRegister(AY_PORTB), 0x81);
+
+    // Every other register reads back unchanged through the bus, whatever the port directions
+    for (uint8_t reg = 0; reg < AY_PORTA; reg++)
+    {
+        const uint8_t value = static_cast<uint8_t>(0x10 + reg);
+        chip.writeRegister(reg, value);
+        EXPECT_EQ(chip.readRegisterOnBus(reg), value) << "R" << int(reg);
+    }
+    EXPECT_EQ(chip.readRegisterOnBus(0x10), 0xFF) << "no register 16";
+}
+
+/// endregion </Reset state and I/O ports>
 
 /// region <Generators period/frequency tests>
 

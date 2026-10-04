@@ -2,6 +2,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/video/screen.h"
 #include "emulator/zxpoly/zxpolyscreencomposer.h"
 
 #include <array>
@@ -159,6 +160,11 @@ public:
     /// not match the current display size
     bool CopyDisplay(uint8_t* dst, size_t dstSize);
 
+    /// The latest display frame and its geometry as one pair (any thread): the frame the user sees, which is
+    /// what a screenshot of the master returns. The working picture is the master's, doubled. False before the
+    /// first frame
+    bool SnapshotDisplay(FrameSnapshot& out);
+
     /// Runs `frames` frames as RunFrame does; at unlimited speed the slaves'
     /// frames overlap the master's next ones (SetPipelinedSlaves). All four
     /// are at the last frame boundary when it returns
@@ -278,7 +284,7 @@ private:
 
     std::string _prefix;
     std::array<std::shared_ptr<Emulator>, MODULES> _instances{};
-    std::array<std::unique_ptr<ZXPolyPortInterceptor>, MODULES> _interceptors{};
+    std::array<std::unique_ptr<ZXPolyPortInterceptor>, MODULES> _interceptors;
 
     // Platform state
     uint8_t _port3D00 = 0;
@@ -333,6 +339,7 @@ private:
     std::vector<uint32_t> _displayBack;
     unsigned _displayWidth = 0;
     unsigned _displayHeight = 0;
+    PictureGeometry _displayGeometry;  // of _displayFront (under _displayMutex)
 
     // Host input queued for the next frame boundary (keys and the Kempston
     // mouse), applied to all four members at once

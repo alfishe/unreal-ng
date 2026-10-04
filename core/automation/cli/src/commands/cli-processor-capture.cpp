@@ -9,7 +9,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
-#include <emulator/video/screencapture.h>
+#include <emulator/emulatorcontext.h>
+#include <emulator/video/screenshotter.h>
 
 #include <sstream>
 
@@ -109,57 +110,110 @@ void CLIProcessor::HandleCaptureOCR(const ClientSession& session, std::shared_pt
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleCaptureScreen(const ClientSession& session, 
+void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
                                          std::shared_ptr<Emulator> emulator,
                                          const std::vector<std::string>& args)
 {
-    // Get emulator ID
-    auto manager = EmulatorManager::GetInstance();
-    std::string emulatorId = manager->GetSelectedEmulatorId();
-    
-    if (emulatorId.empty())
+    // The session's own emulator (not "the selected one, or the first")
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context || !context->pScreen)
     {
-        auto ids = manager->GetEmulatorIds();
-        if (!ids.empty())
-        {
-            emulatorId = ids[0];
-        }
-    }
-    
-    // Parse format option (default: gif)
-    std::string format = "gif";
-    for (size_t i = 1; i < args.size(); i++)
-    {
-        if (args[i] == "--format=png" || args[i] == "-png" || args[i] == "png")
-        {
-            format = "png";
-        }
-        else if (args[i] == "--format=gif" || args[i] == "-gif" || args[i] == "gif")
-        {
-            format = "gif";
-        }
-        // Future: handle page selection (5, 7, shadow)
-    }
-    
-    // Capture screen
-    auto result = ScreenCapture::captureScreen(emulatorId, format);
-    
-    if (!result.success)
-    {
-        session.SendResponse(std::string("Error: ") + result.errorMessage + NEWLINE);
+        session.SendResponse(std::string("Error: the emulator has no screen") + NEWLINE);
         return;
     }
-    
+
+    // capture screen [--area=full|screen] [--format=png|gif] [file]
+    // Legacy spellings kept: -png / -gif / png / gif, and the bare words full / screen
+    ScreenshotOptions options;  // the whole frame, PNG
+    for (size_t i = 1; i < args.size(); i++)
+    {
+        const std::string& arg = args[i];
+        std::string word;
+        if (arg.rfind("--area=", 0) == 0)
+        {
+            word = arg.substr(7);
+            if (!Screenshotter::ParseArea(word, options.area))
+            {
+                session.SendResponse("Error: unknown area '" + word + "': use full or screen" + NEWLINE);
+                return;
+            }
+        }
+        else if (arg.rfind("--source=", 0) == 0)
+        {
+            word = arg.substr(9);
+            if (!Screenshotter::ParseSource(word, options.source))
+            {
+                session.SendResponse("Error: unknown source '" + word + "': use presented or live" + NEWLINE);
+                return;
+            }
+        }
+        else if (arg.rfind("--format=", 0) == 0)
+        {
+            word = arg.substr(9);
+            if (!Screenshotter::ParseFormat(word, options.format))
+            {
+                session.SendResponse("Error: unknown format '" + word + "': use png or gif" + NEWLINE);
+                return;
+            }
+        }
+        else if (arg == "-png" || arg == "png")
+        {
+            options.format = ScreenshotFormat::Png;
+        }
+        else if (arg == "-gif" || arg == "gif")
+        {
+            options.format = ScreenshotFormat::Gif;
+        }
+        else if (arg == "full" || arg == "screen")
+        {
+            Screenshotter::ParseArea(arg, options.area);
+        }
+        else if (!arg.empty() && arg[0] == '-')
+        {
+            session.SendResponse("Error: unknown option '" + arg + "' (see: capture)" + NEWLINE);
+            return;
+        }
+        else
+        {
+            options.saveTo = arg;  // a path: write the image there instead of printing it
+        }
+    }
+
+    const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
+    if (!shot.ok)
+    {
+        session.SendResponse(std::string("Error: ") + shot.errorMessage + NEWLINE);
+        return;
+    }
+
     std::stringstream ss;
-    ss << "Screen Capture:" << NEWLINE;
-    ss << "  Format: " << result.format << NEWLINE;
-    ss << "  Size: " << result.width << "x" << result.height << NEWLINE;
-    ss << "  Data size: " << result.originalSize << " bytes" << NEWLINE;
-    ss << "  Base64 length: " << result.base64Data.size() << " chars" << NEWLINE;
-    ss << NEWLINE;
-    ss << "data:" << (result.format == "png" ? "image/png" : "image/gif") 
-       << ";base64," << result.base64Data << NEWLINE;
-    
+    ss << "Screenshot:" << NEWLINE;
+    ss << "  Format: " << Screenshotter::FormatName(shot.format) << NEWLINE;
+    ss << "  Area: " << Screenshotter::AreaName(options.area) << NEWLINE;
+    ss << "  Source: " << Screenshotter::RequestSourceName(options.source) << NEWLINE;
+    if (shot.frame.beamLine >= 0)
+    {
+        ss << "  Beam: line " << shot.frame.beamLine << ", T " << shot.frame.beamTstate
+           << (shot.frame.partial ? " (the frame is half drawn)" : "") << NEWLINE;
+    }
+    ss << "  Size: " << shot.width << "x" << shot.height << " (at " << shot.crop.x << "," << shot.crop.y
+       << " of the " << shot.frame.width << "x" << shot.frame.height << " frame)" << NEWLINE;
+    ss << "  Screen window: " << shot.frame.screenWindow.width << "x" << shot.frame.screenWindow.height << " at "
+       << shot.frame.screenWindow.x << "," << shot.frame.screenWindow.y << NEWLINE;
+    ss << "  Data size: " << shot.encodedSize << " bytes" << NEWLINE;
+    if (!shot.savedFile.empty())
+    {
+        ss << "  Saved to: " << shot.savedFile << NEWLINE;
+    }
+    else
+    {
+        const std::string base64 = Screenshotter::Base64Encode(shot.bytes);
+        ss << "  Base64 length: " << base64.size() << " chars" << NEWLINE;
+        ss << NEWLINE;
+        ss << "data:" << (shot.format == ScreenshotFormat::Png ? "image/png" : "image/gif") << ";base64," << base64
+           << NEWLINE;
+    }
+
     session.SendResponse(ss.str());
 }
 
@@ -170,14 +224,20 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "================" << NEWLINE;
     ss << NEWLINE;
     ss << "  capture ocr                     OCR text from screen (ROM font)" << NEWLINE;
-    ss << "  capture screen [--format=gif|png]  Capture screen bitmap" << NEWLINE;
+    ss << "  capture screen [--area=full|screen] [--format=png|gif] [--source=presented|live] [file]" << NEWLINE;
+    ss << "                                  Screenshot: the whole frame (default) or the working picture;" << NEWLINE;
+    ss << "                                  PNG (default) or GIF; the presented frame (default) or the live" << NEWLINE;
+    ss << "                                  one as drawn now; to a file or printed as a data URI" << NEWLINE;
     ss << "  capture romtext                 Capture ROM print output (TODO)" << NEWLINE;
     ss << "  capture framebuffer <file> [rgba|index]  Raw pixels (RGBA, or u16 pens on the Sprinter)" << NEWLINE;
     ss << NEWLINE;
     ss << "Examples:" << NEWLINE;
     ss << "  capture ocr                     Extract text from screen" << NEWLINE;
-    ss << "  capture screen                  Capture as GIF (default)" << NEWLINE;
-    ss << "  capture screen --format=png    Capture as PNG" << NEWLINE;
+    ss << "  capture screen                  Whole frame as PNG, printed as a data URI" << NEWLINE;
+    ss << "  capture screen --area=screen    The working picture only (no border)" << NEWLINE;
+    ss << "  capture screen scratch/shot.png Save the whole frame to a file" << NEWLINE;
+    ss << "  capture screen --format=gif     256-color GIF instead of PNG" << NEWLINE;
+    ss << "  capture screen --source=live    The frame as drawn now (a paused machine reports where the beam stopped)" << NEWLINE;
     ss << NEWLINE;
 
     session.SendResponse(ss.str());

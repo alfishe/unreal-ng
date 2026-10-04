@@ -71,7 +71,9 @@ A comprehensive cross-platform menu system has been implemented for the Unreal S
 
 ### Tools Menu
 - **Settings...** (Ctrl+Alt+S) - Configure emulator [TODO]
-- **Take Screenshot** (Ctrl+Shift+S) - Save screenshot [TODO]
+- **Take Screenshot** - Copy what the window shows (viewport-cropped) to the clipboard
+- **Save Screenshot As...** - Save the whole presented frame, with border, as a PNG or GIF file (no keyboard shortcut: plain F12 and the other keys must reach the emulated machine)
+  (design: [screenshotter design](../../../inprogress/2026-10-03-screenshotter/design.md))
 - **Record Video...** - Start/stop video recording [TODO]
 
 ### Help Menu
@@ -257,7 +259,7 @@ The menu system provides GUI access to CLI commands:
 
 5. **Tools Menu**
    - Settings dialog
-   - Screenshot functionality
+   - Screenshot functionality (Take Screenshot, Save Screenshot As... - implemented)
    - Video recording
 
 ### Extensibility

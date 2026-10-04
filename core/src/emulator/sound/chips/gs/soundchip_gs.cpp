@@ -319,9 +319,15 @@ void SoundChip_GeneralSound::handleFrameStart()
 
     // Frame-relative bases (Unreal init_gs_frame): the ZX tact counter and
     // the GS cycle accumulator are snapshotted so host-multiplier changes
-    // take effect cleanly from the next frame
+    // take effect cleanly from the next frame. The GS base is the nominal
+    // timeline, not the card's actual time: the CPU ends a frame up to one
+    // instruction past it, and that overshoot must not pile up frame after
+    // frame. Taken against the previous ZX anchor, so before the anchor moves
+    const double gsUnitsPerHz = static_cast<double>(GS_CLOCK_HZ);
+    _frameStartGsCycles = GSHostClock::nextFrameBase(_frameStartGsCycles, _frameGsCycles, totalGsCycles(),
+                                                     GSHostClock::zxElapsedSince(_context, _frameStartZxTacts),
+                                                     GSHostClock::unitsPerZxTact(_context, gsUnitsPerHz));
     _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
-    _frameStartGsCycles = totalGsCycles();
     _frameGsCycles = frameGsLength();
 }
 

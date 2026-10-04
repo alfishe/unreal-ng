@@ -45,6 +45,18 @@ constexpr uint32_t TAPE_PATTERN_GAP_PLAYING = 1000;  // looser while playing: a 
 // scanning keys, so one frame is the floor.
 constexpr uint32_t TAPE_GAP_HOLD_FRAMES = 2;
 constexpr uint32_t TAPE_BLOCK_HOLD_FRAMES = 50;
+// Inside a PILOT the wait is longer: a custom loader that has seen the first pilot pulses often sits out a fixed delay
+// before it checks that the pilot goes on (DIZZY X KID__DR: ld hl,#0415 / djnz, 3.5 million T, 50.07 frames), and a
+// pilot freeze rewinds the pilot, so the loader would find a fresh pilot after every delay and never lock. A data
+// pilot lasts about 2 s (3220 pulses of 2168 T): 100 frames is still short enough that a loader that is really
+// gone gets its pilot from the start when it comes back.
+constexpr uint32_t TAPE_PILOT_HOLD_FRAMES = 100;
+// ... but a pilot can be shorter than that (DIZZY X KID__DR's data blocks: 3223 pulses, 1.94 s, 97 frames), and then
+// playback is paused too late: the pause lands in the sync pulses or the data, the tape freezes there, and the loader,
+// which wants a pilot first, waits for ever. Playback must be paused (and the pilot rewound) before the head leaves
+// the pilot. So in the last TAPE_PILOT_TAIL_TSTATES of a pilot the pause comes after TAPE_BLOCK_HOLD_FRAMES.
+// Two frames of margin: the pause is only decided at a frame end, and a frame covers up to ~70000 T of pulses.
+constexpr uint64_t TAPE_PILOT_TAIL_TSTATES = 150000;
 
 /// endregion </Constants>
 

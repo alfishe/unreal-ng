@@ -48,8 +48,26 @@ protected:
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
 
+    // AY clock (SetPsgClock): PSG_CLOCK_RATE unless the machine switches it
+    // (the Profi in hi-res: 1.5 MHz). _psgClock is what the generators run at
+    // now; _psgClockRequested the latest request, which may still wait on the
+    // render timeline as a clock marker in _ssgWrites[0] (applied when the
+    // render cursor reaches its T-state, like a register write)
+    uint32_t _psgClock = static_cast<uint32_t>(PSG_CLOCK_RATE);
+    uint32_t _psgClockRequested = static_cast<uint32_t>(PSG_CLOCK_RATE);
+    // One generator tick (8 AY clocks) on the base-T timeline: _tickT whole T
+    // plus _tickSubT / kRenderSubUnits. 16 + 0 at 1.75 MHz (the fast path: the
+    // fraction is never touched), 18 + 80/120 at 1.5 MHz. 120 sub-units make
+    // every clock whose tick is a multiple of 1/2, 1/3, 1/4, 1/5, 1/6, 1/8 T
+    // exact; any other clock rounds its tick to 1/120 T (the pitch still
+    // follows the exact clock - only the tick a write lands on is rounded)
+    static constexpr uint32_t kRenderSubUnits = 120;
+    int64_t _tickT = 16;
+    uint32_t _tickSubT = 0;
+    uint32_t _renderSub = 0;  // the render cursor's fraction, in 1/kRenderSubUnits T
+
     // Native clock decimation (like amiga-paula PWM renderer)
-    // Generators tick at PSG_CLOCK_RATE, we decimate to _coreRate
+    // Generators tick at _psgClock / 8, we decimate to _coreRate
     double _decimationPhase = 0.0;
     double _decimationStep = (double)(PSG_CLOCK_RATE / 8) /
                              (double)(AUDIO_SAMPLING_RATE * FilterInterpolate::DECIMATE_FACTOR);
@@ -220,13 +238,19 @@ public:
         _decimationPhase = 0.0;
         _outputFlushPending = false;
         _renderT = -kTurboSoundRenderLagT;
+        _renderSub = 0;
         _renderReanchor = false;
         _seenT = false;
+        // The AY clock is the board's, not the chip's: a reset keeps the
+        // machine's latest request (a clock marker still queued takes effect
+        // now, the queue is dropped below)
+        if (_psgClock != _psgClockRequested)
+            applyPsgClock(_psgClockRequested);
         _ssgWrites[0].clear();
         _ssgWrites[1].clear();
-        // Effective generator rate = PSG_CLOCK_RATE / 8
+        // Effective generator rate = _psgClock / 8
         // _decimationStep = how many generator ticks per FIR sub-sample
-        _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(_coreRate * FilterInterpolate::DECIMATE_FACTOR);
+        _decimationStep = generatorRate() / (double)(_coreRate * FilterInterpolate::DECIMATE_FACTOR);
 
         // Reset decimators for native clock mode (state only - their
         // rate-designed coefficients from setCoreRate() are preserved)
@@ -274,14 +298,38 @@ public:
         _coreRate = rate;
         _samplePhase = 0;
         _renderReanchor = true;
-        _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
-        _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
+        _lqTicksPerSample = generatorRate() / (double)rate;
+        _decimationStep = generatorRate() / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
 
-        _chip0->decimatorLeft().configure((double)rate, _decimatorQuality);
-        _chip0->decimatorRight().configure((double)rate, _decimatorQuality);
-        _chip1->decimatorLeft().configure((double)rate, _decimatorQuality);
-        _chip1->decimatorRight().configure((double)rate, _decimatorQuality);
+        const double inputRate = generatorRate();
+        _chip0->decimatorLeft().configure((double)rate, _decimatorQuality, false, inputRate);
+        _chip0->decimatorRight().configure((double)rate, _decimatorQuality, false, inputRate);
+        _chip1->decimatorLeft().configure((double)rate, _decimatorQuality, false, inputRate);
+        _chip1->decimatorRight().configure((double)rate, _decimatorQuality, false, inputRate);
     }
+
+    /// AY clock at run time (ITurboSoundDevice::SetPsgClock): rounded to
+    /// 100 Hz, kMinPsgClock..kMaxPsgClock (false outside). Queued at the
+    /// current T-state as a clock marker on chip 0's write queue, so it
+    /// reaches the generators exactly there - writes before it render at the
+    /// old clock, the tick period, LQ boxcar ratio and HQ decimator input
+    /// rate change on the tick it falls in, the FIR history carries on (no
+    /// click). Applied at once while synthesis is suppressed
+    bool SetPsgClock(uint32_t hz) override;
+    uint32_t GetPsgClock() const override
+    {
+        return _psgClock;
+    }
+    /// The latest request, a switch still queued on the render timeline included
+    uint32_t GetRequestedPsgClock() const
+    {
+        return _psgClockRequested;
+    }
+
+    static constexpr uint32_t kPsgClockStepHz = 100;
+    static constexpr uint32_t kMinPsgClock = 100'000;
+    /// A clock marker carries the clock in 15 bits of 100 Hz
+    static constexpr uint32_t kMaxPsgClock = 0x7FFF * kPsgClockStepHz;
 
     /// Track the Z80 frequency multiplier (turbo switches): the sample PLL
     /// consumes already-multiplied t-states (Z80::t), so the increment must
@@ -342,6 +390,29 @@ private:
     /// Timed SSG register write at the current T-state (see SsgWriteQueue);
     /// applied at once while synthesis is suppressed
     void queueSsgWrite(int chipIndex, uint8_t reg, uint8_t value);
+    /// One dequeued entry: an SSG register write, or a clock marker
+    void applySsgWrite(int chipIndex, const SsgWrite& write);
+    /// Switch the generators to hz now (tick period, LQ ratio, HQ decimator input rate)
+    void applyPsgClock(uint32_t hz);
+    /// The generator (tick) rate: the AY clock / 8, 218.75 kHz by default
+    double generatorRate() const
+    {
+        return static_cast<double>(_psgClock) / 8.0;
+    }
+    /// One generator tick on the render cursor
+    void advanceRenderCursor()
+    {
+        _renderT += _tickT;
+        if (_tickSubT != 0) [[unlikely]]
+        {
+            _renderSub += _tickSubT;
+            if (_renderSub >= kRenderSubUnits)
+            {
+                _renderSub -= kRenderSubUnits;
+                ++_renderT;
+            }
+        }
+    }
     /// Apply every pending SSG write timed at or before t (render cursor)
     void applySsgWrites(int64_t t);
     /// Apply every pending SSG write now (nothing will tick them in)

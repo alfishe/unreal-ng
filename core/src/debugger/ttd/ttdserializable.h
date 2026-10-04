@@ -71,16 +71,16 @@ enum class PeripheralId : uint8_t
     SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
     SprinterPld = 25,     // Sprinter Sp2000 PLD state, decoder latches, configuration module, INT source, accelerator slot (tdd-integration §2.1)
     Atm2Kbc = 26,         // ATM Turbo 2+ keyboard controller: the MCS-51 (RAM, SFRs, timers, UART), board latches, PS/2 keyboard
-    MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232)
+    MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232, ZX Profi v5 8251)
     SprinterVideoRam = 28,  // Sprinter video RAM, 256 KB whole (a TTD v2 memory region once those exist)
     Z84C15 = 29,          // Zilog Z84C15 on-chip block: system registers, wait generator, watchdog, CTC, SIO (FIFOs), PIO, daisy chain
     SprinterFastRam = 30, // Sprinter fast RAM (the four 16 KB cache pages), 64 KB whole (a TTD v2 memory region once those exist)
     SprinterInput = 31,   // Sprinter AT keyboard byte stream (SIO A) and Microsoft serial mouse packet generator (SIO B)
     SprinterCovoxBlaster = 32, // Sprinter Covox / Covox-Blaster: ring, indices, rate phase, INT request, DAC words (S6)
-    // Reserved for Sprinter devices that do not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
+    SprinterIsa = 33,     // Sprinter ISA slots: the #9FBD latch, the card kind in each slot, the cards' bus state (ISA phase I1)
+    // Reserved for a Sprinter device that does not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
     // never declared. The device that lands takes its id, declares it and adds its blob - the existing Sprinter
     // blobs keep their layout, so a checkpoint only gains a blob
-    SprinterIsa = 33,     // reserved (S6b): ISA I/O window latches, ZX-bus adapter
     SprinterPads = 34,    // reserved (input extras): the two extended joystick pads and their select counters
     Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
@@ -92,11 +92,22 @@ enum class PeripheralId : uint8_t
                           // page 0Eh volume / routing, the READ CD sector waiting for the data buffer; boards with a CD unit only
     Vdac2Memory = 42,     // TS-Conf VDAC2 card: the FT812's memory regions (RAM_G, display lists, REG, CMD, ...), zero runs dropped, until TTD v2 regions
     Vdac2 = 43,           // TS-Conf VDAC2 card: card time, INT edges, monitor source, FT812 control state (EveSaveState, metrics)
-    Smuc = 44,            // Scorpion SMUC board: #FFBA / #7FBA latches, IDE window registers, serial EEPROM link (not its contents)
-    EvoAvrVolatile = 45,  // ZX-Evo AVR volatile registers (ext type, EEPROM window, LEDs) where the paging blob lacks them: TS-Conf
-    KeyboardMatrix = 46,  // ZX keyboard: the 8 matrix rows and the pressed-key counts (key changes are journal events)
-    RzxPlayback = 47,     // RZX playback position and counters (emulator/rzx/rzxttdstate.h); the recording is the medium
-    // Future: SAA1099, GS512, etc.
+    ProfiXtKbc = 44,      // Profi PROFI-XT keyboard controller: the MCS-48 (RAM, registers, ports, timer), output latch, WAIT
+                          // flip-flop, the XT keyboard's wire, time base; the table engine's matrix (ProfiXtKbc::State)
+    EthernetNics = 45,    // frame-level network cards in expansion slots (the Sprinter's NE2000): DP8390, packet RAM, EEPROM (network tdd §13)
+    SlotSerial1 = 46,     // the UART card in expansion slot 1 (the Sprinter's SprinterESP): its 16550 and peer (netstate::SerialPort)
+    SlotSerial2 = 47,     // the same for slot 2
+    SlotSerial1B = 48,    // the second UART of the card in expansion slot 1 (SprinterSerial's COM2; network phase SN4)
+    SlotSerial2B = 49,    // the same for slot 2
+    Ppi8255 = 50,         // an 8255 PPI (the ZX Profi's: joystick, printer / Covox): mode word and output latches (Ppi8255::State)
+    Pit8253 = 51,         // an 8253 PIT (the ZX Profi v5's COM baud timer): three counters and the clock position (Pit8253::State)
+    Usart8251 = 52,       // an 8251 USART (the ZX Profi v5's COM port): registers, buffers, the line, the #B3 latch (Usart8251::State)
+    Saa1099 = 53,         // Philips SAA1099 (tdd-saa1099.md §5): registers, generators, LFSRs, envelopes, clock-ratio phase; carried inside its card's blob set
+    Smuc = 54,            // Scorpion SMUC board: #FFBA / #7FBA latches, IDE window registers, serial EEPROM link (not its contents)
+    EvoAvrVolatile = 55,  // ZX-Evo AVR volatile registers (ext type, EEPROM window, LEDs) where the paging blob lacks them: TS-Conf
+    KeyboardMatrix = 56,  // ZX keyboard: the 8 matrix rows and the pressed-key counts (key changes are journal events)
+    RzxPlayback = 57,     // RZX playback position and counters (emulator/rzx/rzxttdstate.h); the recording is the medium
+    // Future: GS512, etc.
     Count
 };
 
@@ -156,10 +167,20 @@ enum class TTDDeviceType : uint16_t
     CdDrive = 41,
     Vdac2Memory = 42,
     Vdac2 = 43,
-    Smuc = 44,
-    EvoAvrVolatile = 45,
-    KeyboardMatrix = 46,
-    RzxPlayback = 47
+    ProfiXtKbc = 44,
+    EthernetNics = 45,
+    SlotSerial1 = 46,
+    SlotSerial2 = 47,
+    SlotSerial1B = 48,
+    SlotSerial2B = 49,
+    Ppi8255 = 50,
+    Pit8253 = 51,
+    Usart8251 = 52,
+    Saa1099 = 53,
+    Smuc = 54,
+    EvoAvrVolatile = 55,
+    KeyboardMatrix = 56,
+    RzxPlayback = 57
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -205,6 +226,16 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::ZiFi) == static_cast<uint16_t
 static_assert(static_cast<uint16_t>(TTDDeviceType::CdDrive) == static_cast<uint16_t>(PeripheralId::CdDrive), "TTDDeviceType::CdDrive must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::Vdac2Memory) == static_cast<uint16_t>(PeripheralId::Vdac2Memory), "TTDDeviceType::Vdac2Memory must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::Vdac2) == static_cast<uint16_t>(PeripheralId::Vdac2), "TTDDeviceType::Vdac2 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::ProfiXtKbc) == static_cast<uint16_t>(PeripheralId::ProfiXtKbc), "TTDDeviceType::ProfiXtKbc must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EthernetNics) == static_cast<uint16_t>(PeripheralId::EthernetNics), "TTDDeviceType::EthernetNics must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SlotSerial1) == static_cast<uint16_t>(PeripheralId::SlotSerial1), "TTDDeviceType::SlotSerial1 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SlotSerial2) == static_cast<uint16_t>(PeripheralId::SlotSerial2), "TTDDeviceType::SlotSerial2 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SlotSerial1B) == static_cast<uint16_t>(PeripheralId::SlotSerial1B), "TTDDeviceType::SlotSerial1B must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SlotSerial2B) == static_cast<uint16_t>(PeripheralId::SlotSerial2B), "TTDDeviceType::SlotSerial2B must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Ppi8255) == static_cast<uint16_t>(PeripheralId::Ppi8255), "TTDDeviceType::Ppi8255 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Pit8253) == static_cast<uint16_t>(PeripheralId::Pit8253), "TTDDeviceType::Pit8253 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Usart8251) == static_cast<uint16_t>(PeripheralId::Usart8251), "TTDDeviceType::Usart8251 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Saa1099) == static_cast<uint16_t>(PeripheralId::Saa1099), "TTDDeviceType::Saa1099 must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::Smuc) == static_cast<uint16_t>(PeripheralId::Smuc), "TTDDeviceType::Smuc must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::EvoAvrVolatile) == static_cast<uint16_t>(PeripheralId::EvoAvrVolatile), "TTDDeviceType::EvoAvrVolatile must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::KeyboardMatrix) == static_cast<uint16_t>(PeripheralId::KeyboardMatrix), "TTDDeviceType::KeyboardMatrix must keep its v1 number");

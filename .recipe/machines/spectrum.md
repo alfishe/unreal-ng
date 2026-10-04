@@ -1,4 +1,4 @@
-# Recipe: Real Sinclairs (48K, 128K, +3)
+# Recipe: Real Sinclairs (48K, 128K, +2, +2A, +3)
 
 The original machines — and the control group for clone debugging. Some
 clone-world features (sound cards, TurboSound) are *architecturally*
@@ -12,6 +12,8 @@ card availability without checking the instance's actual config.
 |:--|:--|:--|:--|
 | `48K` | 48 | beeper only | none (interface needed) |
 | `128k` | 128 | AY (`#FFFD`/`#BFFD`) | none (interface needed) |
+| `PLUS2` (config `spectrum2`) | 128 | AY | none (grey +2: 128K hardware, Amstrad ROM) |
+| `PLUS2A` (config `spectrum2a`) | 128 | AY | none (the +3 without its floppy controller) |
 | `PLUS3` | 128 | AY | built-in +3 FDC, +3DOS |
 
 Ground truth: `mem_model` in
@@ -31,6 +33,7 @@ Ground truth: `mem_model` in
 ```text
 emulator_manage {"action":"create","model":"48K"}    # the no-frills baseline
 emulator_manage {"action":"create","model":"128k"}
+emulator_manage {"action":"create","model":"PLUS2"}    # also PLUS2A
 emulator_manage {"action":"create","model":"PLUS3"}
 
 inspect_state {"aspects":["audio_ay","registers"]}
@@ -70,16 +73,13 @@ inspect_state {"aspects":["contention"]}
   wait too (since the M1 contention rework); the `contention` switch gives
   the same A/B on one machine.
 - **Software compatibility floor** — anything 48K-clean runs everywhere.
-- **Card policy boundary — branch-dependent, NOT true on `master`**: this
-  claim describes a policy that may hold on the `generalsound`/`moonsound`
-  feature branches, but verified 2026-09-23 on `master`,
-  `data/configs/spectrum48/unreal.ini` actually ships `GSType=BASS` and
-  `MoonSound=1` (both enabled) — the same as clone configs, and no "real
-  Sinclair never had this card" comment exists in that file. `audio_gs`
-  itself returns `status: "not_implemented"` on `master` regardless of
-  model, so this whole policy is currently unverifiable/inactive here. Only
-  trust this bullet on a branch where you've confirmed the config values
-  yourself.
+- **Card policy boundary**: the shipped Sinclair configs (`spectrum48`,
+  `spectrum128`, `spectrum2`, `spectrum2a`, `spectrum3`) set `MoonSound=0`
+  (a real Sinclair never had it; the Pentagon and Scorpion configs keep
+  `MoonSound=1`) and ship `GSType=NGS` like every model (NeoGS is the shipped
+  General Sound card on every model). `audio_gs` is a real `inspect_state`
+  aspect (General Sound mailbox flags, MPAG page, DAC channels); check the
+  instance's actual config values rather than trusting the model name.
 
 ## WebAPI
 
@@ -110,7 +110,7 @@ insert directly.
 - **`128k` vs `PLUS3` is not just the FDC** — +3 has different ROM paging
   (`+3DOS` bank) and subtle timing; a "128K-compatible" program can still
   trip on `PLUS3` ROM entry points.
-- **`ram_size` is fixed per model** (48/128/128) — any other value is a 400.
+- **`ram_size` is fixed per model** (48/128/128/128/128) — any other value is a 400.
 - **Don't assume 48K is AY-silent in this build** — see the `audio_ay` note
   above: the shipped `spectrum48` config enables TurboSound=FM like every
   other model, so `audio_ay`/`/ports` both report the chip. Real 48K
@@ -118,13 +118,7 @@ insert directly.
   enforce that distinction. If a test depends on 48K being genuinely silent,
   verify the instance's actual `TurboSound`/`SD`/`CovoxFB` config values
   rather than trusting the model name alone.
-- **`PLUS3` create failure, root-caused and fixed 2026-09-23**: the shipped
-  `data/configs/spectrum3/unreal.ini` `[ROM]` section was simply missing
-  the `48k=`/`128k=`/`PLUS3=` lines that `spectrum48`/`spectrum128`'s
-  configs both carry (a config-file omission, not a code bug —
-  `config.cpp:199` reads `[ROM] PLUS3=` and got nothing). Fixed by adding
-  the three lines in the same position/format as the sibling configs.
-  Live-verified: `PLUS3` now creates and boots into the real +3 ROM
-  (`" 1982 Amstrad"` copyright banner in `screen_ocr`/`capture/ocr`
-  output). If this regresses, check that key first before assuming a code
-  change is needed.
+- **`PLUS3` needs its `[ROM]` keys**: `data/configs/spectrum3/unreal.ini`
+  carries `48k=`, `128k=` and `PLUS3=` (the 2026-09-23 create failure was a
+  missing-keys config omission, fixed). If a create ever fails again, check
+  `[ROM] PLUS3=` first.

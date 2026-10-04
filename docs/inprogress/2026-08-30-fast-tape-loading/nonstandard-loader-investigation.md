@@ -116,7 +116,7 @@ Legend:
 | CHEFRANOV (control) | OK | OK | OK | OK |
 | EMELYANOV | OK | OK | **hang** (ERR_NR stop) | **OK** |
 | HACKER_SHURIK | OK | OK | OK | OK |
-| KID__DR | OK² | OK | hang³ | hang³ |
+| KID__DR | hang⁴ | hang⁴ | hang⁴ | hang⁴ |
 | SAN-SAN | OK² | OK | **hang** | **hang** |
 | TIMOFEY | BASIC | BASIC | BASIC | BASIC |
 | echology | OK | OK | OK | OK |
@@ -124,10 +124,12 @@ Legend:
 ¹ The liveness keys drop this program back to BASIC. Before the keys, the 48K runs show its
 "1-cheat 2-normal" menu, so the load completes; the Pentagon runs were not checked before the
 keys.
-² The ERR_NR stop fires here but after the needed data. KID__DR stops at block 4 of 6 and SAN-SAN
+² The ERR_NR stop fires here but after the needed data. SAN-SAN stops
 at block 6 of 7. The tail blocks are the 128K extras of a "48/128k" release, which a 48K machine
 never reads.
 ³ Ends on a "TO BE CONTINUED" screen and does not react to keys.
+⁴ Re-checked 2026-10-04: the loader never locks onto the pilot of block 2, so nothing after block 1 is loaded; the
+  tape just plays to its end (the sweep's `cursor=6/6` is not a load). Incompatible: see O1.
 
 ### 5.2 Pentagon 128
 
@@ -252,12 +254,24 @@ impact today; recorded for completeness.
 
 ### Open, not explained by B1–B4
 
-- **O1: KID__DR on Pentagon 128** ends on a solid red screen in every configuration, including
-  fast loading on. It works on 48K. The block-2 loader never polls the tape: the cursor stays at
-  2 while the machine derails. Suspect 128K paging or memory contents that the crack does not
-  expect.
-- **O2: TIMOFEY on 48K** returns to BASIC in every configuration. It works on Pentagon. Possibly
-  a 128K-only release; check the loader before calling it a defect.
+- **O1: KID__DR - closed (2026-10-04): incompatible on every model, not a tape-manager defect.** Two separate checks of
+  the loader fail:
+  1. *Pentagon 128 (ROM set `[ROM.pentagon]`):* a ROM identity check (copy and clone protection). The loader requires
+     byte `#20` at ROM `#006D` (the `JR NZ` of the original 48K NMI handler), at `#986B` and in every interrupt
+     (`#5ECA`); the set's `48for128.rom` has `#28` there, so it fills memory with `#15` and derails (solid red screen,
+     cursor stays at block 2). MAME's Pentagon has `#20` and passes this check. Owner: no ROM change.
+     Annotated listing: [`docs/disasm/games/dizzy-x-kid-dr-loader/`](../../disasm/games/dizzy-x-kid-dr-loader/README.md).
+  2. *48K and 128K (original ROM):* the loader never locks onto the pilot of block 2 (the screen block): after the
+     delay it measures two pilot pulses as B = `#BF` at `#5DE1` and needs more than `#C6`, so it retries for ever while
+     the tape plays to its end. Same in MAME's `spectrum` with the original ROM, so it is not our tape handling. The
+     pulse counter loop (`#5E47`, 63 T per count) looks tuned for a machine without memory contention, a Pentagon-class
+     one (hypothesis; the Pentagon with the original 48K ROM was not run).
+  The earlier note that the 50-frame delay and a pilot rewind caused it was wrong (see TODO.md). The real, separate
+  defect found on the way, a pause that landed after the end of a short pilot, is fixed (`520915269`).
+- **O2: TIMOFEY on 48K** returns to BASIC in every configuration; it works on Pentagon. Closed
+  2026-10-03 as a 128K-only release (owner: incompatible, documented). Evidence from the tape bytes:
+  block 2 contains `LD BC,#7FFD` and `OUT (C),A`, and blocks 2-4 hold 45568 bytes, more than a
+  48K machine has free. Not traced in a debugger.
 - **O3: HACKER_SHURIK on Pentagon, fast loading off** hangs even with a 50-frame freeze. It works
   with fast loading on.
 

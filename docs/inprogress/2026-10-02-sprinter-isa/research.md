@@ -189,6 +189,10 @@ bit 0 = IRQ slot 1, bit 1 = IRQ slot 2, bit 2 = DRQ slot 2 (in), bit 3 = DACK sl
 slot 1 (in), bit 5 = DACK slot 1 (out), bits 6-7 printer (DOC-RU "ISA interrupts"; MAN §9.3). The PIO can
 raise a Z80 mode-2 interrupt on an input change (bit-control mode), so a card's IRQ can interrupt the CPU
 through the Z84C15 daisy chain. **There is no DMA controller**: a program would move DMA data itself.
+*(Checked on the schematic for phase I4: the six nets IRQ1 / IRQ2 / DRQ1 / DRQ2 / DACK1 / DACK2 have 3.9 kOhm pull-ups,
+R165-R170, and go straight to PB0-PB5 with no inverter; ISA IRQs are active high, so an undriven pin reads 1. IEI is
+tied high and IEO is not connected: the PLD's `/INT` is not part of the daisy chain. BC-Term programs `#00` vector,
+`#CF`, `#01` / `#02` direction, `#B7` (enabled, OR, active high, mask follows), `#FE` / `#FD` mask, `#83`.)*
 *(Inference: with AEN and DACK under software control, a program can make a DMA-style cycle by setting
 AEN = 1 and DACK = 0 and then reading or writing window 3; nothing found does this.)*
 

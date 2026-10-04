@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "sprinterbios.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 #include <algorithm>
 #include <array>
@@ -16,11 +17,27 @@ namespace SprinterBios
 const std::vector<Image>& Known()
 {
     static const std::vector<Image> kKnown = {
-        {"sp2k-3.04.rom", "3.04", "Sprinter BIOS 3.04 (Peters Plus, 17.06.2003; DSS 1.62, not 1.71)", 0x1729CB5Cu},
-        {"sp2k-3.06-hf2.rom", "3.06", "Firmware v3.06 Hotfix 2 (community build, 19.01.2026; the MAME pack's firmware)", 0x9AA7BB29u},
-        {"sp2k-3.07-beta1.rom", "3.07", "Firmware v3.07 BETA 1 (community build, 24.09.2026; the default)", 0xA06A1A02u},
+        {"sp2k-3.04.rom", "3.04", "Sprinter BIOS 3.04 (Peters Plus, 17.06.2003; DSS 1.62, not 1.71)", 0x1729CB5Cu, nullptr},
+        {"sp2k-3.06-hf2.rom", "3.06", "Firmware v3.06 Hotfix 2 (community build, 19.01.2026; the MAME pack's firmware; the default)", 0x9AA7BB29u,
+         nullptr},
+        {"sp2k-3.07-beta1.rom", "3.07", "Firmware v3.07 BETA 1 (community build, 24.09.2026)", 0xA06A1A02u,
+         "the floppy driver returns with IY changed (FDD_DRIVER.asm, BIOS-TT f546c4e); DSS 1.71.57 (MAME-pack disk) "
+         "then cannot start programs from a floppy ('Invalid EXE file' / 'Bad command or file name'); use the DSS "
+         "from the 3.07 recovery disk or BIOS 3.06 Hotfix 2 (docs/inprogress/2026-09-28-sprinter/bios-versions.md "
+         "5.2)"},
     };
     return kKnown;
+}
+
+std::vector<std::string> KnownIssues(uint32_t crc32)
+{
+    std::vector<std::string> issues;
+    for (const Image& image : Known())
+    {
+        if (image.crc32 == crc32 && image.knownIssue)
+            issues.emplace_back(image.knownIssue);
+    }
+    return issues;
 }
 
 namespace
@@ -116,6 +133,41 @@ bool ApplyToConfig(CONFIG& config, const Options& options, std::string& error)
         config.sprinter.fast_start = static_cast<uint8_t>(options.fastStart);
     if (options.accelIntSuspend >= 0)
         config.sprinter.accel_int_suspend = static_cast<uint8_t>(options.accelIntSuspend);
+    for (int n = 0; n < 2; n++)
+    {
+        if (options.isaSlot[n] < 0)
+            continue;
+        sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[n];
+        if (slot.kind != static_cast<uint8_t>(options.isaSlot[n]))
+            slot.chip = 0;   // the chip number belongs to the kind: another kind starts from its default chip
+        slot.kind = static_cast<uint8_t>(options.isaSlot[n]);
+        // A kind's own defaults where the configured values do not fit it (an INI written for an NE2000)
+        uint16_t base = 0;
+        if (options.isaSlot[n] == static_cast<int>(sprinterisa::CardKind::Modem) &&
+            !sprinterisa::ParseModemBase(std::to_string(slot.base), base))
+        {
+            slot.base = sprinterisa::kModemDefaultBase;
+            slot.irq = sprinterisa::kModemDefaultIrq;
+        }
+        if (options.isaSlot[n] == static_cast<int>(sprinterisa::CardKind::Dual16552) &&
+            !sprinterisa::ValidSerialJumper(0, slot.irq))
+            slot.irq = sprinterisa::kSerialDefaultIrqA;
+    }
+    return true;
+}
+
+bool IsaSlotFromString(const std::string& text, int slot, Options& options, std::string& error)
+{
+    if (text.empty())
+        return true;
+    sprinterisa::CardKind kind = sprinterisa::CardKind::None;
+    if (slot < 0 || slot > 1 || !sprinterisa::ParseKind(text, kind))
+    {
+        error = "isa_slot" + std::to_string(slot + 1) +
+                ": none | zxbus | ram | ne2000 | el3c509b | sprinteresp | modem | dual16552";
+        return false;
+    }
+    options.isaSlot[slot] = static_cast<int>(kind);
     return true;
 }
 

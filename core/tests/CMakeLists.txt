@@ -216,7 +216,9 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/debug-event-hub.cpp
         )
+        target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/webapi/src)
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/mcp/src)
         # Plain signature (no keyword) to match the existing target_link_libraries call below
         target_link_libraries(${PROJECT_NAME} jsoncpp_static)
@@ -252,13 +254,15 @@ if (NOT TARGET ${PROJECT_NAME})
     # opl4: core sources (incl. the MoonSound device) are compiled directly
     # into this binary, not taken from the core archive — they need opl4's
     # include path and symbols here. The UNREALNG_HAVE_OPL4 gate arrives via
-    # core's PUBLIC compile definition.
+    # core's PUBLIC compile definition. sam2695 likewise: the MIDI line (core/src/emulator/sound/midi)
+    # and its tests include the library's public header.
     target_link_libraries(${PROJECT_NAME}
         ${common_libraries}
         core
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
         opl4
+        sam2695
         $<$<BOOL:${ENABLE_VDAC2}>:eve::emu>
     )
 

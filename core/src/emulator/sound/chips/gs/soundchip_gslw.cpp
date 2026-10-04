@@ -11,6 +11,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "gshostclock.h"
 
 namespace
 {
@@ -1150,8 +1151,14 @@ void SoundChip_GSLightweight::handleFrameStart()
 {
     _frameHadActivity = false;
 
-    _frameStartZxTacts = currentZxTacts();
-    _frameStartGsCycles = totalGsCycles();
+    // Nominal base, not the card's actual time: the player ends a frame up to one
+    // 320-cycle quantum past it, and that overshoot must not pile up frame after
+    // frame. Taken against the previous ZX anchor, so before the anchor moves
+    const uint64_t zxNow = currentZxTacts();
+    const int64_t zxElapsed = zxNow < _frameStartZxTacts ? -1 : static_cast<int64_t>(zxNow - _frameStartZxTacts);
+    _frameStartGsCycles = GSHostClock::nextFrameBase(_frameStartGsCycles, _frameGsCycles, totalGsCycles(), zxElapsed,
+                                                     gsCyclesPerZxTact());
+    _frameStartZxTacts = zxNow;
     _frameGsCycles = frameGsLength();
 }
 

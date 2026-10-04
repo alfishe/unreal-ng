@@ -47,6 +47,7 @@ class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
 class MediaManager;
+class EthernetGateway;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
@@ -136,6 +137,7 @@ public:
 	Atm2IoEsp* pAtm2IoEsp = nullptr;
 	// The TS AVR firmware's ZiFi block beside the #xxEF COM port (TS-Conf, ZX-Evo + TS firmware); NetworkManager owns it
 	ZiFi* pZiFi = nullptr;
+	EthernetGateway* pEthernetGateway = nullptr;   // the virtual network's switch + router for frame-level cards
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;
@@ -403,7 +405,7 @@ public:
     ///          same frame is 286720 T-states long.
     /// @return T-states per frame at the current CPU clock
     /// @see GetBaseFrameTStates, GetCpuClockMultiplier
-    uint32_t GetFrameTStates() const { return config.frame * GetCpuClockMultiplier(); }
+    uint32_t GetFrameTStates() const { return emulatorState.BaseToCpuT(config.frame); }
 
     /// @brief Raster base T-states per frame, unscaled by the clock multiplier
     /// @details Pentagon 71680; ZX48/128 and Scorpion ZS-256 69888. This is the

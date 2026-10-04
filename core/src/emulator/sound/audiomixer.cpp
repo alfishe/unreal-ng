@@ -203,6 +203,27 @@ StateNode AudioMixer(EmulatorContext* context)
     master["muted"] = sm->isMuted();
     master["sample_rate_hz"] = static_cast<uint64_t>(sm->getCoreRate());
     ret["master"] = master;
+    // What the host audio output (the speakers) received: a run not paced to real time (run_frames and the
+    // other direct runs, TTD seek / replay, turbo) holds it; frame counters are emulated frames since creation.
+    // holders: the holds active now, by reason (all 0 while the machine plays); holds_taken: ever taken, by
+    // reason; stale_holds_cleared: holds a resume found without their reason and dropped (a leak, logged)
+    StateNode host = StateNode::Object();
+    host["held"] = sm->isHostOutputHeld();
+    StateNode holders = StateNode::Object();
+    StateNode taken = StateNode::Object();
+    for (size_t i = 0; i < SoundManager::kHostHoldReasons; i++)
+    {
+        const auto reason = static_cast<SoundManager::HostHoldReason>(i);
+        holders[SoundManager::HostHoldReasonName(reason)] = static_cast<int64_t>(sm->hostOutputHolds(reason));
+        taken[SoundManager::HostHoldReasonName(reason)] = sm->hostOutputHoldsTaken(reason);
+    }
+    host["holders"] = holders;
+    host["holds_taken"] = taken;
+    host["stale_holds_cleared"] = sm->hostOutputStaleHoldsCleared();
+    host["frames_delivered"] = sm->hostFramesDelivered();
+    host["frames_audible"] = sm->hostFramesAudible();
+    host["frames_held"] = sm->hostFramesHeld();
+    ret["host_output"] = host;
     StateNode devices = StateNode::Array();
     bool anySolo = false;
     for (const AudioDeviceInfo& d : sm->devices())

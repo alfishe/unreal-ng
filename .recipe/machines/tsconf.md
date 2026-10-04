@@ -42,8 +42,15 @@ load_software {"path":".../program.spg"}              # a TS-Conf SDK program
 #     switched to TSL first (media kept): the answer's emulator_id is the NEW
 #     instance - use it from then on (model_switched, previous_emulator_id)
 
-capture_media {"type":"screenshot"}                  # 720x288 for every TS mode
+capture_media {"action":"screenshot"}                # whole frame: 720x288 for every TS mode
+capture_media {"action":"screenshot","area":"screen"} # only the graphics window (below)
 ```
+
+`area=screen` returns the graphics window named by `V_CONFIG`: 512x192, 640x200,
+640x240 or 720x288 pixels. These are pixel counts of the saved image: a TS frame
+stores 2 pixels per raster dot, so the window is twice as wide as the dot count.
+Example: a 256x192 TS-Conf mode gives a 512x192 `area=screen` image. Details:
+[agent-screenshot-view.md](../media/agent-screenshot-view.md).
 
 ## WebAPI
 
@@ -52,6 +59,10 @@ EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json'
       -d '{"model":"TSL"}' | jq -r .id)
 curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '.video, .memory.pages'
 curl -s "$BASE/emulator/$EMU/state/tsconf/tsu" | jq '[.sprites[] | select(.active)]'   # the visible sprites
+# Debugger board: the write-only registers as last written, DMA as programmed vs live, the line's tile pages
+curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '{sys_config, cache_en, fm_maps: .memory.fm_maps,
+     dma: (.dma | {programmed_source, source, programmed_destination, destination, ctrl}),
+     line_tiles: (.video.line | {t0_gpage, t1_gpage}), dma_regs: .regs[26:32]}'
 curl -s "$BASE/emulator/$EMU/video/pixel?layer=1&x=100&y=50" | jq '.layer, .sources'  # which TSU object drew a pixel
 curl -s -X POST "$BASE/emulator/$EMU/snapshot/load" -H 'Content-Type: application/json' \
      -d '{"path":"testdata/machines/tsconf/spg/sprites.spg"}' | jq .emulator_id
@@ -155,6 +166,6 @@ a stable "lo<->hi" band instead of chasing every flip.
 | TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
 | 14 MHz timing: DRAM waits on uncached reads / cache misses (zmem.v phase logic) and the DRAM arbiter (video refusing the CPU in the fetch window), 8-fclk AY / VG93 I/O stall; DMA word costs; DMA CRAM writes land at their dot | implemented (phase 8) |
 | TSU timing: line L drawn at ts_start of line L - 1 with that line's latches (a mid-line write acts from the next line or the one after) | implemented |
-| Firmware build: `[MISC] TS_VDAC` = NONE (default: STATUS VDAC_VER 0, PWM colours) or 3BIT / 4BIT / 5BIT, `TS_VDAC2=1` (VDAC curves, BLT2); `/state/tsconf` `build{}` | implemented |
+| Firmware build: `[MISC] TS_VDAC` = NONE (default: STATUS VDAC_VER 0, PWM colours) or 3BIT / 4BIT / 5BIT, `TS_VDAC2=1` (VDAC curves, BLT2; the `TSL-VDAC2` variant model sets it with the card, see [tsconf-vdac2.md](tsconf-vdac2.md)); `/state/tsconf` `build{}` | implemented |
 | Video debug mapper (`/video/layout`, `/video/pixel`, `/video/address`, `/video/text`; CLI `video ...`, Lua / Python `video_*`) | graphics layer (layer 0) and the TSU (layer 1 "tsu": the object, its SFILE / tilemap words, graphics byte, CRAM) in 14 MHz pixels; `/video/address?space=sprite_ram|palette` |
 | TS-specific Qt docks | not yet (the model-first debugger) |

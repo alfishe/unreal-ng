@@ -42,6 +42,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
 #include <functional>
@@ -57,6 +58,7 @@
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
+#include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
 #include "ttdfileinfo.h"
@@ -512,9 +514,10 @@ public:
     void RequestInvalidation(const char* reason);
     inline bool IsInvalidationPending() const { return _pendingInvalidation.load(std::memory_order_acquire) != nullptr; }
 
-    inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
+    /// Any thread: the state is atomic (observers poll it while the machine runs)
+    inline bool IsRecording() const { return _state.load(std::memory_order_acquire) == TTDSessionState::Recording; }
 
-    inline TTDSessionState GetState() const { return _state; }
+    inline TTDSessionState GetState() const { return _state.load(std::memory_order_acquire); }
     inline TTDRecordMode GetRecordMode() const { return _recordMode; }
     inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
 
@@ -536,26 +539,44 @@ public:
     ///        flows. Idempotent (no-op when not in DebuggerLive).
     void EndDebuggerLiveHistory();
 
-    /// @brief The session summary. Safe from any thread (the toolbar's
-    /// tooltip, CLI / Lua / Python / gdb / WebAPI threads): while a recording
-    /// runs on the emulation thread, the timeline, page store and journals
-    /// change every frame, so a caller on another thread asks that thread to
-    /// compute the summary at its next frame boundary and waits for it; on the
-    /// emulation thread itself, or with the machine parked, it is computed
-    /// at once.
+    /// @brief The session summary, computed from the live session structures.
+    ///
+    /// Thread contract (TDD section 7.2): only the thread that drives the
+    /// session may call it - the machine's thread, or a control thread while
+    /// the machine is paused (the same rule as every other session operation).
+    /// It walks the timeline, the page store and the journals, which the
+    /// machine's thread reallocates while it records. Every call also
+    /// publishes its result for GetPublishedSessionInfo().
     TTDSessionInfo GetSessionInfo() const;
-    /// @brief The same summary without waiting, for periodic displays (the
-    /// toolbar's tooltip): while a recording runs on another thread, the one
-    /// published at a recent frame boundary (and a fresh one is asked for);
-    /// otherwise GetSessionInfo()
-    TTDSessionInfo GetLatestSessionInfo() const;
-    /// Summaries the recording thread computed for callers on other threads
-    /// (diagnostics: shows that cross-thread reads go through the frame boundary)
-    uint64_t SessionInfoPublications() const
-    {
-        std::lock_guard<std::mutex> lock(_infoMutex);
-        return _infoSerial;
-    }
+    /// @brief The last published session summary - for observers on any thread
+    /// at any time (UI tooltips, status bar, polling timers).
+    ///
+    /// Never touches the live session: it copies a snapshot under its own
+    /// small mutex. Published by the thread that drives the session: at every
+    /// session operation (start, stop, invalidate, load, seek, resume, history
+    /// limit), on every GetSessionInfo() call, and at frame boundaries while a
+    /// session is active (at most every kPublishIntervalMs, and only once an
+    /// observer has asked since the last publication). So the numbers lag the
+    /// running machine by at most one interval plus a frame; while the machine
+    /// is paused they are exact.
+    TTDSessionInfo GetPublishedSessionInfo() const;
+    static constexpr uint32_t kPublishIntervalMs = 100;
+
+    /// @brief The session summary for automation status reads, from any thread.
+    ///
+    /// Live (GetSessionInfo) when nothing else can be changing the session:
+    /// the caller is the machine's thread; or no thread executes the machine
+    /// and no other control operation is in progress (the control lock is
+    /// free) and the session is not recording (a recording machine could be
+    /// resumed by another thread mid-read). Otherwise the published snapshot,
+    /// which is exact for a parked recording (the machine's thread publishes
+    /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
+    /// a frame old while it runs. Never blocks, never pauses the machine.
+    TTDSessionInfo ReadSessionInfo() const;
+
+    /// @brief The machine's thread, about to park (pause): publish the
+    /// recording's summary so status reads while paused are exact
+    void OnMachineParking();
 
     /// @brief History limit: while recording, the oldest checkpoints are
     /// released once the timeline holds more than `maxFrames` checkpoints or
@@ -722,7 +743,7 @@ public:
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
     /// report provenance; streams with no path leave it empty.
-    void SetSessionSourcePath(const std::string& path) { _sourcePath = path; }
+    void SetSessionSourcePath(const std::string& path);
 
     /// @brief In-memory capture/restore divergence self-test.
     ///
@@ -796,8 +817,8 @@ public:
     //
     // The flag itself (`_context->ttdReplayActive`) is read by every
     // suppression site — see emulatorcontext.h. EnterReplayMode / ExitReplayMode
-    // also save/restore the SoundManager mute state so the host audio output
-    // can be muted independently of feature flags.
+    // also hold the host audio output (SoundManager::HostOutputHold, reason
+    // TtdReplay): nothing reaches the speakers, the user's mute is untouched.
     //
     // Threading: same discipline as Restore — called on the control thread
     // with the emulator paused. Replay is driven by a follow-up RunTStates
@@ -806,18 +827,41 @@ public:
 
     /// @brief Enter silent-replay mode.
     ///
-    /// Sets `_context->ttdReplayActive = true`, saves and forces the
-    /// SoundManager mute state. Idempotent: a second call while already in
-    /// replay is a no-op (and does NOT overwrite the saved mute state, so
-    /// nesting is safe).
+    /// Sets `_context->ttdReplayActive = true` and holds the host audio
+    /// output. Idempotent: a second call while already in replay is a no-op
+    /// (no second hold, so nesting is safe).
     void EnterReplayMode();
 
     /// @brief Exit silent-replay mode.
     ///
-    /// Clears `_context->ttdReplayActive`, restores the SoundManager mute
-    /// state captured by EnterReplayMode. Idempotent: a call while not in
-    /// replay is a no-op.
+    /// Clears `_context->ttdReplayActive` and releases the host audio hold.
+    /// Idempotent: a call while not in replay is a no-op.
     void ExitReplayMode();
+
+    /// @brief EnterReplayMode for a scope: ExitReplayMode on Exit() or, at the
+    /// latest, when the scope ends - an exception or early return inside a
+    /// replay can no longer leave replay mode (and its host audio hold) on.
+    /// Same semantics as the explicit pair: Exit leaves replay mode even when
+    /// an outer caller entered it first.
+    class ReplayModeScope
+    {
+    public:
+        explicit ReplayModeScope(TimeTravelManager& manager) : _manager(&manager) { manager.EnterReplayMode(); }
+        ~ReplayModeScope() { Exit(); }
+        ReplayModeScope(const ReplayModeScope&) = delete;
+        ReplayModeScope& operator=(const ReplayModeScope&) = delete;
+        void Exit()
+        {
+            if (TimeTravelManager* manager = _manager)
+            {
+                _manager = nullptr;
+                manager->ExitReplayMode();
+            }
+        }
+
+    private:
+        TimeTravelManager* _manager;
+    };
 
     /// @brief Query the replay-mode flag. Reads `_context->ttdReplayActive`.
     /// Defined out-of-line (EmulatorContext is only forward-declared here).
@@ -2018,8 +2062,54 @@ private:
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
-    /// Read from any thread (IsRecording, GetSessionInfo); written by the session's owner
+    /// Written only by the thread that drives the session, read by observers
+    /// on any thread (IsRecording / GetState)
     std::atomic<TTDSessionState> _state{TTDSessionState::Idle};
+
+    /// GetPublishedSessionInfo(): the snapshot observers read instead of the
+    /// live session (TDD section 7.2: "a small mutex-protected summary struct").
+    /// _published is guarded by _publishedMutex; everything else is touched by
+    /// the session-driving thread only
+    void PublishSessionInfo(const TTDSessionInfo& info) const;
+    void PublishSessionInfo() const { (void)GetSessionInfo(); }
+    /// Frame boundary: publish when an observer asked and the interval passed
+    void MaybePublishAtFrameBoundary();
+    mutable std::mutex _publishedMutex;
+    mutable TTDSessionInfo _published;
+    mutable std::atomic<bool> _publishRequested{false};
+    /// Every public operation that reads or changes the session holds one for
+    /// its whole run (TDD section 7.2, "control thread, emulator paused").
+    /// On the machine's own thread it does nothing but publish after a change.
+    /// On any other thread it
+    ///   - takes the control lock (_controlMutex): one control operation at a
+    ///     time, and ReadSessionInfo never computes beside one;
+    ///   - parks the machine while a session is active (Recording: its thread
+    ///     appends to the timeline and journals; Detached: it replays them),
+    ///     and resumes it afterwards if it parked it here;
+    ///   - after a Change, the outermost operation publishes the summary.
+    /// An Idle session is not touched by a running machine, so it is not parked.
+    class SessionOperation
+    {
+    public:
+        enum class Kind : uint8_t { Read, Change };
+        SessionOperation(const TimeTravelManager& manager, Kind kind);
+        ~SessionOperation();
+        SessionOperation(const SessionOperation&) = delete;
+        SessionOperation& operator=(const SessionOperation&) = delete;
+
+    private:
+        const TimeTravelManager& _manager;
+        Kind _kind;
+        bool _locked = false;
+        bool _parked = false;
+    };
+    bool OnMachineThread() const;
+    mutable std::recursive_mutex _controlMutex;
+    mutable int _operationDepth = 0;  ///< nesting on the lock holder's thread (guarded by _controlMutex)
+    std::chrono::steady_clock::time_point _lastPublish{};
+    /// ROM signature of a live session, taken with its baseline (the ROM the
+    /// recording relies on); GetSessionInfo no longer hashes the ROM per call
+    uint64_t _liveRomSignature = 0;
 
     /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
     TTDRecordMode _recordMode = TTDRecordMode::Session;
@@ -2129,8 +2219,10 @@ private:
     /// I-frame restore by walking deltas from this anchor. Updated on
     /// every OnFrameBoundary when an I-frame is emitted.
     uint64_t _lastKeyFrameIdx = 0;
-    uint64_t _historyLimitFrames = 0;   ///< SetHistoryLimit (0 = no limit)
-    uint64_t _historyLimitBytes = 0;
+    /// SetHistoryLimit (0 = no limit). Atomic: a control thread sets them while
+    /// the machine's thread enforces them after every capture
+    std::atomic<uint64_t> _historyLimitFrames{0};
+    std::atomic<uint64_t> _historyLimitBytes{0};
     uint64_t _evictedCheckpoints = 0;   ///< released by the limit in this session
     uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _timeline (kept with it)
     static uint64_t BlobBytes(const TTDCheckpoint& cp);
@@ -2242,6 +2334,8 @@ private:
 
     /// Refresh EmulatorContext::kStepWorkTtdInput (the per-step gate)
     void UpdateInputWorkFlag();
+    /// Live input other threads queued: applied in order (and journaled), or dropped when the journal owns input
+    void DrainPendingLiveInput();
 
     /// RestoreCheckpoint + ArmInputPlayback + port-journal playback from the
     /// checkpoint's cursor: every restore that navigates history (seek,
@@ -2289,17 +2383,6 @@ private:
     /// Whether to capture write journal entries. When false, journal is empty
     /// and reverse-watchpoint queries fall back to checkpoint replay.
     /// Set via SetEnableWriteJournal() before StartRecording().
-    /// region <Session summary across threads (GetSessionInfo)>
-    TTDSessionInfo ComputeSessionInfo() const;   ///< the recording thread, or a parked machine
-    bool MachineQuiet() const;                   ///< no frame can run concurrently with the caller
-    void PublishSessionInfo();                   ///< at a frame boundary: serve a pending request
-    mutable std::mutex _infoMutex;
-    mutable std::condition_variable _infoCv;
-    mutable bool _infoRequested = false;
-    mutable uint64_t _infoSerial = 0;            ///< counts publications
-    TTDSessionInfo _infoPublished;
-    std::atomic<std::thread::id> _captureThread{};   ///< the thread that captured the last frame
-    /// endregion
 
     bool _enableWriteJournal = false;   ///< D40: the journal is recorded on demand
     static constexpr size_t kDefaultWriteJournalBytes = 64u * 1024 * 1024;
@@ -2339,13 +2422,13 @@ private:
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)
     // -----------------------------------------------------------------------
 
-    /// True while inside EnterReplayMode / ExitReplayMode — gates the
-    /// save/restore of `_soundMuteBeforeReplay` so nested calls are safe.
+    /// True while inside EnterReplayMode / ExitReplayMode, so nested calls are safe
     bool _inReplayMode = false;
 
-    /// SoundManager mute state as it was before EnterReplayMode forced it
-    /// true. Restored by ExitReplayMode. Only meaningful while `_inReplayMode`.
-    bool _soundMuteBeforeReplay = false;
+    /// The host audio hold of the replay (reason TtdReplay): taken by EnterReplayMode after the replay flag is
+    /// set, released by ExitReplayMode before it clears it (and with the manager). Replay runs as fast as the
+    /// host goes; the user's master mute is never touched
+    SoundManager::HostOutputHold _replayHostHold;
     /// Z80 debug mode before replay engaged the debug memory path (restored on exit)
     bool _debugModeBeforeReplay = false;
 

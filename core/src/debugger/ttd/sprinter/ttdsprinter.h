@@ -18,6 +18,7 @@
 ///   | 30 SprinterFastRam | the 64 KB fast RAM | 1 + 65 536 |
 ///   | 31 SprinterInput | the AT keyboard's byte stream and the serial mouse's packet generator | 85 |
 ///   | 32 SprinterCovoxBlaster | the Covox / Covox-Blaster: ring (256 x 16 bit), control, play / write indices, 16-bit phase, INT request, DAC words, the next play tick, statistics (phase S6) | 1 + 544 |
+///   | 33 SprinterIsa | the #9FBD latch, the card kind fitted in each ISA slot, the cards' own bus state (none yet: network cards carry theirs in EthernetNics) | 4 |
 ///   | 35 Wd1793Context | the WD1793's command in flight beyond the BetaDisk blob (ttdwd1793context.h) | 1 + 112 |
 ///
 /// Every blob starts with a version byte (kVersion); a blob of another version
@@ -100,8 +101,8 @@ private:
 class TTDSprinterInput : public TTDSerializable
 {
 public:
-    static constexpr uint8_t kVersion = 2;
-    static constexpr size_t kSize = 88;
+    static constexpr uint8_t kVersion = 3;
+    static constexpr size_t kSize = 89;
 
     explicit TTDSprinterInput(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
 
@@ -184,6 +185,25 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return "SprinterCovoxBlaster"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterCovoxBlaster; }
+    uint64_t TTDHashState() const override;
+
+private:
+    PortDecoder_Sprinter& _decoder;
+};
+
+/// Id 33: the ISA slots (Sprinter ISA tdd §9): version, the whole #9FBD byte, the kind fitted in slot 1 and 2,
+/// then each card's own bus state (SprinterIsaBus::SaveState). A blob recorded with another population is not
+/// loaded (logged); a session with one is refused at load (TimeTravelManager's slot guards)
+class TTDSprinterIsa : public TTDSerializable
+{
+public:
+    explicit TTDSprinterIsa(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
+
+    size_t TTDStateSize() const override;
+    void TTDSaveState(uint8_t* dst) const override;
+    void TTDLoadState(const uint8_t* src) override;
+    std::string TTDDeviceName() const override { return "SprinterIsa"; }
+    PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterIsa; }
     uint64_t TTDHashState() const override;
 
 private:

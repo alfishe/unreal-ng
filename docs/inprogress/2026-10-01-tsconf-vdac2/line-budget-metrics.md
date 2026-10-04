@@ -1,6 +1,6 @@
 # VDAC2: FT812 line budget metrics and TTD
 
-**Created:** 2026-10-02. **Status:** design, implementation started (branch `vdac2-line-metrics`).
+**Created:** 2026-10-02. **Status:** L1-L3 and T1 built, on master; L4 (calibration on a card) open.
 
 ## 1. Why
 

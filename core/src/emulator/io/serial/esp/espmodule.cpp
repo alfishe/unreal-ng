@@ -1,16 +1,52 @@
 #include "emulator/io/serial/esp/espmodule.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 #include "emulator/io/network/virtualnetwork.h"
 
-EspModule::EspModule(VirtualNetwork* network, Chip chip, int slots)
+bool EspModule::ParseFirmware(const std::string& text, Firmware& out)
+{
+    std::string t;
+    for (char c : text)
+    {
+        if (c != ' ' && c != '\t' && c != '_')
+            t.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (t == "ESP32" || t == "ESP32-AT220")
+        out = Firmware::Esp32At220;
+    else if (t == "ESP8266" || t == "ESP8266-NONOS" || t == "NONOS" || t == "ESP8266-AT174")
+        out = Firmware::Esp8266NonOs174;
+    else if (t == "ESP8266-AT221" || t == "AT221" || t == "2.2.1" || t == "ESP8266-2.2.1")
+        out = Firmware::Esp8266At221;
+    else if (t == "ESP8266-AT222" || t == "AT222" || t == "2.2.2" || t == "ESP8266-2.2.2")
+        out = Firmware::Esp8266At222;
+    else
+        return false;
+    return true;
+}
+
+const char* EspModule::FirmwareName(Firmware firmware)
+{
+    switch (firmware)
+    {
+        case Firmware::Esp32At220: return "ESP32";
+        case Firmware::Esp8266NonOs174: return "ESP8266";
+        case Firmware::Esp8266At221: return "ESP8266-AT221";
+        case Firmware::Esp8266At222: return "ESP8266-AT222";
+    }
+    return "ESP32";
+}
+
+EspModule::EspModule(VirtualNetwork* network, Chip chip, int slots, const std::array<uint8_t, 6>* mac)
     : _network(network), _chip(chip), _stack(std::make_unique<EspStack>(network, slots))
 {
     // A fixed station MAC per chip family (Espressif OUIs): leases stay stable
     _mac = chip == Chip::Esp8266 ? std::array<uint8_t, 6>{0x5C, 0xCF, 0x7F, 0x5A, 0x00, 0x01}
                                  : std::array<uint8_t, 6>{0x24, 0x6F, 0x28, 0x5A, 0x00, 0x01};
+    if (mac)
+        _mac = *mac;
     _stack->onDone = [this](const EspStack::Done& done) {
         OnStackDone(done);
         Process();
@@ -22,9 +58,9 @@ EspModule::EspModule(VirtualNetwork* network, Chip chip, int slots)
         if (onReceive)
             onReceive();
     };
-    // Powered up with the saved access point: the virtual one, joined
+    // Powered up with the saved access point: the virtual one, joined (no network: no access point in range)
     _ssid = kVirtualSsid;
-    _wifi = Wifi::GotIp;
+    _wifi = _network ? Wifi::GotIp : Wifi::Idle;
     _ip = _network ? _network->LeaseFor(_mac) : 0;
 }
 
@@ -61,8 +97,39 @@ void EspModule::OnLineSettings(const SerialLine& line)
     _lineMismatch = !(line.baud == _baud && line.dataBits == 8 && line.parity == 'N');
 }
 
+void EspModule::SetResetPin(bool held)
+{
+    if (held == _resetHeld)
+        return;
+    _resetHeld = held;
+    if (held)
+    {
+        // The chip stops: what it held for the ZX, what it got, its links and the Wi-Fi association are gone
+        ++_hardwareResets;
+        _out.clear();
+        _rx.clear();
+        _pendingBaud = 0;
+        _downloadMode = false;
+        Leave();
+        OnHardwareReset();
+        return;
+    }
+    // The boot ROM reads GPIO0 (and GPIO2 / GPIO15, strapped on the board) at the release
+    _baud = _factoryBaud;
+    _flowControl = true;
+    OnLineSettings(_zxLine);
+    if (_gpio0Low)
+    {
+        _downloadMode = true;   // UART download: the flasher's protocol is not emulated
+        return;
+    }
+    OnHardwareBoot();
+}
+
 void EspModule::Transmit(uint8_t byte)
 {
+    if (!Running())
+        return;   // a chip in reset or in the ROM's download loop takes no AT bytes
     UpdateWifi();
     // At another rate or format the module sees framing errors, not bytes
     if (_lineMismatch)
@@ -75,7 +142,7 @@ void EspModule::Transmit(uint8_t byte)
 
 bool EspModule::HasByte() const
 {
-    return !_out.empty() && !_lineMismatch && Now() >= _outReadyAt;
+    return Running() && !_out.empty() && !_lineMismatch && Now() >= _outReadyAt;
 }
 
 uint8_t EspModule::TakeByte()
@@ -134,7 +201,7 @@ void EspModule::Join(const std::string& ssid)
     _wifi = Wifi::Connecting;
     _ip = 0;
     // Only the virtual access point exists: another name keeps connecting
-    _wifiAt = ssid == kVirtualSsid ? Now() + MicrosToT(kJoinUs) : 0;
+    _wifiAt = ssid == kVirtualSsid && _network ? Now() + MicrosToT(kJoinUs) : 0;
 }
 
 void EspModule::Leave()
@@ -171,6 +238,8 @@ void EspModule::UpdateWifi()
 
 void EspModule::OnFrame()
 {
+    if (!Running())
+        return;
     UpdateWifi();
     _stack->OnFrame();
     Process();
@@ -184,6 +253,8 @@ bool EspModule::SaveState(netstate::EspModuleState& out) const
     out.wifi = static_cast<uint8_t>(_wifi);
     out.lineMismatch = _lineMismatch ? 1 : 0;
     out.flowControl = _flowControl ? 1 : 0;
+    out.pins = static_cast<uint8_t>((_resetHeld ? 1 : 0) | (_gpio0Low ? 2 : 0) | (_downloadMode ? 4 : 0));
+    out.factoryBaud = _factoryBaud;
     std::memcpy(out.mac, _mac.data(), 6);
     std::strncpy(out.ssid, _ssid.c_str(), sizeof(out.ssid) - 1);
     out.ip = _ip;
@@ -219,6 +290,11 @@ bool EspModule::LoadState(const netstate::EspModuleState& in, const EspStack::By
     _wifi = in.wifi <= static_cast<uint8_t>(Wifi::GotIp) ? static_cast<Wifi>(in.wifi) : Wifi::Idle;
     _lineMismatch = in.lineMismatch != 0;
     _flowControl = in.flowControl != 0;
+    _resetHeld = (in.pins & 1) != 0;
+    _gpio0Low = (in.pins & 2) != 0;
+    _downloadMode = (in.pins & 4) != 0;
+    if (in.factoryBaud)
+        _factoryBaud = in.factoryBaud;
     std::memcpy(_mac.data(), in.mac, 6);
     _ssid.assign(in.ssid, strnlen(in.ssid, sizeof(in.ssid)));
     _ip = in.ip;

@@ -223,6 +223,14 @@ public:
     uint64_t VersionStamp() const override { return _revision.load() + _writeStamp.load(); }
     void CurrentVersions(std::vector<MediaVersionInfo>& out) const override;
     bool SetHead(const std::string& slotId, uint64_t version) override;
+    /// A slot's peripheral reports that the GUEST took its medium out (a CD drive's START STOP UNIT
+    /// eject; emulation thread, inside the command). The normal eject runs at the next frame
+    /// boundary (ApplyPending: Detach, NC_MEDIA_EJECTED, revision): the slot is empty for every
+    /// surface as after a user's eject. It is a consequence of guest I/O, not an outside input: no
+    /// recording guard, no session invalidation. During TTD replay (sealed: the live run already
+    /// emptied the slot) nothing on the host side changes. A medium with unsaved writes stays (no
+    /// disposition without a user to ask; a CD has none)
+    void GuestEject(const std::string& slotId);
 
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running

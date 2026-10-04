@@ -108,11 +108,16 @@ void SprinterMemory::StandardUpdateBanks(const SprinterPldState& pld)
 
     // Window 3: the cell of the current Spectrum page; page #40 until the first port read
     const uint8_t page3 = pld.starting ? kPortTablePage : pld.cells[pld.pg3 & 0x3F];
-    if ((pld.sc & 0x10) && (page3 & 0xF9) == 0xD0)
+    SprinterIsaBus::Space isaSpace = SprinterIsaBus::Space::Memory;
+    int isaSlot = 0;
+    if ((pld.sc & 0x10) && SprinterIsaBus::PageToSlot(page3, isaSpace, isaSlot))
     {
+        // The ISA view: the RAM page under it is neither read nor written (the trash page takes the plain store)
         MapRamToBank(3, page3, false);
         _action[3] = BankAction::Isa;
         _redirect[3] = ReadRedirect::Isa;
+        _isaSpace = static_cast<uint8_t>(isaSpace);
+        _isaSlot = static_cast<uint8_t>(isaSlot);
     }
     else
     {
@@ -150,6 +155,8 @@ void SprinterMemory::MapRamToBank(uint8_t bank, uint8_t ramPage, bool writable)
         SetBankWriteProtected(bank);
     else if (ramPage == kCblPage)
         _action[bank & 3] = BankAction::CblPage;
+    else if (ramPage == kPortTablePage && _decoder && _decoder->PldJournal().Enabled())
+        _action[bank & 3] = BankAction::PortTable;  // the PLD journal notes table writes (nothing when it is off)
 }
 
 void SprinterMemory::MapFastRamToBank(uint8_t bank, uint8_t fastRamPage)
@@ -186,7 +193,10 @@ uint8_t SprinterMemory::Redirect(uint16_t addr, uint8_t normal) const
         case ReadRedirect::Graphics:
             return _ramBase[static_cast<size_t>(kGraphicsFirstPage) * PAGE_SIZE + _pld->portY * 1024u + (addr & 0x3FF)];
         case ReadRedirect::Isa:
-            return 0xFF;
+            // Tools (debugger, memory viewer, automation) peek the card: no side effect
+            return _decoder ? _decoder->GetIsaBus().Peek(static_cast<SprinterIsaBus::Space>(_isaSpace), _isaSlot,
+                                                         static_cast<uint16_t>(addr & 0x3FFF))
+                            : 0xFF;
         case ReadRedirect::LoadingCs:
             return addr >= _loadingFastRamFrom ? _cacheBase[addr] : normal;
         default:
@@ -194,11 +204,23 @@ uint8_t SprinterMemory::Redirect(uint16_t addr, uint8_t normal) const
     }
 }
 
+uint8_t SprinterMemory::IsaRead(uint16_t addr)
+{
+    return _decoder ? _decoder->GetIsaBus().Read(static_cast<SprinterIsaBus::Space>(_isaSpace), _isaSlot,
+                                                 static_cast<uint16_t>(addr & 0x3FFF))
+                    : 0xFF;
+}
+
 uint8_t SprinterMemory::MemoryReadFast(uint16_t addr, bool isExecution)
 {
     const uint8_t value = Memory::MemoryReadFast(addr, isExecution);
     if (_anyRedirect) [[unlikely]]
+    {
+        // A CPU read or opcode fetch in the ISA view is a real ISA cycle (code can run from ISA memory)
+        if (_redirect[addr >> 14] == ReadRedirect::Isa)
+            return IsaRead(addr);
         return Redirect(addr, value);
+    }
     return value;
 }
 
@@ -206,7 +228,11 @@ uint8_t SprinterMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
     const uint8_t value = Memory::MemoryReadDebug(addr, isExecution);
     if (_anyRedirect) [[unlikely]]
+    {
+        if (_redirect[addr >> 14] == ReadRedirect::Isa)
+            return IsaRead(addr);
         return Redirect(addr, value);
+    }
     return value;
 }
 
@@ -271,9 +297,16 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
             return;
         }
         case BankAction::Isa:
+            // An ISA cycle replaces the RAM cycle: no plain store landed (write-protected) and no Spectrum
+            // screen shadow write happens (the PLD's ISA select wins; Sprinter ISA tdd §4.3)
+            _decoder->GetIsaBus().Write(static_cast<SprinterIsaBus::Space>(_isaSpace), _isaSlot,
+                                        static_cast<uint16_t>(addr & 0x3FFF), value);
             return;
         case BankAction::ResetPage:
-            _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+            _decoder->OnResetPageWrite();
+            break;
+        case BankAction::PortTable:
+            _decoder->OnPortTableWrite(addr);
             break;
         case BankAction::CblPage:
             _decoder->OnCblPageWrite(addr, value);

@@ -6,6 +6,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/ports/models/spectrum128ayioport.h"
 #include "emulator/video/screen.h"
 
 ///
@@ -23,6 +24,8 @@ class PortDecoder_Spectrum128 : public PortDecoder, public IReadCycleLatch
 {
     /// region <Fields>
 protected:
+    /// The board wiring on AY port A (keypad / AUX and RS-232 lines), attached to the socket AY
+    Spectrum128AyIoPort _ayIoPort;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -48,6 +51,12 @@ public:
     /// writes only. Z80::readCycleLatch, docs/inprogress/2026-09-30-fusetest-core-defects/research.md claim 2
     void OnReadCycle(uint16_t port, uint8_t value) override;
     /// endregion </Interface methods>
+
+    /// The board wiring on AY port A (devices on the keypad / AUX and RS-232 sockets set its receiver levels)
+    Spectrum128AyIoPort& AyIoPort()
+    {
+        return _ayIoPort;
+    }
 
     /// region <Helper methods>
 public:

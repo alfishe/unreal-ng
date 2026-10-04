@@ -11,6 +11,8 @@
 #include "platform-sockets.h"
 
 struct StateNode;
+struct BreakpointSpec;
+class BreakpointManager;
 
 /**
  * @brief Session context for a client connection
@@ -103,7 +105,9 @@ private:
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleIsa(const ClientSession& session, const std::vector<std::string>& args);
     static std::string RtcReportText(EmulatorContext* context);
+    static std::string IsaReportText(EmulatorContext* context);
     void HandleNetwork(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 
@@ -126,6 +130,7 @@ private:
     void HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPList(const ClientSession& session, const std::vector<std::string>& args);
     void HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPHits(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPClear(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
@@ -293,6 +298,14 @@ private:
     // The parsed address is stored in the 'result' parameter
     // maxValue specifies the maximum allowed value (default: 0xFFFF for 16-bit addresses)
     bool ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue = 0xFFFF) const;
+
+    // Breakpoint arguments shared by bp / wp / bport: args[addressIndex] is an address or a range "A-B", the
+    // arguments from `flagsFrom` on carry --page ramN, --slot-only, --mask M, --hits N|>=N|%N anywhere; what
+    // is left is the note. False with the reason in `error`
+    bool ParseBreakpointArgs(const std::vector<std::string>& args, size_t addressIndex, size_t flagsFrom,
+                             BreakpointSpec& spec, std::string& error) const;
+    // Adds the breakpoint and says what was set ("Breakpoint #3 set at 0x8000 ...") or why not
+    std::string AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what);
 
     // Helper method to format text for terminal output (converts \n to \r\n)
     // This ensures proper line breaks in telnet/terminal clients

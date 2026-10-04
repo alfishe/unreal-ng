@@ -220,6 +220,36 @@ The binary format is portable (Kaitai schema `core/src/debugger/ttd/ttd.ksy`;
 Python analyzer in `tools/verification/ttd-analyzer`), so captures outlive
 the process.
 
+### Inspect a file, search port journals, export a clip
+
+```bash
+# Describe a .ttd without loading it (no emulator instance involved; MCP time_travel "file_info")
+curl -s "$BASE/ttd/file-info?path=scratch/session-001.ttd" \
+  | jq '{session_start_frame, session_end_frame, sections, machine}'
+# 400/404 with ok:false + error when the path is not a readable .ttd
+
+# "When did the program ...?" from the port journals, no replay (MCP time_travel "port_events")
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/port-events" -H 'Content-Type: application/json' \
+     -d '{"event":"key","arg":"enter","newest":true,"limit":3}' | jq -c '.hits[] | {frame, tinframe, port, value, pc}'
+
+# Lossless frame clip, written inside the core (one call instead of seek + capture per frame)
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: application/json' \
+     -d '{"from":100,"to":200,"path":"scratch/clip1"}' | jq '{ok, frames, bytes, planeb, width, height, seconds}'
+```
+
+- `file-info` reports `path`, `file_bytes`, `schema_version`, the frame range, `checkpoint_count`, which
+  `sections` are present (`write_journal`, `coverage_index`, `bookmarks`, `input_journal`, `port_journals`, ...)
+  and the recorded `machine` (model, ROM signature, devices): provision a matching instance before `load`.
+- `port-events` needs a stopped or paused recording (it also works on a loaded file, or on a file on disk with
+  `"file": "<path>"`). `event` is one of `key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`,
+  `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
+  `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
+  `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,
+  `pc`, plus `ay_register` for AY events).
+- `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
+  optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
+  There is no dedicated MCP action: use `invoke_api`.
+
 ### Coverage heatmap (when did my code run?)
 
 With the coverage index enabled you get per-frame executed/written/read

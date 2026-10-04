@@ -52,7 +52,7 @@ void NeoGSZxDma::updateMode()
             mode = Mode::Watch;
     }
     _mode = mode;
-    const bool want = mode != Mode::Off;
+    const bool want = mode != Mode::Off && _host.zxHostMemoryBus();
     if (want != _installed && _host.zxInstall(want))
         _installed = want;
 }

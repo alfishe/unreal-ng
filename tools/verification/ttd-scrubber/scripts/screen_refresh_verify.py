@@ -47,7 +47,8 @@ def http(method, path, body=None):
 
 def screen_md5(iid):
     """GET /capture/screen as raw PNG bytes; return md5 of bytes."""
-    status, body = http("GET", f"/api/v1/emulator/{iid}/capture/screen")
+    # The server default changed to PNG + area=full; ask for GIF + the working picture explicitly so the hashed bytes keep their old meaning.
+    status, body = http("GET", f"/api/v1/emulator/{iid}/capture/screen?format=gif&area=screen")
     if status != 200:
         return None, status
     return hashlib.md5(body).hexdigest(), status

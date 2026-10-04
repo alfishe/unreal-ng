@@ -49,7 +49,7 @@ StateNode Unavailable(const char* description)
 
 /// One AY chip, fully decoded. Same keys as the WebAPI has always returned
 /// for /state/audio/ay/{chip}, so existing clients keep working.
-StateNode AyChipNode(SoundChip_AY8910* chip, int index)
+StateNode AyChipNode(SoundChip_AY8910* chip, int index, double clockHz)
 {
     StateNode ret = StateNode::Object();
     ret["available"] = true;
@@ -78,7 +78,7 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index)
         channel["period"] = int(period);
         channel["fine"] = int(fine);
         channel["coarse"] = int(coarse);
-        channel["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
+        channel["frequency_hz"] = clockHz / (16.0 * (period + 1));
         const uint8_t volumeReg = regs[8 + ch];
         channel["volume"] = int(volumeReg & 0x0F);
         channel["tone_enabled"] = (regs[7] & (0x01 << ch)) == 0;
@@ -94,13 +94,13 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index)
     envelope["shape"] = int(envShape);
     envelope["period"] = int(envPeriod);
     envelope["current_output"] = int(chip->getEnvelopeGenerator().out());
-    envelope["frequency_hz"] = 1750000.0 / (256.0 * (envPeriod + 1));
+    envelope["frequency_hz"] = clockHz / (256.0 * (envPeriod + 1));
     ret["envelope"] = envelope;
 
     StateNode noise = StateNode::Object();
     const uint8_t noisePeriod = regs[6] & 0x1F;
     noise["period"] = int(noisePeriod);
-    noise["frequency_hz"] = 1750000.0 / (16.0 * (noisePeriod + 1));
+    noise["frequency_hz"] = clockHz / (16.0 * (noisePeriod + 1));
     ret["noise"] = noise;
 
     StateNode mixer = StateNode::Object();
@@ -586,6 +586,9 @@ StateNode Ay(EmulatorContext* context)
     ITurboSoundDevice* ts = sm->getTurboSound();
     const bool fm = ts && ts->hasFm();
     ret["slot_device"] = !ts ? "None" : (fm ? "TSFM" : "TurboSound");
+    // The AY input clock the generators run at now: 1750000 except where the machine switches it (the Profi in
+    // hi-res: 1500000, [PROFI] AyClock)
+    ret["psg_clock_hz"] = static_cast<int64_t>(sm->GetPsgClock());
     if (ayCount == 0)
         ret["description"] = "No AY chips available";
     else if (ayCount == 1)
@@ -624,7 +627,7 @@ StateNode AyChip(EmulatorContext* context, int chip)
     SoundChip_AY8910* ay = sm->getAYChip(chip);
     if (!ay)
         return Unavailable("AY chip not available");
-    return AyChipNode(ay, chip);
+    return AyChipNode(ay, chip, double(sm->GetPsgClock()));
 }
 
 StateNode Fm(EmulatorContext* context)
@@ -786,6 +789,10 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
         StateNode& zx = dma["zx"];
         zx["mode"] = ngs.zxMode;
         zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["host_memory_bus"] = ngs.zxHostMemoryBus;
+        if (!ngs.zxHostMemoryBus)
+            zx["note"] = "no host memory cycles on this ZX-bus (the Sprinter's ISA ZX-bus adapter passes I/O only): "
+                         "the module never sees a host access, the overlay is never installed";
         zx["read_latch"] = int(ngs.zxReadLatch);
         zx["pending"] = ngs.zxPending;
         zx["pending_address"] = ngs.zxPendingAddress;
@@ -2040,6 +2047,7 @@ StateNode Network(EmulatorContext* context)
     set["atm2ioesp"] = st.settings.atm2IoEsp;
     set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
     set["zifi"] = st.settings.zifi;
+    set["modem_phonebook"] = st.settings.modemPhonebook;   // the numbers a Hayes modem peer dials (ModemPhonebook=)
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
@@ -2061,6 +2069,28 @@ StateNode Network(EmulatorContext* context)
     machine["internal_io"] = st.internalIo;
     machine["zifi"] = st.zifiMachine;
     ret["cards"] = st.cards;
+    // Expansion slots (the Sprinter's ISA slots): what the config puts there, the network card fitted, its report
+    if (!st.expansionSlots.empty())
+    {
+        StateNode& slots = ret["slots"];
+        slots = StateNode::Array();
+        for (const NetworkManager::Status::Slot& s : st.expansionSlots)
+        {
+            StateNode row = StateNode::Object();
+            row["id"] = s.id;
+            row["bus"] = s.bus;
+            row["label"] = s.label;
+            row["configured"] = s.configured.empty() ? std::string("none") : s.configured;
+            row["card"] = s.card.empty() ? std::string("none") : s.card;
+            if (!s.note.empty())
+                row["not_fitted"] = s.note;
+            for (const auto& member : s.details.members)
+                row[member.first] = member.second;
+            slots.push(std::move(row));
+        }
+    }
+    if (st.ethernetGateway.isObject())
+        ret["ethernet_gateway"] = st.ethernetGateway;
     if (!st.notes.empty())
     {
         StateNode& notes = ret["not_fitted"];
@@ -2098,17 +2128,22 @@ StateNode Network(EmulatorContext* context)
         node["peer_pending"] = uint64_t(c.pending);
         if (c.peerBaud)
             node["peer_baud"] = c.peerBaud;   // an ESP module's own rate: a mismatch with "baud" garbles both sides
+        if (c.modem.isObject())
+            node["modem"] = c.modem;          // a Hayes modem peer: mode, lines, call, settings, counters, journal
+        if (c.esp.isObject())
+            node["esp"] = c.esp;              // an ESP module peer: firmware, state, Wi-Fi, AT / ZiFi native session
     };
 
     // The machine's own serial port when it is no 16550 (ATM Turbo 2+
-    // keyboard controller): the MCU's UART line and its peer
+    // keyboard controller, ZX Profi v5 8251): the line and its peer
     StateNode& machineSerial = ret["machine_serial"];
     machineSerial["fitted"] = st.machineSerial.fitted;
     if (st.machineSerial.fitted)
     {
         const NetworkManager::Status::Com& m = st.machineSerial;
         machineSerial["flavor"] = m.flavor;
-        machineSerial["kbc_firmware"] = m.firmware;
+        if (!m.firmware.empty())
+            machineSerial["kbc_firmware"] = m.firmware;
         peerFields(machineSerial, m);
         machineSerial["rts"] = m.rts;
         machineSerial["dtr"] = m.dtr;

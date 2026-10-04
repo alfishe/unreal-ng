@@ -83,7 +83,7 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # counters, per-line DRAM budget)
     ("tsconf_sprites", "TSL", "testdata/machines/tsconf/spg/sprites.spg", 50),
     # Sprinter Sp2000 (Sprinter S7): the cold full start of the shipped config - the ROM's loader feeds
-    # the PLD its bitstream at 3.5 MHz, then the default BIOS (3.07 BETA 1 since 2026-10-02) starts its POST
+    # the PLD its bitstream at 3.5 MHz, then the default BIOS (3.06 Hotfix 2 since 2026-10-03) starts its POST
     # at 21 MHz: the PLD, Z84C15, video RAM, fast RAM, input and WD1793-context blobs (ids 25, 28-31, 35)
     ("sprinter_boot", "SPRINTER", None, 0),
 ]
@@ -96,6 +96,9 @@ CORPUS_DIR = "testdata/ttd"
 # fixture recorded with it cannot replay exactly; the classic card can
 FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
     "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
+    # The Sprinter fits the General Sound behind its ISA ZX-bus adapter (slot 1, ISA phase I2, 2026-10-03); the classic
+    # card, as for the Pentagon corpus (NeoGS leaves its RAM out of TTD v1). The fixture also carries the port journals
+    # (PortDecoder::TtdEnginesSealed; the adapter passes no memory cycles, so no NeoGS ZX-DMA could stop them either)
     "sprinter_boot": {"out": "testdata/machines/sprinter/ttd/boot.ttd", "gs": "z80"},
     # The Pentagon corpus: TTD_Corpus_Test fits the classic card before loading, and a session loads only into the
     # card it was recorded with. The shipped configs fit NeoGS, so without this a re-record from the stock app

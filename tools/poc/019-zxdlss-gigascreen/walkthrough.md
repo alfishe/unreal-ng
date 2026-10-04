@@ -70,7 +70,7 @@ python3 capture/extract_clip.py --ttd data/across_the_edge_full.ttd --out data/c
 
 The script loads the `.ttd` into a new instance, seeks to the session start
 and walks with `ttd/step-forward`. After each step it takes
-`GET /capture/screen?format=png&mode=full` (352x288 including the border),
+`GET /capture/screen?area=full&format=png` (352x288 including the border; both are the server defaults now),
 `/state/screen` and `/state/paging`. Frames are stored as palette-index planes
 (the whole demo uses 15 colors) in zstd chunks of 500 - format in
 `common/clip.py`. About 24–32 frames/s, ~10 minutes, 13 MB.

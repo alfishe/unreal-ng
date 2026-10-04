@@ -35,6 +35,8 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "debugger/ttd/ttdportsearch.h"
+#include "emulator/state/devicestate.h"
 #include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -56,6 +58,9 @@
 #include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/machines/sprinter/sprinterdssmedia.h"
 #include "emulator/machines/sprinter/sprinterfixture.h"
+#include "emulator/video/sprinter/sprintergamevideo.h"
+#include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterpldgame.h"
 
 namespace
 {
@@ -120,8 +125,9 @@ TEST_F(TTDSprinter_Test, Pld_RoundTripsThePldTheDecoderAndTheIntSource)
     acc.operations = 1234;
 
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 2 + sizeof(SprinterAccelState))
-        << "Standard brings no module state; the accelerator section";
+    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 +
+                                             sizeof(SprinterAccelState))
+        << "Standard brings no module state, the room is Game's (the largest); the accelerator section";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(saved[0], ttd::TTDSprinterPld::kVersion);
     const SprinterPldState pldBefore = pld;
@@ -180,8 +186,9 @@ TEST_F(TTDSprinter_Test, Pld_TheModuleTravelsByNameWithItsState)
     std::memcpy(stub->state, "\x11\x22\x33\x44", 4);
 
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 4 + 2 + sizeof(SprinterAccelState))
-        << "room for the largest module state";
+    EXPECT_EQ(serializer.TTDStateSize(),
+              ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 + sizeof(SprinterAccelState))
+        << "room for the largest module state (Game's 16 bytes, more than this module's 4)";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(saved.data()) + 139), "TtdStateModule");
 
@@ -253,6 +260,7 @@ TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
     ASSERT_TRUE(input.KeyboardStream().Busy());
     ASSERT_LT(input.SerialMouse().GetState().sent, 3);
     input.SetKeyboardOverruns(3);
+    input.SetPldKeyboardFlags(SprinterInput::kPldCtrl | SprinterInput::kPldAlt | SprinterInput::kPldOff);
 
     ttd::TTDSprinterInput serializer(*_decoder);
     EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterInput::kSize);
@@ -271,6 +279,8 @@ TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
     EXPECT_EQ(board.x, 31 + 12) << "the board mouse counters are in the blob";
     EXPECT_EQ(board.y, 85 - 1);
     EXPECT_EQ(board.buttons, 0xFD);
+    EXPECT_EQ(input.PldKeyboardFlags(), SprinterInput::kPldCtrl | SprinterInput::kPldAlt | SprinterInput::kPldOff)
+        << "the PLD's keyboard block (Ctrl and Alt down, a break prefix seen) is in the blob";
 }
 
 TEST_F(TTDSprinter_Test, VideoRam_RoundTripsWithThePaletteAndTheIntList)
@@ -362,7 +372,7 @@ protected:
         ASSERT_NE(_ttd, nullptr);
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
-        // Pinned to BIOS 3.04 (the shipped default is 3.07 BETA 1; its cold start is the corpus fixture
+        // Pinned to BIOS 3.04 (the shipped default is 3.06 Hotfix 2; its cold start is the corpus fixture
         // testdata/machines/sprinter/ttd/boot.ttd, TTD_Corpus_Test)
         ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // PowerOn resets
 
@@ -588,9 +598,45 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(3);
     for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
                                  ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput,
-                                 ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse})
+                                 ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse,
+                                 ttd::PeripheralId::SprinterIsa, ttd::PeripheralId::EthernetNics})
         EXPECT_EQ(cp->peripheralBlobs.count(static_cast<uint8_t>(id)), 1u) << "id " << int(id);
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
+}
+
+/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; with the NeoGS on the ISA ZX-bus adapter
+/// too: IsaZxBusAdapter_Test.NeoGsZxDmaCannotInstall_PortJournalRecords): a
+/// recording answers "who wrote this port" (/ttd/port-events) and the PLD journal's TTD source, and its replay
+/// feeds the recorded IN results with no divergence. Boot-bound: BIOS POST frames, replayed once
+TEST_F(TTDSprinterMachine_Test, PortJournal_RecordsAndAnswersPortEvents)
+{
+    PowerOn(true);
+    Skip(5);
+    StartRecording();
+    Record(30);
+    _ttd->StopRecording();
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    ASSERT_TRUE(info.portJournalActive) << info.portJournalOffReason;
+    EXPECT_GT(info.portReadCount, 0u);
+    EXPECT_GT(info.portWriteCount, 0u);
+
+    ttd::TTDPortQuery q;
+    std::string error;
+    ASSERT_TRUE(ttd::BuildPortEventQuery("out", "", q, error)) << error;
+    const ttd::TTDPortSearchResult hits = _ttd->SearchPortEvents(q);
+    ASSERT_TRUE(hits.ok) << hits.error;
+    EXPECT_FALSE(hits.hits.empty());
+
+    DeviceState::SprinterJournalQuery jq;
+    jq.ttd = true;
+    const StateNode fromTtd = DeviceState::SprinterJournal(_context, jq);
+    EXPECT_EQ(fromTtd.find("error"), nullptr) << DeviceState::ToText(fromTtd);
+
+    ExpectExactReplay(0, 30, "BIOS POST with the port journals");
+    const ttd::TTDSessionInfo after = _ttd->GetSessionInfo();
+    EXPECT_EQ(after.portReplayDivergences, 0u);
+    EXPECT_EQ(after.portReplayValueMismatches, 0u);
 }
 
 /// Mid PLD load: the full start, a checkpoint while the ROM's loader feeds the PLD (the bitstream count,
@@ -889,6 +935,80 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidPs2ByteAndMidMousePacket)
     _context->pMouse->SetPresent(true);
 }
 
+/// A glide through the automation (design 2026-10-03): the steps are applied at frame ends, paced by the serial
+/// mouse, and journaled like any mouse input; a click queued behind it follows. A replay from the start and from
+/// the middle of the glide is exact, and the program logged the glide's motion whole
+TEST_F(TTDSprinterMachine_Test, ExactRestore_GlideAndQueuedClickOnTheSerialMouse)
+{
+    PowerOn(true);
+    Skip(10);
+    _context->pMouse->SetPresent(false);  // the board mouse alone
+
+    // DI; log SIO B bytes at #9000 (the same polling loop as above, SIO B only)
+    static const uint8_t program[] = {
+        0xF3,                    // 8000 DI
+        0xDD, 0x21, 0x00, 0x90,  // 8001 LD IX,#9000
+        0xDB, 0x1B,              // 8005 loop: IN A,(#1B)  SIO B RR0
+        0x0F,                    // 8007 RRCA
+        0x30, 0xFB,              // 8008 JR NC,loop
+        0xDB, 0x1A,              // 800A IN A,(#1A)
+        0xDD, 0x77, 0x00,        // 800C LD (IX+0),A
+        0xDD, 0x23,              // 800F INC IX
+        0x18, 0xF2,              // 8011 JR loop
+    };
+    for (size_t i = 0; i < sizeof(program); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (uint16_t a = 0x9000; a < 0x9400; a++)
+        _context->pMemory->DirectWriteToZ80Memory(a, 0);
+    Z84Lib::Z84C15& chip = _decoder->GetZ84();
+    chip.Write(0x10, 0x55);
+    chip.Write(0x10, 45);
+    chip.Write(0x1B, 0x04);
+    chip.Write(0x1B, 0x44);
+    _z80->pc = 0x8000;
+    RunToBoundary();
+    Record(2);  // not recorded: the serial mouse takes its reference sample
+
+    StartRecording();
+    size_t midGlide = 0;
+    Record(1, [&](int) {
+        ASSERT_TRUE(MouseManager()->Glide(400, -200).ok());
+        ASSERT_TRUE(MouseManager()->Click(MouseButton::Left, 3).queued);
+    });
+    Record(40, {}, [&] {
+        if (!midGlide && MouseManager()->IsBusy() && MouseManager()->GetState().glideRemainingDx < 200)
+            midGlide = _ttd->GetCheckpointCount() - 1;
+    });
+    _ttd->StopRecording();
+    EXPECT_FALSE(MouseManager()->IsBusy());
+    ASSERT_GT(midGlide, 0u) << "no boundary in the middle of the glide";
+
+    // The program's log: Microsoft packets adding up to the glide, then the click
+    int dx = 0, dy = 0;
+    bool sawLeft = false, sawRelease = false;
+    for (uint16_t a = 0x9000; a + 2 < 0x9400; a += 3)
+    {
+        const uint8_t b0 = _context->pMemory->DirectReadFromZ80Memory(a);
+        if (b0 == 0)
+            break;
+        ASSERT_EQ(b0 & 0x40, 0x40) << "a packet starts at #" << std::hex << a;
+        const uint8_t b1 = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a + 1));
+        const uint8_t b2 = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a + 2));
+        dx += static_cast<int8_t>(static_cast<uint8_t>(((b0 & 0x03) << 6) | (b1 & 0x3F)));
+        dy += static_cast<int8_t>(static_cast<uint8_t>(((b0 & 0x0C) << 4) | (b2 & 0x3F)));
+        sawLeft |= (b0 & 0x20) != 0;
+        sawRelease |= sawLeft && (b0 & 0x30) == 0;
+    }
+    EXPECT_EQ(dx, 400);
+    EXPECT_EQ(dy, 200) << "200 down";
+    EXPECT_TRUE(sawLeft) << "the queued click reached the program";
+    EXPECT_TRUE(sawRelease);
+
+    ExpectExactReplay(0, _ttd->GetCheckpointCount(), "the whole glide");
+    ExpectExactReplay(midGlide, 20, "from the middle of the glide");
+    _context->pMouse->SetPresent(true);
+}
+
 /// Seek anywhere: positions inside frames (the replay to them runs the journal), back and forth,
 /// arrive at the state the recording had there
 TEST_F(TTDSprinterMachine_Test, SeekAnywhere_InsideFramesBackAndForth)
@@ -1020,3 +1140,54 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_AcceleratorArmedAndInIntSuspendWind
 }
 
 /// endregion </Exact restore on the real BIOS>
+
+/// The Game PLD configuration (sprinterpldgame.h) in the TTD: the module and its 16-byte state travel in the PLD blob,
+/// every checkpoint holds beam_t 0 of its own frame (the frame start closed the frame before), and a replay ends every
+/// frame with the same blobs - with ScreenHQ off as recorded and with it on (the grid-offset register runs on every
+/// catch-up whether the frame is drawn or not). BIOS 3.04 runs its POST on the Game logic (it returns through page
+/// #41 into nothing, restarts and clears cell #EE): any deterministic program will do. Boot-bound: ~40 frames
+TEST_F(TTDSprinterMachine_Test, GameModule_ReplaysBitExactWithAnyRendering)
+{
+    PowerOn(true);
+    Skip(5);
+    // The Game bitstream's load: the sink one write before the end with the Game hashes (FNV-1a backwards with the
+    // inverse of its prime, as sprinterpldgame_test.cpp), the PLD's reset at the next instruction
+    _decoder->BeginLoading();
+    SprinterPldState& pld = _decoder->GetPldState();
+    pld.bitstreamCount = SprinterPldConfig::kPldConfigurationWrites - 1;
+    pld.bitstreamHashHead = SprinterPldGame::kHeadHash;
+    pld.bitstreamHashFull = (SprinterPldGame::kFullHash * 0x359C449Bu) ^ 0xFFu;
+    _decoder->OnConfigurationWrite(0xFF);
+    RunToBoundary();
+    ASSERT_EQ(_decoder->ActiveModule().Descriptor().name, "Game");
+    Skip(3);
+
+    StartRecording();
+    Record(20);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 21u);
+
+    // The blob: module name at 139, state room (u16) at 171, used (u16) at 173, the state from 175
+    // (offset, frame offset, 2 reserved, beam_t u32, frame u64)
+    for (size_t idx = 0; idx < _ttd->GetCheckpointCount(); idx++)
+    {
+        const std::vector<uint8_t> blob = BlobOf(idx, ttd::PeripheralId::SprinterPld);
+        ASSERT_GT(blob.size(), 175u + sizeof(SprinterGameVideoState));
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(blob.data()) + 139), "Game") << "checkpoint " << idx;
+        SprinterGameVideoState state;
+        std::memcpy(&state, blob.data() + 175, sizeof(state));
+        EXPECT_EQ(state.beamT, 0u) << "checkpoint " << idx << ": the frame start closed the frame before";
+        EXPECT_EQ(state.frame, _ttd->GetCheckpoint(idx)->time.frame) << "checkpoint " << idx;
+    }
+    ExpectExactReplay(0, 20, "Game, ScreenHQ off as recorded");
+
+    // The beam-exact renderer on: different catch-ups, the same machine state at every boundary
+    _emulator->GetFeatureManager()->setFeature(Features::kScreenHQ, true);
+    _context->pMemory->UpdateFeatureCache();
+    ASSERT_TRUE(_ttd->SeekTo({_ttd->GetCheckpoint(0)->time.frame, 0}));
+    for (size_t idx = 1; idx < _ttd->GetCheckpointCount() && !HasFailure(); idx++)
+    {
+        RunToBoundary();
+        ExpectLiveMatchesCheckpoint(idx, "Game, ScreenHQ on: frame " + std::to_string(idx), false, false);
+    }
+}

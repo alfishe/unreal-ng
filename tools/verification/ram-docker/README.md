@@ -48,12 +48,12 @@ Platform is auto-detected. Docker image is built for matching architecture.
 ## Docker Image
 
 Based on `docker/Dockerfile.universal`:
-- Debian testing (GLIBC 2.38+)
+- Ubuntu 24.04 (glibc 2.39), gcc 14, CMake 3.31
 - Qt 6.9.3 (qtmultimedia, qt5compat)
-- ICU 56 (legacy support)
-- OpenSSL, Brotli, UUID
+- OpenSSL, UUID
 
-First run builds the image (~10-15 min). Subsequent runs use cache.
+The same image CMake CI and the Linux release packages build in. First run builds the
+image (a few minutes: Qt is downloaded, nothing is compiled). Subsequent runs use cache.
 
 ## Build Targets
 

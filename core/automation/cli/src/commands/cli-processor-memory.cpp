@@ -1107,6 +1107,8 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
         ss << "                  IXH, IXL, IYH, IYL" << NEWLINE;
         ss << "16-bit registers: AF, BC, DE, HL, IX, IY, SP, PC, IR" << NEWLINE;
         ss << "                  AF', BC', DE', HL' (alternate)" << NEWLINE;
+        ss << "                  MEMPTR (alias WZ)" << NEWLINE;
+        ss << "Interrupt state:  IM (0-2), IFF1, IFF2 (0-1)" << NEWLINE;
         ss << NEWLINE;
         ss << "Examples:" << NEWLINE;
         ss << "  reg A            - Get A register" << NEWLINE;
@@ -1176,6 +1178,10 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
                 ss << std::setw(regInfo->is16bit ? 4 : 2) << value << NEWLINE;
                 session.SendResponse(ss.str());
             }
+            else if (regInfo)
+            {
+                session.SendResponse("Error: " + regName + " is at most " + std::to_string(regInfo->maxValue) + NEWLINE);
+            }
             else
             {
                 session.SendResponse("Error: Unknown register '" + regName + "'" + NEWLINE);
@@ -1204,6 +1210,11 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
                     ss << "Set " << firstArg << " = 0x" << std::hex << std::uppercase << std::setfill('0');
                     ss << std::setw(is16bit ? 4 : 2) << value << NEWLINE;
                     session.SendResponse(ss.str());
+                }
+                else
+                {
+                    session.SendResponse("Error: " + firstArg + " is at most " +
+                                         std::to_string(Z80::FindRegister(firstArg)->maxValue) + NEWLINE);
                 }
                 return;
             }
@@ -1270,8 +1281,10 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
 
     // Empty line for IR and first line of flags
     ss << "                                     IR: " << std::setw(4) << z80State->ir_ << "  (I: " << std::setw(2)
-       << static_cast<int>(z80State->i) << ", R: " << std::setw(2) << static_cast<int>(z80State->r_low) << ")"
+       << static_cast<int>(z80State->i) << ", R: " << std::setw(2) << static_cast<int>(Z80::RegisterR(z80State)) << ")"
        << NEWLINE;
+    ss << "                                     MEMPTR: " << std::setw(4) << z80State->memptr << "  Q: " << std::setw(2)
+       << static_cast<int>(z80State->q) << NEWLINE;
     ss << NEWLINE;
 
     // Flags and interrupt state in two columns
@@ -1285,11 +1298,15 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
     ss << "  5: " << ((z80State->f & 0x20) ? "1" : "0") << " (Unused bit 5)";
     ss << "                HALT: " << (z80State->halted ? "Yes" : "No") << NEWLINE;
 
-    ss << "  H: " << ((z80State->f & 0x10) ? "1" : "0") << " (Half-carry)" << NEWLINE;
-    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)" << NEWLINE;
+    ss << "  H: " << ((z80State->f & 0x10) ? "1" : "0") << " (Half-carry)";
+    ss << "                    IM: " << std::dec << static_cast<int>(z80State->im) << NEWLINE;
+    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)";
+    ss << "                Boundary: " << Z80::BoundaryName(z80State->boundary) << NEWLINE;
     ss << "  P/V: " << ((z80State->f & 0x04) ? "1" : "0") << " (Parity/Overflow)" << NEWLINE;
     ss << "  N: " << ((z80State->f & 0x02) ? "1" : "0") << " (Add/Subtract)" << NEWLINE;
-    ss << "  C: " << ((z80State->f & 0x01) ? "1" : "0") << " (Carry)";
+    ss << "  C: " << ((z80State->f & 0x01) ? "1" : "0") << " (Carry)" << NEWLINE << NEWLINE;
+    ss << "Time: frame " << std::dec << emulator->GetContext()->emulatorState.frame_counter << ", T " << z80State->t
+       << " (CPU T-states since the frame's start)";
 
     // Send the formatted register dump
     session.SendResponse(ss.str());

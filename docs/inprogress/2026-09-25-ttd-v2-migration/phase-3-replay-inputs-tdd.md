@@ -229,7 +229,7 @@ TTDReplayStats TimeTravelEngine::LastReplayStats() const;   // every surface sho
 **As built (2026-10-04).** The step came down to one finding and two pieces.
 
 - **The finding.** TTD could record while an RZX played, but a seek back inside the playback went wrong. The replay ran with the RZX player where it stood (at the end of the session), took its `IN` values and frame ends from there and desynced it.
-- **Piece 1: the player's position is a device state.** `RzxPlayback` (id 47, `emulator/rzx/rzxttdstate.*`, 84 bytes) holds:
+- **Piece 1: the player's position is a device state.** `RzxPlayback` (id 57, `emulator/rzx/rzxttdstate.*`, 84 bytes) holds:
   - the frames done, the fetches and the `IN` position in the current frame;
   - the player state, the counters and the first desync;
   - a fingerprint of the recording.

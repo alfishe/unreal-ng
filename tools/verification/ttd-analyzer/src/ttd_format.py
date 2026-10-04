@@ -50,9 +50,12 @@ v1 is the first production release with XOR-delta encoding:
 
 from __future__ import annotations
 
+import os
+import re
 import struct
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 try:
     import zstandard as _zstd
@@ -200,61 +203,59 @@ def crc32c(data: bytes, seed: int = 0) -> int:
 # length driving an unbounded read loop, not a real design limit.
 MAX_PERIPHERAL_BLOBS_PER_CHECKPOINT = 64
 
-# PeripheralId enum (ttdserializable.h), for readable reporting of peripheral_blobs.
-# tests/test_peripheral_ids.py keeps it equal to the C++ enum.
-# Was missing 7/8 (only went up to 6) - fixed 2026-09-23 while auditing this
-# module against the real enum; unlabelled ids used to print as bare integers
-# (e.g. KempstonMouse showed as "7" in `info` output).
-PERIPHERAL_ID_NAMES = {
-    0: "TurboSound",
-    1: "BetaDisk",
-    2: "Tape",
-    3: "Covox",
-    4: "TSFM",
-    5: "GeneralSound",
-    6: "ScorpionProfROM",
-    7: "KempstonMouse",
-    8: "AtmPaging",
-    9: "ProfiPaging",
-    10: "MoonSound",
-    11: "GeneralSoundLightweight",
-    12: "NeoGS",
-    13: "Plus3Paging",
-    14: "Upd765",
-    15: "EvoSdCard",
-    16: "TsConfPaging",
-    17: "AtaChannel",
-    18: "Ds12887",
-    19: "EvoPs2",
-    20: "ZxNetUsb",
-    21: "EvoTurboCache",
-    22: "EvoFontRam",
-    23: "KempstonJoystick",
-    24: "SerialPort",
-    25: "SprinterPld",
-    26: "Atm2Kbc",
-    27: "MachineSerialPeer",
-    28: "SprinterVideoRam",
-    29: "Z84C15",
-    30: "SprinterFastRam",
-    31: "SprinterInput",
-    32: "SprinterCovoxBlaster",
-    33: "SprinterIsa",
-    34: "SprinterPads",
-    35: "Wd1793Context",
-    36: "AtmIoBus",
-    37: "Atm2IoEsp",
-    38: "EvoMouse",
-    39: "ZiFiLine",
-    40: "ZiFi",
-    41: "CdDrive",
-    42: "Vdac2Memory",
-    43: "Vdac2",
-    44: "Smuc",
-    45: "EvoAvrVolatile",
-    46: "KeyboardMatrix",
-    47: "RzxPlayback",
-}
+# PeripheralId enum (core/src/debugger/ttd/ttdserializable.h), for readable
+# reporting of peripheral_blobs and for `validate`'s unknown-id check.
+#
+# The table is read from the C++ enum itself, the single source of the ids,
+# instead of being copied here: a hand-kept copy drifted twice (7/8 missing
+# until 2026-09-23, 45-47 until 2026-10-03), and every recording carrying a
+# newer device then failed `validate` with one error per checkpoint.
+# UNREAL_TTD_PERIPHERAL_HEADER points at another copy of the header (a tool
+# run outside the source tree).
+PERIPHERAL_ID_HEADER = Path(
+    os.environ.get("UNREAL_TTD_PERIPHERAL_HEADER")
+    or Path(__file__).resolve().parents[4] / "core" / "src" / "debugger" / "ttd" / "ttdserializable.h"
+)
+
+
+def parse_peripheral_id_enum(text: str) -> Dict[int, str]:
+    """``{id: name}`` from the ``enum class PeripheralId`` in *text*.
+
+    Every enumerator carries an explicit ``= N`` (the ids are on-disk
+    values); ``Count`` closes the enum. Raises ``ValueError`` when the enum
+    is missing or holds an enumerator without a value, so a changed header
+    layout fails loudly instead of yielding a short table.
+    """
+    at = text.find("enum class PeripheralId")
+    if at < 0:
+        raise ValueError("no 'enum class PeripheralId' found")
+    body = text[text.index("{", at) + 1:text.index("}", at)]
+    body = re.sub(r"//[^\n]*", "", body)
+    ids: Dict[int, str] = {}
+    for entry in body.split(","):
+        entry = entry.strip()
+        if not entry or entry == "Count":
+            continue
+        m = re.fullmatch(r"(\w+)\s*=\s*(\d+)", entry)
+        if not m:
+            raise ValueError(f"PeripheralId enumerator without an explicit id: {entry!r}")
+        ids[int(m.group(2))] = m.group(1)
+    if not ids:
+        raise ValueError("'enum class PeripheralId' holds no ids")
+    return ids
+
+
+def load_peripheral_id_names(header: Path = PERIPHERAL_ID_HEADER) -> Dict[int, str]:
+    try:
+        return parse_peripheral_id_enum(header.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise RuntimeError(
+            f"cannot read the PeripheralId enum from {header}: {e} "
+            "(set UNREAL_TTD_PERIPHERAL_HEADER to ttdserializable.h)"
+        ) from e
+
+
+PERIPHERAL_ID_NAMES: Dict[int, str] = load_peripheral_id_names()
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
 # + flags(u8) + reserved(u16) + uncompressedSize(u32) + compressedSize(u32).

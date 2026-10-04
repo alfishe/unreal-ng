@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "emulator/memory/memorywaitoverlay.h"
+#include "emulator/video/sprinter/sprinterintsource.h"
 
 /// The Sprinter's turbo wait rule (Sprinter technical-design §4, decision D4).
 ///
@@ -54,18 +55,28 @@ public:
 ///
 ///   WAIT_ORIG = /MR or CT5 or ALL_MODE2 or ((!(V_RAM & A14 & A15) & !(A14 & !A15)) or TURBO)
 ///
-/// In words: with ALL_MODE bit 2 = 0 and the CPU at 3.5 MHz, a memory access to #4000-#7FFF, or to
-/// #C000-#FFFF while #7FFD bit 2 is set (V_RAM = PN2, DCP.TDF:577: Spectrum pages 4-7), is held while
-/// CT5 = 0. CT[5..0] is the video counter's low part (VIDEO2.TDF:280-298): CT[2..0] counts 0, 1, 2, 4,
-/// 5, 6 (six 42 MHz clocks), CT[5..3] steps once per six clocks, so CT5 is low for 24 clocks and high
-/// for 24 - a 48-clock period = 4 T at 3.5 MHz, 56 periods per 224-T line (one per 16-pixel square).
-/// The CPU samples /WAIT in T2 and once per wait state after it, so an access whose T2 falls on the
-/// first low T waits 2 T, on the second low T 1 T, on a high T none (0.75 T on average).
+/// In words: with ALL_MODE bit 2 = 0 and the CPU at 3.5 MHz, a memory access (/MR: never a port cycle) to
+/// #4000-#7FFF, or to #C000-#FFFF while #7FFD bit 2 is set (V_RAM = PN2, DCP.TDF:577: Spectrum pages 4-7),
+/// is held while CT5 = 0 - in every line, the border included. CT[5..0] is the video counter's low part
+/// (VIDEO2.TDF:284-298): CT[2..0] counts 0, 1, 2, 4, 5, 6 (six 42 MHz clocks), CT[5..3] steps once per six
+/// clocks, so CT5 is low for 24 clocks and high for 24 - a 48-clock period = 4 T at 3.5 MHz, 56 periods per
+/// 224-T line (one per 16-pixel square). The CPU samples /WAIT in T2 and once per wait state after it.
 ///
-/// Where the CT period starts relative to the frame is not documented (tdd-zx-mode Q1): kPhase is a
-/// placeholder until the measurement program (testdata/machines/sprinter/zx-timing/) reports it from a
-/// real board. Worked example (kPhase = 0): LD A,(#4000) whose read starts at frame T 1 000:
-/// T2 = 1 001, (1 001 + 0) mod 4 = 1: the second low T, 1 T of wait; at T 1 003: T2 mod 4 = 0, 2 T.
+/// The phase follows from the PLD (tdd-zx-mode §3.3, Q1 closed 2026-10-03):
+/// - the 3.5 MHz clock is a toggle of CT[2..0] = 2 (DCP.TDF:275), registered on the falling 42 MHz edge; CT and
+///   the toggle both power up at 0 and nothing resets them, so every CPU T-state starts 3.5 clocks after a
+///   CT[2..0] = 0 state and CT5's edges (CT[5..3] steps on CT[2..0] 6 -> 0) sit 3.5 clocks before a T boundary;
+/// - INTT is clocked by CT5 (VIDEO2.TDF:394) and INT_X is set by its rising edge (SP2_ACEX.TDF:744), so the frame
+///   INT starts with a CT5-high half: the T-states from INT are high, high, low, low (repeating);
+/// - an access whose T1 is T 1 after INT (mod 4) has T2 on the first low T: /WAIT seen twice, 2 T; T1 at 2: 1 T;
+///   T1 at 3 or 0: T2 on the high half, none. Waits by T1 from INT mod 4: 0, 2, 1, 0 (0.75 T on average).
+/// A Verilator run of the transcribed counters, clock, INT and WAIT_ORIG gives the same table over a whole
+/// frame (the Sprinter verification package, orig_phase.csv); a board measurement would still confirm it.
+///
+/// SprinterIntSource places every INT on the CT5 rise, frame T = kCt5RiseT (mod 4), so the rule is relative to
+/// that one constant. M1 opcode fetches, operand / data reads and writes all sample /WAIT in T2: one table.
+/// Worked example: LD A,(#4000) whose data read starts at frame T 1 003: 1 003 - 2 = 1 001, mod 4 = 1: 2 T of
+/// wait; at T 1 004: 2 (mod 4), 1 T; at T 1 005 / 1 006: none.
 ///
 /// Installed only while the waits apply (PortDecoder_Sprinter::ApplyWaits): every other machine and
 /// the Sprinter outside this mode pay nothing.
@@ -74,16 +85,17 @@ class SprinterOrigWaits : public MemoryWaitOverlay
 public:
     /// T-states per CT5 period (48 clocks of 42 MHz)
     static constexpr uint32_t kPeriod = 4;
-    /// Frame T at which a CT5-low half starts, mod 4: a placeholder (tdd-zx-mode Q1), the one place to change
-    static constexpr uint32_t kPhase = 0;
+    /// Frame T (mod 4) of the CT5 rise = every INT edge (SprinterIntSource::kCt5RiseT)
+    static constexpr uint32_t kCt5RiseT = SprinterIntSource::kCt5RiseT;
+    /// Wait states by (T1 - kCt5RiseT) mod 4: T1 at INT + 1 has T2 on the first CT5-low T
+    static constexpr uint8_t kWaitsFromRise[kPeriod] = {0, 2, 1, 0};
 
     explicit SprinterOrigWaits(Z80* cpu) : MemoryWaitOverlay(cpu) {}
 
     /// Wait states for a memory cycle that started (T1) at base T-state `startClock` of the frame
     static uint32_t Rule(uint32_t startClock)
     {
-        const uint32_t sample = (startClock + 1u + kPhase) % kPeriod;  // T2, where /WAIT is first sampled
-        return sample == 0 ? 2u : (sample == 1 ? 1u : 0u);
+        return kWaitsFromRise[(startClock + kPeriod - kCt5RiseT) % kPeriod];
     }
 
     /// The windows the PLD equation covers: window 1 always, window 3 while #7FFD bit 2 is set

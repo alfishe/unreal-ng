@@ -446,6 +446,16 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 - Uses a persistent target position to prevent cumulative drift
 - Resets target when other stepping commands are used
 
+**Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
+audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
+The machine computes the same samples as at normal speed (TTD determinism; captures and recordings still get
+them). TTD seek / replay and turbo mode hold the output the same way; the user's master mute is never touched.
+Each hold ends with the run, seek or turbo span that took it (also when it fails), and `resume` drops any hold
+whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
+`GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
+`ttd_replay`, `turbo`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
+`frames_delivered`, `frames_audible`, `frames_held`.
+
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision
 - Frequent stepping may impact overall emulation performance
@@ -457,7 +467,7 @@ Commands to view and analyze the internal state of the selected emulator instanc
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `registers` | `regs`, `r` | | Display complete Z80 CPU register state. Shows main registers (AF, BC, DE, HL, IX, IY, SP, PC), alternate register set (AF', BC', DE', HL'), special registers (I, R, IFF1, IFF2), and flags (S, Z, Y, H, X, P/V, N, C). Output formatted for readability with hex and decimal values. |
+| `registers` | `regs`, `r` | | Display complete Z80 CPU register state. Shows main registers (AF, BC, DE, HL, IX, IY, SP, PC), alternate register set (AF', BC', DE', HL'), special registers (I, R, MEMPTR, IFF1, IFF2, IM, HALT), flags (S, Z, Y, H, X, P/V, N, C), and the time (frame, CPU T-states since the frame's start). `registers <name> [value]` / `registers get|set` read or write one register: the table names, MEMPTR (alias WZ), IM (0-2), IFF1 / IFF2 (0-1). |
 | `debugmode <on\|off>` | | `on` or `off` | Enable or disable detailed memory access tracking. When ON, the emulator records every memory read/write for analysis via `memcounters`. **Warning**: Significant performance impact (~50% slower). Use only when analyzing specific memory access patterns. |
 | `memcounters [reset]` | `memstats` | `[reset]` | Display memory access statistics when debug mode is active. Shows: <br/>• Read/write/execute access counts per address<br/>• Hotspot identification (most frequently accessed)<br/>• Access type breakdown (code vs data)<br/>If `reset` is specified, clears all accumulated statistics. Requires `debugmode on` to collect data. |
 | `calltrace [depth]` | | `[max-entries]` | Display execution call trace history (CALL/RET tracking). Shows:<br/>• Call stack with return addresses<br/>• Function entry points<br/>• Nesting level<br/>• Symbolic names if loaded from .map file<br/>Default shows last 50 entries. Specify `depth` to override (max 1000). The trace buffer is circular and maintained during execution. |
@@ -722,7 +732,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 | Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| AY / SSG overview | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
 | AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
@@ -737,16 +747,21 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | CD audio control: `play` (`track=N [to=M]`, `lba=X frames=N`, `msf=MM:SS:FF end=..`), `pause`, `resume`, `stop`, `volume` (`left= right= route= sotc=`), `mixer` (`volume= mute= solo=`); `drive` = `ide0.slave` / unit / first CD drive. One source: `CdAudioControl` | `cdaudio <verb> [drive] k=v ..` | `POST /cdaudio/{verb}` | `cdaudio(verb, drive, {k=v})` | `cdaudio(verb, drive, k=v)` | `invoke_api` POST `/cdaudio/{verb}` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
-| Sprinter Sp2000 machine (PLD, decoder, windows, cells, clock + 21 MHz waits, frame, video summary, accelerator, sound, Z84C15 with wait generator and daisy chain, floppy latch, CMOS / IDE links, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` (summary: PLD, windows, accelerator, sound line) |
+| Sprinter Sp2000 machine (PLD with the configuration module Standard / Game and why it runs, decoder, windows, cells, clock + 21 MHz waits, frame, video summary, accelerator, sound, Z84C15 with wait generator and daisy chain, floppy latch, CMOS / IDE links, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` (summary: PLD, windows, accelerator, sound line) |
 | Sprinter port table (map / DOS / PN5 / direction) | `state sprinter ports map=0 dos=1 rw=w` | `GET /state/sprinter/ports?map=0&dos=1&rw=w` | `sprinter_ports{map=0, dos=1, rw="w"}` | `sprinter_ports(map=0, dos=1, rw="w")` | `sprinter_ports` (current state); `invoke_api` for another map |
 | Sprinter port lookup (index, code, name) | `state sprinter port 21BC rw=w` | `GET /state/sprinter/ports/lookup?port=21BC&rw=w` | `sprinter_port(0x21BC, {rw="w"})` | `sprinter_port(0x21BC, rw="w")` | `invoke_api` |
 | Sprinter screen text (80 x 32 text squares) | `state sprinter text` | `GET /state/sprinter/text` | `sprinter_text()` | `sprinter_text()` | `sprinter_text` |
 | Sprinter mode table per square (map, HOLD, frame length, RGMOD, PORT_Y, palettes in use) | `state sprinter video [page=0\|1] [all=1] [squares=1]` | `GET /state/sprinter/video?page=&all=&squares=` | `sprinter_video{page=, all=, squares=}` | `sprinter_video(page=, all=, squares=)` | `sprinter_video` (the map) |
 | Sprinter palettes (8 x 256 pens, R, G, B as video RAM holds them) | `state sprinter palette [0-7\|all\|used]` | `GET /state/sprinter/palette?k=` | `sprinter_palette(k)` | `sprinter_palette(k)` | `sprinter_palette` |
 | Sprinter Covox-Blaster ring (256 words, play / write index) | `state sprinter ring` | `GET /state/sprinter/sound/ring` | `sprinter_sound_ring()` | `sprinter_sound_ring()` | `sprinter_sound_ring` |
-| Sprinter BIOS images, loaded image, start options | `state sprinter bios` | `GET /state/sprinter/bios` | `sprinter_bios()` | `sprinter_bios()` | `sprinter_bios` |
+| Sprinter ZX (Spectrum) mode: active, launcher configuration from the hardware and the launcher's RAM (each `.ZX` option with its evidence), best-matching mode file + confidence, clock (CNF request, F12, MHz, why), frame / INT, ROMs by CRC, the decode of `#7FFD` / `#1FFD` / `#01FD` / `#xxFD` / `#FE` / `#1F` with each port's effect and its TTD query | `state sprinter zx [deep=0]` | `GET /state/sprinter/zx-mode?deep=0` (also the `zx_mode` section of `/state/sprinter`) | `sprinter_zx_mode([deep])` | `sprinter_zx_mode(deep=True)` | `sprinter_zx_mode` |
+| Sprinter PLD journal: who changed the PLD setup and when (frame, T, PC): port table writes with the decodes they changed, CNF / turbo, clock, `#7FFD` / `#1FFD` (the port used), ALL_MODE, RGMOD, HOLD, frame length, PLD load, F12, Ctrl+Alt+Del, resets; `source=ttd`: the OUTs of the TTD recording to those PLD codes | `state sprinter journal [kinds=cnf,port_1ffd] [since=N] [from=F] [to=F] [limit=N] [source=live\|ttd]` | `GET /state/sprinter/pld-journal?kinds=&since=&from=&to=&limit=&source=` | `sprinter_pld_journal{kinds=, since=, from=, to=, limit=, source=}` | `sprinter_pld_journal(kinds=, since=, from_frame=, to_frame=, limit=, source=)` | `sprinter_pld_journal` (`pld_journal_kinds`, `pld_journal_source`) |
+| Sprinter PLD journal on / off / clear (on by default; off costs nothing) | `state sprinter journal on\|off\|clear` | `POST /sprinter/pld-journal {enabled, clear}` | `sprinter_pld_journal_control{enabled=, clear=}` | `sprinter_pld_journal_control(enabled=, clear=)` | `invoke_api` POST `/sprinter/pld-journal` |
+| Sprinter BIOS images, loaded image, its `known_issues`, start options | `state sprinter bios` | `GET /state/sprinter/bios` | `sprinter_bios()` | `sprinter_bios()` | `sprinter_bios` |
 | Sprinter BIOS / start options select (loads at the reset) | `state sprinter bios 3.06 [fast_start=0\|1] [accel_int_suspend=0\|1] [reset=0\|1]` | `POST /sprinter/bios {bios, fast_start, accel_int_suspend, reset}` | `sprinter_bios_select{bios="3.06"}` | `sprinter_bios_select(bios="3.06")` | `invoke_api` POST `/sprinter/bios` |
 | Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
+| Sprinter ISA slot population at create (default `[ISA]`: slot 1 none, slot 2 NE2000; fixed for the instance) | `create SPRINTER --isa-slot1 <kind> --isa-slot2 <kind>` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}` | - | - | `emulator_manage` create `sprinter_isa_slot1`, `sprinter_isa_slot2` |
+| Profi keyboard at create (`[PROFI] Keyboard=`: v5 `xt`, v3 `matrix`) and in force | `create PROFI --profi-keyboard xt\|xttable\|matrix` (also `start`); `state` (Profi keyboard), `keyboard route` (controller name) | `POST /emulator/create\|start {"model":"PROFI","profi":{"keyboard":"xttable"}}`; `GET /state/paging` `profi_keyboard`, `GET /keyboard/status` `keyboard_controller` | `paging_state().profi_keyboard`, `keyboard_controller()` | `paging_state()['profi_keyboard']`, `keyboard_controller()` | `emulator_manage` create `profi_keyboard`; `inspect_state` aspect `paging` |
 | Device memory regions (the Sprinter's 256 KB video RAM `vram`) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
 | Region read / write | `memory region read vram 0x17F0 3`, `memory region write vram 0x17F0 00 00 A8` | `GET /memory/region/vram?offset=&length=&format=hex\|data\|sparse\|binary`, `POST /memory/region/vram {offset, hex\|data}`, `/memory/page/vram/{0-15}` | `region_read(name, off, len)`, `region_write(name, off, {..}\|"hex")` | `region_read(...)` -> bytes, `region_write(...)` | `memory_region` (region, address, size); `invoke_api` POST |
 | Region save / load (files) | `memory region save\|load vram <file> [offset] [len]` | `POST /memory/region/vram {action: save\|load, path, offset, length}` | `region_save(name, path)`, `region_load(name, path)` | `region_save(...)`, `region_load(...)` | `invoke_api` POST |
@@ -755,6 +770,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Pixel sources (memory, registers, palette behind a pixel; `t=` the beam point at a frame T) | `video pixel <x> <y> [layer]`, `video pixel t <tstate>` | `GET /video/pixel?x=&y=&layer=` / `?t=` | `video_pixel(...)`, `video_pixel_at(t)` | `video_pixel(...)`, `video_pixel_at(t)` | `invoke_api` |
 | Pixels a byte feeds (RAM page, Z80 address, palette cell, sprite word, device video RAM) | `video address <page> <off>`, `video address z80\|palette\|sprite_ram\|vram <n>` | `GET /video/address?page=&offset=` / `?z80=` / `?space=vram&offset=` | `video_address(...)`, `video_address_in(space, off)` | the same | `invoke_api` |
 | Text grid of a text mode (ATM / ZX-Evo / TS-Conf, the Sprinter's text squares) | `video text [layer]` | `GET /video/text` | `video_text()` | `video_text()` | `video_text` |
+| Screenshot of the presented frame: the whole frame with border (default) or the working picture (`area=screen`); PNG (default) or GIF; the answer carries the frame geometry (`frame`, `screen_window`, `crop`); optional file path | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | `GET /capture/screen?area=&format=&source=&path=` (`mode=` is a deprecated alias of `area`) | `screenshot{area=, format=, source=, path=}` | `capture_screen(format="png", area="", path="", source="")` (`full=` deprecated) | `capture_media` screenshot `area`, `format`, `source`, `path` |
 | Raw framebuffer (rgba; the Sprinter's u16 pens with `index`) | `capture framebuffer <file> [rgba\|index]` | `GET /capture/framebuffer?format=&encoding=binary\|base64` | `framebuffer([format])` | `framebuffer(format)` (+ numpy `array`) | `capture_media` framebuffer |
 | Screen digest (RAM pages, or the machine's own video RAM on the Sprinter) | `digest [--active] [--banks ..] [<start> <end>]` | `GET /state/screen/digest` | `screen_digest(...)` | `screen_digest(...)` | `screen_digest` |
 | Audio channels overview (beeper, AY, GS, Covox, master, mixer devices) | `state audio channels` | `GET /state/audio/channels` | - (`audio_mixer()`) | - (`audio_mixer()`) | `invoke_api` |
@@ -765,6 +781,12 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Network settings (change) | `network set k=v ..` | `POST /network/config` | `network_configure{..}` | `network_configure(**kw)` | `invoke_api` POST `/network/config` |
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
+| ISA slots (report; Sprinter) | `state isa` / `isa` | `GET /state/isa` | `isa_state()` | `isa_state()` | `isa` |
+| ISA ZX-bus adapter + the GS behind it (Sprinter) | `isa` (`zx_bus`), `isa io 1 #BB`, `state audio gs` | `GET /state/isa` (`slots[].zx_bus`, `summary_line`), `POST /control/isa`, `GET /state/audio/gs` | `isa_state().slots[1].zx_bus`, `gs_state()` | `isa_state()['slots'][0]['zx_bus']`, `gs_state()` | `isa` (`[isa]` card line), `audio_gs` |
+| ISA IRQ lines (Sprinter) | `isa irq` | `GET /state/isa` (`irq_summary`, `pio_port_b`, `slots[].irq_line`) | `isa_state()` | `isa_state()` | `isa` (`[isa] irq:` line) |
+| ISA access journal | `isa journal [n\|clear\|on\|off]` | `GET /state/isa/journal` | `isa_journal(n)` | `isa_journal(last)` | `invoke_api` GET `/state/isa/journal` |
+| Ethernet frames (capture / inject) | `network frames [link] [file.pcap]`, `network frame <link> <hex>` | `GET /network/frames`, `POST /network/frame` | `network_frames(link, n)`, `network_inject_frame(link, hex)` | `network_frames(link, last)`, `network_frames_pcap()`, `network_inject_frame()` | `invoke_api` |
+| ISA cycle / RESET pulse / latch | `isa io\|mem <slot> <addr> [v]`, `isa peek`, `isa reset`, `isa latch <v>` | `POST /control/isa` | `isa_io_read(slot, addr)` .. `isa_reset()` | `isa_io_read(slot, addr)` .. `isa_reset()` | `invoke_api` POST `/control/isa` |
 | Memory contention | `state contention` | `GET /state/contention` | `contention_state()` | `contention_state()` | `contention` |
 | Static port map & routing | `ports` | `GET /ports` | `ports_map()` | `ports_map()` | `ports` |
 | Paging latches + bank table (the Sprinter: a `sprinter` block with the four windows; its fast RAM reads as page type `cache`) | `paging` | `GET /state/paging` | `paging_state()` | `paging_state()` | `paging` |
@@ -863,10 +885,11 @@ Advanced debugging features for the selected emulator instance. The emulator sup
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bp <addr>` | `break`, `breakpoint` | `<address>` | Set an execution breakpoint at `<address>`. Emulation pauses when PC reaches this address. Address can be hex (0x8000) or decimal (32768). Returns breakpoint ID for future reference. |
-| `wp <addr> <type>` | `watchpoint` | `<address> <r\|w\|rw>` | Set a memory watchpoint at `<address>`:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>Useful for tracking when memory is accessed. |
-| `bport <port> <type>` | `portbreak` | `<port> <in\|out\|both>` | Set an I/O port breakpoint:<br/>• `in` - break on port IN operation<br/>• `out` - break on port OUT operation<br/>• `both` - break on either IN or OUT<br/>Essential for debugging I/O operations (keyboard, sound, disk, ports). |
-| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port<br/>• Active/Inactive<br/>• Group name<br/>• Optional annotation |
+| `bp <addr>` | `break`, `breakpoint` | `<address>[-<end>] [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set an execution breakpoint on an address or a range (`bp 0x8000-0x80FF`). Address can be hex (0x8000) or decimal (32768). `--page`: a physical breakpoint on that page at offset `address & #3FFF`, through any slot that shows the page (`--slot-only`: only through the slot of the address). `--hits` stops on the Nth hit only, from the Nth on (`>=N`) or every Nth (`%N`); every hit is counted. Returns the breakpoint id and its description. |
+| `wp <addr> <type>` | `watchpoint` | `<address>[-<end>] <r\|w\|rw> [--page ramN\|romN\|cacheN [--slot-only]] [--hits N\|>=N\|%N] [note]` | Set a memory watchpoint on an address or a range:<br/>• `r` - break on read access<br/>• `w` - break on write access<br/>• `rw` - break on read OR write<br/>`wp 0x4000-0x57FF w` watches the screen bitmap; `--page` / `--slot-only` / `--hits` as for `bp`. |
+| `bport <port> <type>` | `portbreak` | `<port> <i\|o\|io> [--mask M] [--hits N\|>=N\|%N] [note]` | Set an I/O port breakpoint:<br/>• `i` - break on port IN operation<br/>• `o` - break on port OUT operation<br/>• `io` - break on either IN or OUT<br/>`--mask M` matches every port where `(port & M) == (<port> & M)`: `bport 0xFE i --mask 0x00FF` catches the keyboard read on any high byte. `--hits` as for `bp`. |
+| `bphits reset [id]` | | `reset [breakpoint-id]` | Set the hit counters back to 0, of one breakpoint or of all (`bplist` shows them as "(hit Nx)"). |
+| `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port, a range end ("to 0x80FF"), the page ("in ram32", "(this slot only)"), a port mask<br/>• Active/Inactive<br/>• The hit policy ("hits >=5") and the hits so far ("(hit 12x)")<br/>• Optional annotation |
 | `bpclear [id\|all]` | `bc` | `[breakpoint-id \| all]` | Clear breakpoints:<br/>• No argument: clear ALL breakpoints and watchpoints<br/>• `<id>`: clear specific breakpoint by ID<br/>• `all`: explicitly clear all (same as no argument)<br/>**Warning**: This permanently deletes breakpoints. Use `bpoff` to temporarily disable instead. |
 
 #### 4.2 Breakpoint Group Management
@@ -1358,11 +1381,11 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frames, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+| `videorecord status` | | Show recording state, output file, frames, region, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -2270,6 +2293,11 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state rtc` / `rtc` / `cmos` | | | Show the CMOS clock (MC146818 / DS12887; the ZX-Evo AVR's emulation of one) - the same report as WebAPI `/state/rtc`, Lua/Python `rtc_state()` and MCP `rtc` (`DeviceState::Rtc`):<br/>• Chip, the ports the machine wires it to, cell count, NVRAM file, the guest's address latch<br/>• Time base: `host` (host local time plus the offset the guest set), `emulated` (while TTD records), `fixed` (tests)<br/>• Time as the guest reads it now; registers A-D and the alarms decoded<br/>• Every cell as hex, peeked (register C keeps its flags)<br/>Machines: ATM3 (ZX-Evo), PROFI, SCORPION / PROFSCORP with `[HDD] Scheme=SMUC`; elsewhere the reason why not | ✅ Implemented |
 | `rtc read <start> [count]` | | `<start> [count]` | CMOS cells as the guest reads them, without side effects (`RtcAccess::Read`, same as WebAPI `GET /rtc/cells`). Numbers: decimal, `0x..`, `#..` or `..h` | ✅ Implemented |
 | `rtc write <start> <byte> [byte..]` | | `<start> <bytes>` | Write CMOS cells like the guest (`RtcAccess::Write`, same as WebAPI `POST /rtc/cells`): time registers set the clock, C and D are read-only, the address latch is not touched; marked as a debugger edit while TTD records | ✅ Implemented |
+| `state isa` / `isa` | | | Show the ISA slots (the Sprinter's two ISA-8 slots) - the same report as WebAPI `/state/isa`, Lua/Python `isa_state()` and MCP `isa` (`DeviceState::Isa`): the `#9FBD` latch (A19-A14, AEN, RESET), whether window 3 shows a slot now, and per slot the configured and fitted card, why a configured card is not fitted, the card's own fields and cycle counters (a 3C509B also its ID port under `resources.id_port`). Other machines: "no ISA slots on this machine". The ZX-bus adapter (slot 1 by default, ISA phase I2) adds `zx_bus`: the General Sound / NeoGS behind it, its ports `#B3` / `#BB` / `#33` (CPU `#C0B3` / `#C0BB` / `#C033` with window 3 = `#D4`), its reset from ISA RESET DRV, its mailbox status | ✅ Implemented |
+| `isa irq` | | | The ISA interrupt lines only (the same report, cut down): `irq_summary`, `pio_port_b` (mode, lines, latched inputs, read value, direction, mask, interrupt control, vector, pending, under service) and per slot `irq_line` (the card's IRQ, PB0 / PB1, who drives the line - a pin nobody drives reads high through the 3.9 kOhm pull-up - level, the card's request and cause, the PIO's bit-mode setup for that bit, and whether it reaches the CPU: IM 2 vector, table, daisy-chain order, or why not) | ✅ Implemented |
+| `isa journal [n\|clear\|on\|off]` | | | The ISA access journal (`IsaAccess::Journal`, same as WebAPI `GET /state/isa/journal`): the last n accesses with frame, T, PC, slot, read / write / stall, the ISA and CPU address, the card's register name and the value, the interrupt events, and `irq_events` (the interrupt events from their own ring, which polling does not flush); `clear`, `on`, `off` | ✅ Implemented |
+| `network frames [link] [file.pcap]` / `network frame <link> <hex>` | | | The Ethernet gateway's capture of the frame-level cards (`EthernetAccess`): one line per frame (index, frame, direction, port, length, summary), or the whole capture as a pcap file; `frame` queues a frame towards the card at the next frame boundary | ✅ Implemented |
+| `isa io <slot> <address> [value]` / `isa mem ...` / `isa peek <slot> <address> [mem]` / `isa reset` / `isa latch <value>` | | | One ISA cycle at a 20-bit ISA address (`IsaAccess::Execute`, same as WebAPI `POST /control/isa`): read, or write the value; `peek` shows what the card answers without side effects; `reset` pulses RESET DRV to both slots; `latch` writes `#9FBD`. An empty slot reads `#FF`. A tool edit while TTD records | ✅ Implemented |
 | `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level, mute state, and the live core sample rate (`sample_rate_hz` in the WebAPI master block — follows the `audio_rate` pin, see section 7) | 🔮 Planned |
 
 **AY-3-8912 Registers**:
@@ -3015,9 +3043,18 @@ tape import recording.wav --target tzx -o imported.tzx
 
 ### 11. Mouse Input Injection
 
-Drive the Kempston Mouse of the selected emulator from a script, a remote tool or an AI agent.
+Drive the mouse of the selected emulator from a script, a remote tool or an AI agent. The input goes
+to the **machine's own mouse**, whatever it is (design:
+[2026-10-03-mouse-api-routing](../../../inprogress/2026-10-03-mouse-api-routing/design.md)):
 
-**How the device works, in one paragraph.** The Kempston Mouse is a *relative* device: it
+| Machine | Mouse (`device` id) | What the program reads |
+| :--- | :--- | :--- |
+| 48K, 128K, +2, +2A, +3, Pentagon, Scorpion, Profi, ZX-Poly | Kempston interface (`kempston`) | `#FADF` buttons, `#FBDF` X, `#FFDF` Y |
+| ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
+| ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
+| Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+
+**How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
 the mouse adds to them, and they wrap around (255 + 1 = 0). The program running on the
 machine reads the counters, compares them with its previous reading and moves its own
@@ -3029,7 +3066,7 @@ emulated screen and do not depend on the host window size or monitor DPI.
 
 | Value | Meaning | Allowed per call |
 | :--- | :--- | :--- |
-| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero) |
+| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero); `mouse glide`: −4096 … 4096 |
 | `dy` | + = **up** (no flip: screen Y grows down, the counter grows up) | −127 … 127 |
 | `steps` (wheel) | + = away from you | −7 … 7, not 0 |
 | `button` | `left`, `right`, `middle` (or `l`, `r`, `m`), any case | — |
@@ -3042,6 +3079,14 @@ gives X = 231; the program computes 231 − 31 = 200, reads that as −56 and mo
 **left**. The error message tells you to split a long move into several moves with
 `run_frames` between them.
 
+**Long moves: `mouse glide`.** `glide <dx> <dy>` moves up to ±4096 per axis in steps the
+program can follow: the first step (at most 127) now, then one step per frame, each once the
+program has read the last one (at most 10 frames' wait; at once when no program reads the mouse).
+Commands sent while a glide is in progress queue behind it and are applied in order, one per
+frame, so a `click` after a glide lands where the glide ended. `mouse clear` drops the queue.
+Worked example (a program reading the mouse every frame): `glide 300 0` -> X + 127 now, + 127 at
+the end of the next frame, + 46 at the end of the frame after.
+
 **Timing.** Each command changes the device before it returns (a direct call on the
 caller's thread, not a queued message). The machine reacts only when its program next reads
 the ports. For reproducible results: `pause`, inject, then `run_frames N`. `click` presses
@@ -3051,23 +3096,29 @@ sees the button held for exactly N frames.
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `mouse move` | | `<dx> <dy>` | Add `dx`/`dy` to the X/Y counters (8-bit wrap). | ✅ Implemented |
+| `mouse glide` | | `<dx> <dy>` | Long move (±4096) in steps of at most 127, one per frame, paced by the program's reads; later commands queue behind it. | ✅ Implemented |
 | `mouse press` | | `<button>` | Press and hold a button. | ✅ Implemented |
 | `mouse release` | | `<button>` | Release a button. | ✅ Implemented |
 | `mouse click` | | `<button> [frames]` | Press, hold `frames` (default 2), release on its own at a frame end. A new click replaces a pending one. | ✅ Implemented |
 | `mouse buttons` | | `<none\|b1,b2…>` | Set the exact set of pressed buttons (`none` = all up). Cancels a pending click. | ✅ Implemented |
 | `mouse wheel` | | `<steps>` | Scroll by whole notches (4-bit counter, wraps at 16). | ✅ Implemented |
-| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click. | ✅ Implemented |
-| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support, and **port routing**: decoded or shadowed with the reason (mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor). | ✅ Implemented |
+| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click and the input queued behind a glide. | ✅ Implemented |
+| `mouse status` | `mouse info` | `[device]` | The Kempston interface's counters, buttons, wheel, fitting, the bytes the three ports return, pending click, TTD journal support and **port routing** (decoded or shadowed with the reason: mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor); then **the machine's mouse**: its id, kind, fitted / in use, counters, registers, and per kind the serial line (line and receiver baud, in tune, the packet in flight, packets sent, bytes received, framing errors, the receive FIFO) or the PS/2 state (connected, resolution); the glide queue. `device` names another device of the machine (an unknown id is an error listing the ids). | ✅ Implemented |
+| `mouse devices` | | — | The machine's mouse devices, each as in `status`. | ✅ Implemented |
 | `mouse set` | | `<x> <y>` | Debug: write the raw X/Y counters (0–255). Allowed while TTD records (journalled). | ✅ Implemented |
 | `mouse help` | | — | Subcommand help. | ✅ Implemented |
 
-**Warnings (the command still succeeds):**
-- *Mouse not fitted* (`[INPUT] Mouse=NONE`, or feature `kempstonmouse` off): the counters
-  change, but nothing answers on the mouse ports, so the program reads the floating bus.
-  Warning: `mouse not present: guest reads floating bus on the mouse ports`.
-- *No wheel fitted* (`[INPUT] Wheel=NONE`, the shipped default): `mouse wheel` changes the
-  wheel counter, but the program cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE):
-  the guest does not see the wheel counter`.
+**No mouse fitted: refused.** On a machine with no mouse a program could read (`[INPUT]
+Mouse=NONE` or feature `kempstonmouse` off on a Kempston or ZX-Evo / TS-Conf machine) every
+input command fails: `no mouse fitted on this machine: a program cannot read mouse input
+(...)` (WebAPI 409 with `"reason":"no_mouse"`). `mouse status` still answers and says so. The
+Sprinter's mouse is part of the board: it is never refused. (Until 2026-10-03 the command
+succeeded with the warning `mouse not present`.)
+
+**Warning (the command still succeeds):** *no wheel fitted* (`[INPUT] Wheel=NONE`, the shipped
+default, or the Sprinter's two-button serial mouse): `mouse wheel` is accepted, but the program
+cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE, or a mouse without one): the guest
+does not see the wheel`.
 
 **Worked example** (Pentagon after reset: X = 31, Y = 85, nothing pressed, shipped config `Wheel=NONE`):
 
@@ -3089,7 +3140,10 @@ script reads `0x0E`, `0x2E`, `0x2F`, `0x2D`.
 **Rejected on purpose: absolute "move the cursor to (x, y)".** The program keeps its own
 cursor position (and may clip or scale it), so the emulator cannot know where the cursor is.
 To reach a screen point, work in a closed loop: find the cursor (screenshot or a known RAM
-variable), `mouse move` by the difference, `run_frames 1`, check again.
+variable), `mouse move` by the difference, `run_frames 1`, check again. Where the program
+clamps its pointer at the screen edge and moves it one pixel per count (Flex Navigator in the
+Sprinter's 640-pixel mode), **home** first: `mouse glide -1000 1000` puts the pointer in the
+top-left corner, then `mouse glide <x> <-y>` reaches the point (x, y) of the picture.
 
 **TTD (time-travel debugging):**
 - While TTD **records**, every mouse change is written to the TTD input journal before it
@@ -3401,8 +3455,8 @@ Capture and export audio/video output for recording and analysis.
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `screenshot <file>` | `<filename>` | Capture current screen frame to PNG file. Includes border. Resolution: 320x240 (with border) or 256x192 (screen only). | 🔮 Planned |
-| `screenshot screen <file>` | `<filename>` | Capture only screen area (no border). | 🔮 Planned |
+| `screenshot <file>` | `<filename>` | Superseded by `capture screen [--area=full\|screen] [--format=png\|gif] <file>` (see 8.2): whole frame with border by default (352x288 on a Spectrum, 1024x768 for the FT812 picture), PNG. | ✅ Implemented as `capture screen` |
+| `screenshot screen <file>` | `<filename>` | Superseded by `capture screen --area=screen <file>`: only the working picture (256x192 on a Spectrum, the graphics window on TS-Conf, the whole FT812 picture). | ✅ Implemented as `capture screen --area=screen` |
 | `video record <file>` | `<filename>` | Start recording video to file (MP4, WebM, or AVI). Frame rate: 50 FPS (PAL) or 60 FPS (NTSC). | 🔮 Planned |
 | `video stop` | | Stop video recording and finalize file. | 🔮 Planned |
 | `audio record <file>` | `<filename>` | Start recording audio to WAV file. Captures beeper + AY output. | 🔮 Planned |
@@ -3674,10 +3728,12 @@ Capture and extract various output data from the emulator: screen text via OCR, 
 | :--- | :--- | :--- | :--- |
 | `capture ocr` | | OCR text from screen using ROM font bitmap matching. Returns 24 lines × 32 characters. | ✅ Implemented |
 | `capture romtext` | | Start/show captured ROM print output (uses ROMPrintDetector). | 🔮 Planned |
-| `capture screen` | `[5\|7\|shadow]` | Capture screen bitmap. Default: screen 5. Output: base64-encoded GIF with format/size metadata. | 🔮 Planned |
-| `capture screen 5` | | Capture main screen (page 5). | 🔮 Planned |
-| `capture screen 7` | | Capture shadow screen (page 7). | 🔮 Planned |
-| `capture screen shadow` | | Alias for `capture screen 7`. | 🔮 Planned |
+| `capture screen` | `[--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with its border by default, `--area=screen` the working picture; PNG by default; the presented frame by default, `--source=live` the frame as drawn now. Prints the geometry and a data URI, or saves to `file`. Legacy spellings `-png`, `-gif`, `png`, `gif`, `full`, `screen` still work. An unknown word is an error. | ✅ Implemented |
+| `capture framebuffer` | `<file> [rgba\|index]` | Raw pixels of the same presented frame (RGBA, or the Sprinter's u16 pens with `index`). | ✅ Implemented |
+
+`source=presented` (default) is the finished frame the window shows, a couple of frames behind the machine. `source=live` is the frame as drawn right now, with no present delay and no ZX DLSS processing: on a running machine the emulation thread copies it at the end of its next frame (an answer within one frame time; 409 `no-frame` if none comes within 1 s), on a paused one it is read directly and the answer says where the beam stopped (`frame.beam.line`, `frame.beam.tstate`) and whether the frame is half drawn (`frame.partial`: the beam is inside a frame drawn per T-state, so the lines it has not reached are still the previous frame's). The master of a ZX-Poly group shows the group's composed display frame (2x, `frame.source: composed`, the working picture 512x384); a slave keeps its own frame.
+
+A screenshot is one frame snapshot: the pixels and the frame's own geometry, taken together from the presented frame (the tear-free frame the window shows, a couple of frames behind the machine; more with ZX DLSS). `area=screen` cuts the frame geometry's screen window: the paper of a Spectrum, the graphics window of a TS-Conf (from V_CONFIG), the whole picture of an FT812 card, and on a hires mode the whole frame when the picture fills it. The old per-page (`5` / `7` / `shadow`) capture was never implemented and is not planned: the picture is what the monitor shows. Design: [`docs/inprogress/2026-10-03-screenshotter/design.md`](../../../inprogress/2026-10-03-screenshotter/design.md).
 
 **OCR Implementation Details**:
 - Uses `ZXSpectrum::FONT_BITMAP[96][8]` from ROM for character matching
@@ -3685,14 +3741,25 @@ Capture and extract various output data from the emulator: screen text via OCR, 
 - Returns '?' for unrecognized patterns, ' ' for empty cells
 - Tested at all 768 screen positions (32×24) and all 96 font characters
 
-**WebAPI Response Format** (for `capture screen`):
+**WebAPI Response Format** (for `GET /capture/screen`, here `area=full` on a Pentagon):
 ```json
 {
-  "format": "gif",
+  "status": "success",
+  "format": "png",
+  "area": "full",
+  "source": "presented",
+  "width": 352,
+  "height": 288,
   "size": 12345,
+  "crop":          { "x": 0,  "y": 0,  "width": 352, "height": 288 },
+  "screen_window": { "x": 48, "y": 48, "width": 256, "height": 192 },
+  "frame": { "width": 352, "height": 288, "mode": "Pentagon128K", "source": "native", "frame_number": 4711 },
   "data": "base64encodeddata..."
 }
 ```
+`crop` is the returned image's rectangle inside the frame, `screen_window` the working picture inside the frame, `frame.source` is `native` (the machine's own frame), `external` (a video card's picture: the FT812) or `composed` (a ZX-Poly group's display frame). With `path=` the image is written on the server and `saved: true, file` replace `data`.
+
+**Errors** (JSON `{error, message, kind}`): 400 `bad-parameter` for an unknown `area`, `mode` or `format` (the message lists the allowed words) or an `area` and `mode` that disagree; 404 `not-found`; 409 `no-frame` when the emulator has not presented a frame yet; 500 `bad-geometry` (the screen window does not fit the frame, the message has both sizes), `encode-failed`, `io-failed`; 503 while the emulator shuts down.
 
 #### 8.3 Music Detector & Ripper
 

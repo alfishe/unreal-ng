@@ -113,7 +113,9 @@ TEST_F(SprinterDeviceState_Test, OriginalWaitsAndTapeAreReported)
     EXPECT_TRUE(Bool(waits, "active")) << DeviceState::ToText(report);
     EXPECT_FALSE(Bool(waits, "all_mode_bit2"));
     EXPECT_EQ(Int(waits, "period_t"), 4);
-    EXPECT_EQ(Int(waits, "phase_t"), 0);
+    EXPECT_EQ(Int(waits, "ct5_rise_t"), 2);
+    ASSERT_EQ(Member(waits, "waits_by_t1_from_int").items.size(), 4u);
+    EXPECT_EQ(Member(waits, "waits_by_t1_from_int").items[1].i, 2);
     ASSERT_EQ(Member(waits, "windows_waiting").items.size(), 4u);
     EXPECT_FALSE(Member(waits, "windows_waiting").items[0].b);
     EXPECT_TRUE(Member(waits, "windows_waiting").items[1].b);
@@ -719,4 +721,235 @@ TEST(SprinterDeviceStateOther_Test, UnavailableOnOtherMachines)
         const std::string text = DeviceState::ToText(node);
         EXPECT_NE(text.find("Not a Sprinter machine"), std::string::npos) << text;
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ZX mode report (DeviceState::SprinterZxMode, /state/sprinter/zx-mode) and the PLD journal
+// (DeviceState::SprinterJournal, /state/sprinter/pld-journal; tdd-zx-mode.md §12)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// The option row of the ZX report
+bool OptionOn(const StateNode& report, const std::string& option)
+{
+    for (const StateNode& o : Member(Member(report, "config"), "options").items)
+        if (Str(o, "option") == option)
+            return Bool(o, "on");
+    ADD_FAILURE() << "no option " << option;
+    return false;
+}
+
+const StateNode* PortRow(const StateNode& report, const std::string& port)
+{
+    for (const StateNode& row : Member(Member(report, "ports"), "rows").items)
+        if (Str(row, "port") == port)
+            return &row;
+    return nullptr;
+}
+}  // namespace
+
+class SprinterZxReport_Test : public SprinterDeviceState_Test
+{
+protected:
+    static constexpr uint16_t kCnfPort = 0x00A4;  ///< a port the test table sends to code #C6
+
+    /// The launcher's ZX mode as the hardware holds it: vROM in window 0, ALL_MODE, the CNF write through the
+    /// table, the frame latch
+    void EnterZx(uint8_t cnf, uint8_t allMode, bool lines312)
+    {
+        OpenDcp();
+        SetCodeAll(kCnfPort, false, 0xC6);
+        SetCodeAll(0x1FFD, false, 0xC0);  // #01FD is the same entry
+        SetCodeAll(0x7FFD, false, 0xC1);
+        SetCodeAll(0x00FE, false, 0xC2);
+        Out(kCnfPort, cnf);
+        Pld().romOff = 1;
+        Pld().ramSys = 1;
+        Pld().cacheOn = 0;
+        Pld().frameLines = lines312 ? 1 : 0;
+        SetCodeAll(0x00BF, false, 0xC3);
+        Out(0x00BF, allMode);
+        _decoder->UpdateBanks();
+    }
+
+    /// The SP_128 / SP__48 / SP_TRD images (BIOS 3.06 HF2 flash pages 2-4) in the vROM cells' pages
+    bool LoadSprinterRoms()
+    {
+        const std::string path = (TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / "sp2k-3.06-hf2.rom").string();
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f)
+            return false;
+        std::vector<uint8_t> rom(16 * PAGE_SIZE);
+        const size_t got = std::fread(rom.data(), 1, rom.size(), f);
+        std::fclose(f);
+        if (got != rom.size())
+            return false;
+        const uint8_t pages[3][2] = {{0xE2, 0x90}, {0xE3, 0x91}, {0xE1, 0x92}};  // cell, RAM page; flash pages 2, 3, 4
+        for (int i = 0; i < 3; i++)
+        {
+            Pld().Cell(pages[i][0]) = pages[i][1];
+            std::memcpy(_memory->RAMPageAddress(pages[i][1]), rom.data() + (2 + i) * PAGE_SIZE, PAGE_SIZE);
+        }
+        return true;
+    }
+
+    static std::string Best(const StateNode& report) { return Str(Member(Member(report, "config"), "best_match"), "file"); }
+    static std::string Confidence(const StateNode& report)
+    {
+        return Str(Member(Member(report, "config"), "best_match"), "confidence");
+    }
+};
+
+// SP.ZX: CNF #07 (turbo, map 0, #7FFD and #1FFD on), ALL_MODE #FE, 320 lines, the Sprinter ROMs
+TEST_F(SprinterZxReport_Test, SprinterZxIsRecognizedWithItsOptions)
+{
+    ASSERT_FALSE(Z84Lib::Z84C15::Owns(kCnfPort));
+    const bool roms = LoadSprinterRoms();
+    EnterZx(0x07, 0xFE, false);
+
+    const StateNode report = DeviceState::SprinterZxMode(_context);
+    ASSERT_TRUE(Bool(report, "active")) << DeviceState::ToText(report);
+    EXPECT_EQ(Best(report), "SP.ZX") << DeviceState::ToText(Member(report, "config"));
+    EXPECT_TRUE(OptionOn(report, "/turbo"));
+    EXPECT_TRUE(OptionOn(report, "/sprinter"));
+    EXPECT_TRUE(OptionOn(report, "/7FFD"));
+    EXPECT_TRUE(OptionOn(report, "/1FFD"));
+    EXPECT_FALSE(OptionOn(report, "/mem512"));
+    EXPECT_FALSE(OptionOn(report, "/origin"));
+    EXPECT_EQ(Str(Member(report, "config"), "option_line").rfind("/sprinter /turbo /7FFD /1FFD", 0), 0u);
+    if (roms)
+    {
+        EXPECT_EQ(Confidence(report), "high");
+        EXPECT_EQ(Str(Member(report, "rom"), "set"), "sprinter-community");
+    }
+
+    // #01FD reaches the #1FFD latch (the Across the Edge write)
+    const StateNode* p01fd = PortRow(report, "0x01FD");
+    ASSERT_NE(p01fd, nullptr);
+    const StateNode& out = Member(Member(*p01fd, "tr_dos_off"), "out");
+    EXPECT_EQ(Str(out, "code"), "0xC0");
+    EXPECT_NE(Str(out, "effect").find("Scorpion paging"), std::string::npos) << Str(out, "effect");
+    EXPECT_EQ(Str(Member(*p01fd, "ttd_query"), "port_mask"), "0xE0E7");
+
+    // The clock: requested, the F12 switch and the MHz
+    const StateNode& clock = Member(report, "clock");
+    EXPECT_TRUE(Bool(clock, "requested"));
+    EXPECT_EQ(Str(clock, "mhz"), Pld().turboHard ? "21" : "3.5");
+    const DeviceState::SprinterZxBrief brief = DeviceState::SprinterZxModeBrief(_context);
+    EXPECT_TRUE(brief.active);
+    EXPECT_EQ(brief.text.rfind("ZX: Sprinter ZX (turbo req", 0), 0u) << brief.text;
+    EXPECT_NE(brief.text.find("/1FFD"), std::string::npos) << brief.text;
+}
+
+// P128.ZX: CNF #4E (no turbo, map 1, SC clean): #01FD stores the cell, the #1FFD latch stays 0
+TEST_F(SprinterZxReport_Test, Pentagon128CleansTheScorpionPort)
+{
+    EnterZx(0x4E, 0xFE, false);
+    const StateNode report = DeviceState::SprinterZxMode(_context);
+    EXPECT_EQ(Best(report), "P128.ZX") << DeviceState::ToText(Member(report, "config"));
+    EXPECT_FALSE(OptionOn(report, "/turbo"));
+    EXPECT_FALSE(OptionOn(report, "/sprinter"));
+    EXPECT_FALSE(OptionOn(report, "/1FFD"));
+
+    Out(0x01FD, 0x10);
+    EXPECT_EQ(Pld().sc, 0x00);
+    const StateNode after = DeviceState::SprinterZxMode(_context);
+    const StateNode* p01fd = PortRow(after, "0x01FD");
+    ASSERT_NE(p01fd, nullptr);
+    EXPECT_NE(Str(Member(Member(*p01fd, "tr_dos_off"), "out"), "effect").find("SC clean"), std::string::npos) << DeviceState::ToText(*p01fd);
+    EXPECT_EQ(DeviceState::SprinterZxModeBrief(_context).text, "ZX: Pentagon 128 (3.5 MHz)");
+}
+
+// ORIGIN.ZX: the same CNF as P128 (#4E), told apart by ALL_MODE #FA (original waits) and the 312-line frame
+TEST_F(SprinterZxReport_Test, OriginIsToldFromPentagonByWaitsAndFrame)
+{
+    EnterZx(0x4E, 0xFA, true);
+    const StateNode report = DeviceState::SprinterZxMode(_context);
+    EXPECT_EQ(Best(report), "ORIGIN.ZX") << DeviceState::ToText(Member(report, "config"));
+    EXPECT_TRUE(OptionOn(report, "/origin"));
+    EXPECT_TRUE(OptionOn(report, "/lines312"));
+}
+
+// Outside the ZX mode (DSS: ALL_MODE bit 0 = 1): not active, confidence none
+TEST_F(SprinterZxReport_Test, NotActiveOutsideTheZxMode)
+{
+    OpenDcp();
+    const StateNode report = DeviceState::SprinterZxMode(_context);
+    EXPECT_FALSE(Bool(report, "active"));
+    EXPECT_EQ(Confidence(report), "none");
+    EXPECT_EQ(DeviceState::SprinterZxModeBrief(_context).text, "ZX: off");
+    EXPECT_NE(Member(DeviceState::Sprinter(_context), "zx_mode").find("active"), nullptr) << "the state section";
+}
+
+// The launcher's .ZX text in page #FF (community SPECTRUM.EXE) names the mode; the hardware cross-checks it
+TEST_F(SprinterZxReport_Test, LauncherTextInRamIsTheAuthority)
+{
+    const char text[] = "Default (Sprinter ZX)\0C:\\ZX\\SP_128.ROM\0C:\\ZX\\SP__48.ROM\0C:\\ZX\\SP_TRD.ROM\0; reserved\0"
+                        "; r\0; r\0; r\0; r\0; r\0; r\0/sprinter /turbo /7FFD /1FFD /ret-fn\0; palette";
+    std::memcpy(_memory->RAMPageAddress(0xFF), text, sizeof(text));
+    EnterZx(0x07, 0xFE, false);
+    const StateNode report = DeviceState::SprinterZxMode(_context);
+    const StateNode& launcher = Member(report, "launcher");
+    EXPECT_TRUE(Bool(launcher, "mode_text_found"));
+    EXPECT_EQ(Str(launcher, "mode_name"), "Default (Sprinter ZX)");
+    EXPECT_EQ(Str(launcher, "option_line"), "/sprinter /turbo /7FFD /1FFD /ret-fn");
+    EXPECT_TRUE(Member(launcher, "hardware_disagrees").items.empty()) << DeviceState::ToText(launcher);
+    EXPECT_EQ(Confidence(report), "certain");
+    EXPECT_NE(Str(Member(report, "config"), "option_line").find("/ret-fn"), std::string::npos);
+    EXPECT_EQ(DeviceState::SprinterZxModeBrief(_context).text.rfind("ZX: Default (Sprinter ZX) (", 0), 0u);
+}
+
+// The PLD journal: CNF, #1FFD by the port used (change only), ALL_MODE, the port table rebuilt with the
+// decodes it changed - each with frame, T and PC
+TEST_F(SprinterZxReport_Test, JournalNotesWhoChangedThePld)
+{
+    _decoder->PldJournal().Clear();
+    EnterZx(0x07, 0xFE, false);
+    Out(0x01FD, 0x10);
+    Out(0x01FD, 0x10);  // the same value: no second event
+    Out(0x1FFD, 0x00);
+
+    DeviceState::SprinterJournalQuery q;
+    std::string error;
+    ASSERT_TRUE(DeviceState::SprinterJournalQueryFromStrings("cnf,port_1ffd,all_mode", "", "", "", "", "", q, error)) << error;
+    StateNode journal = DeviceState::SprinterJournal(_context, q);
+    const auto& events = Member(journal, "events").items;
+    ASSERT_EQ(events.size(), 4u) << DeviceState::ToText(journal);
+    EXPECT_EQ(Str(events[0], "kind"), "cnf");
+    EXPECT_EQ(Str(events[0], "value"), "0x07");
+    EXPECT_NE(Str(events[0], "text").find("turbo request on"), std::string::npos) << Str(events[0], "text");
+    EXPECT_EQ(Str(events[1], "kind"), "all_mode");
+    EXPECT_EQ(Str(events[2], "kind"), "port_1ffd");
+    EXPECT_EQ(Str(events[2], "port"), "0x01FD");
+    EXPECT_EQ(Str(events[2], "value"), "0x10");
+    EXPECT_EQ(Str(events[3], "value"), "0x00");
+    EXPECT_FALSE(Member(journal, "ttd_queries").items.empty());
+
+    // A port table write: counted, one event at the frame end with the decode it changed
+    Pld().Cell(SprinterCode::Page1) = SprinterMemory::kPortTablePage;
+    _decoder->UpdateBanks();
+    ASSERT_EQ(_sprinterMemory->GetBankAction(1), SprinterMemory::BankAction::PortTable);
+    const uint16_t index = SprinterPortTable::Index(0, false, true, false, 0x7FFD);
+    Poke(static_cast<uint16_t>(0x4000 + index), 0x00);  // map 0, TR-DOS off: #7FFD writes go nowhere
+    _decoder->OnFrameEnd();
+    ASSERT_TRUE(DeviceState::SprinterJournalQueryFromStrings("port_table", "", "", "", "", "", q, error));
+    journal = DeviceState::SprinterJournal(_context, q);
+    ASSERT_EQ(Member(journal, "events").items.size(), 1u) << DeviceState::ToText(journal);
+    const StateNode& table = Member(journal, "events").items[0];
+    EXPECT_EQ(Int(table, "value"), 1);
+    bool found = false;
+    for (const StateNode& d : Member(table, "details").items)
+        found |= d.s.find("map 0, DOS off, OUT #7FFD") != std::string::npos;
+    EXPECT_TRUE(found) << DeviceState::ToText(table);
+
+    // Off: no table watch, no events
+    DeviceState::SprinterJournalControl(_context, 0, true);
+    EXPECT_EQ(_sprinterMemory->GetBankAction(1), SprinterMemory::BankAction::Plain);
+    Out(0x01FD, 0x10);
+    EXPECT_EQ(Int(DeviceState::SprinterJournalControl(_context, 1, false), "held"), 0);
+
+    // Bad queries
+    EXPECT_FALSE(DeviceState::SprinterJournalQueryFromStrings("nonsense", "", "", "", "", "", q, error));
+    EXPECT_FALSE(DeviceState::SprinterJournalQueryFromStrings("", "", "", "", "", "file", q, error));
 }

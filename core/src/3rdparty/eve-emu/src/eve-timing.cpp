@@ -155,6 +155,7 @@ void RequestSwap(EveChip& chip, uint32_t mode)
 void ApplySwap(EveChip& chip)
 {
     ScanState& scan = chip.state.scan;
+    const bool changed = std::memcmp(ActiveDl(chip), PendingDlRegion(chip).base, kRamDlSize) != 0;
     if (kSwapCopiesList)
     {
         Region& active = ActiveDlRegion(chip);
@@ -172,7 +173,7 @@ void ApplySwap(EveChip& chip)
     scan.dlswapPending = 0;
     RegSet(chip, Reg::Dlswap, 0);
     RaiseInterrupt(chip, kIntSwap);
-    DisplayListSwapped(chip);
+    DisplayListSwapped(chip, changed);
     CoproSwapDone(chip);
 }
 

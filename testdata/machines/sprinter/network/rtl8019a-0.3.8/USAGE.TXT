@@ -1,0 +1,52 @@
+Sprinter RTL8019AS Network Kit -- Index
+
+This is the entry point for the user-facing documentation shipped
+in the kit.  Common conventions, configuration, exit codes, and
+batch examples live in HOWTO.TXT; each utility has its own
+short reference page.
+
+Read these in order on a fresh setup:
+
+1. HOWTO.TXT -- conventions, env vars, exit codes, batch idioms.
+2. NETCFG.TXT -- NETCFG -i to seed env from NET.CFG.
+3. IFUP.TXT   -- bring the link up (static or DHCP).
+4. PING.TXT   -- verify reachability.
+
+Then use whichever utility you need.  All <NAME>.TXT files use
+the same layout: usage syntax, options, examples, exit codes.
+
+File  |  Utility / topic
+HOWTO.TXT  |  Common conventions and configuration (start here)
+NETCFG.TXT  |  NET.CFG / env-var management
+IFUP.TXT  |  Static or DHCP interface bring-up
+PING.TXT  |  ICMP echo
+NSLOOKUP.TXT  |  DNS A-record lookup
+NTP.TXT  |  NTPv3 client; sets the DSS clock
+WGET.TXT  |  HTTP download with redirect following
+FTP.TXT  |  FTP download + directory listing
+TELNET.TXT  |  ANSI/VT100 Telnet client with Zmodem/Ymodem
+TFTP.TXT  |  TFTP download with RFC 2348 blksize
+ISAPROBE.TXT  |  ISA bus troubleshooting and raw window inspection
+NICEEP.TXT  |  Read-only dump of a jumperless card's 93C46 EEPROM
+UNETRTL.TXT  |  UNET DLL: TCP/UDP/DNS/ping, two channels, developer API
+
+UNETRTL.DLL is for developers: it exposes the kit's network stack
+to your own DSS programs through the same numbered API the Sprinter
+Wi-Fi kit implements, so one binary can drive either card.  The
+ready-built DLL is also committed at the repository root and ships in
+the archive and floppy image.
+
+NICINFO.EXE prints the detected RTL8019AS identity, MAC address, packet
+RAM layout, and register snapshot. If the card is not detected normally,
+use ISAPROBE.EXE with the procedures in ISAPROBE.TXT.
+
+For driver-level details, NIC register descriptions, and MAME
+network setup see sprinter_rtl8019_soft.md and
+docs/MAME_NETWORK.md in the source tree.
+
+Developer floppy diagnostic: UNETTEST -r SLICE HOST PORT verifies a full
+8192-byte HTTP body against the supplied host response server. SLICE=0
+is blocking, 25 uses SENDSLICE. Exit 0 requires exact content, CRC32 and
+EOF without LOST; exit 3 reports transport/content failure, 1 usage,
+2 DLL/load/hardware failure, 4 missing network configuration.
+See UNETRTL.TXT for the response format and host helper.

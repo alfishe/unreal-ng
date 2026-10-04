@@ -1,0 +1,88 @@
+Sprinter ESP Network Kit - Quick Start (HOWTO)
+================================================
+
+What you need
+  - Sprinter DSS with the SprinterESP / Sprinter-Wi-Fi card (ESP8266, ESP-AT).
+  - ESP-AT firmware version 2.2.2.0 (recommended). Download the firmware image
+    and host-side flashing instructions from:
+    https://github.com/witchcraft2001/sprinter_wifi/tree/main/firmware
+    ESP-AT 2.2.1 remains compatible, but corrupted files, missing bytes and
+    slow downloads are known 2.2.1 limits. Check the installed version with
+    NETPROBE.
+  - The name and password of your Wi-Fi network.
+
+1. Install
+  Unpack the package to C:\WIFI (or use the preinstalled copy). Add the package
+  directory to PATH in C:\SYSTEM.BAT so all tools can be run from any location.
+  Add this line without removing the existing PATH entries:
+
+      SET PATH=%PATH%;C:\WIFI
+
+  Reboot DSS or run C:\SYSTEM.BAT once to apply the change. Then switch to the
+  package directory for the initial configuration:
+
+      C:
+      CD \WIFI
+
+2. Configure Wi-Fi  (do this once)
+  Run the interactive editor and fill in your network:
+
+      NETCFG /W
+
+  Set:
+      SSID = your Wi-Fi name
+      PASS = your Wi-Fi password
+      DHCP = 1            (leave 1 for a normal home router)
+      BAUD = 115200       (use 57600 or 38400 if 115200 loses bytes)
+  Save. Settings are stored in C:\WIFI\NET.CFG.
+
+3. Bring the connection up
+      NETUP
+
+  On success it prints the selected ESP firmware profile, the assigned IP
+  (for example 192.168.1.138) and "NETUP done". The package utilities can
+  then use the active connection. NET_ESP_FW is published as 2.2.1 or 2.2.2.
+
+4. Check that it works
+      PING 8.8.8.8
+      WGET http://example.com -o INDEX.HTM -y
+
+  A successful PING prints a reply time; WGET saves the page to INDEX.HTM.
+
+One-shot batch
+  CONNECT.BAT runs NETRESET, NETUP and PING 8.8.8.8 in sequence.
+
+Everyday commands (run after NETUP)
+  PING host                 reachability test
+  WGET url [-o file]        download an http:// file (no HTTPS)
+  FTP  host file [-u user -p pass]   download over FTP
+  TFTP host GET file -o FILE          download over TFTP
+  NTP                       set the DSS clock from the network
+                            NTP server and timezone are taken from the
+                            NET_NTP/NET_TZ variables published by NETUP.
+  WTERM                     open a manual ESP-AT terminal for hand-typed
+                            commands.
+
+  Overwrite/resume of an existing local file (WGET, FTP, TFTP):
+    if the file exists, the tool asks [R]esume / [O]verwrite / [C]ancel.
+    -y or -f   overwrite without asking
+    -r         resume/append without asking (WGET, FTP; TFTP has no resume)
+  Handy in batch files, e.g.:  WGET url -o FILE.BIN -y
+
+If something is stuck and tools report "ESP connection error #1"
+  Run, in this order:
+      NETRESET      reset the ESP module
+      NETUP         reconnect
+
+Tips
+  - Run NETUP once per session; the other tools reuse that connection.
+  - If a tool right after NETUP reports "busy", the ESP stack is still coming
+    up - just run it again.
+  - Only http:// is supported, not https://.
+  - Use CONNECT.BAT to connect; it contains the commands needed to initialize
+    and bring up the network after starting the computer.
+
+More detail
+  README.TXT   - overview, full command list, batch examples.
+  USAGE.MD     - full reference, config keys, workflow, exit codes.
+  <TOOL>.TXT   - one page per tool (NETUP.TXT, WGET.TXT, FTP.TXT, ...).

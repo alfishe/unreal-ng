@@ -267,10 +267,10 @@ void EmulatorAPI::getTTDFileInfo(const HttpRequestPtr& req, std::function<void(c
 ///   - 404 when the emulator instance is not found
 ///   - 503 when the emulator is shutting down (IsDestroying)
 ///
-/// Thread-safety: GetSessionInfo() takes a snapshot of the manager's
-/// observable state. It is safe to call from the HTTP thread while the
-/// emulator thread is mutating the timeline (per TDD §7.2 the only writer
-/// to those fields is the emulator thread, and the reads are word-sized).
+/// Thread-safety: ReadSessionInfo() never walks a session another thread is
+/// changing: live only while nothing runs the machine and no other control
+/// operation is in progress, else the summary the session-driving thread
+/// published (TDD section 7.2; at most ~100 ms old while recording).
 void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
@@ -349,7 +349,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
 
     if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
     {
-        ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+        ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
         ret["state"]                    = ttd::TTDSessionStateToString(info.state);
         ret["session_start_frame"]      = Json::UInt64(info.sessionStartFrame);
         ret["current_end_frame"]        = Json::UInt64(info.currentEndFrame);
@@ -545,7 +545,7 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
     // Optional history limit, the same as POST /ttd/history-limit
     if (json && (json->isMember("history_limit_frames") || json->isMember("history_limit_bytes")))
     {
-        const ttd::TTDSessionInfo current = mgr->GetSessionInfo();
+        const ttd::TTDSessionInfo current = mgr->ReadSessionInfo();
         mgr->SetHistoryLimit((*json).get("history_limit_frames", Json::UInt64(current.historyLimitFrames)).asUInt64(),
                              (*json).get("history_limit_bytes", Json::UInt64(current.historyLimitBytes)).asUInt64());
     }
@@ -556,7 +556,7 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
     ret["already_active"]       = alreadyRecording;
     ret["state"]                = ttd::TTDSessionStateToString(mgr->GetState());
     ret["write_journal_enabled"] = mgr->GetEnableWriteJournal();
-    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     ret["history_limit_frames"] = Json::UInt64(info.historyLimitFrames);
     ret["history_limit_bytes"]  = Json::UInt64(info.historyLimitBytes);
 
@@ -577,7 +577,7 @@ void EmulatorAPI::historyLimitTTD(const HttpRequestPtr& req,
     auto* mgr = resolveTTD(id, callback);
     if (!mgr) return;
 
-    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     auto json = req->getJsonObject();
     if (json && (json->isMember("frames") || json->isMember("bytes")))
     {
@@ -596,7 +596,7 @@ void EmulatorAPI::historyLimitTTD(const HttpRequestPtr& req,
         }
         mgr->SetHistoryLimit(frames.isNull() ? info.historyLimitFrames : frames.asUInt64(),
                              bytes.isNull() ? info.historyLimitBytes : bytes.asUInt64());
-        info = mgr->GetSessionInfo();
+        info = mgr->ReadSessionInfo();
     }
 
     Json::Value ret;
@@ -1004,7 +1004,7 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
     ret["count"] = Json::UInt64(journal.Size());
 
     Json::Value markers(Json::arrayValue);
-    const auto& events = journal.Events();
+    const auto events = journal.SnapshotEvents();
     for (const auto& e : events)
     {
         Json::Value marker;
@@ -1283,7 +1283,7 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
         return;
     }
 
-    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     ret["ok"] = true;
     ret["path"] = path;
     ret["checkpoint_count"] = Json::UInt64(info.checkpointCount);
@@ -2028,7 +2028,7 @@ void EmulatorAPI::getTTDCoverageScan(const HttpRequestPtr& req,
         return;
     }
 
-    uint64_t toFrame = mgr ? mgr->GetSessionInfo().currentEndFrame : 0;
+    uint64_t toFrame = mgr ? mgr->ReadSessionInfo().currentEndFrame : 0;
     if (!toStr.empty() && !ParseUint64Param(toStr, toFrame))
     {
         auto resp = CoverageBadRequest("Invalid to_frame: '" + toStr + "' (expected unsigned integer)");
@@ -2187,7 +2187,7 @@ void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
         return;
     }
 
-    uint64_t toFrame = mgr ? mgr->GetSessionInfo().currentEndFrame : 0;
+    uint64_t toFrame = mgr ? mgr->ReadSessionInfo().currentEndFrame : 0;
     if (!toStr.empty() && !ParseUint64Param(toStr, toFrame))
     {
         auto resp = CoverageBadRequest("Invalid to_frame: '" + toStr + "' (expected unsigned integer)");

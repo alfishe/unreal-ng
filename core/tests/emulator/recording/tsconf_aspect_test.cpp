@@ -267,3 +267,51 @@ TEST_F(TsConfAspect_Test, NonTsConfFramebufferPassesThroughUnchanged)
     context->pRecordingManager->StopRecording();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// The screen region follows the guest's window: a TS-Conf program that changes the V_CONFIG window while a
+/// recording runs is not cut and not dropped; the new window is fitted into the size the file started with
+TEST_F(TsConfAspect_Test, ScreenRegionFitsALaterWindowIntoTheFilesSize)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+
+    context->pPortDecoder->DecodePortOut(0x00AF, 0x00, 0);  // V_CONFIG: ZX, the 256x192 window = 512x192 pixels
+    emulator->RunNFrames(2);
+
+    auto sink = std::make_unique<CaptureSinkEncoder>();
+    CaptureSinkEncoder* sinkPtr = sink.get();
+    rm->SetCaptureRegion(VideoCaptureRegion::MainScreen);
+    ASSERT_TRUE(rm->StartRecordingWithEncoder(TestPathHelper::GetUniqueTestScratchPath("tsconf-window-follow") + ".mp4",
+                                              std::move(sink)));
+    ASSERT_EQ(sinkPtr->startedConfig.videoWidth, 512u) << "the file takes the window's width";
+    ASSERT_EQ(sinkPtr->startedConfig.videoHeight, 384u) << "and its height with every line doubled";
+
+    // The first window: its own pixels
+    FramebufferDescriptor fb = context->pScreen->GetFramebufferDescriptor();
+    WriteReferencePattern(fb);
+    rm->CaptureFrame(fb);
+    ASSERT_EQ(sinkPtr->lastWidth, 512);
+    ASSERT_EQ(sinkPtr->lastHeight, 384);
+    auto pixel = [&](uint32_t x, uint32_t y) { return sinkPtr->lastPixels.data() + (static_cast<size_t>(y) * 512 + x) * 4; };
+    EXPECT_EQ(pixel(0, 0)[0], 104) << "the window's first pixel is frame x 104";
+    EXPECT_EQ(pixel(0, 0)[2], 48) << "frame line 48";
+
+    // The program switches to the 360x288 window (the whole 720x288 frame, 720x576 square pixels)
+    context->pPortDecoder->DecodePortOut(0x00AF, 0xC0, 0);
+    fb = context->pScreen->GetFramebufferDescriptor();
+    WriteReferencePattern(fb);
+    rm->CaptureFrame(fb);
+    ASSERT_EQ(sinkPtr->lastWidth, 512) << "the file keeps its size";
+    ASSERT_EQ(sinkPtr->lastHeight, 384);
+    // 720x576 into 512x384 by height: 480 wide, 16 px bars each side
+    EXPECT_EQ(pixel(0, 100)[3], 0xFF);
+    EXPECT_EQ(pixel(0, 100)[0] | pixel(0, 100)[1] | pixel(0, 100)[2], 0) << "a black bar on the left";
+    EXPECT_EQ(pixel(511, 100)[0] | pixel(511, 100)[1] | pixel(511, 100)[2], 0) << "and on the right";
+    EXPECT_EQ(pixel(16, 0)[0], 0) << "the whole frame's first pixel (x 0)";
+    EXPECT_EQ(pixel(16 + 479, 0)[0] | (pixel(16 + 479, 0)[1] << 8), 479 * 720 / 480) << "its last column, by the nearest pixel";
+
+    rm->StopRecording();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

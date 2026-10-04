@@ -1,6 +1,7 @@
 // WebAPI Emulator Lifecycle Management Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include <emulator/ports/models/profiboard.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include "../emulator_api.h"
 
@@ -64,7 +65,8 @@ std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>&
     return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
 }
 
-/// Optional "sprinter": {"bios": "3.06" | <file>, "fast_start": bool, "accel_int_suspend": bool} of a create /
+/// Optional "sprinter": {"bios": "3.06" | <file>, "fast_start": bool, "accel_int_suspend": bool, "isa_slot1": "none",
+/// "isa_slot2": "ne2000"} of a create /
 /// start body (SprinterBios, automation audit G11): the BIOS image and start options of a new SPRINTER.
 /// True when absent or valid; false with a 400 already sent
 bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<void(CONFIG&)>& out,
@@ -83,11 +85,13 @@ bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<
     std::string error, path;
     if (!value.isObject() ||
         !SprinterBios::OptionsFromStrings(text("bios"), text("fast_start"), text("accel_int_suspend"), "", options, error) ||
+        !SprinterBios::IsaSlotFromString(text("isa_slot1"), 0, options, error) ||
+        !SprinterBios::IsaSlotFromString(text("isa_slot2"), 1, options, error) ||
         (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
     {
         Json::Value err;
         err["error"] = "Bad Request";
-        err["message"] = error.empty() ? std::string("sprinter must be an object {bios, fast_start, accel_int_suspend}")
+        err["message"] = error.empty() ? std::string("sprinter must be an object {bios, fast_start, accel_int_suspend, isa_slot1, isa_slot2}")
                                        : "sprinter: " + error;
         auto resp = HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -96,6 +100,51 @@ bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<
         return false;
     }
     out = SprinterBios::CreateOverride(options);
+    return true;
+}
+
+std::function<void(CONFIG&)> Combine(std::function<void(CONFIG&)> first, std::function<void(CONFIG&)> second);
+
+/// Optional "profi": {"keyboard": "matrix" | "xt" | "xttable" | "default", "zq3_mhz": 16..24 (even), "ay_clock":
+/// "old" | "new"} of a create / start body: the keyboard on a new Profi's keyboard connector ([PROFI] Keyboard=,
+/// ProfiKeyboardOverride) and its hi-res clocks ([PROFI] ZQ3MHz / AyClock, ProfiClockOverride). True when absent or
+/// valid; false with a 400 already sent
+bool ParseProfiField(const std::shared_ptr<Json::Value>& json, std::function<void(CONFIG&)>& out,
+                     const std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (!json || !json->isMember("profi"))
+        return true;
+    const Json::Value& value = (*json)["profi"];
+    ProfiKeyboard keyboard = ProfiKeyboard::Default;
+    uint8_t zq3 = 0;
+    int ayNew = -1;
+    bool clocksOk = value.isObject();
+    if (clocksOk && value.isMember("zq3_mhz"))
+    {
+        const int mhz = value["zq3_mhz"].isInt() ? value["zq3_mhz"].asInt() : 0;
+        clocksOk = mhz >= 16 && mhz <= 24 && (mhz % 2) == 0;
+        zq3 = static_cast<uint8_t>(mhz);
+    }
+    if (clocksOk && value.isMember("ay_clock"))
+    {
+        const std::string ay = value["ay_clock"].isString() ? value["ay_clock"].asString() : "";
+        clocksOk = ay == "old" || ay == "new";
+        ayNew = ay == "new" ? 1 : 0;
+    }
+    if (!clocksOk || (value.isMember("keyboard") && !value["keyboard"].isString()) ||
+        !ParseProfiKeyboard(value.get("keyboard", "").asString().c_str(), keyboard))
+    {
+        Json::Value err;
+        err["error"] = "Bad Request";
+        err["message"] = "profi must be an object {keyboard: matrix | xt | xttable | default, zq3_mhz: 16..24 (even), "
+                         "ay_clock: old | new}";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return false;
+    }
+    out = Combine(ProfiKeyboardOverride(keyboard), ProfiClockOverride(zq3, ayNew));
     return true;
 }
 
@@ -427,7 +476,11 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
     std::function<void(CONFIG&)> sprinterOverride;
     if (!ParseSprinterField(json, sprinterOverride, callback))
         return;
-    const std::function<void(CONFIG&)> createOverride = Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride);
+    std::function<void(CONFIG&)> profiOverride;
+    if (!ParseProfiField(json, profiOverride, callback))
+        return;
+    const std::function<void(CONFIG&)> createOverride =
+        Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride);
 
     try
     {
@@ -626,7 +679,11 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     std::function<void(CONFIG&)> sprinterOverride;
     if (!ParseSprinterField(json, sprinterOverride, callback))
         return;
-    const std::function<void(CONFIG&)> createOverride = Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride);
+    std::function<void(CONFIG&)> profiOverride;
+    if (!ParseProfiField(json, profiOverride, callback))
+        return;
+    const std::function<void(CONFIG&)> createOverride =
+        Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride);
 
     // ZX-Poly: "zxpoly": true or {"file": "<.zxp | .prom | disk image>"}
     const bool zxpoly = json && json->isMember("zxpoly") &&

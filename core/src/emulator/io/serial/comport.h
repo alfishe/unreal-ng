@@ -91,6 +91,10 @@ public:
     /// keyboard controller)
     static bool SavePeer(const ISerialPeer* peer, netstate::Com& out);
     static bool LoadPeer(ISerialPeer* peer, const netstate::Com& in, const ByteSource& bytes);
+    /// A stream link's part (phase, sockets, received bytes by reference, unsent bytes): a stream peer's, the
+    /// Hayes modem's call
+    static bool SaveStream(const StreamPeer& stream, netstate::Com& out);
+    static bool LoadStream(StreamPeer& stream, const netstate::Com& in, const ByteSource& bytes);
 
 private:
     void AddAccessWait(uint8_t reg, bool read);

@@ -415,7 +415,9 @@ void TtdWidget::updateTelemetry()
         return;
     }
 
-    EmulatorContext* context = _activeEmulator->GetContext();
+    // Leased for this handler: an automation thread may remove the instance
+    const Emulator::ContextLease lease = _activeEmulator->LeaseContext();
+    EmulatorContext* context = lease.get();
     if (!context || !context->pTimeTravelManager)
     {
         _statusLabel->setText(tr("TTD: Unavailable"));
@@ -424,9 +426,10 @@ void TtdWidget::updateTelemetry()
     }
 
     ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-    // A periodic refresh: while recording, a recent frame's summary without
-    // waiting for the emulation thread
-    ttd::TTDSessionInfo info = ttd->GetLatestSessionInfo();
+    // The published snapshot, never the live session: this 100 ms timer runs
+    // while the machine's thread records (and automation may stop or
+    // invalidate the session at the same time)
+    const ttd::TTDSessionInfo info = ttd->GetPublishedSessionInfo();
     ttd::TTDTimePoint currentPos = ttd->CurrentPosition();
 
     // Not available for this machine at all (a ZX-Poly member): say why
@@ -667,7 +670,7 @@ void TtdWidget::onLoadSession()
     else
     {
         ttd->SetSessionSourcePath(path);
-        ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+        ttd::TTDSessionInfo info = ttd->ReadSessionInfo();
         ttd->SeekTo(ttd::TTDTimePoint{info.sessionStartFrame, 0});
         _mainWindow->refreshViewport();
     }
@@ -719,6 +722,15 @@ void TtdWidget::onClearSession()
         QMessageBox::warning(this, tr("TTD Recording Active"), QString::fromStdString(refusal));
         return;
     }
+    // A Detached machine that runs replays the recorded history (input
+    // playback, the session-end check at every frame): park it before the
+    // history is freed, as every other action here does
+    if (ttd->GetState() == ttd::TTDSessionState::Detached && _activeEmulator->IsRunning() &&
+        !_activeEmulator->IsPaused())
+    {
+        _activeEmulator->Pause();
+        _activeEmulator->WaitForPauseConfirmation(1000);
+    }
     ttd->InvalidateSession("User cleared session in Qt GUI");
     updateTelemetry();
 }
@@ -747,7 +759,8 @@ void TtdWidget::onJumpStart()
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !context->pTimeTravelManager) return;
-    ttd::TTDSessionInfo info = context->pTimeTravelManager->GetSessionInfo();
+    // Read before the seek pauses the machine: the published snapshot
+    const ttd::TTDSessionInfo info = context->pTimeTravelManager->GetPublishedSessionInfo();
     performSeekToFrame(info.sessionStartFrame);
 }
 
@@ -794,8 +807,9 @@ void TtdWidget::onJumpEnd()
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !context->pTimeTravelManager) return;
-    ttd::TTDTimePoint endPos = context->pTimeTravelManager->SessionEndPosition();
-    performSeekToFrame(endPos.frame);
+    // Read before the seek pauses the machine: the published snapshot
+    const ttd::TTDSessionInfo info = context->pTimeTravelManager->GetPublishedSessionInfo();
+    performSeekToFrame(info.currentEndFrame);
 }
 
 void TtdWidget::onResumeFromHere()

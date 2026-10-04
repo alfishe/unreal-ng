@@ -27,7 +27,7 @@ struct NetworkForm
     // What the machine offers (read-only)
     bool zxBus = true;
     bool internalIo = false;           ///< the ATM Turbo 2+ INTERNAL I/O connector (ATM2IOESP)
-    std::string serialPort = "none";   ///< none | evo-avr | zifi | atm2-kbc
+    std::string serialPort = "none";   ///< none | evo-avr | zifi | atm2-kbc | profi-8251
     bool zifiMachine = false;          ///< the TS AVR firmware's ZiFi (TS-Conf, ZX-Evo + a TS firmware)
 
     // ZX-Bus cards
@@ -42,10 +42,19 @@ struct NetworkForm
     // Serial ports: the machine's own and the ZX-WiFi card's
     ComPortSpec comPort;               ///< kind None = nothing on the line
     ComPortSpec zxWifiPeer;            ///< default AT
-    std::string espChip = "ESP32";     ///< ESP32 | ESP8266
+    std::string espChip = "ESP32";     ///< ESP32 | ESP8266 | ESP8266-AT221 | ESP8266-AT222
     bool modemLines = false;
     std::string avrFirmware = "BASE2023";
     std::string kbcFirmware;           ///< [ATM] Kbc= name; empty: no controller socket
+
+    // UART cards in expansion slots (the Sprinter's SprinterESP, ISA modem, SprinterSerial): which slot holds one,
+    // what its UART(s) are wired to
+    bool slotUart[2] = {false, false};
+    std::string slotCard[2];            ///< sprinteresp | modem | dual16552
+    ComPortSpec slotPeer[2];            ///< default: SprinterESP AT (its ESP-12F), modem MODEM, SprinterSerial NONE
+    bool slotUartB[2] = {false, false}; ///< a second UART (SprinterSerial's COM2)
+    ComPortSpec slotPeerB[2];           ///< default NONE
+    std::string modemPhonebook;         ///< [NETWORK] ModemPhonebook: "<number>=<host>[:<port>],..."
 
     // Virtual network
     bool hostAccess = true;
@@ -59,7 +68,9 @@ struct NetworkForm
 NetworkForm NetworkFormFromState(const StateNode& network);
 
 /// The settings that differ between two forms, as ParseChange takes them
-/// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, zifi, esp_chip, com_modem_lines, avr_firmware, kbc_firmware,
+/// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, zifi, esp_chip, isa1_peer, isa2_peer, isa1_peer_b,
+/// isa2_peer_b, modem_phonebook, com_modem_lines,
+/// avr_firmware, kbc_firmware,
 /// host_access, dns_mode, hosts, forwards, connect_timeout_ms)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after);
 
@@ -78,6 +89,8 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form);
 
 /// A peer is an emulated ESP module (the chip setting applies to it)
 bool NetworkPeerIsEsp(const ComPortSpec& peer);
+/// A peer is the emulated Hayes modem (the phone book applies to it)
+bool NetworkPeerIsModem(const ComPortSpec& peer);
 
 /// [EVO] Avr= presets, oldest first, with a line for people:
 /// {"BASE2010", "NedoPC 2010: a register file, no transfer"}, ...
@@ -89,3 +102,16 @@ std::vector<std::pair<std::string, std::string>> NetworkKbcFirmwareChoices();
 
 /// The baud rates offered for a SERIAL: peer (any other can be typed)
 std::vector<uint32_t> NetworkSerialBaudChoices();
+
+/// One expansion slot (the Sprinter's ISA slots) as the window shows it: what is plugged and what it uses, in one
+/// line ("NE2000 RTL8019AS, I/O #300-#31F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway"), or why a
+/// configured card is not there. Built from the report's `slots` (network tdd §14)
+struct NetworkSlotRow
+{
+    std::string id;      ///< "isa2"
+    std::string label;   ///< "ISA slot 2 (J7), page #D6"
+    std::string line;
+};
+/// `isa`: the ISA slot report (DeviceState::Isa) or null - each fitted slot then also shows its IRQ line ("IRQ line
+/// low -> PB1, interrupts the CPU, 3 acknowledged"; ISA phase I4)
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const StateNode* isa = nullptr);

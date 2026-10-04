@@ -1,0 +1,63 @@
+EL3INFO.EXE
+
+EL3INFO performs bounded classic-ISA discovery of one 3Com 3C509B (TPO or TP),
+reads its EEPROM without modifying it, validates the IDs, MAC and checksums,
+and temporarily activates the operating register window. It is the first
+program to run on a new machine and the instrument to reach for whenever a
+card is not found.
+
+Usage
+
+EL3INFO [-v] [-s 0|1] [-p #100..#1F0] [-b AUTO|#200..#3E0]
+EL3INFO /?
+
+| Option | Meaning                                                        |
+|--------|----------------------------------------------------------------|
+| -s   | Physical ISA slot, 0 or 1. Default 1.                    |
+| -p   | ISA ID port, #100..#1F0 on a 16-byte boundary. Default #110. |
+| -b   | I/O base, AUTO or #200..#3E0 on a 16-byte boundary.        |
+| -v   | Also print address/resource words and both checksum words.     |
+
+Behaviour
+
+Defaults are slot 1, ID port #110, and the I/O base stored in EEPROM. An
+explicit -b changes only the current activation; it is never written to
+EEPROM, and nothing in this kit ever writes the EEPROM at all. The IRQ field
+is informational: the driver never uses ISA interrupts, so the stored value is
+reported but never acted on.
+
+Discovery accepts a card only when the product ID is 0x9550 or 0x9050
+(two verified boards; see EL3EEP.TXT), the 3Com manufacturer ID, a valid
+unicast MAC and both EEPROM checksums all agree, so an unrelated EtherLink III
+variant stops at the ID check rather than being half-configured.
+
+Examples
+
+EL3INFO
+EL3INFO -v
+EL3INFO -s 0 -p #110
+EL3INFO -s 1 -b #0300
+
+Exit codes
+
+EL3INFO reports which stage of discovery failed rather than the shared class
+codes used by the network utilities:
+
+| Code | Meaning                                   |
+|------|-------------------------------------------|
+| 0    | OK                                        |
+| 1    | Usage error                               |
+| 2    | Invalid parameter                         |
+| 3    | Card / ID not found                       |
+| 4    | Timer timeout                             |
+| 5    | EEPROM checksum                           |
+| 6    | Base                                      |
+| 7    | Active-window verification                |
+| 8    | ISA window state                          |
+
+Every run ends in RESULT OK or RESULT FAIL code=N. An empty slot reads
+every EEPROM word as FFFF and gives code 3; code 5 already proves the card
+answers and that the ID port, bus timing and ISA window are healthy.
+
+Before testing real hardware, record the physical slot, card label and chosen
+ID port. Start with EL3INFO; do not use a blind ISA scan.

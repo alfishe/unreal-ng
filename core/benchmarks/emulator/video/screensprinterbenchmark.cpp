@@ -17,7 +17,7 @@
 #include "emulator/video/screen.h"
 
 /// Sprinter frame cost (Sprinter tdd-video §3, the naive v1 renderer): BIOS 3.04
-/// (selected explicitly, so the numbers stay comparable; the shipped default is 3.07 BETA 1) at its logo (frame 60: graphics squares for the logo, 80-column text, border
+/// (selected explicitly, so the numbers stay comparable; the shipped default is 3.06 Hotfix 2) at its logo (frame 60: graphics squares for the logo, 80-column text, border
 /// squares), the whole 736x288 frame drawn in one go (RenderFrameBatch), and a
 /// full frame of CPU + per-T catch-up rendering. The square cache (MAME's
 /// tilemap idea) waits in the Sprinter TODO for these numbers.

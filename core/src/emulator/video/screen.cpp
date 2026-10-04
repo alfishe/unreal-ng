@@ -612,7 +612,12 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     }
 
     // Allocate framebuffer
+    const uint8_t* const bufferBefore = _framebuffer.memoryBuffer;
+    const uint16_t widthBefore = _framebuffer.width;
+    const uint16_t heightBefore = _framebuffer.height;
     AllocateFramebuffer(_mode);
+    const bool sameFrame = bufferBefore != nullptr && bufferBefore == _framebuffer.memoryBuffer &&
+                           widthBefore == _framebuffer.width && heightBefore == _framebuffer.height;
 
     // Notify consumers that the video mode changed. JUSTIFICATION: mode
     // switches are not only UI-driven - guest software switches modes by
@@ -622,8 +627,11 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // address) is different afterwards; a GUI consumer with cached
     // dimensions has CopyPresentedFramebuffer rejecting every copy (dst too
     // small) and freezes on the last frame. Consumers must re-attach.
-    // Skipped during construction (pEmulator not wired yet).
-    PostVideoModeChanged();
+    // Skipped during construction (pEmulator not wired yet). Not announced when the frame is the same buffer of
+    // the same size: nothing to re-attach, and the GUI's re-attach blanks its picture for a moment (a guest that
+    // switches the mode mid-frame made it flicker)
+    if (!sameFrame)
+        PostVideoModeChanged();
 
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
@@ -744,7 +752,7 @@ uint32_t Screen::GetCurrentTstate()
     // but ULA/screen expects unscaled t-states based on base 3.5MHz clock
     // Video signal timing is independent of CPU speed
     uint32_t scaledTstate = cpu->t;
-    uint32_t unscaledTstate = scaledTstate / state.current_z80_frequency_multiplier;
+    uint32_t unscaledTstate = state.CpuToBaseT(scaledTstate);
 
     return unscaledTstate;
 }
@@ -906,6 +914,11 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         if (newSize != 0 && newSize == _framebuffer.memoryBufferSize)
         {
             _framebuffer.videoMode = mode;
+            // The same frame layout (the usual case: Pentagon <-> AlCo, ZX <-> 128K, the TS modes): only the label
+            // changes. A guest switches it mid-frame by a port write (zifi.spg: three times a frame), and the lines
+            // the beam already drew and the presented frames are valid pictures - clearing them left a black frame
+            if (_framebuffer.width == rd.fullFrameWidth && _framebuffer.height == rd.fullFrameHeight)
+                return;
             _framebuffer.width = rd.fullFrameWidth;
             _framebuffer.height = rd.fullFrameHeight;
             ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);
@@ -1035,10 +1048,131 @@ void Screen::ResizePresentSlotsLocked(size_t size)
         _presentSlotProcessed[i] = false;
         _presentSlotShown[i] = false;
         _presentSlotReport[i] = zxdlss::FrameReport{};
+        _presentSlotGeometry[i] = PictureGeometry{};
     }
     _presentBufferSize = size;
     _presentLatchCounter = 0;
 }
+
+/// region <Frame geometry>
+
+PictureRect Screen::WorkingWindow() const
+{
+    const uint16_t width = _framebuffer.width;
+    const uint16_t height = _framebuffer.height;
+    const VideoModeEnum mode = _framebuffer.videoMode;
+    if (mode < M_MAX)
+    {
+        const RasterDescriptor& rd = rasterDescriptors[mode];
+        const bool fits = rd.screenWidth > 0 && rd.screenHeight > 0 &&
+                          static_cast<uint32_t>(rd.screenOffsetLeft) + rd.screenWidth <= width &&
+                          static_cast<uint32_t>(rd.screenOffsetTop) + rd.screenHeight <= height;
+        if (fits)
+            return PictureRect{rd.screenOffsetLeft, rd.screenOffsetTop, rd.screenWidth, rd.screenHeight};
+    }
+    // No descriptor row (or one that does not fit the frame): the whole frame is the picture
+    return PictureRect{0, 0, width, height};
+}
+
+PictureGeometry Screen::DescribeNativeFrame() const
+{
+    PictureGeometry g;
+    g.width = _framebuffer.width;
+    g.height = _framebuffer.height;
+    g.stride = static_cast<uint32_t>(g.width) * RGBA_SIZE;
+    g.screenWindow = WorkingWindow();
+    g.videoMode = _framebuffer.videoMode;
+    g.source = FrameSource::Native;
+    g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    return g;
+}
+
+PictureGeometry Screen::DescribeExternalFrame() const
+{
+    PictureGeometry g;
+    g.width = _external.width;
+    g.height = _external.height;
+    g.stride = static_cast<uint32_t>(g.width) * RGBA_SIZE;
+    g.screenWindow = PictureRect{0, 0, g.width, g.height};  // the card's picture has no border: all of it is the picture
+    g.videoMode = M_NUL;
+    g.source = FrameSource::External;
+    g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    return g;
+}
+
+bool Screen::CaptureCurrentFrame(FrameSnapshot& out) const
+{
+    const FramebufferDescriptor& fb = IsExternalPictureActive() ? _external : _framebuffer;
+    if (fb.memoryBuffer == nullptr || fb.width == 0 || fb.height == 0)
+        return false;
+    out.geometry = IsExternalPictureActive() ? DescribeExternalFrame() : DescribeNativeFrame();
+    out.pixels.assign(fb.memoryBuffer, fb.memoryBuffer + static_cast<size_t>(out.geometry.stride) * out.geometry.height);
+    return true;
+}
+
+bool Screen::SnapshotLive(FrameSnapshot& out, bool emulationParked, uint32_t timeoutMs)
+{
+    if (emulationParked)
+    {
+        if (!CaptureCurrentFrame(out))
+            return false;
+        // Where the beam stopped: the pixels it has not reached are still the previous frame's
+        if (_context && _context->pCore && _context->pCore->GetZ80() && out.geometry.source == FrameSource::Native)
+        {
+            const uint64_t tacts = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
+            const uint32_t perLine = GetTstatesPerLine();
+            out.geometry.beamTstate = static_cast<int32_t>(tacts);
+            out.geometry.beamLine = perLine ? static_cast<int32_t>(tacts / perLine) : -1;
+            out.geometry.partial = IsScreenHQEnabled() && tacts > 0 && tacts < GetMaxFrameTiming();
+        }
+        return true;
+    }
+
+    std::lock_guard<std::mutex> oneAtATime(_liveRequestMutex);
+    std::unique_lock<std::mutex> lock(_liveMutex);
+    _liveDone = false;
+    _liveOk = false;
+    _livePending.store(true, std::memory_order_release);
+    if (!_liveCv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return _liveDone; }))
+    {
+        _livePending.store(false, std::memory_order_release);  // under the lock: the server takes it too
+        return false;
+    }
+    if (!_liveOk)
+        return false;
+    out = std::move(_liveResult);
+    return true;
+}
+
+void Screen::ServeLiveRequest()
+{
+    if (!_livePending.load(std::memory_order_acquire))
+        return;
+    std::lock_guard<std::mutex> lock(_liveMutex);
+    if (!_livePending.exchange(false, std::memory_order_acq_rel))
+        return;  // the waiter gave up in between
+    _liveOk = CaptureCurrentFrame(_liveResult);
+    _liveDone = true;
+    _liveCv.notify_all();
+}
+
+bool Screen::SnapshotPresented(FrameSnapshot& out)
+{
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    size_t index = 0;
+    const uint8_t* slot = PresentedSlotLocked(&index);
+    if (!slot)
+        return false;
+    const PictureGeometry& g = _presentSlotGeometry[index];
+    // Nothing latched into the slot yet (geometry empty), or a slot that does not match the buffer
+    if (g.width == 0 || g.height == 0 || static_cast<size_t>(g.stride) * g.height != _presentBufferSize)
+        return false;
+    out.pixels.assign(slot, slot + _presentBufferSize);
+    out.geometry = g;
+    return true;
+}
+
+/// endregion </Frame geometry>
 
 void Screen::PostVideoModeChanged()
 {
@@ -1106,6 +1240,7 @@ void Screen::LatchExternalFrame()
     VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
     _presentPlaneB[index].clear();  // plane B belongs to the ZX raster
     _presentSlotWindow[index] = TemporalWindow{};  // no temporal output for an external frame
+    _presentSlotGeometry[index] = DescribeExternalFrame();
     _presentSlotSerial[index] = ++_presentSerial;
     _presentSlotProcessed[index] = false;
     _presentSlotShown[index] = false;
@@ -1137,6 +1272,7 @@ void Screen::LatchFramebuffer()
             _presentPlaneB[index].assign(_planeB.begin(), _planeB.end());
         else if (!_presentPlaneB[index].empty())
             _presentPlaneB[index].clear();
+        _presentSlotGeometry[index] = DescribeNativeFrame();
         _presentSlotSerial[index] = ++_presentSerial;
         _presentSlotProcessed[index] = false;
         _presentSlotShown[index] = false;
@@ -1190,6 +1326,7 @@ void Screen::FlushAndPresentFramebuffer()
         _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
     else
         _presentPlaneB[0].clear();
+    _presentSlotGeometry[0] = DescribeNativeFrame();
     _presentSlotSerial[0] = ++_presentSerial;
     _presentSlotWindow[0] = TemporalWindow{};  // never submitted: the effect restarts below
     _presentSlotProcessed[0] = false;
@@ -1469,6 +1606,12 @@ uint16_t Screen::GetDisplayHeight() const
 }
 
 /// endregion </Display viewport>
+
+uint16_t Screen::FirstStoredRasterLine() const
+{
+    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
+    return static_cast<uint16_t>(timing.vSyncLines + timing.vBlankLines);
+}
 
 const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
 {

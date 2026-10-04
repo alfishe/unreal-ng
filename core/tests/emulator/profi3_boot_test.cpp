@@ -24,6 +24,7 @@
 #include "emulator/video/screen.h"
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -40,7 +41,7 @@ protected:
 
         _emulator = _manager->CreateEmulatorWithModelAndRAM("profi3-boot", "PROFI3", 512, LoggerLevel::LogError);
         if (!_emulator)
-            GTEST_SKIP() << "PROFI3 is not creatable (missing configs/profi3 or data/rom/profi/kramis-v02.rom)";
+            GTEST_SKIP() << "PROFI3 is not creatable (missing configs/profi3 or data/rom/profi/kramis-v03.rom)";
     }
 
     void TearDown() override
@@ -163,6 +164,8 @@ static bool KramisMenuOnScreen(EmulatorContext* context)
 TEST_F(Profi3Boot_Test, KramisV02ReachesItsMenu)
 {
     EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v02.rom"));
+    _emulator->Reset(true);
     _emulator->EnableTurboMode();  // asserts on emulated state (VRAM attributes) only
 
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
@@ -171,12 +174,12 @@ TEST_F(Profi3Boot_Test, KramisV02ReachesItsMenu)
     EXPECT_EQ(context->pScreen->GetVideoMode(), M_PROFI);
 }
 
-/// @brief The other factory v3 image ("ТОО Фирма ПРОФИ" BIOS V0.3 + TR-DOS 5.04T) reaches its menu too
+/// @brief The default v3 image ("ТОО Фирма ПРОФИ" BIOS V0.3 + TR-DOS 5.04T, configs/profi3) reaches its menu
 TEST_F(Profi3Boot_Test, KramisV03ReachesItsMenu)
 {
     EmulatorContext* context = _emulator->GetContext();
-    ASSERT_TRUE(_emulator->LoadROM("rom/profi/kramis-v03.rom"));
-    _emulator->Reset(true);
+    EXPECT_NE(std::string(context->config.profi3_rom_path).find("kramis-v03.rom"), std::string::npos)
+        << "the PROFI3 default ROM: " << context->config.profi3_rom_path;
     _emulator->EnableTurboMode();
 
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
@@ -187,6 +190,8 @@ TEST_F(Profi3Boot_Test, KramisV03ReachesItsMenu)
 TEST_F(Profi3Boot_Test, KramisMenuSinclairStartsThe128Menu)
 {
     EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v02.rom"));   // the V0.2 menu and its TR-DOS 5.03
+    _emulator->Reset(true);
     _emulator->EnableTurboMode();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
     ASSERT_TRUE(KramisMenuOnScreen(context));
@@ -205,6 +210,8 @@ TEST_F(Profi3Boot_Test, KramisMenuSinclairStartsThe128Menu)
 TEST_F(Profi3Boot_Test, KramisMenuTrDosStartsTrDos503)
 {
     EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v02.rom"));   // the V0.2 menu and its TR-DOS 5.03
+    _emulator->Reset(true);
     _emulator->EnableTurboMode();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
     ASSERT_TRUE(KramisMenuOnScreen(context));
@@ -216,6 +223,29 @@ TEST_F(Profi3Boot_Test, KramisMenuTrDosStartsTrDos503)
     const std::string screen = DecodeScreen(context, 5);
     EXPECT_NE(screen.find("TR-DOS Ver 5.03"), std::string::npos) << screen;
     EXPECT_NE(screen.find("A>"), std::string::npos) << screen;
+}
+
+/// @brief The SP-DOS system disk (testdata/machines/profi/cpm/sp-dos) boots on the v3 from the Kramis menu's
+///        "Profi-DOS" entry to "SP-DOS Shell by Michael Markowsky" (hi-res, CPU at 3 MHz)
+TEST_F(Profi3Boot_Test, SpDosBootsToItsShell)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and SP-DOS boot from a floppy
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->RunNFrames(600, true);   // the Kramis menu, settled
+    ASSERT_TRUE(KramisMenuOnScreen(context));
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/profi/cpm/sp-dos/unicopy-sp-dos.td0"), 0,
+                                    &error))
+        << error;
+    TapKeys("ENT");   // the first entry: Profi-DOS
+    _emulator->RunNFrames(1500, true);
+
+    std::string ram;
+    for (uint32_t a = 0; a < 0x10000; a++)
+        ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
+    EXPECT_NE(ram.find("SP-DOS Shell by Michael Markowsky"), std::string::npos)
+        << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
+    EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
 }
 
 /// @brief Development probe (disabled): boot the Kramis BIOS and print what it leaves on the screen

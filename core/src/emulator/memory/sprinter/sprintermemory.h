@@ -30,7 +30,8 @@ struct SprinterPldState;
 ///   - the Spectrum screen shadow (ALL_MODE bit 0 = 0): writes to #4000-#5FFF
 ///     (and window 3 holding Spectrum page 5 / 7) also go to video RAM;
 ///   - page #A0 in window 3 with #1FFD = #10: a write resets the CPU;
-///   - the ISA view: reads #FF, writes ignored (no cards in v1).
+///   - the ISA view (#D0 / #D2 / #D4 / #D6 with #1FFD bit 4): reads, writes and opcode fetches are cycles of
+///     the decoder's SprinterIsaBus (Sprinter ISA tdd §4.3); tool reads peek the card, no side effect.
 class SprinterMemory : public Memory
 {
 public:
@@ -40,8 +41,9 @@ public:
         Plain = 0,   ///< nothing (the Spectrum shadow is checked per write)
         Graphics,    ///< graphics page: the store goes to the video address (plain store trashed)
         ResetPage,   ///< page #A0 with #1FFD = #10: the write resets the CPU
-        Isa,         ///< ISA view: ignored
+        Isa,         ///< ISA view: the write is an ISA cycle (SprinterIsaBus::Write)
         CblPage,     ///< page #FD: the plain store, and the Covox-Blaster sees it (accelerator copies, INT on)
+        PortTable,   ///< page #40 while the PLD journal is on: the plain store, and the journal counts it
     };
 
     /// How a CPU read from a window differs from the mapped page
@@ -49,7 +51,7 @@ public:
     {
         None = 0,
         Graphics,    ///< main RAM at the video address
-        Isa,         ///< #FF (no ISA card)
+        Isa,         ///< an ISA cycle (SprinterIsaBus::Read); tools peek
         LoadingCs,   ///< configuration loading: addresses outside the Z84C15 CS0 read fast RAM
     };
 
@@ -146,6 +148,11 @@ private:
 
     PortDecoder_Sprinter* _decoder = nullptr;
     const SprinterPldState* _pld = nullptr;
+    /// Window 3 in ISA mode: the slot and space its page selects (StandardUpdateBanks)
+    uint8_t _isaSpace = 0;   ///< SprinterIsaBus::Space
+    uint8_t _isaSlot = 0;
+    /// A CPU read of window 3 in ISA mode: one ISA cycle
+    uint8_t IsaRead(uint16_t addr);
     SprinterVideoRam* _vram = nullptr;
 
     BankAction _action[4] = {};

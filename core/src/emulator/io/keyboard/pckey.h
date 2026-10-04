@@ -69,6 +69,22 @@ public:
     /// Every key the sink sees as held is released (breaks sent), e.g. when
     /// automation releases all keys
     virtual void ReleaseAllPcKeys() = 0;
+
+    /// The controller takes the place of the ZX matrix on the keyboard
+    /// connector (Profi PROFI-XT: one keyboard on X9). The host keyboard's
+    /// Auto route then goes to the controller alone, not to both: a host Shift
+    /// would otherwise press Caps Shift on the matrix and Symbol Shift through
+    /// the controller
+    virtual bool ReplacesMatrix() const { return false; }
+    /// Automation: the PC keys that stand for one ZX key on this controller.
+    /// Default pckey::FromZxKey (the ZX-Evo AVR's reverse map)
+    virtual std::vector<PcKey> PcKeysForZxKey(ZXKeysEnum key) const;
+    /// Automation typing: the PC keys that type `c`; `zxKeys` are the ZX keys
+    /// that type it on the matrix. Default pckey::FromCharacter (US layout)
+    virtual std::vector<PcKey> PcKeysForCharacter(char c, const std::vector<ZXKeysEnum>& zxKeys) const;
+    /// A short name for reports and the UI ("PROFI-XT firmware"); empty for an
+    /// unnamed PS/2 controller
+    virtual std::string ControllerName() const { return {}; }
 };
 
 namespace pckey
@@ -90,6 +106,13 @@ namespace pckey
     /// E0 F0 7C E0 F0 12; Pause -> E1 14 77 E1 F0 14 F0 77 on press, nothing on
     /// release. Empty for None
     std::vector<uint8_t> Ps2Set2Bytes(PcKey key, bool pressed);
+
+    /// PC/XT scan code set 1 bytes of a make or break, as an XT keyboard (or an
+    /// AT keyboard in XT mode) sends them: A -> 1E / 9E (break = make | 80h);
+    /// Up -> E0 48 / E0 C8; Print Screen -> E0 2A E0 37 / E0 B7 E0 AA; Pause
+    /// -> E1 1D 45 E1 9D C5 on press, nothing on release. No fake shifts
+    /// around the navigation keys. Empty for None
+    std::vector<uint8_t> XtSet1Bytes(PcKey key, bool pressed);
 
     /// Host key codes -> physical key. PcKey::None when the code is not a key
     /// of the table. These are layout-independent: the same physical key gives

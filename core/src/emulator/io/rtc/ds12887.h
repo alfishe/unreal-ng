@@ -130,7 +130,7 @@ public:
     /// endregion </Registers>
 
     /// region <Time base>
-    /// Frozen instant (Unix seconds, shown as host local time)
+    /// Frozen instant (Unix seconds, shown as its UTC wall time on every host)
     void SetFixedTime(time_t unixSeconds);
     /// Back to the host clock (keeps any offset the guest set)
     void UseLiveTime();

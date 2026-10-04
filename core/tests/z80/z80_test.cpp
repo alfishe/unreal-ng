@@ -926,4 +926,54 @@ TEST_F(Z80_Test, RegisterAPI_GetSetValue_Invalid)
     EXPECT_FALSE(Z80::SetRegisterValue(&z80, "INVALID", 0x1234));
 }
 
+/// R keeps bit 7 apart from the counting bits (LD R,A / LD A,R): a write of bit 7 reads back
+TEST_F(Z80_Test, RegisterAPI_RBit7RoundTrips)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    ResetCPUAndMemory();
+
+    uint16_t value;
+    bool is16bit;
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "R", 0xA5));
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "R", value, is16bit));
+    EXPECT_EQ(value, 0xA5);
+    EXPECT_EQ(Z80::RegisterR(&z80), 0xA5);
+    z80.r_low = 0x01;  // the counter ran on and wrapped its 7 bits: bit 7 stays
+    EXPECT_EQ(Z80::RegisterR(&z80), 0x81);
+
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "IR", 0x3F80));
+    EXPECT_EQ(z80.i, 0x3F);
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "IR", value, is16bit));
+    EXPECT_EQ(value, 0x3F80);
+}
+
+/// MEMPTR (alias WZ), IM and the IFFs read and write through the table; IM and IFF refuse values they
+/// cannot hold
+TEST_F(Z80_Test, RegisterAPI_InternalAndInterruptState)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    ResetCPUAndMemory();
+
+    uint16_t value;
+    bool is16bit;
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "wz", 0xBEEF));
+    EXPECT_EQ(z80.memptr, 0xBEEF);
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "MEMPTR", value, is16bit));
+    EXPECT_EQ(value, 0xBEEF);
+    EXPECT_TRUE(is16bit);
+
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "IM", 2));
+    EXPECT_EQ(z80.im, 2);
+    EXPECT_FALSE(Z80::SetRegisterValue(&z80, "IM", 3));
+    EXPECT_EQ(z80.im, 2) << "a refused write changes nothing";
+
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "IFF1", 1));
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "IFF2", 0));
+    EXPECT_EQ(z80.iff1, 1);
+    EXPECT_EQ(z80.iff2, 0);
+    EXPECT_FALSE(Z80::SetRegisterValue(&z80, "IFF2", 2));
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "IFF1", value, is16bit));
+    EXPECT_EQ(value, 1);
+}
+
 /// endregion </Register Access API Tests>

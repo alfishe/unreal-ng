@@ -15,6 +15,7 @@ standard PC-format FAT12 floppy.
 | `golden/acctest.png` | the accelerator test `ACCTEST.EXE` (below) after it drew its picture, run from the DSS floppy with BIOS 3.04 (phase S5): the golden image of `SprinterBoot_Test.Dss162_AccTestCopiesItsPictureWithTheAccelerator`; its picture area equals MAME's (`reference/mame-acctest-306.png`) |
 | `golden/fn-panels.png` | Flex Navigator 1.10 (the floppy's `fn`) with both panels on `B:\FN`, phase S5: the golden image of `SprinterBoot_Test.Dss162_FlexNavigatorDrawsWithTheAccelerator` |
 | `software/acctest.exe` | the accelerator test program (below) |
+| `dss/1.71.66/` | Estex DSS 1.71.66 built from source (community `master` `ae08ad9`): kernel, shell, installer, boot loader and symbols; see its README |
 
 ## `dss_1_62_92.img` - the DSS 1.62.92 boot floppy
 

@@ -302,10 +302,12 @@ void VirtualNetwork::SendTo(uint16_t id, uint16_t localPort, const NetEndpoint& 
                 return;
             }
             Note(id, s->proto, "dns", to, NetEventStatus::Ok, length);
-            if (_host && !IsReplaying())
+            if (_host)
             {
+                // Counted in a TTD replay too (the journal brings the answer): the counter is checkpointed state
                 ++_counters.dnsHostQueries;
-                _host->DnsQuery(s->hostId, to, data, length);
+                if (!IsReplaying())
+                    _host->DnsQuery(s->hostId, to, data, length);
             }
             else if (!_host)
                 Defer(id, NetEventType::Datagram, NetEventStatus::Ok, to,
@@ -444,7 +446,9 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     std::map<uint16_t, Socket> kept;
     for (const auto& [id, s] : _sockets)
     {
-        if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo || s.guest == keep.zifi))
+        if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo || s.guest == keep.zifi ||
+                        s.guest == keep.ethernet || s.guest == keep.slotUart[0] || s.guest == keep.slotUart[1] ||
+                        s.guest == keep.slotUartB[0] || s.guest == keep.slotUartB[1]))
             kept[id] = s;
     }
     if (_host)
@@ -462,6 +466,16 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     }
     _sockets.swap(kept);
     _listeners.clear();
+    // A kept guest server (a modem that answers calls, an ESP's server) keeps listening: its host listener is new
+    std::vector<std::pair<uint16_t, uint16_t>> relisten;
+    for (auto& [id, s] : _sockets)
+    {
+        if (s.listenPort && s.guest)
+        {
+            relisten.emplace_back(id, s.listenPort);
+            s.listenPort = 0;
+        }
+    }
     // Answers still queued for the kept sockets stay; the others are gone
     std::deque<Deferred> deferred;
     for (Deferred& d : _deferred)
@@ -475,6 +489,8 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
         _nextId = 1;   // ids of kept sockets must not be handed out again
     _counters = Counters();
     _activity.clear();
+    for (const auto& [id, port] : relisten)
+        Listen(id, port);
 }
 
 // ---------------------------------------------------------------------------
@@ -492,14 +508,18 @@ void VirtualNetwork::Pump()
     }
     if (_wasReplaying)
     {
-        // Back to live from the recorded past: the connections of back then are gone
+        // Back to live from the recorded past: the connections of back then are gone. Without such a
+        // connection nothing is reset (no input, no count): resuming a recording then continues exactly as recorded
         _wasReplaying = false;
-        TTDInputEvent ev;
-        ev.kind = TTDInputKind::NetLinkReset;
-        if (_context && _context->pTimeTravelManager)
-            _context->pTimeTravelManager->SubmitLiveInput(ev);
-        else
-            ApplyLinkReset();
+        if (HasResettableStreams())
+        {
+            TTDInputEvent ev;
+            ev.kind = TTDInputKind::NetLinkReset;
+            if (_context && _context->pTimeTravelManager)
+                _context->pTimeTravelManager->SubmitLiveInput(ev);
+            else
+                ApplyLinkReset();
+        }
     }
 
     // 1. The virtual network's own answers, then 2. the host's: both are TTD
@@ -593,6 +613,17 @@ void VirtualNetwork::ApplyHostEvent(const TTDNetInput& net, const uint8_t* paylo
     Deliver(*s, type, status, peer, payload, length, net.journalIndex);
 }
 
+bool VirtualNetwork::HasResettableStreams() const
+{
+    for (const auto& [id, s] : _sockets)
+    {
+        const bool stream = s.proto == NetProto::Tcp || s.proto == NetProto::Serial;
+        if (s.guest && stream && (s.connected || s.remote.addr != 0 || s.proto == NetProto::Serial))
+            return true;
+    }
+    return false;
+}
+
 void VirtualNetwork::ApplyLinkReset()
 {
     ++_counters.linkResets;
@@ -602,7 +633,7 @@ void VirtualNetwork::ApplyLinkReset()
     {
         const bool stream = s.proto == NetProto::Tcp || s.proto == NetProto::Serial;
         if (s.guest && stream && (s.connected || s.remote.addr != 0 || s.proto == NetProto::Serial))
-            affected.push_back(id);
+            affected.push_back(id);   // the same rule as HasResettableStreams
     }
     for (uint16_t id : affected)
     {
@@ -682,6 +713,11 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
                      : s.guest == serial.machine ? 3
                      : s.guest == serial.atmIo   ? 4
                      : s.guest == serial.zifi    ? 5
+                     : s.guest == serial.ethernet ? 6
+                     : s.guest == serial.slotUart[0] ? 7
+                     : s.guest == serial.slotUart[1] ? 8
+                     : s.guest == serial.slotUartB[0] ? 9
+                     : s.guest == serial.slotUartB[1] ? 10
                                                  : 1;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
@@ -775,6 +811,11 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
                   : o.hasGuest == 3 ? serial.machine
                   : o.hasGuest == 4 ? serial.atmIo
                   : o.hasGuest == 5 ? serial.zifi
+                  : o.hasGuest == 6 ? serial.ethernet
+                  : o.hasGuest == 7 ? serial.slotUart[0]
+                  : o.hasGuest == 8 ? serial.slotUart[1]
+                  : o.hasGuest == 9 ? serial.slotUartB[0]
+                  : o.hasGuest == 10 ? serial.slotUartB[1]
                   : o.hasGuest      ? guest
                                     : nullptr;
         s.cookie = o.cookie;

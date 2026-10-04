@@ -27,6 +27,9 @@ rzx_playback  {"action":"stop"}                                   # the machine 
 
 `load_software {"path":"game.rzx"}` does the same as `play`.
 
+`play` takes `switch_model` (default `true`): with `false` a recording for another model is refused
+(model mismatch) instead of switching, and the target id stays.
+
 ## WebAPI
 
 ```bash

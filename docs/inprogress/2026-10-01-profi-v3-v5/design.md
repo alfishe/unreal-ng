@@ -54,7 +54,7 @@ struct ProfiBoard
 | Item | v3 | v5 |
 |:--|:--|:--|
 | Config folder | `data/configs/profi3/unreal.ini` (new, from `profi/`) | `data/configs/profi/unreal.ini` (unchanged) |
-| `[ROM]` key | `PROFI3=rom\profi\kramis-v02.rom` (`config.profi3_rom_path`) | `PROFI=rom\profi.rom` |
+| `[ROM]` key | `PROFI3=rom\profi\kramis-v03.rom` (`config.profi3_rom_path`; V0.2 until 2026-10-03, see roms.md) | `PROFI=rom\profi.rom` |
 | `RAMSize` | 512 (1024 allowed) | 1024 (512 allowed) |
 | `[HDD] Scheme` | `NONE` (`PROFI` is refused with a log line: the board has no IDE) | `PROFI` |
 | ROM roles (`rom.cpp`) | SYS/Menu (Kramis), TR-DOS, 128K Editor, 48K BASIC | today's |
@@ -130,8 +130,10 @@ From the 5.06 netlist and the 5.0 album ([research-profi-v5-open-items.md](resea
 | #DFFD decode | 5.0x: A13=0, A1=0 (A15 not decoded, so a 128K `OUT` to `#1FFD` writes #DFFD too); 5.06: high byte #DF, A1=0, and never from `OUT (n),A` (DD75 `/BLOCK`) | `[PROFI] DffdDecode=emulators` (A15=1, A13=0, A1=0, the default), `v50`, `v506` |
 | CP/M switch | holds #DFFD (and the 5.06 `/BLOCK` flip-flop) cleared through the latches' clear input while pressed; #7FFD and the ROM lines untouched; the front-panel RST clears only #7FFD | `FrontPanelSwitch::Cpm` on v5 (`[PROFI] CpmSwitch`), on every surface next to TURBO; TTD records it, ProfiPaging byte 33 bit 1 |
 
-Whether the CP/M switch also selects the start ROM page, as the manual says, is open: nothing on the processor
-board connects it there.
+The switch needs no link to the ROM pages. No other emulator or RTL models it (ZXMAK2, Xpeccy, xpeccy-plus,
+UnrealSpeccy, pico-spec, Karabas-Pro: all reset into the SYS ROM with #DFFD cleared), and the emulated BIOS shows
+where the manual's behavior comes from: with #DFFD held at #00 it cannot raise its hi-res menu and starts Spectrum
+128 instead ("pressed = Spectrum 128"; `ProfiBoot_Test.CpmSwitchAtPowerOnStartsSpectrum128`).
 
 ## 5. Video timing
 
@@ -314,7 +316,125 @@ Other machines pay nothing. The v5 pays about 3 % for its video WAIT, the overla
 | 5 | Turbo switch for both boards; the turbo waits in `ProfiWaitOverlay`; HLD holds 3.5 MHz on v3 | E3 | R32, R33 |
 | 6 | Automation, Qt, docs, TTD fixture | 1-5 | R40-R43 |
 | 7 | v5 open items: palette gate, 15 MHz clock, the CP/M boot switch | sources | Q5, Q6, R34 |
+| 8 | Keyboard: the PROFI-XT controller on a new MCS-48 core, the table fallback, `#FE` bit 5, routing, TTD, automation (section 9) | research-profi-keyboard.md | R23 |
 
 Phases 1, 2 and 3 have no open questions and can start now; 3b waits for E4. Each phase ends with the full build with zero warnings
 and `core-tests` green (AGENTS.md); the A/B benchmark is in section 6.5
 (`docs/guidelines/performance-guidelines.md`).
+
+## 9. Keyboard
+
+Research: [research-profi-keyboard.md](research-profi-keyboard.md) (its "Emulator rules" 1-9). Branch `profi-xt-kbd`.
+
+### 9.1 What the boards have
+
+| Board | Connector | Lines | Default here |
+|:--|:--|:--|:--|
+| v5 (and v4.01) | X9, 20 pins | KA8-KA15, KD0-KD4 and **KD5** (bit 5 of `#FE`, pull-up R10), /KBW into the Z80 WAIT, /CSKBD (every even-port read), /HRESET | the PROFI-XT controller |
+| v3.2 | KEYB, 16 pins | KA8-KA15, KD0-KD4, pin 2 = KD7 (bit 7 of `#FE`), /HRESET; no KD5, no WAIT | the matrix keyboard |
+
+`[PROFI] Keyboard=` chooses (`ProfiKeyboard` in `profiboard.h`; empty = the board's own):
+
+| Value | What sits on the connector | Class |
+|:--|:--|:--|
+| `Matrix` | the 40-key Spectrum matrix: `Keyboard` as on every other machine, host Shift = Caps Shift, bit 5 reads 1 | - |
+| `XT` | the PROFI-XT controller running its firmware on the MCS-48 core (low-level) | `ProfiXtKbc`, engine Firmware |
+| `XTTable` | the same controller from its key table, without the firmware image (high-level) | `ProfiXtKbc`, engine Table |
+
+The create-time choice is on every automation surface (WebAPI `"profi": {"keyboard"}`, CLI `--profi-keyboard`, MCP
+`profi_keyboard`); the one in force is reported as `profi_keyboard` (`/state/paging`, `/state/memory`, CLI `state`,
+Lua / Python `paging_state()`), the controller's name as `keyboard_controller` (keyboard status, CLI `keyboard route`,
+Lua / Python `keyboard_controller()`, Qt's Machine > Host Keyboard title). Lua and Python have no machine-create
+function (scripts run inside a machine), as for the Sprinter BIOS.
+
+### 9.2 The controller (`core/src/emulator/io/keyboard/profixtkbc.*`)
+
+Modeled on `Atm2Kbc` (the ATM Turbo 2+ controller on the MCS-51 core):
+
+- **MCU**: a new isolated core, `core/src/emulator/cpu/mcs48/` (8048 / 8035 / 8049 family: every opcode, cycles of
+  15 oscillator clocks, the timer / counter, the level-sensitive /INT, T0 / T1, P1 / P2, BUS, MOVX and the 8243
+  expander through callbacks; `mcs48_test.cpp`). 64 bytes of RAM (8035), the program from the 2 KB EPROM image.
+- **Board** (schematic PROFI-XT.PDF): P1 = A8-A15 of the Z80 read in progress; `MOVX` with address bit 7 = 0 writes
+  the output latch (KD0-KD5, bit 7 = RES -> /HRESET); `MOVX` with bit 5 = 0 resets the WAIT flip-flop; T1 = that
+  flip-flop. A Z80 read of an even port clocks the flip-flop with D = P2.7: with a key held (P2.7 = 1) the Z80 waits
+  while the MCU answers; idle (P2.7 = 0) there is no wait and the latch is off X9 (all lines 1).
+- **Keyboard wire**: host keys become set-1 bytes (`pckey::XtSet1Bytes`, new: make, break = make | 80h, E0 / E1
+  prefixes), sent as 9-bit frames (start bit 1, 8 data bits LSB first) at about 10 kHz: each clock edge latches the
+  inverted bit onto T0 and pulls /INT low for 4 machine cycles (the board's differentiator; the RC is not on the
+  schematic). Typematic repeat as `Ps2KeyboardStream` (500 ms, 10.9 / s).
+- **Time**: the MCU runs lazily, caught up to the Z80's emulated time on every `#FE` read, key event and frame end
+  (`PortDecoder::OnFrameEnd`); a read runs it until the wait's release, and that time becomes Z80 wait states
+  (`Z80::AddWaitStates`). The one conversion from CPU clocks to base T-states is `ProfiXtKbc::CpuTToBaseT` (it has to
+  follow the board's clock ratio once the hi-res CPU clock lands).
+- **Reset**: a new assertion of RES (latch bit 7 low while P2.7 drives the latch) resets the machine after the MCU
+  run (`ISoftResetSink`); the controller keeps running (it has its own power-on reset).
+- **Table engine**: `profixtkeymap.*` holds the firmware's key table (plain, with Shift, after Num Lock, in the
+  second mode), read off by running the firmware; the engine applies the same answer rules (the half-row decode,
+  `#00FE` = AND, `#AAFE` / `#55FE`, no wait when idle, a fixed 53-cycle wait otherwise, Ctrl + Alt + Del).
+  `TheTableAgreesWithTheFirmware` compares the two for every PC key in all four contexts.
+
+### 9.3 The reconstructed firmware
+
+`data/rom/profixt/profi-xt-v1.27.rom` ("JV KRAMIS (C) 28.10.1992 vers 1.27"). The only known dump (speccy4ever
+`PROFI_XT-9A8E2686.ROM`) has no `EN I` and its main loop never calls the get-byte routine at 05Fh, so it receives
+no key. Bytes 02Eh-032h are replaced: `C8 11 20 17 37` -> `05 14 5F 00 00` (EN I; CALL 05Fh; NOP; NOP). Verified
+with the 8035 simulator ([tools/machines/profi/xtkbd/](../../../tools/machines/profi/xtkbd/README.md)) and on the
+emulator's core: every key, the BIOS 2.0 EXT test, Ctrl + Alt + Del. It is a reconstruction until a clean re-dump:
+`[ROM] PROFIXT=` takes another image, the emulator warns when given the original dump
+(`TheOriginalDumpReceivesNoKey`), and `XTTable` needs no image. Details: [data/rom/profixt/README.md](../../../data/rom/profixt/README.md).
+
+### 9.4 `#FE` on the Profi
+
+The decoder (`PortDecoder_Profi`) reads the matrix and tape as before (`Default_Port_FE_In`), then, with a controller
+fitted, ANDs in its lines:
+
+| Board | Bits from the controller |
+|:--|:--|
+| v5 | 0-5 (KD5 = bit 5); bit 6 tape, bit 7 GX0 as before |
+| v3 | 0-4; bit 5 reads 1 (no KD5 line); the controller's DK5 lands on bit 7 (KEYB pin 2 = KD7) |
+
+The matrix still reads through: with the default route nothing reaches it, but a `Matrix` / `Both` route, an old
+TTD journal of ZX keys or an RZX file keep working (on the board X9 takes one keyboard). Machines without the
+controller pay nothing: the only addition on the path is `if (_xtKbc)` in the Profi decoder's `#FE` arm.
+
+### 9.5 Keyboard manager
+
+- `IPs2KeySink` (pckey.h) gains `ReplacesMatrix()`, `PcKeysForZxKey()`, `PcKeysForCharacter()` and
+  `ControllerName()`, with defaults that keep the ZX-Evo / ATM / Sprinter behavior.
+- `Keyboard::EffectiveHostRoute`: `Auto` resolves to `Ps2` (not `Both`) when the sink replaces the matrix, so a host
+  Shift does not press Caps Shift on the matrix and Symbol Shift through the controller at once.
+- `DebugKeyboardManager` (PressKey / TapKey / TypeText) asks the sink: the PROFI-XT maps Caps Shift -> Left Ctrl,
+  Symbol Shift -> Left Shift, the other matrix keys 1:1, a combined ZX key (Up) -> its two parts, and types a
+  character through its ZX combination ('&' = Symbol Shift + 6 -> Shift + 6). The EXT keys are PC keys by name:
+  `f1`..`f10`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`.
+- Qt `KeyboardManager` is unchanged: it already sends every host key as a PC key; with the route `ps2` the F keys go
+  to the machine (`machineOwnsKey`).
+
+### 9.6 TTD
+
+`PeripheralId::ProfiXtKbc = 44` (`TTDProfiXtKbc`, `core/src/debugger/ttd/profi/`): `ProfiXtKbc::State` - the MCU
+(RAM, registers, PSW, ports, pins, timer, interrupt state, clock), the latch, the WAIT flip-flop, the reset line, the
+time base, the keyboard wire (queued bytes, the frame in flight, typematic key, held keys) and the table engine's
+closed positions. Declared only when the controller is fitted; a blob of the other engine is refused. Host and
+automation keys are journaled as `PcKey` input and replayed into the controller
+(`TtdSeekReplaysAKeyPressExactly`). No Profi TTD fixtures exist, so none were re-recorded.
+
+### 9.7 Findings that differ from the research
+
+- `#7EFE` (A8 and A15 low) answers half-row A8, not "no key": the firmware decodes A8-A11 first (research section 2
+  corrected).
+- The wait from the idle loop is 49-60 machine cycles (92-113 us), up to ~70 while the MCU is busy; the research
+  estimated 26-58.
+- The Windows keys (E0 5B / 5C / 5D) close H, 0 and 4 in the firmware; the table keeps that.
+- A key sent before the firmware's `EN I` (in the first microseconds after power-on) is lost, as on the board.
+
+### 9.8 Open
+
+- A clean re-dump of the v1.27 EPROM to confirm 02Eh-032h (research 9a).
+- The v3.2 board's own "IBM PC/XT KEYBOARD" pads (XT data on `#FE` bit 7, the XT clock on /INT): not built, no
+  software for it is known (research 9b).
+- The native v5 mechanical keyboard's extra keys (EXT, MODE, GRAF) (research 9c).
+- XT on a v3 board: the KEYB connector has no WAIT line; the emulator keeps the wait so the answers stay correct. How
+  an adapted controller answered without it is unknown.
+- An even-port read that another device answers first (the decoder's earlier arms) does not reach the controller; on
+  the board every even-port read is a /CSKBD.

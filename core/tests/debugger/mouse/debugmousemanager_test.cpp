@@ -183,16 +183,23 @@ TEST_F(DebugMouseManager_Test, SetCounters_WritesRawAndValidates)
     EXPECT_EQ(_manager->SetCounters(0, -1).status, MouseInjectStatus::InvalidArgument);
 }
 
-TEST_F(DebugMouseManager_Test, Absent_AcceptsAndWarns)
+// No mouse fitted ([INPUT] Mouse=NONE on a Kempston machine): the input is refused with the reason
+// (WebAPI 409), never a silent no-op (design 2026-10-03 §5; it used to succeed with a warning)
+TEST_F(DebugMouseManager_Test, Absent_RefusedWithReason)
 {
     _mouse->SetPresent(false);
     MouseInjectResult result = _manager->Move(1, 0);
-    ASSERT_TRUE(result.ok());
-    EXPECT_FALSE(result.warning.empty());
+    EXPECT_EQ(result.status, MouseInjectStatus::NoMouseFitted);
+    EXPECT_NE(result.message.find("no mouse fitted"), std::string::npos) << result.message;
     MouseStateSnapshot state = _manager->GetState();
     EXPECT_FALSE(state.present);
-    EXPECT_EQ(state.x, 32) << "counters still change";
+    EXPECT_FALSE(state.mouseFitted);
+    EXPECT_FALSE(state.device.has_value());
+    ASSERT_EQ(state.devices.size(), 1u) << "the Kempston interface is still listed, not fitted";
+    EXPECT_FALSE(state.devices[0].fitted);
+    EXPECT_EQ(state.x, 31) << "nothing changed";
     EXPECT_EQ(state.portX, 0xFF) << "guest reads nothing from an absent device";
+    _mouse->SetPresent(true);
 }
 
 TEST_F(DebugMouseManager_Test, GetState_PortBytesMatchReadRegister)

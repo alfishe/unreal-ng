@@ -105,13 +105,20 @@ zeroing registers `0x0D` down to `0x01` (data `0x00`), FM register ranges
 ## Behaviour on the current legacy TurboSound device
 
 Legacy `#FFFD` reads return the selected AY register, not a status word.
-The reset sequence selects registers while polling, so it parks in the
-WaitStatus loop at the first selected register whose value has bit 7 set.
-On a fresh machine that is the mixer register (`0x07`): the AY resets
-`_registers[AY_MIXER_CONTROL]` to `0xFF` ("mute all outputs"), so the
-observed traffic ends with `#FFFD ← 0x07`
-and the CPU spins at `0x6293/0x6295` forever. Captured traffic (tune
-`03 DJ Tepp`, frame 0):
+The player parks in a WaitStatus loop as soon as the selected register holds
+a value with bit 7 set.
+
+Since 2026-10-04 the AY resets to the datasheet state, every register 0
+([ay-reset note](../../2026-10-04-ay-reset/TODO.md)), so every poll of the
+reset sequence reads "not busy": the sequence runs to the end on both chips
+(the FM addresses do not move the AY's selection, the AY selection stays at
+register `0x00`), the frame routine plays, and the park comes in frame 3,
+when a data write leaves `0xED` in the selected register; the CPU then spins
+in the channel writer's poll (`0x62DF..0x62F2`). Traffic of tune `03 DJ Tepp`,
+frames 0-7: 674, 2, 2, 9, 0, 0, 0, 0 writes.
+
+Before 2026-10-04 the AY reset set `_registers[AY_MIXER_CONTROL]` to `0xFF`,
+so the park came at the first selection of the mixer register (`0x07`):
 
 ```
 #FFFD <- 0xF8, then pairs (0x0D,0)(0x0C,0)(0x0B,0)(0x0A,0)(0x09,0)(0x08,0),

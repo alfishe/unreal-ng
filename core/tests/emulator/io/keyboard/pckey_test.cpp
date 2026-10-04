@@ -31,6 +31,31 @@ TEST(PcKey_Test, Ps2Set2Bytes)
     EXPECT_TRUE(pckey::Ps2Set2Bytes(PcKey::None, true).empty());
 }
 
+/// Set 1 (PC/XT) make / break bytes, as the PROFI-XT controller receives them (IBM XT technical reference)
+TEST(PcKey_Test, XtSet1Bytes)
+{
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::A, true), (Bytes{0x1E}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::A, false), (Bytes{0x9E})) << "break = make | 80h";
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Escape, true), (Bytes{0x01}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Function1, true), (Bytes{0x3B}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Function11, true), (Bytes{0x57}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::LeftShift, true), (Bytes{0x2A}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Up, true), (Bytes{0xE0, 0x48}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Up, false), (Bytes{0xE0, 0xC8}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Delete, true), (Bytes{0xE0, 0x53}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::KeypadDecimal, true), (Bytes{0x53}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::RightAlt, true), (Bytes{0xE0, 0x38}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::NumLock, true), (Bytes{0x45})) << "not the E0 45 Windows reports";
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::PrintScreen, true), (Bytes{0xE0, 0x2A, 0xE0, 0x37}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::PrintScreen, false), (Bytes{0xE0, 0xB7, 0xE0, 0xAA}));
+    EXPECT_EQ(pckey::XtSet1Bytes(PcKey::Pause, true), (Bytes{0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5}));
+    EXPECT_TRUE(pckey::XtSet1Bytes(PcKey::Pause, false).empty()) << "Pause has no break";
+    EXPECT_TRUE(pckey::XtSet1Bytes(PcKey::None, true).empty());
+    // Every key has a set-1 code
+    for (int i = 1; i < static_cast<int>(PcKey::Count); i++)
+        EXPECT_FALSE(pckey::XtSet1Bytes(static_cast<PcKey>(i), true).empty()) << pckey::Name(static_cast<PcKey>(i));
+}
+
 /// Every key has a code and a unique name that maps back to it
 TEST(PcKey_Test, EveryKeyHasANameAndACode)
 {

@@ -50,7 +50,7 @@ Peripheral ids are `ttd::PeripheralId` (one byte, v1); region ids are `ttd::TTDR
 | Chipset: t-states, frame counter, ports 7FFD / FE / EFF7 / BFFD / FFFD / FF77, ULA+, turbo ratio, multiplier | all | `TTDChipsetState` (120 B) | same record | R | | | ok | `ttdcheckpoint.h:156-218` |
 | `current_z80_frequency` (Hz) | all, read by the ATM2 keyboard controller and the COM port | derived on restore from the multiplier | same | D | | | ok | `debugger/ttd/ttdcheckpoint.cpp` `RestoreChipsetState` |
 | `scorpion_turbo` (Turbo+ latch) | Scorpion, ProfScorpion | ScorpionProfROM (id 6) byte 5; restore re-syncs the wait overlay and the /INT step hook | blob | R | | | ok | `debugger/ttd/scorpion/ttdscorpionprofrom.cpp` |
-| `pFFBA` / `p7FBA` (SMUC routing) | Scorpion, ProfScorpion | Smuc (id 44) | blob | R | | | ok | `debugger/ttd/scorpion/ttdsmuc.cpp` |
+| `pFFBA` / `p7FBA` (SMUC routing) | Scorpion, ProfScorpion | Smuc (id 54) | blob | R | | | ok | `debugger/ttd/scorpion/ttdsmuc.cpp` |
 | +3 floating-bus byte (last contended byte) | +2A, +3 | Plus3Paging (id 13) byte 1, flag in byte 2 | blob | R | | | ok | `debugger/ttd/plus3/ttdplus3paging.cpp` |
 | Memory bank caches, contention slot table, wait overlays, flash phase | all | rebuilt | rebuilt | D | | | ok | `UpdateZ80Banks` after restore |
 | Frame-cost and screen-digest counters | all | — | — | T | | | ok | `platform.h:1093-1106` |
@@ -79,11 +79,11 @@ One row per device blob; the device's memory is in section 1.
 | uPD765 | +3 | id 14 | blob | R | | | ok | `io/fdc/upd765.cpp:1381/1427` |
 | SD card + Z-Controller | ATM3, TSL | id 15 | blob | R | | | ok | `io/sdcard/sdcardspi.cpp:545/571` |
 | TS-Conf state: registers, CRAM, SFILE, DMA, TSU, INT | TSL | id 16 | blob | R | | | ok | |
-| TS-Conf: ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) | TSL | EvoAvrVolatile (id 45) | blob | R | | | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
+| TS-Conf: ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) | TSL | EvoAvrVolatile (id 55) | blob | R | | | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
 | IDE / ATA / ATAPI channel | any `[HDD] Scheme` | id 17 | blob | R | | | ok | `debugger/ttd/ide/ttdatachannel.cpp:68/89` |
 | ATA write-protect switch | IDE | — | — | R | | | gap 12 | `io/ide/ata/atadevice.h:196` |
 | DS12887 / DS1685 real-time clock (emulated time while recording) | ATM3, TSL, Profi v5, Scorpion, Sprinter | id 18 | blob | R | | | ok | `rtc/ds12887.cpp:584/620` |
-| SMUC serial EEPROM link, IDE window registers | Scorpion, ProfScorpion | Smuc (id 44) | blob | R | | | ok | `io/rtc/smucnvram.h` `LinkState` |
+| SMUC serial EEPROM link, IDE window registers | Scorpion, ProfScorpion | Smuc (id 54) | blob | R | | | ok | `io/rtc/smucnvram.h` `LinkState` |
 | ZX-Evo PS/2 keyboard | ATM3, TSL | id 19 | blob | R | | | ok | |
 | ZX-Evo AVR F12 soft reset timer (host clock) | ATM3, TSL | — | — | R | | | gap 15 | `evoavr.cpp:180-190` |
 | ZXNETUSB + W5300 + virtual network | network card | id 20 (30.6 KB fixed) | blob | R | | | gap 1 | `debugger/ttd/network/ttdzxnetusb.cpp:20/42` |
@@ -104,9 +104,9 @@ One row per device blob; the device's memory is in section 1.
 | ZiFi line, ZiFi | ZiFi | ids 39, 40 | blob | R | | | gap 1 | |
 | CD drive | IDE with a CD unit | id 41 | blob | R | | | ok | `debugger/ttd/ide/ttdcddrive.cpp:55/74` |
 | VDAC2 card and FT812 control state | TSL-VDAC2 | id 43 | blob | R (metrics: T, see §5) | | | ok | `ttdvdac2.cpp` |
-| ZX keyboard matrix, pressed keys | all | KeyboardMatrix (id 46), variable size | device state in the checkpoint ([decision 37](engine-decisions.md#h-classes-of-recorded-data)); key changes are events | R | | | ok | `io/keyboard/keyboard.cpp` TTD region |
+| ZX keyboard matrix, pressed keys | all | KeyboardMatrix (id 56), variable size | device state in the checkpoint ([decision 37](engine-decisions.md#h-classes-of-recorded-data)); key changes are events | R | | | ok | `io/keyboard/keyboard.cpp` TTD region |
 | Disk autostart one-shot hook | TR-DOS | — | — | R | | | gap 16 | `io/fdc/diskautostart.h:75-77` |
-| RZX player position and counters | RZX playback | RzxPlayback (id 47), 84 bytes; registered when a recording was played on the machine | device state in the checkpoint; a restore installs or removes the playback's hooks as it was then; each RZX frame end is an `InterruptFrame` fact (Phase 3, Step 2) | R | | | ok (2026-10-04) | `rzx/rzxttdstate.cpp` |
+| RZX player position and counters | RZX playback | RzxPlayback (id 57), 84 bytes; registered when a recording was played on the machine | device state in the checkpoint; a restore installs or removes the playback's hooks as it was then; each RZX frame end is an `InterruptFrame` fact (Phase 3, Step 2) | R | | | ok (2026-10-04) | `rzx/rzxttdstate.cpp` |
 
 ## 4. Journals and events
 

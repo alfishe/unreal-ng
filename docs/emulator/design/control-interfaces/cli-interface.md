@@ -110,9 +110,9 @@ cdaudio volume [drive] left=0-255 right=0-255 route=stereo|swap|mono|left|right|
 cdaudio mixer [drive] volume=0-4 mute=on|off solo=on|off                                           the drive's mixer row
 cdaudio ... --json                            the raw reply (the WebAPI's JSON)
 state rtc               CMOS clock: time, registers A-D, alarms, every cell (aliases: state cmos, rtc, cmos)
-network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity) (alias: net)
+network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity), expansion slot cards (the Sprinter's NE2000 / 3C509B / SprinterESP rows; a 3C509B: ID port, window, FIFOs, EEPROM, link) (alias: net)
 key route [auto|matrix|ps2|both]  Where host and injected keys go: the ZX matrix, the PS/2 keyboard controller (ZX-Evo, ATM Turbo 2+), both
-network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud] (the machine's own serial port: the ZX-Evo AVR's) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31) atm2ioesp=at|espnet|.. atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) zifi=none|at|loopback|tcp:..|serial:.. (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to; the state's zifi block shows the API registers and both rings); devices the machine cannot take are listed under not_fitted in `network`
+network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's own serial port: the ZX-Evo AVR's; modem = a Hayes modem that dials host:port) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266|esp8266-at221|esp8266-at222 (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222) isa1_peer=at|modem[,port]|loopback|tcp:..|serial:.. isa2_peer=.. (Sprinter: a UART card's line - SprinterESP default at, ISA modem default modem, SprinterSerial COM1 default none; `network` prints its slot row with the UART, the ESP's session or the modem's call) isa1_peer_b= isa2_peer_b= (SprinterSerial COM2 #2F8) modem_phonebook=5551234=host:port,.. (the numbers a Hayes modem peer dials with ATDT, any machine: com_port=modem puts one on the machine's own serial port) avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31) atm2ioesp=at|espnet|.. atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) zifi=none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:..|serial:.. (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to; the state's zifi block shows the API registers and both rings); devices the machine cannot take are listed under not_fitted in `network`
 rtc read <start> [n]    Read CMOS cells as the guest reads them (no side effects; numbers: decimal, 0x.., #.., ..h)
 rtc write <start> <b>.. Write CMOS cells like the guest: time registers set the clock, C and D are read-only
 state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
@@ -277,25 +277,29 @@ frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
 
 ### Mouse Input Commands
 
-The `mouse` verb drives the Kempston Mouse of the selected emulator (source:
+The `mouse` verb drives the machine's own mouse of the selected emulator (Kempston interface,
+Sprinter serial mouse, ZX-Evo / TS-Conf PS/2 mouse; source:
 `core/automation/cli/src/commands/cli-processor-mouse.cpp`, output formatting in
 `cli-mouse-format.h`). Full semantics, units and limits: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
 
 | CLI Command | Alias | Description |
 | :--- | :--- | :--- |
 | `mouse move <dx> <dy>` | | Relative move in emulated pixels, +x right, **+y up**, −127…127 each |
+| `mouse glide <dx> <dy>` | | Long move, −4096…4096 each, one step (at most 127) per frame as the program reads; later commands queue behind it |
 | `mouse press <button>` / `mouse release <button>` | | `left`/`right`/`middle` or `l`/`r`/`m` |
 | `mouse click <button> [frames]` | | Hold for `frames` (default 2), then release on its own |
 | `mouse buttons <none\|b1,b2…>` | | Exact pressed set; `left,middle` and `left middle` both work |
 | `mouse wheel <steps>` | | −7…7, not 0 |
-| `mouse clear` | `mouse release_all` | Release all buttons, cancel a pending click |
-| `mouse status` | `mouse info` | Multi-line state block |
+| `mouse clear` | `mouse release_all` | Release all buttons, cancel a pending click and queued input |
+| `mouse status [device]` | `mouse info` | Multi-line state block: the Kempston interface, routing, then `Machine mouse:` (id, kind, fitted / in use, registers, the serial line or the PS/2 state) and the glide queue |
+| `mouse devices` | | The machine's mouse devices |
 | `mouse set <x> <y>` | | Debug: raw counters 0…255 |
 | `mouse help` | | Subcommand help |
 
 Arguments must be whole integers: `10px` or `1.5` gives `Error: Invalid dx '10px': expected an integer`.
 Every successful command prints one line with the resulting state; a second `Warning:` line
-appears when the change cannot reach the program.
+appears when part of the change cannot reach the program (a wheel step with no wheel fitted). On a
+machine with no mouse fitted every input command prints `Error: no mouse fitted on this machine: ...`.
 
 **Interactive session example** (Pentagon after reset, shipped config `Wheel=NONE`):
 
@@ -321,6 +325,21 @@ Kempston Mouse [present]
   Pending click: right, 3 frame(s) left
   TTD journal: supported
   Routing: decoded (standard Kempston address decode)
+Machine mouse: kempston (kempston) [fitted] - Kempston mouse interface
+  X=41 Y=80 mask 0xFC no wheel, 3 buttons
+  Ports: #FADF=0xFC #FBDF=0x29 #FFDF=0x50
+```
+
+On the Sprinter the `Machine mouse:` block shows the board mouse and its serial line, e.g. under
+DSS 1.71 after `mouse move 5 3`:
+
+```
+Machine mouse: sprinter (serial-microsoft) [fitted, in use] - Sprinter board mouse: Microsoft serial mouse on SIO B + the PLD's Kempston view (#58)
+  X=36 Y=88 mask 0xFF no wheel, 3 buttons
+  Ports: #FADF=0xFF #FBDF=0x24 #FFDF=0x58
+  Serial: line 1200 baud, receiver 1215.3 baud (in tune, enabled)
+  Packet: 4C 05 3D (3/3 sent), pending dx=+0 dy=+0
+  Line: 1 packets, 3 bytes received, 0 framing errors; receiver FIFO []
 ```
 
 How to read `#FADF`: bits 0–2 are the buttons (0 = pressed: `0xFC` = left and right down),
@@ -386,13 +405,14 @@ reference: [command-interface.md](./command-interface.md).
 | `video text [layer]` | Exact text grid of an ATM / ZX-Evo / TS-Conf text mode, or the Sprinter's text squares. |
 | `video address vram <offset>` | Every pixel a byte of the machine's own video RAM feeds (the Sprinter). |
 | `video changes [1\|2]` | Video change log: latch changes (mode, #7FFD, border, the Sprinter's RGMOD / HOLD / PORT_Y / ALL_MODE / frame height) with T, line and PC; palette / mode table writes per frame. |
+| `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
 | `capture framebuffer <file> [rgba\|index]` | The picture as raw pixels (R,G,B,A, or the Sprinter's u16 pens). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
 | `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source]` records one mixer device. |
-| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). `start` accepts `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
+| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). `start` accepts `--region full\|screen` (default `full`: the whole frame with its border; `screen`: the working picture, fitted into the start window's size when the window changes), `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
 | `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
 | `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |

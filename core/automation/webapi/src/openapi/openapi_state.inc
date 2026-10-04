@@ -91,6 +91,8 @@
     // Audio state endpoints
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["description"] =
+        "AY / SSG overview: chip count, slot device (TurboSound / TSFM / None), `psg_clock_hz` (the clock the AY generators run at now: 1750000, or 1500000 on a Profi in hi-res with the AY slot, [PROFI] AyClock) and a per-chip summary. Same report as the CLI `state audio ay`, Lua / Python `audio_ay_state()` and MCP `inspect_state` aspect `audio_ay`.";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["required"] = true;
@@ -170,11 +172,16 @@
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["description"] =
         "The TS-Conf machine (model TSL): build (the emulated firmware: vdac, vdac_ver = STATUS VDAC_VER, blt2; "
         "[MISC] TS_VDAC), memory (MEM_CONFIG decoded, the four window pages, LCK128 mode, lock48, DOS, "
-        "virtual TR-DOS, cache, the FM window), video (V_CONFIG decoded: mode ZX / 16C / 256C / TXT, geometry, NOGFX / "
-        "NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and active sprite count; the raster "
-        "line the engine is on with its latched registers and DRAM use), interrupts (mask, pending sources, frame "
-        "position), DMA (busy, task, live byte addresses, block counters), the CPU clock and the SD card. 404 on other "
-        "machines.";
+        "virtual TR-DOS, cache, the FM window and fm_maps = FM_MAPS raw), video (V_CONFIG decoded: mode ZX / 16C / "
+        "256C / TXT, geometry, NOGFX / NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and "
+        "active sprite count; line = the raster line the engine is on with its latched registers, DRAM use and "
+        "t0_gpage / t1_gpage, the tile graphics pages it is drawn with - copies taken at the line start, so a "
+        "T0_G_PAGE / T1_G_PAGE write shows from the next line), interrupts (mask, pending sources, frame position), "
+        "DMA (busy, task, source / destination = the live byte addresses, programmed_source / programmed_destination "
+        "= the byte addresses as the CPU last wrote them, block counters, ctrl = DMA_CTRL as last written: raw, "
+        "device = DDEV {bit 7, bits 2:0}, opt, s_align, d_align, a_sz), cpu_clock, sys_config (raw) with cache_en "
+        "(bit 2), the SD card, and regs[72] = the register file #00-#47 as the CPU last wrote it (register = port "
+        "#xxAF's high byte; the write-only registers have no other way out). 404 on other machines.";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["required"] = true;
@@ -208,14 +215,17 @@
         paths[kState]["get"]["tags"].append("Machine State");
         paths[kState]["get"]["description"] =
             "The Peters Plus Sprinter Sp2000 (model SPRINTER): pld (configuration state unconfigured / loading / "
-            "configured, the active configuration module, bitstream writes and hashes - full FNV-1a and MAME's head "
+            "configured, the active configuration module - Standard or Game - and why: selected_by full_hash / head_hash "
+            "/ unknown_bitstream / watchdog with a sentence in why, cell_EE (RET_PORT: the Game bitstream sets #41, the BIOS "
+            "returns to the program that loaded it), game (the Game module's grid-offset register: active, grid_offset_x / "
+            "_y, frame_start_offset, beam_t), bitstream writes and hashes - full FNV-1a and MAME's head "
             "hash, fast_start, whether the BIOS opened the port decoder), decoder (CNF map 0-3, clean rules, DOS, PN5, "
             "#7FFD / #1FFD after the clean rules), windows[] (per 16K window: kind ROM / loader ROM / fast RAM / vROM "
             "/ RAM / graphics / ISA / port table, the physical page, writable, the cell that names it), registers "
             "(ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD, HOLD, SCALE, CBL control), cells (#C0-#FF as hex "
             "rows), clock (turbo requested, front-panel switch, ratio 1 or 6, MHz, waits: the 21 MHz rule and the windows "
             "it applies to; original_waits: the ZX mode's PLD WAIT_ORIG with ALL_MODE bit 2 = 0 at 3.5 MHz - active, "
-            "all_mode_bit2, rule, period_t 4, phase_t (a placeholder until measured), windows_waiting), tape (time_base "
+            "all_mode_bit2, rule, period_t 4, ct5_rise_t (frame T mod 4 of the CT5 rise = every INT edge), waits_by_t1_from_int [0, 2, 1, 0], phase_note, windows_waiting), tape (time_base "
             "base_clock: the tape input counts real time, 21 MHz cannot load), frame (320 / 312 lines, base "
             "T-states 71680 / 69888), video (mode page, the picture's dominant square kind, square counts by kind, "
             "HOLD offsets, frame INT positions from the mode table), sound (the AY: 1.75 MHz, chips, stereo from the AY config; the "
@@ -228,7 +238,8 @@
             "rate, drive), cmos (DS12887A; the full report is /state/rtc), ide (the adapter's channel latch; drives in /state/ide), accelerator (enabled = ALL_MODE bit 0, mode / "
             "mode_name, armed, length, function, blocked by an INT, int_suspend, alt / xcnt / aagr, operations, "
             "last_extra_clocks, buffer_crc32 / buffer_head; available=false while the PLD loads) and bios (the configured ROM file, the image loaded by CRC-32, the pages identified by signature, the "
-            "shipped images, the start options and how to select one: POST /sprinter/bios). 404 on other machines.";
+            "shipped images, the start options and how to select one: POST /sprinter/bios) and zx_mode (the ZX mode report "
+            "of /state/sprinter/zx-mode without the whole-RAM search). 404 on other machines.";
         paths[kState]["get"]["parameters"][0]["name"] = "id";
         paths[kState]["get"]["parameters"][0]["in"] = "path";
         paths[kState]["get"]["parameters"][0]["required"] = true;
@@ -382,8 +393,11 @@
             "The firmware (core DeviceState::SprinterBios; CLI `state sprinter bios`, Lua / Python sprinter_bios(), MCP "
             "aspect sprinter_bios): rom_file (the configured image), loaded (the shipped image whose CRC-32 the flash "
             "has), loaded_crc32, identified (pages 8 / 0 / 12 by signature), images[] (file, alias, version, crc32, "
-            "present, loaded, selected), reload_pending (a selection waits for the next reset), options (fast_start, "
-            "accel_int_suspend) and how to select. 404 on other machines.";
+            "present, loaded, selected, known_issues), known_issues (what a user should know about the loaded image, e.g. "
+            "3.07 BETA 1's floppy driver changes IY so DSS 1.71.57 cannot start programs from a floppy; empty when "
+            "none), reload_pending (a selection waits for the next reset), options (fast_start, accel_int_suspend), pld (the "
+            "PLD configuration the BIOS runs on: module, selected_by, why, the hashes, cell_EE) and how to select. 404 on "
+            "other machines.";
         paths[kBios]["get"]["parameters"][0]["name"] = "id";
         paths[kBios]["get"]["parameters"][0]["in"] = "path";
         paths[kBios]["get"]["parameters"][0]["required"] = true;
@@ -410,6 +424,88 @@
         paths[kSelect]["post"]["responses"]["200"]["description"] = "Selected (the BIOS report)";
         paths[kSelect]["post"]["responses"]["400"]["description"] = "Unknown image, bad flag";
         paths[kSelect]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kZx = "/api/v1/emulator/{id}/state/sprinter/zx-mode";
+        paths[kZx]["get"]["summary"] = "Get the Sprinter ZX (Spectrum) mode report";
+        paths[kZx]["get"]["tags"].append("Machine State");
+        paths[kZx]["get"]["description"] =
+            "Which Spectrum mode the Sprinter runs and how (core DeviceState::SprinterZxMode; also the zx_mode section of "
+            "/state/sprinter; CLI `state sprinter zx`, Lua / Python sprinter_zx_mode(), MCP inspect_state aspect "
+            "sprinter_zx_mode). Fields: active and active_rule (vROM in window 0, ALL_MODE bit 0 = 0), pld (the PLD "
+            "configuration module, selected_by, why, the hashes, cell_EE: the ZX mode needs Standard), picture, summary (the "
+            "status bar line, e.g. \"ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)\"), config (options[]: /turbo, /sprinter, "
+            "/7FFD, /1FFD, /mem512, /lines312, /origin, /int-sc each with on and the hardware evidence - CNF bits, map, "
+            "ALL_MODE, the frame latch, the INT position; option_line; return /ret-fn | /ret-zx; best_match: file, name, "
+            "launcher (community v2.03 | peters-plus), confidence certain | high | medium | low | none, explanation, "
+            "differences; other_candidates), launcher (what SPECTRUM.EXE left in RAM: mode_name and option_line from its "
+            "copy of the .ZX file - page #FF (community) or #41 (Peters Plus) -, hardware_disagrees, option_table flags "
+            "found by the names block, reset_intercept - cell #EE, #41:#FFF0-#FFF6 -, bios_system_page CNF copy), clock "
+            "(requested by CNF, f12_switch, mhz, why), frame (lines, t_states, int: kind pentagon | spectrum (original) | "
+            "scorpion, line, t_in_line), rom (vROM cells #E0-#E3: page, CRC-32, the ROM file; set), paging, ports (rows "
+            "for #7FFD, #1FFD, #01FD, #3FFD, #5FFD, #9FFD, #BFFD, #DFFD, #FFFD, #FE, #1F: tr_dos_off / tr_dos_on, out and "
+            "in code, name, effect now; ttd_query port / port_mask for POST /ttd/port-events). Query deep=0 skips the "
+            "whole-RAM search for the launcher's option table. 404 on other machines.";
+        paths[kZx]["get"]["parameters"][0]["name"] = "id";
+        paths[kZx]["get"]["parameters"][0]["in"] = "path";
+        paths[kZx]["get"]["parameters"][0]["required"] = true;
+        paths[kZx]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kZx]["get"]["parameters"][1]["name"] = "deep";
+        paths[kZx]["get"]["parameters"][1]["in"] = "query";
+        paths[kZx]["get"]["parameters"][1]["description"] = "0: do not search all RAM for the launcher's option table";
+        paths[kZx]["get"]["parameters"][1]["schema"]["type"] = "string";
+        paths[kZx]["get"]["responses"]["200"]["description"] = "The ZX mode report";
+        paths[kZx]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kJournal = "/api/v1/emulator/{id}/state/sprinter/pld-journal";
+        paths[kJournal]["get"]["summary"] = "Get the Sprinter PLD journal (who changed the PLD setup, when)";
+        paths[kJournal]["get"]["tags"].append("Machine State");
+        paths[kJournal]["get"]["description"] =
+            "The PLD's configuration events (core DeviceState::SprinterJournal; CLI `state sprinter journal`, Lua / "
+            "Python sprinter_pld_journal(), MCP inspect_state aspect sprinter_pld_journal; the events of a frame also in "
+            "/video/changes as machine_events). Each event: seq, epoch (machine resets), frame, t (base T), line, "
+            "t_in_line, pc, kind, port, value, previous, text, details. Kinds: port_table (page #40 written, one event a "
+            "frame, with the key ZX port decodes it changed), cnf, clock, port_7ffd, port_1ffd (on a new value or latch "
+            "change, with the port used: #01FD is #1FFD), all_mode, rgmod, hold, frame_lines, pld_load, pld_configured, "
+            "f12, ctrl_alt_del, reset. source=ttd lists the OUTs of the TTD recording that change one of those PLD codes (CNF "
+            "writes with the turbo or CNF bit, other codes on a new value) through "
+            "the port table as it decodes now (the TTD write journal). ttd_queries[]: per kind the port / port_mask of "
+            "POST /ttd/port-events. Not appended while a TTD replay re-executes; a TTD seek followed by live running "
+            "drops the events after that moment (rewound). 400 on a bad parameter, 404 on other machines.";
+        const char* kJournalParams[][2] = {{"kinds", "comma list of kinds (empty = all)"},
+                                           {"since", "events after this seq"},
+                                           {"from", "first frame"},
+                                           {"to", "last frame"},
+                                           {"limit", "the newest N matches (default 200, 0 = all)"},
+                                           {"source", "live (default) or ttd"}};
+        paths[kJournal]["get"]["parameters"][0]["name"] = "id";
+        paths[kJournal]["get"]["parameters"][0]["in"] = "path";
+        paths[kJournal]["get"]["parameters"][0]["required"] = true;
+        paths[kJournal]["get"]["parameters"][0]["schema"]["type"] = "string";
+        for (Json::ArrayIndex i = 0; i < 6; i++)
+        {
+            Json::Value& qp = paths[kJournal]["get"]["parameters"][i + 1];
+            qp["name"] = kJournalParams[i][0];
+            qp["in"] = "query";
+            qp["description"] = kJournalParams[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kJournal]["get"]["responses"]["200"]["description"] = "The journal";
+        paths[kJournal]["get"]["responses"]["400"]["description"] = "Bad parameter";
+        paths[kJournal]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kJournalCtl = "/api/v1/emulator/{id}/sprinter/pld-journal";
+        paths[kJournalCtl]["post"]["summary"] = "Switch or clear the Sprinter PLD journal";
+        paths[kJournalCtl]["post"]["tags"].append("Machine State");
+        paths[kJournalCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true}, both optional. On by default; off costs nothing (no port "
+            "table watch, no event built). Answers enabled, held, appended.";
+        paths[kJournalCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kJournalCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kJournalCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kJournalCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kJournalCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kJournalCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kJournalCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
     }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
@@ -702,7 +798,9 @@
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["summary"] = "Write memory";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["description"] =
-        "Write one or more bytes to the Z80 address space.";
+        "Write one or more bytes to the Z80 address space (a debugger poke). It is NOT subject to the ROM "
+        "write protection flag: bytes written to an address that is mapped to ROM change the ROM. The flag "
+        "(see /memory/rom/protect) only guards writes to ROM pages through /memory/page/rom/{page}.";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["required"] = true;
@@ -775,7 +873,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled.";
+        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
+        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
+        "instances.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;

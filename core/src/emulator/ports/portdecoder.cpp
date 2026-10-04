@@ -281,24 +281,8 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
         uint16_t breakpointID = brk.HandlePortIn(addr);
         if (breakpointID != BRK_INVALID)
         {
-            bool isHidden = false;
-            auto* bp = brk.GetBreakpointById(breakpointID);
-            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-            {
-                isHidden = true;
-            }
-
-            // Pause emulator (single source of truth)
-            emulator.Pause();
-
-            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-            // Wait until emulator resumed externally
-            emulator.WaitWhilePaused();
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, addr, BreakpointHitKind::PortIn);
         }
     }
 
@@ -346,19 +330,8 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         uint16_t breakpointID = brk.HandlePortIn(port);
         if (breakpointID != BRK_INVALID)
         {
-            bool isHidden = false;
-            auto* bp = brk.GetBreakpointById(breakpointID);
-            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-            {
-                isHidden = true;
-            }
-
-            emulator.Pause();
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port, isHidden);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-            emulator.WaitWhilePaused();
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, port, BreakpointHitKind::PortIn);
         }
     }
 
@@ -389,19 +362,8 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         uint16_t breakpointID = brk.HandlePortOut(addr);
         if (breakpointID != BRK_INVALID)
         {
-            bool isHidden = false;
-            auto* bp = brk.GetBreakpointById(breakpointID);
-            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-            {
-                isHidden = true;
-            }
-
-            emulator.Pause();
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-            emulator.WaitWhilePaused();
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, addr, BreakpointHitKind::PortOut);
         }
     }
 
@@ -444,19 +406,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         uint16_t breakpointID = brk.HandlePortOut(port);
         if (breakpointID != BRK_INVALID)
         {
-            bool isHidden = false;
-            auto* bp = brk.GetBreakpointById(breakpointID);
-            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-            {
-                isHidden = true;
-            }
-
-            emulator.Pause();
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port, isHidden);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-            emulator.WaitWhilePaused();
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, port, BreakpointHitKind::PortOut);
         }
     }
 
