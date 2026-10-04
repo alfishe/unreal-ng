@@ -16,7 +16,10 @@ come the ISA slots and the network cards (section 3).
 - scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
   reproduce (likely cured by the PS/2 overrun fix).
 
-## 2. Spectrum (ZX) mode
+## 2. Spectrum (ZX) mode - doubtful (owner, 2026-10-03)
+
+The owner marked every item of this section as **doubtful**: kept for the record, not scheduled, not to be
+deleted. Take one only on the owner's request.
 
 - Border against a Pentagon: 8 ZX pixels less border at each side (blank squares in the launcher's mode
   table? check against MAME) and a border color change 8 lines off in the bottom border.

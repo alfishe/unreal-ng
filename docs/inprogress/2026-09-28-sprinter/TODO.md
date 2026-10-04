@@ -177,6 +177,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
   tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
   SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
+  - **Owner, 2026-10-03: the open items of this ZX-mode section are doubtful** - kept for the record, not
+    scheduled, not to be deleted; take one only on the owner's request ([open-items-2026-10-03.md](open-items-2026-10-03.md) §2)
   - [x] Z1 (S) faithful path on unreal-ng against MAME (2026-10-02, branch `sprinter-zx-timing`, tdd-zx-mode §4.1, §11):
     every launcher mode (SP, P128, P512, SC256, ORIGIN) runs the zxtime program; frame, clock, INT position (identical
     mode tables), INT count / repeat, 21 MHz loop counts and the picture equal MAME's; launcher + TRD / SCL RAM disk,
