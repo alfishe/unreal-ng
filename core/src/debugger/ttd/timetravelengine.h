@@ -442,7 +442,8 @@ public:
     }
 
 private:
-    friend class TTDSessionFile;   // reads and rebuilds a session as a whole (Phase 4)
+    friend class TTDSessionFile;     // reads and rebuilds a session as a whole (Phase 4)
+    friend class TTDSessionWriter;   // writes a session as it records
 
     bool _open = false;
     bool _readOnly = false;   ///< loaded from a file: CaptureFrame refuses

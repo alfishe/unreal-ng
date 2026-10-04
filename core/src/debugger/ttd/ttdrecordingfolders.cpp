@@ -1,5 +1,6 @@
 #include "debugger/ttd/ttdrecordingfolders.h"
 
+#include <cstdio>
 #include <fstream>
 #include <system_error>
 
@@ -90,6 +91,108 @@ namespace ttd
         }
         if (ec)
             context.Failed(root, ec.message());
+    }
+
+    std::unique_ptr<TTDRecordingFolder> TTDRecordingFolder::Create(const std::string& root, const std::string& name,
+                                                                   std::time_t when, std::string& error)
+    {
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &when);
+#else
+        localtime_r(&when, &local);
+#endif
+        char stamp[32];
+        std::strftime(stamp, sizeof(stamp), "%Y-%m-%d-%H%M%S", &local);
+        std::string lower;
+        for (char c : name)
+        {
+            const bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+            if (c >= 'A' && c <= 'Z')
+                lower += static_cast<char>(c - 'A' + 'a');
+            else
+                lower += keep ? c : '_';
+        }
+        const std::string base = std::string(stamp) + (lower.empty() ? "" : "-" + lower);
+        if (!FileHelper::CreateFolders(root))
+        {
+            error = "cannot create " + root;
+            return nullptr;
+        }
+        for (int n = 1; n < 1000; ++n)
+        {
+            const std::string path = FileHelper::PathCombine(root, n == 1 ? base : base + "-" + std::to_string(n));
+            std::error_code ec;
+            // create_directory is false (no error) when it exists: taken, try the next name
+            if (!fs::create_directory(FileHelper::ToFsPath(path), ec))
+            {
+                if (ec)
+                {
+                    error = "cannot create " + path + ": " + ec.message();
+                    return nullptr;
+                }
+                continue;
+            }
+            auto folder = std::unique_ptr<TTDRecordingFolder>(new TTDRecordingFolder());
+            folder->_path = path;
+            if (!WriteRecordingOwner(path))
+            {
+                error = "cannot write the owner file in " + path;
+                FileHelper::DeleteFolder(path);
+                return nullptr;
+            }
+            return folder;
+        }
+        error = "no free folder name for " + base;
+        return nullptr;
+    }
+
+    std::string TTDRecordingFolder::SegmentPath(uint32_t index) const
+    {
+        char name[32];
+        std::snprintf(name, sizeof(name), "segment-%04u.ttd", index);
+        return FileHelper::PathCombine(_path, name);
+    }
+
+    std::vector<std::string> TTDRecordingFolder::Segments() const
+    {
+        std::vector<std::string> out;
+        for (uint32_t i = 0;; ++i)
+        {
+            const std::string p = SegmentPath(i);
+            if (!FileHelper::FileExists(p))
+                return out;
+            out.push_back(p);
+        }
+    }
+
+    bool TTDRecordingFolder::SaveAs(const std::string& target, bool overwrite, std::string& error) const
+    {
+        const std::vector<std::string> segments = Segments();
+        if (segments.empty())
+        {
+            error = "the recording has no segment yet";
+            return false;
+        }
+        if (segments.size() > 1)
+        {
+            error = "joining several segments comes with the segment ring (Phase 4, Step 3)";
+            return false;
+        }
+        std::error_code ec;
+        const auto options = overwrite ? fs::copy_options::overwrite_existing : fs::copy_options::none;
+        fs::copy_file(FileHelper::ToFsPath(segments.front()), FileHelper::ToFsPath(target), options, ec);
+        if (ec)
+        {
+            error = "cannot write " + target + ": " + ec.message();
+            return false;
+        }
+        return true;
+    }
+
+    bool TTDRecordingFolder::Discard(std::string* error)
+    {
+        return FileHelper::DeleteFolder(_path, error);
     }
 
     CleanupStep CrashedRecordingsCleanupStep()

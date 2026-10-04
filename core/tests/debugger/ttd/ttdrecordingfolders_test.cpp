@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -116,4 +117,35 @@ TEST(TTDRecordingFolders_Test, OwnerFileAndMissingRoot)
                                 ttd::kCrashedRecordingKeep);
     EXPECT_TRUE(context.RemovedItems().empty());
     EXPECT_TRUE(context.FailedItems().empty());
+}
+
+/// A recording's folder: named by local time and model, a second one in the
+/// same second gets "-2"; it names this process; save copies the finished
+/// segment out, discard deletes the folder
+TEST(TTDRecordingFolders_Test, FolderLifecycle)
+{
+    Root root;
+    std::string error;
+    const std::time_t when = 1'759'581'012;   // a fixed instant
+    auto first = ttd::TTDRecordingFolder::Create(root.path, "PENTAGON", when, error);
+    ASSERT_NE(first, nullptr) << error;
+    auto second = ttd::TTDRecordingFolder::Create(root.path, "PENTAGON", when, error);
+    ASSERT_NE(second, nullptr) << error;
+    EXPECT_NE(first->Path().find("-pentagon"), std::string::npos) << first->Path();
+    EXPECT_EQ(second->Path(), first->Path() + "-2");
+    EXPECT_EQ(ttd::ReadRecordingOwner(first->Path()), platform::CurrentProcessId());
+
+    std::string target = FileHelper::PathCombine(root.path, "saved-\xc3\xa9.ttd");
+    EXPECT_FALSE(first->SaveAs(target, false, error)) << "no segment yet";
+    std::ofstream(FileHelper::ToFsPath(first->SegmentPath(0)), std::ios::binary) << "session";
+    ASSERT_EQ(first->Segments().size(), 1u);
+    ASSERT_TRUE(first->SaveAs(target, false, error)) << error;
+    EXPECT_TRUE(FileHelper::FileExists(target));
+    EXPECT_FALSE(first->SaveAs(target, false, error)) << "an existing file is not overwritten unasked";
+    EXPECT_TRUE(first->SaveAs(target, true, error)) << error;
+
+    const std::string path = first->Path();
+    EXPECT_TRUE(first->Discard());
+    EXPECT_FALSE(FileHelper::FolderExists(path));
+    EXPECT_TRUE(FileHelper::FileExists(target)) << "the saved copy stays";
 }

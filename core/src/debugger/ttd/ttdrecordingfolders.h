@@ -19,8 +19,11 @@
 
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "common/cleanupmanager.h"
 
@@ -46,4 +49,30 @@ namespace ttd
 
     /// The step for CleanupManager: crashed recordings in RecordingsRoot(), weekly
     CleanupStep CrashedRecordingsCleanupStep();
+
+    /// One recording's folder: created when a recording starts, its owner
+    /// file naming this process, its segment files numbered from 0
+    /// (segment-0000.ttd). "Save as" joins the segments into one file at the
+    /// chosen path; "discard" deletes the folder.
+    class TTDRecordingFolder
+    {
+    public:
+        /// <root>/<date-time>-<name>, local time ("2026-10-04-153012-pentagon"); "-2", "-3" when taken
+        static std::unique_ptr<TTDRecordingFolder> Create(const std::string& root, const std::string& name,
+                                                          std::time_t when, std::string& error);
+
+        const std::string& Path() const { return _path; }
+        std::string SegmentPath(uint32_t index) const;
+        /// The segment files that exist, in order
+        std::vector<std::string> Segments() const;
+
+        /// One .ttd file at @p target from the segments (they must be finished); refuses an existing
+        /// target unless @p overwrite
+        bool SaveAs(const std::string& target, bool overwrite, std::string& error) const;
+        /// Delete the folder and everything in it
+        bool Discard(std::string* error = nullptr);
+
+    private:
+        std::string _path;
+    };
 }  // namespace ttd

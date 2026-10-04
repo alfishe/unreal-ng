@@ -172,6 +172,8 @@ The 9 corpus sessions, saved with 50 checkpoints per part (`TTDSessionFile_Test`
 
 Every session loads back checkpoint for checkpoint (every region, every device, the events, journals and configuration), and saving the loaded session gives the same bytes. Damage stops the load before the first unreachable part; a file cut short loads its complete parts. Writing as it records (the writer thread) and segments (§5.3) build on this.
 
+**As built (2026-10-04), writing as it records.** `TTDSessionWriter` (same files). The thread that owns the engine calls `Collect()` after its captures: each part whose next part has started is laid out there (the bytes copied, nothing compressed), and queued. The writer thread compresses each record, checks it, appends it and syncs the part. `Save` is the same writer run on the caller's thread, so a file written while recording is byte for byte the file `Save` writes at the end (`TTDSessionWriter_Test`). Lag: reported above 64 MB, the writer stops taking parts above 512 MB ("the disk cannot keep up"); a write error stops it with its reason; in both cases the file is valid to its last complete part. The write journal goes whole with the last part for now; spreading it over the parts comes with the segments. `TTDRecordingFolder` (`ttdrecordingfolders.h`) creates the recording's folder, its owner file and segment paths, saves (one segment: a copy) and discards. Crash safety is tested with a forked child that aborts mid-recording.
+
 #### 5.2.2 Streams
 
 | Id | Stream | Kind | Phase that defines the content |

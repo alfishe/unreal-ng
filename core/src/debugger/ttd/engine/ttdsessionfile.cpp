@@ -170,14 +170,46 @@ bool TTDSessionFile::KnownStream(uint16_t id)
 
 /// region <Save>
 
-bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::string& error,
-                          const TTDSessionSaveParams& params)
+/// region <Writer>
+
+TTDSessionWriter::~TTDSessionWriter()
 {
-    if (!e._open || e._checkpoints.empty())
     {
-        error = "no session to save";
+        std::lock_guard<std::mutex> lock(_mutex);
+        _stop = true;
+    }
+    _wake.notify_all();
+    if (_thread.joinable())
+        _thread.join();
+}
+
+std::string TTDSessionWriter::Error() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _error;
+}
+
+void TTDSessionWriter::Fail(const std::string& why)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_failed.exchange(true))
+        _error = why;
+}
+
+bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, const TTDSessionSaveParams& params,
+                             std::string& error, const Limits& limits)
+{
+    if (!e._open)
+    {
+        error = "no session to write";
         return false;
     }
+    _sink = &sink;
+    _params = params;
+    _limits = limits;
+    _liveItem.assign(e._regions.size(), {});
+    for (size_t r = 0; r < e._regions.size(); ++r)
+        _liveItem[r].assign(e._regions[r].pieces, kNoItem);
 
     // Header: the streams and the session's tables
     TTDContainerHeader header;
@@ -210,229 +242,345 @@ bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::st
         header.sessionTables = std::move(w.bytes);
     }
 
-    TTDContainerWriter writer;
-    if (!writer.Begin(sink, header, &error))
+    if (!_writer.Begin(sink, header, &error))
         return false;
+    if (_background)
+        _thread = std::thread([this]() { Run(); });
+    return true;
+}
 
-    const TTDPieceStore& store = *e._store;
-    std::unordered_map<TTDPieceId, uint32_t> itemOf;   // store id -> number in the file
-    std::vector<uint32_t> itemPart;                    // number -> part
-    std::vector<std::vector<uint32_t>> liveItem(e._regions.size());
-    for (size_t r = 0; r < e._regions.size(); ++r)
-        liveItem[r].assign(e._regions[r].pieces, kNoItem);
-
-    const size_t perPart = std::max<uint32_t>(params.checkpointsPerPart, 1);
-    const size_t total = e._checkpoints.size();
-    const std::vector<TTDEvent>& events = e._events.Events();
-    size_t nextEvent = 0;
-    size_t nextConfig = 0;
-
-    for (size_t first = 0, part = 0; first < total; first += perPart, ++part)
+bool TTDSessionWriter::Collect(const TimeTravelEngine& e)
+{
+    const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
+    while (!Failed() && _next + perPart < e._checkpoints.size())
     {
-        const size_t last = std::min(first + perPart, total);   // exclusive
-        const bool lastPart = last == total;
-        const TTDEngineCheckpoint& head = e._checkpoints[first];
-        TTDByteWriter pieces, checkpoints;
-        std::set<uint32_t> dependencies;
-        checkpoints.Varint(last - first);
-        uint64_t previousFrame = 0;
-        for (size_t i = first; i < last; ++i)
+        if (_queuedBytes.load() > _limits.lagHardBytes)
         {
-            const TTDEngineCheckpoint& cp = e._checkpoints[i];
-            checkpoints.Varint(cp.position.frame - previousFrame);
-            previousFrame = cp.position.frame;
-            checkpoints.U64(cp.start);
-            checkpoints.Raw(&cp.cpu, sizeof(cp.cpu));
-            checkpoints.Raw(&cp.chipset, sizeof(cp.chipset));
-            checkpoints.Varint(cp.unclaimedDevices.size());
-            checkpoints.Bytes(cp.unclaimedDevices.data(), cp.unclaimedDevices.size());
-            checkpoints.Varint(cp.busReadCursor);
-            checkpoints.Varint(cp.busWriteCursor);
-            checkpoints.Varint(cp.mediaReadCursor);
-            checkpoints.Varint(cp.busVectorCursor);
-            uint64_t changedRegions = 0;
-            for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
-                changedRegions += refs.changeCount > 0;
-            checkpoints.Varint(changedRegions);
-            for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
-            {
-                if (refs.changeCount == 0)
-                    continue;
-                checkpoints.Varint(refs.region);
-                checkpoints.Varint(refs.changeCount);
-                for (uint32_t k = refs.firstChange; k < refs.firstChange + refs.changeCount; ++k)
-                {
-                    const auto& change = e._changes[k];
-                    checkpoints.Varint(change.piece);
-                    // The version itself, numbered as it appears
-                    const TTDPieceId id = change.id;
-                    const uint32_t item = static_cast<uint32_t>(itemPart.size());
-                    itemOf[id] = item;
-                    itemPart.push_back(static_cast<uint32_t>(part));
-                    const auto encoding = store.EncodingOf(id);
-                    uint32_t baseItem = kNoItem;
-                    if (TTDPieceStore::IsDifference(encoding))
-                    {
-                        const auto base = itemOf.find(store.BaseOf(id));
-                        if (base == itemOf.end())
-                        {
-                            error = "a version's base is not in the session";
-                            return false;
-                        }
-                        baseItem = base->second;
-                        if (itemPart[baseItem] != part)
-                            dependencies.insert(itemPart[baseItem]);
-                    }
-                    pieces.U8(static_cast<uint8_t>(encoding));
-                    pieces.Varint(store.DepthOf(id));
-                    pieces.Varint(baseItem == kNoItem ? 0 : uint64_t(baseItem) + 1);
-                    pieces.U32(store.CrcOf(id));
-                    pieces.Varint(store.PayloadSize(id));
-                    pieces.Bytes(store.PayloadData(id), store.PayloadSize(id));
-                    liveItem[refs.region][change.piece] = item;
-                }
-            }
-        }
-        // Every piece's current version at the part's end
-        for (const std::vector<uint32_t>& region : liveItem)
-            for (uint32_t item : region)
-                if (item != kNoItem && itemPart[item] != part)
-                    dependencies.insert(itemPart[item]);
-
-        if (!writer.AddRecord(kPieces, pieces.bytes) || !writer.AddRecord(kCheckpoints, checkpoints.bytes))
+            Fail("the disk cannot keep up: " + std::to_string(_queuedBytes.load() >> 20) + " MB waiting");
             break;
-
-        // Events up to the next part's start
-        TTDMachineTime until = 0;
-        if (!lastPart)
-            until = e._checkpoints[last].start;
-        TTDByteWriter ev;
-        size_t count = 0;
-        const size_t eventsFrom = nextEvent;
-        while (nextEvent < events.size() && (lastPart || events[nextEvent].machineTime < until))
-            ++nextEvent, ++count;
-        ev.Varint(count);
-        TTDMachineTime previousTime = 0;
-        for (size_t k = eventsFrom; k < nextEvent; ++k)
-        {
-            const TTDEvent& x = events[k];
-            ev.Varint(x.machineTime - previousTime);
-            previousTime = x.machineTime;
-            ev.U16(static_cast<uint16_t>(x.kind));
-            ev.U16(static_cast<uint16_t>(x.cpu));
-            ev.Raw(x.args, sizeof(x.args));
-            if (x.payload)
-            {
-                const std::vector<uint8_t>& bytes = e._payloads.Bytes(x.payload);
-                ev.Varint(uint64_t(bytes.size()) + 1);
-                ev.Bytes(bytes.data(), bytes.size());
-            }
-            else
-                ev.Varint(0);
         }
-
-        // Configuration entries starting in the part, media versions changing in it
-        TTDByteWriter config;
-        const uint64_t frameUntil = lastPart ? UINT64_MAX : e._checkpoints[last].position.frame;
-        const size_t configFrom = nextConfig;
-        while (nextConfig < e._configs.size() && e._configs[nextConfig].frame < frameUntil)
-            ++nextConfig;
-        config.Varint(nextConfig - configFrom);
-        for (size_t k = configFrom; k < nextConfig; ++k)
+        PartJob job;
+        if (!BuildPart(e, _next, _next + perPart, false, job))
         {
-            const TTDConfigEntry& c = e._configs[k];
-            config.U64(c.frame);
-            config.Varint(c.fingerprint.fields.size());
-            for (const TTDConfigField& f : c.fingerprint.fields)
-            {
-                config.Str(f.name);
-                config.U64(f.value);
-                config.U8(f.affectsRestore ? 1 : 0);
-            }
-        }
-        std::vector<std::pair<const TTDMediaSlot*, std::pair<uint32_t, TTDMediaVersion>>> media;
-        for (const TTDMediaSlot& slot : e._mediaSlots)
-            for (const auto& change : slot.changes)
-                if (change.first >= first && change.first < last)
-                    media.push_back({&slot, change});
-        config.Varint(media.size());
-        for (const auto& [slot, change] : media)
-        {
-            config.Str(slot->slot);
-            config.Str(slot->format);
-            config.U8(slot->hasVersions ? 1 : 0);
-            config.Varint(change.first);
-            config.U64(change.second.contentId);
-            config.U64(change.second.version);
-        }
-
-        // Journals from this part's first checkpoint to the next part's
-        auto range = [&](uint64_t TTDEngineCheckpoint::*cursor, uint64_t size) {
-            return Range{first == 0 ? 0 : head.*cursor, lastPart ? size : e._checkpoints[last].*cursor};
-        };
-        TTDByteWriter reads, writes, vectors, mediaReads;
-        const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._busReads.Size());
-        const Range wr = range(&TTDEngineCheckpoint::busWriteCursor, e._busWrites.Size());
-        const Range vr = range(&TTDEngineCheckpoint::busVectorCursor, e._busVectors.Size());
-        const Range mr = range(&TTDEngineCheckpoint::mediaReadCursor, e._mediaReads.Size());
-        WritePortRecords(reads, e._busReads, rr.from, rr.to);
-        WritePortRecords(writes, e._busWrites, wr.from, wr.to);
-        WritePortRecords(vectors, e._busVectors, vr.from, vr.to);
-        mediaReads.Varint(mr.to - mr.from);
-        for (uint64_t k = mr.from; k < mr.to; ++k)
-        {
-            const TTDMediaJournal::Record& m = e._mediaReads.At(k);
-            mediaReads.U64(m.frame);
-            mediaReads.U32(m.tInFrame);
-            mediaReads.Str(m.slot < e._mediaReads.SlotNames().size() ? e._mediaReads.SlotNames()[m.slot] : "");
-            mediaReads.U64(m.lba);
-            mediaReads.Varint(m.size);
-            mediaReads.Bytes(e._mediaReads.Bytes(m), m.size);
-        }
-
-        // A stream with nothing in this part writes no record (a missing record reads as empty)
-        auto add = [&writer](uint16_t stream, const TTDByteWriter& w, bool empty) {
-            return empty || writer.AddRecord(stream, w.bytes);
-        };
-        bool ok = add(kEvents, ev, count == 0) && add(kConfiguration, config, nextConfig == configFrom && media.empty()) &&
-                  add(kBusReads, reads, rr.to == rr.from) && add(kBusWrites, writes, wr.to == wr.from) &&
-                  add(kBusVectors, vectors, vr.to == vr.from) && add(kMediaReads, mediaReads, mr.to == mr.from);
-
-        // The write journal (derived, D40) goes whole with the last part
-        if (ok && lastPart && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
-        {
-            // In v1's column blocks of 2,048 records (EncodeWriteBlock)
-            TTDByteWriter wj;
-            std::vector<TTDWriteRecord> all;
-            all.reserve(static_cast<size_t>(e._writes.Size()));
-            e._writes.ForEach([&all](const TTDWriteRecord& rec) { all.push_back(rec); });
-            wj.Varint(all.size());
-            for (size_t k = 0; k < all.size(); k += kWriteBlockRecords)
-            {
-                const uint32_t n = static_cast<uint32_t>(std::min<size_t>(kWriteBlockRecords, all.size() - k));
-                const std::vector<uint8_t> block = EncodeWriteBlock(all.data() + k, n);
-                wj.Varint(block.size());
-                wj.Bytes(block.data(), block.size());
-            }
-            wj.Varint(e._writes.Segments().size());
-            for (const TTDJournalSegment& s : e._writes.Segments())
-            {
-                wj.U64(s.from);
-                wj.U64(s.to);
-            }
-            ok = writer.AddRecord(kWriteJournal, wj.bytes);
-        }
-
-        TTDPartEnd end;
-        end.firstFrame = head.position.frame;
-        end.frameCount = static_cast<uint32_t>(e._checkpoints[last - 1].position.frame - head.position.frame + 1);
-        end.dependencies.assign(dependencies.begin(), dependencies.end());
-        if (!ok || !writer.EndPart(end))
+            Fail(_buildError.empty() ? "a part could not be laid out" : _buildError);
             break;
+        }
+        _next += perPart;
+        Queue(std::move(job));
     }
-    if (writer.Failed() || !writer.Finalize())
+    return !Failed();
+}
+
+bool TTDSessionWriter::Finish(const TimeTravelEngine& e)
+{
+    if (_finished)
+        return !Failed();
+    _finished = true;
+    Collect(e);
+    const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
+    while (!Failed() && _next < e._checkpoints.size())
     {
-        error = "the session could not be written";
+        const size_t last = std::min(_next + perPart, e._checkpoints.size());
+        PartJob job;
+        if (!BuildPart(e, _next, last, true, job))
+        {
+            Fail(_buildError.empty() ? "a part could not be laid out" : _buildError);
+            break;
+        }
+        _next = last;
+        Queue(std::move(job));
+    }
+    PartJob finalize;
+    finalize.finalize = true;
+    Queue(std::move(finalize));
+    if (_background)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _stop = true;
+        }
+        _wake.notify_all();
+        if (_thread.joinable())
+            _thread.join();
+    }
+    return !Failed();
+}
+
+void TTDSessionWriter::Queue(PartJob&& job)
+{
+    for (const auto& [id, bytes] : job.records)
+        job.bytes += bytes.size();
+    if (!_background)
+    {
+        Write(job);
+        return;
+    }
+    _queuedBytes += job.bytes;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _queue.push_back(std::move(job));
+    }
+    _wake.notify_one();
+}
+
+void TTDSessionWriter::Run()
+{
+    for (;;)
+    {
+        PartJob job;
+        {
+            std::unique_lock<std::mutex> lock(_mutex);
+            _wake.wait(lock, [this]() { return _stop || !_queue.empty(); });
+            if (_queue.empty())
+                return;   // stopped and drained
+            job = std::move(_queue.front());
+            _queue.pop_front();
+        }
+        Write(job);
+        _queuedBytes -= job.bytes;
+    }
+}
+
+void TTDSessionWriter::Write(PartJob& job)
+{
+    if (Failed())
+        return;
+    if (job.finalize)
+    {
+        if (!_writer.Finalize())
+            Fail("the index could not be written");
+        return;
+    }
+    for (const auto& [stream, bytes] : job.records)
+        if (!_writer.AddRecord(stream, bytes))
+        {
+            Fail("a write failed (disk full or device gone)");
+            return;
+        }
+    if (!_writer.EndPart(job.end, true))
+        Fail("a write failed (disk full or device gone)");
+}
+
+bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job)
+{
+    const TTDPieceStore& store = *e._store;
+    const std::vector<TTDEvent>& events = e._events.Events();
+    const bool lastPart = final && last == e._checkpoints.size();
+    const TTDEngineCheckpoint& head = e._checkpoints[first];
+    TTDByteWriter pieces, checkpoints;
+    std::set<uint32_t> dependencies;
+    checkpoints.Varint(last - first);
+    uint64_t previousFrame = 0;
+    for (size_t i = first; i < last; ++i)
+    {
+        const TTDEngineCheckpoint& cp = e._checkpoints[i];
+        checkpoints.Varint(cp.position.frame - previousFrame);
+        previousFrame = cp.position.frame;
+        checkpoints.U64(cp.start);
+        checkpoints.Raw(&cp.cpu, sizeof(cp.cpu));
+        checkpoints.Raw(&cp.chipset, sizeof(cp.chipset));
+        checkpoints.Varint(cp.unclaimedDevices.size());
+        checkpoints.Bytes(cp.unclaimedDevices.data(), cp.unclaimedDevices.size());
+        checkpoints.Varint(cp.busReadCursor);
+        checkpoints.Varint(cp.busWriteCursor);
+        checkpoints.Varint(cp.mediaReadCursor);
+        checkpoints.Varint(cp.busVectorCursor);
+        uint64_t changedRegions = 0;
+        for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
+            changedRegions += refs.changeCount > 0;
+        checkpoints.Varint(changedRegions);
+        for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
+        {
+            if (refs.changeCount == 0)
+                continue;
+            checkpoints.Varint(refs.region);
+            checkpoints.Varint(refs.changeCount);
+            for (uint32_t k = refs.firstChange; k < refs.firstChange + refs.changeCount; ++k)
+            {
+                const auto& change = e._changes[k];
+                checkpoints.Varint(change.piece);
+                // The version itself, numbered as it appears
+                const TTDPieceId id = change.id;
+                const uint32_t item = static_cast<uint32_t>(_itemPart.size());
+                _itemOf[id] = item;
+                _itemPart.push_back(static_cast<uint32_t>(_part));
+                const auto encoding = store.EncodingOf(id);
+                uint32_t baseItem = kNoItem;
+                if (TTDPieceStore::IsDifference(encoding))
+                {
+                    const auto base = _itemOf.find(store.BaseOf(id));
+                    if (base == _itemOf.end())
+                    {
+                        _buildError = "a version's base is not in the session";
+                        return false;
+                    }
+                    baseItem = base->second;
+                    if (_itemPart[baseItem] != _part)
+                        dependencies.insert(_itemPart[baseItem]);
+                }
+                pieces.U8(static_cast<uint8_t>(encoding));
+                pieces.Varint(store.DepthOf(id));
+                pieces.Varint(baseItem == kNoItem ? 0 : uint64_t(baseItem) + 1);
+                pieces.U32(store.CrcOf(id));
+                pieces.Varint(store.PayloadSize(id));
+                pieces.Bytes(store.PayloadData(id), store.PayloadSize(id));
+                _liveItem[refs.region][change.piece] = item;
+            }
+        }
+    }
+    // Every piece's current version at the part's end
+    for (const std::vector<uint32_t>& region : _liveItem)
+        for (uint32_t item : region)
+            if (item != kNoItem && _itemPart[item] != _part)
+                dependencies.insert(_itemPart[item]);
+
+    job.records.emplace_back(kPieces, std::move(pieces.bytes));
+    job.records.emplace_back(kCheckpoints, std::move(checkpoints.bytes));
+
+    // Events up to the next part's start
+    TTDMachineTime until = 0;
+    if (!lastPart)
+        until = e._checkpoints[last].start;
+    TTDByteWriter ev;
+    size_t count = 0;
+    const size_t eventsFrom = _nextEvent;
+    while (_nextEvent < events.size() && (lastPart || events[_nextEvent].machineTime < until))
+        ++_nextEvent, ++count;
+    ev.Varint(count);
+    TTDMachineTime previousTime = 0;
+    for (size_t k = eventsFrom; k < _nextEvent; ++k)
+    {
+        const TTDEvent& x = events[k];
+        ev.Varint(x.machineTime - previousTime);
+        previousTime = x.machineTime;
+        ev.U16(static_cast<uint16_t>(x.kind));
+        ev.U16(static_cast<uint16_t>(x.cpu));
+        ev.Raw(x.args, sizeof(x.args));
+        if (x.payload)
+        {
+            const std::vector<uint8_t>& bytes = e._payloads.Bytes(x.payload);
+            ev.Varint(uint64_t(bytes.size()) + 1);
+            ev.Bytes(bytes.data(), bytes.size());
+        }
+        else
+            ev.Varint(0);
+    }
+
+    // Configuration entries starting in the part, media versions changing in it
+    TTDByteWriter config;
+    const uint64_t frameUntil = lastPart ? UINT64_MAX : e._checkpoints[last].position.frame;
+    const size_t configFrom = _nextConfig;
+    while (_nextConfig < e._configs.size() && e._configs[_nextConfig].frame < frameUntil)
+        ++_nextConfig;
+    config.Varint(_nextConfig - configFrom);
+    for (size_t k = configFrom; k < _nextConfig; ++k)
+    {
+        const TTDConfigEntry& c = e._configs[k];
+        config.U64(c.frame);
+        config.Varint(c.fingerprint.fields.size());
+        for (const TTDConfigField& f : c.fingerprint.fields)
+        {
+            config.Str(f.name);
+            config.U64(f.value);
+            config.U8(f.affectsRestore ? 1 : 0);
+        }
+    }
+    std::vector<std::pair<const TTDMediaSlot*, std::pair<uint32_t, TTDMediaVersion>>> media;
+    for (const TTDMediaSlot& slot : e._mediaSlots)
+        for (const auto& change : slot.changes)
+            if (change.first >= first && change.first < last)
+                media.push_back({&slot, change});
+    config.Varint(media.size());
+    for (const auto& [slot, change] : media)
+    {
+        config.Str(slot->slot);
+        config.Str(slot->format);
+        config.U8(slot->hasVersions ? 1 : 0);
+        config.Varint(change.first);
+        config.U64(change.second.contentId);
+        config.U64(change.second.version);
+    }
+
+    // Journals from this part's first checkpoint to the next part's
+    auto range = [&](uint64_t TTDEngineCheckpoint::*cursor, uint64_t size) {
+        return Range{first == 0 ? 0 : head.*cursor, lastPart ? size : e._checkpoints[last].*cursor};
+    };
+    TTDByteWriter reads, writes, vectors, mediaReads;
+    const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._busReads.Size());
+    const Range wr = range(&TTDEngineCheckpoint::busWriteCursor, e._busWrites.Size());
+    const Range vr = range(&TTDEngineCheckpoint::busVectorCursor, e._busVectors.Size());
+    const Range mr = range(&TTDEngineCheckpoint::mediaReadCursor, e._mediaReads.Size());
+    WritePortRecords(reads, e._busReads, rr.from, rr.to);
+    WritePortRecords(writes, e._busWrites, wr.from, wr.to);
+    WritePortRecords(vectors, e._busVectors, vr.from, vr.to);
+    mediaReads.Varint(mr.to - mr.from);
+    for (uint64_t k = mr.from; k < mr.to; ++k)
+    {
+        const TTDMediaJournal::Record& m = e._mediaReads.At(k);
+        mediaReads.U64(m.frame);
+        mediaReads.U32(m.tInFrame);
+        mediaReads.Str(m.slot < e._mediaReads.SlotNames().size() ? e._mediaReads.SlotNames()[m.slot] : "");
+        mediaReads.U64(m.lba);
+        mediaReads.Varint(m.size);
+        mediaReads.Bytes(e._mediaReads.Bytes(m), m.size);
+    }
+
+    // A stream with nothing in this part writes no record (a missing record reads as empty)
+    auto add = [&job](uint16_t stream, TTDByteWriter& w, bool empty) {
+        if (!empty)
+            job.records.emplace_back(stream, std::move(w.bytes));
+        return true;
+    };
+    bool ok = add(kEvents, ev, count == 0) && add(kConfiguration, config, _nextConfig == configFrom && media.empty()) &&
+              add(kBusReads, reads, rr.to == rr.from) && add(kBusWrites, writes, wr.to == wr.from) &&
+              add(kBusVectors, vectors, vr.to == vr.from) && add(kMediaReads, mediaReads, mr.to == mr.from);
+
+    // The write journal (derived, D40) goes whole with the last part
+    if (ok && lastPart && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
+    {
+        // In v1's column blocks of 2,048 records (EncodeWriteBlock)
+        TTDByteWriter wj;
+        std::vector<TTDWriteRecord> all;
+        all.reserve(static_cast<size_t>(e._writes.Size()));
+        e._writes.ForEach([&all](const TTDWriteRecord& rec) { all.push_back(rec); });
+        wj.Varint(all.size());
+        for (size_t k = 0; k < all.size(); k += kWriteBlockRecords)
+        {
+            const uint32_t n = static_cast<uint32_t>(std::min<size_t>(kWriteBlockRecords, all.size() - k));
+            const std::vector<uint8_t> block = EncodeWriteBlock(all.data() + k, n);
+            wj.Varint(block.size());
+            wj.Bytes(block.data(), block.size());
+        }
+        wj.Varint(e._writes.Segments().size());
+        for (const TTDJournalSegment& s : e._writes.Segments())
+        {
+            wj.U64(s.from);
+            wj.U64(s.to);
+        }
+        job.records.emplace_back(kWriteJournal, std::move(wj.bytes));
+    }
+
+    job.end.firstFrame = head.position.frame;
+    job.end.frameCount = static_cast<uint32_t>(e._checkpoints[last - 1].position.frame - head.position.frame + 1);
+    job.end.dependencies.assign(dependencies.begin(), dependencies.end());
+    ++_part;
+    return ok;
+}
+
+bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::string& error,
+                          const TTDSessionSaveParams& params)
+{
+    if (!e._open || e._checkpoints.empty())
+    {
+        error = "no session to save";
+        return false;
+    }
+    TTDSessionWriter writer(false);
+    if (!writer.Begin(e, sink, params, error))
+        return false;
+    if (!writer.Finish(e))
+    {
+        error = writer.Error();
         return false;
     }
     return true;

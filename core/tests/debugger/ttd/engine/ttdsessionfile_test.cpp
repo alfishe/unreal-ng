@@ -14,6 +14,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <condition_variable>
+#include <mutex>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +28,7 @@
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/engine/ttdsessionfile.h"
@@ -358,3 +362,253 @@ TEST(TTDSessionFileDeps_Test, APartNeedsThePartsOfItsCurrentVersions)
     ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error)) << error;
     ExpectSameSession(engine, loaded, 40);
 }
+
+/// region <Writing as it records>
+
+namespace
+{
+/// A synthetic session: four pieces, one changing per frame, a bus read every
+/// frame, a marker every seventh frame
+struct Recorder
+{
+    TimeTravelEngine engine;
+    std::vector<uint8_t> memory = std::vector<uint8_t>(4 * kTTDPieceSize);
+    uint64_t frame = 0;
+
+    Recorder()
+    {
+        TTDRegionDesc ram;
+        ram.name = "ram";
+        ram.pieces = 4;
+        ram.bytes = 4 * kTTDPieceSize;
+        std::string error;
+        EXPECT_TRUE(engine.BeginSession({ram}, {}, error)) << error;
+    }
+
+    void Frame()
+    {
+        const uint32_t piece = static_cast<uint32_t>(frame % 4);
+        uint8_t* p = memory.data() + size_t(piece) * kTTDPieceSize;
+        for (size_t i = 0; i < kTTDPieceSize; i += 97)
+            p[i] = static_cast<uint8_t>(p[i] + frame + i);
+        TTDFrameInput input;
+        input.position.frame = frame;
+        input.start = frame * 69888;
+        if (frame == 0)
+            for (uint32_t k = 0; k < 4; ++k)
+                input.changed.push_back({0, k, memory.data() + size_t(k) * kTTDPieceSize});
+        else
+            input.changed.push_back({0, piece, p});
+        std::string error;
+        ASSERT_TRUE(engine.CaptureFrame(input, error)) << error;
+        engine.AppendBusRead({frame, 1000, 0xFE, 0x8000, static_cast<uint8_t>(frame)});
+        if (frame % 7 == 3)
+        {
+            TTDEvent ev;
+            ev.kind = TTDEventKind::OtherMarker;
+            engine.AppendEvent(frame, 2000, ev);
+        }
+        ++frame;
+    }
+};
+
+/// Blocks every write until released, then passes it on (a disk that stalls)
+class GatedSink : public ITTDByteSink
+{
+public:
+    bool Write(const uint8_t* data, size_t size) override
+    {
+        std::unique_lock<std::mutex> lock(_mutex);
+        _cv.wait(lock, [this]() { return _open; });
+        inner.Write(data, size);
+        return true;
+    }
+    bool Sync() override { return true; }
+    uint64_t Size() const override { return inner.Size(); }
+    void Open()
+    {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _open = true;
+        }
+        _cv.notify_all();
+    }
+    TTDMemorySink inner;
+
+private:
+    std::mutex _mutex;
+    std::condition_variable _cv;
+    bool _open = true;
+
+public:
+    void Close()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _open = false;
+    }
+};
+
+/// Fails every write once @p limit bytes went through (a full disk)
+class FullSink : public TTDMemorySink
+{
+public:
+    explicit FullSink(size_t limit) : _limit(limit) {}
+    bool Write(const uint8_t* data, size_t size) override
+    {
+        if (bytes.size() + size > _limit)
+            return false;
+        return TTDMemorySink::Write(data, size);
+    }
+
+private:
+    size_t _limit;
+};
+}  // namespace
+
+/// Writing part by part on the writer thread while recording gives the same
+/// file as saving the finished session: part boundaries depend on frames and
+/// bytes only, never on the thread's timing (QR-3)
+TEST(TTDSessionWriter_Test, WritingAsItRecordsEqualsSavingAtTheEnd)
+{
+    Recorder rec;
+    TTDMemorySink sink;
+    TTDSessionWriter writer;
+    std::string error;
+    rec.Frame();
+    ASSERT_TRUE(writer.Begin(rec.engine, sink, Params(10), error)) << error;
+    for (int i = 1; i < 95; ++i)
+    {
+        rec.Frame();
+        ASSERT_TRUE(writer.Collect(rec.engine));
+    }
+    EXPECT_EQ(writer.PartsQueued(), 9u) << "parts whose next part has started";
+    ASSERT_TRUE(writer.Finish(rec.engine)) << writer.Error();
+    EXPECT_TRUE(sink.bytes == Save(rec.engine, 10));
+
+    TimeTravelEngine loaded;
+    TTDMemorySource source(sink.bytes);
+    ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error)) << error;
+    ExpectSameSession(rec.engine, loaded, 95);
+    EXPECT_EQ(loaded.Events().Count(), rec.engine.Events().Count());
+    EXPECT_TRUE(SameRecords(Records(loaded.BusReads()), Records(rec.engine.BusReads())));
+}
+
+/// A stalled disk: capture goes on (Collect never waits), the lag is
+/// reported, and past the hard limit the writer stops with the reason; the
+/// parts already written stay valid
+TEST(TTDSessionWriter_Test, ASlowDiskNeverHoldsCapture)
+{
+    Recorder rec;
+    GatedSink sink;
+    TTDSessionWriter writer;
+    std::string error;
+    rec.Frame();
+    TTDSessionWriterLimits limits;
+    limits.lagSoftBytes = 1;
+    limits.lagHardBytes = 20'000;
+    ASSERT_TRUE(writer.Begin(rec.engine, sink, Params(5), error, limits)) << error;
+    sink.Close();
+    bool stopped = false;
+    for (int i = 1; i < 400 && !stopped; ++i)
+    {
+        rec.Frame();
+        stopped = !writer.Collect(rec.engine);   // returns at once: the sink is closed
+    }
+    EXPECT_TRUE(stopped) << "the hard limit stops the writer";
+    EXPECT_TRUE(writer.Behind());
+    EXPECT_NE(writer.Error().find("cannot keep up"), std::string::npos) << writer.Error();
+    sink.Open();
+    writer.Finish(rec.engine);
+
+    TTDMemorySource source(sink.inner.bytes);
+    TTDContainerReader reader;
+    ASSERT_TRUE(reader.Open(source, error)) << error;
+    EXPECT_GT(reader.Parts().size(), 0u) << "the parts queued before the limit were written";
+}
+
+/// A write error (disk full): the writer stops with the reason, and the file
+/// opens up to its last complete part
+TEST(TTDSessionWriter_Test, AWriteErrorKeepsTheFileValid)
+{
+    Recorder rec;
+    FullSink sink(30'000);
+    TTDSessionWriter writer;
+    std::string error;
+    rec.Frame();
+    ASSERT_TRUE(writer.Begin(rec.engine, sink, Params(5), error)) << error;
+    bool ok = true;
+    for (int i = 1; i < 300 && ok; ++i)
+    {
+        rec.Frame();
+        ok = writer.Collect(rec.engine);
+    }
+    writer.Finish(rec.engine);
+    EXPECT_TRUE(writer.Failed());
+    EXPECT_NE(writer.Error().find("write failed"), std::string::npos) << writer.Error();
+
+    TTDMemorySource source(sink.bytes);
+    TTDContainerReader reader;
+    ASSERT_TRUE(reader.Open(source, error)) << error;
+    EXPECT_FALSE(reader.Finalized());
+    ASSERT_GT(reader.Parts().size(), 0u);
+    TimeTravelEngine loaded;
+    TTDSessionLoadReport report;
+    ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error, &report)) << error;
+    ExpectSameSession(rec.engine, loaded, loaded.CheckpointCount());
+    EXPECT_EQ(loaded.CheckpointCount(), reader.Parts().size() * 5);
+}
+
+/// The emulator dies while recording (a child process aborts with parts
+/// still queued and one half written): the file opens up to its last
+/// complete part, and those parts load back exactly (FR-13)
+TEST(TTDSessionWriterDeathTest, ACrashKeepsTheCompleteParts)
+{
+    GTEST_FLAG_SET(death_test_style, "fast");   // forked: the child writes where the parent reads
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("crashed-session.ttd");
+    std::error_code ec;
+    std::filesystem::remove(FileHelper::ToFsPath(path), ec);
+    EXPECT_DEATH(
+        {
+            Recorder rec;
+            TTDFileSink sink(path);
+            TTDSessionWriter writer;
+            std::string error;
+            rec.Frame();
+            if (!sink.Valid() || !writer.Begin(rec.engine, sink, Params(5), error))
+                std::exit(1);
+            for (int i = 1; i < 40; ++i)
+            {
+                rec.Frame();
+                writer.Collect(rec.engine);
+            }
+            // Some parts on disk for sure, then more queued while it dies
+            TestWait::For([&writer]() { return writer.QueuedBytes() == 0; });
+            for (int i = 0; i < 40; ++i)
+            {
+                rec.Frame();
+                writer.Collect(rec.engine);
+            }
+            std::abort();
+        },
+        "");
+
+    TTDFileSource source(path);
+    ASSERT_TRUE(source.Valid()) << source.Error();
+    TTDContainerReader reader;
+    std::string error;
+    ASSERT_TRUE(reader.Open(source, error)) << error;
+    EXPECT_FALSE(reader.Finalized());
+    ASSERT_GE(reader.Parts().size(), 7u) << "the parts written before the wait";
+    TimeTravelEngine loaded;
+    TTDSessionLoadReport report;
+    ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error, &report)) << error;
+    EXPECT_EQ(loaded.CheckpointCount(), reader.Parts().size() * 5);
+
+    // The same frames, recorded again without the crash
+    Recorder again;
+    for (size_t i = 0; i < loaded.CheckpointCount() + 1; ++i)
+        again.Frame();
+    ExpectSameSession(again.engine, loaded, loaded.CheckpointCount());
+}
+
+/// endregion </Writing as it records>

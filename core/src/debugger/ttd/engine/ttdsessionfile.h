@@ -35,8 +35,15 @@
 /// parts 0-2 back (150 frames) and reports part 3 as the reason it stopped.
 
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "debugger/ttd/engine/ttdcontainer.h"
@@ -74,6 +81,94 @@ struct TTDSessionLoadReport
     bool complete = false;       ///< every part came in
     std::string stoppedAt;       ///< why the load stopped early
     std::vector<std::string> notes;   ///< the container's notes (scan, skipped streams)
+};
+
+/// How far the writer thread may fall behind (TTDSessionWriter)
+struct TTDSessionWriterLimits
+{
+    uint64_t lagSoftBytes = 64ull << 20;    ///< above: reported as "behind"
+    uint64_t lagHardBytes = 512ull << 20;   ///< above: no more parts are taken
+};
+
+/// Writes a session as it records (Phase 4, §5.2.4). The thread that owns the
+/// engine calls Collect() after its captures: every part that is complete
+/// (its next part's first checkpoint exists) is laid out there, quickly, and
+/// handed to the writer thread, which compresses, checks, appends and makes
+/// each part durable. Capture never waits for the disk: when the queued bytes
+/// pass the hard limit the writer stops taking parts and reports why; the file
+/// stays valid up to its last part. Finish() writes the rest and the index.
+///
+/// Worked example: 50 checkpoints per part; after capture 51 Collect() queues
+/// part 0 (checkpoints 0-49); the writer thread appends its records and its
+/// part end and syncs. At stop, Finish() queues checkpoints 50-... with the
+/// write journal, then the index and the trailer, and waits for the thread.
+class TTDSessionWriter
+{
+public:
+    using Limits = TTDSessionWriterLimits;
+
+    /// @p background: a writer thread; false writes on the caller's thread (Save, tests)
+    explicit TTDSessionWriter(bool background = true) : _background(background) {}
+    ~TTDSessionWriter();
+    TTDSessionWriter(const TTDSessionWriter&) = delete;
+    TTDSessionWriter& operator=(const TTDSessionWriter&) = delete;
+
+    /// Write the header (on this thread) and start the writer
+    bool Begin(const TimeTravelEngine& engine, ITTDByteSink& sink, const TTDSessionSaveParams& params,
+               std::string& error, const Limits& limits = {});
+    /// Queue every complete part; false once writing failed or fell too far behind (Error() says why)
+    bool Collect(const TimeTravelEngine& engine);
+    /// Queue the rest (and the write journal), write the index, wait for the writer
+    bool Finish(const TimeTravelEngine& engine);
+
+    bool Failed() const { return _failed.load(); }
+    std::string Error() const;
+    uint64_t QueuedBytes() const { return _queuedBytes.load(); }
+    bool Behind() const { return QueuedBytes() > _limits.lagSoftBytes; }
+    uint32_t PartsQueued() const { return _part; }
+    size_t CheckpointsWritten() const { return _next; }
+
+private:
+    struct PartJob
+    {
+        std::vector<std::pair<uint16_t, std::vector<uint8_t>>> records;
+        TTDPartEnd end;
+        bool finalize = false;
+        uint64_t bytes = 0;
+    };
+    bool BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job);
+    void Queue(PartJob&& job);
+    void Write(PartJob& job);
+    void Run();
+    void Fail(const std::string& why);
+
+    bool _background;
+    Limits _limits;
+    ITTDByteSink* _sink = nullptr;
+    TTDContainerWriter _writer;
+    TTDSessionSaveParams _params;
+
+    // The layout's state (the engine's thread)
+    std::unordered_map<uint32_t, uint32_t> _itemOf;   ///< store id -> number in the file
+    std::vector<uint32_t> _itemPart;                  ///< number -> part
+    std::vector<std::vector<uint32_t>> _liveItem;     ///< region, piece -> current number
+    size_t _next = 0;                                 ///< the first checkpoint not laid out yet
+    uint32_t _part = 0;
+    size_t _nextEvent = 0;
+    size_t _nextConfig = 0;
+    bool _finished = false;
+    std::string _buildError;   ///< the engine's thread only
+
+    // The writer thread
+    std::thread _thread;
+    mutable std::mutex _mutex;
+    std::condition_variable _wake;
+    std::condition_variable _drained;
+    std::deque<PartJob> _queue;
+    bool _stop = false;
+    std::atomic<bool> _failed{false};
+    std::atomic<uint64_t> _queuedBytes{0};
+    std::string _error;
 };
 
 class TTDSessionFile
