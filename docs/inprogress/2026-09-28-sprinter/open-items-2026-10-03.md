@@ -17,6 +17,12 @@ come the ISA slots and the network cards (section 3).
   latched the PLD keyboard INT. Fixed in unreal-qt (branch `qt-mac-cmd-keymap`): Command is a host key, the
   Control key is Ctrl ([keyboard.md](../../features/keyboard.md#host-keys-on-macos)); re-check the demo without
   touching Command. FBIRD and NOTHENG run after the CTC fix.
+- dontBlink (MAME-pack version) freezes in the "flowers" part (~305 s): a race in the demo, not an emulation fault
+  ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2). An interrupt between `LD SP,#3F74` and
+  `LD HL,(#031D)` makes its SP-repair loop overwrite its own return address. It hits with BIOS 3.07 and 3.06
+  Hotfix 2 alike, and MAME 0.289 freezes the same way in 4 of 6 runs. The final version also dies when Ctrl is
+  pressed during loading (its init enables interrupts in IM 1 before its own handler is in place) - also the
+  demo's; untouched, it plays.
 - scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
   reproduce (likely cured by the PS/2 overrun fix).
 
@@ -61,12 +67,16 @@ deleted. Take one only on the owner's request.
 ## 4. Small and deferred
 
 - BIOS 3.06 Hotfix 2 does not scroll DSS text at the bottom line (MAME too): a question for the BIOS author.
-- BIOS 3.07 BETA 1 (the default) with DSS 1.71.57: programs on a floppy do not start ("Invalid EXE file" /
+- BIOS 3.07 BETA 1 (the default until 2026-10-03; now 3.06 Hotfix 2) with DSS 1.71.57: programs on a floppy do not start ("Invalid EXE file" /
   "Bad command or file name") and `copy` from the floppy writes 0 bytes. Firmware, not emulation (found 2026-10-03):
   the beta's FDD driver returns with IY changed; MAME agrees; a 3.07 build saving IY works, as does the DSS of the
-  3.07 recovery disk. Owner decision: 3.07 BETA 1 stays the default, with a warning in the BIOS report
-  (`known_issues`, all surfaces, Qt status bar) and the recipes. Open: send
+  3.07 recovery disk. Owner decision 2026-10-03: the default goes back to 3.06 Hotfix 2 until the author publishes
+  his fixed build; 3.07 BETA 1 stays selectable with a warning in the BIOS report (`known_issues`, all surfaces,
+  Qt status bar) and the recipes. Open: send
   [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) to the BIOS author ([bios-versions.md](bios-versions.md) §5.2).
+  Checked 2026-10-03: the public upstream head (`beta` `f546c4e`) **is** the kept 3.07 BETA 1, byte for byte,
+  and still changes IY; the author's newer fixes are not pushed. Waiting for the author to push the build
+  ([bios-versions.md](bios-versions.md) §5.3).
 - Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
 - Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.
 

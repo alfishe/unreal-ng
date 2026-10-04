@@ -21,7 +21,7 @@ of the main checkout (`final/`, `keys/`, `ldconf/`, `scroller/`; not committed).
 | BALLS (6 builds) | runs | |
 | BUYAN: PLASMA2, PLASMA3, SCROLL, SCROLL2, SPIRO, XOR_B1, XOR_B2, sprite95, wave6fb, wave6fb2 | run | |
 | BUYAN/20X20 `test20x20.exe` | **open** | draws the left 384 px of a picture, then loops on a 4-entry queue at `#03D0` with interrupts off (`DI`, IM 1); no key changes anything. Not compared with MAME yet (the scripted MAME session did not get the typed command line into Flex Navigator). TTD: `keys/demos-buyan-20x20-test20-1-exe.ttd` |
-| DNTBLINK | investigated separately | branch `sprinter-dntblink-freeze` (picture freezes about 5:10 while the music plays) |
+| DNTBLINK | freezes (both BIOSes) | the picture freezes at about 5:10 (the "flowers" part) on BIOS 3.06 Hotfix 2 and 3.07 BETA 1 alike, from a race in the demo; MAME 0.289 freezes the same way in 4 of 6 runs ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2) |
 | DOOM2 | runs | title + menu |
 | EXAMPLES (13: 256COLOR, 3D_STARS, FAN256, FISH, FLAMES, FLAMES1, PLASMA, PLASMA1, PSY, REAL_3D, SD, splines, STARWAY) | run | PSY: animated logo, Esc exits |
 | FBIRD: `FBIRD.EXE`, `FBIRD_.EXE`, `_FBIRD.EXE` | run | re-checked after the CTC fix: the bird and pipes move (IM 2) |

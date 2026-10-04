@@ -83,7 +83,7 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # counters, per-line DRAM budget)
     ("tsconf_sprites", "TSL", "testdata/machines/tsconf/spg/sprites.spg", 50),
     # Sprinter Sp2000 (Sprinter S7): the cold full start of the shipped config - the ROM's loader feeds
-    # the PLD its bitstream at 3.5 MHz, then the default BIOS (3.07 BETA 1 since 2026-10-02) starts its POST
+    # the PLD its bitstream at 3.5 MHz, then the default BIOS (3.06 Hotfix 2 since 2026-10-03) starts its POST
     # at 21 MHz: the PLD, Z84C15, video RAM, fast RAM, input and WD1793-context blobs (ids 25, 28-31, 35)
     ("sprinter_boot", "SPRINTER", None, 0),
 ]
