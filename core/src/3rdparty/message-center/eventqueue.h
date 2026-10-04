@@ -166,6 +166,9 @@ public:
     void RemoveObserverById(const std::string& topic, uint64_t observerId);
     void RemoveObserver(const std::string& topic, ObserverDescriptor* observer);
 
+    /// Number of observers currently registered for the topic (0 for an unknown topic)
+    size_t ObserverCount(const std::string& topic);
+
     int ResolveTopic(const char* topic);
     int ResolveTopic(const std::string& topic);
     int RegisterTopic(const char* topic);

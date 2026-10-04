@@ -1059,6 +1059,34 @@ TEST_F(EmulatorHostAudioResume_Test, StepOverASoundingSubroutineIsSilent)
     EXPECT_EQ(_sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
 }
 
+/// StepOver registers a handler on the shared BREAKPOINT topic that captures its emulator and FeatureManager. It must
+/// be gone with the emulator: a breakpoint event of another instance with a colliding id used to reach the dead
+/// handler, which locked the destroyed FeatureManager's mutex and aborted the process
+TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
+{
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    const size_t observersBefore = center.ObserverCount(NC_EXECUTION_BREAKPOINT);
+    {
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("stepover-observer", "PENTAGON",
+                                                                                LoggerLevel::LogError);
+        ASSERT_TRUE(emulator);
+        const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};  // DI; CALL #8010; JR $
+        for (size_t i = 0; i < sizeof(program); i++)
+            emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+        emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+        emulator->DebugOn();
+        emulator->StartAsync();
+        emulator->Pause();
+        emulator->GetZ80State()->pc = 0x8001;  // the CALL
+        emulator->GetZ80State()->sp = 0xFF00;
+        emulator->StepOver();  // registers the handler, resumes to the temporary breakpoint
+        EXPECT_GT(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "StepOver registered no handler: the test checks nothing";
+        emulator->Stop();
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+    }
+    EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step-over handler outlived its emulator";
+}
+
 TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
 {
     // A TTD seek replays from a checkpoint at host speed under the replay hold; afterwards nothing holds the
