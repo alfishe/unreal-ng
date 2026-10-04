@@ -669,6 +669,37 @@ TEST(Emulator_DirectRunBreakpoint_Test, BreakpointAtTheStartIsHitWhenNotStoppedT
     emulator->Release();
 }
 
+/// A hit-count breakpoint counts each arrival once: stepping on from where it stopped is not another hit
+TEST(Emulator_DirectRunBreakpoint_Test, HitCountIgnoresSteppingOnFromTheStop)
+{
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    constexpr uint16_t kLoop = kProgram + 11;  // JR $: an endless loop on itself
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = kLoop;
+    spec.hitMode = BRK_HIT_EQUAL;
+    spec.hitTarget = 3;
+    std::string error;
+    BreakpointManager& brk = *emulator->GetBreakpointManager();
+    const uint16_t id = brk.AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const BreakpointDescriptor& bp = *brk.GetAllBreakpoints().at(id);
+
+    // Six instructions, then the loop: arrivals 1 and 2 run on, the 3rd stops before the JR
+    EXPECT_EQ(emulator->RunNCPUCycles(100, false), 8u);
+    EXPECT_TRUE(emulator->LastDirectStop().hit);
+    EXPECT_EQ(bp.hitCount, 3u);
+
+    emulator->RunSingleCPUCycle(false);  // the JR runs: leaving the stop is not an arrival
+    EXPECT_EQ(bp.hitCount, 3u);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    emulator->RunSingleCPUCycle(false);  // the next arrival counts, and the 4th does not stop
+    EXPECT_EQ(bp.hitCount, 4u);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    emulator->Release();
+}
+
 TEST(Emulator_DirectRunBreakpoint_Test, MemoryAndPortBreakpointsEndTheRunAfterTheirInstruction)
 {
     auto emulator = DirectRunEmulator();
