@@ -17,6 +17,8 @@
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/serial/esp/atmodule.h"
+#include "emulator/io/serial/esp/espdescribe.h"
+#include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/io/serial/esp/espnetmodule.h"
 #include "emulator/io/serial/hayesmodempeer.h"
 #include "emulator/ports/portdecoder.h"
@@ -198,7 +200,19 @@ std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specTex
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
         case ComPortSpec::Kind::At:
-            esp = std::make_unique<AtModule>(_network.get(), build, mac);
+            // The spec's own firmware (AT,ESP8266-AT222) wins over the board's and [NETWORK] EspChip
+            esp = std::make_unique<AtModule>(_network.get(),
+                                             spec.firmware != ComPortSpec::kDefaultFirmware
+                                                 ? static_cast<EspModule::Firmware>(spec.firmware)
+                                                 : build,
+                                             mac);
+            break;
+        case ComPortSpec::Kind::ZiFiNative:
+            esp = std::make_unique<ZiFiNativeModule>(_network.get(),
+                                                     spec.firmware != ComPortSpec::kDefaultFirmware
+                                                         ? static_cast<ZiFiNativeModule::Variant>(spec.firmware)
+                                                         : ZiFiNativeModule::Variant::S3,
+                                                     mac);
             break;
         case ComPortSpec::Kind::Espnet:
             esp = std::make_unique<EspnetModule>(_network.get(), chip);
@@ -257,8 +271,16 @@ void NetworkManager::FitCom(const Plan& plan, const AvrKeep* keep)
         _com->Uart().LoadState(*keep->com);   // the same chip, a new cable: its registers stay
     if (plan.zifi)
     {
-        // The ZiFi board's ESP ships at 115200, the only rate the AVR's USART0 runs
-        _zifi = std::make_unique<ZiFi>(_context, _com->Uart(), MakePeer(plan.zifiPeer, kDefaultEspBaud),
+        // The ZiFi board's ESP ships at 115200, the only rate the AVR's USART0 runs. The board carries an ESP-01
+        // (ESP8266, 1 MB flash): an ESP8266 build from [NETWORK] EspChip, else NonOS AT 1.7.4 (what original
+        // ZiFi users flashed; ESP-AT 2.2.x on request: ZiFi=AT,ESP8266-AT222)
+        const auto chipBuild = static_cast<EspModule::Firmware>(_context->config.network.espChip);
+        std::unique_ptr<ISerialPeer> zifiPeer =
+            MakePeer(plan.zifiPeer, kDefaultEspBaud,
+                     EspModule::ChipOf(chipBuild) == EspModule::Chip::Esp8266 ? chipBuild : EspModule::Firmware::Esp8266NonOs174);
+        if (auto* at = dynamic_cast<AtModule*>(zifiPeer.get()); at && at->GetChip() == EspModule::Chip::Esp8266)
+            at->SetFlash(atdialect::Flash::OneMb);
+        _zifi = std::make_unique<ZiFi>(_context, _com->Uart(), std::move(zifiPeer),
                                        std::move(waitPortInterrupt));
         if (keep && keep->zifiLine)
             _zifi->Line().Uart().LoadState(*keep->zifiLine);
@@ -897,6 +919,8 @@ void NetworkManager::FillPeerStatus(const ISerialPeer* peer, Status::Com& c) con
     {
         c.peerBaud = esp->Baud();
         c.requests = esp->RequestsServed();
+        c.esp = StateNode::Object();
+        espdescribe::Describe(*esp, c.esp);
         for (const EspModule::Exchange& e : esp->RecentExchanges())
             c.exchanges.emplace_back(e.request, e.reply);
     }

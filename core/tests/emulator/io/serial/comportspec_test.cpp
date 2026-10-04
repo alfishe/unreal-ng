@@ -90,6 +90,44 @@ TEST(ComPortSpec_Test, EspModuleRates)
     EXPECT_EQ(s.ToString(), "AT,115200");
     EXPECT_FALSE(ComPortSpec::Parse("ESPNET,", s, error));
     EXPECT_FALSE(ComPortSpec::Parse("AT,fast", s, error));
-    EXPECT_NE(error.find("AT[,<baud>]"), std::string::npos) << error;
+    EXPECT_NE(error.find("AT[,<firmware>][,<baud>]"), std::string::npos) << error;
     EXPECT_FALSE(ComPortSpec::Parse("ESPNET,0", s, error));
+}
+
+TEST(ComPortSpec_Test, AtFirmwareForOneModule)
+{
+    // AT[,<firmware>][,<baud>]: the build of this module alone (ZiFi=AT,ESP8266-AT222), either order
+    ComPortSpec s;
+    std::string error;
+    ASSERT_TRUE(ComPortSpec::Parse("at,esp8266-at222", s, error)) << error;
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::At);
+    EXPECT_EQ(s.firmware, 3);
+    EXPECT_EQ(s.baud, 0u);
+    EXPECT_EQ(s.ToString(), "AT,ESP8266-AT222");
+    ASSERT_TRUE(ComPortSpec::Parse("AT,57600,2.2.1", s, error)) << error;
+    EXPECT_EQ(s.firmware, 2);
+    EXPECT_EQ(s.baud, 57600u);
+    EXPECT_EQ(s.ToString(), "AT,ESP8266-AT221,57600");
+    ASSERT_TRUE(ComPortSpec::Parse("AT", s, error));
+    EXPECT_EQ(s.firmware, ComPortSpec::kDefaultFirmware) << "not written: EspChip / the board decides";
+    EXPECT_FALSE(ComPortSpec::Parse("AT,ESP9000", s, error));
+    EXPECT_NE(error.find("ESP8266-AT222"), std::string::npos) << error;
+    EXPECT_FALSE(ComPortSpec::Parse("AT,115200,57600", s, error)) << "one rate";
+    EXPECT_FALSE(ComPortSpec::Parse("ESPNET,ESP8266", s, error)) << "ESPNET has one firmware";
+}
+
+TEST(ComPortSpec_Test, ZiFiNative)
+{
+    ComPortSpec s;
+    std::string error;
+    ASSERT_TRUE(ComPortSpec::Parse("zifi-native", s, error)) << error;
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::ZiFiNative);
+    EXPECT_EQ(s.ToString(), "ZIFI-NATIVE");
+    ASSERT_TRUE(ComPortSpec::Parse("ZIFI-NATIVE,esp-01s", s, error)) << error;
+    EXPECT_EQ(s.firmware, 1);
+    EXPECT_EQ(s.ToString(), "ZIFI-NATIVE,ESP01S");
+    ASSERT_TRUE(ComPortSpec::Parse("ZIFI-NATIVE,S3,115200", s, error)) << error;
+    EXPECT_EQ(s.firmware, 0);
+    EXPECT_EQ(s.ToString(), "ZIFI-NATIVE,S3,115200");
+    EXPECT_FALSE(ComPortSpec::Parse("ZIFI-NATIVE,ESP8266-AT222", s, error)) << "an AT build is no native variant";
 }

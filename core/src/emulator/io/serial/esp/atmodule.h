@@ -13,6 +13,7 @@
 /// SEND OK before the next +IPD, CLOSED after the last data, no other text
 /// while a link is busy.
 
+#include "emulator/io/serial/esp/atdialect.h"
 #include "emulator/io/serial/esp/espmodule.h"
 
 class AtModule final : public EspModule
@@ -31,6 +32,10 @@ public:
     const char* Kind() const override { return "at"; }
     void OnFrame() override;
     Firmware GetFirmware() const { return _firmware; }
+    /// The module's flash (a board property: the ESP-01 / ESP-01S carry 1 MB, whose ESP-AT build has no OTA)
+    void SetFlash(atdialect::Flash flash) { _flash = flash; }
+    atdialect::Flash GetFlash() const { return _flash; }
+    bool SysLog() const { return _sysLog; }
 
     /// Session settings a status view shows (AT+CIPMUX, AT+CIPRECVMODE, AT+SYSSTORE, AT+CIPDNS)
     bool Mux() const { return _mux; }
@@ -68,6 +73,7 @@ private:
         NetEndpoint remote;           ///< UDP: where CIPSEND goes
         uint16_t localPort = 0;
         uint32_t notified = 0;        ///< passive mode: bytes announced with +IPD,<len>
+        bool ipdOwed = false;         ///< ESP-AT 2.x passive mode: +IPD reported, AT+CIPRECVDATA not run yet
     };
 
     void HandleLine(const std::string& line);
@@ -75,12 +81,13 @@ private:
     void Ok() { Send("\r\nOK\r\n"); }
     /// ESP-AT 2.x (ESP32 AT 2.2.0, ESP8266 2.2.1 / 2.2.2) rather than NonOS 1.7
     bool At2() const { return _firmware != Firmware::Esp8266NonOs174; }
-    /// The ESP8266 ESP-AT 2.2 builds (their reply forms: +PING:, +CIPRECVDATA:<len>,)
-    bool Esp8266At2() const { return _firmware == Firmware::Esp8266At221 || _firmware == Firmware::Esp8266At222; }
     void OnHardwareReset() override;
     void OnHardwareBoot() override;
     void ResetSession();
-    void Error() { Send("\r\nERROR\r\n"); }
+    /// ERROR, after "ERR CODE:" when the build has error codes and AT+SYSLOG=1 (default: a parameter is invalid)
+    void Error(uint32_t code = atdialect::ErrorCode(atdialect::kSubParaInvalid));
+    void ExecFail() { Error(atdialect::ErrorCode(atdialect::kSubExecFail)); }
+    void Unsupported() { Error(atdialect::ErrorCode(atdialect::kSubUnsupported)); }
     void EmitUrcs();
     void FinishSend();
     void Boot(uint64_t afterUs);
@@ -92,7 +99,8 @@ private:
     void DoCipStatus();
     void DoCipServer(const std::string& args);
     void DoCipRecvData(const std::string& args);
-    void DoCwJap(const std::string& args);
+    void DoCwJap(const std::string& args, bool execute);
+    void DoCipState();
     void DoUart(const std::string& args);
     void DoSntpCfg(const std::string& args);
     void DoSntpTime();
@@ -102,6 +110,8 @@ private:
     void FlushTransparent();
 
     Firmware _firmware = Firmware::Esp32At220;
+    const atdialect::Traits* _traits = nullptr;
+    atdialect::Flash _flash = atdialect::Flash::TwoMbOrMore;
 
     // Settings
     bool _echo = true;

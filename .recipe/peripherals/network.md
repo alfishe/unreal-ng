@@ -76,7 +76,8 @@ takes the same values for the card's side:
 | `LOOPBACK` | every byte the ZX sends comes back |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
 | `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
-| `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |
+| `AT[,<firmware>][,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET`; `<firmware>` (`ESP32`, `ESP8266` = NonOS 1.7.4, `ESP8266-AT221`, `ESP8266-AT222`) picks the build for this module alone, else `[NETWORK] EspChip=` |
+| `ZIFI-NATIVE[,<variant>][,<baud>]` | the 2026 ZiFi firmware (binary frames, not AT): `S3` = ESP32-S3-Zero `s3-native-0.6.94` (default), `ESP01S` = ESP-01S `native-0.2.2`; see ZiFi below |
 | `MODEM[,<guest port>]` | an emulated Hayes modem: `AT` commands, `ATDT <host>[:<port>]` (port 23 by default) or `ATDT <number>` from `[NETWORK] ModemPhonebook=5551234=bbs.example.org:23,...` dials through the virtual network; `CONNECT <rate>` / `BUSY` (refused) / `NO ANSWER` / `NO CARRIER`, DCD follows the call, `+++` (a second of silence around it) returns to command mode, `ATO` / `ATH`; with `<guest port>` a host client of that guest port (`Forward=`) rings it (`RING`, RI; `ATA` or `ATS0=n` answers). See [The Hayes modem](#the-hayes-modem) |
 | `SERIAL:<device>[,<baud>]` | a host serial device (`/dev/tty.usbserial-0001`, `/dev/ttyUSB0`, `COM3`); it follows the rate and format the ZX programs (`<baud>` until then, 115200 by default); `ComModemLines=1` passes RTS / DTR and reports CTS / DSR / RI / DCD (off by default: USB ESP boards wire RTS / DTR to reset / boot) |
 
@@ -123,10 +124,18 @@ COM port can. `inspect_state network` shows it as `atm2ioesp`. Details:
 **ZiFi** (TS-Conf; a ZX-Evo with `[EVO] Avr=TS2016-02` / `TS2016-04`): the
 TS-Labs AVR firmware passes bytes between the Z80 and an ESP module on its own
 UART (115200, no flow control) through two rings, 511 bytes in and 255 out.
-`ZiFi=` says what is on that UART: `NONE` (default: no ZiFi board), `AT` (the
-original board: an ESP-01 with Espressif's AT firmware, HackerVBI's
-`zifi.spg`), or any `ComPort=` value (`LOOPBACK`, `TCP:...`, `SERIAL:...` for
-a real ESP on USB). The Z80 sees the same `#xxEF` range as the COM port:
+`ZiFi=` says what is on that UART:
+
+| `ZiFi=` | The board |
+|:--|:--|
+| `NONE` (default) | no ZiFi board |
+| `AT` | the original board: an ESP-01 (ESP8266, 1 MB) with Espressif's AT firmware - NonOS AT 1.7.4 (HackerVBI's `zifi.spg` sends `AT+CWMODE_DEF`, `AT+CWJAP_CUR`), or the ESP8266 build `[NETWORK] EspChip=` names |
+| `AT,ESP8266-AT222` | the same ESP-01 reflashed with ESP-AT 2.2.2 (1 MB build: no OTA). Espressif's dialect: no `_CUR` / `_DEF` forms (they answer `ERROR`), `+CWJAP:<code>` + `ERROR`, `AT+CWSTATE?`, `AT+CIPSTATE?`, quoted `+CIPDOMAIN:`, one passive `+IPD` per read, `ERR CODE:0x...` before `ERROR` after `AT+SYSLOG=1`. What a ZiFi port of the Sprinter ESP Network Kit needs (passive receive: the AVR has no flow control) |
+| `AT,ESP8266-AT221` | the kit's "2.2.1" (its `_CUR` tokens, no `SYSSTORE`, no passive receive) |
+| `ZIFI-NATIVE` / `ZIFI-NATIVE,ESP01S` | the 2026 "new ZiFi": an ESP32-S3-Zero (`s3-native-0.6.94`) or an ESP-01S (`native-0.2.2`) with the binary protocol of the new `zifi.spg` and the Wild Commander plugins |
+| `LOOPBACK`, `TCP:...`, `SERIAL:...` | as for `ComPort=` (`SERIAL:` = a real ESP on a USB adapter) |
+
+The Z80 sees the same `#xxEF` range as the COM port:
 
 | Port | What |
 |:--|:--|
@@ -141,9 +150,41 @@ a real ESP on USB). The Z80 sees the same `#xxEF` range as the COM port:
 Until `#F1` goes to `#C7EF` every ZiFi register reads `#FF`. Every access
 holds the Z80 while the AVR answers. `inspect_state network` shows it as
 `zifi` (API, which ring the data register reaches, IMR / ISR, ring fill, the
-line's peer, `dropped` = bytes the full ring lost); at runtime
-`network set zifi=at`. Details:
+line's peer, `dropped` = bytes the full ring lost) and, for an ESP module, `esp`
+(the firmware, Wi-Fi, the `at_session` or `native_session`, the last 32
+exchanges); at runtime `network set zifi=at` / `zifi=at,esp8266-at222` /
+`zifi=zifi-native`. Details:
 [2026-10-02-tsconf-zifi](../../docs/inprogress/2026-10-02-tsconf-zifi/README.md).
+
+**The native ZiFi protocol** (`ZIFI-NATIVE`): frames `5A CMD LEN_L LEN_H DATA
+XOR` both ways (XOR of CMD, LEN and DATA, not the `5A`; at most 1024 bytes).
+The module answers `FE` (ACK) at once and the result later (`90` NET_OPEN,
+`92` NET_RECV - no ACK, `94` HTTP GET `[ok][code LE16][length LE32]`, `A2` NTP
+`YYYYMMDDhhmmss`, `83` WIFI_INI `[ok][IPv4]`, `F0` for PING); a failure sends
+`EE <text>` first, and `GET_STEP` (`05`) returns the last command and that
+text. The Wi-Fi is the virtual access point: `zifi.ini` must say `ssid:
+UnrealNG` (any password); another SSID ends in `EE "wifi timeout"` after
+10 s. Not emulated (they answer as when the service cannot start, `EE
+"ftp:not emulated"` etc.): FTP / SMB / WebDAV (they call back into the Z80),
+OTA, the online update, the WC updater, the weather; HTTPS (`get:tls connect
+failed`). `native_session.activity` shows the command waiting for the network.
+
+Check by hand (the API on, PING, SYS_INFO):
+
+```text
+network set zifi=zifi-native
+out #C7EF,#F1 ; in #C1EF            -- API on, ZiFi selected for #00EF..#BFEF
+out #BFEF: 5A 04 00 00 04           -- PING
+in  #C0EF -> 5 ; INIR from #BFEF: 5A F0 00 00 F0
+```
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"zifi": "zifi-native,s3"}}}
+{"tool": "inspect_state", "arguments": {"target": "auto", "aspects": ["network"]}}
+```
+
+The `[zifi]` line then ends `[ZIFI-NATIVE S3 (s3-native-0.6.94), idle]`.
 
 ```json
 {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
