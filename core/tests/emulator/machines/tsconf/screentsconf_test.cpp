@@ -526,3 +526,44 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
         }
     }
 }
+
+/// A program that changes the video mode mid-frame (zifi.spg: a 256C header, a TXT list, a 256C status bar, every
+/// frame) keeps what the beam already drew. All TS modes share one 720x288 frame and the hardware has no
+/// framebuffer to clear, so a V_CONFIG mode change must not wipe the lines above it (it did: only the last
+/// segment survived, a black screenshot with a status bar at the bottom)
+TEST_F(ScreenTSConf_Test, VID6_ModeChangeMidFrameKeepsTheDrawnLines)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x06);
+    ts.cram[0xA6] = 0x03E0;  // the border: green, nothing else in the picture is
+    const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
+    Reg(TsConfReg::VConfig, 0x00);
+
+    TsConfEngine& engine = _decoder->GetEngine();
+    engine.OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    Screen()->InitRaster();
+    Screen()->ResetPrevTstate();
+    auto runTo = [&](uint32_t line) {
+        const uint32_t t = line * TsConfEngine::kLineTacts;
+        _z80->t = t;
+        engine.CatchUp(t);
+        Screen()->UpdateScreen();
+    };
+    runTo(60);
+    Reg(TsConfReg::VConfig, 0x01);  // ZX -> 16C
+    runTo(90);
+    Reg(TsConfReg::VConfig, 0x03);  // 16C -> TXT
+    runTo(120);
+    Reg(TsConfReg::VConfig, 0x02);  // TXT -> 256C
+    runTo(150);
+
+    uint32_t* buffer = nullptr;
+    size_t size = 0;
+    Screen()->GetFramebufferData(&buffer, &size);
+    auto at = [&](uint32_t dot, uint32_t line) { return buffer[Fy(line) * 720 + Fx(dot)]; };
+    EXPECT_EQ(at(100, 40), border) << "a line drawn in the first mode";
+    EXPECT_EQ(at(100, 70), border) << "a line drawn in the second mode";
+    EXPECT_EQ(at(100, 100), border) << "a line drawn in the third mode";
+    EXPECT_EQ(at(100, 130), border) << "a line of the last mode";
+}

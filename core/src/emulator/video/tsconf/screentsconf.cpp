@@ -9,6 +9,7 @@
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
+#include "emulator/video/videofamily.h"
 
 namespace
 {
@@ -205,6 +206,20 @@ const void* ScreenTSConf::VideoFamilyView() const
 
 void ScreenTSConf::SetVideoMode(VideoModeEnum mode)
 {
+    // A mode change inside the TS family (ZX / 16C / 256C / TXT by V_CONFIG) is only a new label: every TS mode has
+    // the same 720x288 frame, raster and timing, and the hardware has no framebuffer to clear. Programs switch
+    // it mid-frame from line interrupts (zifi.spg: 256C header, TXT list, 256C status bar, every frame). The full
+    // path would clear the lines already drawn and the presented frames, and tell the GUI to re-attach its
+    // screen - twice a frame: a black picture with the last segment only, flickering
+    if (_framebuffer.memoryBuffer != nullptr && FamilyOf(_mode) == VideoFamily::TsConf &&
+        FamilyOf(mode) == VideoFamily::TsConf)
+    {
+        _mode = mode;
+        _drawCallback = _drawCallbacks[_mode];
+        _framebuffer.videoMode = mode;
+        return;
+    }
+
     // The raster state and framebuffer come from the descriptor; the ZX
     // renderer's tables are not used by this screen
     Screen::SetVideoMode(mode);
