@@ -591,19 +591,23 @@ Global functions on the bound or selected emulator (breakpoints fire while debug
 stops where: [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```lua
-id = bp(0x8000)                -- execution breakpoint, returns its id (-1 on failure)
-id = bp(0xC000, "ram32")       -- only while RAM page 32 is mapped at #C000 ("rom3", "cache0")
-id = bp_read(0x4000)           -- memory read; bp_read(addr, "ram5") bound to a page
-id = bp_write(0x5C00)          -- memory write; bp_write(addr, page) the same
-id = bp_port_in(0xFE)
-id = bp_port_out(0xFE)
+id = bp(0x8000)                -- execution breakpoint, returns its id (-1 when refused)
+id = bp(0x8000, {to=0x80FF})   -- a range #8000-#80FF (one check per access, however many ranges)
+id = bp(0x0038, {hits=50})     -- stop on the 50th hit only; '>=50' from the 50th on, '%50' every 50th
+id = bp(0xC000, "ram32")       -- physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = bp(0xC000, {page="ram32", slot_only=true})  -- only through slot 3 (#C000)
+id = bp_read(0x4000)           -- memory read; the same options
+id = bp_write(0x4000, {to=0x57FF})  -- memory write: the screen bitmap
+id = bp_port_in(0xFE, {mask=0x00FF})  -- port IN on #FE with any high byte; options {mask=, hits=}
+id = bp_port_out(0x7FFD)
+bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
 n = bp_count()
-print(bp_list())               -- the text table; a page breakpoint ends "in ram32"
-st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, page = {kind, page}}
+print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
+st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}
 ```
 
 ### Analyzer Management

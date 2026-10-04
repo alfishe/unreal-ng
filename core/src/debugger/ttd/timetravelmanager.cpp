@@ -1990,6 +1990,16 @@ bool TimeTravelManager::SubmitLiveInputImpl(const TTDInputEvent& ev, const TTDNe
     const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
     if (loopRunning && !onLoopThread)
     {
+        // Paused and parked: nobody else drives the machine until Resume (which waits for this), so the input is
+        // applied - and journaled - now, after whatever was queued before it. The API's "applied before the
+        // response" then holds on a paused machine too (pause -> mouse/keyboard -> read state)
+        if (_context->pEmulator->RunWhileParked([&]() {
+                DrainPendingLiveInput();
+                ApplyLiveInput(ev, net, payload, payload ? length : 0);
+                UpdateInputWorkFlag();
+            }))
+            return true;
+
         {
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             PendingInput pending;
@@ -2083,17 +2093,7 @@ void TimeTravelManager::ServiceInput()
 
     // 2. Live input queued by other threads: applied (and journaled) here, or
     //    dropped when the journal took over input while it waited
-    std::vector<PendingInput> pending;
-    {
-        std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        pending.swap(_pendingInput);
-    }
-    if (!pending.empty() && !OwnsInput())
-    {
-        for (const PendingInput& p : pending)
-            ApplyLiveInput(p.ev, p.hasNet ? &p.net : nullptr, p.payload.empty() ? nullptr : p.payload.data(),
-                           static_cast<uint32_t>(p.payload.size()));
-    }
+    DrainPendingLiveInput();
 
     // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
     //    like live input when the journal took over while they waited
@@ -2109,6 +2109,21 @@ void TimeTravelManager::ServiceInput()
     }
 
     UpdateInputWorkFlag();
+}
+
+void TimeTravelManager::DrainPendingLiveInput()
+{
+    std::vector<PendingInput> pending;
+    {
+        std::lock_guard<std::mutex> lock(_pendingInputMutex);
+        pending.swap(_pendingInput);
+    }
+    if (!pending.empty() && !OwnsInput())
+    {
+        for (const PendingInput& p : pending)
+            ApplyLiveInput(p.ev, p.hasNet ? &p.net : nullptr, p.payload.empty() ? nullptr : p.payload.data(),
+                           static_cast<uint32_t>(p.payload.size()));
+    }
 }
 
 void TimeTravelManager::UpdateInputWorkFlag()

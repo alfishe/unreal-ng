@@ -148,4 +148,9 @@ void EffectiveMac(const SlotConfig& slot, int slotIndex, uint8_t instance, uint8
 /// Whether this build has the card (the phases that are not built yet refuse the kind with a reason)
 bool KindAvailable(CardKind kind, std::string* why = nullptr);
 
+/// A slot population that works but is wrong on the board (empty: none). SprinterSerial with both IRQ jumpers
+/// (J5 and J6) fitted: on the Sprinter every IRQ pin of a slot is one line, and the PC16552D's push-pull INTA / INTB
+/// fight when their levels differ (network open question Q13, owner 2026-10-04: modeled as the high one winning)
+std::string SlotWarning(const SlotConfig& slot, int slotIndex);
+
 }  // namespace sprinterisa

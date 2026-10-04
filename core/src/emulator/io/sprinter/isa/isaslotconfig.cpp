@@ -294,6 +294,16 @@ void EffectiveMac(const SlotConfig& slot, int slotIndex, uint8_t instance, uint8
     out[5] = static_cast<uint8_t>(slotIndex + 1);
 }
 
+std::string SlotWarning(const SlotConfig& slot, int slotIndex)
+{
+    if (static_cast<CardKind>(slot.kind) == CardKind::Dual16552 && slot.irq != 0 && slot.irqB != 0)
+        return "slot " + std::to_string(slotIndex + 1) + ": SprinterSerial with both IRQ jumpers fitted (J5 IRQ " +
+               std::to_string(slot.irq) + ", J6 IRQ " + std::to_string(slot.irqB) +
+               "): the Sprinter joins every IRQ pin of a slot, so COM1's and COM2's push-pull INTR outputs fight "
+               "whenever their levels differ (modeled: the high one wins); fit one jumper";
+    return {};
+}
+
 bool KindAvailable(CardKind kind, std::string* why)
 {
     const char* reason = nullptr;

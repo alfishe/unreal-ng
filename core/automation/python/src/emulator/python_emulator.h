@@ -108,6 +108,25 @@ inline py::dict StepOutcome(const Emulator& emulator, unsigned executed)
     return result;
 }
 
+/// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
+/// ApplyScriptOptions). The breakpoint id, or -1 when refused
+inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8_t access, uint16_t address,
+                                  const std::string& page, int32_t to, bool slotOnly, int32_t mask, const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = type;
+    spec.access = access;
+    spec.address = address;
+    std::string error;
+    if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
 inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
 {
     int maxPage;
@@ -1556,48 +1575,37 @@ namespace PythonBindings
                  "RZX playback status")
             
             // Breakpoint management
-            .def("bp", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return -1;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (!bpm) return -1;
-                std::string error;
-                const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_EXECUTE, page, error);
-                return id == BRK_INVALID ? -1 : static_cast<int>(id);
-            }, "Add execution breakpoint; page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
-               py::arg("addr"), py::arg("page") = "")
-            .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return -1;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (!bpm) return -1;
-                std::string error;
-                const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_READ, page, error);
-                return id == BRK_INVALID ? -1 : static_cast<int>(id);
-            }, "Add memory read breakpoint (watchpoint); page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
-               py::arg("addr"), py::arg("page") = "")
-            .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page) -> int {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return -1;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (!bpm) return -1;
-                std::string error;
-                const uint16_t id = bpm->AddMemoryBreakpointInPageSpec(addr, BRK_MEM_WRITE, page, error);
-                return id == BRK_INVALID ? -1 : static_cast<int>(id);
-            }, "Add memory write breakpoint (watchpoint); page 'ram32' / 'rom3' / 'cache0': only while that page is mapped at the address (-1: bad page)",
-               py::arg("addr"), py::arg("page") = "")
-            .def("bp_port_in", [](Emulator& self, uint16_t port) -> int {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return -1;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                return bpm ? static_cast<int>(bpm->AddPortInBreakpoint(port)) : -1;
-            }, "Add port IN breakpoint", py::arg("port"))
-            .def("bp_port_out", [](Emulator& self, uint16_t port) -> int {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return -1;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                return bpm ? static_cast<int>(bpm->AddPortOutBreakpoint(port)) : -1;
-            }, "Add port OUT breakpoint", py::arg("port"))
+            .def("bp", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
+                             const std::string& hits) -> int {
+                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits);
+            }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
+               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'. -1 when refused",
+               py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
+               py::arg("hits") = "")
+            .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
+                             const std::string& hits) -> int {
+                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits);
+            }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
+               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'. -1 when refused",
+               py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
+               py::arg("hits") = "")
+            .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
+                             const std::string& hits) -> int {
+                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits);
+            }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
+               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'. -1 when refused",
+               py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
+               py::arg("hits") = "")
+            .def("bp_port_in", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits) -> int {
+                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits);
+            }, "Add a port breakpoint (bp_port_in); mask: matches every port with (port & mask) == (port & mask); "
+               "hits '5' / '>=5' / '%5'. -1 when refused",
+               py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
+            .def("bp_port_out", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits) -> int {
+                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits);
+            }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
+               "hits '5' / '>=5' / '%5'. -1 when refused",
+               py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
             .def("bp_remove", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
@@ -1635,6 +1643,16 @@ namespace PythonBindings
                 return bpm ? bpm->SetBreakpointGroup(id, group) : false;
             }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name",
                py::arg("id"), py::arg("group"))
+            .def("bp_reset_hits", [](Emulator& self, int id) -> bool {
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                if (!bpm)
+                    return false;
+                if (id >= 0)
+                    return bpm->ResetHitCount(static_cast<uint16_t>(id));
+                bpm->ResetAllHitCounts();
+                return true;
+            }, "Hit counters back to 0: one breakpoint (id), or all (no id). False for an unknown id",
+               py::arg("id") = -1)
             .def("bp_count", [](Emulator& self) -> size_t {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return 0;
@@ -1669,6 +1687,7 @@ namespace PythonBindings
                     result["active"] = info.active;
                     result["note"] = info.note;
                     result["group"] = info.group;
+                    result["hit_count"] = info.hitCount;
                     if (!info.pageKind.empty())
                     {
                         py::dict page;
