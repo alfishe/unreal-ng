@@ -7,6 +7,7 @@
 #include "emulator/memory/profi/profiwaitoverlay.h"
 #include "emulator/io/keyboard/profixtkbc.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/ppi/ppi8255.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -49,6 +50,7 @@ public:
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
+    Ppi8255& GetPpi() { return _ppi; }
 
     /// The keyboard on the connector ([PROFI] Keyboard=, resolved for the board): Matrix, Xt or XtTable
     ProfiKeyboard GetKeyboardKind() const { return _keyboardKind; }
@@ -81,6 +83,8 @@ public:
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;
+    /// The 8255 register an address selects in the current port map, or #FF
+    uint8_t PpiRegister(uint16_t port, bool dosPorts) const;
     /// The Profi IDE answers in EXT mode only (IDE design §3.2)
     IdeAdapter::Gate IdeGate() override;
 
@@ -143,6 +147,9 @@ protected:
     /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
     const ProfiBoard _board;
     Ds12887 _rtc{256};
+    /// The board's 8255 (KR580VV55): Kempston joystick on port A, printer / Covox on B and C. Its addresses are
+    /// #1F/#3F/#5F/#7F outside the DOS / CP/M port set and #87/#A7/#C7/#E7 in the extended map (decoder-prom.md)
+    Ppi8255 _ppi;
     /// The keyboard on X9 (v5) / KEYB (v3), fixed at power-on; the PROFI-XT controller when fitted. Every even-port
     /// read that reaches the #FE arm is its /CSKBD (design section "Keyboard")
     ProfiKeyboard _keyboardKind = ProfiKeyboard::Matrix;
