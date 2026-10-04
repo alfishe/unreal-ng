@@ -1070,6 +1070,12 @@ emu.mem_find("AF 3C")                -- hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 -- or as a number
 emu.mem_find("AF 3C", 0x8000, 0xFFFF, 2, 32)  -- start, end, alignment, max matches
 emu.mem_find("CD ?? 00")             -- ?? = any byte, "A?" = any low nibble
+
+-- One coherent debugger snapshot (the same as GET /debug/snapshot): read at one moment, paused or between frames
+snap, err = debug_snapshot{disasm = 21, stack = 8, memory = {"cpu:0x8000:256", "ram5:0:6912"}}
+-- snap.seq, snap.state, snap.pause.reason, snap.consistency, snap.regs.special.pc, snap.prev_regs,
+-- snap.pages[1].kind, snap.stack.words, snap.time.frame, snap.disasm[1].mnemonic,
+-- snap.memory[1].bytes (a Lua string), snap.memory[2].error when a window cannot be read
 emu.mem_find("C3", nil, nil, 1, 64, "ram")         -- every RAM page: matches as page {kind, page} + offset
 emu.mem_find("C3 00 80", 0, 0x3FFF, 1, 64, "ram5") -- one page (offsets), also "rom2", "cache0"
 emu.mem_find("21 00 40", nil, nil, 1, 64, "cpu", "FF FF F0")  -- mask: 1 bits must match

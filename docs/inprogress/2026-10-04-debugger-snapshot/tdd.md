@@ -161,7 +161,7 @@ nothing per instruction.
 | MCP | `inspect_state` aspect `snapshot` (`disasm`, `stack`, `memory` arguments) with a one-line summary | `inspect_state` `memory`: unchanged (JSON transport); large binary reads go through `snapshot` memory windows (base64) |
 | Lua | `debug_snapshot{disasm=21, stack=8, memory={"cpu:0x8000:256"}}` -> table (memory windows as Lua strings) | `mem_read_bytes(addr, len [, space])` -> Lua string |
 | Python | `debug_snapshot(disasm=21, stack=8, memory=["cpu:0x8000:256"])` -> dict (memory as `bytes`) | `mem_read_bytes(addr, len, space="cpu")` -> `bytes` |
-| CLI | `snapshot [--disasm N] [--stack N] [--memory space:addr:len]` -> text: registers, pages, time, code, stack, hexdump | `memory save` gains `--space` (a page to a file) |
+| CLI | `debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]` (`snapshot` is the existing .sna load / save command) -> text: registers, pages, time, code, stack, hexdump | `memory save <space>:<addr>:<len> <file>` (any window to a file; the bank / page forms stay) |
 | Qt | not needed: the Qt debugger reads the core directly on the emulator thread. Stated in the docs | - |
 
 Docs: `webapi-interface.md`, `lua-interface.md`, `python-interface.md`, `command-interface.md`, `cli-interface.md`,
@@ -173,8 +173,8 @@ D7 / E3 marked done.
 | Test | Proves |
 |---|---|
 | `MemoryRead_Test` | every space and length limit; wrap at #FFFF; a page shorter than asked |
-| WebAPI binary vs JSON | the binary body equals the JSON bytes for the same request, on all five endpoints |
-| `/registers`, `/disasm` golden | JSON identical before and after the switch to the shared builders |
+| WebAPI binary vs JSON | the binary body equals the JSON bytes for the same request (checked live with curl against unreal-qt: core-tests do not link the drogon handlers) |
+| `/registers`, `/disasm` golden | JSON identical before and after the switch to the shared builders (captured live from a paused snapshot before and after: byte-identical) |
 | `DebugSnapshot_Test` paused | each part equals the separate reads |
 | `DebugSnapshot_Test` running | all parts describe one frame boundary: `regs.special.t`, `time.t` and the PC's bytes in `memory` agree |
 | `prev_regs` | step twice: `prev_regs` of the second snapshot = `regs` of the first |
