@@ -3656,83 +3656,48 @@ namespace PythonBindings
                 return reply.Ok() ? StateNodeToPy(reply.body) : py::object(py::dict());
             }, "Get current TTD position")
 
-            .def("ttd_markers", [](Emulator& self) -> py::list {
-                py::list markers;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return markers;
-                const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-                for (const auto& e : journal.SnapshotEvents())
-                {
-                    py::dict marker;
-                    marker["frame"]    = py::cast(e.time.frame);
-                    marker["tinframe"] = py::cast(e.time.tInFrame);
-                    marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
-                    marker["reason"]   = e.reason;
-                    markers.append(marker);
-                }
-                return markers;
+            .def("ttd_markers", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "markers");
+                return StateNodeToPy(reply.Ok() ? *reply.body.find("markers") : StateNode::Array());
             }, "List external-event markers (replay barriers)")
 
             // -------------------------------------------------------------
             // TD-4 — agent bookmarks (advisory annotations, never barriers).
             // Labels are keys: non-empty, at most 63 chars, unique per session.
             // -------------------------------------------------------------
-            .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
-                                         py::object frameObj, uint32_t tInFrame) -> py::dict {
-                py::dict result;
-                result["added"] = false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["error"] = "TTD not available";
-                    return result;
-                }
 
-                // Position omitted → current position (mark here).
-                ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+            .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
+                                         py::object frameObj, uint32_t tInFrame) -> py::object {
+                // Position omitted: the current position (mark here)
+                std::map<std::string, std::string> options{{"label", label}};
                 if (!frameObj.is_none())
                 {
-                    time.frame    = frameObj.cast<uint64_t>();
-                    time.tInFrame = tInFrame;
+                    options["frame"] = std::to_string(frameObj.cast<uint64_t>());
+                    options["tinframe"] = std::to_string(tInFrame);
                 }
-
-                std::string err;
-                if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-add", options);
+                StateNode value = reply.body;
+                if (!reply.Ok())
                 {
-                    result["error"] = err;
-                    return result;
+                    value["added"] = false;
+                    value["error"] = reply.message;
                 }
-                result["added"]    = true;
-                result["label"]    = label;
-                result["frame"]    = py::cast(time.frame);
-                result["tinframe"] = py::cast(time.tInFrame);
-                return result;
+                return StateNodeToPy(value);
             }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
                py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_bookmarks", [](Emulator& self) -> py::list {
-                py::list bookmarks;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return bookmarks;
-                for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
-                {
-                    py::dict entry;
-                    entry["frame"]    = py::cast(bm.time.frame);
-                    entry["tinframe"] = py::cast(bm.time.tInFrame);
-                    entry["label"]    = bm.label;
-                    bookmarks.append(entry);
-                }
-                return bookmarks;
+            .def("ttd_bookmarks", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks");
+                return StateNodeToPy(reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
             }, "List agent bookmarks (time-sorted)")
 
             .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->RemoveBookmark(label);
+                return TtdRunPy(self, "bookmark-delete", {{"label", label}}).Ok();
             }, "Delete an agent bookmark by label", py::arg("label"))
 
             // A bookmark seek IS a seek — identical result shape to ttd_seek
             // (plus the resolved label); a bookmark never halts anything.
+
             .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::object {
                 return TtdSeekPy(TtdRunPy(self, "seek", {{"bookmark", label}}));
             }, "Seek to an agent bookmark by label", py::arg("label"))

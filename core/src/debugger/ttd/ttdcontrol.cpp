@@ -179,7 +179,8 @@ const std::vector<std::string>& TTDControl::Verbs()
 {
     static const std::vector<std::string> verbs = {
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
-        "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step"};
+        "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
+        "markers", "bookmarks", "bookmark-add", "bookmark-delete"};
     return verbs;
 }
 
@@ -195,6 +196,8 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"resume", {"frame", "tinframe"}},
         {"step-instruction", {"dir"}},
         {"reverse-step", {"count", "tstates"}},
+        {"bookmark-add", {"label", "frame", "tinframe"}},
+        {"bookmark-delete", {"label"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -266,6 +269,14 @@ TTDReply TTDControl::Run(const std::string& verb, const TTDRequest& request)
         return StepInstruction(request);
     if (verb == "reverse-step")
         return ReverseStep(request);
+    if (verb == "markers")
+        return Markers();
+    if (verb == "bookmarks")
+        return Bookmarks();
+    if (verb == "bookmark-add")
+        return BookmarkAdd(request);
+    if (verb == "bookmark-delete")
+        return BookmarkDelete(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -695,6 +706,92 @@ TTDReply TTDControl::ReverseStep(const TTDRequest& request)
     reply.body["reached"] = ok;
     reply.body["mode"] = tstatesText ? "tstates" : "count";
     AddPosition(reply.body, _manager->CurrentPosition());
+    return reply;
+}
+
+TTDReply TTDControl::Markers()
+{
+    const auto events = _manager->GetExternalEvents().SnapshotEvents();
+    TTDReply reply;
+    reply.body["count"] = static_cast<uint64_t>(events.size());
+    StateNode list = StateNode::Array();
+    for (const auto& e : events)
+    {
+        StateNode marker = TimePointNode(e.time);
+        marker["kind"] = TTDExternalEventKindToString(e.kind);
+        marker["reason"] = std::string(e.reason);
+        list.push(marker);
+    }
+    reply.body["markers"] = list;
+    return reply;
+}
+
+// TD-4: agent bookmarks are advisory annotations, never replay barriers. Labels are
+// keys: non-empty, at most 63 characters, unique per session
+TTDReply TTDControl::Bookmarks()
+{
+    const auto bookmarks = _manager->GetBookmarks();  // time-sorted snapshot copy
+    TTDReply reply;
+    reply.body["count"] = static_cast<uint64_t>(bookmarks.size());
+    StateNode list = StateNode::Array();
+    for (const auto& bm : bookmarks)
+    {
+        StateNode entry = TimePointNode(bm.time);
+        entry["label"] = bm.label;
+        list.push(entry);
+    }
+    reply.body["bookmarks"] = list;
+    return reply;
+}
+
+TTDReply TTDControl::BookmarkAdd(const TTDRequest& request)
+{
+    const std::string* label = Option(request, "label");
+    if (!label || label->empty())
+        return Fail(TTDControlError::BadRequest,
+                    "Missing or empty required field: label (non-empty string, at most 63 characters)");
+
+    // No frame: the current position ("mark here")
+    TTDTimePoint time = _manager->CurrentPosition();
+    if (const std::string* frameText = Option(request, "frame"))
+    {
+        uint64_t frame = 0;
+        uint64_t t = 0;
+        const std::string* tText = Option(request, "tinframe");
+        if (!ParseU64(*frameText, frame) || (tText && (!ParseU64(*tText, t) || t > UINT32_MAX)))
+            return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
+        time = {frame, static_cast<uint32_t>(t)};
+    }
+    else if (Option(request, "tinframe"))
+        return Fail(TTDControlError::BadRequest, "tinframe needs a frame");
+
+    // The label contract is the client's (400); a duplicate label or a position outside
+    // the timeline conflicts with the session (409)
+    if (label->size() > kMaxBookmarkLabelLength)
+        return Fail(TTDControlError::BadRequest, "bookmark label is longer than " +
+                                                     std::to_string(kMaxBookmarkLabelLength) +
+                                                     " characters");
+    std::string err;
+    if (!_manager->AddBookmark(time, *label, &err))
+        return Fail(TTDControlError::Conflict, err);
+    TTDReply reply;
+    reply.created = true;
+    reply.body["added"] = true;
+    reply.body["label"] = *label;
+    AddPosition(reply.body, time);
+    return reply;
+}
+
+TTDReply TTDControl::BookmarkDelete(const TTDRequest& request)
+{
+    const std::string* label = Option(request, "label");
+    if (!label || label->empty())
+        return Fail(TTDControlError::BadRequest, "Missing required field: label");
+    if (!_manager->RemoveBookmark(*label))
+        return Fail(TTDControlError::NotFound, "Unknown bookmark label: " + *label);
+    TTDReply reply;
+    reply.body["removed"] = true;
+    reply.body["label"] = *label;
     return reply;
 }
 

@@ -13,6 +13,7 @@
 
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
+#include "debugger/ttd/ttdexternalevents.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 
@@ -303,4 +304,54 @@ TEST_F(TTDControl_Test, InstructionStepsCheckTheirArguments)
     ASSERT_TRUE(r.Ok()) << r.message;
     EXPECT_TRUE(Bool(r, "reached"));
     EXPECT_EQ(Str(r, "mode"), "count");
+}
+
+// ---------------------------------------------------------------------------
+// Group 3: markers and bookmarks
+// ---------------------------------------------------------------------------
+
+TEST_F(TTDControl_Test, MarkersListTheReplayBarriers)
+{
+    Record(2);
+    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::TapeControl, "play");
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    const TTDReply r = Run("markers");
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_EQ(Int(r, "count"), 1);
+    const StateNode& marker = r.body.find("markers")->items.at(0);
+    EXPECT_EQ(marker.find("kind")->s, ttd::TTDExternalEventKindToString(ttd::TTDExternalEventKind::TapeControl));
+    EXPECT_EQ(marker.find("reason")->s, "play");
+}
+
+TEST_F(TTDControl_Test, BookmarksAreAddedListedAndDeletedByLabel)
+{
+    Record(4);
+    ASSERT_TRUE(Run("stop").Ok());
+    const uint64_t frame = _ttd->GetSessionInfo().sessionStartFrame + 1;
+
+    TTDReply r = Run("bookmark-add", {{"label", "entry"}, {"frame", std::to_string(frame)}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_EQ(r.HttpStatus(), 201);
+    EXPECT_TRUE(Bool(r, "added"));
+    EXPECT_EQ(Int(r, "frame"), static_cast<int64_t>(frame));
+
+    EXPECT_EQ(Run("bookmark-add", {{"label", "entry"}}).error, TTDControlError::Conflict);  // duplicate
+    EXPECT_EQ(Run("bookmark-add", {{"label", ""}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("bookmark-add", {{"label", std::string(64, 'x')}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("bookmark-add", {{"label", "late"}, {"frame", "99999999"}}).error, TTDControlError::Conflict);
+
+    r = Run("bookmarks");
+    ASSERT_TRUE(r.Ok());
+    EXPECT_EQ(Int(r, "count"), 1);
+    EXPECT_EQ(r.body.find("bookmarks")->items.at(0).find("label")->s, "entry");
+
+    r = Run("seek", {{"bookmark", "entry"}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_EQ(r.body.find("arrived_at")->find("frame")->i, static_cast<int64_t>(frame));
+    EXPECT_EQ(Str(r, "bookmark"), "entry");
+
+    EXPECT_TRUE(Run("bookmark-delete", {{"label", "entry"}}).Ok());
+    const TTDReply gone = Run("bookmark-delete", {{"label", "entry"}});
+    EXPECT_EQ(gone.error, TTDControlError::NotFound);
+    EXPECT_EQ(gone.message, "Unknown bookmark label: entry");
 }

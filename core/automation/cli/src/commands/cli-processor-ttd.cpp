@@ -765,33 +765,22 @@ void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorConte
             return;
         }
         const std::string label = args[2];
-
-        // Optional position; omitted → current position (mark here).
-        ttd::TTDTimePoint time = mgr->CurrentPosition();
-        try
+        // Optional position; omitted: the current position (mark here)
+        std::map<std::string, std::string> options{{"label", label}};
+        if (args.size() > 3)
         {
-            if (args.size() > 3)
-            {
-                time.frame = std::stoull(args[3]);
-                time.tInFrame = args.size() > 4 ? static_cast<uint32_t>(std::stoul(args[4])) : 0u;
-            }
+            options["frame"] = args[3];
+            options["tinframe"] = args.size() > 4 ? args[4] : "0";
         }
-        catch (const std::exception& e)
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"bookmark-add", options});
+        if (!reply.Ok())
         {
-            session.SendResponse(std::string("Error: Invalid argument: ") + e.what() + NEWLINE);
+            session.SendResponse(std::string("Error: ") + reply.message + NEWLINE);
             return;
         }
-
-        std::string err;
-        if (!mgr->AddBookmark(time, label, &err))
-        {
-            session.SendResponse(std::string("Error: ") + err + NEWLINE);
-            return;
-        }
-
         std::stringstream ss;
-        ss << "TTD: Bookmark '" << label << "' added at (frame=" << time.frame
-           << ", tInFrame=" << time.tInFrame << ")" << NEWLINE;
+        ss << "TTD: Bookmark '" << label << "' added at (frame=" << reply.body.find("frame")->i
+           << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -805,9 +794,10 @@ void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorConte
             return;
         }
 
-        if (!mgr->RemoveBookmark(args[2]))
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"bookmark-delete", {{"label", args[2]}}});
+        if (!reply.Ok())
         {
-            session.SendResponse(std::string("Error: Unknown bookmark '") + args[2] + "'" + NEWLINE);
+            session.SendResponse("Error: " + reply.message + NEWLINE);
             return;
         }
 

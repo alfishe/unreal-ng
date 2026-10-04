@@ -3786,25 +3786,9 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("position")));
         });
 
-        lua.set_function("ttd_markers", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) return result;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return result;
-            const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-            int idx = 1;  // Lua tables are 1-based
-            for (const auto& e : journal.SnapshotEvents())
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = e.time.frame;
-                marker["tinframe"] = e.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
-                marker["reason"]   = e.reason;
-                result[idx++]       = marker;
-            }
-            return result;
+        lua.set_function("ttd_markers", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("markers");
+            return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("markers") : StateNode::Array());
         });
 
         // -----------------------------------------------------------------
@@ -3812,63 +3796,33 @@ public:
         // Labels are keys: non-empty, at most 63 chars, unique per session.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_bookmark_add", [this](const std::string& label,
+        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label,
                                                      sol::optional<uint64_t> frameOpt,
-                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["added"] = false;
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
-
-            // Position omitted → current position (mark here).
-            ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+            // Position omitted: the current position (mark here)
+            std::map<std::string, std::string> options{{"label", label}};
             if (frameOpt)
             {
-                time.frame    = *frameOpt;
-                time.tInFrame = tInFrameOpt.value_or(0);
+                options["frame"] = std::to_string(*frameOpt);
+                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
             }
-
-            std::string err;
-            if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+            const ttd::TTDReply reply = TtdRun("bookmark-add", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
             {
-                result["error"] = err;
-                return result;
+                value["added"] = false;
+                value["error"] = reply.message;
             }
-            result["added"]    = true;
-            result["label"]    = label;
-            result["frame"]    = time.frame;
-            result["tinframe"] = time.tInFrame;
-            return result;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_bookmarks", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) return result;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return result;
-            int idx = 1;  // Lua tables are 1-based
-            for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
-            {
-                sol::table entry = lua_view.create_table();
-                entry["frame"]    = bm.time.frame;
-                entry["tinframe"] = bm.time.tInFrame;
-                entry["label"]    = bm.label;
-                result[idx++]     = entry;
-            }
-            return result;
+        lua.set_function("ttd_bookmarks", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("bookmarks");
+            return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
         });
 
         lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->RemoveBookmark(label);
+            return TtdRun("bookmark-delete", {{"label", label}}).Ok();
         });
 
         // A bookmark seek IS a seek — identical result shape to ttd_seek

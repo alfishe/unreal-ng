@@ -55,12 +55,13 @@ struct TTDReply
     TTDControlError error = TTDControlError::None;
     std::string message;  ///< one sentence a user can act on; every surface shows it verbatim
     StateNode body = StateNode::Object();
+    bool created = false;  ///< success that made a new thing (a bookmark): HTTP 201
 
     bool Ok() const { return error == TTDControlError::None; }
     /// Success: the body. Failure: {"error": <phrase>, "message": ...} then the body's
     /// fields (a body that names its own "error" keeps it)
     StateNode ToValue() const;
-    int HttpStatus() const { return TTDControlErrorHttpStatus(error); }
+    int HttpStatus() const { return Ok() && created ? 201 : TTDControlErrorHttpStatus(error); }
 };
 
 class TTDControl
@@ -95,6 +96,10 @@ private:
     TTDReply Resume(const TTDRequest& request);
     TTDReply StepInstruction(const TTDRequest& request);
     TTDReply ReverseStep(const TTDRequest& request);
+    TTDReply Markers();
+    TTDReply Bookmarks();
+    TTDReply BookmarkAdd(const TTDRequest& request);
+    TTDReply BookmarkDelete(const TTDRequest& request);
 
     /// Moving in the timeline is refused while recording: the restored state would
     /// overwrite the live machine and the next capture would break the timeline

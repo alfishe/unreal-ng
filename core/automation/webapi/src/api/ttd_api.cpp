@@ -596,30 +596,8 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
                                  std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    const ttd::TTDExternalEventJournal& journal = mgr->GetExternalEvents();
-
-    Json::Value ret;
-    ret["count"] = Json::UInt64(journal.Size());
-
-    Json::Value markers(Json::arrayValue);
-    const auto events = journal.SnapshotEvents();
-    for (const auto& e : events)
-    {
-        Json::Value marker;
-        marker["frame"]    = Json::UInt64(e.time.frame);
-        marker["tinframe"] = Json::UInt(e.time.tInFrame);
-        marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
-        marker["reason"]   = e.reason;
-        markers.append(marker);
-    }
-    ret["markers"] = markers;
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    RespondTTD(id, "markers", {}, callback);
 }
 
 // -------------------------------------------------------------------------
@@ -636,28 +614,8 @@ void EmulatorAPI::getTTDBookmarks(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    const auto bookmarks = mgr->GetBookmarks();  // time-sorted snapshot copy
-
-    Json::Value ret;
-    ret["count"] = Json::UInt64(bookmarks.size());
-
-    Json::Value list(Json::arrayValue);
-    for (const auto& bm : bookmarks)
-    {
-        Json::Value entry;
-        entry["frame"]    = Json::UInt64(bm.time.frame);
-        entry["tinframe"] = Json::UInt(bm.time.tInFrame);
-        entry["label"]    = bm.label;
-        list.append(entry);
-    }
-    ret["bookmarks"] = list;
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    RespondTTD(id, "bookmarks", {}, callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/bookmarks
@@ -674,64 +632,9 @@ void EmulatorAPI::postTTDBookmark(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    auto jsonBody = req->getJsonObject();
-    if (!jsonBody || !jsonBody->isMember("label") || !(*jsonBody)["label"].isString() ||
-        (*jsonBody)["label"].asString().empty())
-    {
-        Json::Value error;
-        error["error"]   = "Bad Request";
-        error["message"] = "Missing or empty required field: label "
-                           "(non-empty string, at most 63 characters)";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const std::string label = (*jsonBody)["label"].asString();
-
-    // Default to the current position so "mark here" needs no coordinates.
-    ttd::TTDTimePoint time = mgr->CurrentPosition();
-    if (jsonBody->isMember("frame"))
-    {
-        time.frame    = (*jsonBody)["frame"].asUInt64();
-        time.tInFrame = jsonBody->isMember("tinframe")
-                            ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt())
-                            : 0;
-    }
-
-    std::string err;
-    if (!mgr->AddBookmark(time, label, &err))
-    {
-        // Label contract violations are client errors; a duplicate label or
-        // a position outside the timeline conflicts with the session state.
-        const bool badLabel = err.find("empty") != std::string::npos ||
-                              err.find("longer") != std::string::npos;
-        Json::Value error;
-        error["error"]   = badLabel ? "Bad Request" : "Conflict";
-        error["message"] = err;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(badLabel ? HttpStatusCode::k400BadRequest
-                                     : HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    Json::Value ret;
-    ret["added"]    = true;
-    ret["label"]    = label;
-    ret["frame"]    = Json::UInt64(time.frame);
-    ret["tinframe"] = Json::UInt(time.tInFrame);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    resp->setStatusCode(HttpStatusCode::k201Created);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "bookmark-add", std::move(options), callback);
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/ttd/bookmarks/{label}
@@ -741,28 +644,8 @@ void EmulatorAPI::deleteTTDBookmark(const HttpRequestPtr& req,
                                     std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id, const std::string& label) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    if (!mgr->RemoveBookmark(label))
-    {
-        Json::Value error;
-        error["error"]   = "Not Found";
-        error["message"] = "Unknown bookmark label: " + label;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    Json::Value ret;
-    ret["removed"] = true;
-    ret["label"]   = label;
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    RespondTTD(id, "bookmark-delete", {{"label", label}}, callback);
 }
 
 // -------------------------------------------------------------------------

@@ -157,7 +157,7 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
   - [ ] 1b `TTDControl` over v1; WebAPI, CLI, Lua, Python on it; surface contract check
     - [x] Group 1 (2026-10-04): status, start, stop, invalidate, history-limit, journal, journal-build, journal-build-cancel
     - [x] Group 2 (2026-10-04): position, seek, step-back, step-forward, resume, step-instruction, reverse-step
-    - [ ] Group 3: markers, bookmarks
+    - [x] Group 3 (2026-10-04): markers, bookmarks, bookmark-add, bookmark-delete
     - [ ] Group 4: find-last, reverse-continue, port-events, coverage probe / scan / summary
     - [ ] Group 5: dump, load, file-info, export-clip
   - [ ] 1c GDB, DeZog, Qt, ZX-Poly group control and the Sprinter port search on `TTDControl`
