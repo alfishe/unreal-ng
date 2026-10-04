@@ -2029,6 +2029,21 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << zifi["rs232_rx"].asInt() << " / " << zifi["rs232_tx"].asInt() << "; line "
                                             << (zifi.isMember("peer") ? zifi["peer"].asString() : std::string("none"))
                                             << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
+                                            << (zifi.isMember("esp") ? " [" + zifi["esp"]["firmware"].asString() +
+                                                                           (zifi["esp"].isMember("native_session")
+                                                                                ? ", " + zifi["esp"]["native_session"]["activity"].asString() +
+                                                                                      (zifi["esp"]["native_session"]["last_error"].asString().empty()
+                                                                                           ? std::string()
+                                                                                           : ", last error \"" + zifi["esp"]["native_session"]["last_error"].asString() + "\"") +
+                                                                                      (zifi["esp"]["native_session"]["file_bridge"]["ftp"]["running"].asBool()
+                                                                                           ? ", FTP on " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["port"].asString() +
+                                                                                                 " (host " + zifi["esp"]["native_session"]["file_bridge"]["ftp"]["host_port"].asString() +
+                                                                                                 "), " + std::to_string(zifi["esp"]["native_session"]["file_bridge"]["ftp"]["sessions"].size()) +
+                                                                                                 " session(s)"
+                                                                                           : std::string())
+                                                                                : std::string()) +
+                                                                           "]"
+                                                                     : std::string())
                                             << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
                                             << zifi["dropped"].asUInt64();
                                     // A UART line at a glance: its peer, and a Hayes modem's mode, call and lines

@@ -1,5 +1,6 @@
 #include "emulator/io/serial/uart16550.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "emulator/io/serial/serialpeer.h"
@@ -71,6 +72,7 @@ Uart16550::Params Uart16550::EvoAvrParams(AvrFirmware firmware)
         case AvrFirmware::Ts2016Feb:
             break;
         case AvrFirmware::Ts2016Apr:
+            p.waitChecksPerLoop = 8;
             p.rxDepth = 511;
             p.txDepth = 255;
             p.threNotFull = true;
@@ -164,7 +166,8 @@ uint32_t Uart16550::AccessCycles(uint8_t reg, bool read, uint64_t now)
     // The AVR's clock, absolute, from the base-clock T-states
     const uint64_t avrNow = now * _params.avrClockHz / _baseClockHz;
     const uint64_t elapsed = avrNow > _avrRelease ? avrNow - _avrRelease : 0;
-    const uint32_t loop = _params.loopCycles ? _params.loopCycles : 1;
+    const uint32_t checks = _params.waitChecksPerLoop ? _params.waitChecksPerLoop : 1;
+    const uint32_t loop = std::max<uint32_t>(1, (_params.loopCycles ? _params.loopCycles : 1) / checks);
     // The main loop looks at the flag once per pass, and a pass starts when
     // the previous access is released: right behind it a whole pass is left,
     // long after it anywhere in one. The interrupt steals its cycles from the

@@ -15,10 +15,12 @@
 
 PortDecoder_Spectrum128::PortDecoder_Spectrum128(EmulatorContext* context) : PortDecoder(context)
 {
+    Spectrum128AyIoPort::Attach(_context, &_ayIoPort);
 }
 
 PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
 {
+    Spectrum128AyIoPort::Attach(_context, nullptr);
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->readCycleLatch == this)
         _context->pCore->GetZ80()->SetReadCycleLatch(nullptr);
     MLOGDEBUG("PortDecoder_Spectrum128::~PortDecoder_Spectrum128()");

@@ -102,7 +102,8 @@ enum class PeripheralId : uint8_t
     Ppi8255 = 50,         // an 8255 PPI (the ZX Profi's: joystick, printer / Covox): mode word and output latches (Ppi8255::State)
     Pit8253 = 51,         // an 8253 PIT (the ZX Profi v5's COM baud timer): three counters and the clock position (Pit8253::State)
     Usart8251 = 52,       // an 8251 USART (the ZX Profi v5's COM port): registers, buffers, the line, the #B3 latch (Usart8251::State)
-    // Future: SAA1099, GS512, etc.
+    Saa1099 = 53,         // Philips SAA1099 (tdd-saa1099.md §5): registers, generators, LFSRs, envelopes, clock-ratio phase; carried inside its card's blob set
+    // Future: GS512, etc.
     Count
 };
 

@@ -296,3 +296,51 @@ TEST_F(SoundChipTurboSound_Test, TtdRoundTripKeepsTheClockState)
     // Output content is not TTD state (the load flushes the decimators, the DC blockers are host-side): only the count
     EXPECT_EQ(nextA.size(), nextB.size());
 }
+
+/// region <Reset state>
+
+/// Power-on (the emulator just created) and a machine reset (Core::Reset) both leave the two AY chips in the
+/// datasheet reset state: every register 0, so both I/O ports are inputs and IN #FFFD of R14 / R15 reads the pulled-up
+/// pins (#FF), not the zero latch. Before the fix the reset set R7 = #FF: both ports outputs, R14 / R15 read 0.
+/// Sources: docs/inprogress/2026-10-04-ay-reset/TODO.md
+TEST_F(SoundChipTurboSound_Test, PowerOnAndMachineResetGiveTheDatasheetState)
+{
+    SoundChip_TurboSound* device = Device(*_context->pSoundManager);
+    ASSERT_NE(device, nullptr);
+
+    auto expectResetState = [device](const char* when)
+    {
+        for (int chip = 0; chip < 2; chip++)
+        {
+            SCOPED_TRACE(testing::Message() << when << ", chip " << chip);
+            device->portDeviceOutMethod(0xFFFD, chip == 0 ? 0xFF : 0xFE);  // TurboSound chip select
+            const uint8_t* regs = device->getChip(chip)->getRegisters();
+            for (int reg = 0; reg < 16; reg++)
+                EXPECT_EQ(regs[reg], 0) << "R" << reg;
+            device->portDeviceOutMethod(0xFFFD, AY_PORTA);
+            EXPECT_EQ(device->portDeviceInMethod(0xFFFD), 0xFF) << "IN #FFFD of R14";
+            device->portDeviceOutMethod(0xFFFD, AY_PORTB);
+            EXPECT_EQ(device->portDeviceInMethod(0xFFFD), 0xFF) << "IN #FFFD of R15";
+        }
+        device->portDeviceOutMethod(0xFFFD, 0xFF);
+    };
+
+    expectResetState("power-on");
+
+    // Program both chips away from the reset state: ports outputs with latches, sound on
+    for (int chip = 0; chip < 2; chip++)
+    {
+        device->portDeviceOutMethod(0xFFFD, chip == 0 ? 0xFF : 0xFE);
+        Poke(device, AY_MIXER_CONTROL, 0xF8);
+        Poke(device, AY_PORTA, 0x12);
+        Poke(device, AY_PORTB, 0x34);
+        Poke(device, AY_A_VOLUME, 0x0F);
+        device->portDeviceOutMethod(0xFFFD, AY_PORTA);
+        ASSERT_EQ(device->portDeviceInMethod(0xFFFD), 0x12) << "output port reads its latch";
+    }
+
+    _context->pCore->Reset();
+    expectResetState("machine reset");
+}
+
+/// endregion </Reset state>

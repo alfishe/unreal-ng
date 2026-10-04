@@ -792,6 +792,85 @@ TEST_F(SprinterBoot_Test, Bios306_DssUsesBothChannels)
     std::remove(data.c_str());
 }
 
+// The BIOS boot from an ATAPI CD (atapi-cd-boot.md): BIOS 3.06 Hotfix 2 with CMOS #10 = #03 (the system disk on the
+// primary slave) finds a CD unit there and goes to CDSTART: sector 1 has no signature, so it reads sector 17 with
+// 2048-byte sectors, finds "Starting..." + #00, copies the sector to #8000 and jumps to #800C with A = the drive code
+// (#C1, ATAPI on the primary slave), SP = #8000, interrupts off, IM 1. The disc is built here: an ISO 9660 primary
+// volume descriptor at sector 16, the boot sector at 17 (where a Joliet image keeps its descriptor), a terminator at 18.
+// Its loader stores A at #8802 and a marker at #8800, then loops at #8014.
+// Boot-bound (BIOS POST, SETUP, the IDE scan of four units), the turbo mode on
+TEST_F(SprinterBoot_Test, Bios306_BootsFromAnAtapiCd)
+{
+    constexpr size_t kSector = 2048;
+    std::vector<uint8_t> iso(32 * kSector, 0);
+    uint8_t* pvd = &iso[16 * kSector];
+    pvd[0] = 0x01;
+    std::memcpy(pvd + 1, "CD001", 5);
+    pvd[6] = 0x01;
+    pvd[80] = 32;  // volume space size, both-endian 32-bit
+    pvd[87] = 32;
+    pvd[128] = 0x00;  // logical block size 2048, both-endian 16-bit
+    pvd[129] = 0x08;
+    pvd[130] = 0x08;
+    uint8_t* boot = &iso[17 * kSector];
+    std::memcpy(boot, "Starting...", 12);  // the BIOS's SYSID, its zero byte included
+    const uint8_t loader[] = {0x32, 0x02, 0x88,  // LD (#8802),A   the drive code
+                              0x3E, 0xAA,        // LD A,#AA
+                              0x32, 0x00, 0x88,  // LD (#8800),A   the marker
+                              0x18, 0xFE};       // JR $           at #8014
+    std::memcpy(boot + 12, loader, sizeof(loader));
+    uint8_t* terminator = &iso[18 * kSector];
+    terminator[0] = 0xFF;
+    std::memcpy(terminator + 1, "CD001", 5);
+    terminator[6] = 0x01;
+    const std::string isoPath = TestPathHelper::GetUniqueTestScratchPath("sprinter-cdboot.iso");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(isoPath, iso.data(), iso.size()));
+
+    _context->config.ide[1].cd = 1;
+    _context->pCore->RefitIde();
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    MediaSource source;
+    source.path = isoPath;
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = _context->pMediaManager->Insert("ide0.slave", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+
+    // SETUP's defaults (cells #0E-#20) with the system disk on the primary slave; the checksum over the 19 cells
+    // (SETTINGS.asm CHEKSUM: H = #DE, H = RLC(H - v) - v) goes to #3F, so SETUP keeps them
+    const uint8_t cells[] = {0x4A, 0x07, 0x03, 0x00, 0x00, 0x10, 0x10, 0x20, 0x00, 0x00,
+                             0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x77, 0x00};
+    Ds12887& rtc = _decoder->GetRtc();
+    uint8_t h = 0xDE;
+    for (size_t i = 0; i < sizeof(cells); i++)
+    {
+        rtc.SetCell(static_cast<uint8_t>(0x0E + i), cells[i]);
+        uint8_t a = static_cast<uint8_t>(h - cells[i]);
+        a = static_cast<uint8_t>((a << 1) | (a >> 7));
+        h = static_cast<uint8_t>(a - cells[i]);
+    }
+    ASSERT_EQ(h, 0xF2) << "atapi-cd-boot.md section 2, the worked example";
+    rtc.SetCell(0x3F, h);
+
+    Memory* memory = _context->pMemory;
+    Z80* z80 = _context->pCore->GetZ80();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return memory->DirectReadFromZ80Memory(0x8800) == 0xAA; }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("Primary Slave     ... UNREAL-NG CD-ROM")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("Boot from CD-ROM Primary IDE Slave OK")) << ScreenText();
+    ASSERT_EQ(memory->DirectReadFromZ80Memory(0x8800), 0xAA) << "the CD's loader ran\n" << ScreenText();
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8802), 0xC1) << "A = the drive code: ATAPI, the primary slave";
+    EXPECT_EQ(z80->pc, 0x8014);
+    EXPECT_EQ(z80->sp, 0x8000);
+    EXPECT_EQ(z80->iff1, 0);
+    EXPECT_EQ(z80->im, 1);
+    for (size_t i = 0; i < 12 + sizeof(loader); i++)
+        EXPECT_EQ(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(0x8000 + i)), boot[i]) << "#8000 + " << i;
+
+    DestroyEmulator();
+    std::remove(isoPath.c_str());
+}
+
 // Empty channels (tdd-storage §3.4): the Sprinter's AT board pulls DD7 down as the ATA standard asks, so a channel
 // with no drive reads #7F - BSY = 0 - and every BIOS rejects its units at once:
 //   3.04 (two units, AUTOIDE MASTER): status without BSY, then the sector count written with 5 reads back #7F;

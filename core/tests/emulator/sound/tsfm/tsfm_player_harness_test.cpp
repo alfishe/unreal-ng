@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include <utility>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/tsfmplayerharness.h"
@@ -17,9 +18,11 @@
 /// init falls through into a chip-reset sequence that polls the TSFM status
 /// bit before every register/data pair. On the legacy TurboSound device
 /// #FFFD reads return the selected AY register instead of a status word, so
-/// the init/reset sequence deterministically parks in the WaitStatus loop
-/// once it selects a register whose value has bit 7 set (the mixer register
-/// powers up as 0xFF in this emulator). Full-frame playback assertions
+/// the player deterministically parks in a WaitStatus loop once the selected
+/// register holds a value with bit 7 set. An AY reset clears every register,
+/// so the init/reset sequence completes and the park comes a few frames into
+/// playback (until 2026-10-04 the AY reset R7 to 0xFF and the player parked
+/// inside the reset sequence). Full-frame playback assertions
 /// therefore belong to P4, where the TSFM device answers status reads; the
 /// legacy-device tests below pin the memory contract, the init traffic and
 /// its determinism.
@@ -101,41 +104,44 @@ TEST_F(TsfmPlayerHarness_Test, InitWritesChipResetThenParksInWaitStatus)
 
     // Frame 0: init relocation + the chip-reset sequence. The reset opens
     // with control word 0xF8 on #FFFD, then drives register/data pairs down
-    // from register 0x0D on both chips
+    // from register 0x0D
     const auto& writes = _harness.GetWrites();
     ASSERT_GE(writes.size(), 14u) << "init/reset sequence did not start";
     EXPECT_EQ(writes[0].port, 0xFFFD);
     EXPECT_EQ(writes[0].value, 0xF8) << "reset sequence must open with control word 0xF8";
-
-    size_t pairs = 0;
-    for (size_t i = 1; i + 1 < writes.size(); i += 2)
-    {
-        if (writes[i].port == 0xFFFD && writes[i + 1].port == 0xBFFD)
-            pairs++;
-        else
-            break;
-    }
-    EXPECT_GE(pairs, 6u) << "expected descending register/data pairs (0x0D..)";
     EXPECT_EQ(writes[1].value, 0x0D);
 
-    // The legacy device answers the status poll with register data: after the
-    // reset sequence selects the mixer register (power-on value 0xFF, bit 7
-    // set) the player parks in the WaitStatus loop inside sub_628A
-    // (0x628B..0x6295) and no further traffic appears
-    EXPECT_GT(_harness.GetChip0WriteCount(), 0u);
-    EXPECT_GT(_harness.GetChip1WriteCount(), 0u);
-    EXPECT_EQ(writes.back().port, 0xFFFD);
-    EXPECT_EQ(writes.back().value, 0x07) << "last write should select the mixer register";
+    // The legacy device answers the status poll with the selected AY register.
+    // An AY reset leaves every register 0 (datasheets; the emulator used to set
+    // R7 = 0xFF, which parked the player at the R7 select in this very
+    // sequence), so the poll reads "not busy" all through the reset: the
+    // pairs run down to register 0x00 and on through the FM ranges, which the
+    // AY ignores, on both chips (control word 0xF9 selects the second)
+    size_t ssgPairs = 0;
+    for (size_t i = 1; i + 1 < writes.size(); i += 2)
+    {
+        if (writes[i].port != 0xFFFD || writes[i + 1].port != 0xBFFD || size_t(writes[i].value) + ssgPairs != 0x0Du)
+            break;
+        if (++ssgPairs == 14)
+            break;
+    }
+    EXPECT_EQ(ssgPairs, 14u) << "expected SSG register/data pairs 0x0D..0x00";
+    EXPECT_GE(_harness.GetControlWordCount(0xF9), 1u) << "the reset reaches the second chip";
+
+    // Then the frame routine plays until a data write leaves a value with
+    // bit 7 set in the selected AY register (the FM addresses do not move the
+    // AY selection); the next poll parks the player in the channel writer's
+    // WaitStatus loop (0x62DF..0x62F2) for good. Deterministic: the exact
+    // per-frame traffic is pinned
+    EXPECT_EQ(writes.back().port, 0xBFFD);
+    EXPECT_NE(writes.back().value & 0x80, 0) << "the last data write sets bit 7 of the selected register";
 
     Z80* z80 = _context->pCore->GetZ80();
-    EXPECT_GE(z80->pc, 0x628B) << "player is not parked in the WaitStatus loop";
-    EXPECT_LE(z80->pc, 0x6295) << "player is not parked in the WaitStatus loop";
+    EXPECT_GE(z80->pc, 0x62DF) << "player is not parked in the channel writer's WaitStatus loop";
+    EXPECT_LE(z80->pc, 0x62F2) << "player is not parked in the channel writer's WaitStatus loop";
 
-    // Deterministic stop: all later frames stay silent
-    const auto& perFrame = _harness.GetPerFrameWriteCounts();
-    ASSERT_EQ(perFrame.size(), 8u);
-    for (size_t i = 1; i < perFrame.size(); i++)
-        EXPECT_EQ(perFrame[i], 0u) << "unexpected traffic after the legacy WaitStatus park";
+    const std::vector<uint32_t> expectedPerFrame = {674, 2, 2, 9, 0, 0, 0, 0};
+    EXPECT_EQ(_harness.GetPerFrameWriteCounts(), expectedPerFrame);
 }
 
 /// endregion

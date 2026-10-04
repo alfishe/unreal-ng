@@ -770,6 +770,33 @@ TEST_F(LoaderZ80_Test, saveAndLoadRoundtripKeepsAYRegisters)
     EXPECT_EQ(psg->getCurrentRegister(), 0x07);
 }
 
+/// A snapshot's AY registers replace the reset state as stored: the loader runs the machine reset first (all
+/// registers 0, ports inputs), then writes the 16 registers, so R7's port directions and the R14 / R15 latches are the
+/// snapshot's and IN #FFFD follows them
+TEST_F(LoaderZ80_Test, loadKeepsAYPortDirectionsAndLatches)
+{
+    const std::string source = TestPathHelper::GetTestDataPath("loaders/z80/dizzyx.z80");
+    ScopedTestFile patchedPath(TestPathHelper::GetUniqueTestScratchPath("test_ay_ports.z80"));
+
+    std::vector<uint8_t> file = ReadWholeFile(source);
+    ASSERT_GE(file.size(), Z80_AY_REGISTERS_OFFSET + 16u);
+    file[Z80_AY_REGISTERS_OFFSET + AY_MIXER_CONTROL] = 0b0111'1000;  // port A output, port B input
+    file[Z80_AY_REGISTERS_OFFSET + AY_PORTA] = 0x5A;
+    file[Z80_AY_REGISTERS_OFFSET + AY_PORTB] = 0x3C;
+    WriteWholeFile(patchedPath, file);
+
+    LoaderZ80CUT loader(_context, patchedPath);
+    ASSERT_TRUE(loader.load());
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    ASSERT_NE(psg, nullptr);
+    EXPECT_EQ(psg->readRegister(AY_MIXER_CONTROL), 0b0111'1000);
+    EXPECT_EQ(psg->readRegister(AY_PORTA), 0x5A);
+    EXPECT_EQ(psg->readRegister(AY_PORTB), 0x3C);
+    EXPECT_EQ(psg->readRegisterOnBus(AY_PORTA), 0x5A) << "port A output: reads its latch";
+    EXPECT_EQ(psg->readRegisterOnBus(AY_PORTB), 0xFF) << "port B input: reads the pins";
+}
+
 /// In a 48K snapshot the AY bytes are state only when flags 2 bit 2 says the AY was in use
 TEST_F(LoaderZ80_Test, load48KSnapshotAppliesAYOnlyWhenMarkedInUse)
 {

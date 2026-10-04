@@ -92,4 +92,12 @@ public:
         }
         return nullptr;
     }
+
+    size_t Count(const std::string& op) const
+    {
+        size_t n = 0;
+        for (const Command& c : commands)
+            n += c.op == op ? 1 : 0;
+        return n;
+    }
 };

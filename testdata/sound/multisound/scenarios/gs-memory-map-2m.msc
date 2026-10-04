@@ -1,0 +1,11 @@
+# The 2 MB build (GS_RAM_2MB): page bits 5-4 select RAM 1-4
+ram 2m
+gout 0000 10
+gmr 8000 00
+gout 0000 20
+gmr 8000 00
+gout 0000 3F
+gmr FFFF 00
+gout 0000 40    # bit 6 selects no RAM, but the page is not 0: RAM 1, gma 0 (not ROM)
+gmr 8000 00
+gmr 4000 00

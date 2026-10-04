@@ -44,6 +44,7 @@ namespace
         PeerEspnet,
         PeerAt,
         PeerModem,
+        PeerZiFiNative,
         PeerPlug
     };
 
@@ -57,6 +58,7 @@ namespace
             case PeerEspnet: return ComPortSpec::Kind::Espnet;
             case PeerAt: return ComPortSpec::Kind::At;
             case PeerModem: return ComPortSpec::Kind::Modem;
+            case PeerZiFiNative: return ComPortSpec::Kind::ZiFiNative;
             case PeerPlug: return ComPortSpec::Kind::Plug;
             default: return ComPortSpec::Kind::None;
         }
@@ -72,6 +74,7 @@ namespace
             case ComPortSpec::Kind::Espnet: return PeerEspnet;
             case ComPortSpec::Kind::At: return PeerAt;
             case ComPortSpec::Kind::Modem: return PeerModem;
+            case ComPortSpec::Kind::ZiFiNative: return PeerZiFiNative;
             case ComPortSpec::Kind::Plug: return PeerPlug;
             default: return PeerNone;
         }
@@ -107,6 +110,7 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     _kind->addItem(tr("ESP module, ESPNET firmware (NedoOS)"));
     _kind->addItem(tr("ESP module, AT firmware (Espressif)"));
     _kind->addItem(tr("Hayes modem (ATDT dials host:port or a phone book number)"));
+    _kind->addItem(tr("ZiFi module, native firmware (2026 ZiFi: 5A CMD LEN DATA XOR)"));
     _kind->addItem(tr("Loopback test plug (bytes back; RTS -> CTS, DTR -> DSR / DCD)"));
     layout->addWidget(_kind);
 
@@ -152,6 +156,11 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     for (uint32_t rate : NetworkSerialBaudChoices())
         _espBaud->addItem(QString::number(rate), rate);
     _espBaud->setToolTip(tr("The module's firmware rate; the ZX must program the same, else both sides read garbage"));
+    _espFirmware = new QComboBox(_espRow);
+    _espFirmware->setToolTip(tr("The module's firmware: AT builds (default: [NETWORK] EspChip, or the board's own chip) "
+                                "or the native ZiFi firmwares"));
+    espLine->addWidget(new QLabel(tr("Firmware"), _espRow));
+    espLine->addWidget(_espFirmware, 1);
     espLine->addWidget(new QLabel(tr("Module baud"), _espRow));
     espLine->addWidget(_espBaud, 1);
     layout->addWidget(_espRow);
@@ -179,12 +188,14 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     connect(_device, &QComboBox::currentTextChanged, this, &SerialPeerEditor::edited);
     connect(_baud, &QComboBox::currentTextChanged, this, &SerialPeerEditor::edited);
     connect(_espBaud, &QComboBox::currentIndexChanged, this, &SerialPeerEditor::edited);
+    connect(_espFirmware, &QComboBox::currentIndexChanged, this, &SerialPeerEditor::edited);
     updateFields();
 }
 
 void SerialPeerEditor::setSpec(const ComPortSpec& spec)
 {
-    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud), b6(_espBaud), b7(_modemPort);
+    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud), b6(_espBaud), b7(_modemPort),
+        b8(_espFirmware);
     if (spec.kind == ComPortSpec::Kind::Modem)
         _modemPort->setValue(spec.port);
     _kind->setCurrentIndex(IndexOf(spec.kind));
@@ -198,8 +209,11 @@ void SerialPeerEditor::setSpec(const ComPortSpec& spec)
         _device->setCurrentText(Q(spec.device));
         _baud->setCurrentText(QString::number(spec.baud));
     }
-    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
+    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At ||
+        spec.kind == ComPortSpec::Kind::ZiFiNative)
     {
+        updateFields();   // the firmware list for this kind
+        _espFirmware->setCurrentIndex(std::max(0, _espFirmware->findData(static_cast<uint>(spec.firmware))));
         int index = _espBaud->findData(spec.baud);
         if (index < 0)
         {
@@ -227,8 +241,11 @@ ComPortSpec SerialPeerEditor::spec() const
         const uint32_t baud = _baud->currentText().trimmed().toUInt(&ok);
         spec.baud = ok && baud ? baud : 115200;
     }
-    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
+    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At ||
+        spec.kind == ComPortSpec::Kind::ZiFiNative)
         spec.baud = _espBaud->currentData().toUInt();
+    if ((spec.kind == ComPortSpec::Kind::At || spec.kind == ComPortSpec::Kind::ZiFiNative) && _espFirmware->count())
+        spec.firmware = static_cast<uint8_t>(_espFirmware->currentData().toUInt());
     if (spec.kind == ComPortSpec::Kind::Modem)
         spec.port = static_cast<uint16_t>(_modemPort->value());
     return spec;
@@ -250,7 +267,29 @@ void SerialPeerEditor::updateFields()
 {
     _tcpRow->setVisible(_kind->currentIndex() == PeerTcp);
     _serialRow->setVisible(_kind->currentIndex() == PeerSerial);
-    _espRow->setVisible(_kind->currentIndex() == PeerEspnet || _kind->currentIndex() == PeerAt);
+    const int kind = _kind->currentIndex();
+    _espRow->setVisible(kind == PeerEspnet || kind == PeerAt || kind == PeerZiFiNative);
+    if (kind != _firmwareKind)
+    {
+        // The builds this kind of module can run (ComPortSpec::firmware values)
+        const QSignalBlocker block(_espFirmware);
+        _espFirmware->clear();
+        if (kind == PeerAt)
+        {
+            _espFirmware->addItem(tr("Default (EspChip, or the board's chip)"), static_cast<uint>(ComPortSpec::kDefaultFirmware));
+            _espFirmware->addItem(tr("ESP32, AT 2.2.0"), 0u);
+            _espFirmware->addItem(tr("ESP8266, NonOS AT 1.7.4"), 1u);
+            _espFirmware->addItem(tr("ESP8266, ESP-AT 2.2.1 (the Sprinter kit's 2.2.1)"), 2u);
+            _espFirmware->addItem(tr("ESP8266, ESP-AT 2.2.2"), 3u);
+        }
+        else if (kind == PeerZiFiNative)
+        {
+            _espFirmware->addItem(tr("ESP32-S3-Zero, s3-native-0.6.94"), 0u);
+            _espFirmware->addItem(tr("ESP-01S, native-0.2.2"), 1u);
+        }
+        _espFirmware->setVisible(_espFirmware->count() > 0);
+        _firmwareKind = kind;
+    }
     _modemRow->setVisible(_kind->currentIndex() == PeerModem);
 }
 
@@ -369,8 +408,10 @@ void NetworkWindow::buildUi()
     zifiLayout->addWidget(_zifiWhy);
     auto* zifiForm = new QFormLayout();
     _zifiPeer = new SerialPeerEditor(zifi);
-    _zifiPeer->setToolTip(tr("None: no ZiFi board. AT: the original board, an ESP-01 with Espressif's AT firmware "
-                             "(zifi.spg). 115200, no flow control: the AVR's rings hold 511 bytes in, 255 out"));
+    _zifiPeer->setToolTip(tr("None: no ZiFi board. AT: the original board, an ESP-01 (ESP8266, 1 MB) with Espressif's "
+                             "AT firmware - NonOS 1.7.4 unless chosen (HackerVBI zifi.spg); ESP-AT 2.2.2 for a "
+                             "Sprinter ESP Network Kit port. ZiFi native: the 2026 firmwares (the new zifi.spg, the "
+                             "Wild Commander plugins). 115200, no flow control: the AVR's rings hold 511 bytes in, 255 out"));
     zifiForm->addRow(tr("Its UART is wired to"), _zifiPeer);
     zifiLayout->addLayout(zifiForm);
     page->addWidget(zifi);

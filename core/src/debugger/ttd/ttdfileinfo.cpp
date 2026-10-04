@@ -153,6 +153,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::SlotSerial2: return "slot-serial-2";
         case PeripheralId::SlotSerial1B: return "slot-serial-1b";
         case PeripheralId::SlotSerial2B: return "slot-serial-2b";
+        case PeripheralId::Saa1099: return "saa1099";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

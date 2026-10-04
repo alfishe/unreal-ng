@@ -328,6 +328,11 @@
     paths["/api/v1/emulator/{id}/video/record"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["region"]["enum"].append("main");
     paths["/api/v1/emulator/{id}/video/record"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["region"]["description"] =
+        "full (default): the whole frame with its border. screen (alias main): the working picture; the file keeps the "
+        "size of the working window at the start, and a window that changes later is scaled into it with its aspect "
+        "kept and black bars, never cut";
+    paths["/api/v1/emulator/{id}/video/record"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["filename"]["type"] = "string";
     {
         Json::Value& props = paths["/api/v1/emulator/{id}/video/record"]["post"]["requestBody"]["content"]

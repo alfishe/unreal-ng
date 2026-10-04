@@ -105,6 +105,7 @@ public:
     EspStack& operator=(const EspStack&) = delete;
 
     int SlotCount() const { return static_cast<int>(_slots.size()); }
+    VirtualNetwork* Network() const { return _network; }
     const Slot& GetSlot(int i) const { return _slots[static_cast<size_t>(i)]; }
     bool Valid(int i) const { return i >= 0 && i < SlotCount() && _slots[static_cast<size_t>(i)].state != State::Free; }
     uint8_t SlotMask() const;
@@ -122,6 +123,11 @@ public:
     void Listen(int slot);
     /// The first queued client into a free slot; -1 when none is queued or no slot is free
     int Accept(int listenSlot);
+    /// The same into the given slot (a firmware that keeps its sockets in fixed places: the ZIFI-NATIVE file
+    /// servers); -1 when none is queued or the slot is taken
+    int AcceptInto(int listenSlot, int target);
+    /// Clients a listening slot holds
+    size_t PendingClients(int listenSlot) const { return _slots[static_cast<size_t>(listenSlot)].pending.size(); }
     /// TCP: send everything (the virtual network queues it)
     void Send(int slot, const uint8_t* data, uint32_t length);
     /// UDP: one datagram
@@ -154,6 +160,13 @@ public:
     bool LoadState(const netstate::EspStackState& in, const ByteSource& bytes);
     /// The virtual-network sockets of this stack belong to it (TTD restore)
     void RebindAll();
+
+    /// Slots beyond netstate::kEspSlots are not in EspStackState: a firmware with more sockets saves them itself
+    /// (the ZIFI-NATIVE file bridge, in the ZiFi blob) and puts them back after LoadState
+    void RestoreSlot(int slot, Slot state) { _slots[static_cast<size_t>(slot)] = std::move(state); }
+    /// The listening slot gets a new waiting socket at the next frame boundary (TTD state of such a slot)
+    bool RearmQueued(int slot) const;
+    void QueueRearm(int slot) { _rearm.push_back(slot); }
 
     // INetGuest
     void OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,

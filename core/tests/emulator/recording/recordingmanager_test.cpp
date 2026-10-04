@@ -382,3 +382,56 @@ TEST(RecordingManager_Test, VideoSize_EachRecordingDerivesItsOwn)
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+namespace
+{
+uint32_t PixelOf(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t x, uint32_t y)
+{
+    const uint8_t* p = rgba.data() + (static_cast<size_t>(y) * width + x) * 4;
+    return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+}  // namespace
+
+/// FitPicture: the largest picture of the source's aspect, centered, nearest pixel, opaque black bars
+TEST(RecordingManager_Test, FitPicture_SameSizeIsACopy)
+{
+    std::vector<uint8_t> src(4 * 3 * 4);
+    for (size_t i = 0; i < src.size(); i++)
+        src[i] = static_cast<uint8_t>(i * 7 + 1);
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 4, 3, 4, 3, out);
+    EXPECT_EQ(out, src);
+}
+
+TEST(RecordingManager_Test, FitPicture_NarrowSourceGetsBarsLeftAndRight)
+{
+    // 2x2 into 6x4: by height 4x4, one bar column each side
+    std::vector<uint8_t> src = {1, 0, 0, 0xFF, 2, 0, 0, 0xFF, 3, 0, 0, 0xFF, 4, 0, 0, 0xFF};
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 2, 2, 6, 4, out);
+    ASSERT_EQ(out.size(), static_cast<size_t>(6 * 4 * 4));
+    EXPECT_EQ(PixelOf(out, 6, 0, 1), 0xFF000000u) << "left bar";
+    EXPECT_EQ(PixelOf(out, 6, 5, 1), 0xFF000000u) << "right bar";
+    EXPECT_EQ(PixelOf(out, 6, 1, 0) & 0xFF, 1u);
+    EXPECT_EQ(PixelOf(out, 6, 2, 0) & 0xFF, 1u) << "each source pixel covers 2x2";
+    EXPECT_EQ(PixelOf(out, 6, 3, 0) & 0xFF, 2u);
+    EXPECT_EQ(PixelOf(out, 6, 1, 3) & 0xFF, 3u);
+    EXPECT_EQ(PixelOf(out, 6, 4, 3) & 0xFF, 4u);
+}
+
+TEST(RecordingManager_Test, FitPicture_WideSourceGetsBarsAboveAndBelow)
+{
+    // 4x2 into 4x4: by width 4x2, one bar line each side
+    std::vector<uint8_t> src(4 * 2 * 4, 0);
+    for (size_t i = 0; i < 8; i++)
+    {
+        src[i * 4] = static_cast<uint8_t>(10 + i);
+        src[i * 4 + 3] = 0xFF;
+    }
+    std::vector<uint8_t> out;
+    RecordingManager::FitPicture(src.data(), 4, 2, 4, 4, out);
+    EXPECT_EQ(PixelOf(out, 4, 2, 0), 0xFF000000u) << "top bar";
+    EXPECT_EQ(PixelOf(out, 4, 2, 3), 0xFF000000u) << "bottom bar";
+    EXPECT_EQ(PixelOf(out, 4, 0, 1) & 0xFF, 10u);
+    EXPECT_EQ(PixelOf(out, 4, 3, 2) & 0xFF, 17u);
+}
