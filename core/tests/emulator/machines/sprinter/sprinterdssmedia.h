@@ -39,7 +39,8 @@ inline std::vector<uint8_t> FloppyRootFile(const std::vector<uint8_t>& floppy, c
 
 /// A bootable DSS hard disk, built the way DSS's BOOT.EXE leaves one (hardware-reference §9.3,
 /// materials.md "A reference HDD image"): 16 MiB, an MBR whose entry 0 is a FAT16 partition (type #06) at
-/// LBA 63, the 3-sector DSS loader at LBA 1-3, and a FAT16 volume (4 sectors per cluster, 2 FATs, 512 root
+/// LBA 63, the 3-sector DSS loader at LBA 1-3 (`mbrCode`, when given, goes into the MBR right before the partition
+/// table, where DSS 1.71's BOOT.EXE puts the loader's sector-0 part), and a FAT16 volume (4 sectors per cluster, 2 FATs, 512 root
 /// entries) holding `files` in its root, in order
 struct DssHddFile
 {
@@ -50,7 +51,8 @@ struct DssHddFile
 constexpr uint32_t kDssHddStart = 63, kDssHddFatSize = 32;
 constexpr uint32_t kDssHddRootLba = kDssHddStart + 1 + 2 * kDssHddFatSize;  ///< 128
 
-inline std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, const std::vector<DssHddFile>& files)
+inline std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, const std::vector<DssHddFile>& files,
+                                        const std::vector<uint8_t>& mbrCode = {})
 {
     constexpr uint32_t kTotal = 32768, kStart = kDssHddStart, kSectors = kTotal - kStart;
     constexpr uint32_t kSpc = 4, kReserved = 1, kFatSize = kDssHddFatSize, kRootEntries = 512;
@@ -66,6 +68,8 @@ inline std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, cons
     put32(446 + 12, kSectors);
     put16(510, 0xAA55);
     std::memcpy(disk.data() + 512, loader.data(), std::min<size_t>(loader.size(), 3 * 512));
+    if (!mbrCode.empty() && mbrCode.size() <= 446)
+        std::memcpy(disk.data() + 446 - mbrCode.size(), mbrCode.data(), mbrCode.size());
 
     // Partition boot sector with the BPB (DOSBOOT4: "FAT16   " at +#36, media #F8)
     const size_t bs = static_cast<size_t>(kStart) * 512;

@@ -34,6 +34,8 @@ public:
 
     bool Start(uint16_t port, std::string& error);
     void Stop();
+    /// Forget everything without touching the sockets (a restart or a TTD load already took them)
+    void Forget();
     void Poll();
 
     bool Running() const { return _running; }
@@ -66,7 +68,8 @@ private:
             Delete,
             Mkcol
         } kind = None;
-        Kind after = None;          ///< Discard: the method that follows
+        Kind after = None;          ///< Discard: the method that follows (None: answer `afterStatus`)
+        uint16_t afterStatus = 0;   ///< Discard before OPTIONS (200) or an unknown method (405)
         uint8_t step = 0;
         std::string path;
         std::string depth;

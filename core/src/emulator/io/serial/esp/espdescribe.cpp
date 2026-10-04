@@ -8,6 +8,7 @@
 #include "emulator/io/serial/esp/zififtpserver.h"
 #include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/io/serial/esp/zifivfsbridge.h"
+#include "emulator/io/serial/esp/zifiwebdavserver.h"
 
 namespace
 {
@@ -96,6 +97,25 @@ void Describe(const EspModule& esp, StateNode& e)
             static const char* const kProxy[] = {"off", "on", "unreachable"};
             s["proxy"] = native->ProxyHost() + ":" + std::to_string(native->ProxyPort()) + " (" +
                          kProxy[native->ProxyStatus() % 3] + ")";
+        }
+        if (native->GetVariant() == ZiFiNativeModule::Variant::Esp01s)
+        {
+            // The ESP-01S WebDAV server (port 80, with FTP_START / FTP_STOP)
+            const ZiFiWebDavServer& dav = native->WebDav();
+            StateNode w = StateNode::Object();
+            w["running"] = dav.Running();
+            if (dav.Running())
+            {
+                w["port"] = static_cast<uint64_t>(dav.Port());
+                w["client"] = dav.ClientConnected();
+                w["request"] = dav.JobText();
+            }
+            w["requests"] = static_cast<uint64_t>(dav.Requests());
+            w["last_request"] = dav.LastRequest();
+            w["last_status"] = static_cast<uint64_t>(dav.LastStatus());
+            w["bytes_sent"] = dav.BytesSent();
+            w["bytes_received"] = dav.BytesReceived();
+            s["webdav"] = w;
         }
         s["zifi_ini_bytes"] = static_cast<uint64_t>(native->IniText().size());
         if (!native->WeatherLocation().empty())

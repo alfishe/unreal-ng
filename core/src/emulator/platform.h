@@ -395,6 +395,7 @@ struct IDE_CONFIG
 {
 	unsigned c = 0, h = 0, s = 0;	// geometry; 0/0/0: from the image header, else from its size
 	uint8_t cd = 0;					// 1: the unit is an ATAPI CD-ROM drive (auto for an .iso image)
+	uint8_t cf = 0;					// 1: a disk unit is a CompactFlash card on an IDE adapter (CFA IDENTIFY, 8-bit mode)
 };
 
 enum RSM_MODE
