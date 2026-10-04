@@ -10,21 +10,19 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
-#include "emulator/sound/chips/ssgwritequeue.h"
-#include "emulator/sound/chips/tsfm/fm_word_queue.h"
-#include "emulator/sound/chips/tsfm/ym2203_engine.h"
+#include "emulator/sound/chips/tsfm/ym2203pair.h"
 #include "emulator/sound/native_audio_tap.h"
 
 /// @file soundchip_turbosoundfm.h
 /// @brief TSFM - the TurboSound FM board (2 x YM2203) chip core (design §5).
 ///
-/// The CPLD's three latches (TsfmBoard) select one of two YM2203 halves
-/// (TsfmChip = SoundChip_AY8910 SSG + ymfm FM engine) for the AY-bus ports.
-/// The core is advanced in T-states (syncTo/advanceChip) so it is in step
-/// with the CPU at every instruction boundary - the invariant TTD
-/// checkpointing relies on (§5.2). P4 delivers the core with a silent
-/// output stage: the FM word queue and the SSG render buffers exist but
-/// nothing is rendered into them; the output stage (§6) drains the queues.
+/// The CPLD's three latches (TsfmBoard) select one of the two YM2203 of the
+/// shared Ym2203Pair (tsfm/ym2203pair.h: chips, timers, busy, the T-state
+/// core loop, the output-stage primitives) for the AY-bus ports. The board
+/// keeps the #FFFD control-word parse, the FM mute and its stereo mix on top.
+/// The core is advanced in T-states (syncTo) so it is in step with the CPU
+/// at every instruction boundary - the invariant TTD checkpointing relies on
+/// (§5.2). The pair runs at 1 : 1 here (YM master clock = audio T-state).
 
 /// The logic chip's three latches, clocked by a control word
 /// (OUT #FFFD with value 0xF8..0xFF, design §5.1 / hardware-reference §3.2)
@@ -37,110 +35,26 @@ struct TsfmBoard
 
 /// FM input rate (§6.3): the YM2203 sample clock at prescaler /6 is
 /// PSG_CLOCK_RATE/4 = 437.5 kHz = exactly 2x the SSG generator rate
-constexpr double kTsfmFmInputRate = static_cast<double>(PSG_CLOCK_RATE) / 4.0;
+constexpr double kTsfmFmInputRate = kYm2203FmInputRate;
 
 /// FM output coupling (schematic rev C): each YM3014 buffer output (FM1/FM2)
 /// reaches the DA5 mixer through C14/C15 = 10 uF into two 24 k resistors to
 /// the op-amp virtual grounds (R17||R18, R19||R20 = 12 k):
-/// fc = 1 / (2 pi * 12 k * 10 uF) = 1.33 Hz
+/// fc = 1 / (2 pi * 12 k * 10 uF) = 1.33 Hz (the pair's default fmCouplingHz)
 constexpr double kTsfmFmCouplingHz = 1.0 / (2.0 * 3.14159265358979323846 * 12000.0 * 10e-6);
 
-/// Per-chip output-stage state (§6): the sample-and-hold value of the newest
-/// consumed FM word, the coupling high-pass after the mute gate, its mono
-/// 437.5 kHz decimator (slave of chip-0 SSG left, §6.3), the LQ boxcar
-/// accumulator and the raw pre-mute DAC tap (§6.4).
-/// Not TTD state — the §8.2 payload (P5) carries core state only.
-struct TsfmOutputState
-{
-    double hold = 0.0;                    // newest FM word / 32768, held until the next word
-    FilterDCBlocker coupling{kTsfmFmInputRate, kTsfmFmCouplingHz};  // C14/C15 into the DA5 mixer
-    double lastFed = 0.0;                 // newest coupled half-tick value (LQ sample with no half-tick)
-    bool couplingSettlePending = false;   // after a flush: settle the coupling on the first live word
-    FilterDecimator decimator;            // 437.5 kHz -> core rate, HQ path
-    double lqSum = 0.0;                   // LQ boxcar: sum of gated half-tick values
-    uint32_t lqCount = 0;                 // LQ boxcar: half-ticks summed for this output sample
-    std::shared_ptr<NativeAudioTap> nativeTap = std::make_shared<NativeAudioTap>();
-};
-
-/// One YM2203: the SSG half is the same SoundChip_AY8910 the legacy device
-/// uses, the FM half is a vendored ymfm engine. Not copyable or movable -
-/// ymfm holds references to the interface and the override adapter.
-class TsfmChip
-{
-public:
-    explicit TsfmChip(EmulatorContext* context)
-        : ssg(context), fm(intf), ssgAdapter(ssg)
-    {
-        // §5.4: construction runs the machine-reset sequence. ymfm's
-        // constructor does NOT call reset() - its register array is
-        // uninitialised until reset() runs.
-        fm.ssg_override(ssgAdapter);
-        resetChip();
-
-        // TTD save-path scratch (§8.2): reserved once so TTDSaveState never
-        // allocates on its steady-state path (measured ymfm payload: 494 B).
-        ttdScratch.reserve(1024);
-    }
-
-    TsfmChip(const TsfmChip&) = delete;
-    TsfmChip& operator=(const TsfmChip&) = delete;
-
-    /// Per-chip half of the reset sequence (§5.4)
-    void resetChip()
-    {
-        ssg.reset();
-        // ymfm resets FM registers, operators and status; the adapter's
-        // ssg_reset() is a no-op, so the AY is not reset twice
-        fm.reset();
-        // ymfm's reset leaves the prescaler as it was; a real YM2203 reset
-        // returns to /6
-        fm.write_address(0x2D);
-        address = 0;
-        fmClockPhase = 0;
-        fmKeyOn[0] = fmKeyOn[1] = fmKeyOn[2] = 0;
-        intf.reset();
-        ssg.setChipModel(AYChipModel::YM2149);
-        ssgWrites.clear();
-    }
-
-    SoundChip_AY8910 ssg;      // SSG half, model YM2149
-    Ym2203Interface intf;      // timers + busy, in T-states
-    Ym2203Engine fm;           // ymfm::ym2203 subclass, patched
-    SsgOverrideAdapter ssgAdapter;
-
-    uint8_t address = 0;       // YM2203 address latch (8-bit)
-    int32_t fmClockPhase = 0;  // T-states since the last FM sample, 0 .. 12*p-1
-
-    // Key-on mask per FM channel as last written to register 0x28 (bits
-    // 4-7 = slots S1,S2,S3,S4). Mirror for the state report
-    // (DeviceState::FmChip); ymfm keeps the live key state privately.
-    uint8_t fmKeyOn[3] = {0, 0, 0};
-
-    // Output-side hand-off (not TTD state, §6)
-    FmWordQueue words;
-
-    // SSG register writes timed to their T-state, applied by the render loop
-    // on the tick they fall in (TTD state: pending writes are chip input)
-    SsgWriteQueue ssgWrites;
-
-    // Output stage (§6): hold register, decimator, LQ boxcar, raw DAC tap
-    TsfmOutputState out;
-
-    // TTD save-path scratch (§8.2): ymfm_saved_state serializes into a
-    // vector via push_back; reserved in the constructor so TTDSaveState
-    // never allocates on its steady-state path (measured payload: 494 B).
-    std::vector<uint8_t> ttdScratch;
-};
+/// The chip and its output-stage state live in the shared pair
+using TsfmChip = Ym2203Chip;
+using TsfmOutputState = Ym2203OutputState;
 
 class SoundChip_TurboSoundFM : public ITurboSoundDevice
 {
     /// region <Fields>
 protected:
     TsfmBoard _board;
-    std::unique_ptr<TsfmChip> _chips[2];
-
-    uint64_t _syncedT = 0;        // core advanced to this frame-relative T-state (§5.2); not TTD state
-    bool _adoptCpuClock = true;   // set by reset/restore: next sync adopts the CPU's T-state without advancing
+    // The two YM2203 with their T-state core loop and output-stage state, at
+    // 1 : 1 (YM master clock = audio T-state) with the board's FM coupling
+    Ym2203Pair _pair;
 
     AudioFrameDescriptor _ayAudioDescriptor;
     int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;
@@ -159,33 +73,28 @@ protected:
     int16_t* const _fm0Buffer = (int16_t*)_fm0AudioDescriptor.memoryBuffer;
     int16_t* const _fm1Buffer = (int16_t*)_fm1AudioDescriptor.memoryBuffer;
 
-    static constexpr double kFmInputRate = kTsfmFmInputRate;
     /// FM loudness baseline (§7.1): full-scale DAC word -> 0.30 in the mix
     static constexpr double kFmBaseGain = 0.30;
     /// Constant lag of the render cursor behind the word and SSG-write
     /// timeline (§6.2, see kTurboSoundRenderLagT)
-    static constexpr int64_t kFmRenderLagT = kTurboSoundRenderLagT;
+    static constexpr int64_t kFmRenderLagT = Ym2203Pair::kRenderLag;
 
     size_t _coreRate = AUDIO_SAMPLING_RATE;
-    bool _hqEnabled = true;
     // Anti-alias FIR tier, applied by setCoreRate ([SOUND] DecimatorQuality)
     FilterDecimator::Quality _decimatorQuality = FilterDecimator::Quality::Reference;
-    bool _synthesisSuppressed = false;
-    bool _coreSynthesisSkipped = false;  // FM operator clocking frozen (sound off, no TTD); see ITurboSoundDevice
     bool _prescalerWarned = false;  // one §9.4 warning per device instance
 
     // Render loop state — the legacy SoundChip_TurboSound loop copied
     // verbatim (§11 bit-identity): the mixer-exact sample accumulator (see
     // SoundChip_TurboSound::_samplePhase), per-frame buffer cursor, T-state
-    // axis base, LQ boxcar phase, plus the §6.2 FM cursor
+    // axis base, LQ boxcar phase; the §6.2 FM cursor is the pair's render
+    // cursor (continuous across frames, rebased with the words, kFmRenderLagT
+    // behind)
     uint64_t _samplePhase = 0;
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
     double _decimationPhase = 0.0;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
-    // FM half-tick cursor of the render loop (§6.2) on the word timeline:
-    // continuous across frames (rebased with the words), kFmRenderLagT behind
-    int64_t _renderT = -kFmRenderLagT;
     // Rate or quality switch: the render loop's position against the CPU
     // clock moved; re-anchor the cursor at the next frame start
     bool _renderReanchor = false;
@@ -220,13 +129,19 @@ public:
     /// Chip `i` (0 = first = the 0xFE chip)
     TsfmChip* chip(int index) const
     {
-        return (index == 0 || index == 1) ? _chips[index].get() : nullptr;
+        return _pair.chip(index);
+    }
+
+    /// The shared YM2203 pair (tests, the state report)
+    Ym2203Pair& pair()
+    {
+        return _pair;
     }
 
     /// T-state the core has been advanced to (frame-relative)
     uint64_t syncedT() const
     {
-        return _syncedT;
+        return _pair.syncedT();
     }
 
     /// True once the one-per-instance §9.4 prescaler warning has fired
@@ -246,10 +161,11 @@ public:
 
     /// region <Constructors / destructor>
 public:
-    SoundChip_TurboSoundFM(EmulatorContext* context) : ITurboSoundDevice(context)
+    SoundChip_TurboSoundFM(EmulatorContext* context)
+        : ITurboSoundDevice(context),
+          _pair(context, Ym2203PairConfig{static_cast<uint32_t>(CPU_CLOCK_RATE), static_cast<uint32_t>(CPU_CLOCK_RATE),
+                                          kTsfmFmCouplingHz})
     {
-        _chips[0] = std::make_unique<TsfmChip>(_context);
-        _chips[1] = std::make_unique<TsfmChip>(_context);
         // Design all six decimators and attach the FM slaves (§6.3), and
         // apply the configured FM trim (§7.1)
         setCoreRate(_coreRate);
@@ -266,7 +182,10 @@ public:
 public:
     /// Advance the core to frame-relative T-state t. The first call after
     /// construction/reset adopts t without advancing (nothing to simulate).
-    void syncTo(uint64_t t);
+    void syncTo(uint64_t t)
+    {
+        _pair.syncTo(t);
+    }
 
     /// Frame-relative T-state of the CPU right now (the port callbacks see
     /// the IORQ's own T-state; handleStep then advances to the instruction
@@ -278,27 +197,10 @@ public:
     /// (the tap sees the raw pre-mute value), then feed the gated hold —
     /// board mute grounds the DAC data line — to the HQ decimator or the LQ
     /// boxcar accumulator. Public: §12.4 drives half-tick sequences directly
-    void fmHalfTick(int chipIndex, int64_t h);
-
-protected:
-    void advanceChip(TsfmChip& c, int32_t delta, uint64_t t0);
-
-    /// Silence the output-stage audio content - hold, coupling, LQ boxcar,
-    /// decimator histories - keeping every tick-gating phase (determinism)
-    void flushOutputStage();
-
-    /// Timed SSG register write at the current core position (see
-    /// SsgWriteQueue); applied at once while synthesis is suppressed
-    void queueSsgWrite(TsfmChip& c, uint8_t reg, uint8_t value);
-    /// Apply every pending SSG write timed at or before t (render cursor)
-    void applySsgWrites(int64_t t);
-    /// Apply every pending SSG write now (nothing will tick them in)
-    void applyAllSsgWrites();
-
-    /// LQ boxcar output of one chip's FM hold stream: average of the summed
-    /// half-ticks (or the current hold when no half-tick landed on this
-    /// output sample), resetting the accumulator
-    double fmLqSample(int chipIndex);
+    void fmHalfTick(int chipIndex, int64_t h)
+    {
+        _pair.fmHalfTick(chipIndex, h, _board.fmEnabled);
+    }
     /// endregion </Core loop>
 
     /// region <Methods>
@@ -307,35 +209,34 @@ public:
 
     void updateState(bool bypassPrescaler = false)
     {
-        _chips[0]->ssg.updateState(bypassPrescaler);
-        _chips[1]->ssg.updateState(bypassPrescaler);
+        _pair.updateState(bypassPrescaler);
     }
 
     void setHQEnabled(bool enabled) override
     {
-        if (enabled != _hqEnabled)
+        if (enabled != _pair.hqEnabled())
             _renderReanchor = true;
-        if (enabled && !_hqEnabled)
+        if (enabled && !_pair.hqEnabled())
             _outputFlushPending = true;  // the HQ decimators were not fed in LQ
-        _hqEnabled = enabled;
+        _pair.setHQEnabled(enabled);
     }
 
     void setSynthesisSuppressed(bool suppressed) override
     {
-        if (!suppressed && _synthesisSuppressed)
+        if (!suppressed && _pair.synthesisSuppressed())
             _outputFlushPending = true;  // nothing was rendered while suppressed
-        _synthesisSuppressed = suppressed;
+        _pair.setSynthesisSuppressed(suppressed);
     }
 
     void setCoreSynthesisSkipped(bool skipped) override
     {
-        _coreSynthesisSkipped = skipped;
+        _pair.setCoreSynthesisSkipped(skipped);
     }
-    bool isCoreSynthesisSkipped() const { return _coreSynthesisSkipped; }
+    bool isCoreSynthesisSkipped() const { return _pair.coreSynthesisSkipped(); }
 
     /// Redesigns all six decimators for the rate (§6.3): four SSG ones at
     /// the generator rate (identical to the legacy device — bit-identity,
-    /// §11), two FM ones at kFmInputRate in slave mode under chip-0 SSG left
+    /// §11), two FM ones at kTsfmFmInputRate in slave mode under chip-0 SSG left
     void setDecimatorQuality(FilterDecimator::Quality quality) override
     {
         _decimatorQuality = quality;
@@ -348,17 +249,9 @@ public:
         _renderReanchor = true;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
 
-        _chips[0]->ssg.decimatorLeft().configure((double)rate, _decimatorQuality);
-        _chips[0]->ssg.decimatorRight().configure((double)rate, _decimatorQuality);
-        _chips[1]->ssg.decimatorLeft().configure((double)rate, _decimatorQuality);
-        _chips[1]->ssg.decimatorRight().configure((double)rate, _decimatorQuality);
-        _chips[0]->out.decimator.configure((double)rate, _decimatorQuality, false, kFmInputRate);
-        _chips[1]->out.decimator.configure((double)rate, _decimatorQuality, false, kFmInputRate);
-
         // FM decimators run in slave mode: chip-0 SSG left gates the output
         // cadence of every stream (§6.3)
-        _chips[0]->out.decimator.attachMaster(&_chips[0]->ssg.decimatorLeft());
-        _chips[1]->out.decimator.attachMaster(&_chips[0]->ssg.decimatorLeft());
+        _pair.configureDecimators(rate, _decimatorQuality);
     }
 
     size_t getCoreRate() const override
@@ -518,34 +411,24 @@ public:
         return ttd::PeripheralId::TSFM;
     }
 
-    /// ymfm's counters that advance with the FM clock: the envelope counter
-    /// (+4 per 3 FM clocks) and the clock count (u8), per chip. Offsets in
-    /// TTDSaveState: 50 bytes of header, then per chip 586 bytes (address,
-    /// fmClockPhase, two timers, busy, the ymfm payload's size, the payload,
-    /// the AY); in the ymfm payload the envelope counter is at +5, the clock
-    /// count at +15 (fm_engine_base::save_restore). The engine stores each as
-    /// its residual from a line
+    /// ymfm's counters that advance with the FM clock, per chip (the pair's
+    /// Ym2203Pair::TTDTimeFields): the blob's chips follow its 50-byte header
+    /// (version, board byte, sample phase, five decimator phases). The engine
+    /// stores each as its residual from a line
+    static constexpr uint16_t kTsfmStateHeaderSize = 1 + 1 + 8 + 8 + 4 * 8;
     ttd::TTDDeviceDescriptor TTDDescribe() const override
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.runsBehindCpu = true;
-        constexpr uint16_t kHeader = 50, kChip = 586, kYmfm = 1 + 4 + 4 + 4 + 4 + 2;
-        for (uint16_t chip = 0; chip < 2; ++chip)
-        {
-            const uint16_t ymfm = kHeader + chip * kChip + kYmfm;
-            d.timeFields.push_back({static_cast<uint16_t>(ymfm + 5), 4});    // m_env_counter
-            d.timeFields.push_back({static_cast<uint16_t>(ymfm + 15), 1});   // m_total_clocks
-        }
+        Ym2203Pair::TTDTimeFields(d.timeFields, kTsfmStateHeaderSize);
         return d;
     }
 
-    /// Synced: the core has been advanced to the CPU's T-state (the frame end
-    /// syncs it, the next frame's start moves it to the new frame's axis), or
-    /// it adopts the CPU's position at its next sync (after a reset or restore)
+    /// Synced: the pair has been advanced to the CPU's T-state, or adopts the
+    /// CPU's position at its next sync (after a reset or restore)
     bool TTDSyncedTime(int64_t& offset) const override
     {
-        offset = static_cast<int64_t>(_syncedT);
-        return _adoptCpuClock || _syncedT == nowT();
+        return _pair.TTDSyncedTime(nowT(), offset);
     }
 
     std::string TTDDeviceName() const override
