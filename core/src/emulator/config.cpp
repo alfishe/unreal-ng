@@ -14,6 +14,7 @@
 #include "emulator/video/atm/atmgeometry.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
+#include "emulator/io/serial/hayesmodempeer.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/serial/esp/espmodule.h"
@@ -421,15 +422,57 @@ bool Config::ParseConfig(IniFile& inimanager)
 			else
 				MLOGWARNING("Config: unknown [ISA] %sChip=%s (RTL8019AS | UM9003 | NE1000), RTL8019AS used", prefix.c_str(), v);
 		}
+		const auto kind = static_cast<sprinterisa::CardKind>(slot.kind);
+		if (kind == sprinterisa::CardKind::Modem)
+		{
+			slot.base = sprinterisa::kModemDefaultBase;
+			slot.irq = sprinterisa::kModemDefaultIrq;
+		}
+		else if (kind == sprinterisa::CardKind::Dual16552)
+			slot.irq = sprinterisa::kSerialDefaultIrqA;
 		if (const char* v = inimanager.GetValue("ISA", (prefix + "Base").c_str(), nullptr))
 		{
 			uint16_t base = 0;
-			if (sprinterisa::ParseNe2000Base(v, base))
+			if (kind == sprinterisa::CardKind::Modem)
+			{
+				if (sprinterisa::ParseModemBase(v, base))
+					slot.base = base;
+				else
+					MLOGWARNING("Config: [ISA] %sBase=%s: the modem's COM base is 0x3F8 | 0x2F8 | 0x3E8 | 0x2E8, 0x%03X kept",
+					            prefix.c_str(), v, slot.base);
+			}
+			else if (sprinterisa::ParseNe2000Base(v, base))
 				slot.base = base;
 			else
 				MLOGWARNING("Config: [ISA] %sBase=%s: #200..#3E0 in steps of #20, #%03X kept", prefix.c_str(), v, slot.base);
 		}
 		slot.irq = static_cast<uint8_t>(inimanager.GetLongValue("ISA", (prefix + "Irq").c_str(), slot.irq) & 0x0F);
+		if (kind == sprinterisa::CardKind::Modem && !sprinterisa::ValidModemIrq(slot.irq))
+		{
+			MLOGWARNING("Config: [ISA] %sIrq=%u: the modem's IRQ is 2 | 3 | 4 | 5 | 7, 4 used", prefix.c_str(), slot.irq);
+			slot.irq = sprinterisa::kModemDefaultIrq;
+		}
+		if (kind == sprinterisa::CardKind::Dual16552 && !sprinterisa::ValidSerialJumper(0, slot.irq))
+		{
+			MLOGWARNING("Config: [ISA] %sIrq=%u: SprinterSerial's J5 joins COM1 to IRQ 3 or 2 (0 = open), 3 used",
+			            prefix.c_str(), slot.irq);
+			slot.irq = sprinterisa::kSerialDefaultIrqA;
+		}
+		slot.irqB = static_cast<uint8_t>(inimanager.GetLongValue("ISA", (prefix + "IrqB").c_str(), 0) & 0x0F);
+		if (!sprinterisa::ValidSerialJumper(1, slot.irqB))
+		{
+			MLOGWARNING("Config: [ISA] %sIrqB=%u: SprinterSerial's J6 joins COM2 to IRQ 4 or 2 (0 = open), open used",
+			            prefix.c_str(), slot.irqB);
+			slot.irqB = 0;
+		}
+		if (const char* v = inimanager.GetValue("ISA", (prefix + "Decode").c_str(), nullptr))
+		{
+			const std::string d = StringHelper::ToUpper(std::string(v));
+			if (d == "FULL" || d == "PARTIAL")
+				slot.partialDecode = d == "PARTIAL" ? 1 : 0;
+			else
+				MLOGWARNING("Config: [ISA] %sDecode=%s: FULL | PARTIAL, FULL used", prefix.c_str(), v);
+		}
 		if (const char* v = inimanager.GetValue("ISA", (prefix + "Mac").c_str(), nullptr))
 		{
 			if (!sprinterisa::ParseMac(v, slot))
@@ -443,7 +486,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 			if (ComPortSpec::Parse(v, spec, error) && spec.ToString().size() < sizeof(slot.peer))
 				std::snprintf(slot.peer, sizeof(slot.peer), "%s", spec.ToString().c_str());
 			else
-				MLOGWARNING("Config: [ISA] %sPeer=%s: %s - AT used", prefix.c_str(), v, error.c_str());
+				MLOGWARNING("Config: [ISA] %sPeer=%s: %s - the card's default used", prefix.c_str(), v, error.c_str());
+		}
+		// SprinterSerial's COM2 (ComPortSpec, default NONE)
+		if (const char* v = inimanager.GetValue("ISA", (prefix + "PeerB").c_str(), nullptr))
+		{
+			ComPortSpec spec;
+			std::string error;
+			if (ComPortSpec::Parse(v, spec, error) && spec.ToString().size() < sizeof(slot.peerB))
+				std::snprintf(slot.peerB, sizeof(slot.peerB), "%s", spec.ToString().c_str());
+			else
+				MLOGWARNING("Config: [ISA] %sPeerB=%s: %s - NONE used", prefix.c_str(), v, error.c_str());
 		}
 	}
 
@@ -1083,6 +1136,19 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (address < 0 || address > 0xFF || (address & 0x07))
 			MLOGWARNING("Config: [NETWORK] Atm2IoEspAddress=%ld: a bus address 0x00..0xF8 in steps of 8 (0xF0 or 0xF8); 0x%02X used",
 			            address, config.network.atm2IoEspAddress);
+	}
+	// The Hayes modem's phone book (network tdd §10): "5551234=bbs.example.org:23,5550000=10.0.2.2:2323"
+	config.network.modemPhonebook[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ModemPhonebook", nullptr), config.network.modemPhonebook,
+	                sizeof config.network.modemPhonebook);
+	{
+		std::map<std::string, std::string> book;
+		std::string error;
+		if (!HayesModemPeer::ParsePhonebook(config.network.modemPhonebook, book, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ModemPhonebook=%s: %s - empty phone book", config.network.modemPhonebook, error.c_str());
+			config.network.modemPhonebook[0] = '\0';
+		}
 	}
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "

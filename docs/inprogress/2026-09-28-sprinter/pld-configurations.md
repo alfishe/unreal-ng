@@ -44,7 +44,7 @@ the CPU reset follows.
 | Loader timing | 113 T per bitstream byte (no Z84C15 wait generator) |
 | Soft reset | keeps the configuration (`:1588-1600`) |
 | Unknown bitstream | no module concept: Standard logic stays |
-| DooM, Video configurations | none |
+| DooM, Video configurations | none; they exist only as Sprinter 97 bitstreams and are not needed on the Sp2000 (§6) |
 
 ## 3. In unreal-ng
 
@@ -90,9 +90,110 @@ return to `DCP.MIF`'s, and the machine is Standard.
   restore `DCP.MIF`'s cell `#EE` on the hardware, and how does `/ret-fn` survive it there?
 - Mode0 bits 5-4 of the Game configuration ("graphics / text, must be 0", "640 / 320 points") are not modeled; MAME
   draws every square 320 and GAME_00 uses only `#61`, `#62`, `#65`, `#66`, `#F8`, `#FC-#FE`.
-- DooM and Video configurations: missing in both emulators; no program on the MAME-pack disk loads them.
+- ~~DooM and Video configurations~~ - **closed 2026-10-03, not planned**: Sprinter 97 bitstreams only, their
+  functions are in the Sp2000's Standard; the full account is §6.
 - LDConf `STREAM.300/303/305`: unknown bitstreams, run as Standard.
 - Hardware timing of the load end (CONF_DONE, extra DCLKs, the CPU reset), §1.
+
+## 6. DooM and Video: Sprinter 97 legacy
+
+**Decision (2026-10-03): no DooM or Video module is planned. No Sp2000 software needs them.** This section holds
+the whole finding, so that the question does not have to be researched again.
+
+### 6.1 What the two configurations were
+
+Ivan Mak's manual (`sp2000_man.pdf`, 15.08.2003, §2.4-2.6) lists three special configurations besides Standard:
+Game-1, DooM and Video. The descriptions there are the **Sprinter 97** ones, copied unchanged.
+
+- **DooM** is Game-1 plus an accelerator that stretches or shrinks a vertical or horizontal line in hardware:
+  the operation that draws the walls of a Doom-style 3D view. It was made for the DOOM demo port. In the Sp97 PLD
+  design (`SPRINT08.TDF`, preset block "Sprinter-DOOM", `ACCELERAT = 3`) the accelerator adds a step register
+  `AAGR` to a fixed-point index `XCNT:XAGR` on every access; a write to the port with DCP code `xxxxx111` sets
+  the step. Worked example: a step of 0.5 reads every source byte twice, so a 64-pixel wall column fills 128 lines.
+- **Video** is Game-1 plus a path that writes hard-disk data straight into video memory while a sector is
+  being read. It was made for Ivan Mak's FLC2 player (`FLC2.ASZ`, 1998): the player starts a multi-sector IDE
+  read, maps a screen page and runs chains of `POP DE` over it; each read fetches the next disk word into video
+  RAM, 87 frames of 128 sectors. The last Video build added a mode that doubles pixels (160 x 128 on the whole
+  screen); its sources are lost, so this is not verified.
+
+On the Sp97 these configurations were not loaded from files: a BIOS build carried one in a configuration slot
+(`SPRINPR2.BAT` puts the DooM stream into ROM slot `#14100`), and the 1999 DOOM demo switches the slot through
+the BIOS.
+
+### 6.2 The files that survive
+
+All of them are Sprinter 97 bitstreams for an Altera **FLEX EPF10K10**, 14 751 bytes each (header
+`FF FF 62 7B 25 00`). The Sp2000's PLD is an **ACEX 1K30**, whose stream is 59 215 bytes (header
+`FF FF 62 7B 39 00`).
+
+| File (materials name) | Original name | Date | Configuration | SHA-256 | Head hash |
+|---|---|---|---|---|---|
+| `doom/sp97-sprint08-dm.bin` | `SPRINT08.DM` | 1999-01-23 | DooM | `2e0b6d85389303bce95480d6c61c49879b332da904a6211ff8c1b15b8d3d1e91` | `#8C0B2C6D` |
+| `video/sp97-sprint04-vid.bin` | `SPRINT04.VID` | 1998-11-16 | Video (`SPRINT04` design) | `25850a1e76a2c5c1d0c0c8e27a9dcfef72c289b82cbc44be68229a247bf704a5` | `#3664CFCD` |
+| `video/sp97-sprint08-vid.bin` | `SPRINT08.VID` | 1999-02-09 | Video (`SPRINT08.TDF`) | `43b2cce9dd352b9fc7890acd3a076e8383c6cca9d1e038778e44304dd7b8614b` | `#C670F611` |
+| `video/sp97-sprint11-vid.bin` | `SPRINT11.VID` | 2000-08-17 | Video, newest (sources lost) | `50f249182cf6bec0c119db7e9b97a5f2ea0e25ead34d1fc28d35f5efcddd8151` | `#4F7C1F52` |
+
+The head hash is MAME's (the first 4 096 loader writes, §3); it is listed only to tell the files apart. The full
+hash does not apply: the Sp2000 loader always streams 473 720 writes, these streams have 118 008.
+
+Where they came from (both links checked, HTTP 200, 2026-10-03):
+
+- [sp97-bios-master.zip](https://zxgit.org/Sprinter/97/raw/branch/master/master/sp97-bios-master.zip) from
+  [zxgit.org/Sprinter/97](https://zxgit.org/Sprinter/97) (commit `56d4b1e`): all four bitstreams and the build
+  script `SPRINPR2.BAT`.
+- [2_DEMO.ZIP](https://winglion.sprinter.ru/soft/2_DEMO.ZIP) (winglion archive): the same `SPRINT08.DM`, the demo
+  sources `DOOM.ASZ` (1999, Sp97), `DOOM2.ASZ` (2002, Sp2000) and the player `FLC2.ASZ` / `FLC2.COM`.
+
+Copies, checksums of every file and the research notes are in the owner's materials, `firmware/pld/special/`
+(README there); they are not in the repository.
+
+No Sp2000 (ACEX 1K30) build of either configuration was found in any archive, repository, BIOS image, disk image
+or CD that was checked, including the MAME pack's hard disk and the Peters Plus CD.
+
+### 6.3 Why the Sp2000 cannot load them
+
+The Sp2000's ROM loader (§1) streams a fixed 59 215 bytes into an ACEX 1K30. A FLEX 10K10 stream is a different
+chip's configuration: different size, header and cell layout. Loaded through the Sp2000 loader it would not
+configure the chip at all. Running them would mean emulating the Sp97 board (another chip, another memory and
+port map), which is out of scope.
+
+### 6.4 What replaced them on the Sp2000
+
+The manual (§1.4) says that on the Sp2000 these configurations are merged into one PLD firmware. The standard
+sources confirm it for DooM and suggest it for Video:
+
+- **DooM -> the standard accelerator's scale register, code `#C7`.** `ACCELER.TDF` of the standard 1K30 design has
+  `WR_C7` (DCP code `1100X111`), `ALT_ACC` and `XCNT_AGR = (XCNT,XAGR) + AAGR`: the Sp97 DooM accelerator, now
+  always present. MAME models it (`m_alt_acc`), and so does unreal-ng (`SprinterAccelerator::OnScaleWrite`,
+  [s5-accelerator-outcome.md](s5-accelerator-outcome.md)).
+- **Video -> `HDD_FLIP` / `HDDR`.** The standard sources carry hard-disk-to-memory logic: `DCP.TDF`
+  `HDD_FLIP` / `HDD_DATA` and `SP2_1K30.TDF` `HDDR[]` fed into the memory data path. That it reproduces the Sp97
+  "read into the screen" path, and whether a 160 x 128 pixel-doubling mode exists in `VIDEO2.TDF`, is **not
+  verified identical**. No Sp2000 program is known to use either.
+
+### 6.5 What Sp2000 software does today
+
+- The Sp2000 DOOM demo (`DOOM2.ASZ`, 2002) only writes `#C7` into the port table ("open the scale port") and uses
+  the scale port. It loads no bitstream; the copy on the Peters Plus CD contains none (searched for the ACEX
+  header). It runs on Standard in unreal-ng ([demo-status.md](demo-status.md), DOOM2: runs).
+- Today's video player (kostya261 SVP, 2026) uses the ordinary 320 x 256 / 640 x 256 modes, the accelerator and
+  the Covox-Blaster on Standard; no reload.
+- The only Video software, FLC2 (1998), is Sp97 code.
+
+### 6.6 Decision and what would reopen it
+
+**Not planned: no Sp2000 software needs them.** Gap V12 is closed as not needed
+([mame-gap-analysis.md](mame-gap-analysis.md)); MAME has neither.
+
+Reopen when either turns up:
+
+- a Sp2000 (ACEX 1K30, 59 215-byte) build of the DooM or the Video bitstream;
+- a Sp2000 program that reloads the PLD with one of them. The emulator would show it without any change:
+  it runs the program on Standard and logs `unknown PLD bitstream, full hash ..., head hash ..., using
+  Standard` (§3), with the hashes to identify the stream.
+
+Separately, and only if a Sp2000 program is found that streams the hard disk through it: whether the standard
+`HDD_FLIP` / `HDDR` path needs emulating inside the Standard module.
 
 ## Glossary
 

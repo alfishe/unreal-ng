@@ -168,6 +168,8 @@ void EthernetGateway::OpenListeners()
     for (const auto& [guestPort, hostPort] : _network.Config().forwards)
     {
         (void)hostPort;
+        if (std::find(_reservedGuestPorts.begin(), _reservedGuestPorts.end(), guestPort) != _reservedGuestPorts.end())
+            continue;   // another device answers this port (a modem)
         Listener l;
         l.id = NextId();
         l.socket = _network.Open(NetProto::Tcp, this, l.id);

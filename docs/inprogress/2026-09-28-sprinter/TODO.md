@@ -107,6 +107,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   branch `sprinter-default-bios-306`; [bios-versions.md](bios-versions.md) §6.1): `[ROM] SPRINTER=` in the shipped
   config, catalog labels, automation texts, recipes; 3.04-pinned tests select 3.04 explicitly
   (`SprinterFixture::SelectBios`); the TTD corpus fixture `boot.ttd` re-recorded on 3.07 BETA 1
+- [x] Default BIOS back to 3.06 Hotfix 2 (owner decision 2026-10-03, branch `sprinter-bios-head`;
+  [bios-versions.md](bios-versions.md) §6.1): the upstream head is the kept 3.07 BETA 1 and still has the floppy
+  IY bug; 3.07 BETA 1 stays selectable with its `known_issues` warning. `[ROM] SPRINTER=`, catalog labels,
+  automation texts, recipes, AGENTS.md; `boot.ttd` re-recorded on 3.06 Hotfix 2
 - [x] Debugger crash at address 0 during a Sprinter reset (2026-10-02, branch `sprinter-debugger-null-bank`;
   [crash-debugger-null-window.md](crash-debugger-null-window.md)): `Memory::Reset` put the null 48K ROM role into
   window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
@@ -149,13 +153,17 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
        ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference. **Pass done 2026-10-03:
-     [demo-status.md](demo-status.md)** (open: BUYAN/20X20). ~~The Game PLD configuration for GAME_00 / LDConf
+     [demo-status.md](demo-status.md)** (BUYAN/20X20: a race in the demo, closed 2026-10-03). ~~The Game PLD configuration for GAME_00 / LDConf
      START.BAT~~ **done 2026-10-03** (branch `sprinter-pld-game`, [game-configuration.md](game-configuration.md)): the
      Game module (selected by the bitstream's full hash `#C0FA3055`, cell `#EE` = `#41`, the per-square grid-offset
      picture), all five automation surfaces + the status bar, recipe, MAME captures, env-gated HDD tests.
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
+     dontBlink's picture freeze at ~5:10 (2026-10-03): a race in the demo's SP-repair log (an INT between
+     `#0D1E LD SP,#3F74` and `#0D25 LD HL,(#031D)` overwrites its return address). Timing luck at clock level, MAME
+     freezes the same way in 4 of 6 runs; analysis [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2. It hits with BIOS 3.06 Hotfix 2
+     (the default again since 2026-10-03) and 3.07 BETA 1 alike. The owner checks it on a real board.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
@@ -290,7 +298,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
 - Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
-  `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; ISA I4 PIO IRQ lines **built 2026-10-03**, branch `sprinter-isa-i4`, ISA tdd §14), SN5 3C509B (M), SN6
+  `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; **built 2026-10-03**, branch `sprinter-sn4-modem`, network tdd §18: BC-Term dials a BBS over the ISA interrupt), SN5 3C509B (M), SN6
   host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
@@ -316,6 +324,12 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     `Fdc_Bios307SectorReadLoop_HdSide1`, `SprinterFloppyExe_Test` (env-gated). Owner decision 2026-10-03: 3.07 BETA 1
     stays the default, unchanged; the warning is the BIOS report's `known_issues` (all surfaces, Qt status bar) and
     the recipes. Upstream: [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) (to send to the BIOS author).
+  - [x] Upstream head check (2026-10-03): the public `beta` head `f546c4e` is the kept `sp2k-3.07-beta1.rom`,
+    byte for byte (every beta commit since 2026-01-19 calls itself "3.07 BETA 1"); its FDD driver still
+    changes IY. `make-bios.py` now fixes the default CMOS date (`--cmos-date`), which used to come from the
+    host clock ([bios-versions.md](bios-versions.md) §3.2, §5.3).
+  - [ ] When the BIOS author pushes the build with the newer fixes: build it, run `SprinterFloppyExe_Test` and
+    dontBlink to the end logo, then add it or replace the default (owner decides).
 - Flex Navigator (ACC-8, S4) stops after its splash: the BIOS `RESETD` RESTORE from track 71 (213 ms)
   outlasts the BIOS `WREST` wait (65 536 polls, ~184 ms here), the BIOS zeroes the track register and
   the RESTORE ends at track 9 ([roadmap-and-plan.md](roadmap-and-plan.md) §8). The wait needs at least
@@ -366,8 +380,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   it; Game does not: its INT is Standard's, the program waits with EI / HALT on the mode table's INT).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
-- After v1: DooM and Video PLD configuration modules, after analyzing their bitstreams
-  against MAME (Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
+- ~~After v1: DooM and Video PLD configuration modules~~ - not planned (2026-10-03): Sprinter 97
+  (FLEX) bitstreams only, their functions are in the Sp2000's Standard
+  ([pld-configurations.md](pld-configurations.md) §6). Game: done 2026-10-03, [game-configuration.md](game-configuration.md); its open points there §7:
   Mode0 bits 5-4, whether `/RESET` clears the grid offset).
 - LDConf's `STREAM.300` / `.303` / `.305` (other Standard core builds?) run as Standard with "unknown bitstream";
   name them once their source is known.

@@ -238,6 +238,7 @@ void Uart16550::Reset()
     _fcr = Evo() ? 0x01 : 0x00;
     _txc = false;
     _stubIir = 0x00;
+    _afr = 0;
     _lcr = 0;
     _mcr = 0;
     _lsr = kLsrThre | kLsrTemt;
@@ -417,12 +418,17 @@ void Uart16550::UpdateModemStatus()
         if (_peer && _peer->Cts())
             lines |= kMsrCts;
     }
-    else if (_peer)
+    else
     {
-        if (_peer->Cts()) lines |= kMsrCts;
-        if (_peer->Dsr()) lines |= kMsrDsr;
-        if (_peer->Ri()) lines |= kMsrRi;
-        if (_peer->Dcd()) lines |= kMsrDcd;
+        if (_peer)
+        {
+            if (_peer->Cts()) lines |= kMsrCts;
+            if (_peer->Dsr()) lines |= kMsrDsr;
+            if (_peer->Ri()) lines |= kMsrRi;
+            if (_peer->Dcd()) lines |= kMsrDcd;
+        }
+        // Pins the card does not wire to the line read their own level
+        lines = static_cast<uint8_t>((lines & _params.msrWired) | (_params.msrUnwired & ~_params.msrWired & 0xF0));
     }
     const uint8_t changed = static_cast<uint8_t>(lines ^ _msrLines);
     uint8_t deltas = 0;
@@ -629,6 +635,8 @@ uint8_t Uart16550::Read(uint8_t reg, uint64_t now)
         case kIer:
             return dlab ? _dlm : _ier;
         case kIirFcr:
+            if (dlab && _params.afr)
+                return _afr;   // PC16552D: AFR in the baud rate register set
             value = Iir();
             if ((value & 0x0F) == 0x02)
                 _thrInterrupt = false;   // reading IIR with THRE as the source clears it
@@ -692,6 +700,11 @@ void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
             break;
         case kIirFcr:
         {
+            if (dlab && _params.afr)
+            {
+                _afr = static_cast<uint8_t>(value & 0x07);   // PC16552D: AFR, not FCR
+                break;
+            }
             if (Evo())
             {
                 // The AVR acts only with bit 0 set: bit 1 empties RX and clears
@@ -764,6 +777,7 @@ Uart16550::View Uart16550::GetView() const
     v.msr = _msr;
     v.scr = _scr;
     v.divisor = static_cast<uint16_t>((_dlm << 8) | _dll);
+    v.afr = _afr;
     v.rxCount = _rxCount;
     v.txCount = _txCount;
     v.txBusy = _txBusy;
@@ -798,6 +812,7 @@ void Uart16550::SaveState(State& out) const
     out.lcrWritten = _lcrWritten ? 1 : 0;
     out.txc = _txc ? 1 : 0;
     out.stubIir = _stubIir;
+    out.afr = _afr;
     out.avrRelease = _avrRelease;
     std::memcpy(out.rx, _rx.data(), kMaxRx);
     std::memcpy(out.tx, _tx.data(), kMaxTx);
@@ -826,6 +841,7 @@ void Uart16550::LoadState(const State& in)
     _txHead = static_cast<uint16_t>(in.txHead % kMaxTx);
     _txc = in.txc != 0;
     _stubIir = in.stubIir;
+    _afr = static_cast<uint8_t>(in.afr & 0x07);
     _avrRelease = in.avrRelease;
     _txShift = in.txShift;
     _txBusy = in.txBusy != 0;

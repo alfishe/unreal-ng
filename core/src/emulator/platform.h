@@ -744,6 +744,9 @@ struct CONFIG
 		/// (4 sockets, NonOS AT 1.7.4), 2 = ESP8266 ESP-AT 2.2.1, 3 = ESP8266 ESP-AT 2.2.2. The SprinterESP card's
 		/// ESP-12F takes an ESP8266 value from here, else 2.2.2 (the Sprinter ESP Network Kit's firmware)
 		uint8_t espChip;
+		/// The Hayes modem's phone book (ComPortSpec MODEM, any serial port): "<number>=<host>[:<port>],..." (','
+		/// separates: ';' starts an INI comment); a number dialed with ATDT is looked up by its digits
+		char modemPhonebook[512];
 	} network;
 
 	struct

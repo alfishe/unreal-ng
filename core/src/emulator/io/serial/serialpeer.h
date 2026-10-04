@@ -150,6 +150,15 @@ public:
     /// @param modemLines a serial device gets RTS / DTR and reports CTS / DSR /
     ///        RI / DCD ([NETWORK] ComModemLines); otherwise CTS reads asserted
     StreamPeer(VirtualNetwork* network, const ComPortSpec& spec, bool modemLines = false);
+
+    /// A dialed link (the Hayes modem's: network tdd §10): it stays idle until Dial(), never retries on its own,
+    /// and opens its sockets for `owner` (the modem: one guest of the virtual network for its link and its
+    /// listener), which hands the events of cookies kCookieLink / kCookieDns back to OnNetEvent
+    struct Dialer
+    {
+        INetGuest* owner = nullptr;
+    };
+    StreamPeer(VirtualNetwork* network, const Dialer& dialer);
     ~StreamPeer() override;
 
     StreamPeer(const StreamPeer&) = delete;
@@ -180,6 +189,31 @@ public:
 
     /// Drop the link and open it again now (a host that came back, tests)
     void Reconnect() { Open(); }
+
+    // --- Dialer links (Dialer constructor) ------------------------------------------------------
+    /// Open the link to `spec` (TCP:<host>:<port>): the name resolves, the connect follows; onLinkChange tells
+    /// how it ends (Connected, or Idle with the reason)
+    void Dial(const ComPortSpec& spec);
+    /// Close the link now (sockets at the next frame boundary); bytes in either direction are dropped
+    void HangUp();
+    /// Take over an accepted connection (a listener's socket, already bound to the owner with kCookieLink): the
+    /// link is Connected to `peer` at once; no onLinkChange
+    void Adopt(uint16_t socket, const NetEndpoint& peer);
+    /// The target the link dials (TTD restore: the state does not carry the spec)
+    void SetDialSpec(const ComPortSpec& spec) { _spec = spec; }
+    const ComPortSpec& Spec() const { return _spec; }
+    bool IsDialer() const { return _dialer; }
+    /// A dialer link changed phase by itself: Connected, or Idle after a failure / the other end closing
+    /// (`status`: why a connect failed - Refused for a refused one; `why` in words)
+    std::function<void(Phase phase, NetEventStatus status, const std::string& why)> onLinkChange;
+    /// The socket of the connection (0: none)
+    uint16_t Socket() const { return _socket; }
+    /// Where the link goes: the resolved address and port (0 while unknown)
+    NetEndpoint Remote() const { return _remote; }
+    void SetRemote(const NetEndpoint& remote) { _remote = remote; }
+
+    static constexpr uint32_t kCookieLink = 0;
+    static constexpr uint32_t kCookieDns = 1;
 
     // INetGuest
     void OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
@@ -214,18 +248,20 @@ public:
     static constexpr size_t kMaxPending = 64 * 1024;
 
 private:
-    static constexpr uint32_t kCookieLink = 0;
-    static constexpr uint32_t kCookieDns = 1;
-
     void Open();
     void StartConnect(uint32_t addr);
-    void Fail(const std::string& why);
+    void Fail(const std::string& why, NetEventStatus status = NetEventStatus::Error);
+    /// The guest the sockets belong to (the owner of a dialer link, else this)
+    INetGuest* Guest() { return _owner ? _owner : this; }
     void CloseSockets();
     void SendLineAndLines();
 
     VirtualNetwork* _network = nullptr;
     ComPortSpec _spec;
     bool _modemLines = false;
+    bool _dialer = false;
+    INetGuest* _owner = nullptr;
+    NetEndpoint _remote;
 
     Phase _phase = Phase::Idle;
     uint16_t _socket = 0;
