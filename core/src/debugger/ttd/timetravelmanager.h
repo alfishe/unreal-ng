@@ -65,6 +65,8 @@
 #include "ttdv1events.h"
 #include "engine/ttdrestoreresult.h"
 #include "engine/ttdwriteindex.h"
+#include "engine/ttdrecordingwriter.h"
+#include "ttdrecordingfolders.h"
 #include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
@@ -576,6 +578,13 @@ public:
     /// Without an engine attached this costs one pointer check per frame.
     /// Tests and benchmarks only
     void SetShadowEngine(TimeTravelEngine* engine);
+    /// Shadow mode (Phase 4): write the shadow engine's session as it records,
+    /// a file per segment, into a recording folder under @p root (empty, the
+    /// default: no files). A stop finishes the files; invalidating the session
+    /// deletes its folder. For tests and the benchmark until Phase 5
+    void SetShadowRecordingRoot(const std::string& root) { _shadowRecordingRoot = root; }
+    /// The folder the shadow session is written to (empty when none)
+    std::string ShadowRecordingFolder() const;
     TimeTravelEngine* GetShadowEngine() const { return _shadowEngine; }
 
     /// Phase 3 A/B: seeks restore from @p engine's checkpoints and replay its
@@ -2041,6 +2050,12 @@ private:
     /// The shadow engine's screenshot stream (frame-boundary stream 0, off until switched on)
     void RegisterScreenshotStream(TimeTravelEngine& engine);
     std::vector<uint8_t> _screenshotScratch;
+    std::string _shadowRecordingRoot;
+    std::unique_ptr<TTDRecordingFolder> _shadowFolder;
+    std::unique_ptr<TTDRecordingWriter> _shadowWriter;
+    /// The shadow session's files: finished (stop, a new session) or deleted (invalidated)
+    void FinishShadowFiles();
+    void DiscardShadowFiles();
 
 public:
     /// Frame-boundary stream 0 of the shadow engine: width u16, height u16,

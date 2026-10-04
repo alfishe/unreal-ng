@@ -31,6 +31,9 @@
 
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 #include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
+#include <random>
+#include <ctime>
+#include "emulator/config.h"
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
 #include "emulator/io/rtc/ds12887.h"
 #include "debugger/ttd/ttdconfigcapture.h"
@@ -393,6 +396,7 @@ void TimeTravelManager::StopRecording()
         _shadowEvents.facts = 0;
     }
     SyncMediaReadJournal();   // no more recording into the engine
+    FinishShadowFiles();
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
@@ -484,6 +488,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
 
     MLOGINFO("TimeTravelManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
+    DiscardShadowFiles();
     ResetShadow();
     _lastDropReason = reason ? reason : "";
 
@@ -3682,8 +3687,30 @@ void TimeTravelManager::NoteReplaySource(TTDReplaySource source)
     NoteFact(ev);
 }
 
+std::string TimeTravelManager::ShadowRecordingFolder() const
+{
+    return _shadowFolder ? _shadowFolder->Path() : std::string();
+}
+
+void TimeTravelManager::FinishShadowFiles()
+{
+    if (_shadowWriter && _shadowEngine && !_shadowWriter->Finish(*_shadowEngine))
+        MLOGWARNING("TimeTravelManager: the shadow session's files: %s", _shadowWriter->Error().c_str());
+    _shadowWriter.reset();   // the folder stays the session's until a new one starts or it is invalidated
+}
+
+void TimeTravelManager::DiscardShadowFiles()
+{
+    _shadowWriter.reset();   // its thread stops; the files go with the folder
+    if (_shadowFolder)
+        _shadowFolder->Discard();
+    _shadowFolder.reset();
+}
+
 void TimeTravelManager::ResetShadow()
 {
+    FinishShadowFiles();
+    _shadowFolder.reset();   // a finished recording stays on disk
     ArmShadowRegions(false);
     _shadowDeviceRegions.clear();
     if (_shadowEngine)
@@ -4014,6 +4041,37 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     engine.SetConfiguration(out.time.frame, CaptureConfigFingerprint(*_context, _shadowRomSignature));
     _shadowLastStart = in.start;
     _shadowLastBase = baseNow;
+
+    // Written as it records, a file per segment (Phase 4)
+    if (!_shadowRecordingRoot.empty())
+    {
+        if (!_shadowWriter && !_shadowFolder)
+        {
+            const TMemModel* model = Config::FindModelByEnum(_context->config.mem_model);
+            std::string why;
+            _shadowFolder = TTDRecordingFolder::Create(_shadowRecordingRoot, model ? model->ShortName : "session",
+                                                       std::time(nullptr), why);
+            if (_shadowFolder)
+            {
+                TTDSessionSaveParams params;
+                params.createdMicros = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                                 std::chrono::system_clock::now().time_since_epoch())
+                                                                 .count());
+                std::random_device random;
+                for (uint8_t& b : params.uuid)
+                    b = static_cast<uint8_t>(random());
+                TTDRecordingFolder* folder = _shadowFolder.get();
+                _shadowWriter = std::make_unique<TTDRecordingWriter>(
+                    [folder](uint32_t n) { return folder->SegmentPath(n); }, params);
+                if (!_shadowWriter->Begin(engine, why))
+                    _shadowWriter.reset();
+            }
+            if (!_shadowWriter)
+                MLOGWARNING("TimeTravelManager: the shadow session is not written: %s", why.c_str());
+        }
+        else if (_shadowWriter && !_shadowWriter->Collect(engine))
+            MLOGWARNING("TimeTravelManager: writing the shadow session stopped: %s", _shadowWriter->Error().c_str());
+    }
 }
 
 void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
