@@ -18,7 +18,9 @@
 #include <sys/time.h>
 #endif
 
+#include "common/network/mactranslator.h"
 #include "platform/dynamiclibrary.h"
+#include "platform/hostadaptermac.h"
 
 namespace
 {
@@ -203,6 +205,8 @@ std::vector<HostAdapter> HostFrameBridge::Adapters(std::string& error)
         a.wireless = (it->flags & kIfWireless) != 0;
         for (PcapAddr* address = it->addresses; address; address = address->next)
         {
+            if (!a.hasMac && address->addr && LinkAddressOf(address->addr, a.mac.data()))
+                a.hasMac = true;
             if (address->addr && address->addr->sa_family == AF_INET)
             {
                 char text[INET_ADDRSTRLEN] = {};
@@ -211,6 +215,8 @@ std::vector<HostAdapter> HostFrameBridge::Adapters(std::string& error)
                     a.ipv4.emplace_back(text);
             }
         }
+        if (!a.hasMac)
+            a.hasMac = AdapterMacByName(a.name, a.mac.data());
         out.push_back(std::move(a));
     }
     _pcap->freeAllDevs(list);
@@ -245,13 +251,15 @@ bool HostFrameBridge::Open(const std::string& adapter, std::string& error)
         error = "'" + adapter + "' is a loopback adapter: no LAN behind it";
         return false;
     }
-    if (found->wireless)
+    // Wi-Fi (SN6b): an access point drops frames from the card's own MAC - they leave with the adapter's
+    const bool translate = found->wireless;
+    if (translate && !found->hasMac)
     {
-        // SN6a (owner Q1): Ethernet first; Wi-Fi needs the MAC translation of SN6b
-        error = "'" + adapter + "' is a Wi-Fi adapter: an access point drops frames from the card's own MAC, so the "
-                "plain bridge works on wired adapters only (Wi-Fi bridging is planned); use NAT on Wi-Fi";
+        error = "'" + adapter + "' is a Wi-Fi adapter whose own MAC address is unknown: the bridge needs it to "
+                "translate the card's frames";
         return false;
     }
+    const Mac hostMac = found->mac;
 
     auto openHandle = [this, &adapter, &error](bool promisc) -> void* {
         char errbuf[kErrbufSize] = {};
@@ -297,6 +305,9 @@ bool HostFrameBridge::Open(const std::string& adapter, std::string& error)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _adapter = adapter;
+        _translate = translate;
+        _hostMac = hostMac;
+        _guestIps.clear();
         _queue.clear();
         _counters = Counters{};
         _lastError.clear();
@@ -335,6 +346,12 @@ void HostFrameBridge::SetStations(const std::vector<Mac>& stations)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _stations = stations;
+}
+
+void HostFrameBridge::SetGuestIps(const std::vector<uint32_t>& ips)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _guestIps = ips;
 }
 
 bool HostFrameBridge::WantsFrame(const uint8_t* frame, size_t length, const std::vector<Mac>& stations)
@@ -419,7 +436,9 @@ void HostFrameBridge::CaptureLoop()
         }
         const size_t length = std::min<size_t>(header->caplen, kMaxFrame);
         std::lock_guard<std::mutex> lock(_mutex);
-        if (!WantsFrame(data, length, _stations))
+        const bool wanted = _translate ? MacTranslator::WantsInbound(data, length, _hostMac, _guestIps)
+                                       : WantsFrame(data, length, _stations);
+        if (!wanted)
         {
             ++_counters.filtered;
             continue;

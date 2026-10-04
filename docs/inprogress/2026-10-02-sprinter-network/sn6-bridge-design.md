@@ -1,7 +1,7 @@
 # SN6 - the frame cards on the host's real LAN (bridge mode)
 
-**Status:** SN6a (wired adapters) built 2026-10-04, branch `sprinter-sn6-bridge`, verified live on the development Mac
-(section 10); SN6b (Wi-Fi through MAC translation) open. Builds on [tdd.md](tdd.md) §7.8 (the first
+**Status:** SN6a (wired adapters) and SN6b (Wi-Fi through MAC translation) built and verified live 2026-10-04
+(sections 10, 11). Builds on [tdd.md](tdd.md) §7.8 (the first
 sketch) and the owner's decision Q2 ([open-questions.md](open-questions.md): "the bridge right away"; NAT stays the
 no-admin default, the bridge is the second host path for the same card).
 
@@ -133,7 +133,8 @@ Section 9 Q1 asks how far SN6 goes here.
 | Automation: WebAPI `GET .../network/adapters` + OpenAPI, CLI `network adapters`, Lua / Python `network_adapters()`, MCP via `invoke_api` (tool text); the settings through the existing network config verb on every surface | `core/automation/*` |
 | Qt: Network window, group "Ethernet cards": the path (NAT / bridge) and the host adapter list | `unreal-qt/src/network/` |
 
-Tests: `EthernetGateway_Test.Bridge_*` (3), `HostFrameBridge_Test.*` (2), `SprinterNetwork_Test.Bridge_FramesFromTheLanAreJournaledInputs`
+Tests: `EthernetGateway_Test.Bridge_*` (3), `HostFrameBridge_Test.*` (the frame filter; the one that loads libpcap and
+lists the host's adapters is `DISABLED_`: unit tests do not touch the host network, owner 2026-10-04), `SprinterNetwork_Test.Bridge_FramesFromTheLanAreJournaledInputs`
 (a fake adapter: the NetFrame lands in the TTD journal with its bytes). Linux CI image (gcc) builds and passes them;
 MinGW syntax check of the Windows files.
 
@@ -148,5 +149,29 @@ the LAN's broadcasts arriving (`lan_in`) and the card's frames leaving (`lan_out
   host's own stack never receives it (the same as VirtualBox's pcap bridge on macOS). Other machines on the LAN can.
 - The Sprinter kits are not resident: after `IFUP` returns nobody on the Sprinter answers ARP or ping. A test that
   pings the Sprinter needs a resident program (a kit server) running.
-- The adapter list marks only loopback and Wi-Fi as not bridgeable; tunnels (`utun*`) are refused when opened (not
-  Ethernet), not in the list.
+- The adapter list marks only loopback as not bridgeable; tunnels (`utun*`) are refused when opened (not Ethernet),
+  not in the list.
+
+## 11. As built (SN6b, Wi-Fi, 2026-10-04)
+
+A wireless adapter (libpcap's `PCAP_IF_WIRELESS`) bridges through **MAC translation**, chosen automatically - no
+setting:
+
+| Part | Where |
+|---|---|
+| The adapter's own MAC: macOS `AF_LINK`, Linux `AF_PACKET` from the libpcap address list, Windows the IP Helper API by the Npcap GUID | `core/src/platform/hostadaptermac.h`, `platform/{macos,linux,windows}/hostadaptermac_*.cpp`; `HostAdapter::mac` |
+| `MacTranslator`: out - Ethernet source and ARP sender = the host MAC, DHCP requests get the BROADCAST flag (UDP checksum cleared); in - a unicast for the host MAC goes to the card whose IPv4 address it carries (IPv4 destination, ARP target; learned from the card's packets and the DHCP ACK), the card's MAC put back; the host's own traffic dropped | `core/src/common/network/mactranslator.{h,cpp}` |
+| The capture thread keeps group frames and the unicasts that can be for a guest (`WantsInbound`): the bulk of the host's own Wi-Fi traffic never reaches the queue | `hostframebridge.cpp` |
+| The journal keeps the frame as the card sees it (after translation): a replay needs no translation table | `networkmanager.cpp` `PumpBridge` |
+| Frames from the adapter shorter than 60 bytes are padded (Wi-Fi's 802.11-to-Ethernet conversion leaves the padding out; the DP8390 drops runts) - for wired adapters too | `PumpBridge` |
+| Report `ethernet_gateway.bridge`: `translation`, `host_mac`, `guests[]` (ip, card_mac); adapters list `mac`, `translation` | `networkmanager.cpp`, `ethernetaccess.cpp` |
+
+Tests: `MacTranslator_Test.*` (DHCP, ARP and IPv4 both ways, the host's traffic, the capture filter),
+`SprinterNetwork_Test.Bridge_*` (a short frame padded).
+
+**Live check (macOS `en1`, Wi-Fi, 172.16.13.55):** `IFUP` lease 172.16.15.142 from 172.16.0.1, `PING 172.16.0.1`
+3 / 3, `NSLOOKUP example.com` through 172.16.1.1. The first try found the runt problem: the router's 56-byte ARP
+reply reached the card and was dropped by its receive filter, so PING reported "ARP reply timeout".
+
+Limits: IPv4 only (ARP, DHCP, ICMP, UDP, TCP); a protocol that carries the card's MAC elsewhere in its payload, or a
+non-IP protocol, does not cross. As with the wired bridge, the host itself does not reach the card.
