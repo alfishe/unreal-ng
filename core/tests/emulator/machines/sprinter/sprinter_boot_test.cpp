@@ -18,6 +18,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
+#include <emulator/io/ide/idecontroller.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
@@ -869,6 +870,52 @@ TEST_F(SprinterBoot_Test, Bios306_BootsFromAnAtapiCd)
 
     DestroyEmulator();
     std::remove(isoPath.c_str());
+}
+
+// A CompactFlash card on an IDE adapter, the usual system disk of a Sprinter today (peripherals-survey §8 item 5): the
+// card answers IDENTIFY with the CFA signature #848A and the model "UNREAL-NG CF"; BIOS 3.06 Hotfix 2 lists it as a
+// disk and boots DSS 1.71 from it. The disk is built here from the DSS 1.71.66 build in testdata, laid out as its
+// BOOT.EXE installs it (estex-dss-build.md section 4): DSSloader.bin's first 1443 bytes at LBA 1-3, its last 276
+// (ZERO_SECTOR_OF_BPB, which the loader copies back from sector 0) in the MBR right before the partition table;
+// SYSTEM.DOS, SYSTEM.EXE and a SYSTEM.BAT running `ver` on a FAT16 partition. The card's IDENTIFY sets "removable" (word 0 bit 7), which BIOS
+// 3.06 hands to DSS (AUTOIDE PARSE_IdentifyDevice -> MediaParameters bit 0): DSS takes the removable path, which
+// needs that sector-0 part (a disk image without it boots as a hard disk and crashes as a CF card).
+// Boot-bound (BIOS POST, SETUP, the IDE scan, DSS 1.71 from the card), the turbo mode on
+TEST_F(SprinterBoot_Test, Bios306_Dss171BootsFromACompactFlashCard)
+{
+    const std::string dss = TestPathHelper::GetTestDataPath("machines/sprinter/dss/1.71.66/");
+    const std::vector<uint8_t> loader = ReadAll(dss + "DSSloader.bin");
+    const std::vector<uint8_t> kernel = ReadAll(dss + "system.dos");
+    const std::vector<uint8_t> shell = ReadAll(dss + "system.exe");
+    if (loader.empty() || kernel.empty() || shell.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss/1.71.66 is missing";
+    constexpr size_t kSectors13 = 1443;  // "SECTORS 1..3 DATA ENDS" of the ae08ad9 build (DSSBOOT.ASM)
+    ASSERT_EQ(loader.size(), kSectors13 + 276) << "the testdata loader is the ae08ad9 build";
+    const std::vector<uint8_t> sectors13(loader.begin(), loader.begin() + kSectors13);
+    const std::vector<uint8_t> sector0(loader.begin() + kSectors13, loader.end());
+    const std::string bat = "ver\r\n";  // the shell runs SYSTEM.BAT: the version line
+    std::vector<uint8_t> disk = BuildDssHdd(sectors13,
+                                            {{"SYSTEM  DOS", kernel},
+                                             {"SYSTEM  EXE", shell},
+                                             {"SYSTEM  BAT", std::vector<uint8_t>(bat.begin(), bat.end())}},
+                                            sector0);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("dss171-cf.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(image, disk.data(), disk.size()));
+
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    std::string error;
+    ASSERT_TRUE(_context->pIdeController->SetUnitKind(0, IdeController::UnitKind::CompactFlash, &error)) << error;
+    InsertHdd(image, "ide0.master");
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->descriptor.label, "IDE primary master (CompactFlash)");
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1500, 5);
+    EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG CF")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("Estex DSS version 1.71.66. Shell version 1.2.523.")) << ScreenText();
+
+    DestroyEmulator();
+    std::remove(image.c_str());
 }
 
 // Empty channels (tdd-storage §3.4): the Sprinter's AT board pulls DD7 down as the ATA standard asks, so a channel

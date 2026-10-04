@@ -24,6 +24,14 @@ namespace
         row.acceptsFolder = Flag(slot.find("acceptsFolder"));
         if (const StateNode* aliases = slot.find("aliases"); aliases && !aliases->items.empty())
             row.alias = aliases->items.front().s;
+        if (const StateNode* tags = slot.find("tags"))
+        {
+            for (const StateNode& tag : tags->items)
+            {
+                row.ideUnit = row.ideUnit || tag.s == "ide";
+                row.compactFlash = row.compactFlash || tag.s == "cf";
+            }
+        }
 
         const StateNode* medium = slot.find("medium");
         if (medium && medium->isObject())

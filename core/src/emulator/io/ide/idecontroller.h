@@ -65,12 +65,27 @@ public:
     /// The machine's reset line: both units back to power-on
     void Reset();
 
-    /// Swap a unit's drive for the other kind (a hard disk for a CD-ROM drive,
-    /// or back), as a user would change the hardware: the unit must be empty,
-    /// the emulator not running, TTD not recording. The machine's in-memory
-    /// config (`ide[unit].cd`) follows, so a reset or RefitIde keeps it; a new
-    /// machine starts from its config file
-    bool SetUnitKind(int unit, bool cdrom, std::string* error = nullptr);
+    /// What sits on an IDE unit
+    enum class UnitKind : uint8_t
+    {
+        Disk = 0,          ///< a hard disk
+        Cdrom = 1,         ///< an ATAPI CD-ROM drive
+        CompactFlash = 2,  ///< a CompactFlash card on an IDE adapter (a disk that identifies as CFA)
+    };
+
+    /// Swap a unit's drive for another kind (a hard disk, a CD-ROM drive, a
+    /// CompactFlash card), as a user would change the hardware: the unit must be
+    /// empty, the emulator not running, TTD not recording. The machine's
+    /// in-memory config (`ide[unit].cd` / `.cf`) follows, so a reset or RefitIde
+    /// keeps it; a new machine starts from its config file
+    bool SetUnitKind(int unit, UnitKind kind, std::string* error = nullptr);
+    bool SetUnitKind(int unit, bool cdrom, std::string* error = nullptr)
+    {
+        return SetUnitKind(unit, cdrom ? UnitKind::Cdrom : UnitKind::Disk, error);
+    }
+    UnitKind KindOf(int unit) const;
+    /// "disk" / "cdrom" / "cf"
+    static const char* UnitKindName(UnitKind kind);
     /// 0-3 for "ide0.master" / "ide0.slave" / "ide1.master" / "ide1.slave", -1 for any other slot
     static int UnitForSlot(const std::string& slotId);
 
