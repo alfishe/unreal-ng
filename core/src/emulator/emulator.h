@@ -174,9 +174,10 @@ private:
 
     private:
         Emulator& _emulator;
-        /// The host audio hold this direct run takes (SoundManager::holdHostOutput): it is not paced to real
-        /// time, so its frames must not reach the speakers sped up
-        SoundManager* _heldSound = nullptr;
+        /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
+        /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
+        /// it unmarks it, so Resume's reconcile never sees this hold without its run
+        SoundManager::HostOutputHold _hostHold;
     };
 
     // Emulator state

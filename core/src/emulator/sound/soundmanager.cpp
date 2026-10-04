@@ -322,6 +322,118 @@ void SoundManager::unmute()
     _mute = false;
 }
 
+/// region <Host output holds>
+
+const char* SoundManager::HostHoldReasonName(HostHoldReason reason)
+{
+    switch (reason)
+    {
+        case HostHoldReason::DirectRun:
+            return "direct_run";
+        case HostHoldReason::TtdReplay:
+            return "ttd_replay";
+        case HostHoldReason::Turbo:
+            return "turbo";
+    }
+    return "unknown";
+}
+
+SoundManager::HostOutputHold::HostOutputHold(SoundManager* sound, HostHoldReason reason) : _reason(reason)
+{
+    if (sound)
+    {
+        _epoch = sound->acquireHostHold(reason);
+        _sound = sound;
+    }
+}
+
+SoundManager::HostOutputHold::HostOutputHold(HostOutputHold&& other) noexcept
+    : _sound(other._sound), _reason(other._reason), _epoch(other._epoch)
+{
+    other._sound = nullptr;
+}
+
+SoundManager::HostOutputHold& SoundManager::HostOutputHold::operator=(HostOutputHold&& other) noexcept
+{
+    if (this != &other)
+    {
+        Release();
+        _sound = other._sound;
+        _reason = other._reason;
+        _epoch = other._epoch;
+        other._sound = nullptr;
+    }
+    return *this;
+}
+
+void SoundManager::HostOutputHold::Release()
+{
+    if (_sound)
+    {
+        SoundManager* sound = _sound;
+        _sound = nullptr;
+        sound->releaseHostHold(_reason, _epoch);
+    }
+}
+
+uint32_t SoundManager::acquireHostHold(HostHoldReason reason)
+{
+    const size_t i = static_cast<size_t>(reason);
+    _hostHoldsTaken[i].fetch_add(1, std::memory_order_relaxed);
+    // The epoch first: a reconcile that bumps it between the two reads dropped nothing of ours, and the count
+    // below is then this hold's own
+    const uint32_t epoch = _hostHoldEpoch[i].load(std::memory_order_acquire);
+    _hostHolds[i].fetch_add(1, std::memory_order_acq_rel);
+    return epoch;
+}
+
+void SoundManager::releaseHostHold(HostHoldReason reason, uint32_t epoch)
+{
+    const size_t i = static_cast<size_t>(reason);
+    // A reconcile already dropped this hold (it was taken before the epoch moved): nothing left to give back
+    if (_hostHoldEpoch[i].load(std::memory_order_acquire) != epoch)
+        return;
+    int holds = _hostHolds[i].load(std::memory_order_acquire);
+    while (holds > 0 && !_hostHolds[i].compare_exchange_weak(holds, holds - 1, std::memory_order_acq_rel))
+    {
+    }
+}
+
+bool SoundManager::isHostOutputHeld() const
+{
+    for (const std::atomic<int>& holds : _hostHolds)
+    {
+        if (holds.load(std::memory_order_acquire) > 0)
+            return true;
+    }
+    return false;
+}
+
+int SoundManager::reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive)
+{
+    const bool active[kHostHoldReasons] = {directRunActive, ttdReplayActive, turboActive};
+    int dropped = 0;
+    for (size_t i = 0; i < kHostHoldReasons; i++)
+    {
+        if (active[i])
+            continue;
+        // Epoch first, then the count: a guard taken from here on belongs to the new epoch and keeps its hold
+        _hostHoldEpoch[i].fetch_add(1, std::memory_order_acq_rel);
+        const int stale = _hostHolds[i].exchange(0, std::memory_order_acq_rel);
+        if (stale > 0)
+        {
+            dropped += stale;
+            LOGWARNING("SoundManager: dropped %d stale host output hold(s) [%s] - a holder never released it",
+                        stale, HostHoldReasonName(static_cast<HostHoldReason>(i)));
+        }
+    }
+    if (dropped > 0)
+        _hostStaleHoldsCleared.fetch_add(static_cast<uint64_t>(dropped), std::memory_order_relaxed);
+    return dropped;
+}
+
+/// endregion </Host output holds>
+
 void SoundManager::onEmulatorPaused()
 {
     if (_gs)
@@ -1285,7 +1397,7 @@ void SoundManager::handleFrameEnd()
     AudioCallback callback = _context->pAudioCallback.load(std::memory_order_acquire);
     void* obj = _context->pAudioManagerObj.load(std::memory_order_acquire);
 
-    // A run not paced to real time (holdHostOutput): the host gets nothing, as while paused
+    // A run not paced to real time (a HostOutputHold): the host gets nothing, as while paused
     if (callback && obj && isHostOutputHeld())
     {
         _hostFramesHeld.fetch_add(1, std::memory_order_relaxed);

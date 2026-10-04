@@ -347,9 +347,27 @@ POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count":
 > host audio output (the speakers) gets nothing, on every machine and from every sound source (beeper, AY,
 > Covox / Sprinter Covox-Blaster, GS, FM, MoonSound, CD): the same as while paused. The machine computes exactly
 > the same samples as at normal speed (TTD stays deterministic), and audio captures (`/audio/capture`) and
-> recordings still get them. TTD seek / replay and turbo mode hold the host output the same way. `resume`
-> restores sound. `GET /audio/mixer` -> `host_output` shows it: `held`, `frames_delivered`, `frames_audible`,
-> `frames_held` (emulated frames since the instance was created).
+> recordings still get them. TTD seek / replay and turbo mode hold the host output the same way. The user's
+> master mute is never touched by any of them.
+>
+> Each hold belongs to the run that took it and ends with it - also when the run fails or throws - so after the
+> run, the seek or turbo the host output is free again. `resume` (WebAPI, MCP, CLI, GUI) also checks it: a hold
+> whose reason is not in effect at that moment (no direct run on any thread, no TTD replay, no turbo) is a leak
+> and is dropped and counted, so a resumed machine is always heard.
+>
+> `GET /audio/mixer` -> `host_output` shows it:
+>
+> | Field | Meaning |
+> |-------|---------|
+> | `held` | `true` while any hold is active |
+> | `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` (all `0` while the machine plays) |
+> | `holds_taken` | holds ever taken, by reason |
+> | `stale_holds_cleared` | leaked holds a `resume` dropped (should stay `0`; each one is also logged) |
+> | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames handed to the speakers / of those, not silent / withheld |
+>
+> Example: a Sprinter playing music, `POST /pause`, `POST /run_frames {"count":50}`, `POST /resume`. During
+> `run_frames`, `holders.direct_run` is `1` and `frames_held` grows by 50. After `resume`, `held` is `false`,
+> `holders` is all `0`, and `frames_delivered` / `frames_audible` grow by about 50 a second again.
 
 ### Debug Mode
 ```
@@ -390,7 +408,7 @@ GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binar
 GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
-GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]

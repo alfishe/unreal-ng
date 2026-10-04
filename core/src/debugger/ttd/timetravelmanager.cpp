@@ -1767,7 +1767,7 @@ void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
 void TimeTravelManager::EnterReplayMode()
 {
     if (_inReplayMode)
-        return;  // Idempotent + nest-safe: do NOT overwrite saved mute state
+        return;  // Idempotent + nest-safe: no second hold
 
     if (!_context)
     {
@@ -1775,26 +1775,14 @@ void TimeTravelManager::EnterReplayMode()
         return;
     }
 
-    // Capture current SoundManager mute state so ExitReplayMode can restore
-    // it exactly. The TDD is explicit that host-buffer submission is muted
-    // but device ticks (handleStep / handleFrameStart) keep running — using
-    // the existing mute() facility is precisely this contract, since mute
-    // only zeroes the output buffer at the host boundary in handleFrameEnd.
-    if (_context->pSoundManager)
-    {
-        _soundMuteBeforeReplay = _context->pSoundManager->isMuted();
-        _context->pSoundManager->mute();
-        // Replay runs as fast as the host goes: nothing reaches the host audio callback at all (the mute
-        // alone would still feed it silence at that speed)
-        _context->pSoundManager->holdHostOutput();
-    }
-    else
-    {
-        _soundMuteBeforeReplay = false;
-    }
-
     _context->ttdReplayActive = true;
     _inReplayMode = true;
+
+    // Replay runs as fast as the host goes: nothing reaches the host audio callback at all (TDD §8.2: device
+    // ticks keep running, only the host boundary is held). Taken after the flag is set, so a resume reconcile
+    // never sees the hold without its replay; the user's master mute is not touched
+    if (_context->pSoundManager)
+        _replayHostHold = SoundManager::HostOutputHold(_context->pSoundManager, SoundManager::HostHoldReason::TtdReplay);
 
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
@@ -1810,8 +1798,7 @@ void TimeTravelManager::EnterReplayMode()
     if (_memory)
         _memory->UpdateFeatureCache();
 
-    MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (sound mute saved=%d)",
-             static_cast<int>(_soundMuteBeforeReplay));
+    MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (host audio output held)");
 }
 
 void TimeTravelManager::ExitReplayMode()
@@ -1825,6 +1812,8 @@ void TimeTravelManager::ExitReplayMode()
         return;
     }
 
+    // The hold goes first, then the flag (see EnterReplayMode)
+    _replayHostHold.Release();
     _context->ttdReplayActive = false;
     _inReplayMode = false;
 
@@ -1836,19 +1825,7 @@ void TimeTravelManager::ExitReplayMode()
     if (_memory)
         _memory->UpdateFeatureCache();
 
-    // Restore the saved mute state. If the user had muted audio before the
-    // seek, they want it muted after; if not, the existing unmute() path is
-    // the right call.
-    if (_context->pSoundManager)
-    {
-        if (_soundMuteBeforeReplay)
-            _context->pSoundManager->mute();
-        else
-            _context->pSoundManager->unmute();
-        _context->pSoundManager->releaseHostOutput();
-    }
-
-    MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (sound mute restored)");
+    MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (host audio output released)");
 }
 
 bool TimeTravelManager::IsReplayActive() const
@@ -2802,7 +2779,7 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     // is idempotent and saves the host audio mute state so we can restore
     // it on exit (TDD §8.2).
     // ------------------------------------------------------------------
-    EnterReplayMode();
+    ReplayModeScope replay(*this);
 
     // ------------------------------------------------------------------
     // Run to the target. Recorded input is applied by the stepping engine
@@ -2813,7 +2790,7 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     // The CPU resumes at the checkpoint's overshoot, not at 0
     RunToTInFrame(targetTInFrame);
 
-    ExitReplayMode();
+    replay.Exit();
 }
 
 void TimeTravelManager::RunToFrameEnd()
@@ -2854,7 +2831,7 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
     // restores through _liveSnapshot.
     LiveStateSnapshot local;
     SaveLiveState(local);
-    EnterReplayMode();
+    ReplayModeScope replay(*this);
 
     // Replay whole frames from `cp` until frame `f` is the current frame.
     auto runUntilFrame = [this](uint64_t f) {
@@ -2940,7 +2917,7 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
     if (const uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount))
         composedPlaneB.assign(planeB, planeB + planeBCount);
 
-    ExitReplayMode();
+    replay.Exit();
     RestoreLiveState(local);
 
     // Machine state is exactly the caller's again; only the pixels change.
@@ -5316,9 +5293,9 @@ replay_fallback:
         _context->ttdProbe.Reset();
         _context->ttdProbe.Arm(q);
 
-        EnterReplayMode();
+        ReplayModeScope replay(*this);
         ReplayWithinFrame(cp.time.frame, replayEndT);
-        ExitReplayMode();
+        replay.Exit();
 
         auto hits = _context->ttdProbe.ExtractHits();
         _context->ttdProbe.Disarm();
@@ -5431,9 +5408,9 @@ bool TimeTravelManager::StepForwardInstruction()
     // Run exactly one instruction via silent replay. RunTStates(1, true)
     // enters the Z80Step loop once — Z80Step executes one complete
     // instruction regardless of its t-state length.
-    EnterReplayMode();
+    ReplayModeScope replay(*this);
     _context->pEmulator->RunTStates(1, true);
-    ExitReplayMode();
+    replay.Exit();
 
     PresentPosition(false);
     return true;
@@ -5571,9 +5548,9 @@ TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
         _context->ttdProbe.Reset();
         _context->ttdProbe.Arm(q);
 
-        EnterReplayMode();
+        ReplayModeScope replay(*this);
         ReplayWithinFrame(cp.time.frame, replayEndT);
-        ExitReplayMode();
+        replay.Exit();
 
         auto hits = _context->ttdProbe.ExtractHits();
         _context->ttdProbe.Disarm();
@@ -6381,10 +6358,10 @@ const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
 
     SaveLiveState(_liveSnapshot);
 
-    EnterReplayMode();
+    ReplayModeScope replay(*this);
     BuildFrameCache(frame, *_frameCache);
     RestoreLiveState(_liveSnapshot);
-    ExitReplayMode();
+    replay.Exit();
 
     SetState(stateBeforeBuild);
 

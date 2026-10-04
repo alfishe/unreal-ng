@@ -54,6 +54,7 @@
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
+#include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
 #include "ttdfileinfo.h"
@@ -757,8 +758,8 @@ public:
     //
     // The flag itself (`_context->ttdReplayActive`) is read by every
     // suppression site — see emulatorcontext.h. EnterReplayMode / ExitReplayMode
-    // also save/restore the SoundManager mute state so the host audio output
-    // can be muted independently of feature flags.
+    // also hold the host audio output (SoundManager::HostOutputHold, reason
+    // TtdReplay): nothing reaches the speakers, the user's mute is untouched.
     //
     // Threading: same discipline as Restore — called on the control thread
     // with the emulator paused. Replay is driven by a follow-up RunTStates
@@ -767,18 +768,41 @@ public:
 
     /// @brief Enter silent-replay mode.
     ///
-    /// Sets `_context->ttdReplayActive = true`, saves and forces the
-    /// SoundManager mute state. Idempotent: a second call while already in
-    /// replay is a no-op (and does NOT overwrite the saved mute state, so
-    /// nesting is safe).
+    /// Sets `_context->ttdReplayActive = true` and holds the host audio
+    /// output. Idempotent: a second call while already in replay is a no-op
+    /// (no second hold, so nesting is safe).
     void EnterReplayMode();
 
     /// @brief Exit silent-replay mode.
     ///
-    /// Clears `_context->ttdReplayActive`, restores the SoundManager mute
-    /// state captured by EnterReplayMode. Idempotent: a call while not in
-    /// replay is a no-op.
+    /// Clears `_context->ttdReplayActive` and releases the host audio hold.
+    /// Idempotent: a call while not in replay is a no-op.
     void ExitReplayMode();
+
+    /// @brief EnterReplayMode for a scope: ExitReplayMode on Exit() or, at the
+    /// latest, when the scope ends - an exception or early return inside a
+    /// replay can no longer leave replay mode (and its host audio hold) on.
+    /// Same semantics as the explicit pair: Exit leaves replay mode even when
+    /// an outer caller entered it first.
+    class ReplayModeScope
+    {
+    public:
+        explicit ReplayModeScope(TimeTravelManager& manager) : _manager(&manager) { manager.EnterReplayMode(); }
+        ~ReplayModeScope() { Exit(); }
+        ReplayModeScope(const ReplayModeScope&) = delete;
+        ReplayModeScope& operator=(const ReplayModeScope&) = delete;
+        void Exit()
+        {
+            if (TimeTravelManager* manager = _manager)
+            {
+                _manager = nullptr;
+                manager->ExitReplayMode();
+            }
+        }
+
+    private:
+        TimeTravelManager* _manager;
+    };
 
     /// @brief Query the replay-mode flag. Reads `_context->ttdReplayActive`.
     /// Defined out-of-line (EmulatorContext is only forward-declared here).
@@ -2174,13 +2198,13 @@ private:
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)
     // -----------------------------------------------------------------------
 
-    /// True while inside EnterReplayMode / ExitReplayMode — gates the
-    /// save/restore of `_soundMuteBeforeReplay` so nested calls are safe.
+    /// True while inside EnterReplayMode / ExitReplayMode, so nested calls are safe
     bool _inReplayMode = false;
 
-    /// SoundManager mute state as it was before EnterReplayMode forced it
-    /// true. Restored by ExitReplayMode. Only meaningful while `_inReplayMode`.
-    bool _soundMuteBeforeReplay = false;
+    /// The host audio hold of the replay (reason TtdReplay): taken by EnterReplayMode after the replay flag is
+    /// set, released by ExitReplayMode before it clears it (and with the manager). Replay runs as fast as the
+    /// host goes; the user's master mute is never touched
+    SoundManager::HostOutputHold _replayHostHold;
     /// Z80 debug mode before replay engaged the debug memory path (restored on exit)
     bool _debugModeBeforeReplay = false;
 

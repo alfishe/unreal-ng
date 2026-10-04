@@ -106,6 +106,36 @@ The reply to a `PUT` is the whole mixer report, so one call both sets and
 verifies. Per-frame `peak` and `active` (`activeRecently`) are the quick
 "is this device making sound" test without capturing anything.
 
+## Is anything reaching the speakers? (`host_output`)
+
+The mixer report also says what the host audio output got. A run that is not
+paced to real time holds it: the speakers get nothing while every device keeps
+computing its samples (captures and recordings still get them). Three things
+hold it, each for exactly its own span: a direct run (`run_frames`,
+`run_tstates`, `step`... - `direct_run`), a TTD seek or replay (`ttd_replay`)
+and turbo mode (`turbo`). None of them touches the user's master mute.
+
+| Field | Meaning |
+|:--|:--|
+| `held` | `true` while any hold is active |
+| `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` |
+| `holds_taken` | holds ever taken, by reason |
+| `stale_holds_cleared` | holds a `resume` found without their reason and dropped (a leak; stays `0`) |
+| `frames_delivered` / `frames_audible` / `frames_held` | emulated frames given to the speakers / of those, not silent / withheld |
+
+"I resumed and hear nothing" - read it twice, a second apart:
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/audio/mixer" | jq '{master, host_output}'
+```
+
+A playing, resumed machine shows `held: false`, every `holders` entry `0`,
+and `frames_delivered` / `frames_audible` growing by about 50 a second. If
+`frames_audible` stays put while `frames_delivered` grows, the machine plays
+silence (check `master.muted` and the devices' `peak`). If a holder is not `0`
+after `resume`, something still runs fast (turbo on, a TTD replay); `resume`
+itself drops holds whose reason is gone.
+
 ## Reading a capture result
 
 `GET /audio/capture/result` (MCP `audio_result`) returns:
