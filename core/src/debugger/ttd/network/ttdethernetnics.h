@@ -2,15 +2,17 @@
 
 /// @file ttdethernetnics.h
 /// @brief TTD serializer of the frame-level network cards (PeripheralId::EthernetNics = 45; network tdd §13): every
-/// NE2000 in an expansion slot - its port key, the DP8390 registers, the remote / local DMA pointers, the packet RAM
-/// (bytes until TTD v2 memory regions), the 93C46 EEPROM, the RTL8019AS page 3, the transmit in flight and the
-/// station address. Registered while NetworkManager has slot cards; looks them up at every call.
+/// Ethernet card in an expansion slot (IEthernetCard: the NE2000 boards - DP8390 registers, DMA pointers, packet RAM,
+/// 93C46 EEPROM, RTL8019AS page 3, the transmit in flight, the station address; the 3C509B - its ID sequence state,
+/// windows, both FIFOs with their packets, TX status stack, statistics, the EEPROM image) and the Ethernet gateway.
+/// Registered while NetworkManager has slot cards; looks them up at every call.
 ///
-/// Layout v1: u8 version, u8 card count, per card: u8 key length, the key ("isa2.eth"), Ne2000Board::SaveState;
-/// then u32 length + the Ethernet gateway's tables (EthernetGateway::SaveState: ARP pairs, TCP connections with
-/// their sequence numbers, timers and queued host bytes, UDP / ICMP flows, listeners, frames waiting for a card;
-/// length 0 without a gateway). Variable size (the gateway's queues). A blob whose cards (keys, order, variants)
-/// differ from the fitted ones is not loaded.
+/// Layout v2 (network SN5): u8 version 2, u8 card count, per card: u8 key length, the key ("isa2.eth"), u8 kind length,
+/// the kind ("ne2000" | "el3c509b"), u32 state length, the card's state (IEthernetCard::SaveCardState); then u32
+/// length + the Ethernet gateway's tables (EthernetGateway::SaveState: ARP pairs, TCP connections with their sequence
+/// numbers, timers and queued host bytes, UDP / ICMP flows, listeners, frames waiting for a card; length 0 without a
+/// gateway). Variable size. Layout v1 (SN1-SN4, NE2000 only) still loads: per card the key, then the fixed
+/// Ne2000Board::SaveState. A blob whose cards (keys, kinds, order, variants) differ from the fitted ones is not loaded.
 
 #include <vector>
 
@@ -24,7 +26,7 @@ namespace ttd
 class TTDEthernetNics : public TTDSerializable
 {
 public:
-    static constexpr uint8_t kVersion = 1;
+    static constexpr uint8_t kVersion = 2;
 
     explicit TTDEthernetNics(EmulatorContext* context) : _context(context) {}
 

@@ -138,6 +138,8 @@ bool ApplyToConfig(CONFIG& config, const Options& options, std::string& error)
         if (options.isaSlot[n] < 0)
             continue;
         sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[n];
+        if (slot.kind != static_cast<uint8_t>(options.isaSlot[n]))
+            slot.chip = 0;   // the chip number belongs to the kind: another kind starts from its default chip
         slot.kind = static_cast<uint8_t>(options.isaSlot[n]);
         // A kind's own defaults where the configured values do not fit it (an INI written for an NE2000)
         uint16_t base = 0;

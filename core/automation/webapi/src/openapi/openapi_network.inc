@@ -38,7 +38,18 @@
             "tx_fifo, bytes_in, bytes_out, overruns), pins (out1_esp_reset, out2_esp_gpio0_low), peer (kind, target, connected, "
             "pending), esp (module, firmware, state running | reset held | ROM download mode, hardware_resets, wifi, ssid, ip, mac, "
             "baud, factory_baud, flow_control, line_mismatch, requests, at_session (echo, mux, passive_receive, sysstore, dns, "
-            "links: link, proto, remote, rx_pending, peer_closed), exchanges: the last 32 AT requests and replies). "
+            "links: link, proto, remote, rx_pending, peer_closed), exchanges: the last 32 AT requests and replies); a 3Com "
+            "EtherLink III (card el3c509b, network phase SN5): chip (3C509B-TPO / 3C509B-TP), product_id, base (the active I/O "
+            "base), eeprom_base, id_port (the ID port the last zero picked, #100-#1F0), ids (AUTOINIT / ID_WAIT with the sequence "
+            "position / ID_CMD, tag), activated, irq, irq_level, irq_driven, mac (the EEPROM's), station_address (window 2), "
+            "port_key, link, link_state (no cable / link beat disabled / link test running / link pass), window, powered_down, "
+            "registers (status, configuration_control, address / resource / internal configuration, interrupt and read zero "
+            "masks, rx_filter, the three thresholds, rx / tx / statistics enabled, media, net and FIFO diagnostic, EEPROM command "
+            "and data), fifo (tx_capacity, tx_free, tx_packets, tx_bytes, tx_on_wire, rx_capacity, rx_free, rx_packets, rx_bytes, "
+            "rx_status, tx_status_stack), eeprom (product and manufacturer IDs, configuration words, checksums, busy, all 64 "
+            "words), statistics (window 6), counters (tx_frames, rx_frames, rx_filtered, rx_fifo_full_waits, tx_no_link, "
+            "tx_underruns, tx_overruns, rx_underruns, id_sequences, id_eeprom_reads, activations, power_on_resets, commands), "
+            "events (the last 64: isolation, activation, resets, underruns) and summary (one line). "
             "ethernet_gateway (with a frame-level "
             "card): mode nat, router_mac, router_ip, dns_ip, ports (port, mac, queued_frames, dhcp_lease), arp (mac, ip), tcp "
             "(guest, remote, state, socket, queued_bytes, unacked, guest_window, guest_mss, guest_fin, host_fin, retries), udp, "
@@ -107,7 +118,7 @@
         paths[kFrames]["get"]["summary"] = "Get the Ethernet frame capture";
         paths[kFrames]["get"]["tags"].append("Network");
         paths[kFrames]["get"]["description"] =
-            "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000), both ways. "
+            "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000 or 3C509B), both ways. "
             "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card), port, "
             "length, summary (\"ARP who-has 10.0.2.2 tell 10.0.2.15\", \"IPv4 10.0.2.15:1025 > 192.0.2.10:80 TCP S ...\"), "
             "hex; link=isa2.eth picks one card, last=N the newest N (default 64). format=pcap: a pcap file "

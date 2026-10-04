@@ -8,8 +8,9 @@
 /// [ISA]
 /// Slot1=NONE             ; ISA slot 1 (J6, page #D4 / #D0)
 /// Slot2=NE2000           ; ISA slot 2 (J7, page #D6 / #D2)
-/// Slot2Chip=RTL8019AS    ; NE2000: RTL8019AS | UM9003 | NE1000
-/// Slot2Base=0x300        ; NE2000: 0x200..0x3E0 in steps of 0x20 (in an INI '#' starts a comment: 0x300 or 300h)
+/// Slot2Chip=RTL8019AS    ; NE2000: RTL8019AS | UM9003 | NE1000.  EL3C509B: TPO | TP
+/// Slot2Base=0x300        ; NE2000: 0x200..0x3E0 in steps of 0x20; EL3C509B: 0x200..0x3E0 in steps of 0x10 (the
+///                        ; EEPROM's base). In an INI '#' starts a comment: 0x300 or 300h
 /// Slot2Irq=3             ; written into the card's EEPROM (one IRQ line per slot)
 /// Slot2Mac=auto          ; auto = 02:53:50:00:<instance>:<slot> (SPRINTERESP: the ESP's station MAC, auto =
 ///                        ; 5C:CF:7F:5A:<instance>:<slot>)
@@ -57,13 +58,20 @@ enum class Ne2000Chip : uint8_t
     Ne1000 = 2,
 };
 
+/// 3Com 3C509B boards (network tdd §9): the two the Sprinter 3C509B kit verified (EtherLink3::Variant)
+enum class El3Chip : uint8_t
+{
+    Tpo = 0,   ///< 3C509B-TPO, product ID #9550
+    Tp = 1,    ///< 3C509B-TP, product ID #9050
+};
+
 constexpr int kSlots = 2;
 
 /// One slot's settings (plain fields: the struct lives in CONFIG, which is copied as bytes)
 struct SlotConfig
 {
     uint8_t kind;        ///< CardKind
-    uint8_t chip;        ///< NE2000: Ne2000Chip
+    uint8_t chip;        ///< NE2000: Ne2000Chip; EL3C509B: El3Chip
     uint16_t base;       ///< I/O base of a network card (NE2000: #300)
     uint8_t irq;         ///< the IRQ the card's configuration names (informational: one line per slot)
     uint8_t macAuto;     ///< 1: 02:53:50:00:<instance>:<slot>
@@ -113,9 +121,16 @@ bool ParseKind(const std::string& text, CardKind& kind);
 
 const char* ChipName(Ne2000Chip chip);
 bool ParseChip(const std::string& text, Ne2000Chip& chip);
+/// "3C509B-TPO" / "3C509B-TP"; parses TPO | TP (also with a 3C509B- prefix)
+const char* El3ChipName(El3Chip chip);
+bool ParseEl3Chip(const std::string& text, El3Chip& chip);
+/// The chip a slot's settings name, in report form (NE2000: "RTL8019AS", EL3C509B: "3C509B-TPO"; others: "")
+std::string SlotChipName(const SlotConfig& slot);
 
 /// "#300", "0x300", "300h" or "768"; NE2000 bases #200..#3E0 in steps of #20
 bool ParseNe2000Base(const std::string& text, uint16_t& base);
+/// An I/O base for a card kind: NE2000 as above, EL3C509B #200..#3E0 in steps of #10
+bool ParseSlotBase(const std::string& text, CardKind kind, uint16_t& base);
 
 /// MODEM bases: #3F8, #2F8, #3E8, #2E8 (the same number forms)
 bool ParseModemBase(const std::string& text, uint16_t& base);

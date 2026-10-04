@@ -1,6 +1,7 @@
-# Recipe: Sprinter networking - Ethernet (NE2000, RTL8019AS kit) and Wi-Fi (SprinterESP, ESP kit)
+# Recipe: Sprinter networking - Ethernet (NE2000, RTL8019AS kit; 3Com 3C509B, 3C509B kit) and Wi-Fi (SprinterESP, ESP kit)
 
 The Wi-Fi card has its own part: [SprinterESP Wi-Fi with the Sprinter ESP Network Kit](#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit);
+the 3Com card too: [3Com 3C509B with the Sprinter 3C509B Network Kit](#3com-3c509b-with-the-sprinter-3c509b-network-kit);
 the ISA Hayes modem and the SprinterSerial card theirs: [ISA Hayes modem and SprinterSerial](#isa-hayes-modem-and-sprinterserial).
 
 The `SPRINTER` model has an NE2000-class Ethernet card fitted by default: a Realtek RTL8019AS at ISA I/O `#300`, IRQ 3,
@@ -210,6 +211,75 @@ slot line, "Slot 1 SprinterESP: its 16550 is wired to", the chip box with the 2.
 TTD: blob 46 (`SlotSerial1`; slot 2: 47) holds the 16550 and the ESP module (AT state, sockets, received bytes by
 journal reference); a replay without the host reproduces the session byte for byte
 (`SprinterEspKit_Test.TtdReplaysTheSessionWithoutTheHost`).
+
+## 3Com 3C509B with the Sprinter 3C509B Network Kit
+
+The 3Com EtherLink III 3C509B (network phase SN5) is fitted on request in place of the NE2000: `[ISA] Slot2=EL3C509B`
+(`Slot2Chip=TPO` default, or `TP`; `Slot2Base` is the EEPROM's base, `0x200..0x3E0` in steps of `0x10`), create option
+`"sprinter": {"isa_slot2": "el3c509b"}`. It is on the same Ethernet gateway (DHCP `10.0.2.15`, router `10.0.2.2`, DNS
+`10.0.2.3`). Software finds it through the **ID port** (`#110`, any `#1x0`): the 255-byte ID sequence, the EEPROM read
+bit by bit, then activation at `#300` - before that nothing answers at `#300`. The kit (release 0.1.2, fixture
+`testdata/machines/sprinter/network/el3c509b-0.1.2/`) checks the product ID (`#9550` / `#9050`), the manufacturer ID,
+a unicast MAC and both EEPROM checksums, enables the 10BASE-T link beat and waits for the link (48 ms), and polls.
+
+```bash
+# The kit on a floppy with a NET.CFG (HW=AUTO probes both slots at ID port #110); the system disk as above
+K=testdata/machines/sprinter/network/el3c509b-0.1.2
+mformat -C -i scratch/el3kit.img -f 1440 ::
+for f in $K/*.EXE $K/*.DLL; do mcopy -i scratch/el3kit.img "$f" ::; done
+printf 'NET=509B\r\nHW=AUTO\r\nIDPORT=#110\r\nMAC=\r\nIP=DHCP\r\nNTP=pool.ntp.org\r\nTZ=+0\r\n' > scratch/NET.CFG
+mcopy -i scratch/el3kit.img scratch/NET.CFG ::
+
+B=http://localhost:8090/api/v1/emulator            # UNREAL_WEBAPI_PORT moves the port
+ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' \
+       -d '{"model":"SPRINTER","sprinter":{"bios":"3.06","fast_start":true,"isa_slot2":"el3c509b"}}' | jq -r .id)
+curl -s -X POST $B/$ID/pause
+curl -s -X POST $B/$ID/media/ide0.master/insert -H 'Content-Type: application/json' \
+     -d "{\"path\":\"$PWD/scratch/sp-net.img\",\"access\":\"session\"}"
+curl -s -X POST $B/$ID/media/fdd.b/insert -H 'Content-Type: application/json' -d "{\"path\":\"$PWD/scratch/el3kit.img\"}"
+curl -s -X POST $B/$ID/reset
+curl -s -X POST $B/$ID/ttd/start -H 'Content-Type: application/json' -d '{"history_limit_frames":30000}'   # record first
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"count":1500}'                 # DSS: C:\>
+curl -s -X POST $B/$ID/resume
+
+type() { curl -s -X POST $B/$ID/keyboard/type -H 'Content-Type: application/json' -d "{\"text\":\"$1\\n\"}"; }
+type 'B:'; type 'NETCFG -i'                 # [C2] ENV COMMIT, RESULT OK
+type 'CLS'; type 'IFUP'                     # [I0] LINK UP, [I1] DHCP OFFER, [I2] DHCP ACK IP=10.0.2.15
+type 'CLS'; type 'PING -n 2 10.0.2.2'       # Reply from 10.0.2.2: bytes=32 time=9ms TTL=64
+type 'CLS'; type 'NSLOOKUP example.com'     # the host's resolver: a real address
+type 'CLS'; type 'WGET http://127.0.0.1:18317/f.bin -o C:\\F.BIN -y'   # python3 -m http.server 18317 on the host
+curl -s $B/$ID/state/sprinter/text | jq -r '.lines[].text' | grep -v '^ *$'
+```
+
+Checked live (2026-10-04, own instance on port 8317): `IFUP` -> lease `10.0.2.15`; `PING 10.0.2.2` -> 2 / 2 replies,
+9 ms; `NSLOOKUP example.com` -> a real address; `WGET` -> "Done. 20000 bytes received." from the host's HTTP server.
+`EL3INFO -v` prints the product (`9550`), I/O (`0300`), MAC, IRQ and both checksums. BIOS 3.06 HF2 does not scroll
+the last line: `CLS` between programs. The kit aligns DHCP waits to the DSS clock's next second: a frozen RTC (a fixed
+time) makes `IFUP` end with `RESULT FAIL code=4`.
+
+What is plugged and what it is doing:
+
+```bash
+curl -s $B/$ID/state/isa | jq '{summary, id_port: .slots[1].resources.id_port, z80: .slots[1].z80_access}'
+# summary: "slot 1: empty; slot 2: el3c509b I/O #300-#30F id_port #100-#1F0 IRQ 3"
+# id_port: {"io":"#100-#1F0 step #10","z80":"window 3 page #D6, #9FBD A15-A14 = 0: CPU #C100-#C1F0",
+#           "note":"writes to any of them watched (the ID sequence); ID_WAIT at #110, sequence 0/255"}
+curl -s $B/$ID/state/network | jq '.slots[1] | {summary, ids, link_state, window, fifo, counters}'
+# summary: "3C509B-TPO, ID port #110 ID_WAIT, active at #300, window 0, status #0000, RX off filter #5, TX off;
+#           TX FIFO 0 packet(s), 3068 free; RX FIFO 0 packet(s), 5116 free; link pass"
+curl -s $B/$ID/state/network | jq '.slots[1] | {registers, eeprom: (.eeprom | {product_id, checksums}), events}'
+curl -s "$B/$ID/state/isa/journal?last=3" | jq -c '.entries[] | {pc, access, cpu_address, what, value}'
+# {"pc":"#5441","access":"write","cpu_address":"#C30F","what":"command","value":"#08"}  (registers named by window)
+curl -s "$B/$ID/network/frames?link=isa2.eth&last=3" | jq -r '.frames[] | "\(.index) \(.direction) \(.summary)"'
+```
+
+CLI: `network`, `isa`, `isa journal 8`, `network frames isa2.eth`. Lua / Python: `network_state().slots[2]` /
+`network_state()["slots"][1]`, `isa_state()`. MCP: `inspect_state` aspect `network` prints the card's one-line summary,
+`isa` its ID port. Qt: Tools > Network - the slot line with the ID port, window, FIFOs and link.
+
+TTD: the card's whole state (ID sequence state, windows, both FIFOs, TX status stack, statistics, the EEPROM) rides in
+blob 45 `EthernetNics` (version 2: per card its kind and a length-prefixed state); a replay without the host
+reproduces the session byte for byte (`SprinterEl3Kit_Test.TtdReplaysTheFetchWithoutTheHost`).
 
 ## ISA Hayes modem and SprinterSerial
 
