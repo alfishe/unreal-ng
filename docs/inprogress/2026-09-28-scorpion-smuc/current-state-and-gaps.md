@@ -6,6 +6,8 @@
 | **Code state** | IDE rollout 1 (P1-P7), analyzed on branch `ide-atapi`; on `master` since `f5fc5f05` (merge `c69486ab`). The code below is named, not linked |
 | **Hardware facts** | [hardware-reference.md](hardware-reference.md) (the consensus this page is compared against) |
 
+> **Update 2026-10-04:** G8 is closed and half of G9 (the clock, now the shared `Ds12887`: emulated-time base, TTD id 18, DS1685 registers, reports on every surface). `SMUCNvram` keeps only the EEPROM. The RTC rows below describing a host-clock chip are historical; the current state is the readiness table in [TODO.md](TODO.md).
+
 ## 1. Where the SMUC code lives
 
 | Piece | File (master) | What it does |

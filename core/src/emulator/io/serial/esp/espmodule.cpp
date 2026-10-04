@@ -264,6 +264,13 @@ bool EspModule::SaveState(netstate::EspModuleState& out) const
     out.pendingBaudAt = _pendingBaudAt;
     out.outReadyAt = _outReadyAt;
     out.requests = _requests;
+    // The ZX side's line: a pending baud change compares against it when it lands (UpdateWifi)
+    static constexpr char kParities[] = "NOEMS";
+    const char* parity = std::strchr(kParities, _zxLine.parity);
+    out.zxLineFormat = static_cast<uint8_t>(0x80 | ((_zxLine.dataBits - 5) & 0x03) |
+                                            ((parity && *parity ? static_cast<uint8_t>(parity - kParities) : 0) << 2) |
+                                            (_zxLine.stopBits == 2 ? 0x20 : 0));
+    out.zxLineBaud = _zxLine.baud;
     bool complete = true;
     out.rxLength = static_cast<uint32_t>(std::min<size_t>(_rx.size(), netstate::kEspRxBytes));
     std::copy(_rx.begin(), _rx.begin() + out.rxLength, out.rx);
@@ -297,6 +304,14 @@ bool EspModule::LoadState(const netstate::EspModuleState& in, const EspStack::By
     _pendingBaudAt = in.pendingBaudAt;
     _outReadyAt = in.outReadyAt;
     _requests = in.requests;
+    if (in.zxLineFormat & 0x80)
+    {
+        static constexpr char kParities[] = "NOEMS";
+        _zxLine.baud = in.zxLineBaud;
+        _zxLine.dataBits = static_cast<uint8_t>(5 + (in.zxLineFormat & 0x03));
+        _zxLine.parity = kParities[std::min<uint8_t>((in.zxLineFormat >> 2) & 0x07, 4)];
+        _zxLine.stopBits = (in.zxLineFormat & 0x20) ? 2 : 1;
+    }
     _rx.assign(in.rx, in.rx + std::min<uint32_t>(in.rxLength, netstate::kEspRxBytes));
     _out.assign(in.out, in.out + std::min<uint32_t>(in.outLength, netstate::kEspOutBytes));
     LoadFirmware(in);

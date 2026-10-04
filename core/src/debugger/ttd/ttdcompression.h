@@ -85,23 +85,27 @@ inline std::vector<uint8_t> Compress(const uint8_t* src, size_t size, int level 
 /// @param rawSize     Expected uncompressed size.
 /// @param out         Destination buffer (must hold at least rawSize bytes).
 /// @return true on success, false on size mismatch or zstd decode error.
-inline bool Decompress(const std::vector<uint8_t>& compressed, size_t rawSize, uint8_t* out)
+inline bool Decompress(const uint8_t* compressed, size_t compressedSize, size_t rawSize, uint8_t* out)
 {
     if (rawSize == 0 || out == nullptr)
     {
         return rawSize == 0;
     }
-    if (compressed.empty())
+    if (compressed == nullptr || compressedSize == 0)
     {
         return false;
     }
-    size_t n = ZSTD_decompress(out, rawSize,
-                               compressed.data(), compressed.size());
+    size_t n = ZSTD_decompress(out, rawSize, compressed, compressedSize);
     if (ZSTD_isError(n))
     {
         return false;
     }
     return n == rawSize;
+}
+
+inline bool Decompress(const std::vector<uint8_t>& compressed, size_t rawSize, uint8_t* out)
+{
+    return Decompress(compressed.data(), compressed.size(), rawSize, out);
 }
 
 /// @brief The decompressed size a zstd frame declares in its header.

@@ -137,6 +137,7 @@ public:
     }
     bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const override;
     std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
     RtcBinding GetRtcBinding() override;
     /// endregion </PortDecoder interface>

@@ -286,6 +286,17 @@ public:
     /// (recorded, or checked). One predictable branch per IN / OUT when null
     ttd::TTDPortJournal* ttdPortReads = nullptr;
     ttd::TTDPortJournal* ttdPortWrites = nullptr;
+    /// TTD's interrupt-vector journal (Phase 3; machines with an IInterruptSource):
+    /// every vector the CPU took, recorded or played back; null when off
+    ttd::TTDPortJournal* ttdVectors = nullptr;
+    /// The TTD session's wall time (host local civil microseconds, taken once
+    /// when a recording starts; INT64_MIN = none): every real-time clock of the
+    /// machine anchors its emulated time at it (Phase 3, Step 5)
+    int64_t ttdSessionWallMicros = INT64_MIN;
+    /// The machine's emulated microseconds at that moment
+    /// (PortDecoder::EmulatedMicroseconds): a clock entering emulated time
+    /// later still reads the one session time base
+    uint64_t ttdSessionEmulatedMicros = 0;
 
     /// The RZX player while a recording plays, else null (emulator/rzx/):
     /// Z80::in hands every IN result to it for the recorded value. Set and

@@ -371,11 +371,13 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [PROFI] DffdDecode=%s, emulators (A15=1, A13=0, A1=0) used", decode);
 	}
 	{
-		// The extended port map (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md): cpm | sys
+		// The extended port map (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md): cpm | sys | v003
 		const char* ext = inimanager.GetValue("PROFI", "ExtPorts", "cpm");
 		config.profi_ext_ports = 0;
 		if (ext && StringHelper::CompareCaseInsensitive(ext, "sys", 3) == 0 && ext[3] == '\0')
 			config.profi_ext_ports = 1;
+		else if (ext && StringHelper::CompareCaseInsensitive(ext, "v003", 4) == 0 && ext[4] == '\0')
+			config.profi_ext_ports = 2;
 		else if (ext && !(StringHelper::CompareCaseInsensitive(ext, "cpm", 3) == 0 && ext[3] == '\0'))
 			MLOGWARNING("Config: unknown [PROFI] ExtPorts=%s, cpm (CP/M and ROM14) used", ext);
 	}
@@ -693,6 +695,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			const std::string extension = image ? StringHelper::ToLower(FileHelper::GetFileExtension(image)) : std::string();
 			const bool cdImage = extension == "iso" || extension == "cue";
 			ide.cd = ((cd && std::atoi(cd) != 0) || cdImage) ? 1 : 0;
+			// A CompactFlash card on an IDE adapter: CFn=1 (a disk unit only)
+			const char* cf = inimanager.GetValue(hdd, ("CF" + n).c_str(), nullptr);
+			ide.cf = (!ide.cd && cf && std::atoi(cf) != 0) ? 1 : 0;
 		}
 	}
 

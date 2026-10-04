@@ -52,7 +52,8 @@ namespace ttd
 enum class TTDExternalEventKind : uint8_t;
 }
 
-class SoundChip_NeoGS : public GeneralSoundCard, private NeoGSDma::Host, private NeoGSZxDma::Host
+class SoundChip_NeoGS : public GeneralSoundCard, public ttd::ITTDRegionSource, private NeoGSDma::Host,
+                        private NeoGSZxDma::Host
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -169,6 +170,32 @@ public:
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::NeoGS; }
+    /// The card's clocks that advance with time (offsets in serializeFixedState
+    /// and the VS10xx block): the engine stores each as its residual from a line
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.runsBehindCpu = true;
+        d.timeFields = {{89, 8},     // _timerStrobeAt
+                        {105, 8},    // _nextDacCrystal
+                        {123, 8},    // _runner.now()
+                        {232, 8},    // _nextTimerCrystal
+                        {static_cast<uint16_t>(TTD_MP3_OFFSET + 34), 8}};   // VS10xx _now
+        return d;
+    }
+    /// Synced: the card's frame base is where its CPU stood at the frame
+    /// start, after the frame end ran it through the frame; the card is at or
+    /// after that base and less than a frame past it
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = _runner.now() - _frameStartTicks;
+        return offset >= 0 && (_frameTicks <= 0 || offset < _frameTicks);
+    }
+
+    /// Time-travel engine regions (Phase 1, Step 6): the card RAM (2-4 MB) and
+    /// the flash (512 KB), recorded as changed 4 KB pieces
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override;
     std::string TTDDeviceName() const override { return "NeoGS"; }
     /// Hashes the machine-visible state: registers, devices, not RAM, flash
     /// or decoded audio
@@ -377,6 +404,8 @@ private:
     Z80CPU* _cpu = nullptr;
     Flash29F040B _flash;
     NeoGSMemory _mem;
+    ttd::TTDRegionTracker _ramTracker;
+    ttd::TTDRegionTracker _flashTracker;
     NeoGSInterrupts _irq;
     NeoGSSound _snd;
     NeoGSSpi _spi;

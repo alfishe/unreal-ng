@@ -26,6 +26,10 @@ public:
     std::string TTDDeviceName() const override { return "Atm2Kbc"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::Atm2Kbc; }
     uint64_t TTDHashState() const override;
+    /// The firmware image (V41, ...) is configuration: its fingerprint, so a
+    /// restore on another image is reported as not bit-exact. The clocks that
+    /// advance with time are time fields (the MCU runs every frame)
+    TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
     Atm2Kbc& _kbc;

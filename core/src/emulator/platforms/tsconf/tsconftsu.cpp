@@ -189,10 +189,15 @@ bool TsConfTsu::Render(const TsConfState& ts, const TsConfLine& set, const uint8
     }
 
     // Sprite layers: S0 runs to the first descriptor with LEAP, S1 to the
-    // next one, S2 to descriptor 84; LEAP counts on inactive descriptors too
+    // next one, S2 to the third LEAP or to descriptor 84. LEAP counts on
+    // inactive descriptors too, and a descriptor with LEAP belongs to the layer
+    // it ends. Nothing behind the third LEAP is processed: the layer machine has
+    // ended the last layer ([V] video_ts.v:263-274, layer_skip |= layer_end), which is
+    // how a program ends its list while the rest of the SFILE holds anything
+    // (zifi.spg loads all 256 words from a table followed by text)
     uint32_t bounds[4] = {0, kDescriptors, kDescriptors, kDescriptors};
     uint32_t layer = 1;
-    for (uint32_t d = 0; d < kDescriptors && layer < 3; d++)
+    for (uint32_t d = 0; d < kDescriptors && layer < 4; d++)
     {
         if (ts.sfile[d * 3] & 0x4000)
             bounds[layer++] = d + 1;

@@ -73,6 +73,7 @@ void IdeController::BuildUnit(int unit)
     config.geometry.heads = ide.h;
     config.geometry.sectors = ide.s;
     config.profiGeometry = _scheme == IDE_PROFI;
+    config.compactFlash = !ide.cd && ide.cf;
 
     std::unique_ptr<AtaDevice> device;
     if (ide.cd)
@@ -95,8 +96,10 @@ void IdeController::BuildUnit(int unit)
     const bool twoChannels = ChannelCount() == 2;
     const char* channelName = channel == 0 ? "primary" : "secondary";
     d.label = std::string("IDE ") + (twoChannels ? std::string(channelName) + " " : std::string()) + place +
-              (ide.cd ? " (CD-ROM)" : " (hard disk)");
+              (ide.cd ? " (CD-ROM)" : config.compactFlash ? " (CompactFlash)" : " (hard disk)");
     d.tags = {"ide", place, SchemeTag(_scheme), ide.cd ? "cdrom" : "hdd"};
+    if (config.compactFlash)
+        d.tags.push_back("cf");
     if (twoChannels)
         d.tags.push_back(channelName);
     if (FirstOfKind(unit))
@@ -157,7 +160,28 @@ int IdeController::UnitForSlot(const std::string& slotId)
     return -1;
 }
 
-bool IdeController::SetUnitKind(int unit, bool cdrom, std::string* error)
+IdeController::UnitKind IdeController::KindOf(int unit) const
+{
+    if (unit < 0 || unit >= kMaxUnits)
+        return UnitKind::Disk;
+    const IDE_CONFIG& ide = _context->config.ide[unit];
+    return ide.cd ? UnitKind::Cdrom : ide.cf ? UnitKind::CompactFlash : UnitKind::Disk;
+}
+
+const char* IdeController::UnitKindName(UnitKind kind)
+{
+    switch (kind)
+    {
+        case UnitKind::Cdrom:
+            return "cdrom";
+        case UnitKind::CompactFlash:
+            return "cf";
+        default:
+            return "disk";
+    }
+}
+
+bool IdeController::SetUnitKind(int unit, UnitKind kind, std::string* error)
 {
     auto fail = [error](const std::string& reason) {
         if (error)
@@ -169,7 +193,7 @@ bool IdeController::SetUnitKind(int unit, bool cdrom, std::string* error)
     if (unit < 0 || unit >= ChannelCount() * AtaChannel::kUnits)
         return fail("no such IDE unit");
     IDE_CONFIG& ide = _context->config.ide[unit];
-    if ((ide.cd != 0) == cdrom)
+    if (KindOf(unit) == kind)
         return true;
     const std::string id = IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits);
     MediaManager* manager = _context->pMediaManager;
@@ -184,7 +208,8 @@ bool IdeController::SetUnitKind(int unit, bool cdrom, std::string* error)
 
     if (manager && _registered)
         manager->UnregisterSlot(id);
-    ide.cd = cdrom ? 1 : 0;
+    ide.cd = kind == UnitKind::Cdrom ? 1 : 0;
+    ide.cf = kind == UnitKind::CompactFlash ? 1 : 0;
     BuildUnit(unit);
     // The other units keep their drives and media; only their aliases may move
     // ("hd" / "cd" name the first unit of each kind)

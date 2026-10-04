@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/media/mediareadjournal.h"
 #include "emulator/io/storage/cd/cdtypes.h"
 #include "emulator/io/storage/iblockdevice.h"
 
@@ -101,12 +102,22 @@ public:
     /// endregion </Disc>
 
     /// region <Reading>
-    /// The whole frame at `lba` (2352 bytes)
+    /// The whole frame at `lba` (2352 bytes). A drive's read: time travel
+    /// records it (or, replaying, hands back the recorded frame)
     ReadResult ReadFrame(uint32_t lba, uint8_t* frame);
-    /// 2048 user bytes of a data frame
+    /// 2048 user bytes of a data frame. A drive's read, recorded as ReadFrame
     ReadResult ReadUser(uint32_t lba, uint8_t* user);
-    /// The frame's 16-bit stereo samples (588 left / right pairs, host order) of an audio frame; silence otherwise
+    /// The frame's 16-bit stereo samples (588 left / right pairs, host order) of an audio frame; silence otherwise.
+    /// Not recorded: the samples are the drive's output to the host, not machine state
     ReadResult ReadAudio(uint32_t lba, int16_t* samples);
+
+    /// Time travel's media read journal for the drive's data reads (the media
+    /// manager binds it with the slot, as MediaReadTap); null = none
+    void BindReadJournal(IMediaReadJournal* const* journal, std::string slot)
+    {
+        _journal = journal;
+        _journalSlot = std::move(slot);
+    }
     /// endregion </Reading>
 
     /// region <IBlockDevice: the data blocks as 512-byte sectors>
@@ -127,6 +138,16 @@ public:
     std::string DescribeTracks() const;
 
 private:
+    /// The reads themselves, unrecorded (ReadAudio, ReadSector: the block stack's tap records those)
+    ReadResult ReadFrameStored(uint32_t lba, uint8_t* frame);
+    ReadResult ReadUserStored(uint32_t lba, uint8_t* user);
+    /// Recording / playback around a drive's read of @p size bytes
+    template <typename Read>
+    ReadResult Journaled(uint32_t lba, uint8_t* dst, uint32_t size, Read&& read);
+
+    IMediaReadJournal* const* _journal = nullptr;
+    std::string _journalSlot;
+
     bool ReadStored(const cd::StoredTrack& stored, uint32_t lba, uint8_t* dst, uint32_t offsetInFrame, uint32_t length);
 
     std::vector<std::unique_ptr<cd::IFrameSource>> _sources;

@@ -8,6 +8,13 @@
 #include "widgets/ttdwidget.h"
 
 #include <QFileDialog>
+#include <QMenu>
+#include <QProgressDialog>
+#include <QSignalBlocker>
+#include <QStyleOptionSlider>
+#include <atomic>
+#include <memory>
+#include <thread>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPainter>
@@ -109,6 +116,14 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _exportBtn->setToolTip(tr("Export current TTD timeline session to a .ttd file"));
     connect(_exportBtn, &QPushButton::clicked, this, &TtdWidget::onExportSession);
 
+    _journalBtn = new QPushButton(tr("Journal"), this);
+    _journalBtn->setCheckable(true);
+    _journalBtn->setToolTip(tr("Write journal: record every memory write, so 'who wrote this address last' answers at "
+                               "once. Off by default; switch it at any moment, also while recording (each on-off "
+                               "span is a segment, shown as a band on the timeline). Without it the search replays "
+                               "one frame - same answer, slower."));
+    connect(_journalBtn, &QPushButton::toggled, this, &TtdWidget::onJournalToggled);
+
     _clearBtn = new QPushButton(tr("Clear"), this);
     _clearBtn->setToolTip(tr("Clear current timeline history and reset session"));
     connect(_clearBtn, &QPushButton::clicked, this, &TtdWidget::onClearSession);
@@ -184,6 +199,7 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     controlLayout->addWidget(_recordBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_loadBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_exportBtn, 0, Qt::AlignVCenter);
+    controlLayout->addWidget(_journalBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_clearBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_historyCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_statusLabel, 1, Qt::AlignVCenter);
@@ -217,7 +233,7 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _stepBackBtn->setFixedWidth(stepBtnWidth);
     connect(_stepBackBtn, &QPushButton::clicked, this, &TtdWidget::onStepBack);
 
-    _timelineSlider = new QSlider(Qt::Horizontal, _scrubberContainer);
+    _timelineSlider = new JournalSpanSlider(Qt::Horizontal, _scrubberContainer);
     _timelineSlider->setRange(0, 0);
     _timelineSlider->setEnabled(false);
     _timelineSlider->setToolTip(tr("TTD Timeline Scrubber (drag to seek within recorded range)"));
@@ -234,6 +250,20 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _jumpEndBtn->setFixedWidth(jumpBtnWidth);
     connect(_jumpEndBtn, &QPushButton::clicked, this, &TtdWidget::onJumpEnd);
 
+    _buildJournalBtn = new QPushButton(tr("Build Journal"), _scrubberContainer);
+    _buildJournalBtn->setToolTip(tr("Build the write journal by replaying recorded frames (about 2-4 ms per frame, "
+                                    "cancelable): then 'who wrote this address last' answers at once there"));
+    {
+        QMenu* menu = new QMenu(_buildJournalBtn);
+        auto frameNow = [this]() -> uint64_t {
+            return _timelineSlider ? static_cast<uint64_t>(_timelineSlider->value()) : 0;
+        };
+        menu->addAction(tr("Whole session"), this, [this]() { buildJournal(0, UINT64_MAX); });
+        menu->addAction(tr("From the start to here"), this, [this, frameNow]() { buildJournal(0, frameNow()); });
+        menu->addAction(tr("From here to the end"), this, [this, frameNow]() { buildJournal(frameNow(), UINT64_MAX); });
+        _buildJournalBtn->setMenu(menu);
+    }
+
     _resumeFromHereBtn = new QPushButton(tr("Rec From Here"), _scrubberContainer);
     _resumeFromHereBtn->setToolTip(tr("Truncate future history and resume live recording from current position"));
     connect(_resumeFromHereBtn, &QPushButton::clicked, this, &TtdWidget::onResumeFromHere);
@@ -245,6 +275,7 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _stepForwardBtn->setFixedHeight(row2Height);
     _jumpEndBtn->setFixedHeight(row2Height);
     _resumeFromHereBtn->setFixedHeight(row2Height);
+    _buildJournalBtn->setFixedHeight(row2Height);
 
     _scrubberContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     _scrubberContainer->setFixedHeight(row2Height);
@@ -254,6 +285,7 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     scrubberLayout->addWidget(_timelineSlider, 1, Qt::AlignVCenter);
     scrubberLayout->addWidget(_stepForwardBtn, 0, Qt::AlignVCenter);
     scrubberLayout->addWidget(_jumpEndBtn, 0, Qt::AlignVCenter);
+    scrubberLayout->addWidget(_buildJournalBtn, 0, Qt::AlignVCenter);
     scrubberLayout->addWidget(_resumeFromHereBtn, 0, Qt::AlignVCenter);
 
     mainLayout->addWidget(_controlContainer);
@@ -369,6 +401,8 @@ void TtdWidget::setVisibleByUser(bool visible)
 
 void TtdWidget::updateTelemetry()
 {
+    if (_journalBuildRunning)
+        return;   // a worker thread replays the session: the progress dialog reports
     if (!_activeEmulator)
     {
         _recordBtn->setEnabled(false);
@@ -430,6 +464,10 @@ void TtdWidget::updateTelemetry()
 
     _recordBtn->setEnabled(true);
     _recordBtn->setText(isRecording ? tr("Stop Rec") : tr("Start Rec"));
+    {
+        const QSignalBlocker block(_journalBtn);
+        _journalBtn->setChecked(info.writeJournalEnabled);
+    }
     _exportBtn->setEnabled(hasHistory);
     _clearBtn->setEnabled(hasHistory);
 
@@ -438,14 +476,14 @@ void TtdWidget::updateTelemetry()
         ? tr(" [Loaded: %1]").arg(QFileInfo(QString::fromStdString(info.sourcePath)).fileName())
         : QString();
 
-    // The journal was expected (enabled) but misses writes of this session:
-    // write searches will replay instead of answering from it. Say so, with
-    // the cause in the tooltip.
-    const bool journalGap = info.writeJournalEnabled && !info.writeJournalComplete && hasHistory;
-    provenanceStr += journalGap ? tr(" | Journal incomplete") : QString();
-    QString tooltip = journalGap
-        ? tr("The write journal does not cover this session (%1): write/port searches replay history.")
-              .arg(QString::fromStdString(info.journalGapReason))
+    // What the write journal covers (D40): searches for "who wrote this last"
+    // answer at once inside its spans and replay one frame elsewhere
+    if (hasHistory && !info.writeJournalSpans.empty())
+        provenanceStr += info.writeJournalComplete ? tr(" | Journal: whole session")
+                                                   : tr(" | Journal: %1 span(s)").arg(info.writeJournalSpans.size());
+    QString tooltip = hasHistory && !info.writeJournalSpans.empty() && !info.writeJournalComplete
+        ? tr("The write journal covers part of this session (the band on the timeline): write searches outside it "
+             "replay one frame (same answer, slower). 'Build Journal' builds it for more.")
         : QString();
     if (hasHistory)
     {
@@ -519,6 +557,15 @@ void TtdWidget::updateTelemetry()
             _stepForwardBtn->setEnabled(activeFrame < endFrame);
             _jumpEndBtn->setEnabled(activeFrame < endFrame);
             _resumeFromHereBtn->setEnabled(true);
+            _buildJournalBtn->setEnabled(!info.writeJournalComplete);
+
+            // The write journal's spans as a band along the timeline
+            std::vector<std::pair<double, double>> spans;
+            const double range = endFrame > startFrame ? static_cast<double>(endFrame - startFrame) : 1.0;
+            for (const auto& [from, to] : info.writeJournalSpans)
+                spans.emplace_back(std::clamp((static_cast<double>(from.frame) - startFrame) / range, 0.0, 1.0),
+                                   std::clamp((static_cast<double>(to.frame) - startFrame) / range, 0.0, 1.0));
+            _timelineSlider->setJournalSpans(std::move(spans));
 
             // Update Slider Range to exact recorded frame bounds [sessionStartFrame, currentEndFrame]
             _isInternalSliderUpdate = true;
@@ -539,6 +586,8 @@ void TtdWidget::updateTelemetry()
             _stepForwardBtn->setEnabled(false);
             _jumpEndBtn->setEnabled(false);
             _resumeFromHereBtn->setEnabled(false);
+            _buildJournalBtn->setEnabled(false);
+            _timelineSlider->setJournalSpans({});
         }
     }
 
@@ -786,4 +835,82 @@ void TtdWidget::onSliderValueChanged(int value)
 {
     if (_isInternalSliderUpdate) return;
     performSeekToFrame(static_cast<uint64_t>(value));
+}
+
+void TtdWidget::onJournalToggled(bool on)
+{
+    if (!_activeEmulator)
+        return;
+    EmulatorContext* context = _activeEmulator->GetContext();
+    if (!context || !context->pTimeTravelManager)
+        return;
+    context->pTimeTravelManager->SwitchWriteJournal(on);
+    updateTelemetry();
+}
+
+void TtdWidget::buildJournal(uint64_t fromFrame, uint64_t toFrame)
+{
+    if (!_activeEmulator || _journalBuildRunning)
+        return;
+    EmulatorContext* context = _activeEmulator->GetContext();
+    if (!context || !context->pTimeTravelManager)
+        return;
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (ttd->IsRecording())
+    {
+        QMessageBox::information(this, tr("Build Journal"),
+                                 tr("Stop the recording first: the journal is built by replaying recorded history."));
+        return;
+    }
+
+    // The replay needs the machine parked
+    std::shared_ptr<Emulator> emulator = _activeEmulator;
+    if (emulator->IsRunning() && !emulator->IsPaused())
+    {
+        emulator->Pause(false);
+        emulator->WaitForPauseConfirmation(1000);
+    }
+
+    _journalBuildRunning = true;
+    auto result = std::make_shared<ttd::TTDJournalBuildResult>();
+    auto finished = std::make_shared<std::atomic<bool>>(false);
+    std::thread worker([ttd, fromFrame, toFrame, result, finished]() {
+        *result = ttd->BuildWriteJournalFrames(fromFrame, toFrame);
+        finished->store(true);
+    });
+
+    QProgressDialog progress(tr("Building the write journal by replay..."), tr("Cancel"), 0, 1, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(300);
+    QTimer poll;
+    poll.setInterval(100);
+    connect(&poll, &QTimer::timeout, this, [&]() {
+        const ttd::TimeTravelManager::JournalBuildState state = ttd->GetJournalBuildState();
+        if (state.total)
+        {
+            progress.setMaximum(static_cast<int>(state.total));
+            progress.setValue(static_cast<int>(state.done));
+        }
+        if (progress.wasCanceled())
+            ttd->CancelJournalBuild();
+        if (finished->load())
+            progress.close();
+    });
+    poll.start();
+    progress.exec();
+    poll.stop();
+    if (!finished->load())
+        ttd->CancelJournalBuild();   // the dialog went away some other way
+    worker.join();
+    _journalBuildRunning = false;
+
+    if (!result->ok)
+        QMessageBox::warning(this, tr("Build Journal"), QString::fromStdString(result->error));
+    else
+        _statusLabel->setToolTip(tr("Write journal built for %1 frame(s), %2 writes%3")
+                                     .arg(result->framesBuilt)
+                                     .arg(result->records)
+                                     .arg(result->cancelled ? tr(" (cancelled)") : QString()));
+    _mainWindow->refreshViewport();
+    updateTelemetry();
 }

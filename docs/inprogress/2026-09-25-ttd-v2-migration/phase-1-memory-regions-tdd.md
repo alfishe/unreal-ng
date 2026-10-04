@@ -187,11 +187,14 @@ enum class TTDRegionId : uint16_t          // stable, stored in files, appended,
     SprinterVideoRam = 6,
     SprinterFastRam = 7,
     Vdac2GraphicsMemory = 8,
-    Vdac2DisplayList = 9,
-    Vdac2Registers = 10,
-    Vdac2CommandFifo = 11,
-    EvoAvrEeprom = 12,
-    SmucEeprom = 13,
+    Vdac2DisplayList0 = 9,
+    Vdac2DisplayList1 = 10,
+    Vdac2Registers = 11,
+    Vdac2CommandFifo = 12,
+    Vdac2Special = 13,
+    Vdac2Inflight = 14,
+    EvoAvrEeprom = 15,
+    SmucEeprom = 16,
 };
 
 struct TTDRegionDesc
@@ -208,9 +211,29 @@ struct TTDRegionDesc
 };
 ```
 
-The unused tail of a partial last piece is treated as zero and never read from or written to device memory. The region set of a session is fixed in Phase 1; Phase 2 makes device-set changes timeline events (D26).
+The unused tail of a partial last piece is treated as zero and never read from or written to device memory. The region set of a session is fixed, as is its device set (D38).
 
-**The reference table, two levels** (E3: 8-page blocks, 0.21 of v1's table bytes over all inputs; ZX-Evo 4,096 → 520 B per frame):
+**The reference table: change records and periodic full tables** (as built, 2026-10-02; replaces the copy-on-write-only design below, see the measurement).
+
+- Each checkpoint records, per region, only the pieces that got a **new version**: `{piece, version}`, 8 bytes each. A dirty piece whose content came out unchanged records nothing. A frame in which nothing changed records nothing (PR-10).
+- Every **S-th** checkpoint (S = 64 by default) also holds a **full table** of the region, as copy-on-write blocks (§ below) derived from the previous full table: only the blocks with a piece changed since then are new.
+- A restore takes the nearest full table at or before the target and applies at most S − 1 checkpoints' change records forward.
+- A change record holds one reference to its version; a full table's blocks hold theirs.
+
+Measured (`TTDMatrix`, 600 frames, `UNREAL_TTD_BENCH_ENGINE=all`), reference bytes per frame:
+
+| Case | v1 | Copy-on-write blocks only (8-page blocks) | Change records + full table every 64 |
+|---|---|---|---|
+| 48K, BASIC | 96 | 160 | **34** |
+| Pentagon 128, BASIC | 128 | 160 | **26** |
+| Pentagon 1024, BASIC | 1,026 | 218 | **33** |
+| ZX-Evo, BASIC | 4,103 | 552 | **78** |
+| Pentagon 128, game | 128 | 159 | **62** |
+| Across the Edge | 128 | 160 | **69** |
+
+Copy-on-write blocks alone lose to v1 on small busy machines at any block size (4–32 pieces measured): when most frames change several blocks of a 128 KB machine, copying blocks costs more than v1's dense 4 bytes per piece. Change records cost 8 bytes per changed piece, and full tables every 64 frames add a few bytes per frame. S = 32 and S = 128 differ from 64 by a few bytes per frame.
+
+**The full tables, two levels** (E3: 8-page blocks for large regions, smaller blocks for small ones - `TTDRefTables::DefaultBlockPieces`):
 
 ```cpp
 struct TTDRefBlock                         // 32 piece ids = 8 pages; shared, reference-counted
@@ -241,12 +264,34 @@ The engine records the running emulator in parallel with v1 ("shadow mode"), so 
 
 The engine can also run alone (no v1) for benchmarks and for tests that restore into the emulator. Shadow mode is a test and benchmark setting; users do not see it.
 
+**As built (2026-10-02).** `TimeTravelManager::SetShadowEngine(engine)`; `CaptureNow` calls `FeedShadow` after its own capture with the same dirty page list (four pieces per dirty 16 KB page), live memory, CPU, chipset and device blobs. v1's history being cleared (`StartRecording`, `InvalidateSession`), loaded (`DeserializeSession`) or cut short (`TruncateTimelineAfter`) ends the engine's session, which restarts with a full rescan at the next capture (the engine records the trunk only until branches exist). A v1 restore (`RestoreCheckpoint`) marks the live memory as differing from the engine's delta base, so the next capture hands over every piece once. The benchmark's `"engine"` runs in shadow mode, so its capture time and counted work are its own. Measured on 600-frame runs at host load ~10:
+
+| Case | Capture p50, µs (v1 → engine) | Capture p99, µs | Delta-base copy per frame |
+|---|---|---|---|
+| ZX-Evo, BASIC | 355 → 18.5 | 822 → 64.5 | 4 MB → 72 KB (the first frame's full rescan averaged in) |
+| Pentagon 1024, BASIC | 110 → 5.6 | 481 → 14.6 | 1 MB → 18 KB |
+| Pentagon 128, game | 426 → 64 | 1,098 → 114 | 128 KB → 40 KB |
+| Across the Edge | 407 → 42 | 1,004 → 90 | 128 KB → 66 KB |
+
 ### 4.6 Step 5 — Restore only the pieces that differ
 
 - Each region keeps a **live map**: for every piece, the version whose content is in live memory now. A capture sets it to the new version, a restore to the target's version.
 - A write after that point makes the entry unknown; the region's dirty bits already say which pieces were written.
 - A restore decodes a piece only if its target version differs from the live map, or the piece was written since. E4: on ZX-Evo memory restore drops from ~760 to ~145 µs (most of v1's restore writes zeros into untouched memory), on Pentagon 1024 from 188 to 34 µs.
 - The oracle restores everything into a buffer, so a wrongly skipped piece fails it. A debug-build mode decodes everything and compares.
+
+**As built (2026-10-02).** `RestoreToMemory(index, written, stats)` builds the target's map from the nearest full table and the change records, and decodes a piece only when the version in live memory differs from the target's or `written(region, piece)` says it was written since; `ForgetMemory()` marks everything unknown (a v1 restore in shadow mode calls it). The test restores a recorded game to a sequence of positions and checks both the memory (against v1) and that the decoded count equals the number of versions that differ between the two positions; a mutation treating every piece as equal fails it. Measured (200 frame-aligned seeks over 600 frames, load ~12), memory restore:
+
+| Case | v1 p50, µs | Engine p50 | Engine p99 | Pieces decoded per seek |
+|---|---|---|---|---|
+| ZX-Evo, BASIC | 731 | 125 | 233 | 4 |
+| Pentagon 1024, BASIC | 174 | 27 | 55 | 1 |
+| Pentagon 128, BASIC | 55 | 27 | 55 | 1 |
+| 48K, BASIC | 73 | 54 | 111 | 2 |
+| Across the Edge | 315 | 180 | 417 | 7.5 |
+| Pentagon 128, game | 311 | 337 | 568 | 8.3 |
+
+The game is the one case slower than v1 (+8%): the pieces that differ between two positions are the busy ones, with chains of up to 49 links (the K = 50 trade-off of E1); p99 stays far inside PR-5's 5 ms. K is a parameter of the piece store if Phase 1's matrix run shows a case beyond D33's bound.
 
 ### 4.7 Step 6 — Device memory as regions, large memories first
 
@@ -257,13 +302,19 @@ The engine can also run alone (no v1) for benchmarks and for tests that restore 
 | 3 | General Sound (classic) | `GeneralSoundRam` | 128–512 KB | `SoundChip_GeneralSound::writeMem` | copy; the GS blob keeps registers only (95 B) |
 | 4 | GS lightweight | `GeneralSoundUploadStore` | up to the card RAM | the player's store writes | copy; used size stays in the blob |
 | 5 | Sprinter | `SprinterVideoRam`, `SprinterFastRam` | 256 KB, 64 KB | the Sprinter memory write paths | copy |
-| 6 | VDAC2 (FT812) | graphics memory, display list, registers, command FIFO | 1 MB, 2 × 8 KB, 4 KB, 4 KB | the card's bus writes | through the device: computed registers (`REG_ID`, `REG_CLOCK`, ring pointers) and the display list rebuilt ([VDAC2 design](../2026-10-01-tsconf-vdac2/vdac2-integration-design.md) §9.3) |
+| 6 | VDAC2 (FT812) | `Vdac2GraphicsMemory` (RAM_G), `Vdac2DisplayList0/1`, `Vdac2Registers`, `Vdac2CommandFifo`, `Vdac2Special`, `Vdac2Inflight` | 1 MB, 2 × 8 KB, 4 KB, 4 KB, 4 KB, 1.06 MB | eve-emu's dirty bitmap (one bit per 4 KB page, every chip write path), read before each capture | copy, then `EveMemoryRestored` (the chip rebuilds what it derives), as v1's `Vdac2Memory` blob does |
 | 7 | ZX-Evo AVR | `EvoAvrEeprom` | 4 KiB (1 piece) | the EEPROM-window write | copy |
 | 8 | Scorpion SMUC | `SmucEeprom` | 2 KiB (1 partial piece) | the page commit on STOP | copy; the serial-link state goes into a SMUC blob |
 
 - **Cost rule** (performance guidelines): the NeoGS, GS and MoonSound write paths run per card-CPU write. The hook is one bit-set behind the existing "recording" check: no work at all when nothing records, and an A/B benchmark (`core-benchmarks`, the card's frame benchmark) shows it within noise before it lands.
 - In shadow mode v1 still copies the GS RAM into its blob; the engine's region is checked against it by the oracle. NeoGS, MoonSound, VDAC2 and the EEPROMs are not in v1 files, so their regions are checked by round-trip tests (record, write, seek back, compare) and by live shadow runs.
 - With the device blobs still whole in Phase 1, the GS blob shrinks only in the engine: v1 keeps its own format.
+
+**As built (2026-10-02).** A device offers its memory through `ITTDRegionSource` (`engine/ttdregiontracker.h`): its regions with a `TTDRegionTracker` each, arming, an optional before-capture hook, and, when its blob also carries that memory, its state without it (`TTDStateWithoutRegions`). Sources are registered next to the serializers (`TTDPeripheralRegistry::RegisterRegionSource`; every model serializer that is a source is registered automatically). Two ways to find written pieces:
+- **write hooks** (NeoGS RAM and flash, General Sound RAM): the device marks the tracker on its write paths; it holds the tracker pointer only while the engine records, so the path pays one null check otherwise (A/B `BM_HostFrame_NeoGS_*`: within noise); MoonSound uses the wave memory's own dirty bitmap through the before-capture hook;
+- **compare at each capture** (`compareEachCapture`: Sprinter video RAM and fast RAM): every piece is offered and the engine keeps those whose content differs from its delta base. Used where writes go through shared paths (the fast RAM is written by the generic CPU path, which no machine-specific hook may slow down) or many paths; the cost follows the region's size, not its changes.
+
+The engine skips any offered piece whose content equals its delta base before doing anything else, so a dirty page rewritten with the same bytes costs a comparison only.
 
 ### 4.8 What Phase 4 will serialize
 

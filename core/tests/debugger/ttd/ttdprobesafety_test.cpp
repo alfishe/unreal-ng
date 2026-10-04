@@ -36,6 +36,7 @@ protected:
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
         _ttd = _context->pTimeTravelManager;
+        _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -70,6 +71,7 @@ protected:
 TEST_F(TTD_Probe_Safety_Test, ProbeDisarmed_AfterFindLastAccess)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
     _ttd->RecordMemoryWrite(0x4000, 0, 0x42, 0x1234, 1);
     RunFrames(2);
     _ttd->StopRecording();
@@ -172,6 +174,7 @@ TEST_F(TTD_Probe_Safety_Test, ProbeDisarmed_AfterFindLastAccess_NoMatch)
 TEST_F(TTD_Probe_Safety_Test, RepeatedFindLast_NoHitAccumulation)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);   // journaled writes come after the journal segment starts (D40)
     _ttd->RecordMemoryWrite(0x4000, 0, 0x42, 0x1234, 1);
     RunFrames(3);
     _ttd->StopRecording();

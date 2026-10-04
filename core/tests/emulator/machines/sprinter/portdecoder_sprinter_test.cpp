@@ -701,12 +701,14 @@ TEST_F(PortDecoderSprinter_Test, TraceCodeTable_NamesTheCodes)
     EXPECT_EQ(nameOf(PortDecoder_Sprinter::kTraceZ84Base + 0x19), "Z84 SIO A control");
 }
 
+/// (The WD1793 command context is no Sprinter state any more: the core
+/// registers it with the BetaDisk on every Beta machine)
 TEST_F(PortDecoderSprinter_Test, Ttd_EveryDeclaredStateHasASerializer)
 {
     const auto ids = _decoder->GetTTDModelStateIds();
     const auto serializers = _decoder->CreateTTDSerializers();
     for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
-                                 ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput, ttd::PeripheralId::Wd1793Context})
+                                 ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput})
     {
         EXPECT_NE(std::find(ids.begin(), ids.end(), id), ids.end()) << "declared: id " << int(id);
         EXPECT_TRUE(std::any_of(serializers.begin(), serializers.end(), [id](const auto& s) { return s->TTDPeripheralId() == id; }))

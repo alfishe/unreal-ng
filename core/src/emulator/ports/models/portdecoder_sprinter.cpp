@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_sprinter.h"
 #include "emulator/emulator.h"
@@ -14,7 +15,6 @@
 
 #include "debugger/ttd/sprinter/ttdsprinter.h"
 #include "debugger/ttd/ttdds12887.h"
-#include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -78,6 +78,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 {
     _rtc.SetCenturyRegister(0x32);
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
 
     _vram.SetIntModeListener([this]() { _intSource.Invalidate(); });
 
@@ -1821,8 +1822,6 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateT
     serializers.push_back(std::make_unique<ttd::TTDSprinterVideoRam>(self));
     if (_sprinterMemory)
         serializers.push_back(std::make_unique<ttd::TTDSprinterFastRam>(self));
-    if (_context->pBetaDisk)
-        serializers.push_back(std::make_unique<ttd::TTDWd1793Context>(*_context->pBetaDisk));
     return serializers;
 }
 
@@ -1886,3 +1885,10 @@ PortDecoder::RtcBinding PortDecoder_Sprinter::GetRtcBinding()
 }
 
 /// endregion </Surfaces>
+
+void PortDecoder_Sprinter::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
+{
+    fp.Add("sprinter.fast_start", _context->config.sprinter.fast_start);
+    fp.Add("sprinter.turbo_allowed", _context->config.sprinter.turbo_allowed);
+    fp.Add("sprinter.accel_int_suspend", _context->config.sprinter.accel_int_suspend);
+}

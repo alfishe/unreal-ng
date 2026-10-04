@@ -61,12 +61,14 @@ deleted. Take one only on the owner's request.
   Open: **SN6, the bridge to the host LAN** (owner Q2: wanted; P2 since 2026-10-04, after the ATAPI CD); the kits' other programs (FTP, NTP, TELNET, TFTP, WTERM,
   Gopher, `UNET509B.DLL`), BC-Term's file transfers over the modem; the gateway's host-side receive pause and TCP
   zero-window probes; ISA I3 (RAM card), `DACK`, the 16550 character timeout.
+  ISA Plug and Play (I9, owner 2026-10-04: design and build after SN6; no PnP model on the bus today).
 - ~~Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback)~~ **done 2026-10-04** (ISA I2,
   branch `sprinter-isa-i2-neogs`, [i2-outcome.md](../2026-10-02-sprinter-isa/i2-outcome.md)): ProPlay plays a MOD at
   MAME's pitch and timing; open: the MAME ISA I/O tap; the NeoGS RAM joins TTD with TTD v2 (owner, 2026-10-04).
   ~~The mouse in the GUI through the shared MouseManager~~ done (capture only while polled, automation on the board
   mouse: [2026-10-03-mouse-api-routing](../2026-10-03-mouse-api-routing/design.md)).
-- P2: ATAPI CD on the Sprinter's IDE (media change, eject, ATAPI boot); the CompactFlash identity check;
+- P2: ~~ATAPI CD on the Sprinter's IDE (media change, eject, ATAPI boot)~~ done 2026-10-04 ([atapi-cd-boot.md](atapi-cd-boot.md));
+  ~~the CompactFlash identity check~~ done 2026-10-04 (an IDE unit as a CF card, DSS 1.71 boots from it);
   LDConf (reloading the PLD configuration at run time).
 - Lower: two Sega-style pads, serial mouse variants, tape input (`#FE` bit 6), Centronics printer, SIO B
   as a COM port, the sp2000-light and sp2022d board profiles, the Wild Sound ISA card.

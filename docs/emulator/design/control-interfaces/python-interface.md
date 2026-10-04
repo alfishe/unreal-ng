@@ -245,10 +245,10 @@ class Emulator:
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
-        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem 'modem', SprinterSerial COM1 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' on any machine), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
+        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' for this module alone) (the machine's own serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem 'modem', SprinterSerial COM1 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' on any machine), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
         (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state(); ZX Profi v5: the board's 8251, also machine_serial),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
-        atm2ioesp in network_state()), zifi=<com_port values> (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP,
+        atm2ioesp in network_state()), zifi=<com_port values> | 'zifi-native[,s3|esp01s]' (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP; 'at' = the original ESP-01 with NonOS AT 1.7.4 unless an ESP8266 build is named, 'at,esp8266-at222' = ESP-AT 2.2.2, 'zifi-native' = the 2026 firmware;
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
@@ -998,16 +998,17 @@ except RuntimeError as refusal:
     print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
 ```
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
 
 **Session lifecycle:**
 
 ```python
-emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (journal on by default)
-emu.ttd_start(mode='development')        # write journal on
-emu.ttd_start(mode='gaming')             # no write journal (smaller)
-emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
-emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
+emu.ttd_start(journal=True)              # also record the write journal
+emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
+emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all)
+# -> {'ok': True, 'error': None, 'cancelled': False, 'frames_built': 301, 'frames_covered': 0,
+#     'frames_refused': 0, 'records': ...}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
 emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
 emu.ttd_get_journal_enabled()            # -> bool
@@ -1016,7 +1017,7 @@ emu.ttd_invalidate()             # drop all history (reason defaults to 'python 
 emu.ttd_invalidate(reason='manual')
 ```
 
-`mode` is `'development'` (write journal on) or `'gaming'` (journal off, less memory); any other value raises `ValueError`. `enable_write_journal` wins over `mode`. With neither, `ttd_start()` keeps the choice made by `ttd_set_journal_enabled` (on by default). This matches the CLI (`ttd start --no-journal`), the WebAPI (`{"mode": "gaming"}`) and Lua (`ttd_start("gaming")`).
+The write journal answers "who wrote this address last" at once; without it the search replays one frame (same answer, slower). It is off by default, can be switched at any moment and built later for any span by replay (about 2-4 ms per frame) - see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules). This matches the CLI (`ttd start --journal`, `ttd journal on|off|build`), the WebAPI (`{"journal": true}`, `/ttd/journal`, `/ttd/journal/build`) and Lua (`ttd_start(true)`, `ttd_build_journal`).
 
 **Status:**
 
@@ -1035,7 +1036,7 @@ status = emu.ttd_status()
 #   'model_id': 0,
 #   'model_ram_pages': 8,             # BOUND, not a count (48K reports 6)
 #   'machine': {'model': 'PENTAGON', 'model_id': 1, 'ram_page_bound': 8, 'rom_signature': '0x...',
-#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...],
+#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...], 'not_recorded': [] or ['gs-lw'],
 #               'general_sound': 'none'|'z80'|'lw'|'ngs', 'turbo_sound': 'none'|'turbosound'|'tsfm'},
 #                                     # the recorded machine; None while there is no session
 #   'recorded_by': None,              # the instance that recorded a loaded file
@@ -1047,9 +1048,9 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
-#   'write_journal_complete': True,   # False: write/io find-last replays history
-#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
-#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
+#   'write_journal_complete': True,   # one span over the whole session
+#   'write_journal_segments': [{'from_frame': 98, 'from_tinframe': 4, 'to_frame': 397, 'to_tinframe': 11}],
+#                                     # the spans it covers; outside them a write search replays one frame
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed

@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_profi.h"
 
@@ -49,6 +50,7 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
     // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
     _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
     FitKeyboard();
@@ -428,17 +430,23 @@ uint8_t PortDecoder_Profi::FloatingBusV3(uint32_t t3) const
     return _context->pMemory->RAMPageAddress(page)[offset];
 }
 
+bool PortDecoder_Profi::IdeShadowedBySysRegister(uint16_t port) const
+{
+    // V0.03, TR-DOS with ROM14 = 1: #EB is the system register's alias there, not the IDE's data / command port
+    return !IsExtMode() && IsLongBesideShort() && (static_cast<uint8_t>(port) & 0xE3) == 0xE3;
+}
+
 IdeAdapter::Gate PortDecoder_Profi::IdeGate()
 {
     IdeAdapter::Gate gate = PortDecoder::IdeGate();
-    gate.profiExt = IsExtMode();
+    gate.profiExt = IsExtMode() || IsLongBesideShort();
     return gate;
 }
 
 uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 {
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
-    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+    if (uint8_t ideValue = 0xFF; !IdeShadowedBySysRegister(port) && TryIdePortIn(port, pc, ideValue))
         return ideValue;
 
     uint8_t result = 0xFF;
@@ -483,7 +491,7 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     }
     // RTC/CMOS: #9F/#BF/#DF/#FF, EXT mode only - takes priority over the FDC/system-port
     // decode below, since #BF/#FF alias to the Beta128 system port outside EXT mode.
-    else if ((port & 0x9F) == 0x9F && IsExtMode())
+    else if ((port & 0x9F) == 0x9F && LongPortOpen(port))
     {
         // Only the data ports (#9F/#DF, bit 5 = 0) return real data; the address
         // strobe (#BF/#FF) is write-only and reads as floating bus.
@@ -595,7 +603,7 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
-    if (TryIdePortOut(port, value, pc))
+    if (!IdeShadowedBySysRegister(port) && TryIdePortOut(port, value, pc))
         return;
 
     // Port trace decode attribution (if-chain decoder: no mask/match table)
@@ -668,7 +676,7 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     }
     // RTC/CMOS: #9F/#BF/#DF/#FF, EXT mode only - takes priority over the FDC/system-port
     // decode below, since #BF/#FF alias to the Beta128 system port outside EXT mode.
-    else if ((port & 0x9F) == 0x9F && IsExtMode())
+    else if ((port & 0x9F) == 0x9F && LongPortOpen(port))
     {
         // Bit 5 set (#BF/#FF) latches the register address; clear (#9F/#DF) writes data.
         if (port & 0x20)
@@ -696,7 +704,7 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         // Covox/SoundRive DAC, CP/M-extended-mode aliases (#C7 Left, #A7 Right): real
         // Profi hardware moves the DAC here because the FDC has taken #1F..#7F away from
         // it. See the kProfiCovoxExt* constants above for the decode.
-        else if (IsExtMode())
+        else if (LongPortOpen(port))
         {
             const uint8_t lowByte = static_cast<uint8_t>(port);
             const uint8_t lrBits = lowByte & kProfiCovoxExtLRMask;
@@ -751,7 +759,7 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     // Covox has no idle timeout: with the bus taken away, its DAC latches would otherwise
     // hold their last written level forever - inaudible on real hardware (AC-coupled
     // output stage) but a permanent stuck tone through a digital audio pipeline.
-    const bool covoxReachableNow = !(_state->flags & CF_DOSPORTS) || IsExtMode();
+    const bool covoxReachableNow = !(_state->flags & CF_DOSPORTS) || IsExtMode() || IsLongBesideShort();
     if (!covoxReachableNow && _covoxWasReachable)
     {
         if (_context->pSoundManager && _context->pSoundManager->hasCovox())
@@ -900,7 +908,7 @@ uint8_t PortDecoder_Profi::PpiRegister(uint16_t port, bool dosPorts) const
     const uint8_t low = static_cast<uint8_t>(port);
     if (!dosPorts && (low & 0x9F) == 0x1F)
         return static_cast<uint8_t>((low >> 5) & 0x03);
-    if (dosPorts && (low & 0x9F) == 0x87 && IsExtMode())
+    if (dosPorts && (low & 0x9F) == 0x87 && LongPortOpen(port))
         return static_cast<uint8_t>((low >> 5) & 0x03);
     return 0xFF;
 }
@@ -913,7 +921,7 @@ PortDecoder_Profi::ComDevice PortDecoder_Profi::ComPortDevice(uint16_t port) con
     const uint8_t group = static_cast<uint8_t>(low & 0x9F);
     if (group != 0x8F && group != 0x93)
         return ComDevice::None;
-    if (!IsExtMode())
+    if (!LongPortOpen(port))
         return ComDevice::None;
     if (group == 0x8F)
         return ComDevice::Pit;
@@ -968,6 +976,24 @@ void PortDecoder_Profi::ComOut(ComDevice device, uint16_t port, uint8_t value)
     }
 }
 
+bool PortDecoder_Profi::IsLongBesideShort() const
+{
+    // Djoni's V0.03 PROM (docs/inprogress/2026-10-04-profi-plus/design.md, tools/machines/profi/profidecoder): in the
+    // TR-DOS state with the 48 ROM page (DOS latch on, CP/M off, ROM14 = 1) the stock VG93 stays at #1F..#7F and
+    // the extended group answers at ADR7 = 1 (VG93 #83 #A3 #C3, 8255 #87 #A7 #C7, IDE #8B #AB #CB, RTC #9F #BF
+    // #DF); #E3.. stay the system register
+    if (_context->config.profi_ext_ports != 2 || !_board.extendedPorts)
+        return false;
+    return (_state->flags & CF_TRDOS) && !(_state->pDFFD & 0x20) && (_state->p7FFD & 0x10);
+}
+
+bool PortDecoder_Profi::LongPortOpen(uint16_t port) const
+{
+    if (IsExtMode())
+        return true;
+    return IsLongBesideShort() && (static_cast<uint8_t>(port) & 0xE3) != 0xE3;
+}
+
 bool PortDecoder_Profi::IsExtMode() const
 {
     // The extended port map: CP/M and ROM14, on the v5 board only. The v5 port decoder PROM confirms it
@@ -983,6 +1009,10 @@ bool PortDecoder_Profi::IsExtMode() const
     // (Vadim / Star Software) probe the FDC, RTC and IDE there; BIOS 1.0 / 2.0 instead use the VG93 at #1F..#7F
     // from the SYS ROM and cannot boot a disk with it (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md)
     if (_context->config.profi_ext_ports == 1 && (_state->flags & CF_TRDOS) && !rom14)
+        return true;
+    // ExtPorts=v003 (Djoni's PROM): the same SYS ROM rule, but the PROM forces A2 = 1 in CP/M mode, so the DOS latch
+    // only counts with CP/M off (in CP/M mode the table is the stock CP/M map)
+    if (_context->config.profi_ext_ports == 2 && (_state->flags & CF_TRDOS) && !cpm && !rom14)
         return true;
     return cpm && rom14;
 }
@@ -1008,6 +1038,8 @@ uint16_t PortDecoder_Profi::DecodeFDCPort(uint16_t port) const
         return static_cast<uint16_t>((p1 & 0x60) | 0x1F);
     if ((p1 & 0xE3) == (cpm ? 0xA3 : 0xE3))
         return 0x00FF;
+    if ((p1 & 0x9F) == 0x83 && LongPortOpen(port))
+        return static_cast<uint16_t>((p1 & 0x60) | 0x1F);
 
     return 0;
 }
@@ -1115,6 +1147,17 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
         _context->pScreen->InitRaster();
 }
 
+void PortDecoder_Profi::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
+{
+    const CONFIG& c = _context->config;
+    fp.Add("profi.sync_prom", c.profi_sync_prom);
+    fp.Add("profi.wait_phase", c.profi_wait_phase);
+    fp.Add("profi.wait_pentagon", c.profi_wait_pentagon);
+    fp.Add("profi.rom_wait", c.profi_rom_wait);
+    fp.Add("profi.turbo", c.profi_turbo);
+    fp.Add("profi.cpm", c.profi_cpm);
+    fp.Add("profi.dffd_decode", c.profi_dffd_decode);
+}
 ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
 {
     const auto* decoder = context ? dynamic_cast<const PortDecoder_Profi*>(context->pPortDecoder) : nullptr;

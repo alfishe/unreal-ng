@@ -424,8 +424,8 @@ rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, registe
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
-ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"modem[,guest port]"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: a UART card's line; network_state().slots[n].esp shows the SprinterESP's module, .modem the ISA modem's mode / call / lines / journal); isa1_peer_b / isa2_peer_b (SprinterSerial COM2, slots[n].channel_b); modem_phonebook="5551234=host:port,..." (the numbers a Hayes modem peer dials; com_port="modem" puts one on any machine's serial port)
-ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31); zifi="at" (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP, default "none"; network_state().zifi has the API registers and rings)
+ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,firmware][,baud] (firmware esp32 | esp8266 | esp8266-at221 | esp8266-at222 for this module alone; an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"modem[,guest port]"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: a UART card's line; network_state().slots[n].esp shows the SprinterESP's module, .modem the ISA modem's mode / call / lines / journal); isa1_peer_b / isa2_peer_b (SprinterSerial COM2, slots[n].channel_b); modem_phonebook="5551234=host:port,..." (the numbers a Hayes modem peer dials; com_port="modem" puts one on any machine's serial port)
+ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31); zifi="at" (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP, default "none"; "at,esp8266-at222" = ESP-AT 2.2.2 on the ESP-01, "zifi-native[,s3|esp01s]" = the 2026 native firmware; network_state().zifi has the API registers and rings)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
 isa = isa_state()           -- ISA slots (Sprinter): latch, window, slots[] (configured, card, summary_line, not_fitted, counters, irq_line = the IRQ line: level, driver, PIO port B bit, PIO setup, pending, reaches_cpu; the ZX-bus adapter's zx_bus = the General Sound / NeoGS behind it: cards[1].personality, .status, .cpu_addresses, .machine_reset, reset_held), pio_port_b, irq_summary; a 3C509B adds resources.id_port (#100-#1F0, its isolation state) and network_state().slots[n] its ID port, window, FIFOs, EEPROM, link state, events, summary; available=false elsewhere
@@ -822,10 +822,13 @@ Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it
 **Session lifecycle:**
 
 ```lua
-ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled choice (journal on by default)
-ttd_start("development")     --> bool   -- write journal on
-ttd_start("gaming")          --> bool   -- no write journal (smaller)
-ttd_set_journal_enabled(b)             -- choose journal mode for the next start
+ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled choice (off by default)
+ttd_start(true)              --> bool   -- also record the write journal
+ttd_set_journal_enabled(b)   --> ok, reason  -- switch the write journal at any moment, also while recording
+                                       --   (each on-off span is a segment; status.write_journal_segments)
+ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_built, frames_covered,
+                                       --   frames_refused, records}: build it by replaying frames from..to
+                                       --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
                                        --   (0 = no limit, nil keeps a value; status: history_* fields)
 ttd_get_journal_enabled()    --> bool
@@ -849,7 +852,7 @@ local status = ttd_status()
 -- status.model_id              = 0
 -- status.model_ram_pages       = 8    -- BOUND, not a count (48K reports 6)
 -- status.machine               = { model = "PENTAGON", model_id, ram_page_bound, rom_signature = "0x...",
---                                  peripheral_mask, peripherals = { "betadisk", ... },
+--                                  peripheral_mask, peripherals = { "betadisk", ... }, not_recorded = { "gs-lw" } or {},
 --                                  general_sound = "none"|"z80"|"lw"|"ngs", turbo_sound = "none"|"turbosound"|"tsfm" }
 --                                  -- the recorded machine; nil while there is no session
 -- status.recorded_by           = "emu-..."  -- the instance that recorded a loaded file; nil for a live one
@@ -861,9 +864,9 @@ local status = ttd_status()
 --
 -- Sections
 -- status.write_journal_enabled = true
--- status.write_journal_complete = true  -- false: write/io find-last replays history
--- status.write_journal_wrapped = false  -- true: a "no match" from the journal replays
--- status.write_journal_gap     = nil    -- when incomplete: {reason, frame, tinframe}
+-- status.write_journal_complete = true  -- one span over the whole session
+-- status.write_journal_segments = { {from_frame = 98, from_tinframe = 4, to_frame = 397, to_tinframe = 11} }
+--                                       -- the spans it covers; outside them a write search replays one frame
 -- status.bookmark_count        = 2
 -- status.write_journal_records = 729025
 -- status.write_journal_bytes   = 8748300

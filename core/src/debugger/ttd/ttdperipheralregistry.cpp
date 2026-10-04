@@ -1,5 +1,6 @@
 #include "ttdperipheralregistry.h"
 #include "ttdcompression.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 #include <algorithm>
 #include <cassert>
@@ -17,14 +18,71 @@ void TTDPeripheralRegistry::Register(PeripheralId id, TTDSerializable* device)
     }
 }
 
+std::vector<TTDDeviceEntry> TTDPeripheralRegistry::DeviceEntries() const
+{
+    std::vector<TTDDeviceEntry> devices;
+    for (const auto& [id, device] : _devices)
+        if (device && device->TTDStateSize() != 0)
+            devices.push_back({device->TTDDescribe(), device, nullptr});
+    for (ITTDRegionSource* source : _regionSources)
+    {
+        uint8_t id = 0;
+        std::vector<uint8_t> probe;
+        if (!source->TTDStateWithoutRegions(id, probe))
+            continue;
+        for (TTDDeviceEntry& e : devices)
+            if (static_cast<uint8_t>(e.descriptor.legacyId) == id)
+            {
+                e.withoutRegions = source;
+                e.descriptor.stateSize = static_cast<uint32_t>(probe.size());
+                e.descriptor.variableSize = false;
+            }
+    }
+    return devices;
+}
+
+bool TTDPeripheralRegistry::CheckDeviceTable(std::string& error) const
+{
+    for (const auto& [id, device] : _devices)
+    {
+        if (!device)
+            continue;
+        const std::string name = device->TTDDeviceName();
+        if (static_cast<uint8_t>(device->TTDPeripheralId()) != id)
+        {
+            error = "device " + name + " is registered as id " + std::to_string(id) + " but names itself id " +
+                    std::to_string(static_cast<unsigned>(device->TTDPeripheralId()));
+            return false;
+        }
+        const TTDDeviceDescriptor d = device->TTDDescribe();
+        if (static_cast<uint8_t>(d.legacyId) != id)
+        {
+            error = "device " + name + " describes itself as id " + std::to_string(static_cast<unsigned>(d.legacyId)) +
+                    ", registered as id " + std::to_string(id);
+            return false;
+        }
+        if (!d.variableSize && d.stateSize != device->TTDStateSize())
+        {
+            error = "device " + name + " describes " + std::to_string(d.stateSize) + " bytes of state but saves " +
+                    std::to_string(device->TTDStateSize());
+            return false;
+        }
+    }
+    TTDDeviceTable table;
+    return table.Build(DeviceEntries(), error);
+}
+
 void TTDPeripheralRegistry::Unregister(PeripheralId id)
 {
     _devices.erase(static_cast<uint8_t>(id));
+    _notRecorded &= ~(uint64_t(1) << static_cast<uint8_t>(id));
 }
 
 void TTDPeripheralRegistry::Clear()
 {
     _devices.clear();
+    _regionSources.clear();
+    _notRecorded = 0;
 }
 
 bool TTDPeripheralRegistry::IsRegistered(PeripheralId id) const
@@ -97,6 +155,10 @@ void TTDPeripheralRegistry::CaptureAll(
     std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const
 {
     outBlobs.clear();
+    _lastStateBytes.fill(0);
+    _lastStateTotal = 0;
+    for (std::vector<uint8_t>& s : _lastStates)
+        s.clear();   // keeps the capacity: no allocation per frame
 
     for (const auto& [id, device] : _devices)
     {
@@ -114,6 +176,12 @@ void TTDPeripheralRegistry::CaptureAll(
             continue;
 
         outBlobs[id] = EncodeBlob(id, currentState.data(), currentState.size());
+        if (id < _lastStateBytes.size())
+        {
+            _lastStateBytes[id] = static_cast<uint32_t>(currentState.size());
+            _lastStates[id].assign(currentState.begin(), currentState.end());
+        }
+        _lastStateTotal += currentState.size();
     }
 }
 

@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "emulator/io/serial/esp/atmodule.h"
+#include "emulator/io/serial/esp/espdescribe.h"
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/hayesmodempeer.h"
 #include "emulator/io/serial/serialpeer.h"
@@ -43,13 +44,6 @@ std::string Hex(unsigned value, int digits)
 {
     char text[16];
     std::snprintf(text, sizeof(text), "#%0*X", digits, value);
-    return text;
-}
-
-std::string MacText(const std::array<uint8_t, 6>& m)
-{
-    char text[24];
-    std::snprintf(text, sizeof(text), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
     return text;
 }
 }  // namespace
@@ -535,55 +529,9 @@ void PcSerialCard::Describe(StateNode& out) const
     if (!esp)
         return;
     StateNode e = StateNode::Object();
-    const auto* at = dynamic_cast<const AtModule*>(esp);
     e["module"] = "ESP-12F (ESP8266)";
-    e["firmware"] = at ? std::string(EspModule::FirmwareName(at->GetFirmware())) : std::string(esp->Kind());
-    e["state"] = esp->ResetHeld() ? "reset held (MCR OUT1)" : esp->DownloadMode() ? "ROM download mode (GPIO0 was low)" : "running";
-    e["hardware_resets"] = static_cast<uint64_t>(esp->HardwareResets());
-    static const char* const kWifi[] = {"idle", "connecting", "got_ip"};
-    e["wifi"] = kWifi[static_cast<int>(esp->GetWifi()) % 3];
-    e["ssid"] = esp->Ssid();
-    e["ip"] = NetIpToString(esp->Ip());
-    e["mac"] = MacText(esp->Mac());
-    e["baud"] = static_cast<uint64_t>(esp->Baud());
-    e["factory_baud"] = static_cast<uint64_t>(esp->FactoryBaud());
-    e["flow_control"] = esp->HonorsRts();
-    e["line_mismatch"] = esp->LineMismatch();
-    e["requests"] = esp->RequestsServed();
-    if (at)
-    {
-        StateNode s = StateNode::Object();
-        s["echo"] = at->Echo();
-        s["mux"] = at->Mux();
-        s["passive_receive"] = at->Passive();
-        s["sysstore"] = at->SysStore();
-        if (at->ManualDns(0))
-            s["dns"] = NetIpToString(at->ManualDns(0)) + (at->ManualDns(1) ? "," + NetIpToString(at->ManualDns(1)) : "");
-        StateNode links = StateNode::Array();
-        for (int i = 0; i < AtModule::kLinks; ++i)
-        {
-            if (!at->LinkOpen(i))
-                continue;
-            const EspStack::Slot& slot = at->Stack().GetSlot(i);
-            StateNode l = StateNode::Object();
-            l["link"] = i;
-            l["proto"] = at->LinkUdp(i) ? "udp" : "tcp";
-            l["remote"] = NetIpToString(slot.remote.addr) + ":" + std::to_string(slot.remote.port);
-            l["rx_pending"] = static_cast<uint64_t>(slot.rx.size());
-            l["peer_closed"] = slot.finSeen;
-            links.push(l);
-        }
-        s["links"] = links;
-        e["at_session"] = s;
-    }
-    StateNode ex = StateNode::Array();
-    for (const EspModule::Exchange& x : esp->RecentExchanges())
-    {
-        StateNode one = StateNode::Object();
-        one["request"] = x.request;
-        one["reply"] = x.reply;
-        ex.push(one);
-    }
-    e["exchanges"] = ex;
+    espdescribe::Describe(*esp, e);
+    if (esp->ResetHeld())
+        e["state"] = "reset held (MCR OUT1)";
     out["esp"] = e;
 }

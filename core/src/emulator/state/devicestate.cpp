@@ -1864,7 +1864,7 @@ StateNode Ide(EmulatorContext* context)
             u["channel"] = channelIndex ? "secondary" : "primary";
             u["selected"] = ide->Channel(channelIndex).Selected() == unit;
         }
-        u["kind"] = cd ? "cdrom" : "disk";
+        u["kind"] = IdeController::UnitKindName(ide->KindOf(index));  // disk / cdrom / cf (a CompactFlash card)
         u["present"] = device->IsPresent();
 
         if (IBlockDevice* medium = device->Medium())
@@ -2130,6 +2130,8 @@ StateNode Network(EmulatorContext* context)
             node["peer_baud"] = c.peerBaud;   // an ESP module's own rate: a mismatch with "baud" garbles both sides
         if (c.modem.isObject())
             node["modem"] = c.modem;          // a Hayes modem peer: mode, lines, call, settings, counters, journal
+        if (c.esp.isObject())
+            node["esp"] = c.esp;              // an ESP module peer: firmware, state, Wi-Fi, AT / ZiFi native session
     };
 
     // The machine's own serial port when it is no 16550 (ATM Turbo 2+

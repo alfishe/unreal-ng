@@ -116,6 +116,7 @@ TEST(TtdScorpionProfRomLayout_Test, BlobIsPaddingFree)
     src.p7EFD = 0x33;
     src.p1FFD = 0x44;
     src.scorpionDosTrigger = 0x55;
+    src.scorpionTurbo = 0x01;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(ScorpionProfROMState)), 0)
@@ -237,6 +238,10 @@ TEST_F(TtdScorpionProfRom_Test, HashRespondsToEveryCarriedField)
     state.scorpionDosTrigger ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "scorpionDosTrigger not hashed";
     state.scorpionDosTrigger ^= 0x01;
+
+    state.scorpion_turbo ^= 0x01;
+    EXPECT_NE(serializer.TTDHashState(), base) << "scorpion_turbo not hashed";
+    state.scorpion_turbo ^= 0x01;
 
     EXPECT_EQ(serializer.TTDHashState(), base) << "hash is not a pure function of state";
 }

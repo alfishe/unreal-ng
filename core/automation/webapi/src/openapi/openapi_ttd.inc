@@ -45,11 +45,11 @@
         "per-frame checkpoint capture. Idempotent: returns already_active=true "
         "if recording was already in progress.\n\n"
         "**Optional JSON body:**\n"
-        "- `mode`: \"gaming\" (smaller files, no write journal) or \"development\" (full journal, default)\n"
-        "- `enable_write_journal`: explicit bool override (takes precedence over mode)\n"
+        "- `journal`: also record the write journal (default false). \"Who wrote this address last\" then answers "
+        "at once; without it the search replays one frame (same answer, slower). It can be switched at any moment "
+        "(POST /ttd/journal) and built later for any span by replay (POST /ttd/journal/build)\n"
         "- `history_limit_frames`, `history_limit_bytes`: the history limit, as POST /ttd/history-limit "
-        "(a missing one keeps its current value)\n\n"
-        "Gaming mode produces ~90% smaller .ttd files but disables fast reverse-watchpoint queries.";
+        "(a missing one keeps its current value)";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["required"] = true;
@@ -64,6 +64,78 @@
         "TTD engine not available in this build";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["responses"]["503"]["description"] =
         "Emulator is shutting down";
+
+    // =====================================================================
+    // /ttd/journal - the write journal on demand (D40)
+    // =====================================================================
+    {
+        const char* path = "/api/v1/emulator/{id}/ttd/journal";
+        for (const char* method : {"get", "post"})
+        {
+            Json::Value& op = paths[path][method];
+            op["tags"].append("Time-Travel Debug");
+            op["parameters"][0]["name"] = "id";
+            op["parameters"][0]["in"] = "path";
+            op["parameters"][0]["required"] = true;
+            op["parameters"][0]["schema"]["type"] = "string";
+            op["responses"]["200"]["description"] = "The write journal's state and the spans it covers";
+            op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+                "#/components/schemas/TTDJournalResponse";
+            op["responses"]["404"]["description"] = "Emulator instance not found";
+        }
+        paths[path]["get"]["summary"] = "The write journal's state and spans";
+        paths[path]["get"]["description"] =
+            "Whether the write journal is recorded, the spans of the session it covers, and a build in progress. "
+            "Inside a span, \"who wrote this address last\" answers from the journal at once; outside, the search "
+            "replays one frame (same answer).";
+        paths[path]["post"]["summary"] = "Switch the write journal on or off";
+        paths[path]["post"]["description"] =
+            "Body: `{\"enabled\": true | false}`. Allowed at any moment, also while recording: a journal segment "
+            "starts or ends at the instruction the machine is on (a running machine is paused for the switch and "
+            "resumed). Off by default.";
+        paths[path]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[path]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["type"] =
+            "boolean";
+        paths[path]["post"]["responses"]["400"]["description"] = "The body has no boolean 'enabled'";
+    }
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/journal/build"]["post"];
+        op["summary"] = "Build the write journal by replay";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Replays frames `from_frame`..`to_frame` (both optional; default: the whole session) with every memory "
+            "write collected, and adds them to the write journal: the frames join its spans. Frames already covered "
+            "are left as they are; the session's last frame and frames holding a v1 marker without its data are not "
+            "built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
+            "the progress meanwhile (`write_journal_build`) and POST /ttd/journal/build/cancel stops it (what was "
+            "built is kept). Not while recording.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& body = op["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["properties"]["from_frame"]["type"] = "integer";
+        body["properties"]["to_frame"]["type"] = "integer";
+        op["responses"]["200"]["description"] = "Built (or cancelled; see `cancelled`)";
+        op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDJournalBuildResponse";
+        op["responses"]["409"]["description"] = "Refused: recording, or no complete frame to replay (`error` says which)";
+        op["responses"]["404"]["description"] = "Emulator instance not found";
+    }
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/journal/build/cancel"]["post"];
+        op["summary"] = "Stop a running write journal build";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] = "The build stops after its current frame; what it built is kept. `cancelled` is false "
+                            "when no build was running.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "`{\"cancelled\": bool}`";
+        op["responses"]["404"]["description"] = "Emulator instance not found";
+    }
 
     // =====================================================================
     // POST /ttd/history-limit — keep only the newest history while recording

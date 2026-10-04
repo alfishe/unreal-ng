@@ -46,6 +46,7 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
     _ram.assign(pairs * RAM_PAIR_SIZE, 0x00);
 
     _rom.assign(ROM_SIZE, 0x00);
+    _romHash = ttd::FirmwareFingerprint(_rom.data(), _rom.size());
 
     // Dedicated coprocessor wired to the static trampolines below - never the
     // main emulator Z80 (design §4.3: context hardwiring, debug traps)
@@ -148,6 +149,12 @@ void SoundChip_GeneralSound::hostReset()
 }
 
 void SoundChip_GeneralSound::loadROM(const std::string& romPath)
+{
+    readROM(romPath);
+    _romHash = ttd::FirmwareFingerprint(_rom.data(), _rom.size());
+}
+
+void SoundChip_GeneralSound::readROM(const std::string& romPath)
 {
     _romLoaded = false;
 
@@ -824,7 +831,11 @@ void SoundChip_GeneralSound::writeMem(uint16_t addr, uint8_t value)
 {
     uint8_t* bank = _bankW[(addr >> 14) & 3];
     if (bank) // nullptr = ROM window: write goes nowhere
+    {
         bank[addr & (PAGE_SIZE - 1)] = value;
+        if (_ramTrackerArmed)
+            _ramTrackerArmed->Mark(static_cast<size_t>(bank - _ram.data()) + (addr & (PAGE_SIZE - 1)));
+    }
 }
 
 void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
@@ -1019,6 +1030,25 @@ void SoundChip_GeneralSound::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
 {
+    loadFixedState(src);
+    memcpy(_ram.data(), src + TTD_FIXED_STATE_SIZE, _ram.size());
+    if (_ramTrackerArmed)
+        _ramTrackerArmed->MarkAll();
+    finishLoad(src);
+}
+
+bool SoundChip_GeneralSound::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+{
+    // The time-travel engine restored the RAM as its region already
+    if (size != TTD_FIXED_STATE_SIZE)
+        return false;
+    loadFixedState(state);
+    finishLoad(state);
+    return true;
+}
+
+void SoundChip_GeneralSound::loadFixedState(const uint8_t* src)
+{
     _mb.status = src[0];
     _mb.dataFromHost = src[1];
     _mb.dataToHost = src[2];
@@ -1060,8 +1090,10 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     Z80CpuSetRegisters(_cpu, &regs);
 
     // src[59..94]: queue-era slots, ignored
+}
 
-    memcpy(_ram.data(), src + TTD_FIXED_STATE_SIZE, _ram.size());
+void SoundChip_GeneralSound::finishLoad(const uint8_t* src)
+{
     applyBanking();
 
     // Host-side pipeline follows the restored levels without emitting a
@@ -1097,3 +1129,29 @@ uint64_t SoundChip_GeneralSound::TTDHashState() const
 }
 
 /// endregion </TTDSerializable>
+
+/// region <Time-travel engine region>
+
+void SoundChip_GeneralSound::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+    _ramTracker.Bind(_ram.data(), _ram.size());
+    ttd::TTDDeviceRegion ram;
+    ram.desc.id = ttd::TTDRegionId::GeneralSoundRam;
+    ram.desc.name = "gs.ram";
+    ram.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::GeneralSound);
+    ram.desc.memory = _ram.data();
+    ram.desc.bytes = static_cast<uint32_t>(_ram.size());
+    ram.desc.pieces = _ramTracker.Pieces();
+    ram.tracker = &_ramTracker;
+    out.push_back(ram);
+}
+
+bool SoundChip_GeneralSound::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+{
+    peripheralId = static_cast<uint8_t>(ttd::PeripheralId::GeneralSound);
+    state.resize(TTD_FIXED_STATE_SIZE);
+    serializeFixedState(state.data());
+    return true;
+}
+
+/// endregion </Time-travel engine region>

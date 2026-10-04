@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "common/filehelper.h"
+#include "debugger/ttd/ttdserializable.h"
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -113,6 +114,7 @@ bool Atm2Kbc::Load(Firmware firmware, const std::string& romPath, std::string& e
 {
     _cpu.reset();
     _firmware = Firmware::None;
+    _firmwareHash = 0;
     _crystalHz = 0;
     if (_context && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->SetDeviceIntLine(Z80::kDeviceIntAtm2Kbc, false);
@@ -133,6 +135,7 @@ bool Atm2Kbc::Load(Firmware firmware, const std::string& romPath, std::string& e
     }
 
     _cpu = std::make_unique<mcs51::Mcs51>(info->i8052 ? mcs51::Mcs51::Variant::I8052 : mcs51::Mcs51::Variant::I8051);
+    const uint64_t imageHash = ttd::FirmwareFingerprint(image.data(), image.size());
     _cpu->SetProgram(std::move(image));
     mcs51::Mcs51::Bus bus;
     bus.movxRead = [this](uint16_t address) { return MovxRead(address); };
@@ -145,6 +148,7 @@ bool Atm2Kbc::Load(Firmware firmware, const std::string& romPath, std::string& e
     _cpu->SetPin(3, 4, _board.ve1);
 
     _firmware = firmware;
+    _firmwareHash = imageHash;
     _crystalHz = info->crystalHz;
     _board = Board{_board.latchedHigh, 0xFF, false, _board.ve1, false};
     _resetLow = false;

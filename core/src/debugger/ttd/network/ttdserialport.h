@@ -39,6 +39,16 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return _name; }
     PeripheralId TTDPeripheralId() const override { return _id; }
+    /// One kind, SerialPort, whatever v1 id the port records under: the
+    /// machine's #xxEF port ("uart"), the ATM2IOESP card's ("atm2ioesp.uart"),
+    /// the TS AVR's ZiFi line ("zifi.uart")
+    TTDDeviceDescriptor TTDDescribe() const override
+    {
+        TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+        d.type = TTDDeviceType::SerialPort;
+        d.instance = _id == PeripheralId::Atm2IoEsp ? "atm2ioesp.uart" : _id == PeripheralId::ZiFiLine ? "zifi.uart" : "uart";
+        return d;
+    }
     uint64_t TTDHashState() const override;
 
 private:

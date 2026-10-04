@@ -752,8 +752,8 @@ TEST_F(TTD_Format_V2_Test, OptionalJournal_ConfigurationWorks)
 {
     EnableTTD();
 
-    // Default is enabled
-    EXPECT_TRUE(_ttd->GetEnableWriteJournal());
+    // Off by default: recorded on demand (D40)
+    EXPECT_FALSE(_ttd->GetEnableWriteJournal());
 
     // Can disable
     _ttd->SetEnableWriteJournal(false);

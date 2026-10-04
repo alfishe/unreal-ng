@@ -99,6 +99,24 @@ The loader already on the disk loads the new files (it reads the file names, not
 build was checked: the hard disk of the MAME Sprinter pack with the two files replaced, BIOS 3.06 Hotfix 2, boots
 to Flex Navigator and `ver` shows 1.71.66 / 1.2.523.
 
+**A new disk from scratch (the loader too):** `DSSloader.bin` is not one block of consecutive sectors. `boot.exe`
+splits it in two (the assembler prints both sizes: `SECTORS 1..3 DATA ENDS` and `SECTORS 0 DATA ENDS`):
+
+| Part of `DSSloader.bin` (ae08ad9) | Bytes | Goes to |
+|---|---:|---|
+| the start (`Starting...` and the code the BIOS runs) | 0-1442 (1443) | LBA 1-3 |
+| `ZERO_SECTOR_OF_BPB` | 1443-1718 (276) | sector 0, right before the partition table: bytes 170-445 |
+
+The loader reads sector 0 back and copies that part into place (`GET_BPB`, `DSSBOOT.ASM`). A disk written without it
+boots as a hard disk by luck and crashes on the removable-media path (a CompactFlash card, below). The emulator test
+`SprinterBoot_Test.Bios306_Dss171BootsFromACompactFlashCard` builds its disk this way.
+
+**On a CompactFlash card:** a CF card answers IDENTIFY with word 0 = `#848A`, whose bit 7 says "removable". BIOS
+3.06 copies that bit into the drive's media flags (`AUTOIDE.asm` `PARSE_IdentifyDevice`, `MediaParameters` bit 0),
+and DSS treats the card as removable media. With the loader installed as above, DSS 1.71.66 boots from a CF card
+(and the released 1.71.57 boots from the MAME-pack disk presented as a CF card); in the emulator a unit becomes a
+CF card with `[HDD] CFn=1` or the insert option `device=cf`.
+
 ## 5. Notes
 
 - `master` has the CD file system source (`DSS/FS/CDFS.ASM`) and the ATAPI driver, but the built 1.71.66 gives the

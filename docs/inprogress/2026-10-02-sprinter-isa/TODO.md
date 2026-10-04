@@ -44,6 +44,11 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   disk receives through the interrupt (env-gated test, TTD replay equal)
 - [ ] I4 follow-ups: `IsaCycle::dack` (DACK into the cycle; no card uses DMA), the 16550 character timeout (now:
   immediate below the trigger level)
+- [ ] I9 ISA Plug and Play (owner, 2026-10-04: design, then build, after SN6): the bus has no PnP today, slots get fixed
+  ports / IRQs from the config. Design the bus-level isolation protocol (the ADDRESS `#279` / WRITE_DATA `#A79` ports,
+  the initiation key, serial isolation through READ_DATA, CSN assignment, the resource registers) once for every card,
+  then the cards that have it: the 3C509B (ships "ISA contention only", EEPROM word 13h), the RTL8019AS (NE2000);
+  who uses it on the Sprinter (a DSS driver, a BIOS, a utility) is part of the research - M
 - [x] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial) -
   SN0-SN5 built 2026-10-03; SN6 (the host-LAN bridge) open in the network TODO:
   [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md), phases SN0-SN6; SN1 needs I1, SN4 needs I4.

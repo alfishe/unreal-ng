@@ -20,6 +20,8 @@ They share the input data and two small modules in [`common/`](common/).
 | [E4 — Restore differences](e4-restore-differences/README.md) | What does restoring only differing pieces save on a seek? | ZX-Evo memory restore from ~760 to ~145 µs. Most of a full restore writes zeros into untouched memory |
 | [E5 — Heap split](e5-heap-split/README.md) | Where does v1's recording memory go? | Mostly unused allocation: every stored piece holds ~4 KB of heap whatever it compressed to (`ZSTD_compressBound`). Then the write journal |
 | [E6 — v1 / v2 data model](e6-v1-v2-model/README.md) | How much memory and file will a recording take with v2, on real use, and why? | Memory 3–16× smaller. The model matches measured v1 within 0.6% (ZX-Evo 2%). The write journal becomes the largest stream; idle cards still cost 0.8–0.9 MB per minute |
+| [E7 — write journal retention](e7-write-journal-retention/README.md) | Only "who wrote this last" needs the write journal: how much of it to keep? (Phase 3) | Replay regenerates every frame's writes exactly (3,400 frames, no difference). The journal is 3-31x the required part of a recording; without it the search takes 2-6 ms, its worst case grows with history (about 120 ms on 5 minutes of a heavy demo). Outcome: D40, the journal is recorded on demand and built by replay elsewhere |
+| [E8 — device fields](e8-device-fields/README.md) | Which device-state bytes change from frame to frame, and which only count time? (Phase 2) | Storing only changes: 4–13× smaller than v1. Deriving the time fields (MoonSound, NeoGS, TSFM's own) halves it again: 0.25–0.4 MB per minute, ATM710 0.52 (its keyboard controller) |
 
 ## What changes in the design
 

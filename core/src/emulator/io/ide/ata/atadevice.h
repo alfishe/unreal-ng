@@ -35,6 +35,9 @@ struct DriveConfig
     /// Profi board: without `geometry`, take it from the disk's ProfiHiDD
     /// header, else the SYS ROM's format (16 heads x 16 sectors)
     bool profiGeometry = false;
+    /// A CompactFlash card on an IDE adapter (CFA): IDENTIFY word 0 = #848A and the CFA feature bits, model
+    /// "UNREAL-NG CF", SET FEATURES #01 / #81 switch the 8-bit data transfer on / off
+    bool compactFlash = false;
 };
 
 enum class AtaPhase : uint8_t
@@ -86,7 +89,8 @@ struct AtaDeviceState
     uint8_t asc = 0;
     uint8_t ascq = 0;
     uint8_t unitAttention = 0;   ///< ATAPI: a disc change not reported yet
-    uint8_t reserved8[4] = {};
+    uint8_t eightBit = 0;        ///< CompactFlash: SET FEATURES #01 - one byte per data register access (D0-D7)
+    uint8_t reserved8[3] = {};
     uint8_t cdb[12] = {};        ///< ATAPI command packet
     uint8_t buffer[2048] = {};   ///< one sector (disk) or one CD block
 };

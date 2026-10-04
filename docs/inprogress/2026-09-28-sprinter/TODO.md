@@ -258,7 +258,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     inputs, live counts and ZC/TO rates.
   - ATAPI CD (2026-10-04): BIOS detection, CDX 2025 `LIST` / `COPY` / `OPEN`, the guest's eject emptying the slot,
     media change, and the BIOS boot from CD verified ([atapi-cd-boot.md](atapi-cd-boot.md)); open: a DSS loader for
-    a CD, the DSS CD file system (`beta_cdfs`), an automated boot test.
+    a CD, the DSS CD file system (`beta_cdfs`). The boot path is an automated test since 2026-10-04
+    (`SprinterBoot_Test.Bios306_BootsFromAnAtapiCd`).
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
     media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
@@ -286,7 +287,14 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     from the wire, disabled while ALL_MODE bit 0 is set) is still the host's matrix keys - S.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
   developer interest in §10; priority order, functional items only):**
-  - P2: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT
+  - ~~P2: CompactFlash identity check~~ **done 2026-10-04**: an IDE unit can be a CompactFlash card (`[HDD] CFn=1`,
+    insert option `device=cf`, the Qt media panel's "CF Card"): IDENTIFY word 0 `#848A`, the CFA feature bits, model
+    "UNREAL-NG CF", the CF 8-bit transfer (SET FEATURES `#01` / `#81`). BIOS 3.06 HF2 lists "UNREAL-NG CF" and DSS
+    1.71.66 boots from it (`SprinterBoot_Test.Bios306_Dss171BootsFromACompactFlashCard`); the released 1.71.57 too.
+    Found on the way: the card's "removable" bit sends DSS down the removable path, which needs the loader's
+    sector-0 part ([estex-dss-build.md](estex-dss-build.md) section 4). The 2024-12 "CF bug" BIOS commit is the
+    carry flag (CF) in the ATA read / write routine, not CompactFlash; the 2025-05 "old CF bug fix" accepts an
+    old card's NOP answered with status `#50` instead of an abort. Was: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT
     `AUTOIDE`) - S. Raised from P3 (§10: CF fixes in BIOS-TT 2024-12 / 2025-05; CF is the usual disk).
   - P2 research, changed focus (§10): first a runtime configuration reload, that is LDConf with the MAME-pack
     `DEMOS/LDCONF` streams `STREAM.300-305` and back to Standard, plus the `ALL MODE` port restore (LDConf
@@ -304,11 +312,14 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   - P4 on demand: SIO B as a COM port (the `MOUSE` connector holds the mouse or a `ComPort` peer) - S (survey Q4).
   - P4 on demand: sp2000-light board profile (no ISA slots, one IDE channel) - S (survey Q6).
   - P4 on evidence: 512 KB video RAM / 512 KB ROM of the sp2022d board - S-M (survey Q5).
+- **ISA Plug and Play** (owner, 2026-10-04; after SN6): design and build the bus-level PnP isolation (`#279` /
+  `#A79`, CSNs, resource registers) for every ISA card, then the 3C509B and RTL8019AS sides - M. ISA TODO item I9
+  ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/TODO.md)), PLAN #90.
 - Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
   `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; **built 2026-10-03**, branch `sprinter-sn4-modem`, network tdd §18: BC-Term dials a BBS over the ISA interrupt), SN5 3C509B (M; **built 2026-10-03**, branch `sprinter-sn5-3c509b`, the 3C509B kit end to end), SN6
-  host-LAN bridge (M, optional).
+  host-LAN bridge (M; wanted, P2, next after the CF check).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
