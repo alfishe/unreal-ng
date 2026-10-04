@@ -223,7 +223,7 @@ TEST_F(ProfiBoot_Test, BiosLeavesPleaseWaitWithDisk)
 {
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
-    ASSERT_TRUE(_emulator->LoadDisk("testdata/loaders/trd/zx-format8.trd"));
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd")));
 
     _emulator->RunNFrames(400, true);
 
