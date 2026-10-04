@@ -35,6 +35,24 @@ namespace rzx
     {
         _totalFrames = _file ? _file->TotalFrames() : 0;
         _keyframes.Configure(options.keyframeInterval, options.keyframeBudget);
+
+        uint64_t hash = 0xcbf29ce484222325ULL;
+        auto mix = [&hash](uint64_t value, int bytes) {
+            for (int i = 0; i < bytes; ++i, value >>= 8)
+            {
+                hash ^= value & 0xFF;
+                hash *= 0x100000001b3ULL;
+            }
+        };
+        if (_file)
+            for (const InputBlock& block : _file->inputs)
+            {
+                for (const Frame& frame : block.frames)
+                    mix(uint64_t(frame.fetchCount) | uint64_t(frame.inCount) << 16, 4);
+                for (uint8_t value : block.inValues)
+                    mix(value, 1);
+            }
+        _fingerprint = hash;
     }
 
     bool RzxPlayer::Start(std::string& error)
@@ -216,6 +234,59 @@ namespace rzx
         _inPos = cursor.inPos;
         _pendingSnapshot = nullptr;  // the keyframe's machine already has every snapshot before it
         _keyframes.Rewound(_framesDone);
+        Publish();
+        return true;
+    }
+
+    RzxPlayer::SavedState RzxPlayer::Save() const
+    {
+        SavedState s;
+        s.state = _state;
+        s.lastIn = _lastIn;
+        s.framesDone = _framesDone;
+        s.fetches = _fetches;
+        s.inPos = _inPos;
+        s.interrupts = _interrupts;
+        s.desyncs = _desyncs;
+        s.snapshotsApplied = _snapshotsApplied;
+        s.drift = _drift;
+        s.maxDrift = _maxDrift;
+        s.firstDesync = _firstDesync;
+        return s;
+    }
+
+    bool RzxPlayer::Restore(const SavedState& saved)
+    {
+        if (saved.state == PlayerState::Playing)
+        {
+            if (!SeekCursor({saved.framesDone, saved.fetches, saved.inPos}))
+                return false;
+        }
+        else
+        {
+            // Ended there (finished, desynced, stopped): the owner already
+            // took the hooks out at that point
+            if (saved.framesDone > _totalFrames)
+                return false;
+            _state = saved.state;
+            _endNotified = true;
+            _frame = &kEndFrame;
+            _framesDone = saved.framesDone;
+            _fetches = saved.fetches;
+            _inPos = saved.inPos;
+            _pendingSnapshot = nullptr;
+            _stopReason = saved.state == PlayerState::Desynced
+                              ? std::string("desync (") + DesyncName(saved.firstDesync.kind) + ") in frame " +
+                                    std::to_string(saved.firstDesync.frame)
+                              : std::string(saved.state == PlayerState::Stopped ? "stopped" : "");
+        }
+        _lastIn = saved.lastIn;
+        _interrupts = saved.interrupts;
+        _desyncs = saved.desyncs;
+        _snapshotsApplied = saved.snapshotsApplied;
+        _drift = saved.drift;
+        _maxDrift = saved.maxDrift;
+        _firstDesync = saved.firstDesync;
         Publish();
         return true;
     }

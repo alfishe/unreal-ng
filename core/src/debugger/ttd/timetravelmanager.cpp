@@ -388,7 +388,9 @@ void TimeTravelManager::StopRecording()
                 _shadowEngine->AppendBusWrite(r);
         }
         FeedV1Events(*_shadowEngine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr,
-                     &_toolEditPayloads);
+                     &_toolEditPayloads, &_shadowFacts);
+        _shadowFacts.clear();
+        _shadowEvents.facts = 0;
     }
     SyncMediaReadJournal();   // no more recording into the engine
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
@@ -3622,6 +3624,39 @@ void TimeTravelManager::SetShadowEngine(TimeTravelEngine* engine)
     _shadowRescan = true;
 }
 
+void TimeTravelManager::NoteFact(const TTDEvent& ev)
+{
+    if (_state != TTDSessionState::Recording || _inReplayMode || !_shadowEngine)
+        return;
+    TTDPendingFact fact;
+    fact.at = {_context->emulatorState.frame_counter, TInFrameNow()};
+    // The step crossed the frame's end, which the frame loop handles after it
+    if (const uint32_t span = FrameSpan(); span && fact.at.tInFrame >= span)
+    {
+        fact.at.frame += fact.at.tInFrame / span;
+        fact.at.tInFrame %= span;
+    }
+    fact.ev = ev;
+    _shadowFacts.push_back(fact);
+}
+
+void TimeTravelManager::NoteRzxFrameEnd(uint64_t rzxFrame, bool interrupt)
+{
+    TTDEvent ev;
+    ev.kind = TTDEventKind::InterruptFrame;
+    std::memcpy(ev.args, &rzxFrame, sizeof(rzxFrame));
+    ev.args[kInterruptFrameInterruptArg] = interrupt ? 1 : 0;
+    NoteFact(ev);
+}
+
+void TimeTravelManager::NoteReplaySource(TTDReplaySource source)
+{
+    TTDEvent ev;
+    ev.kind = TTDEventKind::ReplaySourceChange;
+    ev.args[0] = static_cast<uint8_t>(source);
+    NoteFact(ev);
+}
+
 void TimeTravelManager::ResetShadow()
 {
     ArmShadowRegions(false);
@@ -3781,6 +3816,17 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         // Events and bus data the engine gets from here on: what v1 journals after this point
         _shadowEvents.input = _inputJournal.Size();
         _shadowEvents.external = _externalEvents.Size();
+        _shadowEvents.facts = 0;
+        _shadowFacts.clear();
+        if (_context->rzxPlayer)
+        {
+            // The session starts inside an RZX playback
+            TTDPendingFact source;
+            source.at = {out.time.frame, 0};
+            source.ev.kind = TTDEventKind::ReplaySourceChange;
+            source.ev.args[0] = static_cast<uint8_t>(TTDReplaySource::RzxPlayback);
+            _shadowFacts.push_back(source);
+        }
         _shadowBusReads = _portReads.Size();
         _shadowBusWrites = _portWrites.Size();
         _shadowJournalSeq = _writeJournal ? _writeJournal->SeqTail() : 0;   // the whole journal goes in
@@ -3921,7 +3967,10 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         engine.Writes().SetSegments(JournalSegments());
     }
     // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
-    FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads);
+    FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads,
+                 &_shadowFacts);
+    _shadowFacts.erase(_shadowFacts.begin(), _shadowFacts.begin() + static_cast<std::ptrdiff_t>(_shadowEvents.facts));
+    _shadowEvents.facts = 0;
     // A frame of another length than the one before it: a fact at this
     // boundary, the closed frame's length in TTD units (args, u32)
     if (!freshShadow && _shadowLastLength != 0 && closedLength != _shadowLastLength)

@@ -1866,6 +1866,12 @@ rzx::SessionStatus Emulator::GetRzxStatus() const
     return _rzxSession ? _rzxSession->Status() : rzx::SessionStatus{};
 }
 
+rzx::RzxSession* Emulator::LoadedRzxSession()
+{
+    std::lock_guard<std::mutex> lock(_rzxSessionMutex);
+    return _rzxSession && _rzxSession->Status().loaded ? _rzxSession.get() : nullptr;
+}
+
 bool Emulator::IsRzxExtension(const std::string& ext)
 {
     return StringHelper::ToLower(ext) == "rzx";

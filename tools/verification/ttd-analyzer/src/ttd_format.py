@@ -253,6 +253,7 @@ PERIPHERAL_ID_NAMES = {
     44: "Smuc",
     45: "EvoAvrVolatile",
     46: "KeyboardMatrix",
+    47: "RzxPlayback",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

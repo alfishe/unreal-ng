@@ -12,6 +12,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "debugger/ttd/engine/ttdeventlog.h"
+#include "debugger/ttd/ttdcheckpoint.h"
+
 namespace ttd
 {
 
@@ -24,6 +27,15 @@ struct TTDV1EventCursor
 {
     size_t input = 0;
     size_t external = 0;
+    size_t facts = 0;
+};
+
+/// A fact the live machine produced (an RZX frame end, the replay source
+/// changing), kept until the shadow engine takes it at the next boundary
+struct TTDPendingFact
+{
+    TTDTimePoint at;
+    TTDEvent ev;
 };
 
 /// Feed the entries after @p cursor whose frame is at most @p throughFrame,
@@ -32,9 +44,11 @@ struct TTDV1EventCursor
 /// refuses (before its first frame) is skipped and counted in @p refused
 /// @p editData: a debugger edit's bytes by marker index (live recording,
 /// TimeTravelManager::ToolEditPayloads); such an edit becomes input with its
-/// bytes, one without them (v1 files) a barrier
+/// bytes, one without them (v1 files) a barrier. @p facts: the live
+/// machine's facts, merged in after input and markers at the same instant
 size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, const TTDExternalEventJournal& external,
                     TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused = nullptr,
-                    const std::unordered_map<size_t, std::vector<uint8_t>>* editData = nullptr);
+                    const std::unordered_map<size_t, std::vector<uint8_t>>* editData = nullptr,
+                    const std::vector<TTDPendingFact>* facts = nullptr);
 
 }  // namespace ttd

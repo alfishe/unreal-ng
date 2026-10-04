@@ -55,7 +55,7 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 - [ ] 11–13 Media: written sectors, write-protect toggles, queued swaps as events and media versions (decision 25)
 - [x] 14 ESP module `_zxLine`
 - [ ] 15 ZX-Evo F12 timer on emulated time
-- [ ] 16 Edge cases: NMI pending and the +3 floating-bus byte done; disk autostart, RZX cursor, "incomplete" network state open
+- [ ] 16 Edge cases: NMI pending, the +3 floating-bus byte and the RZX playback position (2026-10-04, Phase 3 Step 2) done; disk autostart, "incomplete" network state open
 - [ ] 17 Telemetry streams (decision 35), starting with the VDAC2 line-budget metrics if emulation does not read them
 - [ ] 18 `ttd.ksy:532` NeoGS memory note
 - [ ] Fill the registry's Size and Variability columns from per-stream benchmark measurements
@@ -101,7 +101,9 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] Media read journal (owner decision 2026-10-03: record at the sector read): every block medium's stack ends in `MediaReadTap`; while recording each sector read from an image goes into the engine's `TTDMediaJournal` (time, slot, LBA, bytes; a cursor per checkpoint), a replay from the engine hands them back. Covers the CPU's IN, TS-Conf's SD / IDE DMA and the NeoGS card's own SD reads in one place (2026-10-03). The ATAPI drive's CD data reads (`CdImage::ReadUser` / `ReadFrame`, past the block stack) are journaled too; CD audio samples are the drive's output, not recorded
   - [x] Interrupt vectors recorded (`TTDEngine::BusVectors`, one record per acknowledge on machines with their own INT logic; played back by an engine replay) (2026-10-03)
   - [x] Port journals recorded on every machine (the engine's bus data); v1's gate now only decides whether v1's own replay plays them (`_portJournalRecorded` / `_portJournalValid`). A/B on Pentagon + NeoGS, TS-Conf, Sprinter, Scorpion, Profi, ZX-Evo: engine seeks land on v1's machine. Cost: v1's memory grows on the formerly gated machines (Pentagon + NeoGS idle 1,487 → 1,979 B per frame, TS-Conf 6,433 → 9,081), the engine's stays below v1's
-- [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
+- [x] Step 2 — Replay modes: input events, `IN` values (RZX) (2026-10-04): TTD records while an RZX plays (RZ-F19). The playback position is a device state in every checkpoint (`RzxPlayback`, id 47), so a seek back lands inside the playback and it plays on; each RZX frame end (with or without its interrupt) is an `InterruptFrame` fact and the playback's start / end a `ReplaySourceChange` in the engine; `TimeTravelEngine::RzxFrameTime(n)` maps RZX frame N to machine time. A seek there equals the RZX player's keyframe seek (CPU, all RAM, `#7FFD`, player position) on the 6 recordings in testdata (48K, 128K, +2, Pentagon), from v1's data and from the engine's. Before: a seek back inside an RZX playback desynced the player
+  - [ ] `rzx/seek` through the engine and `RzxKeyframeStore` removed: with the switch-over (Phase 5)
+  - [ ] A session replayable without the RZX file (its forced interrupts from the facts): with media in the session (Phase 4)
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
   - [x] Machine time from the frame table (2026-10-03): in shadow mode a frame starts where the last one started plus its measured length (`emulatorState.t_states` x `ttd_clock_units`), not frame x the current length; a change of length is a `FrameLengthChange` fact. Sprinter 320 / 312 lines: machine time never goes back
   - [ ] CPU table, clock map (`ClockChange` facts), per-checkpoint CPU counter residuals — deferred (owner decision 2026-10-03) to the GS debugger, its user; the card CPUs' counters are already in every checkpoint (device state, time fields)

@@ -17,7 +17,9 @@
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/emulator.h"
 #include "emulator/io/tape/tape.h"
+#include "emulator/rzx/rzxttdstate.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -95,6 +97,15 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
     registry.Register(PeripheralId::KempstonMouse, context->pMouse);
     registry.Register(PeripheralId::KeyboardMatrix, context->pKeyboard);
+    // An RZX recording played on this machine: the playback position (a new
+    // playback cannot start while TTD records, so the set stays fixed)
+    if (context->pEmulator)
+        if (rzx::RzxSession* rzxSession = context->pEmulator->LoadedRzxSession())
+        {
+            auto rzxState = std::make_unique<rzx::RzxTtdState>(*rzxSession);
+            registry.Register(PeripheralId::RzxPlayback, rzxState.get());
+            ownedSerializers.push_back(std::move(rzxState));
+        }
     // Kempston joystick: the state byte, only on machines whose decoder answers #1F (a machine without the arm
     // cannot observe it, and its checkpoints stay as they were)
     if (context->pPortDecoder && context->pPortDecoder->HasKempstonJoystick())

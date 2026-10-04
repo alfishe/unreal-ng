@@ -238,6 +238,15 @@ public:
     /// The position of machine time @p t (frame, offset); false before the first frame
     bool PositionOf(TTDMachineTime t, TTDPosition& out) const;
 
+    /// RZX playback (Phase 3, Step 2): where the session reached RZX frame
+    /// @p rzxFrame - the end of the step that ended the frame before it, from
+    /// the InterruptFrame facts. A frame of 0 fetches has no end of its own
+    /// (the player skips it): the next frame end that reached it, as the
+    /// player's own seek does. False outside the session or without RZX
+    bool RzxFrameTime(uint64_t rzxFrame, TTDMachineTime& at) const;
+    /// What drives the history at @p t (the last ReplaySourceChange at or before it)
+    TTDReplaySource ReplaySourceAt(TTDMachineTime t) const;
+
     /// region <Configuration and media (Phase 3, Step 4)>
 
     /// The settings in force from @p frame on. The first call of a session
@@ -488,6 +497,8 @@ private:
     TTDFrameTable _frames;
     TTDPayloadStore _payloads;
     TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it
+    /// The InterruptFrame facts as (RZX frames done, machine time), in order
+    std::vector<std::pair<uint64_t, TTDMachineTime>> _rzxFrames;
     TTDPortJournal _busReads{TTDPortJournal::Direction::Read};
     TTDPortJournal _busWrites{TTDPortJournal::Direction::Write};
     TTDMediaJournal _mediaReads;

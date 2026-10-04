@@ -923,6 +923,14 @@ public:
     /// then apply queued live input.
     void ServiceInput();
 
+    /// RZX playback while recording (Phase 3, Step 2): the CPU reports each
+    /// RZX frame end at the end of the step that ended it (@p rzxFrame: the
+    /// frames done after it, @p interrupt: the step took the interrupt); the
+    /// playback reports its end. Facts for the shadow engine; nothing while
+    /// not recording or while a replay runs
+    void NoteRzxFrameEnd(uint64_t rzxFrame, bool interrupt);
+    void NoteReplaySource(TTDReplaySource source);
+
     /// @brief The machine left the recorded timeline from outside (reset):
     /// a Detached session returns to Idle and journal playback stops.
     void OnMachineReset();
@@ -2027,6 +2035,9 @@ private:
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
+    std::vector<TTDPendingFact> _shadowFacts;   ///< the live machine's facts since the last boundary
+    /// A fact at the current instant (normalized past the frame's end)
+    void NoteFact(const TTDEvent& ev);
 
     /// The media manager's read journal (Phase 3): sector reads go into the
     /// shadow engine while recording and come from the replay engine while

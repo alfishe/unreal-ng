@@ -40,6 +40,19 @@ enum class TTDEventKind : uint16_t
     InterruptFrame = 0x0303,
 };
 
+/// What drives a stretch of history (D14; ReplaySourceChange args[0]): the
+/// machine's own devices with recorded input, or an RZX playback whose IN
+/// values and interrupts come from the recording
+enum class TTDReplaySource : uint8_t
+{
+    LiveInput = 0,
+    RzxPlayback = 1,
+};
+
+/// InterruptFrame args: u64 the RZX frames done after this frame end, then
+/// u8 1 when the frame ended with the interrupt (0: IFF1 clear, no interrupt)
+constexpr size_t kInterruptFrameInterruptArg = 8;
+
 /// The input kinds share TTDInputKind's numbers
 constexpr TTDEventKind InputEventKind(uint8_t inputKind) { return static_cast<TTDEventKind>(inputKind); }
 constexpr bool IsInputKind(TTDEventKind kind) { return static_cast<uint16_t>(kind) < 0x0100; }

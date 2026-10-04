@@ -272,7 +272,39 @@ bool TimeTravelEngine::AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent e
         start = lastStart + (frame - last) * length;
     }
     ev.machineTime = start + tInFrame;
-    return _events.Append(ev);
+    if (!_events.Append(ev))
+        return false;
+    if (ev.kind == TTDEventKind::InterruptFrame)
+    {
+        uint64_t rzxFrame = 0;
+        std::memcpy(&rzxFrame, ev.args, sizeof(rzxFrame));
+        _rzxFrames.emplace_back(rzxFrame, ev.machineTime);
+    }
+    return true;
+}
+
+bool TimeTravelEngine::RzxFrameTime(uint64_t rzxFrame, TTDMachineTime& at) const
+{
+    auto it = std::lower_bound(_rzxFrames.begin(), _rzxFrames.end(), rzxFrame,
+                               [](const std::pair<uint64_t, TTDMachineTime>& f, uint64_t n) { return f.first < n; });
+    // Before the first fact only an exact frame: frames done before the session also lie below it
+    if (it == _rzxFrames.end() || (it == _rzxFrames.begin() && it->first != rzxFrame))
+        return false;
+    at = it->second;
+    return true;
+}
+
+TTDReplaySource TimeTravelEngine::ReplaySourceAt(TTDMachineTime t) const
+{
+    TTDReplaySource source = TTDReplaySource::LiveInput;
+    for (const TTDEvent& ev : _events.Events())
+    {
+        if (ev.machineTime > t)
+            break;
+        if (ev.kind == TTDEventKind::ReplaySourceChange)
+            source = static_cast<TTDReplaySource>(ev.args[0]);
+    }
+    return source;
 }
 
 size_t TimeTravelEngine::BindLive(const std::vector<TTDRegionDesc>& liveRegions,
@@ -336,6 +368,7 @@ void TimeTravelEngine::EndSession()
     _mediaSlots.clear();
     _pendingMedia.clear();
     _events.Clear();
+    _rzxFrames.clear();
     _payloads.Clear();
     _busReads.Clear();
     _busWrites.Clear();
@@ -795,7 +828,8 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
         h.deviceBlobs += cp.unclaimedDevices.capacity();
     }
     h.frameTable = _frames.HeapBytes();
-    h.eventLog = _events.Events().capacity() * sizeof(TTDEvent) + _payloads.LiveBytes();
+    h.eventLog = _events.Events().capacity() * sizeof(TTDEvent) + _payloads.LiveBytes() +
+                 _rzxFrames.capacity() * sizeof(_rzxFrames[0]);
     h.portReads = _busReads.HeapBytes() - _busReads.CompressedSlackBytes();
     h.portWrites = _busWrites.HeapBytes() - _busWrites.CompressedSlackBytes();
     h.portJournalSlack = _busReads.CompressedSlackBytes() + _busWrites.CompressedSlackBytes();

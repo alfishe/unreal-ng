@@ -147,6 +147,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::Smuc: return "smuc";
         case PeripheralId::EvoAvrVolatile: return "evo-avr-volatile";
         case PeripheralId::KeyboardMatrix: return "keyboard-matrix";
+        case PeripheralId::RzxPlayback: return "rzx-playback";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

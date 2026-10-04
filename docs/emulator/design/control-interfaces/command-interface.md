@@ -3130,6 +3130,8 @@ Play RZX input recordings (game completions from the RZX Archive and the like): 
 
 While a recording plays: fast tape, turbo tape and fast disk read as off, the disk autostart is disarmed, live keyboard / mouse input and the command typer are refused. Turbo mode, pausing, breakpoints, stepping and analyzers work. Machines whose interrupt is not the ULA frame interrupt (TSConf, Sprinter) are refused.
 
+**Time travel during a playback.** Start TTD recording (`ttd start`) after `rzx play`: every TTD checkpoint keeps the playback's position (frame, fetch count, `IN` position, counters), so `ttd seek`, reverse steps and find-last work inside the playback, and running on from a seek plays the recording on from there. A seek back to before an `rzx stop` (or the end) plays the recording again; a seek after it runs live. Seek after `ttd stop`, as always. A playback cannot start while TTD records (it loads a snapshot), and `rzx seek` is refused then; after it, `rzx seek` drops a stopped TTD history (it replaces the machine from its keyframe). The recording itself is not in the TTD session: a saved session restores the playback only on a machine with the same recording loaded.
+
 **Examples**:
 
 ```

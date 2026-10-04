@@ -406,6 +406,8 @@ namespace rzx
             }
         }
         Uninstall();
+        if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+            ttd->NoteReplaySource(ttd::TTDReplaySource::LiveInput);
         PostEvent("stopped", reason);
         if (wasRunning)
             _emulator.Resume(false);
@@ -510,6 +512,33 @@ namespace rzx
         return ok;
     }
 
+    bool RzxSession::SaveTtdState(RzxPlayer::SavedState& out, uint64_t& fingerprint) const
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (!_player)
+            return false;
+        out = _player->Save();
+        fingerprint = _player->Fingerprint();
+        return true;
+    }
+
+    bool RzxSession::RestoreTtdState(const RzxPlayer::SavedState& saved, uint64_t fingerprint)
+    {
+        // The control thread, the machine paused (a seek); the CPU is already restored
+        RzxPlayer* player = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            player = _player.get();
+        }
+        if (!player || player->Fingerprint() != fingerprint || !player->Restore(saved))
+            return false;
+        if (saved.state == PlayerState::Playing)
+            Install();
+        else
+            Uninstall();
+        return true;
+    }
+
     bool RzxSession::IsActive() const
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -579,6 +608,8 @@ namespace rzx
         // Emulation thread, at the end of a step: the machine continues live
         const PlayerStatus status = player.Status();
         Uninstall();
+        if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+            ttd->NoteReplaySource(ttd::TTDReplaySource::LiveInput);
 
         switch (status.state)
         {

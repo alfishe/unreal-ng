@@ -226,6 +226,33 @@ struct TTDReplayStats { uint64_t valueMismatches; uint64_t divergences; std::opt
 TTDReplayStats TimeTravelEngine::LastReplayStats() const;   // every surface shows it next to the seek result
 ```
 
+**As built (2026-10-04).** The step came down to one finding and two pieces.
+
+- **The finding.** TTD could record while an RZX played, but a seek back inside the playback went wrong. The replay ran with the RZX player where it stood (at the end of the session), took its `IN` values and frame ends from there and desynced it.
+- **Piece 1: the player's position is a device state.** `RzxPlayback` (id 47, `emulator/rzx/rzxttdstate.*`, 84 bytes) holds:
+  - the frames done, the fetches and the `IN` position in the current frame;
+  - the player state, the counters and the first desync;
+  - a fingerprint of the recording.
+
+  It is registered when a recording was played on the machine. A new playback cannot start while TTD records, so the device set stays fixed (D38). A restore puts the player there and installs or removes its hooks as they were at that point: a seek back across `rzx stop` plays the RZX again, a seek after it runs live. During the replay the player feeds the same values the port journal hands the CPU; in strict mode its own checks (`IN` count, fetch count) stop a replay that leaves the recording, as an RZX player does.
+- **Piece 2: RZX frames are facts.** At the end of each step that ends an RZX frame, with its interrupt or (IFF1 clear) without, the CPU reports the frames done (`TimeTravelManager::NoteRzxFrameEnd`). The shadow engine gets an `InterruptFrame` fact there (args: u64 frames done, u8 interrupt taken). The start and end of the playback are `ReplaySourceChange` facts (`TTDReplaySource`).
+  - `TimeTravelEngine::RzxFrameTime(n)` maps RZX frame N to machine time. A frame of 0 fetches has no end of its own; it maps to the next frame end, as the player's own seek does.
+  - `ReplaySourceAt(t)` names the source at a time.
+- **No separate replay mode was needed.** The mode follows from the recorded source. "`IN` values authoritative" is what the port journal already does on every replay. The "stop at a divergence" rule is the player's strict mode, now restored with its position.
+
+| Check | Result |
+|---|---|
+| Seek back inside a playback (ericfloaters, 120 frames, 4 points) | the straight play's machine, including the player's position |
+| Seek across `rzx stop` | inside: playback on, frame interrupt masked; after: live |
+| Facts | one per RZX frame end, consecutive frame numbers, interrupt count equal to the player's |
+| Seek to RZX frame N against `SeekRzx(N)` (the keyframe store) | equal (CPU, all RAM, `#7FFD`, player frame and fetches) on all 6 recordings in testdata: 48K ×2, 128K ×2, +2, Pentagon; from v1's data and from the engine's |
+
+Mutants caught: a restore that leaves the hooks alone; a restore that does nothing; facts only for frames ending with an interrupt (Garfield runs with interrupts off: no facts). The 16-recording corpus check runs with `UNREAL_RZX_CORPUS`.
+
+**Left for later:**
+- `rzx/seek` through the engine and the removal of `RzxKeyframeStore` come with the switch-over (Phase 5).
+- A session replayable without the RZX file comes with media in the session (Phase 4). Its forced interrupts would then come from the facts, as the tape's data will.
+
 ### 4.4 Step 3 — Several CPUs
 
 **Machine time** (D20, Phase 1) stays the main CPU's cycles in top-clock units, so one value names one instant through every main-CPU turbo switch (v1's B4 fix, platform.h:1165-1171). Each secondary CPU keeps its own cycle counter.

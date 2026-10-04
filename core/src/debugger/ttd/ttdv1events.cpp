@@ -11,7 +11,8 @@ namespace ttd
 
 size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, const TTDExternalEventJournal& external,
                     TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused,
-                    const std::unordered_map<size_t, std::vector<uint8_t>>* editData)
+                    const std::unordered_map<size_t, std::vector<uint8_t>>* editData,
+                    const std::vector<TTDPendingFact>* facts)
 {
     const std::vector<TTDInputEvent>& inputs = input.Events();
     const std::vector<TTDExternalEvent> markers = external.SnapshotEvents();
@@ -23,11 +24,20 @@ size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, cons
     {
         const bool haveInput = cursor.input < inputs.size() && inputs[cursor.input].time.frame <= throughFrame;
         const bool haveMarker = cursor.external < markers.size() && markers[cursor.external].time.frame <= throughFrame;
-        if (!haveInput && !haveMarker)
+        const bool haveFact = facts && cursor.facts < facts->size() && (*facts)[cursor.facts].at.frame <= throughFrame;
+        if (!haveInput && !haveMarker && !haveFact)
             break;
         TTDEvent ev;
         TTDTimePoint at;
-        if (haveInput && (!haveMarker || before(inputs[cursor.input].time, markers[cursor.external].time)))
+        const TTDPendingFact* fact = haveFact ? &(*facts)[cursor.facts] : nullptr;
+        if (fact && (!haveInput || !before(inputs[cursor.input].time, fact->at)) &&
+            (!haveMarker || !before(markers[cursor.external].time, fact->at)))
+        {
+            ++cursor.facts;
+            at = fact->at;
+            ev = fact->ev;
+        }
+        else if (haveInput && (!haveMarker || before(inputs[cursor.input].time, markers[cursor.external].time)))
         {
             const TTDInputEvent& in = inputs[cursor.input++];
             at = in.time;

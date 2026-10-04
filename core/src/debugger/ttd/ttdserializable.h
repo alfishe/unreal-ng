@@ -95,6 +95,7 @@ enum class PeripheralId : uint8_t
     Smuc = 44,            // Scorpion SMUC board: #FFBA / #7FBA latches, IDE window registers, serial EEPROM link (not its contents)
     EvoAvrVolatile = 45,  // ZX-Evo AVR volatile registers (ext type, EEPROM window, LEDs) where the paging blob lacks them: TS-Conf
     KeyboardMatrix = 46,  // ZX keyboard: the 8 matrix rows and the pressed-key counts (key changes are journal events)
+    RzxPlayback = 47,     // RZX playback position and counters (emulator/rzx/rzxttdstate.h); the recording is the medium
     // Future: SAA1099, GS512, etc.
     Count
 };
@@ -157,7 +158,8 @@ enum class TTDDeviceType : uint16_t
     Vdac2 = 43,
     Smuc = 44,
     EvoAvrVolatile = 45,
-    KeyboardMatrix = 46
+    KeyboardMatrix = 46,
+    RzxPlayback = 47
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -206,6 +208,7 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::Vdac2) == static_cast<uint16_
 static_assert(static_cast<uint16_t>(TTDDeviceType::Smuc) == static_cast<uint16_t>(PeripheralId::Smuc), "TTDDeviceType::Smuc must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::EvoAvrVolatile) == static_cast<uint16_t>(PeripheralId::EvoAvrVolatile), "TTDDeviceType::EvoAvrVolatile must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::KeyboardMatrix) == static_cast<uint16_t>(PeripheralId::KeyboardMatrix), "TTDDeviceType::KeyboardMatrix must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::RzxPlayback) == static_cast<uint16_t>(PeripheralId::RzxPlayback), "TTDDeviceType::RzxPlayback must keep its v1 number");
 
 /// A device in the engine's device table: its kind and its instance name
 /// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)

@@ -378,6 +378,9 @@ public:
     bool SeekRzx(uint64_t frame, std::string* error = nullptr);
     bool IsRzxPlaying() const;
     rzx::SessionStatus GetRzxStatus() const;
+    /// The RZX session when a recording was played on this machine (its player
+    /// kept after the end), else null: time travel records its position
+    rzx::RzxSession* LoadedRzxSession();
     /// `ext` (no dot, any case) is an RZX recording
     static bool IsRzxExtension(const std::string& ext);
     bool SaveSnapshot(const std::string& path);

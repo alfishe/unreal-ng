@@ -791,8 +791,10 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     rzx::RzxPlayer* rzxPlayer = (work & EmulatorContext::kStepWorkRzx) ? _context->rzxPlayer : nullptr;
     RzxBoundary rzxBoundary = RzxBoundary::None;
     uint8_t rzxR0 = 0;
+    uint64_t rzxFramesBefore = 0;
     if (rzxPlayer) [[unlikely]]
     {
+        rzxFramesBefore = rzxPlayer->FramesDone();
         rzxBoundary = RzxFrameEnd(*rzxPlayer);
         rzxR0 = r_low;
         rLoadAdjust = 0;
@@ -848,6 +850,12 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
                 fetches = static_cast<uint8_t>(fetches - 1);
             rzxPlayer->AddFetches(fetches);
         }
+        // A frame end (with its interrupt or, IFF1 clear, without) while TTD
+        // records: a fact at the end of this step, where a seek to "RZX
+        // frame N" lands (Phase 3, Step 2)
+        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelManager)
+            _context->pTimeTravelManager->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
+                                                          rzxBoundary == RzxBoundary::Interrupt);
         if (rzxPlayer->EndPending())
             rzxPlayer->NotifyEnded();
     }

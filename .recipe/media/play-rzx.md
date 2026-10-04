@@ -70,6 +70,33 @@ recorded instruction count). Things to try, one at a time:
 own: a few dozen T-states for Spectaculator files on our timing; tens of
 thousands for SPIN files. It moves the picture, never the program.
 
+## Time travel inside a playback
+
+Start TTD recording after `play`: each TTD checkpoint keeps the playback's
+position, so TTD seeks and reverse steps land inside it and the playback goes
+on from where a seek lands. Like any TTD seek, it needs the recording stopped
+(`ttd/stop`); `rzx/seek` is refused while TTD records, and after it a TTD
+history is dropped (its keyframe seek replaces the machine).
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/rzx/play" -H 'Content-Type: application/json' \
+     -d '{"path": "/abs/testdata/loaders/rzx/archive/ericfloaters.rzx"}' | jq .status
+curl -s -X POST "$BASE/emulator/$EMU_ID/pause" >/dev/null
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" | jq .state                 # "recording"
+curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: application/json' -d '{"frames": 200}' >/dev/null
+curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame}'            # {"state":"playing","frame":201}
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop" | jq .state                  # "idle"
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/json' -d '{"frame": 50}' | jq .reached
+curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame, desyncs}'   # {"state":"playing","frame":49,"desyncs":0}
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-back" | jq .frame             # one video frame back
+curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: application/json' -d '{"frames": 100}' >/dev/null
+curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame, desyncs}'   # plays on from there, 0 desyncs
+```
+
+`ttd/seek` takes video frames (TTD's), `rzx/status` counts RZX frames (one
+per recorded interrupt); here they run nearly in step. A TTD seek to before
+an `rzx/stop` plays the recording again from there; a seek after it stays live.
+
 ## Pitfalls
 
 - **The target changes on a model switch.** Keep using the `emulator_id` from
