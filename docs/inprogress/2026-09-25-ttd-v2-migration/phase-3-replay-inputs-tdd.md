@@ -493,6 +493,13 @@ Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileRe
 - **Docs.** `command-interface.md` (a section on the write journal, with a real CLI example), `webapi-interface.md`, `lua-interface.md`, `python-interface.md`, the MCP README and OpenAPI (paths and the `TTDJournalResponse` / `TTDJournalBuildResponse` schemas). The recipes `ttd-recording.md` and `ttd-reverse-debugging.md` are updated, and `ttd-write-journal.md` is new.
 - **Tests.** Core contract tests: switching from another thread while the machine runs, a build observed and cancelled from another thread, and building by frame numbers. MCP: start with `journal`, `journal_on` and `journal_build` summaries, and a non-boolean `journal` rejected. Checked live on unreal-qt with its own ports (`UNREAL_WEBAPI_PORT`, `UNREAL_CLI_PORT`): record, switch mid-recording, build two spans that merge, find-last inside and outside the spans, and the CLI output.
 
+**As built, J4 (2026-10-04).**
+
+- **Controls.** The TTD panel has a **Journal** toggle in the top row (`SwitchWriteJournal`, before or during a recording) and a **Build Journal** menu button in the scrubber row (whole session / start to here / here to end). The scrubber draws the journal's spans as a band along its bottom edge (`JournalSpanSlider`).
+- **Build.** It runs on a worker thread behind a modal progress dialog that polls `GetJournalBuildState` and cancels with `CancelJournalBuild`. The panel stops reading the session while the build runs.
+- **Tests.** `unreal-qt-tests` `JournalSpanSlider_Test` checks the band's pixels; a mutant without the painting is caught. The dialog itself is not exercised by an automated test.
+- **Docs.** `time-travel-ux.md` §3.4a.
+
 E7 groundwork already in place: `TimeTravelManager::RegenerateFrameWrites` (one frame's writes by replay, tested equal to the journal), `SetWriteJournalCapacity`, the `TTDE7` benchmark.
 
 ## 5. Performance

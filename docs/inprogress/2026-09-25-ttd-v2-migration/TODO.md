@@ -116,7 +116,7 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] J1 (2026-10-03) Core: segments; switch at any instruction (also mid-frame, from the emulation thread); find-last per segment, coverage index for writes outside; port find-last from the port journal; off by default; status; header flag + segment table; ttdfileinfo, Python analyzer, ttd.ksy; format docs
   - [x] J2 (2026-10-04) Core: `BuildWriteJournal(from, to)` by replay, progress and cancel; built records equal recorded ones
   - [x] J3 (2026-10-04) Automation: CLI, WebAPI + OpenAPI, MCP, Lua, Python (start option, `journal on|off|build|status`; `development`/`gaming` removed); command-interface.md, webapi/lua/python interface docs, MCP README, recipes
-  - [ ] J4 Qt: journal switch in the TTD panel, segments band on the scrubber, build for the selection; time-travel-ux.md
+  - [x] J4 (2026-10-04) Qt: journal switch in the TTD panel, segments band on the scrubber, build for the selection; time-travel-ux.md
   - [ ] J5 Python tool via WebAPI: load a .ttd, build a span, save; analyzer README
   - [ ] J6 Engine: segments in TimeTravelEngine (shadow-fed), segment table in the Phase 4 file
   - [x] Groundwork (2026-10-03): `SetWriteJournalCapacity` (sessions with their whole write history), `RegenerateFrameWrites` (a frame's writes by replay, equal to the journal's), TTDE7 benchmark; exactness 0 mismatching frames on 17 sessions x 200 frames

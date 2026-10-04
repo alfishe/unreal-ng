@@ -751,6 +751,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linechart.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linechart.h"
         # The status bar's video mode label (Sprinter: Spectrum mode vs native modes)
+        # The TTD timeline's write journal band (D40)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/journalspanslider_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
