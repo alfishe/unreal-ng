@@ -226,6 +226,8 @@ void Z84C15Engine::Reti(Z84CPU*, void* user)
 {
     // The on-chip chain already saw RETI inside the library; the board's devices now
     Z84C15Engine& e = *static_cast<Z84C15Engine*>(user);
+    if (e._observer)
+        e._observer->OnChipReti();
     if (e._external)
         e._external->OnReti();
 }
@@ -243,9 +245,19 @@ bool Z84C15Engine::ChainSource::IsIntAsserted(uint32_t t)
 
 uint8_t Z84C15Engine::ChainSource::AcknowledgeInterrupt(uint32_t t)
 {
-    // The chain has priority over the board's /INT (MAME tmpz84c015: "ctc -> sio -> pio -> ext")
+    // The chain has priority over the board's /INT (MAME tmpz84c015: "ctc -> sio -> pio -> ext"): the chip drives the
+    // vector. The board still sees the acknowledge cycle (/M1 with /IORQ): its own INT logic reacts to it as to any
+    // INTA - the Sprinter's PLD presets its INT flip-flop on (/IO or /M1) = 0 (SP2_1K30.TDF:744), so a frame or
+    // keyboard INT pending at the same moment ends there; the byte it would answer is not on the bus
     if (_engine._chip.IntPending())
-        return _engine._chip.AcknowledgeInterrupt();
+    {
+        const uint8_t vector = _engine._chip.AcknowledgeInterrupt();
+        if (_engine._external)
+            (void)_engine._external->AcknowledgeInterrupt(t);
+        if (_engine._observer)
+            _engine._observer->OnChipAcknowledge(vector);
+        return vector;
+    }
     return _engine._external ? _engine._external->AcknowledgeInterrupt(t) : 0xFF;
 }
 
@@ -253,6 +265,8 @@ void Z84C15Engine::ChainSource::OnReti()
 {
     // Only the native interpreter calls this; on the engine RETI comes through the library (Reti)
     _engine._chip.OnReti();
+    if (_engine._observer)
+        _engine._observer->OnChipReti();
     if (_engine._external)
         _engine._external->OnReti();
 }

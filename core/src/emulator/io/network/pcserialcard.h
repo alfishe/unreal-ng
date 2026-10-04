@@ -70,6 +70,12 @@ public:
     int IrqLine() const override;
     const char* RegisterName(uint16_t offset, bool write) const override;
     bool Irq() const override;
+    /// INTR is a totem-pole output wired straight to IRQ3: always driven (low while nothing is pending)
+    bool IrqDriven() const override { return true; }
+    void SetIrqListener(std::function<void()> changed) override { _com.Uart().onAdvance = std::move(changed); }
+    uint64_t NextIrqEventAt() const override { return _com.Uart().NextEventAt(); }
+    void CatchUp() override { _com.Uart().Advance(_com.Now()); }
+    std::string IrqCause() const override;
     void OnFrame() override { _com.OnFrame(); }
     void Describe(StateNode& out) const override;
 

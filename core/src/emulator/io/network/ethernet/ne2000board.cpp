@@ -409,6 +409,46 @@ bool Ne2000Board::Irq() const
     return _chip.InterruptActive();
 }
 
+int Ne2000Board::SelectedIrq() const
+{
+    if (_settings.variant != Variant::Rtl8019as)
+        return _settings.irq;
+    static constexpr int kIrqs[8] = {9, 3, 4, 5, 10, 11, 12, 15};   // CONFIG1 IRQS (RTL8019AS datasheet §6.1)
+    return kIrqs[(_config1 >> 4) & 7];
+}
+
+bool Ne2000Board::IrqDriven() const
+{
+    if (_settings.variant == Variant::Rtl8019as && !(_config1 & 0x80))
+        return false;
+    const int irq = SelectedIrq();
+    return irq == 2 || irq == 9 || (irq >= 3 && irq <= 7);
+}
+
+uint64_t Ne2000Board::NextIrqEventAt() const
+{
+    const Dp8390::State& s = _chip.GetState();
+    return s.txPending ? s.txDoneAt : UINT64_MAX;
+}
+
+std::string Ne2000Board::IrqCause() const
+{
+    const Dp8390::State& s = _chip.GetState();
+    static const char* const kBits[8] = {"PRX", "PTX", "RXE", "TXE", "OVW", "CNT", "RDC", "RST"};
+    std::string active;
+    const uint8_t both = static_cast<uint8_t>(s.isr & s.imr & 0x7F);
+    for (int b = 0; b < 7; ++b)
+    {
+        if (both & (1u << b))
+            active += (active.empty() ? "" : "+") + std::string(kBits[b]);
+    }
+    std::string text = "ISR " + Hex(s.isr, 2) + " & IMR " + Hex(s.imr, 2) + (active.empty() ? ": nothing enabled is pending" : ": " + active);
+    if (_settings.variant == Variant::Rtl8019as)
+        text += std::string(", CONFIG1.IRQEN ") + ((_config1 & 0x80) ? "set" : "clear (the pin floats)") + ", IRQS = IRQ " +
+                std::to_string(SelectedIrq());
+    return text;
+}
+
 void Ne2000Board::SetIrqListener(std::function<void()> changed)
 {
     _chip.SetInterruptListener(std::move(changed));

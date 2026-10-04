@@ -17,6 +17,9 @@ class IsaBusDeviceCard final : public IIsaCard
 {
 public:
     explicit IsaBusDeviceCard(IIoBusDevice& device) : _device(device) {}
+    ~IsaBusDeviceCard() override { _device.SetIrqListener(nullptr); }   // the device outlives the wrapper
+    IsaBusDeviceCard(const IsaBusDeviceCard&) = delete;
+    IsaBusDeviceCard& operator=(const IsaBusDeviceCard&) = delete;
 
     IIoBusDevice& Device() { return _device; }
 
@@ -51,6 +54,11 @@ public:
             _device.Reset();
     }
     bool Irq() const override { return _device.Irq(); }
+    bool IrqDriven() const override { return _device.IrqDriven(); }
+    uint64_t NextIrqEventAt() const override { return _device.NextIrqEventAt(); }
+    void CatchUp() override { _device.CatchUp(); }
+    void SetLinesListener(std::function<void()> changed) override { _device.SetIrqListener(std::move(changed)); }
+    std::string IrqCause() const override { return _device.IrqCause(); }
     bool IoRange(uint32_t& first, uint32_t& last) const override { return _device.IoRange(first, last); }
     int IrqLine() const override { return _device.IrqLine(); }
     bool IgnoresAen() const override { return _device.IgnoresAen(); }

@@ -273,7 +273,7 @@ std::vector<uint32_t> NetworkSerialBaudChoices()
     return {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
 }
 
-std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network)
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const StateNode* isa)
 {
     std::vector<NetworkSlotRow> rows;
     const StateNode* slots = network.find("slots");
@@ -347,6 +347,26 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network)
             }
             if (!text(slot, "stalled").empty())
                 row.line += " - STALLED (the ISA cycle hangs until RESET)";
+            // The slot's IRQ line from the ISA report: level, PIO port B bit, whether it interrupts the CPU
+            const StateNode* isaSlots = isa ? isa->find("slots") : nullptr;
+            const size_t index = row.id == "isa1" ? 0 : row.id == "isa2" ? 1 : 2;
+            if (isaSlots && index < isaSlots->items.size())
+            {
+                const StateNode& isaSlot = isaSlots->items[index];
+                if (const StateNode* irq = isaSlot.find("irq_line"))
+                {
+                    const std::string reach = text(*irq, "reaches_cpu");
+                    row.line += "; IRQ line " + text(*irq, "line") + " -> " + text(*irq, "pio_bit") + ", " +
+                                (reach.rfind("yes", 0) == 0 ? std::string("interrupts the CPU")
+                                                            : reach.size() > 4 ? reach.substr(4) : std::string("-"));
+                    if (const StateNode* counters = isaSlot.find("counters"))
+                    {
+                        const StateNode* acks = counters->find("irq_acknowledged");
+                        if (acks && acks->kind == StateNode::Kind::Int && acks->i > 0)
+                            row.line += ", " + std::to_string(acks->i) + " acknowledged";
+                    }
+                }
+            }
         }
         rows.push_back(std::move(row));
     }

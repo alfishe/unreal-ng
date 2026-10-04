@@ -40,9 +40,9 @@ come the ISA slots and the network cards (section 3).
 
 - **Network first:** ISA slots (I1, **done 2026-10-03**, branch `sprinter-isa-network`), then NE2000 Ethernet and
   the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
-  zero-window probes, PIO IRQ lines I4; the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
+  zero-window probes; PIO IRQ lines I4 **done 2026-10-03** (branch `sprinter-isa-i4`); the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
   on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, **done 2026-10-03**, branch `sprinter-esp-sn3`: `[ISA] Slot1=SPRINTERESP`, the ESP kit's `NETUP` / `PING` / `WGET` / `UNETESP.DLL` end to end
-  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line waits for I4), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
+  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line reaches PB0 since ISA I4), modem / SprinterSerial (SN4, ISA I4 built), 3C509B (SN5)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
   through the shared MouseManager.
@@ -62,3 +62,9 @@ come the ISA slots and the network cards (section 3).
   [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) to the BIOS author ([bios-versions.md](bios-versions.md) §5.2).
 - Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
 - Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.
+
+- **ISA I4 (2026-10-03), settled from the PLD source:** when the PIO port B (or any on-chip source) and the PLD's
+  `/INT` are pending together, the chip answers the acknowledge and the PLD presets its INT flip-flop on the same
+  `/M1` + `/IORQ` cycle (`SP2_1K30.TDF:744`, `INT_X = !DFF(GND, INTT & KEYS.int, , (/IO or /M1) & ...)`): the frame /
+  keyboard / Covox-Blaster INT pending at that moment ends there. `Z84C15Engine` now passes every acknowledge to the
+  board's INT logic (it kept the PLD's INT pending before).

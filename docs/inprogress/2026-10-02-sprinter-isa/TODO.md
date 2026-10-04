@@ -25,7 +25,16 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   Python `isa_*`, the port trace codes `isa_io` / `isa_mem`, hardware-reference §11 corrected. `ZxBusPresent()` stays
   `false` until I2 fits the adapter ([tdd.md](tdd.md) §14)
 - [ ] I2 ZX-bus adapter + GS / NeoGS, ProPlay end to end vs MAME (M)
-- [ ] I3 ISA RAM (S), I4 PIO IRQ lines (S)
+- [ ] I3 ISA RAM (S)
+- [x] I4 PIO IRQ lines (2026-10-03, branch `sprinter-isa-i4`, as built in [tdd.md](tdd.md) §14): each slot's IRQ net
+  (pull-up) to PIO port B bit 0 / 1, pushed into the Z84C15 PIO on every change (cycle, RESET DRV, refit, the card's own
+  notice), card deadlines caught up by the step hook only while the PIO waits for an ISA interrupt; NE2000 (ISR & IMR,
+  RTL8019AS IRQEN, 8-bit pins only) and SprinterESP (INTR straight to IRQ3) drive their lines; the slot report's
+  `irq_line` (level, driver, route, PIO setup, pending / under service, reaches the CPU or why not, counters),
+  `irq_summary`, `pio_port_b`, IRQ events in the access journal; CLI `isa irq`; Qt slot rows; BC-Term on the system
+  disk receives through the interrupt (env-gated test, TTD replay equal)
+- [ ] I4 follow-ups: `IsaCycle::dack` (DACK into the cycle; no card uses DMA), the 16550 character timeout (now:
+  immediate below the trigger level)
 - [ ] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial):
   [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md), phases SN0-SN6; SN1 needs I1, SN4 needs I4.
   **SN3 built 2026-10-03**: the SprinterESP (`PcSerialCard`, `[ISA] SlotN=SPRINTERESP`) decodes A13-A3 and ignores

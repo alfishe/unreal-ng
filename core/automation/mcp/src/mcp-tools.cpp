@@ -1174,10 +1174,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
-        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; unavailable on other machines - run an "
+        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; per slot 'irq_line': the IRQ line's level, "
+        "who drives it, its route to the Z84C15 PIO port B (PB0 / PB1), the PIO's bit-mode setup, pending / under service, "
+        "whether it reaches the CPU, and edge / request / acknowledge counters ('irq_summary' in one line); "
+        "unavailable on other machines - run an "
         "ISA cycle with invoke_api POST /api/v1/emulator/{id}/control/isa {action: io_read|io_write|io_peek|mem_read|"
         "mem_write|mem_peek|reset|latch, slot, address, value}; the access journal - who touched which card register, "
-        "frame / T / PC - with invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
+        "frame / T / PC, with the interrupt events (event: irq - line edges, PIO requests, acknowledges, RETI; also in "
+        "irq_events, a ring that polling does not flush) - with "
+        "invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
@@ -2052,6 +2057,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         if (slot["z80_access"].isMember("io"))
                                             out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
                                     }
+                                    if (value.isMember("irq_summary"))
+                                        out << "\n[isa] irq: " << value["irq_summary"].asString();
                                     for (const Json::Value& conflict : value["conflicts"])
                                         out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
                                     out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";

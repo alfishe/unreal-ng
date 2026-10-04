@@ -58,9 +58,24 @@ public:
         return "";
     }
 
-    /// The level of the device's interrupt output, and who wants to hear when it may have changed
+    /// The level of the device's interrupt output (true = the request is active), and who wants to hear when it
+    /// may have changed. The listener is also called when NextIrqEventAt may have moved (a character started on a
+    /// UART's line): the bus then looks again. Calling Irq / IrqDriven / NextIrqEventAt from it is allowed; nothing
+    /// that changes the device
     virtual bool Irq() const { return false; }
     virtual void SetIrqListener(std::function<void()> changed) { (void)changed; }
+    /// Whether the device drives its interrupt pin now (a totem-pole output: low while Irq() is false). False = the
+    /// pin is high impedance (an RTL8019AS with CONFIG1.IRQEN clear, a PC UART card with MCR.OUT2 clear, a line the
+    /// slot does not have): the bus's pull-up decides the level
+    virtual bool IrqDriven() const { return IrqLine() >= 0; }
+    /// The earliest machine time (base T-states, ComPort::Now's clock) at which Irq() may change with no access to
+    /// the device (a character arrives at a UART, a transmit ends on the wire); UINT64_MAX = none. The bus calls
+    /// CatchUp at that time when someone waits for the interrupt
+    virtual uint64_t NextIrqEventAt() const { return UINT64_MAX; }
+    /// Bring the device to the current machine time (what its next access would do first)
+    virtual void CatchUp() {}
+    /// Why the interrupt output is where it is, in words for the slot report ("ISR #01 & IMR #11: PRX"); empty: none
+    virtual std::string IrqCause() const { return {}; }
 
     /// A cycle the device does not finish: the bus hangs while it is set (a UMC UM9003's reset port read, network
     /// tdd §6.4). The owner of the bus decides what that does to the machine
