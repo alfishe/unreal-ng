@@ -690,7 +690,8 @@ void EmulatorAPI::postNetworkConfig(const HttpRequestPtr& req, std::function<voi
     Json::Value ret;
     ret["status"] = "accepted";
     ret["note"] = "applied at the next frame boundary (at once while paused); the card is fitted again, so every "
-                  "connection closes. GET /state/network shows the result";
+                  "connection closes (remote_access alone only moves the host listeners: connections stay). "
+                  "GET /state/network shows the result";
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

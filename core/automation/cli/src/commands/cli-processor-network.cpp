@@ -42,7 +42,10 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
             error = "no network support in this machine";
         else if (NetworkManager::ParseChange(settings, change, error) && manager->RequestChange(change, error))
         {
-            session.SendResponse("Network settings changed: applied at the next frame boundary (every connection closes)" +
+            session.SendResponse(std::string(change.OnlyRemoteAccess()
+                                                 ? "Network settings changed: the host listeners move at the next frame boundary "
+                                                   "(connections stay)"
+                                                 : "Network settings changed: applied at the next frame boundary (every connection closes)") +
                                  std::string(NEWLINE));
             return;
         }
@@ -142,7 +145,8 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     if (!args.empty() && args[0] != "state" && args[0] != "show")
     {
         session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network adapters | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
-                             "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n "
+                             "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... remote_access=on|off (guest servers listen on 0.0.0.0, "
+                             "off: 127.0.0.1 only) connect_timeout_ms=n "
                              "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's serial port; "
                              "an AT module's firmware esp32|esp8266|esp8266-at221|esp8266-at222 overrides esp_chip for it alone; "
                              "an ESP module's baud defaults to the port's: 38400 on the ATM Turbo 2+ controller, 115200 elsewhere) "

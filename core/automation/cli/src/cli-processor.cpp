@@ -645,6 +645,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  network | net | state network - Cards, serial port, W5300 sockets, virtual network, devices not fitted" << NEWLINE;
     oss << "  network set key=value ..     - card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass" << NEWLINE;
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
+    oss << "                                 remote_access=on|off (guest servers listen on 0.0.0.0; off: 127.0.0.1 only)" << NEWLINE;
     oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,port]" << NEWLINE;
     oss << "                                 (the machine's own port; modem = a Hayes modem that dials host:port)" << NEWLINE;
     oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off" << NEWLINE;

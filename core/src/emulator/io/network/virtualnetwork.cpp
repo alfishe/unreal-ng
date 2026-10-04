@@ -403,7 +403,7 @@ void VirtualNetwork::Listen(uint16_t id, uint16_t guestPort)
             placeholder.listenPort = guestPort;
             _sockets[l.hostListenerId] = placeholder;
             if (_host && !IsReplaying())
-                _host->TcpListen(l.hostListenerId, l.hostPort);
+                _host->TcpListen(l.hostListenerId, NetEndpoint{_config.ListenAddress(), l.hostPort});
         }
         it = _listeners.emplace(guestPort, std::move(l)).first;
     }
@@ -671,7 +671,22 @@ void VirtualNetwork::ApplyLinkReset()
         l.pending.clear();
         // Listen again on the host: the old host listener is gone too
         if (l.hostListenerId && _host && !IsReplaying())
-            _host->TcpListen(l.hostListenerId, l.hostPort);
+            _host->TcpListen(l.hostListenerId, NetEndpoint{_config.ListenAddress(), l.hostPort});
+    }
+}
+
+void VirtualNetwork::SetRemoteAccess(bool on)
+{
+    if (_config.remoteAccess == on)
+        return;
+    _config.remoteAccess = on;
+    if (!_host || IsReplaying())
+        return;
+    // The host bridge replaces a listener that has the same id (the old socket closes first)
+    for (const auto& [port, l] : _listeners)
+    {
+        if (l.hostListenerId)
+            _host->TcpListen(l.hostListenerId, NetEndpoint{_config.ListenAddress(), l.hostPort});
     }
 }
 

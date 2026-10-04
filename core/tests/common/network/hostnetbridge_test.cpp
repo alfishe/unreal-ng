@@ -161,7 +161,7 @@ TEST(HostNetBridge_Test, UdpDatagramRoundTrip)
 TEST(HostNetBridge_Test, ListenAcceptsALoopbackClient)
 {
     HostNetBridge bridge;
-    bridge.TcpListen(9, 0);   // any free port
+    bridge.TcpListen(9, {kLoopback, 0});   // any free port
     ASSERT_TRUE(TestWait::For([&] { return bridge.ListenerHostPort(9) != 0; }));
 
     netsock::Handle client = netsock::OpenTcp();
@@ -175,6 +175,83 @@ TEST(HostNetBridge_Test, ListenAcceptsALoopbackClient)
     const uint16_t id = static_cast<uint16_t>(ev.data[0] | (ev.data[1] << 8));
     EXPECT_GE(id, IHostNet::kFirstAcceptedId);
     netsock::Close(client);
+}
+
+namespace
+{
+/// The host's own non-loopback IPv4 address: the source address of the route to a documentation address (a UDP
+/// "connect" sends nothing). 0 when the machine has none (no network, a sandbox)
+uint32_t NonLoopbackAddress()
+{
+    netsock::Handle probe = netsock::OpenUdp();
+    if (probe == netsock::kInvalid)
+        return 0;
+    uint32_t addr = 0;
+    if (netsock::Connect(probe, {NetIp(192, 0, 2, 1), 9}) == netsock::Result::Ok)
+        addr = netsock::LocalAddress(probe);
+    netsock::Close(probe);
+    return (addr >> 24) == 127 ? 0 : addr;
+}
+
+/// Connect to `to` and report whether the connection came up (a refused or unanswered connect is false). A local
+/// refusal is immediate on macOS / Linux; Windows retries a refused SYN, so the wait is bounded
+bool Connects(const NetEndpoint& to)
+{
+    netsock::Handle client = netsock::OpenTcp();
+    netsock::Result r = netsock::Connect(client, to);
+    if (r == netsock::Result::WouldBlock)
+    {
+        std::vector<netsock::PollItem> items(1);
+        items[0].handle = client;
+        items[0].wantRead = false;
+        items[0].wantWrite = true;
+        r = netsock::Poll(items, 1500) > 0 ? netsock::ConnectResult(client) : netsock::Result::Timeout;
+        if (r == netsock::Result::Ok && items[0].failed)
+            r = netsock::Result::Error;
+    }
+    netsock::Close(client);
+    return r == netsock::Result::Ok;
+}
+}  // namespace
+
+/// [NETWORK] RemoteAccess (PLAN #92 N0): the listener binds the address the virtual network passes. 127.0.0.1
+/// (remote access off) refuses a client that comes to the host's LAN address; 0.0.0.0 (on) takes it.
+/// DISABLED (owner rule: enabled tests use no address beyond loopback): it needs the host's own non-loopback
+/// address. The enabled check of the setting is VirtualNetwork_Test (the address TcpListen gets, on the fake host).
+/// Run it by hand on a machine with a network:
+///   ./cmake-build-agent-release/bin/core-tests --gtest_also_run_disabled_tests \
+///       --gtest_filter='HostNetBridge_Test.DISABLED_ListenerBindsTheAddressItIsGiven'
+/// It skips when the machine has no non-loopback IPv4 address
+TEST(HostNetBridge_Test, DISABLED_ListenerBindsTheAddressItIsGiven)
+{
+    const uint32_t lan = NonLoopbackAddress();
+    if (lan == 0)
+        GTEST_SKIP() << "this machine has no non-loopback IPv4 address: the remote-access check needs one";
+
+    HostNetBridge bridge;
+    bridge.TcpListen(9, {kLoopback, 0});
+    ASSERT_TRUE(TestWait::For([&] { return bridge.ListenerHostPort(9) != 0; }));
+    const uint16_t local = bridge.ListenerHostPort(9);
+    EXPECT_FALSE(Connects({lan, local})) << "remote access off: " << NetIpToString(lan) << " must not reach it";
+    EXPECT_TRUE(Connects({kLoopback, local})) << "this computer still can";
+
+    bridge.TcpListen(10, {0, 0});   // 0.0.0.0
+    ASSERT_TRUE(TestWait::For([&] { return bridge.ListenerHostPort(10) != 0; }));
+    EXPECT_TRUE(Connects({lan, bridge.ListenerHostPort(10)})) << "remote access on: the LAN address reaches it";
+
+    // Only the clients that came through are announced: listener 9 once (loopback), listener 10 once
+    int accepted9 = 0, accepted10 = 0;
+    HostNetEvent ev;
+    TestWait::For([&] {
+        while (bridge.PollEvent(ev))
+        {
+            if (ev.type == NetEventType::Accepted)
+                (ev.socket == 9 ? accepted9 : accepted10)++;
+        }
+        return accepted9 + accepted10 >= 2;
+    });
+    EXPECT_EQ(accepted9, 1);
+    EXPECT_EQ(accepted10, 1);
 }
 
 TEST(HostNetBridge_Test, DnsQueryIsAnsweredFromTheResolver)

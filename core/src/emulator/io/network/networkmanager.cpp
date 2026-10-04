@@ -341,6 +341,8 @@ void NetworkManager::Refit()
             copy(net.hosts, sizeof(net.hosts), *change->hosts);
         if (change->forwards)
             copy(net.forwards, sizeof(net.forwards), *change->forwards);
+        if (change->remoteAccess)
+            net.remoteAccess = *change->remoteAccess ? 1 : 0;
         if (change->connectTimeoutMs)
             net.connectTimeoutMs = *change->connectTimeoutMs;
         if (change->comPort)
@@ -391,7 +393,14 @@ void NetworkManager::Refit()
             if (caps.reloadFirmware && !caps.reloadFirmware(why))
                 _firmwareNote = "kbc_firmware: " + why;
         }
-        _forceRefit = true;
+        if (change->OnlyRemoteAccess())
+        {
+            // A host-side setting: the listeners move to the new address, the devices and connections stay
+            if (_network)
+                _network->SetRemoteAccess(net.remoteAccess != 0);
+        }
+        else
+            _forceRefit = true;
     }
     Plan plan = MakePlan();
     if (!_firmwareNote.empty())
@@ -752,6 +761,22 @@ void NetworkManager::Unplug(bool keepSlotCards)
     _plan = Plan();
 }
 
+bool NetworkManager::Change::Empty() const
+{
+    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort &&
+           !zxWifi && !comModemLines && !espChip && !avrFirmware && !kbcFirmware && !atm2IoEsp && !atm2IoEspAddress &&
+           !zifi && !modemPhonebook && !ethernetMode && !bridgeAdapter && slotPeers.empty();
+}
+
+bool NetworkManager::Change::OnlyRemoteAccess() const
+{
+    if (!remoteAccess)
+        return false;
+    Change rest = *this;
+    rest.remoteAccess.reset();
+    return rest.Empty();
+}
+
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
 {
     if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
@@ -1039,6 +1064,7 @@ void NetworkManager::UpdateStatus()
         s.forwards = net.forwards;
         s.comModemLines = net.comModemLines != 0;
         s.hostAccess = net.hostAccess != 0;
+        s.remoteAccess = net.remoteAccess != 0;
         s.connectTimeoutMs = net.connectTimeoutMs;
     }
     {
@@ -1265,6 +1291,7 @@ VirtualNetworkConfig NetworkManager::BuildConfig(const EmulatorContext* context)
         return config;
     const auto& net = context->config.network;
     config.dnsMode = net.dnsPass ? VirtualNetworkConfig::DnsMode::Pass : VirtualNetworkConfig::DnsMode::Host;
+    config.remoteAccess = net.remoteAccess != 0;
 
     // Hosts=name=a.b.c.d,name=a.b.c.d (',' - ';' starts an INI comment)
     std::stringstream hosts(net.hosts);
@@ -1364,6 +1391,11 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         else if (key == "forwards" || key == "forward")
         {
             out.forwards = value;
+        }
+        else if (key == "remote_access" || key == "remoteaccess")
+        {
+            if (!flag(value, "remote_access", out.remoteAccess))
+                return false;
         }
         else if (key == "com_port" || key == "comport" || key == "com")
         {
@@ -1508,7 +1540,7 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         else
         {
             error = "unknown setting '" + rawKey +
-                    "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
+                    "' (card, host_access, dns_mode, hosts, forwards, remote_access, connect_timeout_ms, com_port, zx_wifi, "
                     "com_modem_lines, esp_chip, avr_firmware, kbc_firmware, atm2ioesp, atm2ioesp_address, zifi, isa1_peer, "
                     "isa2_peer, isa1_peer_b, isa2_peer_b, modem_phonebook, ethernet_mode, bridge_adapter)";
             return false;

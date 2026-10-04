@@ -53,6 +53,10 @@ Handle Accept(Handle h, NetEndpoint& peer);
 /// Local port of a bound socket (0 on error)
 uint16_t LocalPort(Handle h);
 
+/// Local address of a bound or connected socket (0 = unbound / any, or an error). A UDP socket "connected" to a
+/// remote address gives the host's own address on the route there (no packet is sent)
+uint32_t LocalAddress(Handle h);
+
 /// Send / receive: `done` is the byte count; Ok or WouldBlock or an error
 Result Send(Handle h, const uint8_t* data, size_t length, size_t& done);
 Result Recv(Handle h, uint8_t* data, size_t capacity, size_t& done);

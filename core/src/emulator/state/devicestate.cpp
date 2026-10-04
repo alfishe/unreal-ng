@@ -2069,6 +2069,7 @@ StateNode Network(EmulatorContext* context)
     set["dns_mode"] = st.settings.dnsMode;
     set["hosts"] = st.settings.hosts;
     set["forwards"] = st.settings.forwards;
+    set["remote_access"] = st.settings.remoteAccess;   // RemoteAccess=: host listeners on 0.0.0.0 (on) or 127.0.0.1
     set["connect_timeout_ms"] = st.settings.connectTimeoutMs;
 
     // Devices a SERIAL: peer can open (read now: a USB adapter comes and goes)
@@ -2279,6 +2280,9 @@ StateNode Network(EmulatorContext* context)
     net["gateway"] = NetIpToString(st.config.gateway);
     net["dns"] = NetIpToString(st.config.dnsServer);
     net["dns_mode"] = st.config.dnsMode == VirtualNetworkConfig::DnsMode::Host ? "host" : "pass";
+    // The host address guest servers listen on: 0.0.0.0 (remote access on: the LAN can connect) or 127.0.0.1
+    net["remote_access"] = st.config.remoteAccess;
+    net["listen_address"] = NetIpToString(st.config.ListenAddress());
     StateNode& hosts = net["hosts"];
     hosts = StateNode::Object();
     for (const auto& [name, addr] : st.config.hosts)
@@ -2314,6 +2318,8 @@ StateNode Network(EmulatorContext* context)
         StateNode s = StateNode::Object();
         s["guest_port"] = int(l.guestPort);
         s["host_port"] = int(l.hostPort);
+        if (l.hostPort)
+            s["host_address"] = NetIpToString(st.config.ListenAddress());
         s["waiting_sockets"] = uint64_t(l.waitingSockets);
         s["pending_clients"] = uint64_t(l.pendingClients);
         servers.push(std::move(s));

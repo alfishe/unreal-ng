@@ -268,6 +268,15 @@ uint16_t LocalPort(Handle h)
     return ntohs(sa.sin_port);
 }
 
+uint32_t LocalAddress(Handle h)
+{
+    sockaddr_in sa;
+    socklen_t len = sizeof(sa);
+    if (getsockname(Os(h), reinterpret_cast<sockaddr*>(&sa), &len) != 0)
+        return 0;
+    return ntohl(sa.sin_addr.s_addr);
+}
+
 static int SendFlags()
 {
 #if defined(MSG_NOSIGNAL)
