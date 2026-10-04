@@ -15,7 +15,10 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
 - [x] P4a `PROFI-PLUS` variant (Machine menu, every create path) with ROM BIOS Plus 0.41h1 in `data/rom/profi/`;
   checked by hand: PQ-DOS 2023 HDD image boots into DOS Navigator 2.0.16
 - [ ] P4b a `ProfiPlusBoot_Test` (board test, PQ-DOS floppy boot; the HDD image is 2 GB - a cut-down image for tests)
-- [ ] Video recording of hi-res (512x240) frames is stretched horizontally (1216x576 from the 608x288 buffer,
-  no pixel-aspect correction like the screen's); owner report 2026-10-04, `~/Movies/unreal_20261004_120759.mp4`
+- [x] Video recording of hi-res (512x240) frames came out stretched horizontally (1216x576 from the 608x288 buffer)
+  and the other mode's frames were dropped after a switch; owner report 2026-10-04. Fixed: a full-frame Profi recording
+  is the screen's 352:288 window x scale in both modes (`RecordingManager`, `RecordsProfiDisplay`;
+  `RecordingManager_Test.ProfiFramesKeepTheScreensWindowInBothModes`), checked with a GIF and an H.264 recording of
+  PROFI-PLUS in DOS Navigator: 704x576 at scale 2
 - [ ] P5 TTD, automation, recipe, docs
-- [ ] P6 DOS Navigator (needs BIOS Plus 0.40+)
+- [x] P6 DOS Navigator: 2.0.16 runs from the PQ-DOS 2023 HDD image on PROFI-PLUS (BIOS Plus 0.41h1)
