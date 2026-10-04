@@ -955,4 +955,79 @@ TEST_F(ProfiPlusBoot_Test, TtdReplaysTheComPortExactly)
     EXPECT_EQ(std::memcmp(&decoder->GetUsart().GetState(), &usart, sizeof(usart)), 0) << "the 8251 as recorded";
 }
 
+/// @brief PQ-DOS from a floppy and from a hard disk (docs/inprogress/2026-10-04-profi-plus/TODO.md, phase P4c). The
+///        disks are in testdata/machines/profi/pqdos (README there); the hard disk image is the 2 GB Karabas Pro one cut
+///        to 2.9 MB by tools/machines/profi/pqdosimage. DOS Navigator draws its panels itself, so the checks look for
+///        the strings the programs keep in memory once they are loaded
+class ProfiPlusPqDos_Test : public ProfiPlusBoot_Test
+{
+protected:
+    /// The 64K the Z80 sees holds `text`
+    bool CpuMemoryHas(const std::string& text)
+    {
+        Z80* z80 = _emulator->GetContext()->pCore->GetZ80();
+        std::string ram;
+        ram.reserve(0x10000);
+        for (uint32_t a = 0; a < 0x10000; a++)
+            ram.push_back(static_cast<char>(z80->DirectRead(static_cast<uint16_t>(a))));
+        return ram.find(text) != std::string::npos;
+    }
+
+    /// Run up to `frames` frames, 50 at a time, until the CPU memory holds `text`
+    bool RunUntilText(const std::string& text, int frames)
+    {
+        for (int done = 0; done < frames; done += 50)
+        {
+            _emulator->RunNFrames(50, true);
+            if (CpuMemoryHas(text))
+                return true;
+        }
+        return false;
+    }
+
+    void TapEnter()
+    {
+        Keyboard* keyboard = _emulator->GetContext()->pKeyboard;
+        keyboard->PressKey(ZXKEY_ENTER);
+        _emulator->RunNFrames(6, true);
+        keyboard->ReleaseKey(ZXKEY_ENTER);
+        _emulator->RunNFrames(12, true);
+    }
+};
+
+/// @brief The PQ-DOS floppy in drive A: ROM BIOS Plus boots it ("Insert bootable disk into floppy drive & press Enter"),
+///        PQ-DOS shows its startup menu and, when the 30 s timeout picks the shell entry, runs DOS Navigator
+TEST_F(ProfiPlusPqDos_Test, BootsFromTheFloppyToDosNavigator)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and PQ-DOS boot from a floppy (about 2700 frames)
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(300, true);   // the BIOS board test, then its boot prompt
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/profi/pqdos/pqdos1.fdi"), 0, &error)) << error;
+    TapEnter();
+    ASSERT_TRUE(RunUntilText("PQ-DOS Startup Menu", 2000)) << "PQ-DOS did not start, pc=" << std::hex
+                                                           << _emulator->GetContext()->pCore->GetZ80()->pc;
+    EXPECT_TRUE(RunUntilText("DOS Navigator", 3000)) << "the menu timeout did not start DOS Navigator, pc=" << std::hex
+                                                     << _emulator->GetContext()->pCore->GetZ80()->pc;
+}
+
+/// @brief The cut-down PQ-DOS hard disk on ide0.master: the BIOS board test finds it, and PQ-DOS boots from it straight
+///        into DOS Navigator on C:\ with no floppy (the hard disk is the BIOS's first boot choice)
+TEST_F(ProfiPlusPqDos_Test, BootsFromTheHardDiskToDosNavigator)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and PQ-DOS boot from a hard disk (about 1300 frames)
+    EmulatorContext* context = _emulator->GetContext();
+    MediaSource source;
+    source.path = TestPathHelper::GetTestDataPath("machines/profi/pqdos/pqdos-hdd-small.img");
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(context->pMediaManager->Insert("ide0.master", source, options).Ok());
+    _emulator->Reset();   // the BIOS looks for the disk at power-on
+
+    _emulator->EnableTurboMode();
+    EXPECT_TRUE(RunUntilText("DOS Navigator", 3000)) << "PQ-DOS did not reach DOS Navigator, pc=" << std::hex
+                                                     << context->pCore->GetZ80()->pc;
+    EXPECT_FALSE(CpuMemoryHas("PQ-DOS Startup Menu")) << "a floppy menu: the disk was not the boot device";
+}
+
 /// endregion </PROFI-PLUS>
