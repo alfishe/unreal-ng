@@ -546,114 +546,9 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    // Defense-in-depth: engine-level SeekTo also rejects, but we want to
-    // return a clear 409 with an actionable message rather than a 200
-    // with reached=false.
-    if (rejectIfRecording(mgr, callback)) return;
-
-    // TD-4: the target may be given either as coordinates ("frame" [+ optional
-    // "tinframe"]) or as a bookmark label ("bookmark"). Everything after the
-    // resolution is a plain seek — a bookmark is advisory and never a barrier.
-    auto jsonBody = req->getJsonObject();
-    const bool seekByBookmark = jsonBody && jsonBody->isMember("bookmark");
-    if (!seekByBookmark && (!jsonBody || !jsonBody->isMember("frame")))
-    {
-        Json::Value error;
-        error["error"]   = "Bad Request";
-        error["message"] = "Missing required field: frame (or bookmark)";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    std::string bookmarkLabel;
-    ttd::TTDTimePoint target{};
-    if (seekByBookmark)
-    {
-        bookmarkLabel = (*jsonBody)["bookmark"].asString();
-        ttd::TTDBookmark bm;
-        if (bookmarkLabel.empty() || !mgr->FindBookmark(bookmarkLabel, bm))
-        {
-            Json::Value error;
-            error["error"]   = bookmarkLabel.empty() ? "Bad Request" : "Not Found";
-            error["message"] = bookmarkLabel.empty()
-                                   ? "Field bookmark must be a non-empty bookmark label"
-                                   : "Unknown bookmark label: " + bookmarkLabel;
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(bookmarkLabel.empty() ? HttpStatusCode::k400BadRequest
-                                                       : HttpStatusCode::k404NotFound);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        target = bm.time;
-    }
-    else
-    {
-        target.frame    = (*jsonBody)["frame"].asUInt64();
-        target.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
-    }
-
-    // Pause the emulator while we mutate TTD state so the emulator thread
-    // can't advance frame_counter past the restored checkpoint before the
-    // caller sees the result. PauseAndConfirm() blocks until the Z80 thread
-    // has actually parked, closing the race in which the in-flight frame
-    // loop would overwrite the freshly restored framebuffer. The emulator
-    // stays paused after a successful seek — the TTD state machine is now
-    // Detached and the next /ttd/resume call will Resume() it.
-    PauseAndConfirm(emulator);
-
-    ttd::TimeTravelManager::TTDSeekResult result;
-    bool reached = mgr->SeekTo(target, &result);
-
-    // SeekTo rebuilt the framebuffer in-place via RestoreCheckpoint ->
-    // Screen::RenderOnlyMainScreen(). The emulator is paused, so MainLoop
-    // won't post NC_VIDEO_FRAME_REFRESH on its own — do it explicitly so
-    // every observer (unreal-qt widget, screen viewer, debug visualization)
-    // repaints with the target snapshot's screen + border.
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["reached"] = reached;
-
-    Json::Value arrivedAt;
-    arrivedAt["frame"]    = Json::UInt64(result.arrivedAt.frame);
-    arrivedAt["tinframe"] = Json::UInt(result.arrivedAt.tInFrame);
-    ret["arrived_at"]     = arrivedAt;
-
-    const char* reasonStr = "target";
-    switch (result.haltReason)
-    {
-        case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-        case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-        default: break;
-    }
-    ret["halt_reason"] = reasonStr;
-
-    if (result.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-    {
-        Json::Value marker;
-        marker["frame"]    = Json::UInt64(result.blockingMarker.time.frame);
-        marker["tinframe"] = Json::UInt(result.blockingMarker.time.tInFrame);
-        marker["kind"]     = ttd::TTDExternalEventKindToString(result.blockingMarker.kind);
-        marker["reason"]   = result.blockingMarker.reason;
-        ret["blocking_marker"] = marker;
-    }
-
-    ret["state"] = ttd::TTDSessionStateToString(mgr->GetState());
-    if (seekByBookmark)
-        ret["bookmark"] = bookmarkLabel;
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "seek", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/step-back
@@ -661,31 +556,8 @@ void EmulatorAPI::stepBackTTD(const HttpRequestPtr& req,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    if (rejectIfRecording(mgr, callback)) return;
-
-    // Same pause-around-state-mutation discipline as seekTTD: wait for the
-    // Z80 thread to park so it can't overwrite the restored framebuffer,
-    // then notify observers to repaint.
-    PauseAndConfirm(emulator);
-
-    bool ok = mgr->StepBackFrame();
-    ttd::TTDTimePoint pos = mgr->CurrentPosition();
-
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["stepped"]  = ok;
-    ret["frame"]    = Json::UInt64(pos.frame);
-    ret["tinframe"] = Json::UInt(pos.tInFrame);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    RespondTTD(id, "step-back", {}, callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/step-forward
@@ -693,31 +565,8 @@ void EmulatorAPI::stepForwardTTD(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    if (rejectIfRecording(mgr, callback)) return;
-
-    // Same pause-around-state-mutation discipline as seekTTD: wait for the
-    // Z80 thread to park so it can't overwrite the restored framebuffer,
-    // then notify observers to repaint.
-    PauseAndConfirm(emulator);
-
-    bool ok = mgr->StepForwardFrame();
-    ttd::TTDTimePoint pos = mgr->CurrentPosition();
-
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["stepped"]  = ok;
-    ret["frame"]    = Json::UInt64(pos.frame);
-    ret["tinframe"] = Json::UInt(pos.tInFrame);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    RespondTTD(id, "step-forward", {}, callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/resume
@@ -728,35 +577,9 @@ void EmulatorAPI::resumeTTD(const HttpRequestPtr& req,
                              std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    ttd::TTDTimePoint from = mgr->CurrentPosition();
-
-    auto jsonBody = req->getJsonObject();
-    if (jsonBody && jsonBody->isMember("frame"))
-    {
-        from.frame    = (*jsonBody)["frame"].asUInt64();
-        from.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
-    }
-
-    bool ok = mgr->ResumeRecordingFrom(from);
-
-    // Mirror of seekTTD: now that the TTD state machine is Recording again,
-    // resume emulator execution so the capture can continue.
-    if (ok && emulator)
-        emulator->Resume();
-
-    Json::Value ret;
-    ret["resumed"]  = ok;
-    ret["frame"]    = Json::UInt64(from.frame);
-    ret["tinframe"] = Json::UInt(from.tInFrame);
-    ret["state"]    = ttd::TTDSessionStateToString(mgr->GetState());
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "resume", std::move(options), callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/ttd/position
@@ -764,28 +587,8 @@ void EmulatorAPI::getTTDPosition(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
-    if (!mgr) return;
-
-    ttd::TTDTimePoint pos = mgr->CurrentPosition();
-    ttd::TTDTimePoint end = mgr->SessionEndPosition();
-
-    Json::Value ret;
-    Json::Value current;
-    current["frame"]    = Json::UInt64(pos.frame);
-    current["tinframe"] = Json::UInt(pos.tInFrame);
-    ret["current"]      = current;
-
-    Json::Value sessionEnd;
-    sessionEnd["frame"]    = Json::UInt64(end.frame);
-    sessionEnd["tinframe"] = Json::UInt(end.tInFrame);
-    ret["session_end"]     = sessionEnd;
-
-    ret["state"] = ttd::TTDSessionStateToString(mgr->GetState());
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    RespondTTD(id, "position", {}, callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/ttd/markers
@@ -1431,36 +1234,9 @@ void EmulatorAPI::stepInstructionTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    if (rejectIfRecording(mgr, callback)) return;
-
-    auto json = req->getJsonObject();
-    std::string dir = "back";
-    if (json && json->isMember("dir"))
-        dir = (*json)["dir"].asString();
-
-    const bool forward = (dir == "forward" || dir == "fwd");
-
-    PauseAndConfirm(emulator);
-
-    bool ok = forward ? mgr->StepForwardInstruction() : mgr->StepBackInstruction();
-    ttd::TTDTimePoint pos = mgr->CurrentPosition();
-
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["stepped"]  = ok;
-    ret["dir"]      = forward ? "forward" : "back";
-    ret["frame"]    = Json::UInt64(pos.frame);
-    ret["tinframe"] = Json::UInt(pos.tInFrame);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "step-instruction", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-step
@@ -1474,64 +1250,9 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id) const
 {
-    std::shared_ptr<Emulator> emulator;
-    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
-    if (!mgr) return;
-
-    if (rejectIfRecording(mgr, callback)) return;
-
-    auto json = req->getJsonObject();
-    const bool hasCount   = json && json->isMember("count");
-    const bool hasTstates = json && json->isMember("tstates");
-
-    if (hasCount && hasTstates)
-    {
-        Json::Value err;
-        err["error"] = "Specify exactly one of 'count' or 'tstates' (not both)";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    if (!hasCount && !hasTstates)
-    {
-        Json::Value err;
-        err["error"] = "Missing required field: 'count' or 'tstates'";
-        auto resp = HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    PauseAndConfirm(emulator);
-
-    bool ok = false;
-    if (hasTstates)
-    {
-        const uint64_t t = (*json)["tstates"].asUInt64();
-        ok = mgr->ReverseStepTStates(t);
-    }
-    else
-    {
-        const uint32_t n = static_cast<uint32_t>((*json)["count"].asUInt64());
-        ok = mgr->ReverseStepInstructions(n);
-    }
-
-    ttd::TTDTimePoint pos = mgr->CurrentPosition();
-    if (emulator)
-        NotifyFrameRefresh(*emulator);
-
-    Json::Value ret;
-    ret["reached"] = ok;
-    ret["mode"]    = hasTstates ? "tstates" : "count";
-    ret["frame"]   = Json::UInt64(pos.frame);
-    ret["tinframe"] = Json::UInt(pos.tInFrame);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "reverse-step", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue

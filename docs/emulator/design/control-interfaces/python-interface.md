@@ -1102,7 +1102,10 @@ emu.ttd_seek(frame=4823, tinframe=14982)    # (frame, tinframe)
 # -> {'reached': True,
 #     'arrived_at': {'frame': 4823, 'tinframe': 14982},
 #     'halt_reason': 'target',              # 'target' | 'external_event' | 'out_of_range'
-#     'blocking_marker': {...}}             # only for external_event: frame, tinframe, kind, reason
+#     'blocking_marker': {...},             # only for external_event: frame, tinframe, kind, reason
+#     'state': 'detached'}
+# The machine stays paused at the target; emu.ttd_resume() records again and runs it.
+# While recording: {'reached': False, 'error': '<why>', 'state': 'recording'}
 
 emu.ttd_step_back()                         # -> bool; one frame back (same position inside the frame)
 emu.ttd_step_forward()                      # -> bool; one frame forward, inside recorded history

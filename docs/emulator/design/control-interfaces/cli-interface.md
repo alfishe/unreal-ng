@@ -238,10 +238,10 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd stop` | — | Stop capturing; retain history. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | Invalidate the session and drop captured data. | ✅ Implemented |
 | `ttd limit [frames N] [bytes N[K\|M\|G]]` | `ttd history-limit` | Bound the history: the oldest frames are released while recording beyond either limit (`off` clears; no arguments shows it). See command-interface.md. | ✅ Implemented |
-| `ttd seek --frame N` | `ttd goto` | Seek to a (frame, tstate) point; optionally `--tstate T` for intra-frame. | ✅ Implemented |
+| `ttd seek <frame> [tinframe]`, `ttd seek --bookmark <label>` | `ttd goto` | Seek to a (frame, T-state) point or a bookmark. Refused while recording; the machine stays paused at the target. | ✅ Implemented |
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
-| `ttd resume` | — | Truncate future at the current (detached) position and resume live recording. | ✅ Implemented |
+| `ttd resume [frame [tinframe]]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. | ✅ Implemented |
 | `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
@@ -264,7 +264,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 > pause
 > ttd find-last --addr 0x5B00 --access write
 frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
-> ttd seek --frame 4823 --tstate 14982
+> ttd seek 4823 14982
 [ok target]
 > ttd step-back
 > disasm

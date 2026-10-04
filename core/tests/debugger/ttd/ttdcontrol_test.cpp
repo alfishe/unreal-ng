@@ -6,7 +6,10 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
@@ -209,4 +212,95 @@ TEST_F(TTDControl_Test, ABodyThatNamesItsOwnErrorKeepsIt)
     EXPECT_EQ(value.find("error")->s, "frame 12 is not replayable");
     EXPECT_EQ(value.find("message")->s, "the build failed");
     EXPECT_FALSE(value.find("ok")->b);
+}
+
+// ---------------------------------------------------------------------------
+// Group 2: positions, seeks, steps, resume
+// ---------------------------------------------------------------------------
+
+TEST_F(TTDControl_Test, MovingInTheTimelineIsRefusedWhileRecording)
+{
+    Record(4);
+    for (const auto& [verb, options] : std::vector<std::pair<std::string, std::map<std::string, std::string>>>{
+             {"seek", {{"frame", "1"}}},
+             {"step-back", {}},
+             {"step-forward", {}},
+             {"step-instruction", {}},
+             {"reverse-step", {{"count", "1"}}}})
+    {
+        const TTDReply r = Run(verb, options);
+        EXPECT_EQ(r.error, TTDControlError::Conflict) << verb;
+        EXPECT_EQ(Str(r, "state"), "recording") << verb;
+    }
+    EXPECT_TRUE(_ttd->IsRecording());
+}
+
+TEST_F(TTDControl_Test, SeekTargetsAreCheckedBeforeAnythingMoves)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    EXPECT_EQ(Run("seek").error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("seek", {{"frame", "-3"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("seek", {{"frame", "2"}, {"tinframe", "4294967296"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("seek", {{"bookmark", ""}}).error, TTDControlError::BadRequest);
+    const TTDReply unknown = Run("seek", {{"bookmark", "nowhere"}});
+    EXPECT_EQ(unknown.error, TTDControlError::NotFound);
+    EXPECT_EQ(unknown.HttpStatus(), 404);
+    EXPECT_EQ(unknown.message, "Unknown bookmark label: nowhere");
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);  // nothing moved
+}
+
+TEST_F(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    const TTDReply end = Run("position");
+    ASSERT_TRUE(end.Ok());
+    const int64_t last = end.body.find("session_end")->find("frame")->i;
+    const int64_t first = static_cast<int64_t>(_ttd->GetSessionInfo().sessionStartFrame);
+    ASSERT_GT(last, first + 2);
+
+    TTDReply r = Run("seek", {{"frame", std::to_string(first + 2)}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "reached"));
+    EXPECT_EQ(Str(r, "halt_reason"), "target");
+    EXPECT_EQ(r.body.find("arrived_at")->find("frame")->i, first + 2);
+    EXPECT_EQ(Str(r, "state"), "detached");
+
+    r = Run("step-forward");
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "stepped"));
+    EXPECT_EQ(Int(r, "frame"), first + 3);
+    r = Run("step-back");
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_EQ(Int(r, "frame"), first + 2);
+    EXPECT_EQ(Run("position").body.find("current")->find("frame")->i, first + 2);
+
+    EXPECT_EQ(Run("resume", {{"tinframe", "5"}}).error, TTDControlError::BadRequest);
+    r = Run("resume");
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "resumed"));
+    EXPECT_EQ(Int(r, "frame"), first + 2);
+    EXPECT_EQ(Str(r, "state"), "recording");
+}
+
+TEST_F(TTDControl_Test, InstructionStepsCheckTheirArguments)
+{
+    Record(4);
+    ASSERT_TRUE(Run("stop").Ok());
+    ASSERT_TRUE(Run("seek", {{"frame", std::to_string(_ttd->GetSessionInfo().sessionStartFrame + 2)}}).Ok());
+
+    EXPECT_EQ(Run("step-instruction", {{"dir", "sideways"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("reverse-step").error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("reverse-step", {{"count", "1"}, {"tstates", "4"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("reverse-step", {{"count", "4294967296"}}).error, TTDControlError::BadRequest);
+
+    TTDReply r = Run("step-instruction", {{"dir", "back"}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "stepped"));
+    EXPECT_EQ(Str(r, "dir"), "back");
+    r = Run("reverse-step", {{"count", "2"}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "reached"));
+    EXPECT_EQ(Str(r, "mode"), "count");
 }

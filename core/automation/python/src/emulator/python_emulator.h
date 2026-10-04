@@ -217,6 +217,21 @@ inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
     return reply.body;
 }
 
+/// A seek's answer as a dict: the reply's fields; a refused seek has reached = False and
+/// error = the message (seeks never raised: scripts read reached)
+inline pybind11::object TtdSeekPy(const ttd::TTDReply& reply)
+{
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        if (!value.find("error"))
+            value["error"] = reply.message;
+        if (!value.find("reached"))
+            value["reached"] = false;
+    }
+    return StateNodeToPy(value);
+}
+
 /// One media verb through MediaControl (media-control-design.md): the options
 /// come as keyword arguments, the reply is the dict every surface returns
 /// (ok, error, message, slot, pending, revision, report and the verb's fields)
@@ -3608,91 +3623,37 @@ namespace PythonBindings
                     throw std::runtime_error(reply.message);  // recording: stop it first
             }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
-            .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["reached"] = false;
-                    result["error"]   = "TTD not available";
-                    return result;
-                }
-                ttd::TTDTimePoint target{frame, tInFrame};
-                ttd::TimeTravelManager::TTDSeekResult r;
-                bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
-                result["reached"] = reached;
-
-                py::dict arrivedAt;
-                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
-                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
-                result["arrived_at"]  = arrivedAt;
-
-                const char* reasonStr = "target";
-                switch (r.haltReason)
-                {
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                    default: break;
-                }
-                result["halt_reason"] = reasonStr;
-
-                if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-                {
-                    py::dict marker;
-                    marker["frame"]    = py::cast(r.blockingMarker.time.frame);
-                    marker["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
-                    marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                    marker["reason"]   = r.blockingMarker.reason;
-                    result["blocking_marker"] = marker;
-                }
-                return result;
-            }, "Seek to a point in the timeline", py::arg("frame"), py::arg("tinframe") = 0)
+            .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::object {
+                return TtdSeekPy(TtdRunPy(self, "seek", {{"frame", std::to_string(frame)}, {"tinframe", std::to_string(tInFrame)}}));
+            }, "Seek to a point in the timeline (the machine stays paused there; ttd_resume continues)",
+               py::arg("frame"), py::arg("tinframe") = 0)
 
             .def("ttd_step_back", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepBackFrame();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-back");
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step back one frame")
 
             .def("ttd_step_forward", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepForwardFrame();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-forward");
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step forward one frame")
 
             .def("ttd_resume", [](Emulator& self, py::object frameObj, uint32_t tInFrame) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
-                ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+                // No frame: resume exactly where the machine stands
+                std::map<std::string, std::string> options;
                 if (!frameObj.is_none())
                 {
-                    from.frame = frameObj.cast<uint64_t>();
-                    from.tInFrame = tInFrame;
+                    options["frame"] = std::to_string(frameObj.cast<uint64_t>());
+                    options["tinframe"] = std::to_string(tInFrame);
                 }
-                return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
-            }, "Resume recording from current or specified point",
+                const ttd::TTDReply reply = TtdRunPy(self, "resume", options);
+                return reply.Ok() && reply.body.find("resumed")->b;
+            }, "Resume recording from current or specified point (the machine runs again)",
                py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_position", [](Emulator& self) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["error"] = "TTD not available";
-                    return result;
-                }
-                ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
-                ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
-                py::dict current;
-                current["frame"]    = py::cast(pos.frame);
-                current["tinframe"] = py::cast(pos.tInFrame);
-                result["current"]   = current;
-                py::dict sessionEnd;
-                sessionEnd["frame"]    = py::cast(end.frame);
-                sessionEnd["tinframe"] = py::cast(end.tInFrame);
-                result["session_end"]  = sessionEnd;
-                return result;
+            .def("ttd_position", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "position");
+                return reply.Ok() ? StateNodeToPy(reply.body) : py::object(py::dict());
             }, "Get current TTD position")
 
             .def("ttd_markers", [](Emulator& self) -> py::list {
@@ -3772,46 +3733,8 @@ namespace PythonBindings
 
             // A bookmark seek IS a seek — identical result shape to ttd_seek
             // (plus the resolved label); a bookmark never halts anything.
-            .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["reached"] = false;
-                    result["error"]   = "TTD not available";
-                    return result;
-                }
-                ttd::TimeTravelManager::TTDSeekResult r;
-                std::string err;
-                const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
-                result["reached"]  = reached;
-                if (!err.empty())
-                    result["error"] = err;
-
-                py::dict arrivedAt;
-                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
-                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
-                result["arrived_at"]  = arrivedAt;
-
-                const char* reasonStr = "target";
-                switch (r.haltReason)
-                {
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                    default: break;
-                }
-                result["halt_reason"] = reasonStr;
-                if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-                {
-                    py::dict marker;
-                    marker["frame"]    = py::cast(r.blockingMarker.time.frame);
-                    marker["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
-                    marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                    marker["reason"]   = std::string(r.blockingMarker.reason);
-                    result["blocking_marker"] = marker;
-                }
-                result["bookmark"]    = label;
-                return result;
+            .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::object {
+                return TtdSeekPy(TtdRunPy(self, "seek", {{"bookmark", label}}));
             }, "Seek to an agent bookmark by label", py::arg("label"))
 
             // -------------------------------------------------------------
@@ -4043,31 +3966,24 @@ namespace PythonBindings
                py::arg("addr_to") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepBackInstruction();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-instruction", {{"dir", "back"}});
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step back one instruction")
 
             .def("ttd_step_instruction_forward", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepForwardInstruction();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-instruction", {{"dir", "forward"}});
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step forward one instruction")
 
-        // -----------------------------------------------------------------
-        // Phase 4 reverse execution (multi-step + reverse-continue).
-        // -----------------------------------------------------------------
             .def("ttd_reverse_step", [](Emulator& self, uint32_t count) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->ReverseStepInstructions(count);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step", {{"count", std::to_string(count)}});
+                return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N instructions (M1 boundaries)",
                py::arg("count") = 1)
 
             .def("ttd_reverse_step_tstates", [](Emulator& self, uint64_t tstates) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step", {{"tstates", std::to_string(tstates)}});
+                return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N t-states (lands at nearest M1 <= target)",
                py::arg("tstates"))
 

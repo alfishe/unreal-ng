@@ -7,9 +7,12 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdbookmarks.h"
+#include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/mainloop.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -24,6 +27,7 @@ int TTDControlErrorHttpStatus(TTDControlError error)
         case TTDControlError::None: return 200;
         case TTDControlError::NotAvailable: return 501;
         case TTDControlError::BadRequest: return 400;
+        case TTDControlError::NotFound: return 404;
         case TTDControlError::Conflict: return 409;
         case TTDControlError::Internal: return 500;
     }
@@ -37,6 +41,7 @@ const char* TTDControlErrorPhrase(TTDControlError error)
         case TTDControlError::None: return "";
         case TTDControlError::NotAvailable: return "Not Available";
         case TTDControlError::BadRequest: return "Bad Request";
+        case TTDControlError::NotFound: return "Not Found";
         case TTDControlError::Conflict: return "Conflict";
         case TTDControlError::Internal: return "Internal Error";
     }
@@ -146,6 +151,21 @@ StateNode RecordedMachineNode(const TTDRecordedMachine& m)
     v["turbo_sound"] = m.turboSound;
     return v;
 }
+
+StateNode TimePointNode(const TTDTimePoint& t)
+{
+    StateNode node = StateNode::Object();
+    node["frame"] = t.frame;
+    node["tinframe"] = static_cast<unsigned>(t.tInFrame);
+    return node;
+}
+
+/// A position in the reply body: frame and tinframe as top-level fields
+void AddPosition(StateNode& body, const TTDTimePoint& t)
+{
+    body["frame"] = t.frame;
+    body["tinframe"] = static_cast<unsigned>(t.tInFrame);
+}
 }  // namespace
 
 /// region <Verbs>
@@ -157,8 +177,9 @@ TTDControl::TTDControl(EmulatorContext* context)
 
 const std::vector<std::string>& TTDControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"status", "start", "stop", "invalidate", "history-limit",
-                                                   "journal", "journal-build", "journal-build-cancel"};
+    static const std::vector<std::string> verbs = {
+        "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
+        "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step"};
     return verbs;
 }
 
@@ -170,6 +191,10 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"history-limit", {"frames", "bytes"}},
         {"journal", {"enabled"}},
         {"journal-build", {"from_frame", "to_frame"}},
+        {"seek", {"frame", "tinframe", "bookmark"}},
+        {"resume", {"frame", "tinframe"}},
+        {"step-instruction", {"dir"}},
+        {"reverse-step", {"count", "tstates"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -229,6 +254,18 @@ TTDReply TTDControl::Run(const std::string& verb, const TTDRequest& request)
         return JournalBuild(request);
     if (verb == "journal-build-cancel")
         return JournalBuildCancel();
+    if (verb == "position")
+        return Position();
+    if (verb == "seek")
+        return Seek(request);
+    if (verb == "step-back" || verb == "step-forward")
+        return StepFrame(verb == "step-forward");
+    if (verb == "resume")
+        return Resume(request);
+    if (verb == "step-instruction")
+        return StepInstruction(request);
+    if (verb == "reverse-step")
+        return ReverseStep(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -450,16 +487,8 @@ TTDReply TTDControl::Journal(const TTDRequest& request)
 
 TTDReply TTDControl::JournalBuild(const TTDRequest& request)
 {
-    if (_manager->IsRecording())
-    {
-        StateNode body = StateNode::Object();
-        body["state"] = TTDSessionStateToString(_manager->GetState());
-        return Fail(TTDControlError::Conflict,
-                    "Cannot scrub while recording is active - stop the recording first. Scrubbing during "
-                    "recording would overwrite live emulator state with restored checkpoint data and corrupt "
-                    "the timeline.",
-                    body);
-    }
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
     uint64_t from = 0;
     uint64_t to = UINT64_MAX;
     const std::string* fromText = Option(request, "from_frame");
@@ -497,14 +526,191 @@ TTDReply TTDControl::JournalBuildCancel()
     return reply;
 }
 
+bool TTDControl::RefuseWhileRecording(TTDReply& reply) const
+{
+    if (!_manager->IsRecording())
+        return false;
+    StateNode body = StateNode::Object();
+    body["state"] = TTDSessionStateToString(_manager->GetState());
+    reply = Fail(TTDControlError::Conflict,
+                 "Cannot scrub while recording is active - stop the recording first. Scrubbing during "
+                 "recording would overwrite live emulator state with restored checkpoint data and corrupt "
+                 "the timeline.",
+                 body);
+    return true;
+}
+
+TTDReply TTDControl::Position()
+{
+    TTDReply reply;
+    reply.body["current"] = TimePointNode(_manager->CurrentPosition());
+    reply.body["session_end"] = TimePointNode(_manager->SessionEndPosition());
+    reply.body["state"] = TTDSessionStateToString(_manager->GetState());
+    return reply;
+}
+
+TTDReply TTDControl::Seek(const TTDRequest& request)
+{
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+
+    // The target: coordinates (frame [+ tinframe]) or a bookmark label (TD-4). A bookmark
+    // is advisory and never a barrier: after the lookup it is a plain seek
+    const std::string* bookmark = Option(request, "bookmark");
+    const std::string* frameText = Option(request, "frame");
+    const std::string* tText = Option(request, "tinframe");
+    TTDTimePoint target{};
+    if (bookmark)
+    {
+        TTDBookmark found;
+        if (bookmark->empty())
+            return Fail(TTDControlError::BadRequest, "Field bookmark must be a non-empty bookmark label");
+        if (!_manager->FindBookmark(*bookmark, found))
+            return Fail(TTDControlError::NotFound, "Unknown bookmark label: " + *bookmark);
+        target = found.time;
+    }
+    else
+    {
+        if (!frameText)
+            return Fail(TTDControlError::BadRequest, "Missing required field: frame (or bookmark)");
+        uint64_t frame = 0;
+        uint64_t t = 0;
+        if (!ParseU64(*frameText, frame) || (tText && (!ParseU64(*tText, t) || t > UINT32_MAX)))
+            return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
+        target = {frame, static_cast<uint32_t>(t)};
+    }
+
+    // Park the machine so its thread cannot advance past the restored checkpoint; it
+    // stays paused at the target (Detached) until resume
+    PauseAndConfirm();
+    TimeTravelManager::TTDSeekResult result;
+    const bool reached = _manager->SeekTo(target, &result);
+    NotifyFrameRefresh();
+
+    TTDReply reply;
+    reply.body["reached"] = reached;
+    reply.body["arrived_at"] = TimePointNode(result.arrivedAt);
+    const char* reason = "target";
+    if (result.haltReason == TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+        reason = "external_event";
+    else if (result.haltReason == TimeTravelManager::TTDSeekHaltReason::OutOfRange)
+        reason = "out_of_range";
+    reply.body["halt_reason"] = reason;
+    if (result.haltReason == TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+    {
+        StateNode marker = TimePointNode(result.blockingMarker.time);
+        marker["kind"] = TTDExternalEventKindToString(result.blockingMarker.kind);
+        marker["reason"] = std::string(result.blockingMarker.reason);
+        reply.body["blocking_marker"] = marker;
+    }
+    reply.body["state"] = TTDSessionStateToString(_manager->GetState());
+    if (bookmark)
+        reply.body["bookmark"] = *bookmark;
+    return reply;
+}
+
+TTDReply TTDControl::StepFrame(bool forward)
+{
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+    PauseAndConfirm();
+    const bool ok = forward ? _manager->StepForwardFrame() : _manager->StepBackFrame();
+    NotifyFrameRefresh();
+    TTDReply reply;
+    reply.body["stepped"] = ok;
+    AddPosition(reply.body, _manager->CurrentPosition());
+    return reply;
+}
+
+TTDReply TTDControl::Resume(const TTDRequest& request)
+{
+    // No frame: resume exactly where the machine stands
+    TTDTimePoint from = _manager->CurrentPosition();
+    if (const std::string* frameText = Option(request, "frame"))
+    {
+        uint64_t frame = 0;
+        uint64_t t = 0;
+        const std::string* tText = Option(request, "tinframe");
+        if (!ParseU64(*frameText, frame) || (tText && (!ParseU64(*tText, t) || t > UINT32_MAX)))
+            return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
+        from = {frame, static_cast<uint32_t>(t)};
+    }
+    else if (Option(request, "tinframe"))
+        return Fail(TTDControlError::BadRequest, "tinframe needs a frame");
+
+    const bool ok = _manager->ResumeRecordingFrom(from);
+    // Recording again: the machine runs so the capture continues (a seek left it paused)
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    if (ok && emulator && !OnMachineThread())
+        emulator->Resume();
+
+    TTDReply reply;
+    reply.body["resumed"] = ok;
+    AddPosition(reply.body, from);
+    reply.body["state"] = TTDSessionStateToString(_manager->GetState());
+    return reply;
+}
+
+TTDReply TTDControl::StepInstruction(const TTDRequest& request)
+{
+    bool forward = false;
+    if (const std::string* dir = Option(request, "dir"))
+    {
+        if (*dir == "forward" || *dir == "fwd")
+            forward = true;
+        else if (*dir != "back")
+            return Fail(TTDControlError::BadRequest, "dir must be back or forward");
+    }
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+    PauseAndConfirm();
+    const bool ok = forward ? _manager->StepForwardInstruction() : _manager->StepBackInstruction();
+    NotifyFrameRefresh();
+    TTDReply reply;
+    reply.body["stepped"] = ok;
+    reply.body["dir"] = forward ? "forward" : "back";
+    AddPosition(reply.body, _manager->CurrentPosition());
+    return reply;
+}
+
+TTDReply TTDControl::ReverseStep(const TTDRequest& request)
+{
+    const std::string* countText = Option(request, "count");
+    const std::string* tstatesText = Option(request, "tstates");
+    if (countText && tstatesText)
+        return Fail(TTDControlError::BadRequest, "Specify exactly one of 'count' or 'tstates' (not both)");
+    if (!countText && !tstatesText)
+        return Fail(TTDControlError::BadRequest, "Missing required field: 'count' or 'tstates'");
+    uint64_t n = 0;
+    if (!ParseU64(countText ? *countText : *tstatesText, n) || (countText && n > UINT32_MAX))
+        return Fail(TTDControlError::BadRequest, "count and tstates must be non-negative integers");
+    if (TTDReply refusal; RefuseWhileRecording(refusal))
+        return refusal;
+
+    PauseAndConfirm();
+    const bool ok = tstatesText ? _manager->ReverseStepTStates(n)
+                                : _manager->ReverseStepInstructions(static_cast<uint32_t>(n));
+    NotifyFrameRefresh();
+    TTDReply reply;
+    reply.body["reached"] = ok;
+    reply.body["mode"] = tstatesText ? "tstates" : "count";
+    AddPosition(reply.body, _manager->CurrentPosition());
+    return reply;
+}
+
 /// endregion </Verbs>
 
 /// region <Machine thread discipline>
 
+bool TTDControl::OnMachineThread() const
+{
+    return _context && _context->pMainLoop && _context->pMainLoop->IsRunThread();
+}
+
 void TTDControl::PauseAndConfirm()
 {
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    if (!emulator)
+    if (!emulator || OnMachineThread())
         return;
     emulator->Pause();
     emulator->WaitForPauseConfirmation(1000);

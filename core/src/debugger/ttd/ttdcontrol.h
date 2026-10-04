@@ -35,6 +35,7 @@ enum class TTDControlError : uint8_t
     None,
     NotAvailable,  ///< time travel is not built in / not constructed for this instance (HTTP 501)
     BadRequest,    ///< unknown verb or option, a value that does not parse (HTTP 400)
+    NotFound,      ///< a named thing does not exist: a bookmark label (HTTP 404)
     Conflict,      ///< refused in the session's current state (HTTP 409)
     Internal       ///< should not happen (HTTP 500)
 };
@@ -88,6 +89,18 @@ private:
     TTDReply Journal(const TTDRequest& request);
     TTDReply JournalBuild(const TTDRequest& request);
     TTDReply JournalBuildCancel();
+    TTDReply Position();
+    TTDReply Seek(const TTDRequest& request);
+    TTDReply StepFrame(bool forward);
+    TTDReply Resume(const TTDRequest& request);
+    TTDReply StepInstruction(const TTDRequest& request);
+    TTDReply ReverseStep(const TTDRequest& request);
+
+    /// Moving in the timeline is refused while recording: the restored state would
+    /// overwrite the live machine and the next capture would break the timeline
+    bool RefuseWhileRecording(TTDReply& reply) const;
+    /// The machine's thread calls in (a breakpoint callback): it is the owner, never wait for it
+    bool OnMachineThread() const;
 
     /// Pause the machine and wait until its thread parks (a TTD mutation must not race a frame)
     void PauseAndConfirm();

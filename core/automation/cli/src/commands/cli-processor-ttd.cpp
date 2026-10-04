@@ -646,8 +646,6 @@ void CLIProcessor::HandleTTDInvalidate(const ClientSession& session, EmulatorCon
 void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* context,
                                   const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
     // TD-4: `ttd seek --bookmark <label>` (alias -b) resolves the label to
     // its stored position; everything else is a coordinate seek.
     std::string bookmarkLabel;
@@ -678,71 +676,44 @@ void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* 
         return;
     }
 
-    ttd::TimeTravelManager::TTDSeekResult result;
-    bool reached = false;
-
+    std::map<std::string, std::string> options;
     if (!bookmarkLabel.empty())
-    {
-        std::string err;
-        reached = mgr->SeekToBookmark(bookmarkLabel, &result, &err);
-        if (!err.empty())
-        {
-            session.SendResponse(std::string("Error: ") + err + NEWLINE);
-            return;
-        }
-    }
+        options["bookmark"] = bookmarkLabel;
     else
     {
-        try
-        {
-            uint64_t frame = std::stoull(positional[0]);
-            uint32_t tInFrame = 0;
-            if (positional.size() > 1)
-            {
-                tInFrame = static_cast<uint32_t>(std::stoul(positional[1]));
-            }
-
-            ttd::TTDTimePoint target{frame, tInFrame};
-            reached = mgr->SeekTo(target, &result);
-        }
-        catch (const std::exception& e)
-        {
-            session.SendResponse(std::string("Error: Invalid argument: ") + e.what() + NEWLINE);
-            return;
-        }
+        options["frame"] = positional[0];
+        if (positional.size() > 1)
+            options["tinframe"] = positional[1];
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"seek", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
     }
 
+    const StateNode& b = reply.body;
+    const StateNode& at = *b.find("arrived_at");
     std::stringstream ss;
-    if (reached)
+    ss << (b.find("reached")->b ? "TTD: Seek reached target" : "TTD: Seek halted at") << " (frame="
+       << at.find("frame")->i << ", tInFrame=" << at.find("tinframe")->i << ")" << NEWLINE;
+    if (!b.find("reached")->b)
     {
-        ss << "TTD: Seek reached target (frame=" << result.arrivedAt.frame
-           << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
-    }
-    else
-    {
-        ss << "TTD: Seek halted at (frame=" << result.arrivedAt.frame
-           << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
-
-        switch (result.haltReason)
+        const std::string reason = b.find("halt_reason")->s;
+        if (reason == "external_event")
         {
-            case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent:
-                ss << "  Reason: External-event marker barrier" << NEWLINE;
-                ss << "  Marker kind: " << ttd::TTDExternalEventKindToString(result.blockingMarker.kind) << NEWLINE;
-                ss << "  Marker reason: " << result.blockingMarker.reason << NEWLINE;
-                break;
-            case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:
-                ss << "  Reason: Target out of range" << NEWLINE;
-                break;
-            default:
-                ss << "  Reason: Unknown" << NEWLINE;
-                break;
+            const StateNode& marker = *b.find("blocking_marker");
+            ss << "  Reason: External-event marker barrier" << NEWLINE;
+            ss << "  Marker kind: " << marker.find("kind")->s << NEWLINE;
+            ss << "  Marker reason: " << marker.find("reason")->s << NEWLINE;
         }
+        else if (reason == "out_of_range")
+            ss << "  Reason: Target out of range" << NEWLINE;
+        else
+            ss << "  Reason: Unknown" << NEWLINE;
     }
     if (!bookmarkLabel.empty())
-    {
         ss << "  (bookmark '" << bookmarkLabel << "')" << NEWLINE;
-    }
-
     session.SendResponse(ss.str());
 }
 
@@ -850,14 +821,17 @@ void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorConte
 
 void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorContext* context)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    bool ok = mgr->StepBackFrame();
-    if (ok)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"step-back", {}});
+    if (!reply.Ok())
     {
-        ttd::TTDTimePoint pos = mgr->CurrentPosition();
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    if (reply.body.find("stepped")->b)
+    {
         std::stringstream ss;
-        ss << "TTD: Stepped back to (frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
+        ss << "TTD: Stepped back to (frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i
+           << ")" << NEWLINE;
         session.SendResponse(ss.str());
     }
     else
@@ -868,14 +842,17 @@ void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorConte
 
 void CLIProcessor::HandleTTDStepForward(const ClientSession& session, EmulatorContext* context)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    bool ok = mgr->StepForwardFrame();
-    if (ok)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"step-forward", {}});
+    if (!reply.Ok())
     {
-        ttd::TTDTimePoint pos = mgr->CurrentPosition();
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    if (reply.body.find("stepped")->b)
+    {
         std::stringstream ss;
-        ss << "TTD: Stepped forward to (frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
+        ss << "TTD: Stepped forward to (frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i
+           << ")" << NEWLINE;
         session.SendResponse(ss.str());
     }
     else
@@ -887,36 +864,23 @@ void CLIProcessor::HandleTTDStepForward(const ClientSession& session, EmulatorCo
 void CLIProcessor::HandleTTDResume(const ClientSession& session, EmulatorContext* context,
                                     const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    ttd::TTDTimePoint from = mgr->CurrentPosition();
-
+    std::map<std::string, std::string> options;
     if (args.size() >= 2)
     {
-        try
-        {
-            from.frame = std::stoull(args[1]);
-            if (args.size() > 2)
-            {
-                from.tInFrame = static_cast<uint32_t>(std::stoul(args[2]));
-            }
-            else
-            {
-                from.tInFrame = 0;
-            }
-        }
-        catch (const std::exception& e)
-        {
-            session.SendResponse(std::string("Error: Invalid argument: ") + e.what() + NEWLINE);
-            return;
-        }
+        options["frame"] = args[1];
+        options["tinframe"] = args.size() > 2 ? args[2] : "0";
     }
-
-    bool ok = mgr->ResumeRecordingFrom(from);
-    if (ok)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    if (reply.body.find("resumed")->b)
     {
         std::stringstream ss;
-        ss << "TTD: Resumed recording from (frame=" << from.frame << ", tInFrame=" << from.tInFrame << ")" << NEWLINE;
+        ss << "TTD: Resumed recording from (frame=" << reply.body.find("frame")->i
+           << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE;
         session.SendResponse(ss.str());
     }
     else
@@ -1259,8 +1223,6 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
 void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                              const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
     // Determine direction from subcommand or explicit arg.
     bool forward = false;
     if (!args.empty())
@@ -1274,75 +1236,59 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
             forward = true;
     }
 
-    bool ok = forward ? mgr->StepForwardInstruction() : mgr->StepBackInstruction();
-    if (ok)
+    const ttd::TTDReply reply =
+        ttd::TTDControl(context).Execute({"step-instruction", {{"dir", forward ? "forward" : "back"}}});
+    if (!reply.Ok())
     {
-        ttd::TTDTimePoint pos = mgr->CurrentPosition();
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    if (reply.body.find("stepped")->b)
+    {
         std::stringstream ss;
-        ss << "TTD: Stepped " << (forward ? "forward" : "back")
-           << " to (frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
+        ss << "TTD: Stepped " << (forward ? "forward" : "back") << " to (frame=" << reply.body.find("frame")->i
+           << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE;
         session.SendResponse(ss.str());
     }
     else
     {
         session.SendResponse(std::string("TTD: Cannot step ") +
-                             (forward ? "forward (at session end)" : "back (at session start)") +
-                             NEWLINE);
+                             (forward ? "forward (at session end)" : "back (at session start)") + NEWLINE);
     }
 }
 
 void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                                           const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-
-    // Parse --count N and --tstates T from args[1..]
-    uint32_t count   = 1;
-    bool     hasCount = false;
-    uint64_t tstates  = 0;
-    bool     hasTstates = false;
-
+    // --count N or --tstates T; neither: one instruction
+    std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
     {
         const std::string& tok = args[i];
         if (tok == "--count" && i + 1 < args.size())
-        {
-            count = static_cast<uint32_t>(std::stoul(args[++i]));
-            hasCount = true;
-        }
+            options["count"] = args[++i];
         else if (tok == "--tstates" && i + 1 < args.size())
-        {
-            tstates = std::stoull(args[++i]);
-            hasTstates = true;
-        }
+            options["tstates"] = args[++i];
     }
+    if (options.empty())
+        options["count"] = "1";
 
-    bool ok;
-    ttd::TTDTimePoint pos{};
-    if (hasTstates)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-step", options});
+    if (!reply.Ok())
     {
-        ok = mgr->ReverseStepTStates(tstates);
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
     }
-    else
+    if (reply.body.find("reached")->b)
     {
-        ok = mgr->ReverseStepInstructions(count);
-    }
-    (void)hasCount;
-
-    if (ok)
-    {
-        pos = mgr->CurrentPosition();
         std::stringstream ss;
-        if (hasTstates)
-        {
-            ss << "TTD: Stepped back " << tstates << " t-states to ";
-        }
+        if (options.count("tstates"))
+            ss << "TTD: Stepped back " << options["tstates"] << " t-states to ";
         else
-        {
-            ss << "TTD: Stepped back " << count << " instruction"
-               << (count == 1 ? "" : "s") << " to ";
-        }
-        ss << "(frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
+            ss << "TTD: Stepped back " << options["count"] << " instruction" << (options["count"] == "1" ? "" : "s")
+               << " to ";
+        ss << "(frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i << ")"
+           << NEWLINE;
         session.SendResponse(ss.str());
     }
     else

@@ -215,6 +215,15 @@ protected:
         return value;
     }
 
+    /// A seek's answer as a table: the reply's fields; a refused seek has reached = false
+    sol::object TtdSeekValue(sol::this_state ts, const ttd::TTDReply& reply) const
+    {
+        StateNode value = TtdScriptValue(reply);
+        if (!value.find("reached"))
+            value["reached"] = false;
+        return StateNodeToLua(ts, value);
+    }
+
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
     /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
     /// pause only when actually running, resume exactly then. RAII so an
@@ -3746,103 +3755,35 @@ public:
             return {reply.Ok(), reply.message};
         });
 
-        lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["reached"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["reached"] = false;
-                result["error"]   = "TTD not available";
-                return result;
-            }
-            uint32_t tInFrame = tInFrameOpt.value_or(0);
-            ttd::TTDTimePoint target{frame, tInFrame};
-            ttd::TimeTravelManager::TTDSeekResult r;
-            bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
-            result["reached"] = reached;
-
-            sol::table arrivedAt = lua_view.create_table();
-            arrivedAt["frame"]    = r.arrivedAt.frame;
-            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
-            result["arrived_at"]  = arrivedAt;
-
-            const char* reasonStr = "target";
-            switch (r.haltReason)
-            {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                default: break;
-            }
-            result["halt_reason"] = reasonStr;
-
-            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = r.blockingMarker.time.frame;
-                marker["tinframe"] = r.blockingMarker.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                marker["reason"]   = r.blockingMarker.reason;
-                result["blocking_marker"] = marker;
-            }
-            return result;
+        lua.set_function("ttd_seek", [this](sol::this_state ts, uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+            return TtdSeekValue(ts, TtdRun("seek", {{"frame", std::to_string(frame)},
+                                                    {"tinframe", std::to_string(tInFrameOpt.value_or(0))}}));
         });
 
         lua.set_function("ttd_step_back", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepBackFrame();
+            const ttd::TTDReply reply = TtdRun("step-back");
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_step_forward", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepForwardFrame();
+            const ttd::TTDReply reply = TtdRun("step-forward");
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_resume", [this](sol::optional<uint64_t> frameOpt, sol::optional<uint32_t> tInFrameOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
-            ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+            // No frame: resume exactly where the machine stands
+            std::map<std::string, std::string> options;
             if (frameOpt)
             {
-                from.frame = *frameOpt;
-                from.tInFrame = tInFrameOpt.value_or(0);
+                options["frame"] = std::to_string(*frameOpt);
+                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
             }
-            return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
+            const ttd::TTDReply reply = TtdRun("resume", options);
+            return reply.Ok() && reply.body.find("resumed")->b;
         });
 
-        lua.set_function("ttd_position", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["error"] = "TTD not available";
-                return result;
-            }
-            ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
-            ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
-            sol::table current = lua_view.create_table();
-            current["frame"]    = pos.frame;
-            current["tinframe"] = pos.tInFrame;
-            result["current"]   = current;
-            sol::table sessionEnd = lua_view.create_table();
-            sessionEnd["frame"]    = end.frame;
-            sessionEnd["tinframe"] = end.tInFrame;
-            result["session_end"]  = sessionEnd;
-            return result;
+        lua.set_function("ttd_position", [this](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("position")));
         });
 
         lua.set_function("ttd_markers", [this]() -> sol::table {
@@ -3934,49 +3875,8 @@ public:
         // (plus the resolved label), so a real barrier between the restore
         // checkpoint and the target still surfaces as halt_reason
         // "external_event". A bookmark itself never halts anything.
-        lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["reached"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["reached"] = false;
-                result["error"]   = "TTD not available";
-                return result;
-            }
-            ttd::TimeTravelManager::TTDSeekResult r;
-            std::string err;
-            const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
-            result["reached"] = reached;
-            if (!err.empty())
-                result["error"] = err;
-
-            sol::table arrivedAt = lua_view.create_table();
-            arrivedAt["frame"]    = r.arrivedAt.frame;
-            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
-            result["arrived_at"]  = arrivedAt;
-
-            const char* reasonStr = "target";
-            switch (r.haltReason)
-            {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                default: break;
-            }
-            result["halt_reason"] = reasonStr;
-            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = r.blockingMarker.time.frame;
-                marker["tinframe"] = r.blockingMarker.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                marker["reason"]   = r.blockingMarker.reason;
-                result["blocking_marker"] = marker;
-            }
-            result["bookmark"]    = label;
-            return result;
+        lua.set_function("ttd_seek_bookmark", [this](sol::this_state ts, const std::string& label) -> sol::object {
+            return TtdSeekValue(ts, TtdRun("seek", {{"bookmark", label}}));
         });
 
         // -----------------------------------------------------------------
@@ -4240,19 +4140,13 @@ public:
         });
 
         lua.set_function("ttd_step_instruction_back", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepBackInstruction();
+            const ttd::TTDReply reply = TtdRun("step-instruction", {{"dir", "back"}});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_step_instruction_forward", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepForwardInstruction();
+            const ttd::TTDReply reply = TtdRun("step-instruction", {{"dir", "forward"}});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         // -----------------------------------------------------------------
@@ -4260,20 +4154,13 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_reverse_step", [this](sol::optional<uint32_t> countOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->ReverseStepInstructions(
-                countOpt.value_or(1));
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"count", std::to_string(countOpt.value_or(1))}});
+            return reply.Ok() && reply.body.find("reached")->b;
         });
 
         lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"tstates", std::to_string(tstates)}});
+            return reply.Ok() && reply.body.find("reached")->b;
         });
 
         lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
