@@ -49,5 +49,7 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
 - [x] Triage of the 116 programs on the PQ-DOS HDD image ([analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
   SP.COM logo = program bug ([sp-demo](../../disasm/machines/profi-plus/sp-demo/README.md)); FLINES / WERT# / PINGVIN# need
   BDOS 98, MAT hits BDOS 9 + NUL (both PQ-DOS behavior)
-- [ ] JAZZY (runs data as code under PQ-DOS) and COLUMNS (open of a missing file returns "found") root causes; `S_MIN'.COM`
-  by hand; confirm PQ-DOS findings with a second source
+- [x] COLUMNS root cause (2026-10-04): PQ-DOS's BDOS open (0Fh) returns A = 0 for a file that does not exist (zero size, current
+  date and time in the FCB, nothing created) while search first (11h) answers FF; the emulated disk path is fine (a probe
+  `.COM` on the PQ-DOS HDD image, table in [pqdos-hdd-programs](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md))
+- [ ] JAZZY (runs data as code under PQ-DOS) root cause; `S_MIN'.COM` by hand; confirm the PQ-DOS findings with a second source
