@@ -28,7 +28,13 @@ full decode sweep. Depends on the
 ## Remaining
 
 - [ ] Owner review of the design
-- [ ] Independent modules (can start before the slots work): SAM-0..5, ML-0..2
+- [x] SAM-0..SAM-2 libsam2695 ([tdd-libsam2695.md](tdd-libsam2695.md) §10 "As built"): `core/src/3rdparty/sam2695/`
+  (UART, parser, SF2 loader, voice model, allocation, state; conformance table in its README), FluidSynth harness and
+  bank corpus check in `tools/verification/sam2695/`; linked into core (`UNREALNG_HAVE_SAM2695`), used by nothing yet
+- [ ] SAM-3 the rest of the MIDI chart (GS SysEx, NRPN 01xx / 18-1Exx / 37xx, sostenuto, soft pedal, portamento,
+  part assignment, voice reserve, assignable controllers), SAM-4 effects (reverb, chorus, spatial, EQ, clipping,
+  codec gain) and render modes, SAM-5 verification consolidation (Dream-board recordings, `data/midi/` bank pinned)
+- [ ] Independent modules (can start before the slots work): ML-0..2
 - [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
   `tools/verification/saa1099/` (SAASound, MAME, MiSTer RTL under Verilator; consensus table in its README), the
   module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 48; not registered in any machine

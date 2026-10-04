@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-03 |
-| **Status** | Draft for owner review |
+| **Status** | Draft for owner review; SAM-0 to SAM-2 built 2026-10-04 (branch `multisound`, as built: §10) |
 | **Decisions** | [open-questions.md](open-questions.md) Q2 (our own vendored library, like libopl4; the most elegant, highest-quality solution), Q3 (SF2 banks, default GeneralUser GS), Q4 (the default bank tracked in `data/midi/`) |
 | **Users** | ZX-MultiSound ([requirements.md](requirements.md) R-MS-14); later any MIDI-capable device (128K MIDI out on the AY port, ZXM cards, Sprinter MIDI) |
 | **Template** | libopl4: `core/src/3rdparty/opl4/` (layout, CMake, README, test framework, state API) |
@@ -85,7 +85,7 @@ silently ignored. A row the library cannot honor is listed with the reason.
 
 | Element | Design |
 |---|---|
-| Polyphony | the chip's own accounting (datasheet §5, NRPN `375Fh`): 64 voices without effects; reverb costs 13, chorus 3, spatial 1, mike 1, mike echo 3, 2-band EQ 4, 4-band EQ 8, plus 1 for internal mixing in some configurations; power-up value `45h` (reverb + chorus on, spatial off, 4-band EQ) gives 38 voices. A 2-layer instrument (datasheet §8-1) takes two voices |
+| Polyphony | the chip's own accounting (datasheet §5, NRPN `375Fh`): 64 voices without effects; reverb costs 13, chorus 3, spatial 1, mike 1, mike echo 3, 2-band EQ 4, 4-band EQ 8, plus 1 for internal mixing in some configurations; power-up value `3Bh` (the p.35 table's "Default": reverb, chorus, spatial, 4-band EQ; `45h` = "reset all" restores it) gives 38 voices. A 2-layer instrument (datasheet §8-1) takes two voices |
 | Allocation | per the datasheet's stealing order where documented; otherwise: release-phase voices first, then the quietest, never the drum voice of a still-held note before melodic voices; exclusive classes (SF2 generator 57: hi-hat open / closed) |
 | Sample playback | 32-bit fixed-point phase with a 32-bit fraction (no float drift over long notes), loop modes from SF2, `sm24` 24-bit samples supported |
 | Interpolation | `Linear`, `Cubic` (4-point Hermite) and `Sinc` (8-tap windowed sinc, default for quality); a render option, not part of the state |
@@ -108,8 +108,8 @@ biquad shelves and peaks at the chip's band frequencies. Effects run at the inte
 
 ### 3.5 Rates and determinism
 
-- **Internal rate.** The engine runs at a fixed internal rate (the chip's own output rate per the datasheet, else
-  44 100 Hz), then resamples to the host rate. A host-rate change never changes the synthesis.
+- **Internal rate.** The engine runs at a fixed internal rate, the chip's own 37 500 Hz (AN_2695: "nominal
+  sampling rate 37.5 kHz"), then resamples to the host rate. A host-rate change never changes the synthesis.
 - **Time.** `hostTickRate` is the axis of every call, exactly as `Opl4Config::hostTickRate`. Events are applied at
   their sample position inside the block (sample-accurate note starts).
 - **Determinism.** The same input on the same build gives bit-identical output. The state blob is platform
@@ -175,8 +175,8 @@ There is no SAM2695 to compare against bit for bit, so verification is layered:
 | Character | recordings of a real Dreamblaster S2 / SAM2695 board (community recordings, or a capture if the owner has hardware) | informative spectral comparison only |
 | Banks | every bank in `testdata/midi/` (git-ignored) | load and render a GM test file: no crash, no refusal of a valid bank, no denormal / NaN |
 
-Golden digests in `core-tests` use a small synthetic bank generated in code (a sine and a noise sample with known
-zones), so the unit tests need no external file. Integration tests that use GeneralUser GS pin it by SHA-256 from
+Golden digests use a small synthetic bank generated in code (a sine and a noise sample with known
+zones), so the unit tests need no external file (as built: fingerprints in the library suite, §10.4). Integration tests that use GeneralUser GS pin it by SHA-256 from
 `data/midi/` (Q4).
 
 ## 7. Tests (library suite `sam2695tests`, home-grown framework as libopl4)
@@ -217,4 +217,85 @@ supplies (like a ROM), and the research only studies the file format for interop
 - [Dream SAM2695 product page](https://docs.dream.fr/items.php?item=4)
 - [Dreamblaster S2 review (VOGONS)](https://www.vogons.org/viewtopic.php?t=56166)
 - Datasheets and application notes downloaded to `testdata/midi/docs/` (index in `testdata/midi/README.md`)
-- SoundFont 2.04 specification (to be linked from the library README with its source URL)
+- [SoundFont 2.04 specification](https://www.synthfont.com/sfspec24.pdf)
+- [FluidSynth](https://www.fluidsynth.org/), the reference SF2 renderer of the comparison harness
+
+## 10. As built (SAM-0 to SAM-2, 2026-10-04)
+
+Branch `multisound`. The library is `core/src/3rdparty/sam2695/`; its [README](../../../core/src/3rdparty/sam2695/README.md)
+holds the datasheet extraction (**the MIDI implementation conformance table**: every chart row with its page,
+status and test; effects and their parameters; polyphony accounting; UART timing and tolerance) and the voice
+model. Core links it (`add_subdirectory(3rdparty/sam2695 EXCLUDE_FROM_ALL)`, excluded from core's source glob,
+`UNREALNG_HAVE_SAM2695=1`); nothing in the emulator uses it yet.
+
+### 10.1 Layout as built (differences to §2)
+
+- `src/synthcore.{h,cpp}` holds the chip (MIDI implementation, channels, voice pool, allocation, polyphony
+  accounting); allocation is not a separate file. `src/sam2695.cpp` is the `Synth` façade (time, input queue,
+  state, render layer).
+- `src/midi/uart.h` and `parser.h` are header-only; `src/common/` adds 128-bit time arithmetic (`wideint.h`), the
+  state archive (`statearchive.h`: one field list per struct for size / save / load) and unit conversions.
+- `src/fx/` does not exist yet (SAM-4). `tools/` holds `sam2695render` (SMF + bank to WAV, `--info`, `--check`,
+  `--line` through the UART) and the SMF reader; target `sam2695render`, `EXCLUDE_FROM_ALL` like `sam2695tests`.
+- The public API is §4 as sketched, plus `Render()` returning the frames written, `DiscardPendingAudio()`,
+  `SetInterpolation()`, `InternalPosition()`, `HostTimeOfSample()`, and `Sf2Bank::LoadFile / LoadMemory` with
+  a `BankError` + reason.
+
+### 10.2 Decisions taken while building (each in the README with its reason)
+
+| Topic | As built |
+|---|---|
+| Internal rate | 37 500 Hz (AN_2695); control blocks of 32 samples on an absolute grid, so output never depends on `Run()` slicing; up to one block of latency |
+| Power-up effects word | `3Bh` (38 voices); `45h` = reset all (restores it, 50 ms busy). The p.35 note says "Spatial Effect OFF" for 45h while its row shows spatial on; both give 38 voices |
+| Mixing voice | one extra voice whenever an effect is on, except with the mike echo on and except reverb + chorus alone: reproduces all 23 table rows |
+| Stealing order | not in the datasheet: release, then pedal-held, then held (melodic before rhythm); quietest, then oldest; never the note being started. Stolen / exclusive-class voices fade 64 samples in 16 spare slots outside the count |
+| UART | standard 16x receiver, majority of ticks 7-8-9, byte at the stop-bit middle, +-4.6 % tolerance (the datasheet is silent) |
+| Reset window | MIDI dropped for 50 ms after `Reset()` / 45h / power-on (`resetDelay`, on by default) |
+| SF2 conventions | E-mu / FluidSynth practice where the banks depend on it: static initialAttenuation x 0.4, concave curve -20/96 log10((1-x)^2), convex mod-envelope attack, the delay holds the whole voice. Spec kept where FluidSynth differs: 100 dB envelope scale, unity DC gain of a non-resonant filter, per-sample envelopes |
+| Interpolation | Sinc = 8-tap full-band Kaiser (beta 6) windowed sinc; a narrower cutoff only added droop (measured error table in `interpolator.cpp`) |
+| Bank loading | `LoadFile` streams (hash pass, lists in memory, samples read in place: a 4 GB bank needs its own size once); SF3 refused with a clear reason; odd-sized chunks without a pad byte are refused and named (FluidSynth refuses them too) |
+| Denormals | filter state flushed below -300 dB per block, the mix bus below -600 dB |
+| Golden tests | fingerprints (RMS per 1024-sample block, 0.05 dB) plus a bit-identical repeat check, not float digests: `libm` differs between platforms; bit identity holds on one build |
+
+### 10.3 Verification results
+
+- **Library suite** `sam2695tests`: 64 tests, 389 checks, all pass (about 50 ms). §7 rows covered: `Uart.ByteTiming`,
+  `Uart.FramingError`, `Uart.BaudTolerance`, `Parser.*`, `Chart.*` (the rows built so far), `Voice.EnvelopeTimecents`,
+  `Voice.LoopModes`, `Voice.ExclusiveClass`, `Allocator.StealingOrder`, `Render.OutputRateIndependent`,
+  `State.RefusesOtherBank`, `Golden.*`; `Fx.ReverbTailAcrossState` waits for SAM-4.
+- **FluidSynth 2.6.1 comparison** (`tools/verification/sam2695/compare.py`): 40 checks, 0 failed; the four expected
+  deviations D1-D4 are explained in its README (envelope dB scale, FluidSynth's filter gain, its 64-sample block
+  quantization, its truncated curve tables). Velocity curve, attenuation, pan, filter level within 0.1 dB; pitch
+  exact; envelope stage times within 3 ms; tremolo, vibrato, loop-until-release, key-scaled decay and the
+  modulation envelope agree.
+- **Bank corpus** (`bankcorpus.py`, 255 SF2 / SF3 files, 55.6 GB under `testdata/midi/`): 249 load and play the
+  GM test file; 6 are refused, each correctly: 3 SF3 (Ogg samples), 1 renamed `sfpk` (SFPack-compressed) file,
+  1 with an odd-sized INFO list without its pad byte (FluidSynth also rejects it), 1 without presets (an empty
+  shell of the ESI-32 collection). After the denormal flush: no NaN, no denormal in any render. 11 banks peak
+  above full scale at the default output gain 0.25 (loud banks played with 15 channels of chords; the chip's
+  soft clipping is SAM-4). 132 banks load with warnings (median 1: mostly loops outside their samples, clamped).
+  Largest bank (4.24 GB) loads in 22 s.
+- Full emulator build (`tools/build/build.sh`): zero compiler warnings; `tools/build/test.sh`: 0 failed.
+
+### 10.4 Open points for the owner
+
+- The power-up effects word: 3Bh (as built, the table's "Default") or 45h literally? Both mean 38 voices; only
+  the stored value and `Describe()` differ.
+- The stealing order is ours (the datasheet has none); a capture from a real SAM2695 / Dreamblaster S2 under
+  voice pressure would settle it (SAM-5).
+- Parallel (MPU) mode is not modeled: the MultiSound drives the serial line. A card that uses the parallel port
+  would need it (status register, 3Fh / FFh / BEh controls, IRQ).
+
+### 10.5 Left for SAM-3 to SAM-5
+
+- **SAM-3:** the chart rows marked SAM-3 in the README (GM / GS SysEx incl. GS reset, master volume / tune / key
+  shift / pan, part assignment and rhythm allocation, voice reserve, scale tuning, velocity slope / offset,
+  controller destinations; NRPN 01xx / 18-1Exx / 3707h / 3722h / 3723h / 3757h; sostenuto, soft pedal, portamento,
+  assignable CC1 / CC2; SysEx device ID).
+- **SAM-4:** reverb (8 programs), chorus (8 programs), spatial effect, 4-band / 2-band EQ, post-effect routing,
+  send scaling 3715h / 3716h, CC 80 / 81, drum sends, soft / hard clipping, the codec output gain; effects state in
+  the blob (`Fx.ReverbTailAcrossState`).
+- **SAM-5:** recordings of a Dreamblaster S2 for an informative comparison, `data/midi/generaluser-gs.sf2`
+  tracked and pinned by SHA-256 (`9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe` for
+  GeneralUser GS 2.0.3 BETA as in `testdata/midi/`), the corpus check and the FluidSynth comparison in a
+  repeatable report.
