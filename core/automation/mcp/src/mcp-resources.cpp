@@ -321,6 +321,7 @@ aspects:["paging"]` reports `profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clo
 The v5 turbo and hi-res wait rules are models of the 5.06 arbiter (M). The BIOS menu entries (TR-DOS, Sinclair, 128)
 are verified on both boards. CP/M boots on v5 from "Загрузка системы CP/M" (disks in testdata/machines/profi/cpm/v5); on v3
 Klug CP/M (cpm/v3) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2's TR-DOS 5.03 cannot load it.
+SP-DOS (cpm/sp-dos, MicroDOS by V. Tereschenko) boots on both boards from the same CP/M entries to its hi-res shell.
 )md";
 
 const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)

@@ -79,7 +79,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | Hi-res (`#DFFD` bit 7) timing: the CPU on its hi-res clock (v3 3 MHz, v5 ZQ3 / 4 = 5 MHz; turbo doubles), frame and INT from the sync PROM's upper half (v3: 320 lines, 48.83 Hz), hi-res waits (v5 model), v3 hi-res floating bus | implemented — see [Hi-res](#hi-res-512x240) |
 | The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads | not implemented |
 | BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards |
-| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M (`cpm/v3/klug-cpm-2.3.td0`) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it |
+| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M (`cpm/v3/klug-cpm-2.3.td0`) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it. SP-DOS (`cpm/sp-dos/unicopy-sp-dos.td0`, MicroDOS with the BIOS by V. Tereschenko) boots on both boards from the same entries to its hi-res shell |
 
 ### Hi-res (512x240)
 

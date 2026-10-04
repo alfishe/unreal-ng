@@ -5,7 +5,7 @@
 | **Date** | 2026-10-03 |
 | **Status** | Draft for owner review |
 | **Design** | [requirements.md](requirements.md), [architecture.md](architecture.md), [compatibility-matrix.md](compatibility-matrix.md) |
-| **Decisions** | [open-questions.md](open-questions.md) Q1-Q6 |
+| **Decisions** | [open-questions.md](open-questions.md) Q1-Q7 |
 | **Order** | owner decision Q3: core first, then existing cards one by one, then the ZX-MultiSound |
 | **Effort scale** | S < 1 week, M 1-2 weeks, L 2-4 weeks |
 
