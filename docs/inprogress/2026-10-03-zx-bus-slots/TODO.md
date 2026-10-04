@@ -15,6 +15,12 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
 - [open-questions.md](open-questions.md): owner decisions Q1-Q7
 
+## Pause (owner decision 2026-10-04)
+
+SL-3 and later wait until the `ttd-engine` branch lands on master: it rewrites the same port decoders, `z80.cpp`,
+`ttdmachineperipherals.cpp` and the GS / NeoGS / MoonSound / TSFM modules that SL-3 / SL-4 migrate. Then rebase
+`zx-bus-slots` on master and continue with SL-3 (including the claimed-port benchmark residue from SL-2).
+
 ## Remaining
 
 - [ ] Owner review of the design (R-OP-8 decided: every slot change restarts the machine, Q6)
