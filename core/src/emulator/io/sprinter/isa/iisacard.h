@@ -13,7 +13,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <vector>
 
 #include "emulator/state/statenode.h"
 
@@ -61,8 +63,20 @@ public:
     /// The slot's RESET DRV (#9FBD bit 7): held = the card is in reset
     virtual void SetReset(bool asserted) = 0;
 
-    /// The card's interrupt request level (ISA phase I4 routes it to the Z84C15 PIO port B)
+    /// The card's interrupt request (ISA phase I4 routes the slot's line to the Z84C15 PIO port B). Irq: the
+    /// request is active; IrqDriven: the card drives its IRQ pin now (false: high impedance, the board's 3.9 kOhm
+    /// pull-up makes the line read high). A card without an interrupt drives nothing
     virtual bool Irq() const { return false; }
+    virtual bool IrqDriven() const { return false; }
+    /// The earliest machine time (base T-states) the line may change with no cycle to the card (UINT64_MAX: none),
+    /// and the catch-up the bus asks for at that time while the CPU waits for the interrupt (I4, tdd §4.5)
+    virtual uint64_t NextIrqEventAt() const { return UINT64_MAX; }
+    virtual void CatchUp() {}
+    /// Called by the card when Irq / IrqDriven / NextIrqEventAt may have changed outside a bus cycle (a frame the
+    /// network delivered, a character the UART's peer started); null clears it
+    virtual void SetLinesListener(std::function<void()> changed) { (void)changed; }
+    /// The request's cause in words for the slot report
+    virtual std::string IrqCause() const { return {}; }
 
     /// What the card occupies on the ISA bus (the slot report's resources): its I/O range and memory window as
     /// first..last ISA addresses (false: none), the IRQ line its configuration names (-1: none)
@@ -79,6 +93,14 @@ public:
         return false;
     }
     virtual int IrqLine() const { return -1; }
+    /// Further I/O addresses the card decodes (the 3C509B's ID port at #100-#1F0): name, range, step, what it does
+    struct AuxIoRange
+    {
+        std::string name;
+        uint32_t first = 0, last = 0, step = 1;
+        std::string note;
+    };
+    virtual std::vector<AuxIoRange> AuxIoRanges() const { return {}; }
     /// The card answers I/O cycles with AEN = 1 (its decoder ignores AEN), and how it decodes in words (the slot
     /// report; empty: "A9-A0, mirrored every #400")
     virtual bool IgnoresAen() const { return false; }
@@ -92,6 +114,8 @@ public:
         (void)write;
         return "";
     }
+    /// Appended to the card's entry in the one-line slot summary (" -> NeoGS on the ZX-bus: ..."; empty: nothing)
+    virtual std::string SummaryNote() const { return {}; }
     /// Whether the card hangs the bus (a cycle it never finishes)
     virtual bool Stalled() const { return false; }
 

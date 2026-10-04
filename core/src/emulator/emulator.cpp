@@ -23,6 +23,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/notifications.h"
+#include "emulator/tstaterunbudget.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -1421,6 +1422,11 @@ void Emulator::WaitWhilePaused()
     if (!_isPaused)
         return;
 
+    // Parking mid-frame: publish the TTD summary first (see MainLoop::Run's
+    // park). The caller executes the machine, so it may read the session
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->OnMachineParking();
+
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
     // Re-confirm on EVERY park iteration, not just the first. A rapid
     // Resume()->Pause() flip-flop (e.g. adapter resume immediately followed
@@ -2632,40 +2638,21 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
     Z80& z80 = *_core->GetZ80();
 
-    // Run exactly N frames worth of t-states. Both counters are in T-states of the frame length now in force;
-    // a hardware clock switch (a turbo machine's) changes that length, mid-frame too, and the two are rescaled
-    // with it so "N frames" stays N frames of emulated time
-    unsigned targetTStates = z80._frameLimit * frames;
-    unsigned elapsed = 0;
+    // Run exactly N frames worth of t-states. The budget is in T-states of the frame length now in force and
+    // follows a hardware clock switch (TStateRunBudget), so "N frames" stays N frames of emulated time
+    TStateRunBudget budget = TStateRunBudget::Frames(z80._frameLimit, frames);
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
-    while (elapsed < targetTStates && !RunHalted())
+    while (!budget.Reached() && !RunHalted())
     {
-        const unsigned prevT = z80.t;
-        const unsigned limitBefore = z80._frameLimit;
+        const uint32_t prevT = z80.t;
+        const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
 
-        const unsigned limitAfter = z80._frameLimit;
-        if (limitAfter == limitBefore)
-        {
-            // Track elapsed t-states (a completed frame rebased t by its limit)
-            elapsed += frameCompleted ? (z80.t + limitBefore - prevT) : (z80.t - prevT);
-        }
-        else if (limitBefore != 0 && limitAfter != 0)
-        {
-            // The frame length changed during the step and t was rescaled with it: only the position inside the
-            // frame, as a fraction of it, means the same before and after
-            const double fractionBefore = static_cast<double>(prevT) / limitBefore;
-            const double fractionAfter = static_cast<double>(z80.t) / limitAfter;
-            const double deltaFrames = (frameCompleted ? 1.0 : 0.0) + fractionAfter - fractionBefore;
-            const double scale = static_cast<double>(limitAfter) / limitBefore;
-            const double elapsedAfter = elapsed * scale + deltaFrames * limitAfter;
-            elapsed = elapsedAfter > 0 ? static_cast<unsigned>(elapsedAfter) : 0;
-            targetTStates = static_cast<unsigned>(targetTStates * scale);
-        }
+        budget.Step(prevT, z80.t, limitBefore, z80._frameLimit, frameCompleted);
 
         // Notify after each frame so debugger/visualizers can update
         if (frameCompleted)
@@ -2673,7 +2660,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     }
 }
 
-void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
+void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
 {
     DirectStepScope directStep(*this);
     CancelPendingStepOver();
@@ -2696,11 +2683,12 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 
     Z80& z80 = *_core->GetZ80();
 
-    unsigned targetT = z80.t + tStates;
+    // 64-bit: the target is counted from the current frame start and a long run spans many frames
+    uint64_t targetT = static_cast<uint64_t>(z80.t) + tStates;
 
     while (z80.t < targetT && !RunHalted())
     {
-        const unsigned limitBefore = z80._frameLimit;
+        const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -2795,17 +2783,17 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
 
     const unsigned anchor = static_cast<unsigned>(_lineStepAnchorOffset);
 
-    // Calculate the ideal target (where we'd land with infinite resolution)
-    unsigned idealT = z80.t + count * t_line;
+    // Calculate the ideal target (where we'd land with infinite resolution); 64-bit, a long run spans many frames
+    const uint64_t idealT = static_cast<uint64_t>(z80.t) + static_cast<uint64_t>(count) * t_line;
 
     // Find the two anchor-aligned positions that bracket idealT
-    unsigned anchorBefore = (idealT / t_line) * t_line + anchor;
+    uint64_t anchorBefore = (idealT / t_line) * t_line + anchor;
     if (anchorBefore > idealT)
         anchorBefore -= t_line;
-    unsigned anchorAfter = anchorBefore + t_line;
+    const uint64_t anchorAfter = anchorBefore + t_line;
 
     // Pick whichever anchor point is closest to the ideal target
-    unsigned targetT;
+    uint64_t targetT;
     if (idealT - anchorBefore <= anchorAfter - idealT)
         targetT = anchorBefore;
     else
@@ -2817,7 +2805,7 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
 
     while (z80.t < targetT && !RunHalted())
     {
-        const unsigned limitBefore = z80._frameLimit;
+        const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -2894,13 +2882,12 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
     Z80& z80 = *_core->GetZ80();
 
     // Safety limit: max 2 frames worth of t-states to prevent infinite loops
-    const unsigned safetyLimit = z80._frameLimit * 2;
-    unsigned elapsed = 0;
+    TStateRunBudget budget = TStateRunBudget::Frames(z80._frameLimit, 2);
 
     while (!RunHalted())
     {
-        const unsigned prevT = z80.t;
-        const unsigned limitBefore = z80._frameLimit;
+        const uint32_t prevT = z80.t;
+        const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
         const Z80::StepResult step = ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -2909,13 +2896,13 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
         if (step.intAccepted)
             break;
 
-        // Track elapsed t-states (a completed frame rebased t by its limit)
-        elapsed += frameCompleted ? (z80.t + limitBefore - prevT) : (z80.t - prevT);
+        budget.Step(prevT, z80.t, limitBefore, z80._frameLimit, frameCompleted);
 
         // Safety: don't run more than 2 frames
-        if (elapsed >= safetyLimit)
+        if (budget.Reached())
         {
-            MLOGWARNING("Emulator::RunUntilInterrupt - Safety limit reached (%u t-states), no interrupt accepted", elapsed);
+            MLOGWARNING("Emulator::RunUntilInterrupt - Safety limit reached (%llu t-states), no interrupt accepted",
+                        static_cast<unsigned long long>(budget.Elapsed()));
             break;
         }
     }
@@ -2925,7 +2912,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates,
+void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,
                                  bool notifyDebugger)
 {
     DirectStepScope directStep(*this);
@@ -2940,18 +2927,18 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
 
     Z80& z80 = *_core->GetZ80();
 
-    unsigned elapsed = 0;
+    // maxTStates 0 = no limit
+    TStateRunBudget budget(maxTStates);
 
     while (!_stopRequested)
     {
-        const unsigned prevT = z80.t;
-        const unsigned limitBefore = z80._frameLimit;
+        const uint32_t prevT = z80.t;
+        const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
         ExecuteStep(true, &frameCompleted);  // Skip breakpoints for condition-based execution
 
-        // Track elapsed t-states (a completed frame rebased t by its limit)
-        elapsed += frameCompleted ? (z80.t + limitBefore - prevT) : (z80.t - prevT);
+        budget.Step(prevT, z80.t, limitBefore, z80._frameLimit, frameCompleted);
 
         // Check predicate
         if (predicate(z80))
@@ -2960,9 +2947,10 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
         }
 
         // Enforce safety limit if specified
-        if (maxTStates > 0 && elapsed >= maxTStates)
+        if (maxTStates > 0 && budget.Reached())
         {
-            MLOGWARNING("Emulator::RunUntilCondition - Safety limit reached (%u t-states)", elapsed);
+            MLOGWARNING("Emulator::RunUntilCondition - Safety limit reached (%llu t-states)",
+                        static_cast<unsigned long long>(budget.Elapsed()));
             break;
         }
     }
@@ -3193,7 +3181,7 @@ void Emulator::StepOut()
     }
 
     // Generous ceiling: deep call chains still return within ~2 s of emulated time
-    const unsigned safetyLimit = _context->config.frame * 100;
+    const uint64_t safetyLimit = static_cast<uint64_t>(_context->config.frame) * 100;
 
     RunUntilCondition(
         [entrySP, memory](const Z80State& state) {

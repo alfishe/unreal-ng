@@ -798,6 +798,12 @@ bool PortDecoder_Profi::IsExtMode() const
         return false;
     const bool cpm = (_state->pDFFD & 0x20) != 0;
     const bool rom14 = (_state->p7FFD & 0x10) != 0;
+    // [PROFI] ExtPorts=sys: Karabas Pro's decode (karabas-pro.vhd: "(cpm='1' and rom14='1') or (dos_act='1' and
+    // rom14='0')") also opens the map while the SYS ROM runs (DOS latch on, ROM14 = 0). ROM BIOS Plus and PQ-DOS
+    // (Vadim / Star Software) probe the FDC, RTC and IDE there; BIOS 1.0 / 2.0 instead use the VG93 at #1F..#7F
+    // from the SYS ROM and cannot boot a disk with it (docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md)
+    if (_context->config.profi_ext_ports == 1 && (_state->flags & CF_TRDOS) && !rom14)
+        return true;
     return cpm && rom14;
 }
 

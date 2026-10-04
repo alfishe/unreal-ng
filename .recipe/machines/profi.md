@@ -79,7 +79,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | Hi-res (`#DFFD` bit 7) timing: the CPU on its hi-res clock (v3 3 MHz, v5 ZQ3 / 4 = 5 MHz; turbo doubles), frame and INT from the sync PROM's upper half (v3: 320 lines, 48.83 Hz), hi-res waits (v5 model), v3 hi-res floating bus | implemented — see [Hi-res](#hi-res-512x240) |
 | The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads | not implemented |
 | BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards |
-| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M (`cpm/v3/klug-cpm-2.3.td0`) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it. SP-DOS (`cpm/sp-dos/unicopy-sp-dos.td0`, MicroDOS with the BIOS by V. Tereschenko) boots on both boards from the same entries to its hi-res shell |
+| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/kondor-system-copyk.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: the Kramis "Profi-DOS" entry. Klug CP/M 2.3 needs the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it. SP-DOS (`cpm/sp-dos/unicopy-sp-dos.td0`, MicroDOS with the BIOS by V. Tereschenko) boots on both boards from the same entries to its hi-res shell |
 
 ### Hi-res (512x240)
 
@@ -180,7 +180,7 @@ curl -s -X POST "$BASE/emulator/$ID/switches" -H 'Content-Type: application/json
 
 CLI: `switch turbo on`; Lua / Python: `set_switch("turbo", true)`, `get_switch("turbo")`; Qt: Machine > TURBO
 Switch; `[PROFI] Turbo=1` turns it on at power-on. The v5 CP/M switch works the same way (`"cpm"`, Machine > CP/M
-Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
+Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. `[PROFI] ExtPorts=sys` decodes the extended ports (VG93 `#83..`, RTC, IDE) from the SYS ROM too, as Karabas Pro: ROM BIOS Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk (default `cpm`; `docs/inprogress/2026-10-01-profi-v3-v5/software-zoo.md`). In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
 its DRAM slot), code in ROM 2x.
 
 ## WebAPI

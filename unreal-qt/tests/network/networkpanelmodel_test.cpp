@@ -247,6 +247,22 @@ TEST(NetworkPanelModel_Test, SlotRowsSayWhatIsPluggedAndWhatItUses)
     EXPECT_EQ(rows[0].line, "zxbus not fitted: not built yet");
     EXPECT_EQ(rows[1].line, "NE2000 RTL8019AS, I/O #300-#31F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway");
     EXPECT_TRUE(NetworkSlotRows(StateNode::Object()).empty()) << "machines without slots show no group";
+
+    // ISA I2: slot 1 holds the ZX-bus adapter (not a network card): with the ISA report the row is the adapter's line
+    StateNode isa = StateNode::Object();
+    StateNode isaSlots = StateNode::Array();
+    StateNode adapter = StateNode::Object();
+    adapter["card"] = "zxbus";
+    adapter["summary_line"] = "zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: #B3 / #BB / #33, RESET from ISA RESET DRV";
+    isaSlots.push(adapter);
+    StateNode isaNe = StateNode::Object();
+    isaNe["card"] = "ne2000";
+    isaSlots.push(isaNe);
+    isa["slots"] = isaSlots;
+    const std::vector<NetworkSlotRow> withIsa = NetworkSlotRows(network, &isa);
+    ASSERT_EQ(withIsa.size(), 2u);
+    EXPECT_EQ(withIsa[0].line, "zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: #B3 / #BB / #33, RESET from ISA RESET DRV");
+    EXPECT_EQ(withIsa[1].line.rfind("NE2000 RTL8019AS", 0), 0u);
 }
 
 // The SprinterESP in a slot: its UART line and the ESP's session in the row, its line editable (isaN_peer)
@@ -285,6 +301,24 @@ TEST(NetworkPanelModel_Test, SprinterEspRowAndItsLine)
     EXPECT_EQ(rows[0].line, "SPRINTERESP TL16C550C, I/O #3E8-#3EF, IRQ 3, UART 115200 baud, MCR #22; ESP ESP8266-AT222 "
                             "(running), Wi-Fi got_ip 10.0.2.15, 0 link(s), MAC 5C:CF:7F:5A:00:01");
 
+    // With the ISA report the row ends with the slot's IRQ line (ISA I4): level, PIO port B bit, whether it interrupts
+    StateNode isa = StateNode::Object();
+    StateNode isaSlots = StateNode::Array();
+    StateNode isaSlot = StateNode::Object();
+    StateNode irqLine = StateNode::Object();
+    irqLine["line"] = "low";
+    irqLine["pio_bit"] = "PB0";
+    irqLine["reaches_cpu"] = "yes: the line going high makes the PIO request IM 2 vector #00 ...";
+    isaSlot["irq_line"] = irqLine;
+    StateNode counters = StateNode::Object();
+    counters["irq_acknowledged"] = static_cast<uint64_t>(6);
+    isaSlot["counters"] = counters;
+    isaSlots.push(isaSlot);
+    isa["slots"] = isaSlots;
+    const std::vector<NetworkSlotRow> withIrq = NetworkSlotRows(network, &isa);
+    ASSERT_EQ(withIrq.size(), 1u);
+    EXPECT_EQ(withIrq[0].line, rows[0].line + "; IRQ line low -> PB0, interrupts the CPU, 6 acknowledged");
+
     const NetworkForm before = NetworkFormFromState(network);
     EXPECT_TRUE(before.slotUart[0]);
     EXPECT_FALSE(before.slotUart[1]);
@@ -297,5 +331,113 @@ TEST(NetworkPanelModel_Test, SprinterEspRowAndItsLine)
     EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("isa1_peer"), std::string("LOOPBACK"))),
               changes.end());
     EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("esp_chip"), std::string("esp8266-at221"))),
+              changes.end());
+}
+
+// The 3C509B in a slot (network phase SN5): its 16 registers, the ID port and isolation state, window, FIFOs, link
+TEST(NetworkPanelModel_Test, El3c509bRow)
+{
+    StateNode network = StateNode::Object();
+    StateNode slots = StateNode::Array();
+    StateNode el3 = StateNode::Object();
+    el3["id"] = "isa2";
+    el3["label"] = "ISA slot 2 (J7), page #D6";
+    el3["configured"] = "el3c509b";
+    el3["card"] = "el3c509b";
+    el3["chip"] = "3C509B-TPO";
+    el3["base"] = "#300";
+    el3["id_port"] = "#110";
+    el3["ids"] = "ID_WAIT, sequence 0/255, tag 0";
+    el3["activated"] = true;
+    el3["irq"] = 3;
+    el3["mac"] = "02:53:50:00:00:02";
+    el3["link"] = "ethernet-gateway";
+    el3["link_state"] = "link pass";
+    el3["window"] = 1;
+    StateNode fifo = StateNode::Object();
+    fifo["tx_packets"] = static_cast<uint64_t>(0);
+    fifo["tx_free"] = 3068;
+    fifo["rx_packets"] = static_cast<uint64_t>(1);
+    fifo["rx_free"] = 5048;
+    el3["fifo"] = fifo;
+    slots.push(el3);
+    network["slots"] = slots;
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].line, "EL3C509B 3C509B-TPO, I/O #300-#30F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway, "
+                            "ID port #110 (ID_WAIT, sequence 0/255, tag 0), active, window 1, TX FIFO 0 pkt / 3068 free, "
+                            "RX FIFO 1 pkt / 5048 free, link pass");
+}
+
+// SprinterSerial in a slot (network SN4): both lines in the row - COM1's peer, COM2's Hayes modem with its call and
+// DCD - and both editable (isaN_peer, isaN_peer_b); the modem phone book is a setting of its own
+TEST(NetworkPanelModel_Test, SprinterSerialRowWithAModemOnCom2)
+{
+    StateNode network = StateNode::Object();
+    StateNode slots = StateNode::Array();
+    StateNode card = StateNode::Object();
+    card["id"] = "isa1";
+    card["label"] = "ISA slot 1 (J6), page #D4";
+    card["configured"] = "dual16552";
+    card["card"] = "dual16552";
+    card["chip"] = "PC16552D";
+    card["base"] = "#3F8";
+    card["irq"] = 3;
+    card["peer_spec"] = "TCP:localhost:2323";
+    StateNode uart = StateNode::Object();
+    uart["baud"] = 57600;
+    uart["mcr"] = "#0B";
+    card["uart"] = uart;
+    StateNode peer = StateNode::Object();
+    peer["kind"] = "tcp";
+    peer["target"] = "localhost:2323";
+    card["peer"] = peer;
+    StateNode b = StateNode::Object();
+    b["base"] = "#2F8";
+    b["peer_spec"] = "MODEM";
+    b["uart"] = uart;
+    StateNode peerB = StateNode::Object();
+    peerB["kind"] = "modem";
+    b["peer"] = peerB;
+    StateNode modem = StateNode::Object();
+    modem["mode"] = "online";
+    StateNode call = StateNode::Object();
+    call["dialed"] = "bbs.test:23";
+    modem["call"] = call;
+    StateNode lines = StateNode::Object();
+    lines["dcd"] = true;
+    lines["ri"] = false;
+    modem["lines"] = lines;
+    modem["last_result"] = "CONNECT 57600";
+    b["modem"] = modem;
+    card["channel_b"] = b;
+    slots.push(card);
+    network["slots"] = slots;
+    StateNode settings = StateNode::Object();
+    settings["modem_phonebook"] = "5551234=bbs.test:23";
+    network["settings"] = settings;
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].line, "DUAL16552 PC16552D, I/O #3F8-#3FF, IRQ 3; COM1: 57600 baud, MCR #0B, tcp localhost:2323; "
+                            "COM2 #2F8: 57600 baud, MCR #0B, modem online bbs.test:23, DCD on, last CONNECT 57600");
+
+    const NetworkForm before = NetworkFormFromState(network);
+    EXPECT_TRUE(before.slotUart[0]);
+    EXPECT_TRUE(before.slotUartB[0]);
+    EXPECT_EQ(before.slotCard[0], "dual16552");
+    EXPECT_EQ(before.slotPeerB[0].ToString(), "MODEM");
+    EXPECT_EQ(before.modemPhonebook, "5551234=bbs.test:23");
+    EXPECT_TRUE(NetworkPeerIsModem(before.slotPeerB[0]));
+    NetworkForm after = before;
+    std::string error;
+    ASSERT_TRUE(ComPortSpec::Parse("modem,2323", after.slotPeerB[0], error));
+    after.modemPhonebook = "7=10.0.2.2:2323";
+    const auto changes = NetworkFormChanges(before, after);
+    EXPECT_NE(std::find(changes.begin(), changes.end(), std::make_pair(std::string("isa1_peer_b"), std::string("MODEM,2323"))),
+              changes.end());
+    EXPECT_NE(std::find(changes.begin(), changes.end(),
+                        std::make_pair(std::string("modem_phonebook"), std::string("7=10.0.2.2:2323"))),
               changes.end());
 }

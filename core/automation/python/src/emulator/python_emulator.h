@@ -2169,7 +2169,7 @@ namespace PythonBindings
             // SprinterPortTable, SprinterPortLookup); map / dos / pn5 / rw omitted = the machine's current state
             .def("sprinter_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Sprinter(self.GetContext()));
-            }, "Sprinter Sp2000: PLD configuration, port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
+            }, "Sprinter Sp2000: PLD configuration (module Standard / Game, selected_by + why, the Game grid offset), port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
             .def("sprinter_text", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
             }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")
@@ -2356,7 +2356,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: the SprinterESP card's 16550 line), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -3374,7 +3374,7 @@ namespace PythonBindings
                     return info;
                 }
                 ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-                ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+                ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
                 info["state"]                    = ttd::TTDSessionStateToString(si.state);
                 info["session_start_frame"]      = py::cast(si.sessionStartFrame);
                 info["current_end_frame"]        = py::cast(si.currentEndFrame);
@@ -3501,11 +3501,11 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager)
                     throw std::runtime_error("TTD not available");
-                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
                 ctx->pTimeTravelManager->SetHistoryLimit(
                     framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
                     bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
-                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
                 return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
             }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
                "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
@@ -3632,7 +3632,7 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return markers;
                 const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-                for (const auto& e : journal.Events())
+                for (const auto& e : journal.SnapshotEvents())
                 {
                     py::dict marker;
                     marker["frame"]    = py::cast(e.time.frame);
@@ -3784,7 +3784,7 @@ namespace PythonBindings
                     result["error"] = err;
                     return result;
                 }
-                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
                 result["ok"] = true;
                 result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
                 result["session_start_frame"] = info.sessionStartFrame;
@@ -4080,7 +4080,7 @@ namespace PythonBindings
                     return d;
                 }
                 auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
+                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
                 ttd::TTDCoverageKindFromString(kindStr, kind);
                 std::optional<ttd::PhysPage> physPage;
@@ -4121,7 +4121,7 @@ namespace PythonBindings
                     return d;
                 }
                 auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
+                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 std::optional<ttd::TTDCoverageKind> optKind;
                 if (!kindObj.is_none())
                 {

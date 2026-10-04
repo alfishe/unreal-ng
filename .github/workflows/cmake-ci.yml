@@ -29,7 +29,7 @@ jobs:
 
     # 1. TELL GITHUB TO RUN INSIDE YOUR IMAGE
     container:             # <--- Custom environment inside the VM
-      image: ghcr.io/alfishe/unreal-ng:qt6.9.3
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -44,7 +44,7 @@ jobs:
           # 2. FIX GIT PERMISSIONS
           # GitHub mounts the code as a volume; git inside the container 
           # requires this to trust the directory ownership.
-          git config --global --add safe.directory $GITHUB_WORKSPACE
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
           # 3. BUILD
           # Based on your previous script, source is in 'unreal-qt' folder
@@ -73,3 +73,32 @@ jobs:
           ./build/bin/core-tests \
             --gtest_filter='TTD_Divergence_Corpus_Test.*:*TTDBench*' \
             --gtest_color=no
+  # Newest GCC (official gcc image). The packaging image stays on gcc 14 so the
+  # Linux packages run on Ubuntu 24.04; this job catches what the next compilers
+  # reject and runs the whole core test suite. Core only - no Qt needed.
+  build-gcc-latest:
+    runs-on: ubuntu-latest
+    container: gcc:16
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Build core-tests
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gcc --version | head -1
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=ON
+          cmake --build build --target core-tests --parallel
+
+      - name: Run core-tests (all, sharded)
+        run: cmake --build build --target test-parallel

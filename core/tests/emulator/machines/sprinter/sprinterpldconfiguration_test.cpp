@@ -96,16 +96,16 @@ protected:
 TEST_F(SprinterPldConfiguration_Test, Registry_FindsByFullThenHeadHash)
 {
     SprinterPldConfigurationRegistry registry;
-    ASSERT_EQ(registry.Count(), 1u);
+    ASSERT_EQ(registry.Count(), 2u) << "Standard and Game";
     EXPECT_EQ(registry.Standard().Descriptor().name, "Standard");
     EXPECT_EQ(registry.Find(SprinterPldStandard::kFullHash304, 0), 0);
 
-    const size_t stub = registry.Register(std::make_unique<StubModule>(0x11551111, 0x3861CFA4));
+    const size_t stub = registry.Register(std::make_unique<StubModule>(0x11551111, 0x5EAD0001));
     EXPECT_EQ(registry.Find(0x11551111, 0), static_cast<int>(stub)) << "full hash";
-    EXPECT_EQ(registry.Find(0x22222222, 0x3861CFA4), static_cast<int>(stub)) << "head hash only (MAME-compatible)";
+    EXPECT_EQ(registry.Find(0x22222222, 0x5EAD0001), static_cast<int>(stub)) << "head hash only (MAME-compatible)";
     EXPECT_EQ(registry.Find(0x22222222, 0x33333333), -1) << "unknown";
     EXPECT_EQ(registry.FindByName("Stub"), static_cast<int>(stub));
-    EXPECT_EQ(registry.FindByName("Game"), -1);
+    EXPECT_EQ(registry.FindByName("Game"), static_cast<int>(SprinterPldConfigurationRegistry::kGameIndex));
 }
 
 // T-PLDM-2: a stub module chosen by its hash overrides one code and one window;

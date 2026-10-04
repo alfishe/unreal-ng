@@ -131,7 +131,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Linux["Linux Build"]
-        L1["Docker Container<br/>ghcr.io/alfishe/unreal-ng:qt6.9.3"]
+        L1["Docker Container<br/>ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04"]
         L2["GCC + Ninja"]
         L3["Qt 6.9.3 (pre-installed)"]
         L1 --> L2 --> L3

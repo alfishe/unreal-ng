@@ -278,7 +278,9 @@ it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a load
 3.5 MHz. The status line shows the clock. The v5 also has the CP/M switch (`"name":"cpm"`, CLI `switch cpm on`,
 `[PROFI] CpmSwitch`): while it is on, #DFFD is held at #00 and writes to it are lost. `[PROFI] DffdDecode=` picks
 the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
-`OUT (n),A`).
+`OUT (n),A`). `[PROFI] ExtPorts=` picks when the extended port map (VG93 #83.., RTC #BF/#DF, IDE) is decoded: `cpm`
+(CP/M and ROM14, the 5.0 PROM, default; BIOS 1.0 / 2.0) or `sys` (also from the SYS ROM, as Karabas Pro: ROM BIOS
+Plus and PQ-DOS need it, BIOS 1.0 / 2.0 then cannot boot a disk).
 
 ## Keyboard (`[PROFI] Keyboard=`)
 | Value | Keyboard |
@@ -320,7 +322,7 @@ aspects:["paging"]` reports `profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clo
 ## Known limitations
 The v5 turbo and hi-res wait rules are models of the 5.06 arbiter (M). The BIOS menu entries (TR-DOS, Sinclair, 128)
 are verified on both boards. CP/M boots on v5 from "Загрузка системы CP/M" (disks in testdata/machines/profi/cpm/v5); on v3
-Klug CP/M (cpm/v3) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2's TR-DOS 5.03 cannot load it.
+Klug CP/M 2.3 boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2's TR-DOS 5.03 cannot load it.
 SP-DOS (cpm/sp-dos, MicroDOS by V. Tereschenko) boots on both boards from the same CP/M entries to its hi-res shell.
 )md";
 
@@ -384,9 +386,9 @@ per 8 x 8 square from the mode table in video RAM), a block accelerator, an AY a
 `emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
 
 ## BIOS and start
-Images: 3.07 (`sp2k-3.07-beta1.rom`, the default), 3.06 (`sp2k-3.06-hf2.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
+Images: 3.06 (`sp2k-3.06-hf2.rom`, the default), 3.07 (`sp2k-3.07-beta1.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
 3.06+). At create: `emulator_manage action=create model=SPRINTER sprinter_bios=3.04 sprinter_fast_start=false`; on a running machine:
-`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.06","reset":true}` (the image loads at the reset).
+`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.07","reset":true}` (the image loads at the reset).
 `inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32), with its known issues
 ("KNOWN ISSUE:" lines; 3.07 BETA 1: DSS 1.71.57 cannot start programs from a floppy, use 3.06 or the DSS of the 3.07
 recovery disk). FastStart off (the
@@ -420,6 +422,15 @@ or from a hard disk / CHD on `ide0.master` (recipe media/sprinter-hdd.md); Flex 
 (`inspect_state aspects:["sprinter"]` accelerator: mode, length, operations). Sound: AY + Covox-Blaster (`sprinter`
 sound block, `sprinter_sound_ring`, `audio_covox`). TTD records and replays the machine (recipe analysis/sprinter-ttd.md).
 Spectrum mode: DSS `SPECTRUM.EXE PENT128.ZX` (A:\ZX), then TR-DOS from drive A.
+
+## PLD configurations
+A program can load another logic bitstream into the PLD (code #2E, LDConf). The machine picks a configuration module by
+the loaded bitstream's hash: Standard (the BIOS's) or Game (`GAME_00.ACX` / LDConf's `GC.BIN`, full hash #C0FA3055, MAME's
+head hash #3861CFA4: every square graphics 320 with a per-square grid offset, cell #EE = #41 so the BIOS returns to the
+program). `inspect_state aspects:["sprinter"]` pld: `module`, `selected_by` (full_hash / head_hash / unknown_bitstream /
+watchdog), `why`, `game` (the grid-offset register); the PLD journal's `pld_configured` event says the same. An unknown
+bitstream runs Standard. A reload with the ROM's stream or the RESET button goes back to Standard (recipe
+machines/sprinter.md).
 
 ## Known limitations
 No ISA cards; the 21 MHz wait rule is MAME's (per-frame wait totals not reported); in the GUI F4 is bound to a speed

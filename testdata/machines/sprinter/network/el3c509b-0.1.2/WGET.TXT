@@ -1,0 +1,82 @@
+WGET.EXE
+
+WGET.EXE downloads plain HTTP/1.0 resources through the polling-only 3C509B
+backend. HTTPS/TLS is not supported. Run NETCFG -i and IFUP first.
+
+Usage
+
+WGET url [-o output] [-y|-f] [-r] [-d]
+WGET /?
+
+| Option | Meaning                                                      |
+|--------|--------------------------------------------------------------|
+| -o   | Local output name; may include a directory part.             |
+| -y   | Overwrite an existing file without prompting.                |
+| -f   | Same as -y.                                                |
+| -r   | Resume: append after a 206 Partial Content reply.          |
+| -d   | Dot progress instead of the KB counter.                      |
+
+The URL must begin with http:// (case-insensitive). Port 80 and path / are
+the defaults. Without -o, WGET uses the URL basename; an empty basename
+becomes OUTPUT.BIN. Options may use - or /, are case-insensitive, and may
+appear in any order.
+
+Behaviour
+
+If the output exists, WGET asks whether to overwrite, resume, or cancel.
+-y/-f overwrites without asking. -r silently resumes and takes precedence
+over overwrite flags: the local size is obtained with DSS MOVE_FP, the GET
+contains Range: bytes=N-, and no bytes are appended unless the server replies
+with 206 Partial Content.
+
+WGET follows at most five absolute http:// or path-only redirects. An HTTPS,
+missing, or malformed Location fails without writing the response body.
+HTTP error pages are not stored. A new empty output is removed after an HTTP
+failure; a pre-existing resume file is retained unchanged.
+
+A response carrying Content-Length is finished the moment that many body
+bytes have arrived: the request asks for Connection: close, but a server is
+free to ignore that and hold the socket open, as HTTP/1.1 servers do by
+default, so waiting for a close would stall a download that already completed.
+Content without a Content-Length is read until the peer closes, which is the
+only end-of-body marker such a response has. A connection that closes before a
+declared Content-Length is reached is reported as a truncated transfer.
+
+Esc or Ctrl+C, timeout, and a premature close all retain the bytes already
+received, so a later -r run can continue them.
+
+Progress display
+
+Normal progress is repainted every sixteenth disk-buffer flush, and once more
+at completion, so the last figure shown is always exact. The body is received
+one segment at a time straight into the buffer and whole 512-byte sectors are
+written as soon as the next segment would not fit, so a flush is about one
+segment and the repaint interval roughly 20 KiB.
+
+Repainting on every flush cost measurable transfer time: the counter is a
+carriage return, a dozen console characters and two 32-bit decimal
+conversions, all of it on the download's critical path. -d prints one dot
+per flush instead of the KB counter; the final time/rate summary is still
+printed.
+
+Examples
+
+WGET http://192.168.7.1/BOOT.BIN
+WGET http://files.lan/pub/big.zip -o C:\NET\BIG.ZIP -y
+WGET http://files.lan/pub/big.zip -r
+WGET http://files.lan/pub/big.zip -d
+
+Exit codes
+
+| Code | Meaning                                                    |
+|------|------------------------------------------------------------|
+| 0    | The body was received completely                           |
+| 1    | Usage error, or a malformed URL                            |
+| 2    | 3C509B not detected                                        |
+| 3    | Connect/receive timeout, truncated transfer, or DNS failure |
+| 4    | NET_* environment missing or invalid; run NETCFG -i    |
+| 5    | Local file error                                           |
+| 6    | HTTP 4xx/5xx, or a redirect that cannot be followed        |
+| 7    | Cancelled with Esc or Ctrl+C                               |
+
+Every run ends with RESULT OK or RESULT FAIL code=N.

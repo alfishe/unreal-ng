@@ -260,8 +260,10 @@ impact today; recorded for completeness.
   and loads it. Annotated listing:
   [`docs/disasm/games/dizzy-x-kid-dr-loader/`](../../disasm/games/dizzy-x-kid-dr-loader/README.md).
   Decision (owner): no ROM change - the protection works as its authors intended.
-- **O2: TIMOFEY on 48K** returns to BASIC in every configuration. It works on Pentagon. Possibly
-  a 128K-only release; check the loader before calling it a defect.
+- **O2: TIMOFEY on 48K** returns to BASIC in every configuration; it works on Pentagon. Closed
+  2026-10-03 as a 128K-only release (owner: incompatible, documented). Evidence from the tape bytes:
+  block 2 contains `LD BC,#7FFD` and `OUT (C),A`, and blocks 2-4 hold 45568 bytes, more than a
+  48K machine has free. Not traced in a debugger.
 - **O3: HACKER_SHURIK on Pentagon, fast loading off** hangs even with a 50-frame freeze. It works
   with fast loading on.
 

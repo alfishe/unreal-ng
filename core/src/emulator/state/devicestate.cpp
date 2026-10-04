@@ -789,6 +789,10 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
         StateNode& zx = dma["zx"];
         zx["mode"] = ngs.zxMode;
         zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["host_memory_bus"] = ngs.zxHostMemoryBus;
+        if (!ngs.zxHostMemoryBus)
+            zx["note"] = "no host memory cycles on this ZX-bus (the Sprinter's ISA ZX-bus adapter passes I/O only): "
+                         "the module never sees a host access, the overlay is never installed";
         zx["read_latch"] = int(ngs.zxReadLatch);
         zx["pending"] = ngs.zxPending;
         zx["pending_address"] = ngs.zxPendingAddress;
@@ -2043,6 +2047,7 @@ StateNode Network(EmulatorContext* context)
     set["atm2ioesp"] = st.settings.atm2IoEsp;
     set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
     set["zifi"] = st.settings.zifi;
+    set["modem_phonebook"] = st.settings.modemPhonebook;   // the numbers a Hayes modem peer dials (ModemPhonebook=)
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
@@ -2123,6 +2128,8 @@ StateNode Network(EmulatorContext* context)
         node["peer_pending"] = uint64_t(c.pending);
         if (c.peerBaud)
             node["peer_baud"] = c.peerBaud;   // an ESP module's own rate: a mismatch with "baud" garbles both sides
+        if (c.modem.isObject())
+            node["modem"] = c.modem;          // a Hayes modem peer: mode, lines, call, settings, counters, journal
     };
 
     // The machine's own serial port when it is no 16550 (ATM Turbo 2+

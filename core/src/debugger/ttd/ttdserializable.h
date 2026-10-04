@@ -96,7 +96,9 @@ enum class PeripheralId : uint8_t
                           // flip-flop, the XT keyboard's wire, time base; the table engine's matrix (ProfiXtKbc::State)
     EthernetNics = 45,    // frame-level network cards in expansion slots (the Sprinter's NE2000): DP8390, packet RAM, EEPROM (network tdd §13)
     SlotSerial1 = 46,     // the UART card in expansion slot 1 (the Sprinter's SprinterESP): its 16550 and peer (netstate::SerialPort)
-    SlotSerial2 = 47,     // the same for slot 2. A second channel per slot (SprinterSerial, network phase SN4) takes new ids
+    SlotSerial2 = 47,     // the same for slot 2
+    SlotSerial1B = 48,    // the second UART of the card in expansion slot 1 (SprinterSerial's COM2; network phase SN4)
+    SlotSerial2B = 49,    // the same for slot 2
     // Future: SAA1099, GS512, etc.
     Count
 };

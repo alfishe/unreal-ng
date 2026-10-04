@@ -34,7 +34,7 @@ flowchart TB
         CELLS["PldCells #C0-#FF<br/>pages, 1FFD, 7FFD, CNF, RGMOD, PORT_Y"]
         DISP["Code dispatch<br/>#10-#9F devices"]
         CFG["PldConfigLoader<br/>bitstream sink, fast start"]
-        REG["SprinterPldConfiguration registry<br/>Standard module (v1);<br/>Game / DooM / Video later"]
+        REG["SprinterPldConfiguration registry<br/>Standard, Game (2026-10-03);<br/>DooM / Video later"]
     end
 
     subgraph MEM["SprinterMemory : Memory"]

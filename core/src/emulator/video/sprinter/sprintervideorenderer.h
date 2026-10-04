@@ -20,8 +20,11 @@ class SprinterVideoRam;
 ///   a16 = (x - 48 - holdX) mod 896   a = a16 / 16   (column 0..55, 16 pixels)
 ///   b8  = (y - 16 - holdY) mod lines b = b8 / 8     (row 0..39, 8 lines)
 ///
-/// with HOLD (code #CB) = v: holdX = (7 - (v & #0F)) x 2, holdY = 7 - (v >> 4)
-/// (MAME sprinter.cpp:850-852; #77 = no shift).
+/// with HOLD (code #CB) = v: holdX = (7 - (v & #0F)) x 2, holdY = (7 - (v >> 4)) x 2
+/// (#77 = no shift). The horizontal step is MAME's (sprinter.cpp:850-851). The vertical step is 2 lines, not
+/// MAME's 1: the PLD preloads the vertical sync counter with (HOLD[7..4], 0) and counts one per line
+/// (SP2_ACEX.TDF:795-815), so a high-nibble unit is 2 lines. RRAID.EXE scrolls with that
+/// (it steps HOLD by 2 lines and puts the second mode page 1 line lower).
 ///
 /// A square (mode bytes m0 m1 m2 at row 1 + 2a + #80 x RGMOD.0, column #300 + 4b;
 /// the Line2 set one row lower) is drawn as (MAME draw_tile / draw_symbol,
@@ -73,11 +76,11 @@ struct SprinterVideoInputs
     };
     FontLatch fontLatch;
 
-    /// HOLD (code #CB) as picture offsets (MAME m_hold)
+    /// HOLD (code #CB) as picture offsets
     void SetHold(uint8_t hold)
     {
         holdX = (7 - static_cast<int32_t>(hold & 0x0F)) * 2;
-        holdY = 7 - static_cast<int32_t>(hold >> 4);
+        holdY = (7 - static_cast<int32_t>(hold >> 4)) * 2;
     }
 };
 
@@ -222,8 +225,36 @@ struct SprinterPicture
     std::string Brief(uint8_t textPage) const;
 };
 
+/// A picture with state that runs in beam order (the Game configuration's grid-offset register,
+/// sprintergamevideo.h): its next pixel depends on every square the beam passed before, the blanking
+/// included. ScreenSprinter runs it on every catch-up whether the frame is drawn or not (turbo
+/// decimation, ScreenHQ off) and closes the frame at every frame start (InitFrame, before the TTD
+/// checkpoint), so the state is the same however the emulator renders - it is machine state (TTD).
+/// Positions are the frame number (EmulatorState::frame_counter) and base T of the frame: pixel = T x 4
+class SprinterBeamVideo
+{
+public:
+    virtual ~SprinterBeamVideo() = default;
+
+    /// The configuration starts at frame `frame`, T `beamT` (the load ended there): the state is its power-up one
+    virtual void Start(uint64_t frame, uint32_t beamT) = 0;
+    /// Run the state up to T `toT` (exclusive) of frame `frame`; a later frame first closes the one the state is
+    /// in. Visible pixels on the way go to `framebuffer` (736 x 288) and `planeB` when they are not null. A `toT`
+    /// behind the state is ignored
+    virtual void Advance(const SprinterVideoInputs& in, uint64_t frame, uint32_t toT, uint32_t* framebuffer,
+                         uint16_t* planeB) = 0;
+    /// Frame `frame` starts: run the state to the last pixel of the frame it is in (when that is an earlier one)
+    virtual void CloseFrame(const SprinterVideoInputs& in, uint64_t frame) = 0;
+    /// Draw frame T [fromT, toT) again from the state of the frame start with the video RAM of now (the batch
+    /// renderer of ScreenHQ off, a TTD repaint); the state does not change
+    virtual void Redraw(const SprinterVideoInputs& in, uint32_t fromT, uint32_t toT, uint32_t* framebuffer,
+                        uint16_t* planeB) const = 0;
+    /// The pen of every visible pixel (736 x 288) of the frame drawn from its start with the video RAM of now
+    virtual void FramePens(const SprinterVideoInputs& in, uint16_t* pens) const = 0;
+};
+
 /// The standard configuration's picture. A configuration module with its own
-/// renderer (a later Game module: per-square scroll, MAME sprinter.cpp:499-545)
+/// renderer (the Game module: per-square grid offset, sprintergamevideo.h)
 /// derives from it and overrides DrawSpan; ScreenSprinter asks the active module
 class SprinterVideoRenderer
 {

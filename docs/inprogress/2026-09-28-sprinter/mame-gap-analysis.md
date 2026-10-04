@@ -146,13 +146,13 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | V4a | Border write timing | `:844` `update_now()` at the port write, the new color from the CPU's I/O access on | `ScreenSprinter::CatchUpToBorderLatch`: the old color up to the I/O cycle's end, where the PLD latches `BORDER` on `/IOWR` rising (`SP2_ACEX.TDF:310-315`), IORQ + 3 T; drawn at IORQ + 4 T to match the PENTAGON picture (owner decision) | **ours better** (MAME draws it from the access; research-zx-mode §7.1) | done |
 | V5 | Flash = frame counter bit 4 | `:409` | `screensprinter.cpp:37` | **equal** | done |
 | V6 | 8 palettes x 256 pens, R, G, B in video RAM columns `#3E0-#3FF` | `:1238-1243`, `:1984` | `core/src/emulator/video/sprinter/sprintervideoram.h:42-65` | **equal** | done |
-| V7 | HOLD (picture shift, code `#CB`) | `:850-851` | `portdecoder_sprinter.cpp:822-825` (power-on `#77` = MAME's {0, 0}) | **equal** | done |
+| V7 | HOLD (picture shift, code `#CB`) | `:850-851` | `portdecoder_sprinter.cpp:822-825` (power-on `#77` = MAME's {0, 0}) | x **equal**; y **differs**: 2 lines per high-nibble unit (PLD `SP2_ACEX.TDF:795-815`), MAME 1 | done 2026-10-03 (RRAID.EXE scrolls with it) |
 | V8 | Mode page (RGMOD bit 0) | `:858-861`, `:549` | `portdecoder_sprinter.cpp:830-835` | **equal** | done |
 | V9 | Changes during a frame | `update_now` catch-up, but pens become colors at frame end: the BIOS fade in frame 60's INT colors MAME's whole frame | each pixel gets the palette of its moment (roadmap §7, ACC-1) | **ours better** | done |
 | V12 | When a written byte reaches the picture | `update_now` before the store: the byte shows from the write's moment, pixel bytes and attributes alike | the byte lands 1 T before the write cycle's end (the PLD's write slot); inside a text / Spectrum square the attribute changes at once, the font byte only from the next square (it is latched at the square's start, `VIDEO2.TDF` `LD_PIC`; [tdd-video.md](tdd-video.md) §3) | **ours better** | done (2026-10-03) |
-| V10 | "Game" configuration renderer (per-square scroll in mode byte 3; "Thunder in the Deep") | `screen_update_game`, `:499-545`; recognized by the head hash `#3861CFA4` (`:1156-1163`), cell `#EE = #41` | the hash is known, no module: Standard runs with a warning (`core/src/emulator/ports/models/sprinter/sprinterpldconfiguration.h:32-36`) | **missing** | Deferred (after v1) |
-| V11 | Game renderer's scroll look-back | `lookback_scroll` (`:555-568`) never changes the square it reads (§3 item 8) | - | **MAME wrong** | Deferred |
-| V12 | DooM and Video configurations | none | none | **both missing** | Deferred |
+| V10 | "Game" configuration (per-square grid offset in mode byte 3; "Thunder in the Deep", GAME_00, LDConf's GC.BIN) | `screen_update_game`, `:499-545`; recognized by the head hash `#3861CFA4` (`:1156-1163`), cell `#EE = #41` | the Game module (`sprinterpldgame.h`): selected by the full hash `#C0FA3055` (or MAME's head hash), cell `#EE = #41` from the bitstream, the picture with the grid-offset register in beam order (`sprintergamevideo.h`); everything else Standard ([game-configuration.md](game-configuration.md)) | **equal** (picture: 1.0 % of MAME's frame differs, the rule differences of V11) | done (2026-10-03, branch `sprinter-pld-game`) |
+| V11 | Game renderer's grid offset across squares and lines | `lookback_scroll` (`:555-568`) never changes the square it reads (§3 item 8): every line starts with offset 0; an offset square switches the offset in its middle at the physical square boundary | one register in beam order: square 55 sets the next line's square 0, a square's offset acts from the next square on (the author's `RELOAD.ASZ`) | **ours better** | done (2026-10-03) |
+| V12 | DooM and Video configurations | none | none: they exist only as Sprinter 97 (FLEX EPF10K10) bitstreams, no Sp2000 build exists, and the Sp2000 merged their functions into Standard (DooM's line stretching = the accelerator's `#C7` scale register; Video's disk-to-memory logic = `HDD_FLIP` / `HDDR`); the Sp2000 DOOM demo and the 2026 video player run on Standard ([pld-configurations.md](pld-configurations.md) §6) | **not needed** | not planned (2026-10-03) |
 
 ### 2.6 Accelerator (unreal-ng: S5 worktree)
 
@@ -296,7 +296,8 @@ Each item names what unreal-ng does instead and the evidence.
    by choice).
 8. **Game configuration scroll look-back.** `lookback_scroll` (`:555-568`) loops over `b` and `a` but reads
    `as_mode(h, v)` with `h` and `v` fixed at the start values, so it never looks at another square. The driver
-   itself says the Game rendering is "not fully discovered" (`:45`). A future Game module must not copy it.
+   itself says the Game rendering is "not fully discovered" (`:45`). The Game module does not copy it: its offset
+   is one register in beam order ([game-configuration.md](game-configuration.md) §3).
 9. **Accelerator logic function.** Only the exact opcodes `#A6`, `#AE`, `#B6`, `#BE` set it, and any other
    opcode leaves it (`:938-951`); in the PLD `#86` / `#8E` / `#96` alias AND / XOR / OR and every other fetch
    resets it to plain (`sprinteraccelerator.h:47-50`, S5 worktree). MAME also has no INT-suspend (`ACC_BLK`).
@@ -328,7 +329,7 @@ Effort on the repository's scale: S < 1 week, M 1-2 weeks, L 2-4 weeks.
 | 7 | CHD hard-disk images | H5 | M | **new** (shared media work) | today the pack's `sp_hdd_sys.chd` must go through `chdman extractraw` first |
 | 8 | Extended joystick pads (two), PIO and SIO B DTR wiring | I10, C13 | S-M | **new "input extras"** | the select counters reset at each frame INT (`:1738`) |
 | 9 | Serial mouse variants (Logitech 3-button, wheel); ~~mouse baud from CTC ZC0, CTC trigger inputs~~ (done 2026-10-02, branch `sprinter-ctc-trg`) | I7, C11 | S | **new "input extras"** | |
-| 10 | Game configuration module (renderer with per-square scroll) | V10 | L | **Deferred** (after v1) | needs `GAME_00.ACX` analysis; do not copy `lookback_scroll` (§3 item 8) |
+| 10 | Game configuration module (renderer with per-square grid offset) | V10 | L | **done** (2026-10-03) | [game-configuration.md](game-configuration.md); `lookback_scroll` not copied (§3 item 8) |
 | 11 | GUI: video RAM viewer, front-panel LEDs | D5, D6 | S | **S7** (Qt docks) | |
 | 12 | Spectrum snapshots on the Sprinter | D2 | S-M | **new** (low) | first check whether MAME's snapshots work (capture 5.10) |
 | 13 | PC ISA cards (AdLib and the like) | Z4 | L | **new** (low) | I/O only, as in MAME |
@@ -363,7 +364,7 @@ when `ata2:0` holds a CD.
 | 5.6 | H6, H7 | `SprinterCD.iso` on the primary slave with BIOS 3.06: the ATAPI packet commands, whether the BIOS boots or mounts it, CD audio start | port trace of codes `#20-#29`; `-wavwrite` for the audio |
 | 5.7 | F8 | a floppy inserted into A after DSS 1.62 reached `B:\>`, then `DIR A:` | Lua `image:load()` at a frame after the prompt; screen and FDC trace |
 | 5.8 | A2, A6 | accelerator with the aliased opcodes (`#86` after `LD C,C`) and the time of a 256-byte fill at 21 MHz | extends the `acctest.exe` capture of the S5 worktree (`mame-acctest-306.png`) |
-| 5.9 | V10 | the Game bitstream (`GAME_00.ACX`) loaded through `#2E`: the head hash, cell `#EE`, a few frames of its renderer | needs a program that loads it; frames are a reference, not a truth (§3 item 8) |
+| 5.9 | V10 | the Game bitstream (`GAME_00.ACX`) loaded through `#2E`: the head hash, cell `#EE`, a few frames of its renderer | **done 2026-10-03**: a copy of the disk whose `SYSTEM.BAT` starts GAME_00 (MAME's natural keyboard cannot type `_` in Flex Navigator), frames and the video RAM in `testdata/machines/sprinter/reference/game/` |
 | 5.10 | D2 | `-snapshot` of a 128K `.sna` in MAME's Sprinter: does it run | one run; decides whether item 12 of §4 is worth it |
 | 5.11 | P10 | reads of code `#29` (and the device register `#26`) with four units under BIOS 3.06 | port trace with `SPC_CODES` |
 

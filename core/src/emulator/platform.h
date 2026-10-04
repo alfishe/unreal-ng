@@ -744,6 +744,9 @@ struct CONFIG
 		/// (4 sockets, NonOS AT 1.7.4), 2 = ESP8266 ESP-AT 2.2.1, 3 = ESP8266 ESP-AT 2.2.2. The SprinterESP card's
 		/// ESP-12F takes an ESP8266 value from here, else 2.2.2 (the Sprinter ESP Network Kit's firmware)
 		uint8_t espChip;
+		/// The Hayes modem's phone book (ComPortSpec MODEM, any serial port): "<number>=<host>[:<port>],..." (','
+		/// separates: ';' starts an INI comment); a number dialed with ATDT is looked up by its digits
+		char modemPhonebook[512];
 	} network;
 
 	struct
@@ -883,6 +886,8 @@ struct CONFIG
 	uint8_t profi_cpm;                    // [PROFI] CpmSwitch: the v5 front-panel CP/M switch at power-on
 	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
 	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)
+	uint8_t profi_ext_ports;              // [PROFI] ExtPorts: 0 cpm (the extended port map with CP/M and ROM14, the 5.0
+	                                      // decoder PROM), 1 sys (also with the DOS latch on and ROM14 = 0, as Karabas Pro)
 	uint8_t profi_keyboard;               // [PROFI] Keyboard: a ProfiKeyboard (ports/models/profiboard.h), 0 = the board's own
 	char profi_xt_rom_path[FILENAME_MAX]; // [ROM] PROFIXT: the PROFI-XT controller firmware instead of rom/profixt/profi-xt-v1.27.rom
 	char kay_rom_path[FILENAME_MAX];

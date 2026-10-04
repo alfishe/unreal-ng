@@ -1,6 +1,8 @@
-# Recipe: Sprinter networking - Ethernet (NE2000, RTL8019AS kit) and Wi-Fi (SprinterESP, ESP kit)
+# Recipe: Sprinter networking - Ethernet (NE2000, RTL8019AS kit; 3Com 3C509B, 3C509B kit) and Wi-Fi (SprinterESP, ESP kit)
 
-The Wi-Fi card has its own part: [SprinterESP Wi-Fi with the Sprinter ESP Network Kit](#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit).
+The Wi-Fi card has its own part: [SprinterESP Wi-Fi with the Sprinter ESP Network Kit](#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit);
+the 3Com card too: [3Com 3C509B with the Sprinter 3C509B Network Kit](#3com-3c509b-with-the-sprinter-3c509b-network-kit);
+the ISA Hayes modem and the SprinterSerial card theirs: [ISA Hayes modem and SprinterSerial](#isa-hayes-modem-and-sprinterserial).
 
 The `SPRINTER` model has an NE2000-class Ethernet card fitted by default: a Realtek RTL8019AS at ISA I/O `#300`, IRQ 3,
 in ISA slot 2 (page `#D6`; owner decision 2026-10-02). It is cabled to the virtual network through the **Ethernet
@@ -32,11 +34,11 @@ The kit numbers the slots 0 / 1: the emulator's slot 2 is the kit's `RTL_HW=1/#3
 
 ## Prepare a disk with the kit
 
-> **BIOS 3.07 BETA 1 (the default) cannot run the kit from the floppy on this disk.** Its floppy driver returns
+> **BIOS 3.07 BETA 1 (selectable; the default until 2026-10-03) cannot run the kit from the floppy on this disk.** Its floppy driver returns
 > with IY changed, and DSS 1.71.57 (the MAME pack's system disk) then fails every program on a floppy ("Invalid
 > EXE file" in Flex Navigator, "Bad command or file name" at the prompt). Copying does not help inside the
 > machine: `copy b:\netcfg.exe c:\` on 3.07 BETA 1 leaves a 0-byte file on C: (checked 2026-10-03; the same copy on
-> 3.06 Hotfix 2 is byte-identical). So either select BIOS 3.06 Hotfix 2 (as below), or put the kit on C: from the
+> 3.06 Hotfix 2 is byte-identical). So either keep the default BIOS 3.06 Hotfix 2 (as below), or put the kit on C: from the
 > host before the boot (`mcopy -i scratch/sp-net.img@@32256 $K/*.EXE $K/*.DLL scratch/NET.CFG ::`) and run it from
 > C:. The firmware side and the upstream note: [bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md) §5.2.
 
@@ -197,6 +199,9 @@ curl -s -X POST $B/$ID/network/config -H 'Content-Type: application/json' -d '{"
 # refused while recording ("a TTD recording is running ..."); afterwards the card is fitted again (UART registers kept)
 ```
 
+Interrupts: the card's INTR reaches PIO port B bit 0 / 1 (ISA I4); BC-Term 1.11 receives the ESP through IM 2 -
+[sprinter-isa.md](sprinter-isa.md#interrupt-lines-verified-2026-10-03).
+
 CLI: `network` (slot rows), `network set esp_chip=esp8266-at221 isa1_peer=loopback`, `isa`, `isa journal 8`. Lua /
 Python: `network_state().slots[1].esp` / `network_state()["slots"][0]["esp"]`, `network_configure{isa1_peer="at"}` /
 `network_configure(isa1_peer="at")`. MCP: `inspect_state` aspect `network` prints one line per slot (UART baud, MCR,
@@ -206,3 +211,164 @@ slot line, "Slot 1 SprinterESP: its 16550 is wired to", the chip box with the 2.
 TTD: blob 46 (`SlotSerial1`; slot 2: 47) holds the 16550 and the ESP module (AT state, sockets, received bytes by
 journal reference); a replay without the host reproduces the session byte for byte
 (`SprinterEspKit_Test.TtdReplaysTheSessionWithoutTheHost`).
+
+## 3Com 3C509B with the Sprinter 3C509B Network Kit
+
+The 3Com EtherLink III 3C509B (network phase SN5) is fitted on request in place of the NE2000: `[ISA] Slot2=EL3C509B`
+(`Slot2Chip=TPO` default, or `TP`; `Slot2Base` is the EEPROM's base, `0x200..0x3E0` in steps of `0x10`), create option
+`"sprinter": {"isa_slot2": "el3c509b"}`. It is on the same Ethernet gateway (DHCP `10.0.2.15`, router `10.0.2.2`, DNS
+`10.0.2.3`). Software finds it through the **ID port** (`#110`, any `#1x0`): the 255-byte ID sequence, the EEPROM read
+bit by bit, then activation at `#300` - before that nothing answers at `#300`. The kit (release 0.1.2, fixture
+`testdata/machines/sprinter/network/el3c509b-0.1.2/`) checks the product ID (`#9550` / `#9050`), the manufacturer ID,
+a unicast MAC and both EEPROM checksums, enables the 10BASE-T link beat and waits for the link (48 ms), and polls.
+
+```bash
+# The kit on a floppy with a NET.CFG (HW=AUTO probes both slots at ID port #110); the system disk as above
+K=testdata/machines/sprinter/network/el3c509b-0.1.2
+mformat -C -i scratch/el3kit.img -f 1440 ::
+for f in $K/*.EXE $K/*.DLL; do mcopy -i scratch/el3kit.img "$f" ::; done
+printf 'NET=509B\r\nHW=AUTO\r\nIDPORT=#110\r\nMAC=\r\nIP=DHCP\r\nNTP=pool.ntp.org\r\nTZ=+0\r\n' > scratch/NET.CFG
+mcopy -i scratch/el3kit.img scratch/NET.CFG ::
+
+B=http://localhost:8090/api/v1/emulator            # UNREAL_WEBAPI_PORT moves the port
+ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' \
+       -d '{"model":"SPRINTER","sprinter":{"bios":"3.06","fast_start":true,"isa_slot2":"el3c509b"}}' | jq -r .id)
+curl -s -X POST $B/$ID/pause
+curl -s -X POST $B/$ID/media/ide0.master/insert -H 'Content-Type: application/json' \
+     -d "{\"path\":\"$PWD/scratch/sp-net.img\",\"access\":\"session\"}"
+curl -s -X POST $B/$ID/media/fdd.b/insert -H 'Content-Type: application/json' -d "{\"path\":\"$PWD/scratch/el3kit.img\"}"
+curl -s -X POST $B/$ID/reset
+curl -s -X POST $B/$ID/ttd/start -H 'Content-Type: application/json' -d '{"history_limit_frames":30000}'   # record first
+curl -s -X POST $B/$ID/run_frames -H 'Content-Type: application/json' -d '{"count":1500}'                 # DSS: C:\>
+curl -s -X POST $B/$ID/resume
+
+type() { curl -s -X POST $B/$ID/keyboard/type -H 'Content-Type: application/json' -d "{\"text\":\"$1\\n\"}"; }
+type 'B:'; type 'NETCFG -i'                 # [C2] ENV COMMIT, RESULT OK
+type 'CLS'; type 'IFUP'                     # [I0] LINK UP, [I1] DHCP OFFER, [I2] DHCP ACK IP=10.0.2.15
+type 'CLS'; type 'PING -n 2 10.0.2.2'       # Reply from 10.0.2.2: bytes=32 time=9ms TTL=64
+type 'CLS'; type 'NSLOOKUP example.com'     # the host's resolver: a real address
+type 'CLS'; type 'WGET http://127.0.0.1:18317/f.bin -o C:\\F.BIN -y'   # python3 -m http.server 18317 on the host
+curl -s $B/$ID/state/sprinter/text | jq -r '.lines[].text' | grep -v '^ *$'
+```
+
+Checked live (2026-10-04, own instance on port 8317): `IFUP` -> lease `10.0.2.15`; `PING 10.0.2.2` -> 2 / 2 replies,
+9 ms; `NSLOOKUP example.com` -> a real address; `WGET` -> "Done. 20000 bytes received." from the host's HTTP server.
+`EL3INFO -v` prints the product (`9550`), I/O (`0300`), MAC, IRQ and both checksums. BIOS 3.06 HF2 does not scroll
+the last line: `CLS` between programs. The kit aligns DHCP waits to the DSS clock's next second: a frozen RTC (a fixed
+time) makes `IFUP` end with `RESULT FAIL code=4`.
+
+What is plugged and what it is doing:
+
+```bash
+curl -s $B/$ID/state/isa | jq '{summary, id_port: .slots[1].resources.id_port, z80: .slots[1].z80_access}'
+# summary: "slot 1: empty; slot 2: el3c509b I/O #300-#30F id_port #100-#1F0 IRQ 3"
+# id_port: {"io":"#100-#1F0 step #10","z80":"window 3 page #D6, #9FBD A15-A14 = 0: CPU #C100-#C1F0",
+#           "note":"writes to any of them watched (the ID sequence); ID_WAIT at #110, sequence 0/255"}
+curl -s $B/$ID/state/network | jq '.slots[1] | {summary, ids, link_state, window, fifo, counters}'
+# summary: "3C509B-TPO, ID port #110 ID_WAIT, active at #300, window 0, status #0000, RX off filter #5, TX off;
+#           TX FIFO 0 packet(s), 3068 free; RX FIFO 0 packet(s), 5116 free; link pass"
+curl -s $B/$ID/state/network | jq '.slots[1] | {registers, eeprom: (.eeprom | {product_id, checksums}), events}'
+curl -s "$B/$ID/state/isa/journal?last=3" | jq -c '.entries[] | {pc, access, cpu_address, what, value}'
+# {"pc":"#5441","access":"write","cpu_address":"#C30F","what":"command","value":"#08"}  (registers named by window)
+curl -s "$B/$ID/network/frames?link=isa2.eth&last=3" | jq -r '.frames[] | "\(.index) \(.direction) \(.summary)"'
+```
+
+CLI: `network`, `isa`, `isa journal 8`, `network frames isa2.eth`. Lua / Python: `network_state().slots[2]` /
+`network_state()["slots"][1]`, `isa_state()`. MCP: `inspect_state` aspect `network` prints the card's one-line summary,
+`isa` its ID port. Qt: Tools > Network - the slot line with the ID port, window, FIFOs and link.
+
+TTD: the card's whole state (ID sequence state, windows, both FIFOs, TX status stack, statistics, the EEPROM) rides in
+blob 45 `EthernetNics` (version 2: per card its kind and a length-prefixed state); a replay without the host
+reproduces the session byte for byte (`SprinterEl3Kit_Test.TtdReplaysTheFetchWithoutTheHost`).
+
+## ISA Hayes modem and SprinterSerial
+
+What the Sprinter's ISA slots were made for in 2000 ("the Sprinter needs a Hayes modem, which has an ISA bus"):
+a period internal modem, driven by **Black Cat Terminal (BC-Term) 1.11** (`C:\MODEM\BCTERM.EXE` on the MAME pack's
+system disk). There is no telephone network: the emulated modem dials a **host TCP endpoint** through the virtual
+network (a telnet BBS, a test server) - by name / address (`ATDT bbs.example.org:2323`, port 23 by default) or by a
+number from the phone book (`[NETWORK] ModemPhonebook=5551234=bbs.example.org:23`, runtime `modem_phonebook`).
+The modem itself is the shared Hayes peer `MODEM` (every machine's serial port takes it:
+[peripherals/network.md](../peripherals/network.md#the-hayes-modem)). Design: network tdd §10 and §18 SN4.
+
+| Card | `[ISA] SlotN=` | What it is | Keys |
+|:--|:--|:--|:--|
+| ISA modem | `MODEM` | 16550A at 1.8432 MHz behind an internal Hayes modem; PC decode (A9-A3 with AEN, mirrors every `#400`); the IRQ pin is driven only while MCR OUT2 is set (PC convention) | `SlotNBase=0x3F8` (`0x2F8`, `0x3E8`, `0x2E8`), `SlotNIrq=4` (2, 3, 5, 7), `SlotNPeer=MODEM` (default; `MODEM,<guest port>` also answers calls) |
+| SprinterSerial rev 1.1.1 | `DUAL16552` | PC16552D: COM1 `#3F8` (USB, CH340), COM2 `#2F8` (RS-232 DB-9); A8 picks the channel; AEN and A19-A16 not decoded; no OUT2 gating | `SlotNPeer=` (COM1, default `NONE`), `SlotNPeerB=` (COM2), `SlotNIrq=3` (J5: 3, 2, 0 = open), `SlotNIrqB=0` (J6: 4, 2, 0), `SlotNDecode=FULL` (`PARTIAL`: D3 left out) |
+
+Create option `"sprinter":{"isa_slot1":"modem"}` (or `"dual16552"`). On the Sprinter every IRQ pin of a slot is one
+line to PIO port B (slot 1 PB0, slot 2 PB1): the IRQ number is what the card's jumpers say, not a separate line.
+SprinterSerial with both jumpers fitted lets the two INTR outputs fight on that line (`irq_contention` in the slot
+row); its COM1 modem inputs are driven by nothing (the CH340's pins are inputs too) and read inactive, COM2 has CTS
+only - BC-Term waits for CTS before each byte, so it sends on COM2 with a modem that drives CTS, not on COM1 (network
+open question Q12).
+
+### WebAPI (verified 2026-10-04: dial out, data both ways, +++ / ATH, an incoming call)
+
+A BBS stub on the host for the example (greets, echoes, logs what it gets): `python3 bbs.py 23923` with
+```python
+import socket, threading
+def serve(c):
+    c.sendall(b"Welcome to the Unreal BBS\r\n")
+    while (d := c.recv(4096)): c.sendall(d)
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", 23923)); s.listen()
+while True: threading.Thread(target=serve, args=(s.accept()[0],), daemon=True).start()
+```
+
+```bash
+B=http://localhost:8090/api/v1/emulator            # UNREAL_WEBAPI_PORT / UNREAL_MCP_PORT / UNREAL_CLI_PORT move the ports
+ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' \
+       -d '{"model":"SPRINTER","sprinter":{"bios":"3.06","fast_start":true,"isa_slot1":"modem"}}' | jq -r .id)
+curl -s -X POST $B/$ID/pause
+# the phone book; modem,2323 also answers calls - Forward= brings host clients of 127.0.0.1:23924 to guest port 2323
+curl -s -X POST $B/$ID/network/config -H 'Content-Type: application/json' \
+     -d '{"modem_phonebook":"5551234=127.0.0.1:23923","isa1_peer":"modem,2323","forwards":"tcp:23924:2323"}'
+curl -s -X POST $B/$ID/media/ide0.master/insert -H 'Content-Type: application/json' \
+     -d "{\"path\":\"$PWD/scratch/sp-net.img\",\"access\":\"session\"}"      # the system disk, SYSTEM.BAT without fn (above)
+curl -s -X POST $B/$ID/reset
+curl -s -X POST $B/$ID/run_frames -d '{"count":1500}'        # DSS at C:\>
+curl -s -X POST $B/$ID/ttd/start                              # record the session (a replay needs no host)
+curl -s -X POST $B/$ID/resume
+type() { curl -s -X POST $B/$ID/keyboard/type -H 'Content-Type: application/json' -d "{\"text\":\"$1\",\"delay_frames\":6}"; }
+enter() { curl -s -X POST $B/$ID/keyboard/tap -H 'Content-Type: application/json' -d '{"key":"enter","frames":6}'; }
+type 'C:\\MODEM\\BCTERM.EXE'; enter                    # BC-Term: finds the modem at #3F8, sends ATZ -> OK
+type 'ATDT5551234'; enter                                # CONNECT 57600, the BBS's banner, "Working mode: TERMINAL"
+type 'hello from the sprinter'                           # reaches the BBS byte for byte, its echo is on the screen
+sleep 2; type '+++'; sleep 2                              # a second of silence around it: OK (the call held)
+type 'ATH'; enter                                        # OK, DCD off, "Working mode: COMMANDS"
+curl -s $B/$ID/state/sprinter/text | jq -r '.lines[].text' | grep -v '^[ .]*$'
+curl -s $B/$ID/state/network | jq -c '.slots[0].modem | {mode, carrier, lines, call, last_result, counters}'
+# {"mode":"command","carrier":false,"lines":{"cts":true,"dcd":false,"dsr":true,"dtr_from_zx":true,"ri":false},
+#  "call":{"dialed":"5551234","link":"idle","remote":"127.0.0.1:23923",...},"last_result":"OK",
+#  "counters":{"dials":1,"connects":1,"escapes":1,"bytes_to_line":26,"bytes_from_line":53,...}}
+curl -s $B/$ID/state/network | jq -c '[.slots[0].modem.journal[] | {command, result}]'
+# [{"command":"ATZ","result":"OK"},{"command":"ATDT5551234","result":"CONNECT 57600"},{"command":"","result":"OK"},
+#  {"command":"ATH","result":"OK"}]
+curl -s $B/$ID/state/isa | jq -r .irq_summary
+# slot 1 IRQ low (driven by modem) -> PB0: interrupts the CPU; 109 requests, 108 acknowledged; ...
+
+# An incoming call: a host client of 127.0.0.1:23924 rings the modem
+(printf 'caller says hi\r\n'; sleep 20) | nc 127.0.0.1 23924 &
+# BC-Term shows RING (every 6 s; modem.lines.ri while it rings, modem.call.ringing); then
+type 'ATA'; enter                                        # CONNECT 57600, then "caller says hi"; typed text reaches nc
+# the caller hangs up: NO CARRIER, DCD off
+curl -s -X POST $B/$ID/ttd/stop
+```
+
+Answers checked live: `ATZ` -> `OK`; `ATDT5551234` -> `CONNECT 57600` + the banner; the BBS logged `hello from the
+sprinter`; `+++` -> `OK`; `ATH` -> `OK`; the call from `nc` -> `RING`, `ATA` -> `CONNECT 57600`, data both ways, its
+hang-up -> `NO CARRIER`. Type with `delay_frames` 6 and hold ENTER 6 frames: BC-Term reads the AT keyboard itself and
+loses a short ENTER tap; at the default 2-frame pace it once switched its keyboard to Russian mid-word (`Lock Rus`).
+
+CLI: `network` (the slot row with `modem:` - mode, lines, call, settings, counters, journal), `network set
+isa1_peer=modem,2323 modem_phonebook=5551234=host:23`, `isa`. Lua: `network_state().slots[1].modem`,
+`network_configure{isa1_peer="modem,2323"}` (refused while TTD records; both run live). Python: the same report as
+`network_state()["slots"][0]["modem"]` (not run live: the build used had Python automation off).
+MCP: `inspect_state` aspect `network` prints `[network] ISA slot 1 (J6), page #D4: modem 16550A at #3F8; line #3F8,
+UART 57600 baud MCR #0B, modem command 5551234, DCD off, last OK`; changes through `invoke_api`. Qt: Tools > Network -
+the slot line shows the call, "Slot 1 ISA modem: its 16550A is wired to" (the line editor has "Hayes modem" with the
+guest port it answers), SprinterSerial gets a COM2 editor, the virtual network box a "Modem phone book" field.
+
+TTD: blob 46 / 47 (slot 1 / 2, the first UART) holds the 16550 and the modem (command state, S-registers, the call's
+link and its received bytes by journal reference); SprinterSerial's COM2 is blob 48 / 49. A replay without any host
+reproduces the session byte for byte (`SprinterBcTermModem_Test`, env `UNREAL_SPRINTER_HDD`).

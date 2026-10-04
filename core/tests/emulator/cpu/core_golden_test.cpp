@@ -73,7 +73,10 @@ const Golden kGolden[] = {
     // row; the earlier ATM3 rows counted fewer because the 14 MHz switch shortened the run
     // ATM3 re-recorded 2026-10-02 (mouse-manager M3): the mouse ports read the AVR's PS/2 mouse registers
     // (found: X = 0, Y = 1) instead of the Kempston interface's power-on 31 / 85; T-states unchanged
-    {"ATM3", nullptr, 0x2AEFD725F44D1D1Dull, 0x55475075DE936CBFull, 10483200ull},
+    // ATM3 re-recorded 2026-10-04: the frozen RTC (SetFixedTime) now shows the instant's UTC wall time on every
+    // host instead of the host's local time; BaseConf copies the clock into RAM, so only the RAM hash moved (the
+    // old row held 07:00:30, recorded on a UTC-5 machine; Linux CI in UTC got 12:00:30)
+    {"ATM3", nullptr, 0x30563EB94B7385D6ull, 0x55475075DE936CBFull, 10483200ull},
     // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 

@@ -9,10 +9,11 @@
 
 using namespace sprinterisa;
 
-TEST(IsaSlotConfig_Test, Default_Slot1EmptySlot2Ne2000)
+TEST(IsaSlotConfig_Test, Default_Slot1ZxBusAdapterSlot2Ne2000)
 {
     const IsaConfig c = DefaultConfig();
-    EXPECT_EQ(static_cast<CardKind>(c.slot[0].kind), CardKind::None) << "slot 1: the ZX-bus adapter waits for ISA I2";
+    EXPECT_EQ(static_cast<CardKind>(c.slot[0].kind), CardKind::ZxBus) << "owner decision Q2: the adapter with the NeoGS";
+    EXPECT_TRUE(KindAvailable(CardKind::ZxBus)) << "ISA phase I2";
     EXPECT_EQ(static_cast<CardKind>(c.slot[1].kind), CardKind::Ne2000) << "owner decision 2026-10-02 (network Q1 = B)";
     EXPECT_EQ(static_cast<Ne2000Chip>(c.slot[1].chip), Ne2000Chip::Rtl8019as);
     EXPECT_EQ(c.slot[1].base, 0x300);
@@ -75,4 +76,35 @@ TEST(IsaSlotConfig_Test, Mac_AutoAndExplicit)
     EXPECT_FALSE(ParseMac("01:00:5e:00:00:01", slot)) << "a group address is no station address";
     EXPECT_FALSE(ParseMac("00:11:22:33:44", slot));
     EXPECT_FALSE(ParseMac("00:11:22:33:44:55:66", slot));
+}
+
+// Network phase SN5: the 3C509B in a slot - its two verified boards, a base in steps of #10, the kind is built
+TEST(IsaSlotConfig_Test, El3c509b_ChipBaseAndAvailability)
+{
+    El3Chip chip = El3Chip::Tp;
+    ASSERT_TRUE(ParseEl3Chip("tpo", chip));
+    EXPECT_EQ(chip, El3Chip::Tpo);
+    ASSERT_TRUE(ParseEl3Chip("3C509B-TP", chip));
+    EXPECT_EQ(chip, El3Chip::Tp);
+    EXPECT_FALSE(ParseEl3Chip("COMBO", chip)) << "only the boards the kit verified";
+    EXPECT_STREQ(El3ChipName(El3Chip::Tpo), "3C509B-TPO");
+
+    uint16_t base = 0;
+    ASSERT_TRUE(ParseSlotBase("#310", CardKind::El3c509b, base)) << "the 3C509B's base: #200 + 16 x n";
+    EXPECT_EQ(base, 0x310);
+    EXPECT_FALSE(ParseSlotBase("#310", CardKind::Ne2000, base)) << "the NE2000's: steps of #20";
+    EXPECT_FALSE(ParseSlotBase("#3F0", CardKind::El3c509b, base)) << "#3F0 would be the EISA code 1Fh";
+    EXPECT_FALSE(ParseSlotBase("#308", CardKind::El3c509b, base));
+
+    SlotConfig slot{};
+    slot.kind = static_cast<uint8_t>(CardKind::El3c509b);
+    slot.chip = static_cast<uint8_t>(El3Chip::Tp);
+    EXPECT_EQ(SlotChipName(slot), "3C509B-TP");
+    slot.kind = static_cast<uint8_t>(CardKind::Ne2000);
+    slot.chip = static_cast<uint8_t>(Ne2000Chip::Um9003);
+    EXPECT_EQ(SlotChipName(slot), "UM9003");
+
+    std::string why;
+    EXPECT_TRUE(KindAvailable(CardKind::El3c509b, &why)) << why;
+    EXPECT_TRUE(KindAvailable(CardKind::Modem, &why)) << "network phase SN4";
 }

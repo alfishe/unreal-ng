@@ -447,7 +447,8 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     for (const auto& [id, s] : _sockets)
     {
         if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo || s.guest == keep.zifi ||
-                        s.guest == keep.ethernet || s.guest == keep.slotUart[0] || s.guest == keep.slotUart[1]))
+                        s.guest == keep.ethernet || s.guest == keep.slotUart[0] || s.guest == keep.slotUart[1] ||
+                        s.guest == keep.slotUartB[0] || s.guest == keep.slotUartB[1]))
             kept[id] = s;
     }
     if (_host)
@@ -465,6 +466,16 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     }
     _sockets.swap(kept);
     _listeners.clear();
+    // A kept guest server (a modem that answers calls, an ESP's server) keeps listening: its host listener is new
+    std::vector<std::pair<uint16_t, uint16_t>> relisten;
+    for (auto& [id, s] : _sockets)
+    {
+        if (s.listenPort && s.guest)
+        {
+            relisten.emplace_back(id, s.listenPort);
+            s.listenPort = 0;
+        }
+    }
     // Answers still queued for the kept sockets stay; the others are gone
     std::deque<Deferred> deferred;
     for (Deferred& d : _deferred)
@@ -478,6 +489,8 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
         _nextId = 1;   // ids of kept sockets must not be handed out again
     _counters = Counters();
     _activity.clear();
+    for (const auto& [id, port] : relisten)
+        Listen(id, port);
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +716,8 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
                      : s.guest == serial.ethernet ? 6
                      : s.guest == serial.slotUart[0] ? 7
                      : s.guest == serial.slotUart[1] ? 8
+                     : s.guest == serial.slotUartB[0] ? 9
+                     : s.guest == serial.slotUartB[1] ? 10
                                                  : 1;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
@@ -799,6 +814,8 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
                   : o.hasGuest == 6 ? serial.ethernet
                   : o.hasGuest == 7 ? serial.slotUart[0]
                   : o.hasGuest == 8 ? serial.slotUart[1]
+                  : o.hasGuest == 9 ? serial.slotUartB[0]
+                  : o.hasGuest == 10 ? serial.slotUartB[1]
                   : o.hasGuest      ? guest
                                     : nullptr;
         s.cookie = o.cookie;

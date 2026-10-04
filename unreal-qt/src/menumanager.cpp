@@ -926,6 +926,16 @@ void MenuManager::createMachineMenu()
         _hostKeyboardGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, action] { emit hostKeyboardRouteRequested(action->data().toString()); });
     }
+#ifdef Q_OS_MACOS
+    // The Command key stays with the host unless asked for (QSettings Keyboard/MacCommandKey)
+    _hostKeyboardMenu->addSeparator();
+    _commandKeyToGuestAction = _hostKeyboardMenu->addAction(tr("Pass &Command as Win Key"));
+    _commandKeyToGuestAction->setStatusTip(
+        tr("Send the Command key to the machine as the PC Win (GUI) key; off, Command is a host key and "
+           "Command shortcuts send nothing to the machine"));
+    _commandKeyToGuestAction->setCheckable(true);
+    connect(_commandKeyToGuestAction, &QAction::triggered, this, &MenuManager::commandKeyToGuestToggled);
+#endif
     connect(_machineMenu, &QMenu::aboutToShow, this, &MenuManager::machineMenuAboutToShow);
 }
 
@@ -946,6 +956,12 @@ void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effe
         _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
     else
         _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1: %2)").arg(effective.toLower(), controller));
+}
+
+void MenuManager::setCommandKeyToGuestChecked(bool checked)
+{
+    if (_commandKeyToGuestAction)
+        _commandKeyToGuestAction->setChecked(checked);
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)

@@ -785,6 +785,30 @@ TEST_F(ProfiPortDecoder_Test, DffdDecodeVariants)
     _context->config.profi_dffd_decode = 0;
 }
 
+/// software-zoo.md: [PROFI] ExtPorts=sys opens the extended map while the SYS ROM runs (DOS latch on, ROM14 = 0), as
+/// Karabas Pro decodes it (ROM BIOS Plus and PQ-DOS need it); the default keeps the 5.0 PROM's CP/M + ROM14 rule
+TEST_F(ProfiPortDecoder_Test, ExtPortsInTheSysRomVariant)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+    Out7FFD(0x00);   // ROM14 = 0
+    OutDFFD(0x80);   // CP/M off (hi-res, as ROM BIOS Plus runs its board test)
+    State().flags |= CF_TRDOS | CF_DOSPORTS;   // the SYS ROM: DOS latch on
+
+    _context->config.profi_ext_ports = 0;   // cpm: the 5.0 decoder PROM
+    EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x1F) << "BIOS 1.0 / 2.0 reach the VG93 at #1F from the SYS ROM";
+    EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x00);
+
+    _context->config.profi_ext_ports = 1;   // sys: Karabas Pro
+    EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x1F) << "the extended VG93 ports";
+    EXPECT_EQ(decoder->DecodeFDCPort(0x003F), 0xFF) << "the extended system port";
+    EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x00) << "Karabas does not decode #1F in the SYS ROM state";
+
+    Out7FFD(0x10);   // ROM14 = 1, CP/M off: neither map's condition holds
+    EXPECT_EQ(decoder->DecodeFDCPort(0x0083), 0x00);
+    _context->config.profi_ext_ports = 0;
+}
+
 TEST_F(ProfiPortDecoder_Test, CpmSwitchHoldsDffdCleared)
 {
     PortDecoder* decoder = _context->pPortDecoder;

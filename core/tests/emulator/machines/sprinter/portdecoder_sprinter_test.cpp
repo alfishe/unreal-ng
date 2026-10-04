@@ -648,7 +648,7 @@ TEST_F(PortDecoderSprinter_Test, Cmos_FixedTimeBcdAndCentury)
     if (!LoadTable304())
         GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
     OpenDcp();
-    _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC (host local time on read)
+    _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC (read as UTC on every host)
 
     Out(0xDFBD, Ds12887::kRegB);
     EXPECT_EQ(In(0xFFBD) & Ds12887::kBBinary, 0) << "BCD after power-on";

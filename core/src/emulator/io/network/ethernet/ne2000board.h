@@ -32,10 +32,11 @@
 
 #include "emulator/io/iiobusdevice.h"
 #include "emulator/io/network/ethernet/dp8390.h"
+#include "emulator/io/network/ethernet/ethernetcard.h"
 #include "emulator/io/network/ethernet/eeprom93c46.h"
 #include "emulator/io/network/ethernet/ethernetlink.h"
 
-class Ne2000Board final : public IIoBusDevice, public IEthernetPort, private Dp8390::IBoard
+class Ne2000Board final : public IEthernetCard, private Dp8390::IBoard
 {
 public:
     enum class Variant : uint8_t
@@ -64,8 +65,8 @@ public:
 
     /// The wire the card is plugged into (the virtual network's Ethernet gateway); null = no cable: transmitted
     /// frames are lost (counted)
-    void SetLink(IEthernetLink* link) { _link = link; }
-    IEthernetLink* Link() const { return _link; }
+    void SetLink(IEthernetLink* link) override { _link = link; }
+    IEthernetLink* Link() const override { return _link; }
 
     // IIoBusDevice
     const char* Kind() const override { return "ne2000"; }
@@ -76,6 +77,16 @@ public:
     void Reset() override;
     bool Irq() const override;
     void SetIrqListener(std::function<void()> changed) override;
+    /// The selected IRQ pin is driven while the chip may drive it: on the RTL8019AS only with CONFIG1.IRQEN set
+    /// (clear: high impedance), and only a pin an 8-bit slot has (IRQ 2/9, 3, 4, 5, 7: IRQ 10-15 sit on the
+    /// 16-bit connector)
+    bool IrqDriven() const override;
+    /// A transmit on the wire ends with PTX (ISR bit 1)
+    uint64_t NextIrqEventAt() const override;
+    void CatchUp() override { _chip.Advance(Now()); }
+    std::string IrqCause() const override;
+    /// The IRQ number the card selects now (RTL8019AS: CONFIG1.IRQS; the others: the jumper, Settings::irq)
+    int SelectedIrq() const;
     bool Stalled() const override { return _stalled; }
     void OnFrame() override;
     void Describe(StateNode& out) const override;
@@ -111,6 +122,14 @@ public:
     void SaveState(uint8_t* dst) const;
     /// False when the blob is of another version / variant (nothing loaded)
     bool LoadState(const uint8_t* src, size_t size);
+    // IEthernetCard: the same bytes
+    size_t CardStateBound() const override { return StateSize(); }
+    void SaveCardState(std::vector<uint8_t>& out) const override
+    {
+        out.resize(StateSize());
+        SaveState(out.data());
+    }
+    bool LoadCardState(const uint8_t* src, size_t size) override { return LoadState(src, size); }
 
 private:
     // Dp8390::IBoard

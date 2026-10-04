@@ -323,7 +323,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
 void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext* context)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
 
     std::stringstream ss;
     ss << "TTD Session Status" << NEWLINE;
@@ -476,7 +476,7 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
                                          const std::vector<std::string>& args)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
-    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     uint64_t frames = info.historyLimitFrames;
     uint64_t bytes = info.historyLimitBytes;
     bool change = false;
@@ -505,7 +505,7 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
     if (change)
     {
         mgr->SetHistoryLimit(frames, bytes);
-        info = mgr->GetSessionInfo();
+        info = mgr->ReadSessionInfo();
     }
 
     std::stringstream ss;
@@ -871,7 +871,7 @@ void CLIProcessor::HandleTTDMarkers(const ClientSession& session, EmulatorContex
     }
     else
     {
-        const auto& events = journal.Events();
+        const auto events = journal.SnapshotEvents();
         for (size_t i = 0; i < events.size(); ++i)
         {
             const auto& e = events[i];
@@ -956,7 +956,7 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
         return;
     }
 
-    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    const ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     std::stringstream ss;
     ss << "TTD: Session loaded from '" << path << "' ("
        << info.checkpointCount << " checkpoints, frames "
@@ -1333,7 +1333,7 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
     std::string sub = args[1];
     uint64_t frame = 0;
     uint64_t fromFrame = 0;
-    uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+    uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
     ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
     bool hasKindParam = false;
     bool kindParamValid = true;
