@@ -406,7 +406,7 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     }
 
     // Use capture-region dimensions if not explicitly set
-    if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
+    if (_videoEnabled && (!_videoSizeExplicit || _videoWidth == 0 || _videoHeight == 0))
     {
         if (_context && _context->pScreen)
         {
@@ -546,7 +546,7 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     }
 
     // Use native framebuffer dimensions if not explicitly set
-    if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
+    if (_videoEnabled && (!_videoSizeExplicit || _videoWidth == 0 || _videoHeight == 0))
     {
         if (_context && _context->pScreen)
         {
@@ -1105,6 +1105,7 @@ void RecordingManager::SetVideoResolution(uint32_t width, uint32_t height)
 
     _videoWidth = width;
     _videoHeight = height;
+    _videoSizeExplicit = width != 0 && height != 0;  // 0x0 = derive from the screen and region at every start
 
     MLOGINFO("RecordingManager::SetVideoResolution - Resolution set to %ux%u", width, height);
 }
