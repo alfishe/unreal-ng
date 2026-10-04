@@ -88,7 +88,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] CP/M on v5: images per board in `testdata/machines/profi/cpm/` (README there); the Kondor, HC and DN disks boot
   from "Загрузка системы CP/M" (`CpmBootsFromTheKondorSystemDisk`). The old `CPM.UDI` stops at its loader's trap:
   its LSTP driver loads `KOI8.FNT`, which the disk lacks (an inconsistent user disk, not an emulation bug)
-- [x] CP/M on v3: Klug CP/M 2.3 boots from the Kramis V0.3 "Profi-DOS" entry (`KlugCpmBootsFromKramisV03`). It
+- [x] CP/M on v3: Klug CP/M 2.3 boots from the Kramis V0.3 "Profi-DOS" entry (checked 2026-10-03; the disk is kept
+  outside the repository, testdata has one disk per check: SP-DOS for the v3, `SpDosBootsToItsShell`). It
   needs TR-DOS 5.04T: V0.2's TR-DOS 5.03 double-steps on its 5 x 1024-byte disk (traced: the FDC follows TR-DOS's
   seeks; the same on a v5 with V0.2, while a v3 with BIOS 2.0 boots it) - software, not the board; `PROFI3` defaults to V0.3 since 2026-10-03
 - [x] A native SP-DOS disk: found in KLUG's BBS archive (2005, area PROFI: UNICOPY, COPYK30, TERMINAL, BIOS by
