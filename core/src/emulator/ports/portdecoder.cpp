@@ -1531,8 +1531,6 @@ void PortDecoder::UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* devi
 void PortDecoder::RebuildFullDecodeClaims()
 {
     _fullDecodeClaims.Build();
-    _claimMemoValid = false;
-    _claimMemoLowByteObserver = nullptr;
 }
 
 void PortDecoder::SetFullDecodeScanTrapForTests(PortDevice* trap)
@@ -1547,9 +1545,22 @@ PortDevice* PortDecoder::LowByteObserver(uint16_t rawPort) const
     return entry ? entry->owner : nullptr;
 }
 
+/// Whether a low-byte card stands the board's decode down for this cycle.
+/// A read only stands the model decode down when the card actually drives
+/// this port's data (portDeviceClaimsRead) - a registered-but-silent low
+/// byte (e.g. a write-only address latch) never asserts its output buffer,
+/// so the real underlying device (ULA/AY/FDC) must answer exactly as if
+/// the card were not attached. Writes have no such ambiguity: every OUT to
+/// a registered low byte stands the model decode down unconditionally.
+bool PortDecoder::LowByteCardStandsDown(uint16_t rawPort, bool isRead) const
+{
+    PortDevice* card = LowByteObserver(rawPort);
+    return card && (!isRead || card->portDeviceClaimsRead(rawPort));
+}
+
 /// Model-decode claim override: see portdecoder.h. Called from each model's
 /// DecodePortIn/Out right after decodePortEx, before any inline handler runs -
-/// the claiming observer was already serviced by the Z80 I/O funnel tap.
+/// the claiming card was already serviced by the cycle's resolution.
 /// The inline OverrideDecodeForFullDecodeClaim has already found the port claimed.
 bool PortDecoder::OverrideDecodeForClaimedPort(uint16_t rawPort, uint16_t& decodedPort,
                                                PortDecodeDisposition& disp, bool isRead)
@@ -1557,21 +1568,11 @@ bool PortDecoder::OverrideDecodeForClaimedPort(uint16_t rawPort, uint16_t& decod
     if (decodedPort == 0x0000)
         return false;
 
-    // The Z80 tap of this cycle already looked the port up (one lookup per claimed cycle); a direct DecodePortIn/Out
-    // call without the tap (tests, tools) looks it up here
-    PortDevice* observer = (_claimMemoValid && rawPort == _claimMemoPort) ? _claimMemoLowByteObserver
-                                                                          : LowByteObserver(rawPort);
-
-    if (observer == nullptr)
-        return false;
-
-    // A read only stands the model decode down when the card actually drives
-    // this port's data (portDeviceClaimsRead) - a registered-but-silent low
-    // byte (e.g. a write-only address latch) never asserts its output buffer,
-    // so the real underlying device (ULA/AY/FDC) must answer exactly as if
-    // the card were not attached. Writes have no such ambiguity: every OUT to
-    // a registered low byte stands the model decode down unconditionally.
-    if (isRead && !observer->portDeviceClaimsRead(rawPort))
+    // The cycle's resolution decided it before the board decode ran (one lookup per claimed cycle); a direct
+    // DecodePortIn/Out call outside a bus cycle (tests, tools) decides it here
+    const bool standDown = (_claimCycle.active && rawPort == _claimCycle.port) ? _claimCycle.standDown
+                                                                              : LowByteCardStandsDown(rawPort, isRead);
+    if (!standDown)
         return false;
 
     // Beta-128 registers keep their TR-DOS session arbitration (R6): the FDC
@@ -1743,32 +1744,16 @@ std::vector<PortDecodeRuleOverride> PortDecoder::FindFullDecodeRuleResolutions()
     return result;
 }
 
-/// Z80 OUT tap, claimed port: forward the RAW port write to the full-decode
-/// observer. Called from Z80::out() (inline NotifyFullDecodeOut) before the
-/// model decode - the observer sees the cycle no matter which device the model
-/// decode attributes it to. The first claim in slot order is the exact 16-bit
-/// observer, then the low-byte one (every high-byte alias of a registered low
-/// byte reaches the card: guest `out (n),a` forms put A in the high byte).
+/// Split-phase OUT tap, claimed port: forward the RAW port write to the
+/// full-decode observer before the model decode - the observer sees the cycle
+/// no matter which device the model decode attributes it to. The first claim
+/// in slot order is the exact 16-bit observer, then the low-byte one (every
+/// high-byte alias of a registered low byte reaches the card: guest
+/// `out (n),a` forms put A in the high byte).
 void PortDecoder::NotifyClaimedOut(uint16_t port, uint8_t value)
 {
-    PortDevice* observer = nullptr;
-    MemoizeClaim(port, observer);
-    if (observer)
-        observer->portDeviceOutMethod(port, value);
-}
-
-/// The one claim lookup of a claimed cycle: the first observer in slot order (exact before low byte) is returned in
-/// firstOwner, the low-byte observer (what the model decode's claim override needs) is remembered for this port
-void PortDecoder::MemoizeClaim(uint16_t port, PortDevice*& firstOwner)
-{
-    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
-    firstOwner = entry ? entry->owner : nullptr;
-    PortDevice* lowByte = nullptr;
-    if (entry)
-        lowByte = entry->mask == kLowByteObserverMask ? entry->owner : LowByteObserver(port);
-    _claimMemoPort = port;
-    _claimMemoLowByteObserver = lowByte;
-    _claimMemoValid = true;
+    if (const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port))
+        entry->owner->portDeviceOutMethod(port, value);
 }
 
 /// Z80 IN tap, claimed port: query the full-decode observer for the RAW port read.
@@ -1783,9 +1768,8 @@ uint8_t PortDecoder::NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsB
     handled = false;
     claimsBus = false;
 
-    PortDevice* observer = nullptr;
-    MemoizeClaim(port, observer);
-    if (observer)
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    if (PortDevice* observer = entry ? entry->owner : nullptr)
     {
         result = observer->portDeviceInMethod(port);
         handled = true;
@@ -1804,11 +1788,35 @@ uint8_t PortDecoder::NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsB
 /// ReadCycle in portdecoder.h)
 uint8_t PortDecoder::ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrove)
 {
+    // The one claim lookup of the cycle: the first card in slot order (the
+    // exact 16-bit observer before the low-byte one) drives the bus
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    PortDevice* card = entry ? entry->owner : nullptr;
+    uint8_t cardValue = 0xFF;
     bool claimsBus = false;
+    cardDrove = card != nullptr;
+    if (card)
+    {
+        cardValue = card->portDeviceInMethod(port);
+        claimsBus = card->portDeviceClaimsRead(port);
+    }
+
+    // The card's value for the board's claim override (the card is never
+    // read twice: a second read would corrupt stateful status registers)
     _lastFullDecodeInPort = port;
-    const uint8_t cardValue = NotifyClaimedIn(port, cardDrove, claimsBus);
+    _lastFullDecodeInValue = cardValue;
+
+    // Does a low-byte card stand the board decode down: decided here, applied
+    // by the decoder's OverrideDecodeForFullDecodeClaim
+    bool standDown = false;
+    if (entry && entry->mask == kLowByteObserverMask)
+        standDown = claimsBus;
+    else if (entry)
+        standDown = LowByteCardStandsDown(port, /*isRead*/ true);
+    _claimCycle = { port, true, standDown };
 
     uint8_t result = DecodePortIn(port, pc);
+    _claimCycle.active = false;
 
     // Shared read cycle, legacy-device priority (R6): when the board decode
     // already handed the port to a device (ULA/AY/FDC...), that device's value
@@ -1828,8 +1836,19 @@ uint8_t PortDecoder::ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrov
 /// WriteCycle, claimed port: the card sees the write first, then the board decodes it
 void PortDecoder::WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc)
 {
-    NotifyClaimedOut(port, value);
+    // The one claim lookup of the cycle (exact observer before the low-byte one)
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    bool standDown = false;
+    if (entry)
+    {
+        entry->owner->portDeviceOutMethod(port, value);
+        // Every write to a low-byte card's port stands the board decode down
+        standDown = entry->mask == kLowByteObserverMask || LowByteObserver(port) != nullptr;
+    }
+    _claimCycle = { port, true, standDown };
+
     DecodePortOut(port, value, pc);
+    _claimCycle.active = false;
 }
 
 bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)

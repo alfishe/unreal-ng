@@ -453,19 +453,25 @@ protected:
     /// The low-byte observer covering this raw port (nullptr when none); claimed ports only
     PortDevice* LowByteObserver(uint16_t rawPort) const;
 
-    /// The claim lookup of the current cycle, done once by the Z80 tap (NotifyClaimedIn / NotifyClaimedOut) and
-    /// reused by the model decode's claim override of the same cycle: the port it was made for and its low-byte
-    /// observer. Valid until the claims change (RebuildFullDecodeClaims)
-    uint16_t _claimMemoPort = 0x0000;
-    bool _claimMemoValid = false;
-    PortDevice* _claimMemoLowByteObserver = nullptr;
+    /// The claim resolution of the claimed cycle ReadCycle / WriteCycle is running: its port and whether a low-byte
+    /// card stands the board's decode down (a write: always; a read: when the card claims it, portDeviceClaimsRead).
+    /// Decided once per cycle, before the board decodes; the board's claim override (OverrideDecodeForFullDecodeClaim)
+    /// applies it instead of looking the port up again. Active only while that board decode runs
+    struct ClaimCycle
+    {
+        uint16_t port = 0x0000;
+        bool active = false;
+        bool standDown = false;
+    };
+    ClaimCycle _claimCycle;
 
-    /// Rebuilds the claim table after a registration change and drops the cycle memo (it points into the table)
+    /// Rebuilds the claim table after a registration change
     void RebuildFullDecodeClaims();
-    /// Looks the claimed port up once and remembers the result for the override of the same cycle
-    void MemoizeClaim(uint16_t port, PortDevice*& firstOwner);
+    /// Whether a low-byte card stands the board down for this cycle: the override's own decision outside a
+    /// ReadCycle / WriteCycle (direct DecodePortIn / Out calls: tests, tools)
+    bool LowByteCardStandsDown(uint16_t rawPort, bool isRead) const;
 
-    /// The claimed-port halves of the inline taps below (out of line: the unclaimed path stays one bit test)
+    /// The claimed-port halves of the split-phase taps NotifyFullDecodeIn / Out (tests, tools)
     void NotifyClaimedOut(uint16_t port, uint8_t value);
     uint8_t NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsBus);
     /// The claimed-port halves of ReadCycle / WriteCycle (out of line: the unclaimed path stays one bit test)
@@ -1052,6 +1058,10 @@ public:
     ///        AY/FDC) must answer exactly as if the card were not attached -
     ///        returning false here leaves decodedPort untouched so the
     ///        caller's normal decode chain runs.
+    ///
+    /// The decision is the claim table resolution's (ReadCycle / WriteCycle decide it once per cycle, before the
+    /// board decodes); the decoders only apply it at the point of their decode where the card's port space begins.
+    /// A direct DecodePortIn / Out call outside a bus cycle (tests, tools) decides it here.
     bool OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
                                           PortDecodeDisposition& disp, bool isRead)
     {
@@ -1077,15 +1087,16 @@ public:
 
     /// endregion </Full-decode clash analysis>
 
-    /// Z80 OUT tap: forward a raw-port write to the registered observer (if any).
-    /// A port no observer claims costs one bit test
+    /// Split-phase OUT tap (tests, tools; the Z80 runs WriteCycle): forward a raw-port write to the registered
+    /// observer (if any). A port no observer claims costs one bit test
     void NotifyFullDecodeOut(uint16_t port, uint8_t value)
     {
         if (_fullDecodeClaims.IsClaimed(port)) [[unlikely]]
             NotifyClaimedOut(port, value);
     }
 
-    /// Z80 IN tap: query the observer for a raw-port read. Returns the
+    /// Split-phase IN tap (tests, tools; the Z80 runs ReadCycle, which applies R6 itself): query the observer for a
+    /// raw-port read. Returns the
     /// observer's bus value (0xFF when none) and sets handled=true when an
     /// observer is registered; claimsBus=true when the observer claims the
     /// read (portDeviceClaimsRead). Z80::in() applies it with
