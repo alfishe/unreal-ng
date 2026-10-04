@@ -521,6 +521,22 @@ TEST_F(Uart16550_Test, Ts2016AprThreMeansRoomAndTemtIsTheUsartTxc)
     EXPECT_EQ(u.Baud(), 230400u) << "TS 2016-04: divisor 0 = 230400";
 }
 
+TEST_F(Uart16550_Test, Ts2016AprPicksTheWaitUpAtTheNextTask)
+{
+    // TS-AVR main.c:414-431 (since 9a3b541b, 2016-03): waittask() after each of the 8 tasks, so a polling loop
+    // right behind its release waits an eighth of a pass, not a whole one (the ZiFi plugins' INIR bursts)
+    const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::AvrFirmware::Ts2016Apr);
+    EXPECT_EQ(p.waitChecksPerLoop, 8);
+    Uart16550 u = MakeAvr(Uart16550::AvrFirmware::Ts2016Apr, &peer);
+    const uint32_t first = u.AccessCycles(Uart16550::kLsr, true, 1000000);
+    const uint64_t release = 1000000 + (static_cast<uint64_t>(first) * 3500000 + 11059199) / 11059200;
+    const uint32_t polled = u.AccessCycles(Uart16550::kLsr, true, release);
+    const uint32_t task = p.loopCycles / 8;
+    EXPECT_LE(polled, p.isrCycles + task + p.serviceRead);
+    EXPECT_GE(polled, p.isrCycles + task + p.serviceRead - 4);
+    EXPECT_EQ(Uart16550::EvoAvrParams(Uart16550::AvrFirmware::Base2023).waitChecksPerLoop, 1) << "BaseConf: once per pass";
+}
+
 TEST_F(Uart16550_Test, AvrWaitIsInterruptPlusLoopPhasePlusService)
 {
     const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::kLatestAvr);

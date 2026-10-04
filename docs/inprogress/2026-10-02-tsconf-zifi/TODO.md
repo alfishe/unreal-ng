@@ -9,7 +9,8 @@ Design: [tdd.md](tdd.md) §6.
 | Z1 the `#xxEF` device, ZiFi API, line, INT, TTD, surfaces | done 2026-10-02: `ZiFi` (`core/src/emulator/io/network/zifi.*`), the TS-Conf decode, the TS AVR's 16550 on TS-Conf, `[NETWORK] ZiFi=`, TTD blobs 39 / 40, guest 5, status `zifi` on every surface, Qt Network window, recipe; tests `ZiFi_Test` (16), `NetworkPanelModel_Test` |
 | Z2 DMA device 7; the ZITOR timeout at its exact time (now: at the next access, received byte or frame boundary, up to a frame late) | open |
 | Z3 `ZIFI-NATIVE` | done 2026-10-04 ([tdd.md](tdd.md) §7.2): `ZiFiNativeModule` (S3 `s3-native-0.6.94`, ESP-01S `native-0.2.2`), `ZiFi=ZIFI-NATIVE[,S3\|ESP01S]`, `esp` status on every surface, Qt, recipe; tests `ZiFiNativeModule_Test`, `ZiFi_Test` (+3) |
-| Z3b the VFS file bridge (FTP / SMB / WebDAV via the WC plugins), OTA, weather, HTTPS | open (they answer "not emulated") |
+| Z3b the VFS file bridge: the VFS client and the FTP server (both firmwares) | done 2026-10-04 ([tdd.md](tdd.md) §7.5): `ZiFiVfsBridge`, `ZiFiFtpServer`, TTD in the ZiFi blob (variable size), `file_bridge` status on every surface, recipe demo; the TS AVR wait picked up per task (`waitChecksPerLoop`); tests `ZiFiVfsBridge_Test` (10), `ZiFiFtpServer_Test` (12), `Uart16550_Test` (+1); real plugins ZIFIFTP v0.15 (S3) and v0.11 (ESP-01S) byte-exact both ways, passive and active |
+| Z3b SMB (S3), TLS for HTTPS and redirects to HTTPS, WC Update, the online update | open (they answer "not emulated" / `get:tls connect failed`) |
 | Z4 ESP-AT 2.2.x dialect | done 2026-10-04 ([tdd.md](tdd.md) §7.1): `atdialect.*`, per-module firmware `AT,<firmware>`, the ESP-01's ESP8266 1 MB default; tests `AtDialect_Test`, `ComPortSpec_Test` (+2) |
 | Z4 open: the kit's "2.2.1" vs Espressif's v2.2.1.0 | ask the kit's author ([tdd.md](tdd.md) §7.4) |
 | Z5 end-to-end with the real programs | done 2026-10-04 with the programs as a user runs them, real internet ([Z5 results](#z5-results-2026-10-04)); the file-bridge plugins (FTP / SMB / WebDAV / WC Update) fail until Z3b; automated tests open |
@@ -41,11 +42,11 @@ WMF plugins, `tools/esp_info.sna`),
 | `NTPTIME.WMF` (S3) | `ZIFI-NATIVE,S3` | works | runs after WC starts: PING, WIFI_INI, NET_NTP `A2` 14 digits; the WC clock goes from host time to UTC+3 (20:44 at 17:44 UTC) |
 | `NTPTIME.WMF` (ESP-01S) | `ZIFI-NATIVE,ESP01S` | works, not on the first boot | later boots: NET_NTP `A2`. First boot after the module is fitted: the plugin waits ~12000 polls for `83`, the fresh module joins in 1.5 s, the plugin gives up silently (follow-up 4) |
 | `WEATHER.WMF` (S3) | `ZIFI-NATIVE,S3` | fails (Z3b: weather) | clock / calendar from NTP shown, "Нет данных о погоде / not emulated" (`EE "weather:not emulated"`) |
-| `ZIFIFTP.WMF` v0.15 (S3) | `ZIFI-NATIVE,S3` | fails (Z3b file bridge) | `FTP_START` -> `EE "ftp:not emulated"`, the plugin's status line |
+| `ZIFIFTP.WMF` v0.15 (S3) | `ZIFI-NATIVE,S3` | works since Z3b ([tdd.md](tdd.md) §7.5) | Python ftplib from the host: LIST / MLSD / SIZE, RETR 100 000 bytes and STOR 70 000 bytes byte-exact (checked on the exported card too), passive and active, MKD / CWD, errors; TTD on |
 | `ZIFISMB.WMF` v0.5.10 (S3) | `ZIFI-NATIVE,S3` | fails (Z3b file bridge) | `SMB_START` -> `EE "smb:not emulated"` |
 | `WCUPDATE.WMF` (S3) | `ZIFI-NATIVE,S3` | fails (Z3b file bridge + HTTPS) | `WCU_START` -> `EE "wcu:not emulated"`; on the ESP-01S `unknown cmd 25`, as the real firmware |
 | `ZIFIUPD.WMF` (S3) | `ZIFI-NATIVE,S3` | fails (Z3b: online update) | `ONLINE_UPDATE_CHECK` -> `EE "update-check:not emulated"` |
-| `ZIFIFTP.WMF` v0.11 (ESP-01S) | `ZIFI-NATIVE,ESP01S` | fails (Z3b file bridge) | `FTP_START` -> `EE "ftp/webdav:not emulated"` |
+| `ZIFIFTP.WMF` v0.11 (ESP-01S) | `ZIFI-NATIVE,ESP01S` | works since Z3b ([tdd.md](tdd.md) §7.5) | the same checks: one session (a second gets 421), LIST "Jan 01 00:00", RETR / STOR byte-exact, passive and active; TTD on |
 | `ZIFIWDAV.WMF` (ESP-01S) | `ZIFI-NATIVE,ESP01S` | fails (Z3b file bridge) | `FTP_START` -> `EE "ftp/webdav:not emulated"` (the ESP-01S opens WebDAV with FTP) |
 | `esp_info.sna` (S3 tools) | both native | works | the SYS_INFO fields: S3 `s3-native-0.6.94`, PSRAM, cores, proxy OFF; ESP-01S `native-0.2.2`, the S3-only fields `n/a` |
 | Karabas Pro net-tools, NedoOS | - | not applicable | Karabas: Profi CP/M programs, not TS-Conf; NedoOS has no ZiFi driver (reference-zifi.md §4) |

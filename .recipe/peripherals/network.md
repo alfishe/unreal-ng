@@ -164,10 +164,14 @@ The module answers `FE` (ACK) at once and the result later (`90` NET_OPEN,
 `EE <text>` first, and `GET_STEP` (`05`) returns the last command and that
 text. The Wi-Fi is the virtual access point: `zifi.ini` must say `ssid:
 UnrealNG` (any password); another SSID ends in `EE "wifi timeout"` after
-10 s. Not emulated (they answer as when the service cannot start, `EE
-"ftp:not emulated"` etc.): FTP / SMB / WebDAV (they call back into the Z80),
-OTA, the online update, the WC updater, the weather; HTTPS (`get:tls connect
-failed`). `native_session.activity` shows the command waiting for the network.
+10 s. The FTP server runs (`FTP_START`, the Wild Commander plugin `ZIFIFTP.WMF`;
+[demo below](#demo-the-zifi-ftp-server-host-client-to-the-zx-sd-card)): the ESP
+listens on the virtual network and turns every file command into VFS request
+frames to the Z80 (`40..5E`), which the plugin answers from the SD card. Not
+emulated (they answer as when the service cannot start, `EE "smb:not
+emulated"` etc.): SMB, OTA, the online update, the WC updater; HTTPS (`get:tls
+connect failed`). `native_session.activity` shows the command waiting for the
+network, `native_session.file_bridge` the FTP sessions and the VFS traffic.
 
 Check by hand (the API on, PING, SYS_INFO):
 
@@ -261,6 +265,56 @@ module disagree. Details: [reference-esp-modules.md](../../docs/inprogress/2026-
 NedoOS with an ESP module: boot `sd_bootesp.$C` for the kernel driver (ESPNET;
 `ini/network.ini currentNetwork=0`), or set `currentNetwork=1` (AT) / `2`
 (userland ESPNET) for the C apps (zxdb, gopher, girc, time2, ...).
+
+#### Demo: the ZiFi FTP server (host client to the ZX SD card)
+
+The ESP is the server: a PC's FTP client logs in, and the plugin in Wild Commander serves the SD card through
+the ESP's VFS requests. Both firmwares: S3 (`s3-native-0.6.94`, plugin `ZIFIFTP.WMF` v0.15: three sessions,
+passive ports 2122-2124, `PORT` / `EPRT`, `MLSD` / `MDTM` / `MFMT`, 16 KiB VFS windows) and ESP-01S
+(`native-0.2.2`, plugin v0.11: one session, passive port 2122, 512-byte VFS blocks). Plugins:
+[ZiFi-ESP32-S3-Zero `FTP Server/`](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/tree/main/FTP%20Server)
+and [ZiFi-ESP-01S-Native-C-Project `FTP Server/`](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/tree/main/FTP%20Server).
+
+1. The SD folder of the browser demo (Wild Commander, `zifi/zifi.ini`) with the firmware's `ZIFIFTP.WMF` in `WC/`
+   (listed under `[PLUGINS]` in `WC/wc.ini`), and a file to download, for example `TEST.BIN`.
+2. TS-Conf, the ZiFi module and a host port for the guest's port 21 (ports from 1024 up, like the passive
+   2122-2124, are reachable on the same host port without a rule):
+
+   ```json
+   {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+     "body": {"zifi": "zifi-native,s3", "forward": "tcp:2121:21", "host_access": true}}}
+   ```
+
+   (`zifi-native,esp01s` for the ESP-01S and its v0.11 plugin.) Insert the folder into `sd.zc`, reset: WC.
+3. TTD with a history limit: `POST /ttd/start`, `POST /ttd/history-limit {"frames":3000}`.
+4. In WC: F10 (RUN PLUGIN), cursor to "ZiFi FTP Server v0.15" (the tenth line), Enter. The plugin's window says
+   `Status : Wi-Fi [################] 100%` (S3) or `Listening` (ESP-01S), `IP : 10.0.2.15`, `Port : 21`.
+   `inspect_state network`: `zifi.esp.native_session.file_bridge.ftp` `running: true`, `host_port: 2121`
+   (`host_port_note` says when a rule is missing).
+5. From the host, user `zx`, password `zx` (the plugin's defaults):
+
+   ```bash
+   python3 - <<'PY'
+   import ftplib, io
+   ftp = ftplib.FTP(); ftp.connect("127.0.0.1", 2121); ftp.login("zx", "zx")
+   ftp.retrlines("LIST")                      # the SD card's root through VFS READDIR
+   buf = io.BytesIO(); ftp.retrbinary("RETR TEST.BIN", buf.write)    # download
+   ftp.storbinary("STOR UP.BIN", io.BytesIO(open("upload.bin", "rb").read()))   # upload
+   ftp.set_pasv(False); ftp.retrlines("LIST")   # active mode: the ESP connects back to 127.0.0.1
+   ftp.quit()
+   PY
+   ```
+
+   Python's ftplib takes the passive data address from the control connection (the 227 reply names the guest's
+   10.0.2.15); curl needs `--ftp-skip-pasv-ip`, or use EPSV.
+6. Esc in the plugin stops the server (`FTP_STOP`); WC re-reads its panels and shows the uploaded file. Check it on
+   the card: `POST /media/sd.zc/export {"path":"card.img"}`, then `mcopy -i card.img ::/UP.BIN .` (a folder is
+   never written).
+
+Measured (2026-10-04, real time with TTD on): S3 RETR 100 000 bytes 8.8 KB/s, STOR 70 000 bytes 9.2 KB/s;
+ESP-01S RETR 6.0 KB/s, STOR 2.6 KB/s; byte-exact both ways, passive and active, the ZiFi ring never overflowed.
+While the ESP waits for the Z80's VFS answer the UART serves only PING and SYS_RESET (other commands are lost, as
+on the firmware: `file_bridge.vfs.dropped_while_waiting`).
 
 ### The Hayes modem
 
