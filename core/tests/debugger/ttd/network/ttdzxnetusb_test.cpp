@@ -360,11 +360,14 @@ TEST_F(TTDComPort_Test, SeekRestoresBytesWaitingInThePeerFromTheJournal)
     _emulator->RunNFrames(1);
     _ttd->StopRecording();
 
-    // The checkpoint of frame `mid` is taken before the COM port catches up
-    // at that boundary: the bytes were delivered, none has reached the FIFO
+    // The checkpoint of frame `mid` holds the COM port caught up at that
+    // boundary (the network devices' frame work runs before the checkpoint):
+    // no character on the line, the 20 bytes in the peer or the FIFO - the
+    // peer's restored from the journal
     ASSERT_TRUE(_ttd->SeekTo({mid, 0}));
     const Uart16550::View v = _context->pComPort->Uart().GetView();
-    EXPECT_EQ(_context->pComPort->Peer()->Pending() + v.rxCount, 19u) << "one byte on the line, 19 restored from the journal";
+    EXPECT_EQ(_context->pComPort->Peer()->Pending() + v.rxCount, 20u) << "every byte in the peer or the FIFO";
+    EXPECT_GT(v.rxCount, 0) << "some reached the FIFO before the checkpoint";
     _emulator->RunNFrames(1);
     EXPECT_EQ(Blob(), afterMid) << "the restored bytes continue as recorded";
 }

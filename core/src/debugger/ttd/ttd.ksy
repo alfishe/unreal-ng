@@ -601,7 +601,10 @@ types:
           RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card),
           46 SlotSerial1 (the UART card in expansion slot 1, the Sprinter's SprinterESP: netstate::SerialPort as id
           24 - the TL16C550C and its peer, an ESP module with its AT state, sockets and received bytes by journal
-          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2).
+          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2),
+          48 SlotSerial1B (the second UART of the card in expansion slot 1: SprinterSerial's COM2; the same
+          netstate::SerialPort; a Hayes modem peer keeps its command state in the record's ESP bytes, peer kind 6),
+          49 SlotSerial2B (the same for expansion slot 2).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

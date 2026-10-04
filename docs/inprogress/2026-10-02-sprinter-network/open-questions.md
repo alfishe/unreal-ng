@@ -117,3 +117,30 @@ instance creation (ISA Q5 = A).
 **Recommendation:** follow ISA Q5 in v1: the card kind and base change with a new instance (the reply says so);
 peer, MAC-independent settings, host access, AT dialect and phone book change live. Runtime refit of slot cards comes
 with PLAN #82.
+
+## Q12. SprinterSerial: what do the UART's unconnected modem inputs read?
+
+Found while building SN4 from the rev 1.1.1 netlist: COM1's CH340 is wired to the PC16552D modem pin for modem pin
+(the CH340's `RTS#` / `DTR#` outputs on the UART's `-RTS1` / `-DTR1` outputs, its `CTS#` / `DSR#` / `DCD#` / `RI#`
+inputs on the UART's inputs), so nothing drives the UART's CTS / DSR / DCD / RI on COM1; COM2's DB-9 brings CTS
+only. The CH340 datasheet names no pull-ups on those pins; the PC16552D / SC16C2552B datasheets do not say what a
+floating modem input reads. Consequence: BC-Term waits for CTS before every byte (MSR bit 4), so with "inactive" it
+cannot send on COM1 (on COM2 an external modem's CTS reaches it).
+
+| Option | Effect |
+|---|---|
+| **A (built)** | Unwired inputs read **inactive** (as an open TTL input, or one with a pull-up, reads high = inactive for these active-low pins). COM1 is a plain RX / TX line; software that waits for CTS does not send there |
+| B | Read **asserted** (DSR / DCD / CTS on, RI off), as the SprinterESP and ATM2IOESP models do for their unconnected pins | BC-Term would work on COM1 |
+
+**Recommendation: A** until a real card is measured (a terminal program on COM1 that waits for CTS would tell);
+switching is one `Uart16550::Params::msrUnwired` value in the preset.
+
+## Q13. SprinterSerial with both IRQ jumpers fitted on the Sprinter
+
+The Sprinter joins every IRQ pin of a slot into one line (ISA I4). SprinterSerial's INTA / INTB are push-pull
+outputs through J5 / J6: with both jumpers fitted, an idle channel drives the line low while the other requests
+(high) - two outputs fight; the level the PIO sees is not defined by any datasheet.
+
+**Built:** the higher level wins (a request is seen), the slot report says `irq_contention: true` and the IRQ cause
+names it; J6 is open by default (`Slot1IrqB=0`), so one channel interrupts. **Question:** keep this, or make the
+contended line read low (no interrupt), as the stronger low-side driver of CMOS outputs usually wins?
