@@ -239,13 +239,15 @@ TEST_F(ZiFiNativeModule_Test, System_ResetRestartsAndRejoins)
 TEST_F(ZiFiNativeModule_Test, WiFi_IniJoinsAndSetsTheZone)
 {
     Send(ZiFiNativeModule::kWifiIni, std::string("; zifi.ini\r\nSSID: UnrealNG\r\npassword: \"secret\"\r\ntime: +3 ; MSK\r\n"));
-    EXPECT_EQ(Cmds(Read()), "FE") << "a new password: the module rejoins";
-    std::vector<Reply> r = Read(1600000);
-    ASSERT_EQ(Cmds(r), "83");
-    EXPECT_EQ(r[0].data, Bytes({1, 10, 0, 2, 15})) << "status 1, the DHCP address";
+    std::vector<Reply> r = Read();
+    ASSERT_EQ(Cmds(r), "FE 83") << "on the virtual AP since the box: its first password is the one it joined with";
+    EXPECT_EQ(r[1].data, Bytes({1, 10, 0, 2, 15})) << "status 1, the DHCP address";
     EXPECT_EQ(_esp->TimeZone(), 3);
     Send(ZiFiNativeModule::kWifiConnect, Bytes({'U', 'n', 'r', 'e', 'a', 'l', 'N', 'G', 0, 's', 'e', 'c', 'r', 'e', 't'}));
     EXPECT_EQ(Cmds(Read()), "FE 81") << "the same network and password: no rejoin";
+    Send(ZiFiNativeModule::kWifiConnect, Bytes({'U', 'n', 'r', 'e', 'a', 'l', 'N', 'G', 0, 'n', 'e', 'w'}));
+    EXPECT_EQ(Cmds(Read()), "FE") << "another password: the module rejoins";
+    ASSERT_EQ(Cmds(Read(1600000)), "81");
 
     Send(ZiFiNativeModule::kWifiIni, std::string("password: x\r\n"));
     r = Read();
@@ -531,6 +533,160 @@ TEST_F(ZiFiNativeModule_Test, Services_FtpStartsTheOthersAnswerAsWhenTheyCannotS
     r = Read();
     ASSERT_EQ(Cmds(r), "FE EE A4");
     EXPECT_EQ(r[2].data, Bytes({0, 1})) << "status 0, record version 1";
+}
+
+// --- Weather (S3) -------------------------------------------------------------------------------------------------
+
+namespace
+{
+const char* const kGeoRome =
+    R"({"results":[{"id":3169070,"name":"Rome","latitude":41.89193,"longitude":12.51133,"country_code":"IT"}],"generationtime_ms":0.6})";
+const char* const kForecastRome =
+    R"({"utc_offset_seconds":7200,"current":{"time":1759577400,"temperature_2m":22.5,"weather_code":3,"is_day":1,)"
+    R"("wind_speed_10m":7.6,"precipitation":0.0,"surface_pressure":1013.2},"daily":{"time":[1759528800,1759615200,)"
+    R"(1759701600,1759788000,1759874400,1759960800],"weather_code":[3,61,2,1,0,80],"temperature_2m_max":[24.1,22,21.5,)"
+    R"(23,24.4,19.9],"temperature_2m_min":[14.2,15,13.1,12.9,13.4,12],"precipitation_sum":[0,4.25,0,0,0,12],)"
+    R"("sunrise":[1759555200,1,1,1,1,1],"sunset":[1759597500,1,1,1,1,1]}})";
+}  // namespace
+
+class ZiFiNativeModuleWeather_Test : public ZiFiNativeModule_Test
+{
+protected:
+    /// The module asks for a host: DNS, connect, the request it sent; then `response` and the close
+    std::string Serve(uint32_t addr, const std::string& response)
+    {
+        AnswerDns(addr);
+        Read();
+        const FakeHostNet::Command connect = *_host->Last("connect");
+        EXPECT_EQ(connect.endpoint.port, 80);
+        _host->Push(NetEventType::Connected, connect.socket);
+        _net->Pump();
+        Read();
+        const std::string request = LastSent();
+        if (!response.empty())
+        {
+            _host->Push(NetEventType::Data, connect.socket, NetEventStatus::Ok, {}, Bytes(response.begin(), response.end()));
+            _host->Push(NetEventType::PeerClosed, connect.socket);
+            _net->Pump();
+        }
+        return request;
+    }
+
+    static std::string Ok(const std::string& body)
+    {
+        return "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) +
+               "\r\n\r\n" + body;
+    }
+
+    std::string LastDnsName()
+    {
+        const FakeHostNet::Command q = *_host->Last("dns");
+        dns::Question question;
+        EXPECT_TRUE(dns::ParseQuery(q.data.data(), q.data.size(), question));
+        return question.name;
+    }
+
+    void Ini(const std::string& text)
+    {
+        Send(ZiFiNativeModule::kWifiIni, text);
+        ASSERT_EQ(Cmds(Read()), "FE 83");
+    }
+};
+
+TEST_F(ZiFiNativeModuleWeather_Test, CityThenForecastGivesTheRecord)
+{
+    Ini("ssid: UnrealNG\r\ntime: +2\r\ncity: Rome\r\ncountry: IT\r\n");
+    Send(ZiFiNativeModule::kWeatherGet);
+    EXPECT_EQ(Cmds(Read()), "FE");
+    EXPECT_EQ(LastDnsName(), "geocoding-api.open-meteo.com");
+    std::string request = Serve(NetIp(188, 40, 0, 1), Ok(kGeoRome));
+    EXPECT_EQ(request.substr(0, request.find("\r\n")), "GET /v1/search?name=Rome&count=1&language=en&format=json&countryCode=IT HTTP/1.0");
+    EXPECT_NE(request.find("Host: geocoding-api.open-meteo.com\r\n"), std::string::npos);
+    EXPECT_TRUE(Read().empty()) << "the forecast next";
+    EXPECT_EQ(LastDnsName(), "api.open-meteo.com");
+    request = Serve(NetIp(188, 40, 0, 2), Ok(kForecastRome));
+    EXPECT_EQ(request.rfind("GET /v1/forecast?latitude=41.8919&longitude=12.5113&current=temperature_2m,", 0), 0u) << request;
+    std::vector<Reply> r = Read();
+    ASSERT_EQ(Cmds(r), "A4");
+    ASSERT_EQ(r[0].data.size(), 90u);
+    EXPECT_EQ(r[0].data[0], 1);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(r[0].data.data() + 2)), "Rome");
+    EXPECT_EQ(r[0].data[26], 23);
+    EXPECT_EQ(r[0].data[41], 6);
+
+    // The place is kept: the next call asks the forecast only
+    Send(ZiFiNativeModule::kWeatherGet);
+    EXPECT_EQ(Cmds(Read()), "FE");
+    EXPECT_EQ(LastDnsName(), "api.open-meteo.com");
+    Serve(NetIp(188, 40, 0, 2), Ok(kForecastRome));
+    EXPECT_EQ(Cmds(Read()), "A4");
+}
+
+TEST_F(ZiFiNativeModuleWeather_Test, FailuresReportTheirReason)
+{
+    Send(ZiFiNativeModule::kWeatherGet);
+    std::vector<Reply> r = Read();
+    ASSERT_EQ(Cmds(r), "FE EE A4");
+    EXPECT_EQ(r[1].Text(), "weather:no city in ini");
+    EXPECT_EQ(r[2].data, Bytes({0, 1}));
+
+    Ini("ssid: UnrealNG\r\ncity: Atlantis\r\n");
+    Send(ZiFiNativeModule::kWeatherGet);
+    Read();
+    Serve(NetIp(188, 40, 0, 1), Ok(R"({"generationtime_ms":0.4})"));
+    r = Read();
+    ASSERT_EQ(Cmds(r), "EE A4");
+    EXPECT_EQ(r[0].Text(), "weather:city: not found");
+    const size_t connects = _host->Count("connect");
+    Send(ZiFiNativeModule::kWeatherGet);
+    r = Read();
+    ASSERT_EQ(Cmds(r), "FE EE A4") << "an unknown place is not asked again";
+    EXPECT_EQ(_host->Count("connect"), connects);
+
+    Ini("ssid: UnrealNG\r\ncountry: IT\r\nzip: 99999\r\n");
+    Send(ZiFiNativeModule::kWeatherGet);
+    Read();
+    EXPECT_EQ(LastDnsName(), "api.zippopotam.us");
+    EXPECT_EQ(Serve(NetIp(1, 2, 3, 4), "HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\n{}").substr(0, 19), "GET /IT/99999 HTTP/");
+    r = Read();
+    ASSERT_EQ(Cmds(r), "EE A4") << "4xx: no retry";
+    EXPECT_EQ(r[0].Text(), "weather:zip: not found");
+}
+
+TEST_F(ZiFiNativeModuleWeather_Test, A503IsRetriedAfterASecond)
+{
+    Ini("ssid: UnrealNG\r\ncity: Rome\r\n");
+    Send(ZiFiNativeModule::kWeatherGet);
+    Read();
+    Serve(NetIp(188, 40, 0, 1), "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+    const size_t lookups = _host->Count("dns");
+    EXPECT_TRUE(Read(900000).empty());
+    EXPECT_EQ(_host->Count("dns"), lookups) << "the pause";
+    Read(200000);
+    EXPECT_EQ(_host->Count("dns"), lookups + 1) << "the second attempt";
+    Serve(NetIp(188, 40, 0, 1), "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+    EXPECT_TRUE(Read(1900000).empty()) << "2 s before the third attempt";
+    Read(200000);
+    Serve(NetIp(188, 40, 0, 1), "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+    std::vector<Reply> r = Read();
+    ASSERT_EQ(Cmds(r), "EE A4") << "three attempts";
+    EXPECT_EQ(r[0].Text(), "weather:city: http 503");
+}
+
+TEST_F(ZiFiNativeModuleWeather_Test, TheBodyMustArriveInFifteenSeconds)
+{
+    Ini("ssid: UnrealNG\r\ncity: Rome\r\n");
+    Send(ZiFiNativeModule::kWeatherGet);
+    Read();
+    Serve(NetIp(188, 40, 0, 1), "");
+    const uint16_t socket = _host->Last("connect")->socket;
+    const std::string head = "HTTP/1.1 200 OK\r\nContent-Length: 400\r\n\r\n{\"res";
+    _host->Push(NetEventType::Data, socket, NetEventStatus::Ok, {}, Bytes(head.begin(), head.end()));
+    _net->Pump();
+    EXPECT_TRUE(Read(14800000).empty());
+    Read(400000);
+    EXPECT_GE(_host->Count("connect"), 1u);
+    EXPECT_STREQ(_esp->Activity().c_str(), "weather waiting to retry") << "reply timeout is worth another try";
 }
 
 // --- TTD ----------------------------------------------------------------------------------------------------------

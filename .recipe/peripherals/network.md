@@ -186,6 +186,49 @@ in  #C0EF -> 5 ; INIR from #BFEF: 5A F0 00 00 F0
 
 The `[zifi]` line then ends `[ZIFI-NATIVE S3 (s3-native-0.6.94), idle]`.
 
+#### Demo: the ZiFi browser on the real internet
+
+The new `zifi.spg` (a catalog browser: vtrd.in, zxart.ee, hype) fetches a ZX picture and a game from the
+internet and saves the game to the SD card. Results of every program and firmware:
+[TODO.md, Z5 results](../../docs/inprogress/2026-10-02-tsconf-zifi/TODO.md#z5-results-2026-10-04).
+
+1. An SD folder: Wild Commander (`boot.$C`, `WC/` from
+   `testdata/machines/tsconf/wildcommander/wc-improved-v1.11i/`), and a folder `zifi/` with
+   [`zifi.spg`](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/ZiFi%20SPG/build/zifi.spg)
+   and `zifi.ini`:
+
+   ```text
+   SSID: UnrealNG
+   password: zx
+   time: +3
+   ```
+
+2. Machine TS-Conf (`TSL`), `network set zifi=zifi-native,s3` (`[NETWORK] ZiFi=ZIFI-NATIVE,S3`), the folder
+   into `sd.zc`, reset: Wild Commander comes up. (HackerVBI's original
+   [`zifi.spg`](https://github.com/HackerVBI/ZiFi/tree/master/_Current_version_executable) does the same with
+   `zifi=at`.)
+3. Start a TTD recording with a history limit (`POST /ttd/start`, then `/ttd/history-limit {"frames":3000}`).
+4. In WC: cursor to `zifi`, Enter, cursor to `zifi.spg`, Enter. The console (bottom) says "HTTP test OK, server
+   code 200", "Clock set from NTP", "Startup finished, menu active".
+5. The program is driven by the mouse (in unreal-qt: capture the mouse in the window). The menu is the top bar
+   (320 x 240 pointer space): DOWNLOADS (x 88-167, y 0-15), GRAPHICS (x 88-167, y 16-31), MUSIC / PRESS
+   (x 184-231, y 0-15 / 16-31). List items are 16 pixels high from y = 32.
+   - GRAPHICS, then "Most popular" (second item): the zxart.ee list; click an entry: the picture (for example
+     "Baking Soda by Grongy") fills the screen. A key returns.
+   - DOWNLOADS, "Games: vtrd.in", the second entry: the game is downloaded through `zifi.vtrd.in` and saved as
+     `zifi/downloads/<date>/<name>.scl`.
+   - PRESS, "Hype": the newest hype.retroscene.org articles.
+6. Evidence: `inspect_state network` (`zifi.esp.exchanges`: `14` HTTP GET -> `94`, `12` NET_RECV -> `92`;
+   `virtual_network.recent_activity`: `connect` / `connected` to the site), `POST /ttd/dump`, and
+   `POST /media/sd.zc/export {"path":"card.img"}` for the saved file (a folder is never written:
+   `mdir -i card.img ::/zifi/downloads`).
+
+Scripted (WebAPI): the pointer is the program's own position, so move it with small `mouse/glide` steps and wait
+until a glide is done before the next one (the browser keeps the position in its variables; `memory/find`
+`01 DF FB ED 78` finds its mouse routine, the position follows it). The main screen switches video modes per
+line: if a screenshot shows only the bottom bar, read the text page instead (`GET /memory/ram/216/0?len=16384`,
+256 bytes per row, characters in the first 128, cp866).
+
 ```json
 {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
   "body": {"com_port": "tcp:127.0.0.1:2323"}}}
