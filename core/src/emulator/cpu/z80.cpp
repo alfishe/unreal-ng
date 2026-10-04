@@ -1265,7 +1265,8 @@ uint8_t Z80::inFromBus(uint16_t port)
 
     // Full-decode observer tap (raw port, pre-decode): a real bus card that
     // fully decodes this address drives the data bus in the same cycle as the
-    // model-decoded device (shared bus, e.g. ZXM-MoonSound vs ULA/AY/Beta-128)
+    // model-decoded device (shared bus, e.g. ZXM-MoonSound vs ULA/AY/Beta-128).
+    // Inline: a port no card claims costs one bit test in the slots claim table
     bool fullDecodeHandled = false;
     bool fullDecodeClaims = false;
     const uint8_t fullDecodeValue = portDecoder.NotifyFullDecodeIn(port, fullDecodeHandled, fullDecodeClaims);
@@ -1372,7 +1373,8 @@ void Z80::out(uint16_t port, uint8_t val)
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Full-decode observer tap (raw port, pre-decode): the card observes the
-    // write cycle in addition to whatever device the model decode hands it to
+    // write cycle in addition to whatever device the model decode hands it to.
+    // Inline: a port no card claims costs one bit test in the slots claim table
     portDecoder.NotifyFullDecodeOut(port, val);
 
     // Let model-specific decoder to process port output

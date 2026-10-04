@@ -113,8 +113,8 @@ bool PortDecoder::TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc)
 PortDecoder::~PortDecoder()
 {
     _portDevices.clear();
-    _fullDecodeDevices.clear();
-    _fullDecodeLowByteDevices.fill(nullptr);
+    _fullDecodeClaims.Clear();
+    _fullDecodeClaims.Build();
 }
 /// endregion </Constructors / Destructors>
 
@@ -1457,71 +1457,92 @@ void PortDecoder::UnregisterPortHandler(uint16_t port)
 
 bool PortDecoder::RegisterFullDecodePort(uint16_t port, PortDevice* device)
 {
-    bool result = false;
+    if (!device)
+        return false;
 
-    if (device)
+    if (_fullDecodeClaims.Contains(kExactObserverMask, port))
     {
-        if (!key_exists(_fullDecodeDevices, port))
-        {
-            _fullDecodeDevices.insert({port, device});
-            result = true;
-        }
-        else
-        {
-            MLOGWARNING("PortDecoder::RegisterFullDecodePort - observer for port: #%04X already registered", port);
-        }
+        MLOGWARNING("PortDecoder::RegisterFullDecodePort - observer for port: #%04X already registered", port);
+        return false;
     }
 
-    return result;
+    slots::ClaimEntry entry;
+    entry.mask = kExactObserverMask;
+    entry.match = port;
+    entry.slot = kExactObserverSlot;
+    entry.owner = device;
+    _fullDecodeClaims.Add(entry);
+    RebuildFullDecodeClaims();
+    return true;
 }
 
 void PortDecoder::UnregisterFullDecodePort(uint16_t port, PortDevice* device)
 {
-    auto it = _fullDecodeDevices.find(port);
-    if (it != _fullDecodeDevices.end() && it->second == device)
-    {
-        _fullDecodeDevices.erase(it);
-    }
+    if (_fullDecodeClaims.Remove(kExactObserverMask, port, device))
+        RebuildFullDecodeClaims();
 }
 
 bool PortDecoder::RegisterFullDecodeLowBytePort(uint8_t port, PortDevice* device)
 {
-    bool result = false;
+    if (!device)
+        return false;
 
-    if (device)
+    if (_fullDecodeClaims.Contains(kLowByteObserverMask, port))
     {
-        if (!_fullDecodeLowByteDevices[port])
-        {
-            _fullDecodeLowByteDevices[port] = device;
-            result = true;
-        }
-        else
-        {
-            MLOGWARNING("PortDecoder::RegisterFullDecodeLowBytePort - observer for port low byte: #%02X already registered", port);
-        }
+        MLOGWARNING("PortDecoder::RegisterFullDecodeLowBytePort - observer for port low byte: #%02X already registered", port);
+        return false;
     }
 
-    return result;
+    slots::ClaimEntry entry;
+    entry.mask = kLowByteObserverMask;
+    entry.match = port;
+    entry.slot = kLowByteObserverSlot;
+    entry.owner = device;
+    _fullDecodeClaims.Add(entry);
+    RebuildFullDecodeClaims();
+    return true;
 }
 
 void PortDecoder::UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device)
 {
-    if (_fullDecodeLowByteDevices[port] == device)
-    {
-        _fullDecodeLowByteDevices[port] = nullptr;
-    }
+    if (_fullDecodeClaims.Remove(kLowByteObserverMask, port, device))
+        RebuildFullDecodeClaims();
+}
+
+void PortDecoder::RebuildFullDecodeClaims()
+{
+    _fullDecodeClaims.Build();
+    _claimMemoValid = false;
+    _claimMemoLowByteObserver = nullptr;
+}
+
+void PortDecoder::SetFullDecodeScanTrapForTests(PortDevice* trap)
+{
+    _fullDecodeClaims.SetScanTrapForTests(trap);
+    RebuildFullDecodeClaims();
+}
+
+PortDevice* PortDecoder::LowByteObserver(uint16_t rawPort) const
+{
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FindByMask(rawPort, kLowByteObserverMask);
+    return entry ? entry->owner : nullptr;
 }
 
 /// Model-decode claim override: see portdecoder.h. Called from each model's
 /// DecodePortIn/Out right after decodePortEx, before any inline handler runs -
 /// the claiming observer was already serviced by the Z80 I/O funnel tap.
-bool PortDecoder::OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
-                                                   PortDecodeDisposition& disp, bool isRead)
+/// The inline OverrideDecodeForFullDecodeClaim has already found the port claimed.
+bool PortDecoder::OverrideDecodeForClaimedPort(uint16_t rawPort, uint16_t& decodedPort,
+                                               PortDecodeDisposition& disp, bool isRead)
 {
     if (decodedPort == 0x0000)
         return false;
 
-    PortDevice* observer = _fullDecodeLowByteDevices[rawPort & 0xFF];
+    // The Z80 tap of this cycle already looked the port up (one lookup per claimed cycle); a direct DecodePortIn/Out
+    // call without the tap (tests, tools) looks it up here
+    PortDevice* observer = (_claimMemoValid && rawPort == _claimMemoPort) ? _claimMemoLowByteObserver
+                                                                          : LowByteObserver(rawPort);
+
     if (observer == nullptr)
         return false;
 
@@ -1567,7 +1588,7 @@ std::vector<PortDecodeClash> PortDecoder::FindFullDecodeClashes() const
 
         for (uint16_t low = 0; low <= 0xFF; low++)
         {
-            const PortDevice* device = _fullDecodeLowByteDevices[low];
+            PortDevice* device = LowByteObserver(low);
             if (device == nullptr || (low & ruleMaskLow) != ruleMatchLow)
                 continue;
 
@@ -1577,7 +1598,7 @@ std::vector<PortDecodeClash> PortDecoder::FindFullDecodeClashes() const
             clash.ruleMatch = rule.match;
             clash.rulePort = rule.port;
             clash.claimLowByte = static_cast<uint8_t>(low);
-            clash.device = _fullDecodeLowByteDevices[low];
+            clash.device = device;
             // Required high bits come from the match value (don't-care bits stay 0)
             clash.sampleAddress = static_cast<uint16_t>((rule.match & 0xFF00) | low);
             clash.fdcProtected = IsBeta128Port(rule.port);
@@ -1703,58 +1724,58 @@ std::vector<PortDecodeRuleOverride> PortDecoder::FindFullDecodeRuleResolutions()
     return result;
 }
 
-/// Z80 OUT tap: forward the RAW port write to the full-decode observer (if any).
-/// Called from Z80::out() before the model decode - the observer sees the cycle
-/// no matter which device the model decode attributes it to.
-void PortDecoder::NotifyFullDecodeOut(uint16_t port, uint8_t value)
+/// Z80 OUT tap, claimed port: forward the RAW port write to the full-decode
+/// observer. Called from Z80::out() (inline NotifyFullDecodeOut) before the
+/// model decode - the observer sees the cycle no matter which device the model
+/// decode attributes it to. The first claim in slot order is the exact 16-bit
+/// observer, then the low-byte one (every high-byte alias of a registered low
+/// byte reaches the card: guest `out (n),a` forms put A in the high byte).
+void PortDecoder::NotifyClaimedOut(uint16_t port, uint8_t value)
 {
-    auto it = _fullDecodeDevices.find(port);
-    if (it != _fullDecodeDevices.end() && it->second)
-    {
-        it->second->portDeviceOutMethod(port, value);
-        return;
-    }
-
-    // Low-byte CPLD decode: every high-byte alias of a registered low byte
-    // reaches the card (guest `out (n),a` forms put A in the high byte).
-    if (PortDevice* lowByteObserver = _fullDecodeLowByteDevices[port & 0xFF])
-    {
-        lowByteObserver->portDeviceOutMethod(port, value);
-    }
+    PortDevice* observer = nullptr;
+    MemoizeClaim(port, observer);
+    if (observer)
+        observer->portDeviceOutMethod(port, value);
 }
 
-/// Z80 IN tap: query the full-decode observer for the RAW port read.
+/// The one claim lookup of a claimed cycle: the first observer in slot order (exact before low byte) is returned in
+/// firstOwner, the low-byte observer (what the model decode's claim override needs) is remembered for this port
+void PortDecoder::MemoizeClaim(uint16_t port, PortDevice*& firstOwner)
+{
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    firstOwner = entry ? entry->owner : nullptr;
+    PortDevice* lowByte = nullptr;
+    if (entry)
+        lowByte = entry->mask == kLowByteObserverMask ? entry->owner : LowByteObserver(port);
+    _claimMemoPort = port;
+    _claimMemoLowByteObserver = lowByte;
+    _claimMemoValid = true;
+}
+
+/// Z80 IN tap, claimed port: query the full-decode observer for the RAW port read.
 /// Returns the observer's bus value (0xFF when none) and sets handled=true
 /// when an observer drives the bus, claimsBus=true when it claims the read
 /// over a model-decoded device (armed card, portDeviceClaimsRead). Z80::in()
 /// applies the value with legacy-device priority unless the observer claims
 /// the bus, and suppresses the floating bus override for handled ports.
-uint8_t PortDecoder::NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus)
+uint8_t PortDecoder::NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsBus)
 {
     uint8_t result = 0xFF;
     handled = false;
     claimsBus = false;
 
-    auto it = _fullDecodeDevices.find(port);
-    if (it != _fullDecodeDevices.end() && it->second)
+    PortDevice* observer = nullptr;
+    MemoizeClaim(port, observer);
+    if (observer)
     {
-        result = it->second->portDeviceInMethod(port);
+        result = observer->portDeviceInMethod(port);
         handled = true;
-        claimsBus = it->second->portDeviceClaimsRead(port);
-    }
-    else if (PortDevice* lowByteObserver = _fullDecodeLowByteDevices[port & 0xFF])
-    {
-        // Low-byte CPLD decode: every high-byte alias of a registered low
-        // byte reaches the card, with the same claim semantics as above.
-        result = lowByteObserver->portDeviceInMethod(port);
-        handled = true;
-        claimsBus = lowByteObserver->portDeviceClaimsRead(port);
+        claimsBus = observer->portDeviceClaimsRead(port);
     }
 
     // Cache the observer's bus value for the claim override inside
     // DecodePortIn (single read of a stateful card register - see
     // _lastFullDecodeInValue)
-    _lastFullDecodeInPort = port;
     _lastFullDecodeInValue = result;
 
     return result;
@@ -1811,10 +1832,10 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
 {
     uint8_t result = 0xFF;
 
-    if (key_exists(_portDevices, port))
+    if (auto it = _portDevices.find(port); it != _portDevices.end())
     {
         // Peripheral registered to handle port event found
-        PortDevice* device = _portDevices.at(port);
+        PortDevice* device = it->second;
         if (device)
         {
             result = device->portDeviceInMethod(port);
@@ -1841,10 +1862,10 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
 /// \param value Value to output into specified port
 void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 {
-    if (key_exists(_portDevices, port))
+    if (auto it = _portDevices.find(port); it != _portDevices.end())
     {
         // Peripheral registered to handle port event found
-        PortDevice* device = _portDevices.at(port);
+        PortDevice* device = it->second;
         if (device)
         {
             device->portDeviceOutMethod(port, value);

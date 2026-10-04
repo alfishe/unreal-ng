@@ -1,6 +1,6 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine, not wired into the emulator) built 2026-10-03, uncommitted on branch `zx-bus-slots`. PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) built 2026-10-04, uncommitted. PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -31,7 +31,23 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
   - [ ] owner review of the SL-1 data choices (tdd.md §5, deviations 3-5)
   - [ ] skipped plan tests, later phases: `RefusedWhileTtdRecords` (SL-5), `IniLoadUsesSamePlan`,
     `LegacyKeysTranslated` (SL-4)
-- [ ] SL-2 port claim table, IORQGE, shadowing (A/B benchmark)
+- [x] SL-2 port claim table, IORQGE, shadowing (2026-10-04, working tree of `zx-bus-slots`, not committed):
+  `slots/portclaimtable.{h,cpp}` (claimed-port bitmap, per-low-byte buckets in slot order, board-port bitmap,
+  cycle resolution with CardWins / BoardWins / UlaOnly / None, Iorq / RdWr detection, IORQGE hiding by slot order,
+  read rule, ROM-fetch lock and DOS gates through `IClaimSignals`, shadow flags for built-ins); PortDecoder's
+  full-decode observers (MoonSound, ZXNETUSB, ComPort / ZX-WiFi) served from it with the old semantics (exact before
+  low byte, R6, `OverrideDecodeForFullDecodeClaim` unchanged); the map + low-byte array removed; unclaimed port = one
+  inline bit test; `PeripheralPortIn/Out` one `find`. Tests `PortClaimTable_Test.*` (12); full `core-tests` green.
+  Benchmarks `BM_PortOut`, `BM_PortCard` added. Review round (2026-10-04): no instrumentation counter on the access
+  path (a test-only scan trap proves "unclaimed never scans"), the claimed port looked up once per cycle (the Z80
+  tap's lookup is memoized for the decoder's override). A/B vs SL-1, 8 interleaved rounds with the load below 12 for
+  each whole round: unclaimed ports 3-14 % faster; a claimed card port still +3.7 to +5.3 % (1.2-1.9 ns per
+  access). Table, loads and the variants tried: [tdd.md](tdd.md) §6
+  - [ ] claimed-port residue (+3.7 to +5.3 % on the MoonSound's own port, 1.2-1.9 ns per access; < 0.05 % of a frame):
+    not from the counter or the second lookup (both removed, no change); the profile puts it in the decoders'
+    and `Z80::inFromBus`'s own code around the inline taps, and variants move it about as much as its size. To be
+    removed with SL-3's single resolution pass (tap + R6 + override in one), re-measured with `BM_PortCard`
+  - [ ] `Write` / `Read` (the full resolution) unused in production until SL-3
 - [ ] SL-3 migrate the old dispatch rules, remove the three mechanisms one by one
 - [ ] SL-4 migrate cards one by one; `[SLOTS]` + legacy key translation; `data/configs` converted
 - [ ] SL-5 TTD fingerprint and session guard

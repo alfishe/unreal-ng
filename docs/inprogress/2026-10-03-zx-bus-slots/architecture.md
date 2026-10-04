@@ -229,6 +229,14 @@ Q6), never on the hot path.
   lockedOnRomFetch, detection, ICard*}`, sorted IORQGE first, then slot order.
 - Per machine: the set of board ports (`porthit` for `BoardWins` machines), precomputed into a second bitmap.
 
+**As built (SL-2,** `core/src/emulator/slots/portclaimtable.{h,cpp}`**):** the buckets are sorted by **slot order
+only**, not "IORQGE first": an IORQGE card hides the cycle from *later* slots (§4.3 step 2), so a passive card in an
+earlier slot must still see it. The owner is today's `PortDevice*` (an `ICard` wraps one from SL-4 on). Entries also
+carry the claim's `Gate` (DOS-gated claims and board ports); the DOS state and the last M1 address come from an
+`IClaimSignals` read only when an entry needs it. `ReadRule::SlotOrder` puts the board before the slots (a modeling
+choice like `WiredAnd`, flagged as a bus fight). The table is rebuilt whenever a device registers or leaves (the
+existing observers register at attach and at a network refit, both at a frame boundary), never on the access path.
+
 ### 4.3 Cycle resolution
 
 For an access to port `p` (read or write):

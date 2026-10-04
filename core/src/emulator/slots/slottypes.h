@@ -6,6 +6,12 @@
 /// exceptions and sources. Plain constant data: every array is a constexpr table in refdata/*.cpp, referenced by
 /// std::span, so the collection needs no heap and no loader.
 
+// Qt defines `slots` and `signals` as macros; these headers reach Qt translation units through portdecoder.h
+#pragma push_macro("slots")
+#pragma push_macro("signals")
+#undef slots
+#undef signals
+
 #include <cstdint>
 #include <span>
 
@@ -250,3 +256,6 @@ constexpr uint32_t Bit(int index)
 }
 
 } // namespace slots
+
+#pragma pop_macro("signals")
+#pragma pop_macro("slots")

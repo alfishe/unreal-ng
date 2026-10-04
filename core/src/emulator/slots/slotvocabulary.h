@@ -8,6 +8,12 @@
 /// Every enum value has an id (the string used in reports, the INI and the docs) and a one-line description; the
 /// tables live in slotvocabulary.cpp and a test checks that none is missing.
 
+// Qt defines `slots` and `signals` as macros; these headers reach Qt translation units through portdecoder.h
+#pragma push_macro("slots")
+#pragma push_macro("signals")
+#undef slots
+#undef signals
+
 #include <cstdint>
 
 namespace slots
@@ -242,3 +248,6 @@ constexpr BusSignal SignalAt(int index)
 }
 
 } // namespace slots
+
+#pragma pop_macro("signals")
+#pragma pop_macro("slots")
