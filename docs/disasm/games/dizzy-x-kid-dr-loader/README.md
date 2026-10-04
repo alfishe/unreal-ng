@@ -54,7 +54,8 @@ a cracker who patches the ROM for his own tricks trips it.
 
 Failure reaction: stage 1 fills 15000 bytes of memory from `#4000` with `#15` (`DEC D`), which
 also erases stage 2; the CPU then runs through the filler and ends in a red or solid screen.
-The interrupt handler pushes `#0000` and jumps through ROM `#3D30`.
+The interrupt handler pushes `#0000` and jumps to ROM `#3D30`, which in the 48K ROM is the character
+set: the CPU executes the bitmap of an "&" as code and runs wild.
 
 ## Verdict
 
@@ -78,5 +79,10 @@ See also the investigation notes in
 
 Verified by running the tape in unreal-ng 48K and Pentagon (execution breakpoints, register and
 memory reads) and cross-checked in MAME (`spectrum`, original ROM): stage 2 and 3 code, the `#006D` check, the filler
-reaction. **Not traced**: the work of the helper at `#6009`, the routine at `#7022`,
-and the content of the encrypted game blocks. Those places are marked `NOT TRACED` in the listing.
+reaction. Also verified: the helper at `#6009` is a lone `RET`; the relocation routine at `#7022`
+finds its own address by `CALL #0052` (a `RET` in the 48K ROM), a further implicit ROM dependence;
+the Y/N answer Y sets the cheat flag `#5D80` to 0; the two `#C9` patches at `#5FFD`/`#5FE3` hit the
+routine at `#5FD2`. **Inferred** only: the `#FFFF` write/read-back looks like a test for RAM at the
+top of memory (16K vs 48K). **Not examined**: the content of the encrypted game blocks and the
+on-screen purpose of the routine at `#5FD2`. Those places are marked `INFERRED` or `NOT TRACED` in
+the listing.
