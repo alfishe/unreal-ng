@@ -7,9 +7,10 @@
     paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/registers"]["get"]["description"] =
         "The main Z80: main (af, bc, de, hl), alternate (af_, bc_, de_, hl_), index (ix, iy), special (pc, sp, i, "
-        "r with bit 7 as last written, memptr = the internal WZ latch), interrupt (iff1, iff2, im, halted), timing "
-        "(t = CPU T-states since the frame's start - above the base T at turbo; frame = the frame number) and the "
-        "decoded flags.";
+        "r with bit 7 as last written, memptr = the internal WZ latch, q = the flag capture register, t = CPU "
+        "T-states since the frame's start - above the base T at turbo), interrupt (iff1, iff2, im, halted, boundary = "
+        "what the next INT / NMI sampling sees: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack) and the "
+        "decoded flags. Field names follow the debugger protocol's Registers.";
     paths["/api/v1/emulator/{id}/registers"]["get"]["responses"]["200"]["description"] = "CPU register values";
 
     paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["summary"] = "Set CPU register value";

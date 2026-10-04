@@ -253,5 +253,8 @@ void DebugEventHub::OnBreakpointsChanged(Message* message)
         return;
     Json::Value event;
     event["event"] = "breakpoints_changed";
+    event["ids"] = Json::Value(Json::arrayValue);
+    for (uint16_t id : payload->ids)
+        event["ids"].append(id);
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }

@@ -17,17 +17,17 @@ there (fresh reset, a jump done by a seek) stops on the first step, without exec
 
 Memory breakpoints need debug mode (and the `breakpoints` feature, on with debug mode).
 
-**Bound to a page.** An execution, read or write breakpoint can name a page - `ram:32`, `rom:3`,
-`cache:0` - and then fires only while that page is mapped at its address: code that a TS-Conf or 128K
+**Bound to a page.** An execution, read or write breakpoint can name a page - `{"kind":"ram","page":32}`
+in JSON, `ram32` / `rom3` / `cache0` in text - and then fires only while that page is mapped at its address: code that a TS-Conf or 128K
 program pages into `#C000` among others. A page the machine does not have is refused.
 
 ```bash
 curl -s -X POST $BASE/emulator/$EMU/breakpoints -H 'Content-Type: application/json' \
-     -d '{"type":"exec","address":"0xC000","page":"ram:32"}'          # {"id":2,...,"page":"ram:32"}
+     -d '{"type":"exec","address":"0xC000","page":{"kind":"ram","page":32}}'   # {"id":2,...,"page":{"kind":"ram","page":32}}
 ```
 
-CLI `bp 0xC000 ram:32`, `wp 0x4000 w ram:5`; Lua `bp(0xC000, "ram:32")`; Python
-`emu.bp(0xC000, page="ram:32")`; MCP `control_execution action=bp_add address=49152 page=ram:32`.
+CLI `bp 0xC000 --page ram32`, `wp 0x4000 w --page ram5`; Lua `bp(0xC000, "ram32")`; Python
+`emu.bp(0xC000, page="ram32")`; MCP `control_execution action=bp_add address=49152 page=ram32`.
 
 **Notes and groups.** `POST /breakpoints` takes `note` and `group` (MCP `bp_add` too); the CLI takes the
 note after the address (and page), `bpgroup` manages groups; Lua / Python set them with `bp_note(id, text)`

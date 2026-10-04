@@ -2094,6 +2094,20 @@ bool Z80::SetRegisterValue(Z80State* state, const std::string& name, uint16_t va
     return true;
 }
 
+const char* Z80::BoundaryName(uint8_t boundary)
+{
+    switch (boundary)
+    {
+        case Z80_BOUNDARY_NONE: return "none";
+        case Z80_BOUNDARY_PREFIX_DD: return "prefix_dd";
+        case Z80_BOUNDARY_PREFIX_FD: return "prefix_fd";
+        case Z80_BOUNDARY_INT_SHADOW: return "int_shadow";
+        case Z80_BOUNDARY_LD_A_IR: return "ld_a_ir";
+        case Z80_BOUNDARY_NMI_ACK: return "nmi_ack";
+        default: return "unknown";
+    }
+}
+
 uint8_t Z80::RegisterR(const Z80Registers* state)
 {
     return static_cast<uint8_t>((state->r_low & 0x7F) | (state->r_hi & 0x80));

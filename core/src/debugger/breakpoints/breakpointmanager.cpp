@@ -197,6 +197,11 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     info.note = bp->note;
     info.group = bp->group;
     info.page = PageSpecName(*bp);
+    if (bp->matchType == BRK_MATCH_BANK_ADDR)
+    {
+        info.pageKind = PageKindName(bp->pageType);
+        info.pageNumber = bp->page;
+    }
 
     // Breakpoint type
     switch (bp->type)
@@ -515,14 +520,16 @@ bool BreakpointManager::ParsePageSpec(const std::string& text, uint8_t& page, Me
 {
     std::string lower = text;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const size_t colon = lower.find(':');
-    const std::string kind = lower.substr(0, colon);
-    if (colon == std::string::npos || (kind != "ram" && kind != "rom" && kind != "cache"))
+    std::string kind;
+    for (const char* name : {"cache", "ram", "rom"})
+        if (lower.rfind(name, 0) == 0)
+            kind = name;
+    if (kind.empty())
     {
-        error = "page must be ram:N, rom:N or cache:N, got '" + text + "'";
+        error = "page must be ramN, romN or cacheN (e.g. ram5), got '" + text + "'";
         return false;
     }
-    std::string number = lower.substr(colon + 1);
+    std::string number = lower.substr(kind.size());
     int base = 10;
     if (number.rfind("0x", 0) == 0)
         number = number.substr(2), base = 16;
@@ -540,12 +547,16 @@ bool BreakpointManager::ParsePageSpec(const std::string& text, uint8_t& page, Me
     return true;
 }
 
+const char* BreakpointManager::PageKindName(MemoryBankModeEnum pageType)
+{
+    return pageType == BANK_ROM ? "rom" : (pageType == BANK_CACHE ? "cache" : "ram");
+}
+
 std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoint)
 {
     if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
         return {};
-    const char* kind = breakpoint.pageType == BANK_ROM ? "rom" : (breakpoint.pageType == BANK_CACHE ? "cache" : "ram");
-    return std::string(kind) + ":" + std::to_string(breakpoint.page);
+    return std::string(PageKindName(breakpoint.pageType)) + std::to_string(breakpoint.page);
 }
 
 bool BreakpointManager::HasPage(uint8_t page, MemoryBankModeEnum pageType) const
@@ -1698,12 +1709,47 @@ void BreakpointManager::RebuildFilters()
     NotifyBreakpointsChanged();
 }
 
+std::string BreakpointManager::PublishedFields(const BreakpointDescriptor& bp)
+{
+    return std::to_string(bp.type) + "|" + std::to_string(bp.matchType) + "|" + std::to_string(bp.memoryType) + "|" +
+           std::to_string(bp.ioType) + "|" + std::to_string(bp.keyType) + "|" + std::to_string(bp.z80address) + "|" +
+           std::to_string(bp.page) + "|" + std::to_string(bp.pageType) + "|" + (bp.active ? "1" : "0") + "|" +
+           bp.owner + "|" + bp.group + "|" + bp.note;
+}
+
 void BreakpointManager::NotifyBreakpointsChanged()
 {
-    // A manager without an emulator (unit tests) has nobody to tell
-    if (_context && _context->pEmulator)
-        MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED,
-                                                   new BreakpointsChangedPayload(_context->pEmulator->GetId()), true);
+    // A manager without an emulator (unit tests) has nobody to tell: the changes wait for the next report
+    if (!_context || !_context->pEmulator)
+        return;
+    std::vector<uint16_t> ids = TakeChangedIds();
+    if (ids.empty())
+        return;
+    auto* payload = new BreakpointsChangedPayload(_context->pEmulator->GetId());
+    payload->ids = std::move(ids);
+    MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED, payload, true);
+}
+
+std::vector<uint16_t> BreakpointManager::TakeChangedIds()
+{
+    std::map<uint16_t, std::string> current;
+    for (const auto& [id, bp] : _breakpointMapByID)
+        if (bp && !bp->hidden)
+            current.emplace(id, PublishedFields(*bp));
+
+    std::vector<uint16_t> ids;
+    for (const auto& [id, fields] : current)
+    {
+        auto was = _published.find(id);
+        if (was == _published.end() || was->second != fields)
+            ids.push_back(id);  // added or changed
+    }
+    for (const auto& [id, fields] : _published)
+        if (!current.count(id))
+            ids.push_back(id);  // removed
+    _published.swap(current);
+    std::sort(ids.begin(), ids.end());
+    return ids;
 }
 
 /// endregion </Helper methods>

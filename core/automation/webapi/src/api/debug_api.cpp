@@ -70,6 +70,26 @@ namespace
 {
 /// The end of a step as the protocol's PauseEvent describes it (docs/inprogress/2026-09-28-debugger-model/
 /// protocol.md §3.16): reason "step", or "breakpoint" with which one, where and on what access
+/// A breakpoint's page as the debugger protocol carries it: {kind: ram | rom | cache, page}; null when it
+/// matches the address in any page
+Json::Value BreakpointPageJson(const BreakpointDescriptor& bp)
+{
+    if (bp.matchType != BRK_MATCH_BANK_ADDR)
+        return Json::Value(Json::nullValue);
+    Json::Value page;
+    page["kind"] = BreakpointManager::PageKindName(bp.pageType);
+    page["page"] = bp.page;
+    return page;
+}
+
+/// The page a request names, as {kind, page} or as the text form "ram32"; the text form for messages
+std::string BreakpointPageText(const Json::Value& value)
+{
+    if (value.isObject())
+        return value.get("kind", "").asString() + (value.isMember("page") ? value["page"].asString() : std::string());
+    return value.asString();
+}
+
 Json::Value StepStopJson(const Emulator& emulator)
 {
     const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
@@ -887,7 +907,7 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
             
             bpObj["address"] = bp->z80address;
             if (bp->matchType == BRK_MATCH_BANK_ADDR)
-                bpObj["page"] = BreakpointManager::PageSpecName(*bp);
+                bpObj["page"] = BreakpointPageJson(*bp);
             
             // Type-specific access flags
             switch (bp->type)
@@ -990,8 +1010,8 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
-    // Optional "page": "ram:32" | "rom:3" | "cache:0" - the memory breakpoint fires only while that page is
-    // mapped at the address
+    // Optional "page": {"kind":"ram","page":32} (protocol) or "ram32" - the memory breakpoint fires only while
+    // that page is mapped at the address
     const Json::Value& body = *json;
     bool inPage = false;
     uint8_t page = 0;
@@ -1003,10 +1023,10 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
                             type == "write" || type == "w";
         if (!memory)
             pageError = "'page' applies to execution, read and write breakpoints";
-        else if (!BreakpointManager::ParsePageSpec(body["page"].asString(), page, pageType, pageError))
+        else if (!BreakpointManager::ParsePageSpec(BreakpointPageText(body["page"]), page, pageType, pageError))
             ;
         else if (!bpm->HasPage(page, pageType))
-            pageError = "this machine has no page " + body["page"].asString();
+            pageError = "this machine has no page " + BreakpointPageText(body["page"]);
         if (!pageError.empty())
         {
             Json::Value error;
@@ -1087,7 +1107,7 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     ret["address"] = address;
     const BreakpointDescriptor* added = bpm->GetAllBreakpoints().at(bpId);
     if (inPage)
-        ret["page"] = BreakpointManager::PageSpecName(*added);
+        ret["page"] = BreakpointPageJson(*added);
     ret["note"] = added->note;
     ret["group"] = added->group;
     ret["message"] = "Breakpoint added";
@@ -1301,8 +1321,11 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
         ret["last_triggered_access"] = bpInfo.access;
         ret["last_triggered_active"] = bpInfo.active;
         ret["last_triggered_note"] = bpInfo.note;
-        if (!bpInfo.page.empty())
-            ret["last_triggered_page"] = bpInfo.page;
+        if (!bpInfo.pageKind.empty())
+        {
+            ret["last_triggered_page"]["kind"] = bpInfo.pageKind;
+            ret["last_triggered_page"]["page"] = bpInfo.pageNumber;
+        }
         ret["last_triggered_info"] = bpm->FormatBreakpointInfo(bpInfo.id);
         ret["paused_by_breakpoint"] = emulator->IsPaused();
     }
@@ -1378,6 +1401,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     special["i"] = z80->i;
     special["r"] = Z80::RegisterR(z80);
     special["memptr"] = z80->memptr;
+    special["q"] = z80->q;
+    special["t"] = static_cast<Json::UInt>(z80->t);  // CPU T-states since the frame's start
     ret["special"] = special;
     
     // Interrupt state
@@ -1386,13 +1411,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     interrupt["iff2"] = z80->iff2;
     interrupt["im"] = z80->im;
     interrupt["halted"] = z80->halted != 0;
+    interrupt["boundary"] = Z80::BoundaryName(z80->boundary);  // what the next INT / NMI sampling sees
     ret["interrupt"] = interrupt;
-
-    // Where in time: CPU T-states since the frame's start, and the frame number
-    Json::Value timing;
-    timing["t"] = static_cast<Json::UInt>(z80->t);
-    timing["frame"] = static_cast<Json::UInt64>(emulator->GetContext()->emulatorState.frame_counter);
-    ret["timing"] = timing;
     
     // Flags decoded
     uint8_t f = z80->af & 0xFF;

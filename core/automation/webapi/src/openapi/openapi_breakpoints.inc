@@ -6,7 +6,7 @@
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["description"] =
-        "Every breakpoint: id, type, address, the access flags, active, note, group, and page ('ram:32') for one bound "
+        "Every breakpoint: id, type, address, the access flags, active, note, group, and page ({kind, page}) for one bound "
         "to a page.";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["responses"]["200"]["description"] = "List of breakpoints";
 
@@ -78,7 +78,7 @@
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["summary"] = "Get breakpoint status";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["description"] =
         "Returns information about the last triggered breakpoint, including type (memory/port), address, and access "
-        "mode; last_triggered_page ('ram:32') when it is bound to a page";
+        "mode; last_triggered_page ({kind, page}) when it is bound to a page";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["in"] = "path";

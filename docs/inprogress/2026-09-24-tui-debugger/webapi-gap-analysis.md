@@ -9,11 +9,16 @@
   `step_done` / `breakpoints_changed` with `seq`; no long-poll fallback) are built - see
   [.recipe/analysis/breakpoints-and-events.md](../../../.recipe/analysis/breakpoints-and-events.md).
   D1 (`/state/tsconf`: `regs`, programmed DMA addresses, `dma.ctrl`, `sys_config` / `cache_en`,
-  `memory.fm_maps`, `video.line.t0_gpage` / `t1_gpage`) and D2 (`/registers`: `memptr`, `halted`,
-  `timing.t` / `timing.frame`; `im`, `iff1`, `iff2`, `memptr` / `wz` writable; R bit 7 round-trips -
-  `/registers`, Lua and Python reported R with bit 7 at 0x4000) are built on every surface, and so is D4's page part (`"page":"ram:32"` on
-  `POST /breakpoints`, CLI `bp` / `wp`, Lua / Python `bp*`, MCP `bp_add`; listed and in the status). PC
-  history (E2) is left to the TTD v2 work; address ranges (D4's rest) need a range matcher in the core.
+  `memory.fm_maps`, `video.line.t0_gpage` / `t1_gpage`) and D2 (`/registers`: `memptr`, `q`, `t`,
+  `halted`, `boundary` - the debugger protocol's Registers names; `im`, `iff1`, `iff2`, `memptr` / `wz`
+  writable; R bit 7 round-trips - `/registers`, Lua and Python reported R with bit 7 at 0x4000) are built
+  on every surface, and so is D4's page part (`"page":{"kind":"ram","page":32}` on `POST /breakpoints`,
+  CLI `bp` / `wp --page ram32`, Lua / Python `bp*`, MCP `bp_add`; listed and in the status). PC history
+  (E2) is left to the TTD v2 work. The rest of D4 (ranges, physical keys, hit counts, port masks) follows
+  the hot-path design of
+  [conditional-breakpoints/design.md §5.2](../2026-08-17-conditional-breakpoints/design.md); the other
+  additions use the debugger protocol's fields and routes
+  ([protocol.md](../2026-09-28-debugger-model/protocol.md)).
 
 **Short answer:** yes, most of it is possible, and part of it already works today. The POC
 already has a WebAPI client. About 60% of the screen can be fed from existing endpoints. To
