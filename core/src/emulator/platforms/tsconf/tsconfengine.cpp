@@ -27,6 +27,7 @@ void TsConfEngine::Reset()
     _ts.cpuAccesses = 0;
     _ts.cpuLineAccesses = 0;
     _cpuLineRunning = 0;
+    _passLine = kLines;
     RebuildLineTable();
 }
 
@@ -40,9 +41,10 @@ void TsConfEngine::RebuildLineTable()
         // The TSU lines of the current line and, when its ts_start passed, the
         // next one (the latches of the previous lines are gone: the current set)
         const uint32_t current = _ts.engNextLine - 1u;
-        RenderTsu(current, _lines[current]);
+        _passLine = kLines;
+        RenderTsu(current, _lines[current], false);
         if (_ts.engNextLine < kLines && _ts.budgetRaster > current * kLineTacts + TsStartTact())
-            RenderTsu(_ts.engNextLine, _lines[current]);
+            RenderTsu(_ts.engNextLine, _lines[current], true);
     }
 }
 
@@ -69,7 +71,45 @@ uint16_t TsConfEngine::VideoCost(uint8_t vConfig, uint32_t line)
     return static_cast<uint16_t>((dots + kLength[mode] - 1) / kLength[mode] * kNeed[mode]);
 }
 
-void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch)
+uint32_t TsConfEngine::VideoCyclesBefore(const TsConfArbiter::Fetch& fetch, uint32_t cycle)
+{
+    // A block decided at DRAM cycle b gives video cycles b + 1 .. b + need (no CPU asking: video first,
+    // arbiter.v:188); measured with tools/machines/tsconf/rtl-sim tsulatch
+    if (!fetch.active || fetch.h1 <= fetch.h0)
+        return 0;
+    const uint32_t blocks = (fetch.h1 - fetch.h0 + fetch.length - 1u) / fetch.length;
+    uint32_t count = 0;
+    for (uint32_t j = 0; j < fetch.need; j++)
+    {
+        const uint32_t first = fetch.h0 + 1u + j;  // video cycle j of block 0
+        if (cycle > first)
+            count += std::min(blocks, (cycle - first + fetch.length - 1u) / fetch.length);
+    }
+    return count;
+}
+
+uint32_t TsConfEngine::PassStart(const TsConfArbiter::Fetch& fetch, uint32_t x0, uint32_t& prefetch)
+{
+    const uint32_t start = x0 + (prefetch ? 1u : 2u);
+    if (prefetch)
+    {
+        uint32_t cycle = start;
+        for (uint32_t words = 0; words < prefetch; cycle++)
+            words += IsVideoCycle(fetch, cycle) ? 0u : 1u;
+        prefetch += IsVideoCycle(fetch, cycle) ? 0u : 1u;
+    }
+    return start;
+}
+
+bool TsConfEngine::IsVideoCycle(const TsConfArbiter::Fetch& fetch, uint32_t cycle)
+{
+    if (!fetch.active || cycle <= fetch.h0)
+        return false;
+    const uint32_t d = cycle - fetch.h0 - 1u;
+    return d / fetch.length < (fetch.h1 - fetch.h0 + fetch.length - 1u) / fetch.length && d % fetch.length < fetch.need;
+}
+
+void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch, bool split)
 {
     // The TS window: the graphics window, or all 360x288 with T_CONFIG[0]
     TsConfLine& set = _lines[line];
@@ -79,8 +119,11 @@ void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch)
     set.tsW = win.w;
     set.tsu = false;
     set.tsuCost = 0;
-    if (!_context->pMemory)
-        return;
+    set.tsuSplit = 0xFFFF;
+    if (_passLine == line)
+        _passLine = kLines;
+    if (!_context->pMemory || !(tConfig & 0xE0))
+        return;  // TSU off (T_CONFIG[7:5] = 0): no prefetch, no pass, no DRAM
     const uint8_t* ram = _context->pMemory->RAMBase();
 
     // The hardware works on this line during the previous one: first the
@@ -91,13 +134,36 @@ void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch)
     if (previous + 17 >= win.y0 && previous + 9 < static_cast<uint32_t>(win.y0 + win.h))
         used += TsConfTsu::Prefetch(_ts, ram, (line - win.y0 + 16) & 0x1FF, _mapRing);
 
+    // The pass runs from ts_start (dot x0 - 1 of the previous line) to the next ts_start; video keeps its blocks
+    // (the line's graphics fetch). The TSU starts at DRAM cycle x0 + 1, x0 + 2 without a prefetch, and the
+    // prefetch holds one more cycle after its last word unless video takes that cycle (tools/machines/tsconf/
+    // rtl-sim tsulatch: `tmap` drops two clocks after tm_end, video_ts.v:104-121,139)
+    const TsConfLine& shown = _lines[previous];
+    const TsConfArbiter::Fetch fetch = TsConfArbiter::FetchOf(shown, previous);
+    const uint32_t x0 = win.x0;
+    const uint32_t start = PassStart(fetch, x0, used);
+
     if (line >= win.y0 && line < static_cast<uint32_t>(win.y0 + win.h))
     {
-        // The TSU gets what the graphics fetch and the CPU (its previous line)
-        // leave; objects beyond that are dropped (TSU-8)
-        const uint32_t taken = static_cast<uint32_t>(VideoCost(_lines[previous].vConfig, previous)) + _ts.cpuLineAccesses;
-        const uint32_t budget = taken < kLineAccesses ? kLineAccesses - taken : 0;
-        set.tsu = TsConfTsu::RenderLine(_ts, latch, ram, _mapRing, line - win.y0, win.w, _tsu[line], budget, used);
+        // The cycles video leaves up to line_start (after cycle 447) are the split, then this line's up to x0;
+        // the CPU (its previous line) takes its share. Objects beyond the budget are dropped (TSU-8)
+        const uint32_t span = kLineAccesses - start;
+        const uint32_t freeBefore = span - (VideoCost(shown.vConfig, previous) - VideoCyclesBefore(fetch, start));
+        const uint32_t freeAfter = x0 - VideoCyclesBefore(TsConfArbiter::FetchOf(shown, line), x0);
+        const uint32_t cpu = _ts.cpuLineAccesses;
+        const uint32_t budget = freeBefore + freeAfter > cpu ? freeBefore + freeAfter - cpu : 0u;
+        uint32_t limit = UINT32_MAX;
+        if (split)
+        {
+            const uint32_t cpuBefore = cpu * span / kLineAccesses;
+            limit = freeBefore > cpuBefore ? freeBefore - cpuBefore : 0u;
+            set.tsuSplit = static_cast<uint16_t>(std::min<uint32_t>(limit, 0xFFFE));
+        }
+        set.tsu = TsConfTsu::BeginLine(_ts, latch, ram, _mapRing, line - win.y0, win.w, _tsu[line], budget, limit, used,
+                                       _pass);
+        used = _pass.used;
+        if (_pass.paused)
+            _passLine = line;
     }
     set.tsuCost = static_cast<uint16_t>(used);
 }
@@ -109,7 +175,7 @@ bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Sour
     const TsConfLine& set = _lines[line];
     if (!set.tsu || line == 0)
         return false;
-    // Drawn during the previous line with its latches (TSU-6)
+    // Drawn during the previous line with its latches, the objects after line_start with this line's (TSU-6)
     const TsConfLine& latch = _lines[line - 1];
     const uint8_t tConfig = _ts.regs[TsConfReg::TConfig];
     const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(latch.vConfig);
@@ -128,13 +194,18 @@ bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Sour
         const uint32_t previous = raster ? raster - 1 : kLines - 1;
         if (previous + 17 >= win.y0 && previous + 9 < static_cast<uint32_t>(win.y0 + win.h))
         {
-            const uint32_t fetched = TsConfTsu::Prefetch(_ts, ram, (raster - win.y0 + 16) & 0x1FF, ring);
+            uint32_t fetched = TsConfTsu::Prefetch(_ts, ram, (raster - win.y0 + 16) & 0x1FF, ring);
             if (back == 0)
-                used = fetched;  // this line's own prefetch counts in its budget
+            {
+                // This line's own prefetch counts in its budget, with the cycle it holds after its words
+                PassStart(TsConfArbiter::FetchOf(latch, line - 1), win.x0, fetched);
+                used = fetched;
+            }
         }
     }
     // The budget the line used: an object that fitted then fits now, the first dropped one is dropped again
-    return TsConfTsu::ProbeLine(_ts, latch, ram, ring, line - win.y0, win.w, indices, sources, set.tsuCost, used);
+    return TsConfTsu::ProbeLine(_ts, latch, set, ram, ring, line - win.y0, win.w, indices, sources, set.tsuCost,
+                                set.tsuSplit, used);
 }
 
 void TsConfEngine::AccountBudget(uint32_t raster)
@@ -284,6 +355,18 @@ void TsConfEngine::LineStart(uint32_t line)
         _lines[line].tsW = rendered.tsW;
         _lines[line].tsu = rendered.tsu;
         _lines[line].tsuCost = rendered.tsuCost;
+        _lines[line].tsuSplit = rendered.tsuSplit;
+    }
+
+    // The objects of this line's pass after line_start take the latch just taken (TsConfTsu "When")
+    if (_passLine == line)
+    {
+        _passLine = kLines;
+        if (_context->pMemory)
+        {
+            TsConfTsu::FinishLine(_ts, _lines[line], _context->pMemory->RAMBase(), _mapRing, _tsu[line], _pass);
+            _lines[line].tsuCost = static_cast<uint16_t>(_pass.used);
+        }
     }
 }
 
@@ -315,7 +398,7 @@ void TsConfEngine::CatchUp(uint32_t t)
         if (tsStart)
         {
             AccountBudget(next + 1);
-            RenderTsu(_ts.engNextLine, _lines[_ts.engNextLine - 1u]);
+            RenderTsu(_ts.engNextLine, _lines[_ts.engNextLine - 1u], true);
         }
         else
         {
@@ -348,6 +431,7 @@ void TsConfEngine::OnMachineFrameRollover(uint32_t frameLength)
     _ts.engNextLine = 0;
     _ts.budgetRaster = 0;
     _cpuLineRunning = 0;
+    _passLine = kLines;
     _interrupts.OnMachineFrameRollover(frameLength);
     // Last: the interrupt controller has taken the old frame's line events
     // (the VDAC2 card's edges are tacts of the frame it closes here)

@@ -419,10 +419,26 @@ sprites need mid-frame SFILE rewrites.
 while line L is displayed (buffer cleared as it is read); rendering starts at
 `ts_start` of the previous line (dot `hpix_beg_ts - 1`: the window start of the
 latched geometry, or dot 88 with `T_CONFIG[0]`; [V] `video_sync.v:130`,
-`video_mode.v:196`) with the tile pages, tile X offsets and `PAL_SEL` latched
-for that previous line (`video_ports.v:153-164`), and is **reset at the next `ts_start`** —
+`video_mode.v:196`) and is **reset at the next `ts_start`** —
 objects not rendered in time (DRAM starvation) are dropped for that line
-([V] `video_top.v:198-206,508`, `video_ts.v:98-121`).
+([V] `video_top.v:198-206,508`, `video_ts.v:98-121`). Each object takes the tile
+pages, tile X offsets and `PAL_SEL` from the line latch in force when the TSU hands
+it to the renderer (`video_ts.v:162-171`, `video_ports.v:153-165`): the pass for L
+starts with L-1's latch, and on a busy line it runs past `line_start` of L (dot
+447), so the objects after it take L's latch. Measured on the Verilog
+(`tools/machines/tsconf/rtl-sim`, `tsulatch`), in DRAM cycles of the pass:
+
+- the TSU starts at cycle `hpix_beg_ts + 1` (`+ 2` on the bottom 8 lines, which have
+  no tilemap prefetch); video keeps its blocks, the CPU outranks the TSU;
+- the prefetch (8 words per tile layer) holds one more cycle after its last word
+  unless video takes that cycle;
+- a tile layer fetches `x_tiles - 1` = 33 / 41 / 46 tiles (256 / 320 / 360 wide)
+  whatever the X offset; tile number 0 without T0Z/T1Z costs nothing;
+- an object is late when more than `split` TSU cycles came before it, `split` = the
+  cycles from the start to dot 447 that video leaves: 16C 270 / 260 / 244 (360 / 320 /
+  256 wide), 256C 360 179, ZX 277, TXT 181 with the CPU idle; the whole pass gets
+  `split` + the cycles of line L before its `hpix_beg_ts` that video leaves (16C 360:
+  356 of 448).
 
 **Tilemap prefetch**: on TS line L the TSU fetches 8 map words per enabled
 layer for the tile row containing line L+16 into a 4-row ring; the prefetch

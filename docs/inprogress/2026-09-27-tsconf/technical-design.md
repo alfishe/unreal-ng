@@ -235,6 +235,18 @@ flowchart TB
   coordinates wrap at 512, sheet at `SG_PAGE & 0xF8`.
 - Every TSU fetch competes for DRAM: a crowded line runs out of slots and drops
   objects — the emulator must model the budget, not just the picture.
+- The pass for L crosses `line_start` of L on a busy line: the objects after it
+  take L's latched tile pages, X offsets and `PAL_SEL` (hardware-spec §4.4).
+
+> **Built 2026-10-05 (TS-Conf audit item 13):** `TsConfEngine::RenderTsu` draws the
+> pass at `ts_start` only up to the DRAM position of `line_start` (`TsConfTsu::BeginLine`,
+> the position from the window start, the video blocks of the line and the CPU's share);
+> `TsConfEngine::LineStart` draws the rest with the latch it has just taken
+> (`TsConfTsu::FinishLine`). The paused pass is engine state, not TTD state: a restore
+> between the two points draws the first part again (`RebuildLineTable`). The video
+> mapper's probe takes both latches and the line's split (`TsConfLine::tsuSplit`).
+> Verified against the Verilog: `TsConfEngine_Test.TSU9_ObjectsAfterLineStartTakeTheNewLatch`
+> (`tools/machines/tsconf/rtl-sim` `tsulatch`).
 
 ## 2.5 DMA
 
