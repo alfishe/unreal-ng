@@ -6,6 +6,10 @@
 //   zxasm decode   <file> [-o out] [--codec id] [--version v] [--codepage cp]
 //   zxasm encode   <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr]
 //   zxasm files    <image.trd>                      list the files of a TR-DOS image
+//   zxasm convert  <file> --to dialect [-o out] [--from dialect]  convert a source to another dialect (alasm ->
+//                                                   sjasmplus, ...); --from names the dialect of a plain text file
+//   zxasm convert  <image.trd> --to dialect -o dir    the whole project: every source of the image converted together
+//                                                   (INCLUDE wildcards resolved), INCBIN files extracted next to them
 //   zxasm check    <file> [--codec id] [--version v] [--show]  decode, encode back: byte-exact? how many lines the
 //                                                   canonical tokenizer alone reproduces (--show lists the others)
 //
@@ -21,6 +25,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -75,7 +80,7 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 
 struct Args
 {
-    std::string command, file, output, codec, codePage, lineEnd, inner, version;
+    std::string command, file, output, codec, codePage, lineEnd, inner, version, to, from;
     bool show = false;
 };
 
@@ -102,9 +107,11 @@ bool Parse(int argc, char** argv, Args& args)
                                           : a == "--codepage" ? !value(args.codePage)
                                           : a == "--line-end" ? !value(args.lineEnd)
                                           : a == "--file" ? !value(args.inner)
-                                          : a == "--version" ? !value(args.version) : false)
+                                          : a == "--version" ? !value(args.version)
+                                          : a == "--to" ? !value(args.to)
+                                          : a == "--from" ? !value(args.from) : false)
             return false;
-        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end" && a != "--file" && a != "--version")
+        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end" && a != "--file" && a != "--version" && a != "--to" && a != "--from")
         {
             if (!args.file.empty())
                 return false;
@@ -181,6 +188,76 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
     }
     return true;
 }
+/// zxasm convert image.trd --to dialect -o dir
+int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const CodecRegistry& registry)
+{
+    std::vector<containers::TrdosFile> files;
+    std::string error;
+    if (!containers::ReadTrd(image, files, error) || args.output.empty() || args.to.empty())
+    {
+        std::cerr << "zxasm: " << (error.empty() ? "convert of an image needs --to and -o <directory>" : error) << "\n";
+        return 2;
+    }
+    // The output directory is made when missing (a UTF-8 name: std::u8string keeps it intact on Windows)
+    std::error_code made;
+    std::filesystem::create_directories(std::filesystem::path(std::u8string(args.output.begin(), args.output.end())), made);
+    if (made)
+    {
+        std::cerr << "zxasm: cannot make " << args.output << ": " << made.message() << "\n";
+        return 1;
+    }
+    std::vector<ProjectFile> project;
+    for (const auto& f : files)
+    {
+        const DetectResult detected = registry.Detect(f.data, f.Hints());
+        if (!detected.chosen || detected.chosen->Info().family != CodecFamily::Tokenized)
+            continue;
+        DecodeOptions options;
+        options.catalog = f.Hints();
+        project.push_back({f.TrimmedName(), detected.chosen->Decode(f.data, options).document});
+    }
+    const ProjectResult converted = ConvertProject(project, args.to);
+    PrintDiagnostics(converted.diagnostics);
+    const ISourceCodec* target = registry.Find(args.to);
+    std::string extracted;
+    for (const ProjectFile& f : converted.files)
+    {
+        std::vector<uint8_t> out;
+        if (target)
+            out = target->Encode(f.document, {}).bytes;
+        else
+        {
+            const std::string text = f.document.Text() + "\n";
+            out.assign(text.begin(), text.end());
+        }
+        if (!WriteFile(args.output + "/" + f.name + ".asm", out))
+        {
+            std::cerr << "zxasm: cannot write " << args.output << "/" << f.name << ".asm\n";
+            return 1;
+        }
+        // INCBIN "name" / "name.T": the file of the image, written under the name the source uses
+        for (const SourceLine& line : f.document.lines)
+        {
+            const size_t at = line.text.find("INCBIN \"");
+            if (at == std::string::npos)
+                continue;
+            const size_t close = line.text.find('"', at + 8);
+            const std::string wanted = line.text.substr(at + 8, close - at - 8);
+            const size_t dot = wanted.find('.');
+            const std::string name = wanted.substr(0, dot);
+            const char type = dot == std::string::npos ? 0 : wanted[dot + 1];
+            for (const auto& file : files)
+                if (file.TrimmedName() == name && (type == 0 || file.type == type))
+                {
+                    WriteFile(args.output + "/" + wanted, file.data);
+                    if (extracted.find("|" + wanted + "|") == std::string::npos)
+                        extracted += "|" + wanted + "|";
+                }
+        }
+    }
+    std::cerr << converted.files.size() << " source(s) converted to " << args.output << "\n";
+    return converted.ok ? 0 : 1;
+}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -227,6 +304,8 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    if (args.command == "convert" && Lower(Extension(args.file)) == "trd" && args.inner.empty())
+        return ConvertImage(args, bytes, registry);
     if (args.command != "encode" && !Unwrap(args, bytes, hints))
         return 1;
 
@@ -262,6 +341,41 @@ int main(int argc, char** argv)
         codePage = parsed;
     }
 
+    if (args.command == "convert")
+    {
+        const DetectResult detected = args.codec.empty() ? registry.Detect(bytes, hints) : DetectResult{};
+        const ISourceCodec* codec = args.codec.empty() ? detected.chosen : registry.Find(args.codec);
+        if (!codec || args.to.empty())
+        {
+            std::cerr << "zxasm: convert needs a recognized source (or --codec) and --to dialect\n";
+            return 2;
+        }
+        DecodeOptions options;
+        options.catalog = hints;
+        options.codePage = codePage;
+        DecodeResult decoded = codec->Decode(bytes, options);
+        if (!args.from.empty())
+            decoded.document.dialect = args.from;
+        const ConvertResult converted = Convert(decoded.document, args.to);
+        PrintDiagnostics(converted.diagnostics);
+        // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings)
+        std::vector<uint8_t> out;
+        if (const ISourceCodec* target = registry.Find(args.to))
+            out = target->Encode(converted.document, {}).bytes;
+        else
+        {
+            const std::string text = converted.document.Text() + "\n";
+            out.assign(text.begin(), text.end());
+        }
+        if (args.output.empty())
+            std::cout.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
+        else if (!WriteFile(args.output, out))
+        {
+            std::cerr << "zxasm: cannot write " << args.output << "\n";
+            return 1;
+        }
+        return converted.ok ? 0 : 1;
+    }
     if (args.command == "decode" || args.command == "check")
     {
         const ISourceCodec* codec = nullptr;

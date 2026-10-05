@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
-| **Status** | Draft; every dialect fact marked **verify** is confirmed from the assembler's manual and a probe source before its plugin is written |
+| **Status** | IR v1 and the first plugins implemented in A5 (ALASM frontend, sjasmplus frontend and backend: [research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md)); the other dialects' columns stay to be researched |
 | **Order** | after the codecs (decision D-4) |
 
 ## 1. Why an IR
@@ -20,6 +20,15 @@ dialect's spelling. Directive kinds, label scopes, number forms and expression o
 dialects have; what only one dialect has gets its own node kind (or `Other` with the dialect named) rather than
 being forced into another dialect's construct. The construct matrix (§4) is filled for **all** dialects before the
 IR node set is frozen (phase A5).
+
+**As built (A5):** `include/unrealasm/ir.h`. A `Program` (dialect, lines, the source's arithmetic: `expressionBits`,
+`unsignedArithmetic`) holds `Line`s (label, `labelGlobal`, statements, comment, source line). A `Statement` is an
+`Instruction` (lower-case mnemonic, operands), a `Directive` (a kind, arguments, operands, text, parameters), a
+`MacroCall` (name, argument texts) or `Raw`. An `Operand` is a register, condition, indirect, indexed, memory,
+immediate or string. An `Expr` is a number (value + spelling + digits), symbol, `$`, `$$`, unary, binary, group (the
+parentheses the source wrote), memory read `{..}`, ALASM's `?label` or raw text. The node set is the union of ALASM and
+sjasmplus so far; directive kinds without a counterpart in a dialect (`DEVICE`, `MODULE`, ...) are `Other` with their
+text, which a backend of the same dialect writes back.
 
 A `Program` is a list of `IrLine`s; each keeps its source position.
 
@@ -64,18 +73,19 @@ rules (characters, length, local syntax, case), its number spellings, its reserv
 | Construct | sjasmplus | pasmo | z88dk | ALASM | TASM | STORM | ZX-ASM | GENS |
 |---|---|---|---|---|---|---|---|---|
 | global labels | ● | ● | ● | ● | ● | ● | ● | ● |
-| local labels | ● (`.name`) | ? | ? | ? | ? | ? | ? | ? |
+| local labels | ● (`.name`) | ? | ? | ● (`LOCAL` / `ENDL` blocks, `@name` global) → R (`name__L<n>`, `.name` in macros) | ? | ? | ? | ? |
 | temporary labels | ● (`1`, `1B` / `1F`) | ? | ? | ? | ? | ? | ? | ? |
-| `EQU` / `DEFL` | ● / ● | ● / ? | ? | ● / ? | ● / ? | ? | ? | ● / ? |
+| `EQU` / `DEFL` | ● / ● | ● / ? | ? | ● / ● (`label=expr`) | ● / ? | ? | ? | ● / ? |
 | `DB` / `DW` / `DS` | ● | ● | ● | ● | ● (`defb`, `defw`, `defs`, `db`, `dw`, `ds` in L1's table) | ? | ? | ● |
 | `INCLUDE` / `INCBIN` | ● / ● | ● / ● | ? | ● / ● | ● / ● (L1) | ? | ? | ? |
-| conditionals | ● | ● | ● | ● | ? | ? | ? | ? |
-| macros | ● | ● | ● | ● | TASM 4 (`DEFMAC` / `ENDMAC`, P1) | ? | ? | ? |
-| repeat blocks | ● (`DUP` / `REPT`) | ● (`REPT`) | ? | ● (`DUP` / `EDUP`, L8) | ? | ? | ? | ? |
+| conditionals | ● | ● | ● | ● (`IF`, `IF0`, `IFN`; `?label` → R `exist`) | ? | ? | ? | ? |
+| macros | ● | ● | ● | ● (`\0`…`\9` → R named; glued or `\P \R \C \N \S` → X) | TASM 4 (`DEFMAC` / `ENDMAC`, P1) | ? | ? | ? |
+| repeat blocks | ● (`DUP` / `REPT`, `WHILE`) | ● (`REPT`) | ? | ● (`DUP` / `EDUP`; `REPEAT` / `UNTIL0` → R `WHILE`) | ? | ? | ? | ? |
 | assemble for another address | ● (`DISP` / `ENT`) | ? | ? | ● (`DISP`, L8) | ● (`PHASE` / `UNPHASE`, L1) | ? | ? | ? |
 | modules / name spaces | ● | – | ? | ? | – | – | – | – |
 | print at assembly | ● (`DISPLAY`) | ? | ? | ● (`DISPLAY`, L8) | TASM 4 (`DISPLAY`, P1) | ? | ? | ? |
 | undocumented instructions | ● | ● | ● | ● (`LX` / `HX` forms) | ● (`lx`, `hx`, `ly`, `hy`, `sli`, L1) | ? | ? | ? |
+| expression priorities | C-like, 32-bit signed | ? | ? | none (left to right), 16-bit unsigned → R parentheses, masks | ? | ? | ? | ? |
 
 The `?` cells are filled by the research of each dialect (the probe source of [source-formats.md](source-formats.md)
 §3 shows what the assembler accepts and what binary it builds).

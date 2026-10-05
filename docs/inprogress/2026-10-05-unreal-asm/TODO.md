@@ -41,7 +41,9 @@ phase; master only after the owner's review.
   - [x] `storm`, versions 1.0beta / 1.2-1.3i: decoder and STORM's encoding rules (implied commands, number forms, packed labels, IX / IY offsets, sub-expressions) derived on 42 real sources (byte-exact all, rules exact 23 492 / 23 497), testdata `storm/` ([research-storm.md](research-storm.md))
   - [x] emulator oracle for ZX-ASM (ZAsm 3.15) and STORM (1.3): files written by the codecs' rules load and show the decoded text (2026-10-05; research-zxasm.md / research-storm.md §6.1)
   - [ ] a STORM file saved by 1.0beta (start #C003)
-- [ ] A5 IR, transforms, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus)
+- [x] A5 IR, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus) (2026-10-05, branch `unreal-asm`): IR v1 (`ir.h`), `Convert` / `ConvertProject`, `zxasm convert` (file, `--from`, whole disk with `INCBIN` files); The Link 18 / 19 objects byte-equal with ALASM's, a constructs sample byte-equal with ALASM 5.09 in the emulator, 508 / 513 sources unchanged through the sjasmplus round trip; example `convert-dialect`; testdata `dialects/` ([research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md))
+  - [ ] A5b `tasm` frontend (TASM → sjasmplus, D-9), then `storm` and `zxasm` frontends
+  - [ ] ALASM `DISPLAY` output differs from sjasmplus' (research-alasm-to-sjasmplus.md §7)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
 - [ ] A8 symbols on the library (symbols S1-S5)

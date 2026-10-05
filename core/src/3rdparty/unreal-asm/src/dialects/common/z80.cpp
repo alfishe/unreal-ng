@@ -1,0 +1,78 @@
+#include "dialects/common/z80.h"
+
+#include <algorithm>
+#include <iterator>
+
+namespace unrealasm::dialects::z80
+{
+namespace
+{
+constexpr std::string_view kMnemonics[] = {
+    "adc", "add", "and", "bit", "call", "ccf", "cp", "cpd", "cpdr", "cpi", "cpir", "cpl", "daa", "dec", "di", "djnz", "ei", "ex",
+    "exx", "halt", "im", "in", "inc", "ind", "indr", "ini", "inir", "jp", "jr", "ld", "ldd", "lddr", "ldi", "ldir", "neg", "nop",
+    "or", "otdr", "otir", "out", "outd", "outi", "pop", "push", "res", "ret", "reti", "retn", "rl", "rla", "rlc", "rlca", "rld",
+    "rr", "rra", "rrc", "rrca", "rrd", "rst", "sbc", "scf", "set", "sla", "sli", "sll", "sra", "srl", "sub", "xor", "inf",
+};
+constexpr std::string_view kRegisters[] = {
+    "a", "b", "c", "d", "e", "h", "l", "i", "r", "af", "af'", "bc", "de", "hl", "sp", "ix", "iy", "ixh", "ixl", "iyh", "iyl", "f",
+};
+constexpr std::string_view kConditions[] = {"nz", "z", "nc", "c", "po", "pe", "p", "m"};
+}  // namespace
+
+std::string Lower(std::string_view text)
+{
+    std::string out(text);
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c); });
+    return out;
+}
+
+std::string Upper(std::string_view text)
+{
+    std::string out(text);
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(c >= 'a' && c <= 'z' ? c - 32 : c); });
+    return out;
+}
+
+bool IsMnemonic(std::string_view lower)
+{
+    return !lower.empty() && std::find(std::begin(kMnemonics), std::end(kMnemonics), lower) != std::end(kMnemonics);
+}
+
+std::string NormalizeRegister(std::string_view lower)
+{
+    if (lower == "hx" || lower == "xh")
+        return "ixh";
+    if (lower == "lx" || lower == "xl")
+        return "ixl";
+    if (lower == "hy" || lower == "yh")
+        return "iyh";
+    if (lower == "ly" || lower == "yl")
+        return "iyl";
+    return std::string(lower);
+}
+
+bool IsRegister(std::string_view normalized)
+{
+    return std::find(std::begin(kRegisters), std::end(kRegisters), normalized) != std::end(kRegisters);
+}
+
+bool IsCondition(std::string_view lower)
+{
+    return std::find(std::begin(kConditions), std::end(kConditions), lower) != std::end(kConditions);
+}
+
+int SplitArity(std::string_view m)
+{
+    if (m == "ld" || m == "ex" || m == "add" || m == "adc" || m == "sbc" || m == "in" || m == "out" || m == "bit" || m == "res" || m == "set")
+        return 2;
+    if (m == "push" || m == "pop" || m == "inc" || m == "dec" || m == "sub" || m == "and" || m == "or" || m == "xor" || m == "cp" || m == "rl" ||
+        m == "rr" || m == "rlc" || m == "rrc" || m == "sla" || m == "sra" || m == "sli" || m == "sll" || m == "srl")
+        return 1;
+    return 0;
+}
+
+bool TakesCondition(std::string_view m)
+{
+    return m == "jp" || m == "jr" || m == "call" || m == "ret";
+}
+}  // namespace unrealasm::dialects::z80

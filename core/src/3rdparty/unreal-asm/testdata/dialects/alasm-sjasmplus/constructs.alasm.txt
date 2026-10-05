@@ -1,0 +1,54 @@
+; ALASM constructs and their sjasmplus form (unreal-asm A5 test data)
+        ORG #6000
+start   LD A,1+2*3      ;left to right: (1+2)*3 = 9
+        LD HL,'table    ;'x is the high byte
+        LD L,.table     ;.x is the low byte
+        LD DE,0+(65536-46)*98/256 ;16-bit unsigned arithmetic: #EE
+        LD BC,#1234<4   ;< rotates a 16-bit word left
+        LD A,5!3        ;! is xor
+        EXA
+        EXD
+        JNZ start
+iy      EQU 7
+        LD IY,iy        ;a lower-case name is a label, not the register
+        LOCAL
+loop    DJNZ loop
+@shared NOP
+        ENDL
+        LOCAL
+loop    DJNZ loop
+        ENDL
+        JP @shared
+        MACRO FILL
+        LD A,\0
+        LD (\1),A
+        ENDM
+        FILL 1,#4000
+        FILL 2,#4001
+        MACRO PAIR
+lbl\0   DB \1
+        ENDM
+        PAIR 1,10
+        PAIR 2,20
+        MACRO SKIP
+_=\P
+        DB \0,\9\R
+        ENDM
+        SKIP 0,1,2,3,4,5,6,7,8,9,10
+        IF0 ?start
+        DB 1
+        ELSE
+        DB 0
+        ENDIF
+        DUP 3
+        NOP
+        EDUP
+count=3
+        REPEAT
+        DB count
+count=count-1
+        UNTIL0 count
+        DS 4,#AA,#55
+        DISPLAY "end: ",/H,$
+table   DB "AB",0
+        LD L,0,H,1

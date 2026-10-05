@@ -40,6 +40,12 @@ add_library(unreal-asm STATIC
     src/codecs/alasm/alasmcodec.cpp
     src/codecs/zxasm/zxasmcodec.cpp
     src/codecs/storm/stormcodec.cpp
+    src/ir/expr.cpp
+    src/core/dialects.cpp
+    src/dialects/common/z80.cpp
+    src/dialects/alasm/alasmfrontend.cpp
+    src/dialects/sjasmplus/sjasmplusbackend.cpp
+    src/dialects/sjasmplus/sjasmplusfrontend.cpp
     src/containers/trdos.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -52,7 +58,7 @@ target_link_libraries(zxasm PRIVATE unreal-asm)
 target_compile_options(zxasm PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Examples (decision D-14): small programs on the public API, built with the library
-foreach(example detect-encoding decode-encode read-hobeta convert-version)
+foreach(example detect-encoding decode-encode read-hobeta convert-version convert-dialect)
     string(REPLACE "-" "" exampleTarget "unrealasmexample${example}")
     add_executable(${exampleTarget} examples/${example}/main.cpp)
     target_link_libraries(${exampleTarget} PRIVATE unreal-asm)
@@ -82,6 +88,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/zxasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
+        ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)

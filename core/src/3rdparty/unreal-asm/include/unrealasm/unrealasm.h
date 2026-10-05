@@ -4,6 +4,7 @@
 
 #include "unrealasm/codec.h"
 #include "unrealasm/containers.h"
+#include "unrealasm/dialect.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/document.h"
 #include "unrealasm/encoding.h"
