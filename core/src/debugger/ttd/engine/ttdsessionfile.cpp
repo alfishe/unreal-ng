@@ -163,7 +163,7 @@ struct Range
 
 bool TTDSessionFile::KnownStream(uint16_t id)
 {
-    if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || (id >= kHolderFirst && id <= kHolderLast))
+    if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || IsHolderStream(id))
         return true;
     for (const TTDStreamDesc& s : Streams())
         if (s.id == id)
@@ -227,9 +227,9 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
                 {static_cast<uint16_t>(kFrameStreamFirst + id), 1, TTDStreamKind::Ancillary, e._streams.Name(id)});
     for (const TTDHolderStream& h : params.holderStreams)
     {
-        if (h.id < kHolderFirst || h.id > kHolderLast)
+        if (!IsHolderStream(h.id))
         {
-            error = "holder stream " + std::to_string(h.id) + " is outside the holder range";
+            error = "holder stream " + std::to_string(h.id) + " is not a holder stream id";
             return false;
         }
         header.streams.push_back({h.id, 1, TTDStreamKind::Ancillary, h.name});
@@ -780,7 +780,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
             if (!KnownStream(record.streamId))
                 continue;
             std::vector<uint8_t> bytes;
-            if (record.streamId >= kHolderFirst && record.streamId <= kHolderLast)
+            if (IsHolderStream(record.streamId))
             {
                 // The holder's data: ancillary, a damaged one is left out
                 std::string holderWhy;

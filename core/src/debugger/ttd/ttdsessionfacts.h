@@ -26,9 +26,9 @@ class TTDBookmarkJournal;
 
 namespace holderstream
 {
-constexpr uint16_t kFacts = sessionstream::kHolderFirst;
-constexpr uint16_t kCoverage = sessionstream::kHolderFirst + 1;
-constexpr uint16_t kBookmarks = sessionstream::kHolderFirst + 2;
+constexpr uint16_t kFacts = sessionstream::kHolderFirstFree;   ///< 17
+constexpr uint16_t kCoverage = sessionstream::kCoverage;       ///< 8: the whole index, v1's coverage format
+constexpr uint16_t kBookmarks = sessionstream::kBookmarks;     ///< 12
 }  // namespace holderstream
 
 struct TTDSessionFacts

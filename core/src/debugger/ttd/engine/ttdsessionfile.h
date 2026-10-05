@@ -74,9 +74,17 @@ constexpr uint16_t kFrameStreamFirst = 0x0100;
 constexpr uint16_t kFrameStreamLast = 0x013F;
 /// A full copy at least every this many frames: reading one decodes at most this many differences
 constexpr uint32_t kFrameStreamFullEvery = 50;
-/// The holder's own data (TTDHolderStream): ancillary, opaque to the engine
-constexpr uint16_t kHolderFirst = 0x0200;
-constexpr uint16_t kHolderLast = 0x02FF;
+/// The holder's own data (TTDHolderStream): ancillary, opaque to the engine.
+/// The stream table (phase-4-session-file-tdd.md §5.3) names 8-10 coverage
+/// and 12 bookmarks; 17-0xFF are free for the holder. 0x0200-0x02FF stay
+/// reserved for branches, 0x0300-0x03FF for groups
+constexpr uint16_t kCoverage = 8;
+constexpr uint16_t kBookmarks = 12;
+constexpr uint16_t kHolderFirstFree = 17;
+inline bool IsHolderStream(uint16_t id)
+{
+    return (id >= 8 && id <= 12) || (id >= kHolderFirstFree && id <= 0x00FF);
+}
 }  // namespace sessionstream
 
 /// Data the engine's holder keeps with a session (the controller's coverage
@@ -84,7 +92,7 @@ constexpr uint16_t kHolderLast = 0x02FF;
 /// the file's last part and handed back by Load as it was
 struct TTDHolderStream
 {
-    uint16_t id = sessionstream::kHolderFirst;   ///< kHolderFirst..kHolderLast
+    uint16_t id = sessionstream::kHolderFirstFree;   ///< sessionstream::IsHolderStream
     std::string name;
     std::vector<uint8_t> bytes;
 };

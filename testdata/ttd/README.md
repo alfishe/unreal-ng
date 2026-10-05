@@ -195,6 +195,9 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-05: the engine corpus re-recorded: the controller's own streams moved to the ids the Phase 4 stream table
+names (8 coverage, 12 bookmarks, 17 facts; 0x02xx is reserved for branches).
+
 2026-10-05: the engine corpus (`engine/`, all seven fixtures) recorded for the first time, by the application on the
 engine after the Phase 5 switch; 3 to 7 times smaller than the v1 files of the same sessions.
 

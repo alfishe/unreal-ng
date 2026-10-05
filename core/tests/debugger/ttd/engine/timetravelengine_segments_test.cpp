@@ -201,7 +201,7 @@ TEST(TimeTravelEngineSegments_Test, ALoadedSessionContinuesWithItsHolderStreams)
     TTDMemorySink sink;
     TTDSessionSaveParams params;
     params.checkpointsPerPart = 7;
-    params.holderStreams = {{0x0201, "coverage", {1, 2, 3}}, {0x0202, "bookmarks", {}}, {0x0203, "facts", {9}}};
+    params.holderStreams = {{8, "coverage", {1, 2, 3}}, {12, "bookmarks", {}}, {17, "facts", {9}}};
     std::string error;
     ASSERT_TRUE(TTDSessionFile::Save(live.engine, sink, error, params)) << error;
 
@@ -211,11 +211,11 @@ TEST(TimeTravelEngineSegments_Test, ALoadedSessionContinuesWithItsHolderStreams)
     ASSERT_TRUE(TTDSessionFile::Load(loaded.engine, source, error, &report)) << error;
     EXPECT_TRUE(loaded.engine.IsReadOnly());
     ASSERT_EQ(report.holderStreams.size(), 2u) << "an empty one is not written";
-    EXPECT_EQ(report.holderStreams[0x0201], (std::vector<uint8_t>{1, 2, 3}));
-    EXPECT_EQ(report.holderStreams[0x0203], (std::vector<uint8_t>{9}));
-    params.holderStreams = {{0x0100, "frames", {1}}};
+    EXPECT_EQ(report.holderStreams[8], (std::vector<uint8_t>{1, 2, 3}));
+    EXPECT_EQ(report.holderStreams[17], (std::vector<uint8_t>{9}));
+    params.holderStreams = {{0x0200, "branch", {1}}};
     TTDMemorySink refused;
-    EXPECT_FALSE(TTDSessionFile::Save(live.engine, refused, error, params)) << "outside the holder range";
+    EXPECT_FALSE(TTDSessionFile::Save(live.engine, refused, error, params)) << "0x02xx is reserved for branches";
 
     ASSERT_TRUE(loaded.engine.TruncateAfter(25, {0, 25, 0}, error)) << error;
     EXPECT_FALSE(loaded.engine.IsReadOnly()) << "it continues";
