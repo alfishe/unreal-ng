@@ -91,6 +91,7 @@ protected:
     // cursor (continuous across frames, rebased with the words, kFmRenderLagT
     // behind)
     uint64_t _samplePhase = 0;
+    uint8_t _renderSpeedMultiplier = 1;   // host speed multiplier of the previous frame (handleFrameStart)
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
     double _decimationPhase = 0.0;

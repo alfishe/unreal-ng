@@ -91,6 +91,7 @@ MultiSoundCard::MultiSoundCard(EmulatorContext* context, const MultiSoundCardCon
     Ym2203PairConfig ymConfig;
     ymConfig.masterClockHz = kYmMasterClockHz;
     ymConfig.hostTickRate = _config.hostTickRate;
+    ymConfig.continuousHostAxis = true;   // the card axis is never rebased
     _ym = std::make_unique<Ym2203Pair>(context, ymConfig);
     _ym->configureChannelOutputs(_config.outputRate);
 
@@ -452,6 +453,9 @@ size_t MultiSoundCard::FrameEnd(uint64_t t, size_t frames)
 void MultiSoundCard::RenderYm(size_t frames, uint64_t t)
 {
     // Split the block at the FM*_ENA changes: each part gets the output samples its share of the time is worth
+    // The pair is synced to t: the cursor rule for the whole frame's samples, before its blocks
+    _ym->beginChannelRender(frames);
+
     const uint64_t start = _renderedTo;
     const uint64_t span = t > start ? t - start : 0;
     size_t done = 0;

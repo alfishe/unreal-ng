@@ -73,13 +73,11 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     // rate or quality switch moves the render loop against the CPU clock
     // (re-anchor once, together with the filter redesign, instead of letting
     // the offsets pile up); far outside the window it has lost the timeline
-    // (host speed multiplier > 1, synthesis resumed after suppression)
-    const int64_t renderT = _pair.renderT();
-    if (_renderReanchor || renderT < -4 * kFmRenderLagT || renderT > 0)
-    {
-        _pair.setRenderT(-kFmRenderLagT);
-        _renderReanchor = false;
-    }
+    // (host speed multiplier > 1, synthesis resumed after suppression).
+    // The pair's one cursor rule (Ym2203Pair::anchorRender): this owner renders as the CPU runs, so at the frame
+    // start the reference is the frame origin of its frame-relative axis (0) with nothing rendered yet (span 0)
+    _pair.anchorRender(0, 0, _renderReanchor);
+    _renderReanchor = false;
 
     // Audio from before an LQ -> HQ switch or a suppression gap must not
     // replay: the HQ decimators were not fed and the hold / coupling still
@@ -108,6 +106,15 @@ void SoundChip_TurboSoundFM::handleFrameStart()
         _prescalerWarned = true;
         MLOGWARNING("SoundChip_TurboSoundFM: prescaler != /6 - the SSG clock ratio is not modelled (design §9.4)");
     }
+
+    // Sample phase after a host speed multiplier: frames at x2 / x4 render their multiplied time, so our phase
+    // advanced by more than the mixer's (whose frame always has the base frame's samples). Back at 1x the two would
+    // disagree at some frame boundaries for good - a never-rendered or a dropped sample, a click. The mixer's
+    // frame-start phase is the authority: take it on the first 1x frame (at 1x the two are equal by construction)
+    const uint8_t speedMultiplier = _context ? _context->emulatorState.HostSpeedMultiplier() : 1;
+    if (speedMultiplier == 1 && _renderSpeedMultiplier != 1 && _context && _context->pSoundManager)
+        _samplePhase = _context->pSoundManager->samplePhase();
+    _renderSpeedMultiplier = speedMultiplier;
 
     // Render-loop frame base (§6.2), same set as the legacy device (§11):
     // _samplePhase and _decimationPhase carry across frames - only reset()

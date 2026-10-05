@@ -31,9 +31,14 @@ void Ym2203Pair::reset()
     _chips[0]->resetChip();
     _chips[1]->resetChip();
 
+    // Render cursor (the rule, anchorRender): on a frame-relative axis the reset restarts the axis' time - the
+    // cursor goes to the frame origin; on a continuous axis time does not jump at a reset and the cursor keeps
+    // its place behind the chips
+    if (frameRelativeChipAxis())
+        anchorRender(0, 0, true);
+
     // Output stage: the FM hold / boxcar state and the decimators (state only; the rate-designed coefficients
     // and the slave wiring are preserved)
-    _renderT = _unity ? -kRenderLag : _chipT - kRenderLag;
     for (auto& c : _chips)
     {
         c->out.hold = 0.0;
@@ -99,6 +104,7 @@ void Ym2203Pair::rebaseFrame(uint64_t now)
     // call, so no time is lost or double-counted.
     if (_adoptCpuClock)
         return;
+    assert(!_config.continuousHostAxis && "a continuous host axis is never rebased");
     const int32_t delta = int32_t(_syncedT - now);
     if (delta == 0)
         return;
@@ -307,18 +313,10 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     if (!_channels)
         return 0;
 
-    // The owner syncs the time it renders first, then renders it: this block covers the `span` master clocks
-    // before the synced position and ends about kRenderLag behind it (a board that syncs a whole frame and then
-    // renders it starts a frame plus the lag behind, with that frame's words queued). The check is on where the
-    // block ENDS: a block that would end past the chips renders time they have not run yet - every queued word is
-    // consumed at its first half-tick and the last one held for the whole block, a block-rate staircase instead of
-    // the chips' output (MS-7 owner report 2026-10-05) - and one that ends more than the word queue can hold behind
-    // has lost the timeline (a gap in rendering, a speed change, a reset on a continuous axis). Either way the
-    // cursor is re-anchored so that this block ends kRenderLag behind the chips
-    const int64_t span = static_cast<int64_t>(frames) * int64_t(_config.masterClockHz) / int64_t(_channelRate);
-    const int64_t end = _renderT + span;
-    if (end > _chipT || end < _chipT - kMaxRenderBehind)
-        _renderT = _chipT - kRenderLag - span;
+    // The cursor was placed by the owner's beginChannelRender (the rule, anchorRender): the synced period's
+    // blocks end kRenderLag behind the chips. Rendering past the chips would consume every queued word at the first
+    // half-tick and hold the last one - a block-rate staircase instead of the chips' output (MS-7 owner report
+    // 2026-10-05, when the check looked at the block's start)
 
     FilterDecimator& master = _channels->ssg[0][0];
     FilterDecimator* const fmDec = _channels->fm;

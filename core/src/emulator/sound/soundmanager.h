@@ -440,6 +440,15 @@ public:
         _sampleAccumulator = tstateRatePhase;
     }
 
+    /// The frame-start sample phase (T-states x rate, modulo CPU_CLOCK_RATE): the authority for how many samples
+    /// every frame has. A device that renders with its own copy (SoundChip_TurboSoundFM) takes it back at the
+    /// first 1x frame after a host speed multiplier (it rendered the faster frames' multiplied time); at 1x the two
+    /// are equal by construction
+    uint64_t samplePhase() const
+    {
+        return _sampleAccumulator;
+    }
+
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
 

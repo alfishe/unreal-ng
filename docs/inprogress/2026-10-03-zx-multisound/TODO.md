@@ -142,6 +142,20 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   that assert the tone, not a level: `MultiSoundCard_Test.FmRowCarriesTheNoteOfEachChipAfterAResetAtAnyTime` /
   `SsgRowCarriesTheToneOfEachChipAfterAResetAtAnyTime`, `Ym2203Pair_Test.PerChannelOutputsFollowTheChipsAfterAResetOnAContinuousAxis`.
   The earlier tests passed because they measured peak-to-peak swing, which a staircase of FM words also has
+- [x] Owner 2026-10-05, "no synchronization problems": the render cursor / chip time relation is one rule of
+  `Ym2203Pair` on every path and axis ([architecture.md](architecture.md) module changes, "Render cursor"), proved by
+  the invariant suite in `core/tests/emulator/sound/tsfm/ym2203pair_test.cpp`: `Ym2203PairBoards_Test` (TSFM socket and
+  MultiSound card x none / machine reset / snapshot load / core rate 48 kHz / host speed x2 and back / FM mute, each at
+  T 0, mid-frame and the frame's last T-state, the FM note and the SSG tone on both chips: frequency within 1 %, no
+  period off by more than 5 %, the card's cursor lag within two output samples of `kRenderLag`, word queues bounded, no
+  re-anchor in 20 steady frames), `Ym2203PairBoardsLongRun_Test` (1000 frames per board, 10 000 checked by hand, no
+  re-anchor, no drift), `Ym2203PairBoardsTtd_Test` (seek at T 0 / mid / end-1 and replay: the CPU position and the
+  cursor lag equal to live at every later frame end, the FM capture within 1 % of its peak). The suite found a second
+  problem, fixed: the TSFM's sample phase after a host speed multiplier (a click at some frame boundaries back at 1x).
+  Not covered: a slot-change restart and a model switch (both build or carry the card on a fresh axis start; the rule
+  needs no special case), and a TTD seek across a machine reset (a reset ends the recording by design)
+- [ ] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
+  TSFM and probably the same click after a host speed multiplier; not a pair board, not changed here
 - [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
 - [ ] owner question: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits); confirm
   on a real board before changing anything
