@@ -88,6 +88,7 @@ private slots:
     void runToInterrupt();
     void resetEmulator();
     void portOut();
+    void showDeviceMemory();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
@@ -156,6 +157,7 @@ private:
     QAction* waitInterruptAction;
     QAction* resetAction;
     QAction* portOutAction;
+    QAction* deviceMemoryAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;

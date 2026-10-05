@@ -18,6 +18,7 @@
 #include "debugger/breakpointeditor.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/devicememorydialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
@@ -128,6 +129,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     portOutAction = new QAction("Port OUT...", this);
     portOutAction->setToolTip("Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit");
     toolBar->addAction(portOutAction);
+    deviceMemoryAction = new QAction("Device memory", this);
+    deviceMemoryAction->setToolTip("Memory a device owns outside RAM / ROM (Sprinter vram, TS-Conf cram / sfile): view and edit");
+    toolBar->addAction(deviceMemoryAction);
     breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
     visualizationAction = new QAction("Visualization", this);
@@ -152,6 +156,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(runToInterruptAction, &QAction::triggered, this, &DebuggerWindow::runToInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
     connect(portOutAction, &QAction::triggered, this, &DebuggerWindow::portOut);
+    connect(deviceMemoryAction, &QAction::triggered, this, &DebuggerWindow::showDeviceMemory);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
     connect(visualizationAction, &QAction::triggered, this, &DebuggerWindow::showVisualizationWindow);
@@ -1230,6 +1235,15 @@ void DebuggerWindow::portOut()
         QMessageBox::warning(this, "Port OUT", QString::fromStdString(result.error));
         return;
     }
+    updateState();
+}
+
+void DebuggerWindow::showDeviceMemory()
+{
+    if (!_emulator) return;
+
+    DeviceMemoryDialog dialog(_emulator, this);
+    dialog.exec();
     updateState();
 }
 

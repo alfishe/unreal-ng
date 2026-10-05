@@ -138,6 +138,10 @@ CLI `out #7FFD #13`, Lua `port_out(0x7FFD, 0x13)`, Python `emu.port_out(0x7FFD, 
 
 ### Device memory regions
 
+Memory a device owns outside RAM / ROM: the Sprinter's video RAM `vram`, the TS-Conf palette `cram` and sprite
+table `sfile` (512 bytes each, word n at offset 2n, low byte first). In the Qt debugger: toolbar "Device memory"
+(hex view; a typed byte goes through the same write path).
+
 ```bash
 curl -s "$BASE/emulator/$EMU_ID/memory/regions" | jq '.regions[] | {name, size_hex, page_size, pages, writable, write_path}'
 

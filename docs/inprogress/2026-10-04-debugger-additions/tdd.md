@@ -126,7 +126,9 @@ The device memory regions (`devicememory.h`, Sprinter `vram`) already reach ever
 `/memory/regions` and `/memory/region/{name}`, CLI `memory region`, Lua / Python `region_read` / `region_write`,
 MCP `inspect_state` `memory_region` (writes through `invoke_api`). So this step only gives the TS-Conf decoder two
 regions. The Qt debugger has no view of device memory regions at all yet (the Sprinter `vram` neither); that view
-is its own item (TODO A2q), for every machine at once, not a TS-Conf special case.
+is its own item (TODO A2q), for every machine at once, not a TS-Conf special case: the debugger toolbar's "Device
+memory" dialog lists the machine's regions and shows one as hex; a typed byte goes through `DeviceMemory::Write`
+(overwrite only, the region size is fixed).
 
 | Region | Size | Layout | A write |
 |---|---|---|---|
