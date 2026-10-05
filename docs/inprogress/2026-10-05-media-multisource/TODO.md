@@ -47,11 +47,10 @@ PLAN.md row **#95**.
 - NFR-P1 A/B (`hostfolderfat_benchmark.cpp`, Linux, 4 cores), before -> after: SeqRead fat16 618 -> 571 ns,
   RandRead 1554 -> 1361 ns, MetaRead 2357 -> 1998 ns; Build unchanged. The extent last-hit cache pays for the
   extra indirection.
-- Full build: zero warnings (C1 and C2). `core-tests` on Linux x86 gcc: all pass except two failures outside this
-  work. (1) `TsfmGolden_Test.*`: all four fail even when run alone; the branch does not touch sound code, and the
-  digests were most likely recorded on the macOS host. (2) `TTDContainer_Test.RealFile` crashes: `TTDFileSink` /
-  `TTDFileSource` pass `&_error` while initializing `_file`, which is declared before `_error`, so the string is
-  written before it exists. The fix is to declare `_error` first.
+- Full build: zero warnings (C1 and C2). `core-tests` on Linux x86 gcc: all pass except `TsfmGolden_Test.*`: all four
+  fail even when run alone; the branch does not touch sound code, and the digests were most likely recorded on the
+  macOS host. The `TTDContainer_Test.RealFile` crash (`_error` written before it was constructed) is fixed on master
+  (cf99ea13) and merged into the branch.
 
 ### C2
 
