@@ -87,6 +87,7 @@
 #include "../../../temporalstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
@@ -2601,6 +2602,34 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return py::bytes(reinterpret_cast<const char*>(pcap.data()), pcap.size());
             }, py::arg("link") = "", "The capture as a pcap file (bytes)")
+            .def("network_traffic", [](Emulator& self, uint64_t since, const std::string& adapter, const std::string& kind,
+                                       unsigned last) -> py::object {
+                TrafficAccess::Query query;
+                query.since = since;
+                query.adapter = adapter;
+                query.kind = kind;
+                query.last = last;
+                return StateNodeToPy(TrafficAccess::Records(self.GetContext(), query));
+            }, py::arg("since") = 0, py::arg("adapter") = "", py::arg("kind") = "", py::arg("last") = 64,
+               "Everything the network adapters sent and received (network #91): tap state + records (index, frame, "
+               "t_in_frame, time_us, kind, direction, adapter, op, peer, summary, hex)")
+            .def("network_traffic_pcapng", [](Emulator& self, const std::string& adapter) -> py::bytes {
+                TrafficAccess::Query query;
+                query.adapter = adapter;
+                query.last = 0;
+                std::vector<uint8_t> file;
+                std::string error;
+                if (!TrafficAccess::Pcapng(self.GetContext(), query, file, error))
+                    throw py::value_error(error);
+                return py::bytes(reinterpret_cast<const char*>(file.data()), file.size());
+            }, py::arg("adapter") = "", "The traffic ring as a pcapng file (bytes) for Wireshark")
+            .def("network_traffic_control", [](Emulator& self, const std::string& action, const std::string& path,
+                                               uint64_t ringBytes) {
+                std::string error;
+                if (!TrafficAccess::Control(self.GetContext(), action, path, ringBytes, error))
+                    throw py::value_error(error);
+            }, py::arg("action"), py::arg("path") = "", py::arg("ring_bytes") = 0,
+               "clear | start (record into the pcapng file `path`, unbounded) | stop | ring (set ring_bytes)")
             .def("network_adapters", [](Emulator&) -> py::object {
                 return StateNodeToPy(EthernetAccess::Adapters());
             }, "The host adapters the bridge can use (ethernet_mode='bridge'): name, ipv4, wireless, bridgeable; library, error")

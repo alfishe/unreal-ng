@@ -85,6 +85,12 @@ public:
     /// BRIDGE: a frame from the host LAN (the NetFrame input, applied at the frame boundary): queued for the station
     /// it is addressed to (every station for a broadcast or multicast), delivered at once
     void FromLan(const uint8_t* frame, size_t length);
+    /// Every frame on the wire, as the capture records it (the virtual network's traffic tap): the port ("isa2.eth",
+    /// "lan"), true = towards the port / from the LAN, and the bytes
+    void SetFrameObserver(std::function<void(const std::string& port, bool toCard, bool lan, const uint8_t*, size_t)> o)
+    {
+        _frameObserver = std::move(o);
+    }
     /// The cards' station addresses (the bridge's capture filter)
     std::vector<std::array<uint8_t, 6>> StationMacs() const;
 
@@ -267,5 +273,6 @@ private:
     uint64_t _captureIndex = 0;
     Mode _mode = Mode::Nat;
     LanCounters _lanCounters;
+    std::function<void(const std::string&, bool, bool, const uint8_t*, size_t)> _frameObserver;
     std::function<void(const uint8_t*, size_t)> _lanOutput;
 };

@@ -8,7 +8,10 @@
 #include "common/network/hostframebridge.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputjournal.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
 
 using ttd::TTDInputEvent;
@@ -48,6 +51,8 @@ VirtualNetwork::VirtualNetwork(EmulatorContext* context, std::unique_ptr<IHostNe
                                const VirtualNetworkConfig& config)
     : _context(context), _host(std::move(host)), _config(config), _dhcp(DhcpSettings(config))
 {
+    _ownTap = std::make_unique<NetworkTrafficTap>([context]() { return TrafficTimeOf(context); });
+    _tap = _ownTap.get();
 }
 
 VirtualNetwork::~VirtualNetwork()
@@ -61,6 +66,41 @@ VirtualNetwork::~VirtualNetwork()
 }
 
 // ---------------------------------------------------------------------------
+// Traffic (network #91)
+// ---------------------------------------------------------------------------
+
+TrafficTime VirtualNetwork::TrafficTimeOf(const EmulatorContext* context)
+{
+    TrafficTime t;
+    if (!context)
+        return t;
+    const EmulatorState& st = context->emulatorState;
+    const Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
+    t.frame = st.frame_counter;
+    t.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
+    t.us = context->pPortDecoder ? context->pPortDecoder->EmulatedMicroseconds() : 0;
+    return t;
+}
+
+void VirtualNetwork::NameGuest(const INetGuest* guest, const std::string& name)
+{
+    if (guest)
+        _guestNames[guest] = name;
+}
+
+std::string VirtualNetwork::GuestName(const INetGuest* guest) const
+{
+    auto it = _guestNames.find(guest);
+    return it == _guestNames.end() ? std::string("socket") : it->second;
+}
+
+void VirtualNetwork::TapSocket(const Socket& s, bool out, const char* op, const NetEndpoint& peer, const uint8_t* data,
+                               uint32_t length, uint16_t localPort)
+{
+    _tap->Socket(GuestName(s.guest), out, op, s.id, s.proto, peer, localPort ? localPort : s.listenPort, data, length);
+}
+
+// ---------------------------------------------------------------------------
 // Frame-level cards: the wire, its gateway and the bridge to a host adapter
 // ---------------------------------------------------------------------------
 
@@ -71,6 +111,11 @@ void VirtualNetwork::EnableFrames(const FrameSettings& settings)
     {
         EmulatorContext* context = _context;
         _gateway = std::make_unique<EthernetGateway>(*this, [context]() { return context ? context->emulatorState.frame_counter : 0; });
+        // Every frame on the wire reaches the traffic tap (the gateway's capture is the wire's one frame point)
+        _gateway->SetFrameObserver([this](const std::string& port, bool toCard, bool, const uint8_t* f, size_t n) {
+            _tap->Frame(port, !toCard, f, n);
+        });
+        NameGuest(_gateway.get(), "gateway-nat");   // the router's own NAT sockets
     }
     _gateway->SetReservedGuestPorts(settings.reservedGuestPorts);
     FitBridge();
@@ -315,6 +360,12 @@ void VirtualNetwork::Note(uint16_t id, NetProto proto, const char* action, const
 void VirtualNetwork::Deliver(Socket& s, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
                              const uint8_t* data, uint32_t length, uint32_t source)
 {
+    // Everything an adapter receives, the virtual network's own answers and the host's alike
+    static const char* const kInOps[] = {"none", "connected", "connect-failed", "data", "peer-closed", "reset",
+                                         "accepted", "datagram", "echo-reply", "listen-failed", "modem-lines"};
+    const auto opIndex = static_cast<size_t>(type);
+    TapSocket(s, false, opIndex < sizeof(kInOps) / sizeof(kInOps[0]) ? kInOps[opIndex] : "event",
+              (peer.addr || peer.port) ? peer : s.remote, data, length);
     switch (type)
     {
         case NetEventType::Connected: Note(s.id, s.proto, "connected", s.remote); break;
@@ -380,6 +431,7 @@ void VirtualNetwork::Connect(uint16_t id, const NetEndpoint& to)
         return;
     s->remote = to;
     s->connected = false;
+    TapSocket(*s, true, "connect", to, nullptr, 0);
 
     if (IsInternal(to.addr) || to.addr == 0 || to.addr == kBroadcast)
     {
@@ -404,6 +456,7 @@ void VirtualNetwork::ConnectTls(uint16_t id, const NetEndpoint& to, const std::s
         return;
     s->remote = to;
     s->connected = false;
+    TapSocket(*s, true, "connect-tls", to, nullptr, 0);
     if (IsInternal(to.addr) || to.addr == 0 || to.addr == kBroadcast)
     {
         Defer(id, NetEventType::ConnectFailed, NetEventStatus::Refused, to);
@@ -455,6 +508,7 @@ void VirtualNetwork::Send(uint16_t id, const uint8_t* data, uint32_t length)
     if (!s || (s->proto != NetProto::Tcp && s->proto != NetProto::Serial) || !data || length == 0)
         return;
     s->bytesOut += length;
+    TapSocket(*s, true, "send", s->remote, data, length);
     if (_host && s->connected && !IsReplaying())
         _host->TcpSend(s->hostId, data, length);
 }
@@ -466,6 +520,7 @@ void VirtualNetwork::SendTo(uint16_t id, uint16_t localPort, const NetEndpoint& 
     if (!s || !data)
         return;
     s->bytesOut += length;
+    TapSocket(*s, true, s->proto == NetProto::Icmp ? "echo" : "sendto", to, data, length, localPort);
 
     if (s->proto == NetProto::Icmp)
     {
@@ -557,6 +612,8 @@ bool VirtualNetwork::AnswerIcmpEcho(uint16_t id, const NetEndpoint& to, const ui
 void VirtualNetwork::ShutdownWrite(uint16_t id)
 {
     Socket* s = Find(id);
+    if (s && s->proto == NetProto::Tcp)
+        TapSocket(*s, true, "shutdown", s->remote, nullptr, 0);
     if (s && s->proto == NetProto::Tcp && _host && !IsReplaying())
         _host->TcpShutdownWrite(s->hostId);
 }
@@ -567,6 +624,7 @@ void VirtualNetwork::Listen(uint16_t id, uint16_t guestPort)
     if (!s || s->proto != NetProto::Tcp)
         return;
     s->listenPort = guestPort;
+    TapSocket(*s, true, "listen", NetEndpoint{}, nullptr, 0, guestPort);
 
     auto it = _listeners.find(guestPort);
     if (it == _listeners.end())
@@ -619,7 +677,10 @@ void VirtualNetwork::Close(uint16_t id)
     const Socket s = it->second;
     _sockets.erase(it);
     if (s.guest)
+    {
         Note(id, s.proto, "close", s.remote);
+        TapSocket(s, true, "close", s.remote, nullptr, 0);
+    }
 
     if (s.listenPort)
     {

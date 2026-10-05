@@ -69,9 +69,9 @@ namespace
     /// '/' - the three inline-comment trigger characters. Values built from
     /// this alphabet can never be additionally truncated by
     /// StripInlineComment on a second pass, which is what makes single-round
-    /// parse/serialize idempotency a property that actually holds (see
-    /// RoundTripCanLoseDataWhenSavedValueContainsACommentMarker below for the
-    /// documented case where it does not).
+    /// parse/serialize idempotency a property that holds for any generated
+    /// input (ValueCutAtTheFirstCommentMarkerSurvivesARoundTrip below covers
+    /// values that contain a marker).
     std::string RandomAlmostIniNoCommentMarkers(size_t size, uint32_t seed = kFuzzSeed)
     {
         static constexpr char kAlphabet[] =
@@ -296,15 +296,11 @@ TEST_F(IniFile_Fuzzing_Test, ParseSerializeIsIdempotentOnArbitraryInput)
     // stronger check than "didn't crash" - it catches asymmetries between
     // what LoadData accepts and what SaveData emits.
     //
-    // Corpus is drawn from an alphabet WITHOUT ';', '#', '/' on purpose: this
-    // property genuinely does not hold when a value contains one of those
-    // characters (StripInlineComment re-applies on every parse, so a value
-    // that survives one strip can be truncated further by the next one) -
-    // that is a real, separate finding, pinned deliberately by
-    // RoundTripCanLoseDataWhenSavedValueContainsACommentMarker below rather
-    // than papered over here. This test verifies the much larger surface
-    // that ISN'T affected by that: idempotency holds for every value made of
-    // any other byte, however adversarial otherwise.
+    // Corpus is drawn from an alphabet WITHOUT ';', '#', '/': values with a
+    // comment marker are cut at load (the first marker starts the comment),
+    // which ValueCutAtTheFirstCommentMarkerSurvivesARoundTrip below covers
+    // separately. This test verifies that idempotency holds for every value
+    // made of any other byte, however adversarial otherwise.
     const std::vector<std::string> corpora = {
         RandomAlmostIniNoCommentMarkers(5000),
         RandomAlmostIniNoCommentMarkers(5000, kFuzzSeed + 1),
@@ -327,35 +323,19 @@ TEST_F(IniFile_Fuzzing_Test, ParseSerializeIsIdempotentOnArbitraryInput)
     }
 }
 
-TEST_F(IniFile_Fuzzing_Test, RoundTripCanLoseDataWhenSavedValueContainsACommentMarker)
+TEST_F(IniFile_Fuzzing_Test, ValueCutAtTheFirstCommentMarkerSurvivesARoundTrip)
 {
-    // Found by ParseSerializeIsIdempotentOnArbitraryInput's original
-    // unfiltered corpus (see the comment above): "last marker wins" (the
-    // documented, correct behavior for a single parse) can compound across a
-    // save+reload cycle. Minimal repro:
-    //
-    //   parse "k=abc#def;ghi"     -> backward scan hits ';' first -> value
-    //                                becomes "abc#def" (correct: the
-    //                                embedded '#' is legitimately kept,
-    //                                per InlineCommentBackwardScanFindsLastMarker)
-    //   save that value           -> file now contains "k = abc#def"
-    //   parse it again            -> '#' is now the ONLY marker present ->
-    //                                truncated AGAIN -> value becomes "abc"
-    //
-    // "def" is lost on the second pass even though nothing about it was ever
-    // an actual comment - SaveData has no escaping for values that contain a
-    // comment-trigger character, so re-loading a saved file is not always
-    // equivalent to the in-memory state that produced it. Pinned here as a
-    // known, current characteristic rather than an assumption nobody
-    // verified; a fix (e.g. quoting/escaping such values on save) is a
-    // deliberate design decision this test does not make on its own.
+    // An inline comment runs from the FIRST marker to the end of the line (since 2026-10-04). The value is
+    // cut once, at load, and a saved file reloads to the same value. (With the earlier "last marker wins"
+    // backward scan, "k=abc#def;ghi" kept "abc#def" on the first parse and lost "def" on the reload, because
+    // the saved "abc#def" then had '#' as its only marker.)
     IniFile first;
     first.LoadData("[s]\nk=abc#def;ghi\n");
-    ASSERT_STREQ(first.GetValue("s", "k"), "abc#def");
+    ASSERT_STREQ(first.GetValue("s", "k"), "abc");
 
     IniFile second;
     second.LoadData(first.SaveData());
-    EXPECT_STREQ(second.GetValue("s", "k"), "abc");  // "def" did not survive the round trip
+    EXPECT_STREQ(second.GetValue("s", "k"), "abc");
 }
 
 /// endregion </Property: round-trip idempotency>

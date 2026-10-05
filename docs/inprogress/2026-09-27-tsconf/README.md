@@ -19,6 +19,7 @@ capture/restore and all automation frontends** (WebAPI/MCP/CLI/Lua/Python).
 | [implementation-plan.md](implementation-plan.md) | Phases 0-8 with dependencies and test-first work lists (test IDs, fixtures, expected values traced to the spec) |
 | [references.md](references.md) | Sources with upstream links, local clones, what each is authoritative for |
 | [boot-and-storage-notes.md](boot-and-storage-notes.md) | Field notes from the real firmware: BIOS Setup options and boot devices, Wild Commander (panel drives, PS/2-only keyboard), IDE on TS-Conf (ports, no MBR needed, WC's disk detection, TTD), test data |
+| [reference-emulator-wine.md](reference-emulator-wine.md) | How to run the original TS-Labs Unreal Speccy under CrossOver / wine on macOS for side-by-side comparisons |
 | [TODO.md](TODO.md) | Status marker + progress |
 
 ## Key findings

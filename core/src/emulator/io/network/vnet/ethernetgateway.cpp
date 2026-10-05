@@ -208,6 +208,8 @@ void EthernetGateway::Record(bool toCard, const std::string& port, const std::ve
     f.toCard = toCard;
     f.port = port;
     f.bytes = bytes;
+    if (_frameObserver)
+        _frameObserver(port, toCard, false, bytes.data(), bytes.size());
     _capture.push_back(std::move(f));
     while (_capture.size() > kCaptureLength)
         _capture.pop_front();
@@ -1055,6 +1057,8 @@ void EthernetGateway::FromLan(const uint8_t* frame, size_t length)
     f.lan = true;
     f.port = "lan";
     f.bytes.assign(frame, frame + length);
+    if (_frameObserver)
+        _frameObserver("lan", true, true, frame, length);
     _capture.push_back(std::move(f));
     while (_capture.size() > kCaptureLength)
         _capture.pop_front();

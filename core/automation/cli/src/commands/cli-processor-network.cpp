@@ -1,5 +1,7 @@
 #include "cli-processor.h"
 
+#include <cctype>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -8,6 +10,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/state/devicestate.h"
+#include "emulator/io/network/traffic/trafficaccess.h"
 #include "emulator/io/network/vnet/ethernetaccess.h"
 #include "common/filehelper.h"
 
@@ -97,6 +100,65 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
         session.SendResponse(ss.str());
         return;
     }
+    if (!args.empty() && args[0] == "traffic")
+    {
+        // network traffic [adapter] [N] | network traffic <file.pcapng> | network traffic start <file.pcapng> | stop | clear
+        // - everything the adapters sent and received (TrafficAccess, network #91)
+        auto ends = [](const std::string& s, const char* tail) {
+            const size_t n = std::strlen(tail);
+            return s.size() > n && s.compare(s.size() - n, n, tail) == 0;
+        };
+        if (args.size() > 1 && (args[1] == "start" || args[1] == "stop" || args[1] == "clear"))
+        {
+            std::string error;
+            const std::string path = args.size() > 2 ? args[2] : std::string();
+            if (!TrafficAccess::Control(emulator->GetContext(), args[1], path, 0, error))
+                session.SendResponse("network traffic " + args[1] + ": " + error + std::string(NEWLINE));
+            else
+                session.SendResponse(args[1] == "start" ? "Recording every packet into " + path + std::string(NEWLINE)
+                                                        : std::string("Done") + NEWLINE);
+            return;
+        }
+        TrafficAccess::Query query;
+        for (size_t i = 1; i < args.size(); ++i)
+        {
+            if (ends(args[i], ".pcapng"))
+            {
+                std::vector<uint8_t> file;
+                std::string error;
+                query.last = 0;
+                if (!TrafficAccess::Pcapng(emulator->GetContext(), query, file, error))
+                {
+                    session.SendResponse("network traffic: " + error + std::string(NEWLINE));
+                    return;
+                }
+                std::ofstream out(FileHelper::ToFsPath(args[i]), std::ios::binary);
+                out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+                session.SendResponse("Wrote " + std::to_string(file.size()) + " bytes of pcapng to " + args[i] + std::string(NEWLINE));
+                return;
+            }
+            if (!args[i].empty() && std::isdigit(static_cast<unsigned char>(args[i][0])))
+                query.last = static_cast<unsigned>(std::strtoul(args[i].c_str(), nullptr, 10));
+            else
+                query.adapter = args[i];
+        }
+        if (query.last == 64)
+            query.last = 32;
+        const StateNode report = TrafficAccess::Records(emulator->GetContext(), query);
+        std::stringstream ss;
+        if (const StateNode* records = report.find("records"))
+        {
+            if (records->items.empty())
+                ss << "No traffic recorded yet" << NEWLINE;
+            for (const StateNode& r : records->items)
+                ss << "#" << r.find("index")->i << " f " << r.find("frame")->i << " " << r.find("adapter")->s << " "
+                   << (r.find("direction")->s == "out" ? "-> " : "<- ") << r.find("summary")->s << NEWLINE;
+        }
+        else
+            ss << DeviceState::ToText(report);
+        session.SendResponse(ss.str());
+        return;
+    }
     if (!args.empty() && args[0] == "adapters")
     {
         // network adapters - the host adapters the bridge can use (ethernet_mode=bridge, network SN6)
@@ -144,7 +206,7 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     }
     if (!args.empty() && args[0] != "state" && args[0] != "show")
     {
-        session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network adapters | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
+        session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network adapters | network traffic [adapter] [N] [file.pcapng] | network traffic start <file.pcapng> | stop | clear | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
                              "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... remote_access=on|off (guest servers listen on 0.0.0.0, "
                              "off: 127.0.0.1 only) connect_timeout_ms=n "
                              "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's serial port; "
