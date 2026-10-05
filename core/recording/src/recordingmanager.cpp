@@ -1058,18 +1058,30 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
 
         if (lent == FrameTargetResult::Ready)
         {
-            if (FrameScaler::ScaleInto(toEncode->memoryBuffer, toEncode->width, toEncode->height, target.data,
-                                       target.stride, _outputWidth, _outputHeight, target.swapRedBlue))
+            // The encoder's own layout: packed (B,G,R,A or R,G,B,A) or NV12 (the NVENC input). The color conversion
+            // of NV12 runs once per source pixel inside the scaler
+            const bool scaled = target.format == FrameTargetFormat::Nv12
+                ? FrameScaler::ScaleIntoNv12(toEncode->memoryBuffer, toEncode->width, toEncode->height, target.data,
+                                             target.stride, target.uv, target.uvStride, _outputWidth, _outputHeight)
+                : FrameScaler::ScaleInto(toEncode->memoryBuffer, toEncode->width, toEncode->height, target.data,
+                                         target.stride, _outputWidth, _outputHeight, target.swapRedBlue);
+            if (scaled)
+            {
                 lender->SubmitFrameTarget(target, timestamp);
+                deliveredToEncoder = true;
+            }
             else
-                lender->ReleaseFrameTarget(target);
-            deliveredToEncoder = true;
+            {
+                lender->ReleaseFrameTarget(target);  // not delivered: the plain path below takes the frame
+            }
         }
         else if (lent == FrameTargetResult::Dropped)
         {
             deliveredToEncoder = true;  // the encoder takes no frame now: nothing to hand over, the clock goes on
         }
-        else if (toEncode->memoryBuffer && (toEncode->width != _outputWidth || toEncode->height != _outputHeight))
+
+        if (!deliveredToEncoder && toEncode->memoryBuffer &&
+            (toEncode->width != _outputWidth || toEncode->height != _outputHeight))
         {
             const uint8_t* scaled = _outputScaler.Scale(toEncode->memoryBuffer, toEncode->width, toEncode->height,
                                                         _outputWidth, _outputHeight);

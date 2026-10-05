@@ -11,14 +11,23 @@ struct EncoderConfig;
 
 /// @brief A buffer an encoder lends to the producer of a frame, so the finished picture is written INTO the encoder's
 /// own memory (the pixel buffer a hardware encoder reads, the queue slot an ffmpeg pipe writes) and never copied
-/// again. 4 bytes per pixel, rows `stride` bytes apart.
+/// again.
+enum class FrameTargetFormat
+{
+    Packed32,  ///< 4 bytes per pixel in `data`, rows `stride` bytes apart (R,G,B,A, or B,G,R,A with swapRedBlue)
+    Nv12       ///< 4:2:0 BT.601 limited range: Y plane in `data` (`stride`), interleaved U,V plane in `uv` (`uvStride`)
+};
+
 struct FrameTarget
 {
-    uint8_t* data = nullptr;
-    size_t stride = 0;        ///< Bytes between row starts (>= width * 4)
+    FrameTargetFormat format = FrameTargetFormat::Packed32;
+    uint8_t* data = nullptr;  ///< Packed32: the pixels. Nv12: the Y plane
+    size_t stride = 0;        ///< Bytes between row starts (Packed32: >= width * 4, Nv12: >= width)
+    uint8_t* uv = nullptr;    ///< Nv12 only: the interleaved U,V plane (height / 2 rows)
+    size_t uvStride = 0;      ///< Nv12 only: bytes between U,V row starts (>= width)
     uint32_t width = 0;
     uint32_t height = 0;
-    bool swapRedBlue = false; ///< The encoder wants B,G,R,A byte order (the emulator frame is R,G,B,A)
+    bool swapRedBlue = false; ///< Packed32: the encoder wants B,G,R,A byte order (the emulator frame is R,G,B,A)
     void* handle = nullptr;   ///< The encoder's own bookkeeping; the producer hands it back untouched
 };
 

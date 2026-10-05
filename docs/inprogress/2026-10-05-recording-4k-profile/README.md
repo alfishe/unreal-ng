@@ -28,12 +28,15 @@ Core, automation (CLI, WebAPI, OpenAPI, MCP, Lua, Python), Qt dialog + toolbar +
 `FrameTarget` lending: VideoToolbox (CVPixelBuffer) and ffmpeg (queue slot + buffer pool) take the scaled frame with no
 second copy. Measured on this Mac (load ~20, 3 rounds, 10 s each): process CPU native 17%, 4K 27%, idle 11-15%; before
 zero-copy 4K was 36% against native 21%. Colors checked on a decoded frame (mean RGB equal to the native recording).
-Not done: NVENC (Windows) still takes the scaled frame through `OnVideoFrame`; lending its registered input buffer is
-the same pattern, needs a Windows build to verify.
+NVENC (Windows) lends its locked NV12 input buffer (branch `nvenc-zero-copy`): `FrameScaler::ScaleIntoNv12` converts
+RGBA -> NV12 once per source pixel, byte-identical to the full-frame conversion (fuzzed, 3000 sizes, ASan clean).
+It compiles with mingw (syntax check) but has NOT run on Windows: do not merge to master before an NVENC run there
+(h264 + hevc, 4K, mp4 plays, colors, bars black).
 
 ## TODO
 
-- NVENC `AcquireFrameTarget` (write into the mapped input surface; needs Windows).
+- Windows run of the NVENC zero-copy path (branch `nvenc-zero-copy`), then merge.
+- SIMD for `PackedToNv12` (the 4K-to-4K videowall case is bound by it).
 
 - Benchmark `FrameScaler` at 3840x2160 (A/B, quiet machine) and decide on SIMD / threads (`SIMD-CANDIDATE(frame scaler
   row expand)` in the code).

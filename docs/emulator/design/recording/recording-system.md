@@ -550,7 +550,12 @@ videowall) without leaving the file's size. `native` costs nothing extra.
 caller's row stride; the 33 MB 4K frame is built once and never copied. The macOS native encoder lends a locked
 `CVPixelBuffer` of the AVAssetWriter pool (B,G,R,A: the R/B swap is done once per SOURCE pixel before the pixels are
 repeated, 100 thousand pixels instead of 8.3 million); the ffmpeg pipe encoder lends a queue slot from a buffer pool
-(the pool also ends the per-frame 33 MB allocation). Encoders that do not lend (NVENC, GIF, DSD, custom) return
+(the pool also ends the per-frame 33 MB allocation). The NVENC encoder (Windows) lends its locked NV12 input buffer
+(`FrameTargetFormat::Nv12`): `FrameScaler::ScaleIntoNv12` converts the colors once per SOURCE pixel (BT.601 limited
+range, chroma averaged under each 2x2 output block, byte-identical to converting the whole scaled frame) and repeats
+the integer blocks in the converted planes. Measured on an arm64 laptop at 3840x2160 (scalar, no SIMD): a 352x288
+ZX frame 2-3 ms against 14.5 ms for scale + full-frame conversion + copy; 1080p 6 ms; a 4K grab 13 ms (bound by the
+conversion itself, a SIMD candidate). Encoders that do not lend (GIF, DSD, custom) return
 `Unsupported` and get the scaled frame through `OnVideoFrame` as before. The queue of the ffmpeg encoder is bounded by
 bytes (about 512 MiB, 15 frames at 4K), and `Stop()` waits for a backlog to drain while it shrinks, so a software 4K
 encoder that runs behind still finalizes its file.

@@ -27,6 +27,11 @@ public:
     bool Start(const std::string& filename, const EncoderConfig& config) override;
     void Stop() override;
     void OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestampSec) override;
+    /// Zero-copy input: the producer writes the frame as NV12 straight into the locked NVENC input buffer
+    /// (FrameScaler::ScaleIntoNv12), so the 4K RGBA -> NV12 conversion and the copy into the buffer never run
+    FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target) override;
+    void SubmitFrameTarget(FrameTarget& target, double timestampSec) override;
+    void ReleaseFrameTarget(FrameTarget& target) override;
     void OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec) override;
 
     bool IsRecording() const override { return _isRecording; }

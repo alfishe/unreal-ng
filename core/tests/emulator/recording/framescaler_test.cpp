@@ -176,3 +176,101 @@ TEST(FrameScaler_Test, ScaleInto_RefusesAShortStrideOrNothingToScale)
     EXPECT_FALSE(FrameScaler::ScaleInto(nullptr, 2, 2, dst.data(), 16, 4, 4, false));
     EXPECT_FALSE(FrameScaler::ScaleInto(reinterpret_cast<const uint8_t*>(px.data()), 0, 2, dst.data(), 16, 4, 4, false));
 }
+
+namespace
+{
+struct Nv12Frame
+{
+    std::vector<uint8_t> y;
+    std::vector<uint8_t> uv;
+};
+
+std::vector<uint32_t> TestPicture(uint32_t w, uint32_t h)
+{
+    std::vector<uint32_t> px(static_cast<size_t>(w) * h);
+    uint32_t seed = 12345u;
+    for (auto& p : px)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        p = seed | 0xFF000000u;
+    }
+    return px;
+}
+
+/// The reference: the picture scaled into packed R,G,B,A (bars and all), then the whole frame converted
+Nv12Frame ReferenceNv12(const std::vector<uint32_t>& src, uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH)
+{
+    std::vector<uint8_t> packed(static_cast<size_t>(dstW) * dstH * 4);
+    EXPECT_TRUE(FrameScaler::ScaleInto(reinterpret_cast<const uint8_t*>(src.data()), srcW, srcH, packed.data(),
+                                       static_cast<size_t>(dstW) * 4, dstW, dstH, false));
+    Nv12Frame frame;
+    frame.y.assign(static_cast<size_t>(dstW) * dstH, 0);
+    frame.uv.assign(static_cast<size_t>(dstW) * dstH / 2, 0);
+    FrameScaler::PackedToNv12(packed.data(), static_cast<size_t>(dstW) * 4, dstW, dstH, frame.y.data(), dstW,
+                              frame.uv.data(), dstW);
+    return frame;
+}
+}  // namespace
+
+TEST(FrameScaler_Test, PackedToNv12_BlackWhiteAndRed)
+{
+    // 2x2: black, white / red, red: BT.601 limited range
+    const uint8_t px[16] = {0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255};
+    uint8_t y[4];
+    uint8_t uv[2];
+    FrameScaler::PackedToNv12(px, 8, 2, 2, y, 2, uv, 2);
+    EXPECT_EQ(y[0], 16);
+    EXPECT_EQ(y[1], 235);
+    EXPECT_EQ(y[2], 82);  // red
+    // chroma of (0 + 255 + 255 + 255) / 4 = 191 per channel R, (0+255+0+0)/4 = 63 G / B
+    EXPECT_EQ(uv[0], static_cast<uint8_t>(((-38 * 191 - 74 * 63 + 112 * 63 + 128) >> 8) + 128));
+    EXPECT_EQ(uv[1], static_cast<uint8_t>(((112 * 191 - 94 * 63 - 18 * 63 + 128) >> 8) + 128));
+}
+
+TEST(FrameScaler_Test, ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte)
+{
+    struct Case
+    {
+        uint32_t srcW, srcH, dstW, dstH;
+    };
+    // Even factor, odd factor (chroma blocks on source edges), odd picture size (bars at odd offsets), 1x, a bigger
+    // picture (no integer factor: the fallback path), the real ZX frame in a 4K-shaped output
+    const Case cases[] = {{4, 3, 24, 18},  {5, 3, 22, 20},  {7, 5, 32, 24},  {6, 6, 6, 6},
+                          {40, 30, 24, 16}, {11, 9, 48, 40}, {352, 288, 384, 216 * 2}};
+    for (const Case& c : cases)
+    {
+        const std::vector<uint32_t> src = TestPicture(c.srcW, c.srcH);
+        const Nv12Frame expected = ReferenceNv12(src, c.srcW, c.srcH, c.dstW, c.dstH);
+
+        // The target with padded rows (a hardware buffer's pitch) and garbage in it
+        const size_t pitch = c.dstW + 16;
+        std::vector<uint8_t> buffer(pitch * c.dstH * 3 / 2, 0x77);
+        uint8_t* yPlane = buffer.data();
+        uint8_t* uvPlane = buffer.data() + pitch * c.dstH;
+        ASSERT_TRUE(FrameScaler::ScaleIntoNv12(reinterpret_cast<const uint8_t*>(src.data()), c.srcW, c.srcH, yPlane,
+                                               pitch, uvPlane, pitch, c.dstW, c.dstH))
+            << c.srcW << "x" << c.srcH << " -> " << c.dstW << "x" << c.dstH;
+
+        for (uint32_t row = 0; row < c.dstH; row++)
+            ASSERT_EQ(std::memcmp(yPlane + row * pitch, expected.y.data() + static_cast<size_t>(row) * c.dstW, c.dstW), 0)
+                << "Y row " << row << " of " << c.srcW << "x" << c.srcH << " -> " << c.dstW << "x" << c.dstH;
+        for (uint32_t row = 0; row < c.dstH / 2; row++)
+            ASSERT_EQ(std::memcmp(uvPlane + row * pitch, expected.uv.data() + static_cast<size_t>(row) * c.dstW, c.dstW), 0)
+                << "UV row " << row << " of " << c.srcW << "x" << c.srcH << " -> " << c.dstW << "x" << c.dstH;
+    }
+}
+
+TEST(FrameScaler_Test, ScaleIntoNv12_BarsAreBlackAndOddOutputIsRefused)
+{
+    const std::vector<uint32_t> src = TestPicture(2, 2);
+    std::vector<uint8_t> y(16 * 8, 0x77);
+    std::vector<uint8_t> uv(16 * 4, 0x77);
+    ASSERT_TRUE(FrameScaler::ScaleIntoNv12(reinterpret_cast<const uint8_t*>(src.data()), 2, 2, y.data(), 16, uv.data(),
+                                           16, 16, 8));
+    // 2x2 in 16x8: k = 4, picture 8x8 at x = 4: the first column is a bar
+    EXPECT_EQ(y[0], 16);
+    EXPECT_EQ(uv[0], 128);
+    EXPECT_EQ(uv[1], 128);
+    EXPECT_FALSE(FrameScaler::ScaleIntoNv12(reinterpret_cast<const uint8_t*>(src.data()), 2, 2, y.data(), 17, uv.data(),
+                                            17, 17, 8));
+}

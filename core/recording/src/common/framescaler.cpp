@@ -172,6 +172,315 @@ bool ScaleInto(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, s
     return true;
 }
 
+namespace
+{
+/// Each source byte repeated k times (k >= 2); the common factors without a call per pixel
+void ExpandBytes(const uint8_t* src, uint32_t count, uint32_t k, uint8_t* dst)
+{
+    switch (k)
+    {
+        case 2:
+            for (uint32_t x = 0; x < count; x++)
+            {
+                dst[2 * x] = src[x];
+                dst[2 * x + 1] = src[x];
+            }
+            break;
+        case 3:
+            for (uint32_t x = 0; x < count; x++)
+            {
+                dst[3 * x] = src[x];
+                dst[3 * x + 1] = src[x];
+                dst[3 * x + 2] = src[x];
+            }
+            break;
+        case 4:
+            for (uint32_t x = 0; x < count; x++)
+            {
+                const uint8_t v = src[x];
+                uint8_t* d = dst + 4 * static_cast<size_t>(x);
+                d[0] = v;
+                d[1] = v;
+                d[2] = v;
+                d[3] = v;
+            }
+            break;
+        default:
+            for (uint32_t x = 0; x < count; x++)
+                std::memset(dst + static_cast<size_t>(x) * k, src[x], k);
+            break;
+    }
+}
+
+inline uint8_t ClampByte(int v)
+{
+    return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+inline uint8_t LumaOf(int r, int g, int b)
+{
+    return ClampByte(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+}
+
+inline void ChromaOf(int r, int g, int b, uint8_t& u, uint8_t& v)
+{
+    u = ClampByte(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+    v = ClampByte(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+}
+}  // namespace
+
+// Not-aliased pointers let the compiler vectorize the converters (an uint8_t* may alias anything)
+#if defined(_MSC_VER)
+#define FRAMESCALER_RESTRICT __restrict
+#else
+#define FRAMESCALER_RESTRICT __restrict__
+#endif
+
+/// SIMD-CANDIDATE(RGBA -> NV12): the 4K-to-4K case (the videowall grab) is bound by this scalar conversion, ~13 ms per
+/// frame on an arm64 laptop; an SSE / NEON de-interleave + fixed-point multiply would cover every machine
+void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h, uint8_t* yDst, size_t yStride,
+                  uint8_t* uvDst, size_t uvStride)
+{
+    for (uint32_t y = 0; y < h; y++)
+    {
+        const uint8_t* FRAMESCALER_RESTRICT row = rgba + static_cast<size_t>(y) * srcStride;
+        uint8_t* FRAMESCALER_RESTRICT out = yDst + static_cast<size_t>(y) * yStride;
+        for (uint32_t x = 0; x < w; x++)
+        {
+            const int r = row[x * 4];
+            const int g = row[x * 4 + 1];
+            const int b = row[x * 4 + 2];
+            out[x] = ClampByte(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+        }
+    }
+    for (uint32_t y = 0; y < h; y += 2)
+    {
+        const uint8_t* FRAMESCALER_RESTRICT row0 = rgba + static_cast<size_t>(y) * srcStride;
+        const uint8_t* FRAMESCALER_RESTRICT row1 = rgba + static_cast<size_t>(y + 1) * srcStride;
+        uint8_t* FRAMESCALER_RESTRICT out = uvDst + static_cast<size_t>(y / 2) * uvStride;
+        for (uint32_t x = 0; x < w; x += 2)
+        {
+            const int r = (row0[x * 4] + row0[x * 4 + 4] + row1[x * 4] + row1[x * 4 + 4]) / 4;
+            const int g = (row0[x * 4 + 1] + row0[x * 4 + 5] + row1[x * 4 + 1] + row1[x * 4 + 5]) / 4;
+            const int b = (row0[x * 4 + 2] + row0[x * 4 + 6] + row1[x * 4 + 2] + row1[x * 4 + 6]) / 4;
+            out[x] = ClampByte(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+            out[x + 1] = ClampByte(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+        }
+    }
+}
+
+bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yDst, size_t yStride, uint8_t* uvDst,
+                   size_t uvStride, uint32_t dstW, uint32_t dstH)
+{
+    const Layout layout = ComputeLayout(srcW, srcH, dstW, dstH);
+    if (!src || !yDst || !uvDst || layout.width == 0 || (dstW & 1) || (dstH & 1) || yStride < dstW ||
+        uvStride < dstW)
+        return false;
+
+    if (layout.scale == 0)
+    {
+        // No integer factor (a picture above the output): scale to packed, convert the whole frame
+        thread_local std::vector<uint8_t> packed;
+        packed.resize(static_cast<size_t>(dstW) * dstH * 4);
+        if (!ScaleInto(src, srcW, srcH, packed.data(), static_cast<size_t>(dstW) * 4, dstW, dstH, false))
+            return false;
+        PackedToNv12(packed.data(), static_cast<size_t>(dstW) * 4, dstW, dstH, yDst, yStride, uvDst, uvStride);
+        return true;
+    }
+
+    const uint32_t k = layout.scale;
+    const uint32_t picX0 = layout.offsetX;
+    const uint32_t picX1 = layout.offsetX + layout.width;
+    const uint32_t picY0 = layout.offsetY;
+    const uint32_t picY1 = layout.offsetY + layout.height;
+
+    // One output pixel per source pixel with the picture on even coordinates (the videowall's 4K grab in a 4K frame):
+    // the 2x2 chroma blocks are whole source blocks, so the tight full-frame conversion runs on the picture
+    // rectangle directly in the target - no per-block bookkeeping
+    if (k == 1 && (picX0 & 1) == 0 && (picY0 & 1) == 0 && (srcW & 1) == 0 && (srcH & 1) == 0)
+    {
+        for (uint32_t y = 0; y < dstH; y++)
+        {
+            uint8_t* yRow = yDst + static_cast<size_t>(y) * yStride;
+            if (y < picY0 || y >= picY1)
+            {
+                std::memset(yRow, 16, dstW);
+            }
+            else
+            {
+                std::memset(yRow, 16, picX0);
+                std::memset(yRow + picX1, 16, dstW - picX1);
+            }
+        }
+        for (uint32_t cy = 0; cy < dstH / 2; cy++)
+        {
+            uint8_t* uvRow = uvDst + static_cast<size_t>(cy) * uvStride;
+            if (2 * cy < picY0 || 2 * cy >= picY1)
+            {
+                std::memset(uvRow, 128, dstW);
+            }
+            else
+            {
+                std::memset(uvRow, 128, picX0);
+                std::memset(uvRow + picX1, 128, dstW - picX1);
+            }
+        }
+        PackedToNv12(src, static_cast<size_t>(srcW) * 4, srcW, srcH, yDst + static_cast<size_t>(picY0) * yStride + picX0,
+                     yStride, uvDst + static_cast<size_t>(picY0 / 2) * uvStride + picX0, uvStride);
+        return true;
+    }
+
+    // ---- Y plane: one converted source row, repeated ----
+    thread_local std::vector<uint8_t> lumaRow;
+    lumaRow.resize(srcW);
+    for (uint32_t y = 0; y < dstH; y++)
+    {
+        uint8_t* out = yDst + static_cast<size_t>(y) * yStride;
+        if (y < picY0 || y >= picY1)
+        {
+            std::memset(out, 16, dstW);
+            continue;
+        }
+        const uint32_t sy = (y - picY0) / k;
+        if ((y - picY0) % k == 0)
+        {
+            const uint8_t* row = src + static_cast<size_t>(sy) * srcW * 4;
+            std::memset(out, 16, picX0);
+            uint8_t* d = out + picX0;
+            if (k == 1)
+            {
+                // One output pixel per source pixel: convert straight into the target row
+                for (uint32_t x = 0; x < srcW; x++)
+                    d[x] = LumaOf(row[x * 4], row[x * 4 + 1], row[x * 4 + 2]);
+            }
+            else
+            {
+                for (uint32_t x = 0; x < srcW; x++)
+                    lumaRow[x] = LumaOf(row[x * 4], row[x * 4 + 1], row[x * 4 + 2]);
+                ExpandBytes(lumaRow.data(), srcW, k, d);
+            }
+            std::memset(out + picX1, 16, dstW - picX1);
+        }
+        else
+        {
+            // The rest of the block's rows: a copy of the first one
+            std::memcpy(out, yDst + static_cast<size_t>(y - 1) * yStride, dstW);
+        }
+    }
+
+    // ---- UV plane: the average under each 2x2 output block, computed once per distinct (source rows) pair ----
+    // Source index under an output row / column; -1 = a bar (black)
+    auto rowIndex = [&](uint32_t y) -> int { return (y < picY0 || y >= picY1) ? -1 : static_cast<int>((y - picY0) / k); };
+    auto colIndex = [&](uint32_t x) -> int { return (x < picX0 || x >= picX1) ? -1 : static_cast<int>((x - picX0) / k); };
+
+    const uint32_t chromaW = dstW / 2;
+    thread_local std::vector<int> col0;
+    thread_local std::vector<int> col1;
+    col0.resize(chromaW);
+    col1.resize(chromaW);
+    for (uint32_t cx = 0; cx < chromaW; cx++)
+    {
+        col0[cx] = colIndex(2 * cx);
+        col1[cx] = colIndex(2 * cx + 1);
+    }
+
+    thread_local std::vector<uint8_t> chromaU;
+    thread_local std::vector<uint8_t> chromaV;
+    chromaU.resize(srcW);
+    chromaV.resize(srcW);
+
+    int prevRow0 = -2;
+    int prevRow1 = -2;
+    for (uint32_t cy = 0; cy < dstH / 2; cy++)
+    {
+        const int r0 = rowIndex(2 * cy);
+        const int r1 = rowIndex(2 * cy + 1);
+        uint8_t* out = uvDst + static_cast<size_t>(cy) * uvStride;
+        if (cy > 0 && r0 == prevRow0 && r1 == prevRow1)
+        {
+            std::memcpy(out, uvDst + static_cast<size_t>(cy - 1) * uvStride, dstW);
+            continue;
+        }
+        prevRow0 = r0;
+        prevRow1 = r1;
+
+        // A pure row pair (both output rows under one source row): the chroma of a column pair inside one source
+        // pixel is that pixel's own chroma, converted ONCE per source pixel here and looked up below
+        const bool pureRow = r0 == r1 && r0 >= 0;
+        if (pureRow)
+        {
+            const uint8_t* srcRow = src + static_cast<size_t>(r0) * srcW * 4;
+            for (uint32_t x = 0; x < srcW; x++)
+                ChromaOf(srcRow[x * 4], srcRow[x * 4 + 1], srcRow[x * 4 + 2], chromaU[x], chromaV[x]);
+        }
+
+        // Even factor and the picture on even coordinates: every 2x2 block is inside one source pixel, so the row is
+        // the source row's (U,V) pairs repeated k / 2 times between two bars
+        if (pureRow && (k & 1) == 0 && (picX0 & 1) == 0)
+        {
+            std::memset(out, 128, picX0);
+            uint8_t* d = out + picX0;
+            const uint32_t reps = k / 2;
+            if (reps == 1)
+            {
+                for (uint32_t x = 0; x < srcW; x++)
+                {
+                    d[2 * x] = chromaU[x];
+                    d[2 * x + 1] = chromaV[x];
+                }
+            }
+            else
+            {
+                for (uint32_t x = 0; x < srcW; x++)
+                    for (uint32_t r = 0; r < reps; r++)
+                    {
+                        d[0] = chromaU[x];
+                        d[1] = chromaV[x];
+                        d += 2;
+                    }
+            }
+            std::memset(out + picX1, 128, dstW - picX1);
+            continue;
+        }
+
+        for (uint32_t cx = 0; cx < chromaW; cx++)
+        {
+            const int c0 = col0[cx];
+            const int c1 = col1[cx];
+            if (pureRow && c0 == c1 && c0 >= 0)
+            {
+                out[2 * cx] = chromaU[c0];
+                out[2 * cx + 1] = chromaV[c0];
+                continue;
+            }
+            if (r0 < 0 && r1 < 0)
+            {
+                out[2 * cx] = 128;  // a bar row: black
+                out[2 * cx + 1] = 128;
+                continue;
+            }
+
+            int rSum = 0;
+            int gSum = 0;
+            int bSum = 0;
+            auto add = [&](int sr, int sc) {
+                if (sr < 0 || sc < 0)
+                    return;  // a bar adds black (0, 0, 0)
+                const uint8_t* px = src + (static_cast<size_t>(sr) * srcW + static_cast<size_t>(sc)) * 4;
+                rSum += px[0];
+                gSum += px[1];
+                bSum += px[2];
+            };
+            add(r0, c0);
+            add(r0, c1);
+            add(r1, c0);
+            add(r1, c1);
+            ChromaOf(rSum / 4, gSum / 4, bSum / 4, out[2 * cx], out[2 * cx + 1]);
+        }
+    }
+    return true;
+}
+
 void Scaler::Reset()
 {
     _output.clear();

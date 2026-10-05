@@ -37,6 +37,22 @@ Layout ComputeLayout(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH)
 bool ScaleInto(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, size_t dstStride, uint32_t dstW,
                uint32_t dstH, bool swapRedBlue);
 
+/// The same picture into an NV12 target (the hardware encoders' input: Y plane, then interleaved U,V at half
+/// resolution, BT.601 limited range - the arithmetic of the NVENC converter). The color conversion runs once per
+/// SOURCE pixel and the integer blocks are repeated in the converted planes, so a 4K frame costs a few hundred
+/// thousand conversions, not 8.3 million. Chroma of a 2x2 output block is the average of the pixels under it (a
+/// block inside one source pixel is exactly that pixel's chroma; a block on a source edge or on the edge of the
+/// bars averages, as the old full-frame conversion did). Black bars: Y 16, U = V = 128.
+/// dstW and dstH must be even. A picture larger than the output (no integer factor) goes through ScaleInto and
+/// PackedToNv12. False for a size of zero, an odd output size or a stride shorter than the row
+bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yDst, size_t yStride, uint8_t* uvDst,
+                   size_t uvStride, uint32_t dstW, uint32_t dstH);
+
+/// Plain conversion of a packed R,G,B,A picture (rows `srcStride` bytes apart) to NV12, w x h even. The reference
+/// of ScaleIntoNv12 and its fallback
+void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h, uint8_t* yDst, size_t yStride,
+                  uint8_t* uvDst, size_t uvStride);
+
 /// One reusable scaler: holds the output buffer and remembers where the bars are
 class Scaler
 {
