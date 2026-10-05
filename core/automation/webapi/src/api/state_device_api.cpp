@@ -10,6 +10,7 @@
 #include <emulator/io/rtc/ds12887.h>
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/io/network/networkmanager.h>
 #include <emulator/cpu/core.h>
@@ -896,6 +897,62 @@ void EmulatorAPI::getNetworkAdapters(const HttpRequestPtr& req, std::function<vo
     if (!getEmulatorByIdOrIndex(id))
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
     ReplyState(EthernetAccess::Adapters(), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/network/traffic - the traffic tap's ring (core TrafficAccess, network #91)
+void EmulatorAPI::getNetworkTraffic(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    TrafficAccess::Query query;
+    const std::string since = req->getParameter("since");
+    const std::string last = req->getParameter("last");
+    query.since = since.empty() ? 0 : std::strtoull(since.c_str(), nullptr, 10);
+    query.last = last.empty() ? 64u : static_cast<unsigned>(std::strtoul(last.c_str(), nullptr, 10));
+    query.adapter = req->getParameter("adapter");
+    query.kind = req->getParameter("kind");
+    if (req->getParameter("format") == "pcapng")
+    {
+        std::vector<uint8_t> file;
+        std::string error;
+        if (!TrafficAccess::Pcapng(emulator->GetContext(), query, file, error))
+            return ReplyNotFound(error, callback);
+        auto resp = HttpResponse::newHttpResponse();
+        resp->setContentTypeString("application/x-pcapng");
+        resp->setBody(std::string(file.begin(), file.end()));
+        resp->addHeader("Content-Disposition", "attachment; filename=\"traffic.pcapng\"");
+        addCorsHeaders(resp);
+        return callback(resp);
+    }
+    ReplyState(TrafficAccess::Records(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/network/traffic {action, path, ring_bytes}
+void EmulatorAPI::postNetworkTraffic(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("action"))
+        return ReplyNotFound("Body: {\"action\": \"clear\" | \"start\" | \"stop\" | \"ring\", \"path\", \"ring_bytes\"}", callback,
+                             HttpStatusCode::k400BadRequest);
+    std::string error;
+    const std::string action = (*body)["action"].asString();
+    const std::string path = body->isMember("path") ? (*body)["path"].asString() : std::string();
+    const uint64_t ringBytes = body->isMember("ring_bytes") ? (*body)["ring_bytes"].asUInt64() : 0;
+    if (!TrafficAccess::Control(emulator->GetContext(), action, path, ringBytes, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    TrafficAccess::Query query;
+    query.last = 0;
+    StateNode reply = TrafficAccess::Records(emulator->GetContext(), query);
+    StateNode ok = StateNode::Object();
+    ok["ok"] = true;
+    ok["tap"] = *reply.find("tap");
+    ReplyState(ok, callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/network/frame {"link": "isa2.eth", "hex": "..."} - a frame towards a card

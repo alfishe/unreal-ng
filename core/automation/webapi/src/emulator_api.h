@@ -336,6 +336,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getNetworkFrames, "/api/v1/emulator/{id}/network/frames", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNetworkFrame, "/api/v1/emulator/{id}/network/frame", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getNetworkAdapters, "/api/v1/emulator/{id}/network/adapters", drogon::Get);
+    // Everything the adapters sent and received (core TrafficAccess, network #91)
+    ADD_METHOD_TO(EmulatorAPI::getNetworkTraffic, "/api/v1/emulator/{id}/network/traffic", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNetworkTraffic, "/api/v1/emulator/{id}/network/traffic", drogon::Post);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -387,6 +390,7 @@ public:
 
     // Disassembly
     ADD_METHOD_TO(EmulatorAPI::getDisasm, "/api/v1/emulator/{id}/disasm", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDebugSnapshot, "/api/v1/emulator/{id}/debug/snapshot", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
 
@@ -1142,6 +1146,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIsaJournal(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=&format=json|pcapng
+    void getNetworkTraffic(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// POST /api/v1/emulator/{id}/network/traffic {action: clear|start|stop|ring, path, ring_bytes}
+    void postNetworkTraffic(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     /// GET /api/v1/emulator/{id}/network/adapters - the host adapters the bridge can use (network SN6)
     void getNetworkAdapters(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -1264,6 +1274,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                       const std::string& id) const;
 
     // Disassembly
+    /// GET /debug/snapshot?disasm=&stack=&memory=<space>:<addr>:<len>[,...] - one coherent debugger snapshot (core DebugSnapshot)
+    void getDebugSnapshot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
     void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,

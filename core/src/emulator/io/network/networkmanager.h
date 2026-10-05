@@ -24,7 +24,6 @@
 #include <vector>
 
 #include "common/network/hostframes.h"
-#include "common/network/mactranslator.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
@@ -143,10 +142,12 @@ public:
     /// Whether a slot card kind is a frame-level Ethernet card ("ne2000", "el3c509b") - the gateway's kinds
     static bool IsFrameCardKind(const std::string& kind) { return kind == "ne2000" || kind == "el3c509b"; }
     /// The switch + router of the frame-level cards (null without one, or with the network off)
-    EthernetGateway* Gateway() const { return _gateway.get(); }
+    EthernetGateway* Gateway() const { return _network ? _network->Gateway() : nullptr; }
+    /// Everything the machine's network adapters send and receive (network #91): the always-on ring and the file
+    /// recording; it outlives a refit (a settings change replaces the virtual network, not the tap)
+    NetworkTrafficTap& Traffic() { return *_traffic; }
     /// The host adapter of BRIDGE mode (tests: a fake instead of libpcap; set before the gateway is fitted)
-    void SetHostFrames(std::unique_ptr<IHostFrames> frames) { _hostFrames = std::move(frames); }
-    IHostFrames* HostFrames() const { return _hostFrames.get(); }
+    void SetHostFrames(std::unique_ptr<IHostFrames> frames) { _hostFramesOverride = std::move(frames); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -327,6 +328,8 @@ private:
     void FitMachineSerial(const Plan& plan);
     void FitAtm2IoEsp(const Plan& plan);
     void FitSlotCards(const Plan& plan);
+    /// The names the traffic tap shows for the socket adapters ("zxnetusb", "com.esp", "isa1.esp", "isa1.modem")
+    void NameTrafficGuests();
     void UnplugSlotCards();
     void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;
 
@@ -341,13 +344,9 @@ private:
     /// UART cards' 16550 registers across a refit by port key (the chip stays; its line's peer is rebuilt with the
     /// network)
     std::vector<std::pair<std::string, Uart16550::State>> _serialKeep;
-    std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
-    /// BRIDGE: the host adapter (network SN6); a test puts a fake in with SetHostFrames before the gateway is built
-    std::unique_ptr<IHostFrames> _hostFrames;
-    std::unique_ptr<MacTranslator> _macTranslator;   ///< a Wi-Fi adapter's MAC translation (network SN6b)
-    std::string _bridgeError;                    ///< why BRIDGE has no adapter open
-    void FitBridge();
-    void PumpBridge();
+    /// A test's host adapter for BRIDGE (a fake instead of libpcap), handed to every virtual network fitted after it
+    std::unique_ptr<IHostFrames> _hostFramesOverride;
+    std::unique_ptr<NetworkTrafficTap> _traffic;
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

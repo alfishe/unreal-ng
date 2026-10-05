@@ -10,6 +10,7 @@
 #include <emulator/state/devicestate.h>
 #include <json/json.h>
 
+#include "../common/binaryresponse.h"
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
 
@@ -63,12 +64,9 @@ void ReplyRead(EmulatorContext* context, const std::string& name, uint32_t offse
         std::string error;
         if (!DeviceMemory::Read(context, name, offset, length, bytes, error))
             return ReplyError(error, callback);
-        auto resp = HttpResponse::newHttpResponse();
-        resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
-        resp->setBody(std::string(bytes.begin(), bytes.end()));
-        resp->addHeader("X-Region", name);
+        auto resp = BinaryMemoryResponse(name, offset, bytes);
+        resp->addHeader("X-Region", name);   // the region read's own headers, kept
         resp->addHeader("X-Offset", std::to_string(offset));
-        addCorsHeaders(resp);
         callback(resp);
         return;
     }

@@ -47,7 +47,9 @@ have an effect. The 2-button option and the USSR variant were not implemented; a
 buttons, always the standard decode. `SwapMouse=` and `MouseScale=` are applied by the desktop
 `MouseManager` when capture starts; `joymouse` is deferred.
 
-There is no "Kempston mouse turbo" to implement, and AMX Mouse is out of scope.
+A "Kempston Mouse Turbo" does exist (Velesoft K-Mouse Turbo: A15 = master / slave, `#FEDF` detect; correction
+2026-10-04, [hardware-reference](hardware-reference.md) §8); it is not implemented yet - see [TODO.md](TODO.md).
+AMX Mouse is out of scope.
 
 The USSR variant is a fitting, not a machine property, hence configuration rather than a
 model override ([hardware-reference §2.1](hardware-reference.md#21-known-documented-decodes-bc4)).

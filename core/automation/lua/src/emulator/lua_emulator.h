@@ -9,6 +9,8 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memoryread.h"
+#include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
@@ -59,6 +61,7 @@
 #include <emulator/config.h>
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
@@ -795,7 +798,10 @@ public:
             Z80State* z80 = emulator->GetZ80State();
             if (!z80)
                 return false;
-            return Z80::SetRegisterValue(z80, name, value);
+            const bool set = Z80::SetRegisterValue(z80, name, value);
+            if (set)
+                emulator->NoteDebugChange();   // the debugger snapshot's seq
+            return set;
         });
 
         // Memory access: direct (non-mutating) reads so inspecting memory
@@ -828,6 +834,43 @@ public:
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
+        });
+
+        // debug_snapshot{disasm = 21, stack = 8, memory = {"cpu:0x8000:256", "ram5:0:6912"}} - one coherent debugger
+        // snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot): memory windows carry their bytes as Lua strings
+        // (field bytes); nil, error when refused
+        lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            DebugSnapshot::Options options;
+            options.rawBytes = true;
+            if (opts)
+            {
+                options.disasm = std::min<unsigned>(opts->get_or("disasm", 0u), 100u);
+                options.stack = opts->get_or("stack", 8u);
+                if (sol::optional<sol::table> windows = opts->get<sol::optional<sol::table>>("memory"))
+                    for (auto& pair : *windows)
+                        if (pair.second.is<std::string>())
+                            options.memory.push_back(pair.second.as<std::string>());
+            }
+            const DebugSnapshot::Result result = DebugSnapshot::Build(emulator, options);
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {StateNodeToLua(s, result.snapshot), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // mem_read_bytes(addr, len [, space]) -> the bytes as a Lua string (MemoryRead): the CPU view (wraps at #FFFF,
+        // up to 65536), a page "ram5" / "rom2" / "cache0" or "ram" (every RAM page back to back); nil, error on refusal
+        lua.set_function("mem_read_bytes", [this](sol::this_state s, uint32_t addr, uint32_t len,
+                                                  sol::optional<std::string> space) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), space.value_or(""), addr, len);
+            if (!read.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, read.error)};
+            return {sol::make_object(s, std::string(read.bytes.begin(), read.bytes.end())), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {
@@ -3195,6 +3238,31 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        // Everything the network adapters sent and received (TrafficAccess, network #91)
+        lua.set_function("network_traffic", [this](sol::this_state s, sol::optional<sol::table> q) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            TrafficAccess::Query query;
+            if (q)
+            {
+                query.since = (*q).get_or("since", uint64_t{0});
+                query.adapter = (*q).get_or("adapter", std::string());
+                query.kind = (*q).get_or("kind", std::string());
+                query.last = (*q).get_or("last", 64u);
+            }
+            return StateNodeToLua(s, TrafficAccess::Records(emulator->GetContext(), query));
+        });
+        lua.set_function("network_traffic_control", [this](sol::this_state s, const std::string& action, sol::optional<std::string> path,
+                                                           sol::optional<uint64_t> ringBytes) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            if (!TrafficAccess::Control(emulator->GetContext(), action, path.value_or(""), ringBytes.value_or(0), error))
+                return mouseError(s, error);
+            sol::variadic_results r;
+            r.push_back(sol::make_object(s, true));
+            return r;
         });
         // The host adapters the bridge can use (ethernet_mode=bridge, network SN6)
         lua.set_function("network_adapters", [](sol::this_state s) -> sol::object {

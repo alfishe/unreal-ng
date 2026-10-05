@@ -626,6 +626,35 @@ TEST_F(McpTools_Test, InspectState_IdeAspect_SummarizesBothSprinterChannels)
     EXPECT_NE(result.text.find("ide1.master (disk): no medium"), std::string::npos) << result.text;
 }
 
+// The snapshot aspect asks GET /debug/snapshot for the code lines and the windows, and summarizes the moment
+TEST_F(McpTools_Test, InspectState_SnapshotAspect_OneRequest)
+{
+    Json::Value snapshot;
+    snapshot["seq"] = 42;
+    snapshot["state"] = "paused";
+    snapshot["consistency"] = "paused";
+    snapshot["pause"]["reason"] = "breakpoint";
+    snapshot["regs"]["special"]["pc"] = 0x8000;
+    snapshot["time"]["frame"] = 100;
+    snapshot["time"]["t"] = 1234;
+    snapshot["disasm"].append(Json::Value(Json::objectValue));
+    snapshot["memory"].append(Json::Value(Json::objectValue));
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/snapshot?disasm=5&memory=cpu:0x8000:16&memory=ram5:0:8"] = {200, snapshot};
+
+    Json::Value args;
+    args["aspects"].append("snapshot");
+    args["count"] = 5;
+    args["windows"].append("cpu:0x8000:16");
+    args["windows"].append("ram5:0:8");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/debug/snapshot?disasm=5&memory=cpu:0x8000:16&memory=ram5:0:8"));
+    EXPECT_NE(result.text.find("[snapshot] seq 42, paused (read paused), last stop breakpoint, PC=8000"), std::string::npos)
+        << result.text;
+    EXPECT_TRUE(result.structured.isMember("snapshot"));
+}
+
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};

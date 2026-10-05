@@ -23,7 +23,7 @@ what create requests accept). `ram_size` is validated against the model's
 | `PLUS2` | ZX-Spectrum +2 (grey) | 128 | creatable; 128K hardware, Amstrad ROM (config `spectrum2`) |
 | `PLUS2A` | ZX-Spectrum +2A | 128 | creatable; the +3 without its floppy controller (config `spectrum2a`) |
 | `PLUS3` | ZX-Spectrum +3 | 128 | creatable |
-| `ATM450` | ATM-Turbo v4.50 | **512**, 1024 | creatable; boots the system ROM menu (CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48), see [machines/atm.md](../machines/atm.md) |
+| `ATM450` | ATM-Turbo v4.50 | **512**, 1024 | creatable; boots the system ROM menu (CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48), see [machines/atm/atm450.md](../machines/atm/atm450.md) |
 | `ATM710` | ATM-Turbo 2+ v7.10 | 128, 256, 512, 1024 | creatable |
 | `ATM3` | ZX-Evo (ATM Turbo 3) | 4096 | creatable |
 | `SCORPION` | ZS Scorpion | 256, 1024 | creatable |

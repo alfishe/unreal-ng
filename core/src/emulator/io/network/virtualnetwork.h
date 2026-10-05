@@ -32,12 +32,18 @@
 #include <string>
 #include <vector>
 
+#include "common/network/hostframes.h"
 #include "common/network/hostnet.h"
+#include "common/network/mactranslator.h"
 #include "common/network/nettypes.h"
+#include "emulator/io/network/ethernet/ethernetlink.h"
+#include "emulator/state/statenode.h"
 #include "emulator/io/network/netstate.h"
+#include "emulator/io/network/traffic/networktraffictap.h"
 #include "emulator/io/network/vnet/dhcpserver.h"
 
 class EmulatorContext;
+class EthernetGateway;
 namespace ttd { struct TTDNetInput; }
 
 struct VirtualNetworkConfig
@@ -73,7 +79,12 @@ struct VirtualNetworkConfig
     static constexpr uint32_t kListenLoopback = NetIp(127, 0, 0, 1);
 };
 
-class VirtualNetwork
+/// The one door between every network adapter of the machine and the network (network #91 refactor): socket-level
+/// adapters (W5300, ESP modules, ZiFi, the modem) open sockets here; frame-level cards (NE2000, 3C509B) put their
+/// frames on its wire (IEthernetLink) - its Ethernet gateway switches them and, in NAT, routes them through its
+/// sockets, or in BRIDGE hands them to a host adapter (network SN6). Every host answer - socket events and bridged
+/// frames - comes back through here as a journaled TTD input
+class VirtualNetwork : public IEthernetLink
 {
 public:
     static constexpr uint16_t kNoSocket = 0;
@@ -116,6 +127,49 @@ public:
     void Listen(uint16_t id, uint16_t guestPort);
 
     void Close(uint16_t id);
+
+    // --- Frame-level cards (the Ethernet wire) ------------------------------
+
+    /// How the frame cards reach the host: NAT (the gateway's router) or BRIDGE (a host adapter, network SN6)
+    struct FrameSettings
+    {
+        bool bridge = false;
+        std::string bridgeAdapter;
+        /// Forward= guest ports another device answers (a Hayes modem's MODEM,<port>): the gateway leaves them alone
+        std::vector<uint16_t> reservedGuestPorts;
+        /// The host adapter to use instead of libpcap (tests: a fake); not owned, must outlive the network
+        IHostFrames* hostFrames = nullptr;
+    };
+    /// Fit the wire for frame cards (the gateway; in BRIDGE the host adapter opens). Again: settings change
+    void EnableFrames(const FrameSettings& settings);
+    /// The wire's gateway (null until EnableFrames)
+    EthernetGateway* Gateway() const { return _gateway.get(); }
+    /// A card plugs into / leaves the wire (frames it sends arrive through Transmit)
+    void AttachStation(IEthernetPort* port);
+    void DetachStation(IEthernetPort* port);
+    // IEthernetLink: a card put a frame on the wire
+    void Transmit(IEthernetPort& from, const uint8_t* frame, size_t length) override;
+    /// The wire's own frame work (gateway timers, retransmissions, queued frames to the cards): the devices' phase of
+    /// the frame boundary, before the TTD checkpoint (NetworkManager::OnFrameDevices)
+    void OnFrameDevices();
+    /// BRIDGE: a frame from the host LAN (the NetFrame TTD input), to the card(s) it is for
+    void ApplyHostFrame(const uint8_t* frame, size_t length);
+    /// BRIDGE: the host adapter's part of the report (adapter, open, error, library, counters, Wi-Fi translation);
+    /// an empty object in NAT
+    StateNode DescribeBridge() const;
+
+    // --- Traffic (network #91): everything every adapter sends and receives, recorded here --------------
+
+    NetworkTrafficTap& Traffic() { return *_tap; }
+    const NetworkTrafficTap& Traffic() const { return *_tap; }
+    /// Record into the machine's tap (NetworkManager owns it: the ring and a file recording outlive a refit that
+    /// replaces this network); without one the network keeps its own
+    void UseTap(NetworkTrafficTap* tap) { _tap = tap ? tap : _ownTap.get(); }
+    /// Machine time for the tap: frame, TTD units in the frame, emulated microseconds
+    static TrafficTime TrafficTimeOf(const EmulatorContext* context);
+    /// The name a socket adapter's traffic shows ("zxnetusb", "com.esp", "isa1.esp", "isa1.modem"); unnamed: "socket"
+    void NameGuest(const INetGuest* guest, const std::string& name);
+    std::string GuestName(const INetGuest* guest) const;
 
     /// Close every socket, forget leases and listeners (machine reset, adapter
     /// removed). The sockets of `keep` stay: a ZX-Bus reset resets the card,
@@ -266,8 +320,24 @@ private:
     void SubmitHostEvent(const HostNetEvent& ev);
     bool AnswerIcmpEcho(uint16_t id, const NetEndpoint& to, const uint8_t* data, uint32_t length);
 
+    void FitBridge();
+    void PumpBridge(bool replaying);
+
+    void TapSocket(const Socket& s, bool out, const char* op, const NetEndpoint& peer, const uint8_t* data,
+                   uint32_t length, uint16_t localPort = 0);
+
     EmulatorContext* _context = nullptr;
+    std::unique_ptr<NetworkTrafficTap> _ownTap;
+    NetworkTrafficTap* _tap = nullptr;
+    std::map<const INetGuest*, std::string> _guestNames;
     std::unique_ptr<IHostNet> _host;
+    // The frame cards' wire (network SN6 / #91): the gateway, and in BRIDGE the host adapter
+    std::unique_ptr<EthernetGateway> _gateway;
+    FrameSettings _frameSettings;
+    std::unique_ptr<IHostFrames> _ownHostFrames;   ///< libpcap, when no test adapter was given
+    IHostFrames* _hostFrames = nullptr;
+    std::unique_ptr<MacTranslator> _macTranslator; ///< a Wi-Fi adapter's MAC translation
+    std::string _bridgeError;
     VirtualNetworkConfig _config;
     DhcpServer _dhcp;
 

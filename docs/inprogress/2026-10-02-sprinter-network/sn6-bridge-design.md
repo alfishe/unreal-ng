@@ -88,10 +88,12 @@ the pcap loader serves macOS, Linux and Windows from one code path.
 
 ## 6. Host permissions (what the user has to do)
 
+The user-facing version with the checks: [docs/features/network-bridge.md](../../features/network-bridge.md#host-permissions).
+
 | Host | Needs | Report when missing |
 |---|---|---|
-| macOS | read / write on `/dev/bpf*` (root by default): Wireshark's **ChmodBPF** (group `access_bpf`) or run as root | "cannot open /dev/bpf: permission denied - install ChmodBPF (Wireshark) or ..." |
-| Linux | `CAP_NET_RAW` + `CAP_NET_ADMIN` on the binary (`setcap`), or root | the same, with the `setcap` line |
+| macOS | read / write on `/dev/bpf*` (root by default): Wireshark's **ChmodBPF** (group `access_bpf`, permanent), or `sudo chmod o+rw /dev/bpf*` (**until the next reboot**: macOS recreates the devices root-only at start), or run as root | "cannot open /dev/bpf: permission denied - install ChmodBPF (Wireshark) or ..." |
+| Linux | `CAP_NET_RAW` + `CAP_NET_ADMIN` on the binary (`setcap`; lost when the binary is replaced: a rebuild or an update), or root | the same, with the `setcap` line |
 | Windows | **Npcap** installed (WinPcap-compatible mode not needed) | "Npcap is not installed" with the download link |
 
 The development Mac: `en0` is wired Ethernet; `/dev/bpf*` is `crw------- root` (no ChmodBPF yet), so a live check
@@ -175,3 +177,19 @@ reply reached the card and was dropped by its receive filter, so PING reported "
 
 Limits: IPv4 only (ARP, DHCP, ICMP, UDP, TCP); a protocol that carries the card's MAC elsewhere in its payload, or a
 non-IP protocol, does not cross. As with the wired bridge, the host itself does not reach the card.
+
+## 12. The virtual network is the one door (refactor, 2026-10-04)
+
+Owner request with the traffic task (PLAN #91): every adapter's traffic must pass one point. Since then the
+`VirtualNetwork` owns the frame cards' wire too:
+
+- a frame card's link (`IEthernetLink`) is the `VirtualNetwork` itself; `Transmit` goes to its `EthernetGateway`
+  (`EnableFrames`, `AttachStation` / `DetachStation`, `OnFrameDevices` for the gateway's timers);
+- the bridge (`IHostFrames`, `MacTranslator`, the padding of short frames) lives in it: `Pump` drains the host
+  adapter next to the socket answers, and the `NetFrame` input is applied by `VirtualNetwork::ApplyHostFrame` like a
+  `NetEvent` by `ApplyHostEvent`;
+- `NetworkManager` only says what to fit (`FrameSettings`: NAT / BRIDGE, adapter, the modem's reserved ports, a test's
+  fake adapter) and reports `DescribeBridge()`.
+
+Socket-level adapters already opened their sockets there. So every byte between any adapter and the network now
+crosses `VirtualNetwork`, the same place where TTD records every outside input: the traffic tap of #91 goes there.

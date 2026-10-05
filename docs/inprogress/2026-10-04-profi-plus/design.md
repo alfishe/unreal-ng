@@ -6,10 +6,11 @@
 ## 1. Goal
 
 A machine variant `PROFI-PLUS` that starts Vadim's ROM BIOS Plus with every device of its board test "Ok", boots
-PQ-DOS from a floppy and from a hard disk, and runs DOS Navigator. Today (BIOS Plus 0.32 on `PROFI` with
-`[PROFI] ExtPorts=sys`) the FDC, both drives, the RTC and the AY pass; the parallel and serial interfaces fail
-(not emulated); HDD fails (no image attached); DOS Navigator 2.0.16 refuses BIOS 0.32 ("Need BIOS version 0.40 or
-higher").
+PQ-DOS from a floppy and from a hard disk, and runs DOS Navigator. **Reached 2026-10-04 (on master):** the board test
+reports every device Ok, PQ-DOS boots from a floppy and from a hard disk image into DOS Navigator 2.0.16 (phases P0-P6
+below; status in [TODO.md](TODO.md)). The starting point was BIOS Plus 0.32 on `PROFI` with `[PROFI] ExtPorts=sys`: the
+FDC, both drives, the RTC and the AY passed; the parallel and serial interfaces failed (not emulated); the HDD failed
+(no image attached); DOS Navigator 2.0.16 refused BIOS 0.32 ("Need BIOS version 0.40 or higher").
 
 ## 2. What the board has (from BIOS Plus 0.32 code, `#1B82..#1D6A` of its SYS page)
 
@@ -87,13 +88,13 @@ Each chip is its own class with a TTD blob, independent of the Profi (other mach
 
 | Phase | Work | Check |
 |:--|:--|:--|
-| P0 | Decode Djoni's V0.03 PROM (`tools/machines/profi/profidecoder`) and compare with the `ExtPorts=sys` rule; fix the rule (or decode from the table) where they differ | the PROM's port map row by row |
+| P0 | Decode Djoni's V0.03 PROM (`tools/machines/profi/profidecoder`) and compare with the `ExtPorts=sys` rule; fix the rule (or decode from the table) where they differ (**done 2026-10-04**: `ExtPorts=v003`, the TR-DOS + ROM14 long ports beside the VG93, the CP/M latch case; `PROFI-PLUS` uses it) | the PROM's port map row by row |
 | P1 | `Ppi8255` + the Profi routing (normal and extended addresses), Covox and joystick through it | unit tests per mode-0 rule; existing Covox / joystick tests unchanged; BIOS Plus "Parallel interface: Ok" |
 | P2 | `Pit8253` (done 2026-10-04) | unit tests per mode, read-back, latch; BIOS Plus reads counter 1 back |
 | P3 | `Usart8251` on the PIT, `ISerialPeer` hookup, `#B3` (done 2026-10-04; the COM interrupt open, section 5) | unit tests (reset sequence, async framing, flags); BIOS Plus "Serial interface: Ok"; a loopback peer round-trip |
-| P4 | `PROFI-PLUS` variant, ROM in `data/rom/profi/`, HDD with PQ-DOS (variant done; board test done 2026-10-04) | `ProfiPlusBoot_Test`: board test all Ok (done: the BIOS result byte `(IY + 2)`, [software-zoo.md](../2026-10-01-profi-v3-v5/software-zoo.md) section 5), PQ-DOS boots from floppy and from an HDD image (open) |
-| P5 | TTD blobs of the three chips (done: ids 50 / 51 / 52), automation (state reports for PPI / PIT / USART on all surfaces, the variant on every create path), recipe, docs | TTD round trip; parity checklist |
-| P6 | DOS Navigator | needs BIOS Plus 0.40 or later (research); with it: DN starts |
+| P4 | `PROFI-PLUS` variant, ROM in `data/rom/profi/`, HDD with PQ-DOS (variant done; board test done 2026-10-04) | `ProfiPlusBoot_Test`: board test all Ok (done: the BIOS result byte `(IY + 2)`, [software-zoo.md](../2026-10-01-profi-v3-v5/software-zoo.md) section 5), PQ-DOS boots from floppy and from an HDD image (**done 2026-10-04**: `ProfiPlusPqDos_Test`, the 2 GB image cut to 2.9 MB by `tools/machines/profi/pqdosimage`) |
+| P5 | TTD blobs of the three chips (done: ids 50 / 51 / 52), automation (**done 2026-10-04**: the `ProfiPeripherals` report on CLI, WebAPI + OpenAPI, MCP, Lua, Python; the Qt panel waits for the debugger plan), recipe, docs; `profi.ext_ports` is in the TTD config fingerprint | TTD round trip; parity checklist |
+| P6 | DOS Navigator | needs BIOS Plus 0.40 or later (research); with it: DN starts (**done 2026-10-04**, from the floppy and from the hard disk) |
 
 A/B: the decoder change adds work only on Profi port accesses; the other machines are not touched (no hot path).
 

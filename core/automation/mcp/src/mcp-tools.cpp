@@ -1173,7 +1173,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
-                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot"})
     {
         allowed.append(aspect);
     }
@@ -1185,6 +1185,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["description"] =
         "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address (hexdump default). "
         "'memory_map' = sparse non-zero block overview of the 64K address space or physical RAM banks (view=address|ram, TD-3). "
+        "'snapshot' = one coherent debugger picture read at one moment (GET /debug/snapshot): seq, state, last stop, regs, "
+        "prev_regs, pages, stack, time, 'count' code lines from PC and the 'windows' memory windows (base64). "
         "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
@@ -1204,7 +1206,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "adapter, open, error, library, frame counters); its frame capture and frame injection go "
         "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
         "/api/v1/emulator/{id}/network/frame {link, hex}; the host adapters for the bridge: GET "
-        "/api/v1/emulator/{id}/network/adapters, and the mode through the network settings (ethernet_mode, bridge_adapter), "
+        "/api/v1/emulator/{id}/network/adapters, and the mode through the network settings (ethernet_mode, bridge_adapter); "
+        "its traffic section is the tap of everything every adapter sent and received (records through invoke_api GET "
+        "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
+        "{action: clear | start (path: a pcapng file, unbounded) | stop | ring}), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'profi' = the ZX Profi's board chips (the port map in force, the 8255, the 8253 counters, the 8251 and the #B3 latch; "
@@ -1278,7 +1283,12 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["size"]["description"] = "Byte count for 'memory' (max 4096)";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["default"] = 8;
-    schema["properties"]["count"]["description"] = "Instruction count for 'disasm'";
+    schema["properties"]["count"]["description"] = "Instruction count for 'disasm' (and the code lines of 'snapshot')";
+    schema["properties"]["windows"]["type"] = "array";
+    schema["properties"]["windows"]["items"]["type"] = "string";
+    schema["properties"]["windows"]["description"] =
+        "'snapshot' memory windows '<space>:<address>:<length>' (space cpu | ram | ram5 | rom2 | cache0; at most 8, each "
+        "at most 65536 bytes, returned as base64)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["default"] = "hexdump";
     schema["properties"]["format"]["description"] = "Read format for 'memory': 'hexdump' (default), 'full' (JSON byte array) or 'sparse' (fill-run segments)";
@@ -1339,11 +1349,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
-                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer")
+                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot"));
                     return;
                 }
             }
@@ -1374,10 +1384,16 @@ void RegisterInspectState(ToolRegistry& registry)
                 pldQuery += "&source=" + args["pld_journal_source"].asString();
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
+            // The snapshot's memory windows (GET /debug/snapshot?memory=...)
+            std::string snapshotWindows;
+            if (args.isMember("windows") && args["windows"].isArray())
+                for (const Json::Value& window : args["windows"])
+                    if (window.isString())
+                        snapshotWindows += "&memory=" + window.asString();
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, snapshotWindows, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -1441,6 +1457,21 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "snapshot")
+                        {
+                            // One coherent picture (GET /debug/snapshot): registers, previous registers, pages, stack,
+                            // time, code from PC and the asked memory windows, read at one moment
+                            const std::string path =
+                                Endpoint(id, "/debug/snapshot") + "?disasm=" + std::to_string(std::min(count, 100u)) + snapshotWindows;
+                            steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    acc[aspect] = std::move(body);
+                                    if (status != 200)
+                                        acc[aspect]["http_status"] = status;
                                     next(true);
                                 });
                             });
@@ -1941,6 +1972,19 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << value["hex"].asString().substr(0, 96);
                                 }
                             }
+                            else if (aspect == "snapshot" && value.isMember("regs"))
+                            {
+                                const Json::Value& special = value["regs"]["special"];
+                                char pc[8];
+                                std::snprintf(pc, sizeof(pc), "%04X", special["pc"].asUInt());
+                                out << "\n[snapshot] seq " << value["seq"].asUInt64() << ", " << value["state"].asString()
+                                    << " (read " << value["consistency"].asString() << "), last stop "
+                                    << value["pause"]["reason"].asString() << ", PC=" << pc << ", frame "
+                                    << value["time"]["frame"].asUInt64() << " t " << value["time"]["t"].asUInt64() << ", "
+                                    << value["disasm"].size() << " code line(s), " << value["memory"].size() << " memory window(s)";
+                            }
+                            else if (aspect == "snapshot" && value.isMember("message"))
+                                out << "\n[snapshot] refused: " << value["message"].asString();
                             else if (aspect == "memory_map" && value.isMember("blocks"))
                             {
                                 out << "\n[memory_map] " << value["model"].asString() << " " << value["view"].asString()

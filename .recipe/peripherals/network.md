@@ -25,9 +25,42 @@ virtual network through the **Ethernet gateway** (a switch + router at
 `slots` and `ethernet_gateway`, and `GET /network/frames` captures their
 frames. Recipe: [machines/sprinter-network.md](../machines/sprinter-network.md).
 
+Those frame cards can also be **bridged to a host adapter** instead (`ethernet_mode=bridge bridge_adapter=en0`):
+the card gets its address from the real LAN. It needs the host's permission to read and write raw frames; on macOS
+`sudo chmod o+rw /dev/bpf*` lasts **only until the next reboot** (Wireshark's ChmodBPF makes it permanent), on Linux
+`setcap` is lost when the binary is replaced, on Windows Npcap must be installed. Reference:
+[docs/features/network-bridge.md](../../docs/features/network-bridge.md).
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).
+
+## Traffic: everything the adapters sent and received (verified 2026-10-04)
+
+Every machine with a network adapter records its traffic at one point, the virtual network (design:
+[network-traffic-debug/design.md](../../docs/inprogress/2026-10-04-network-traffic-debug/design.md)): frame cards'
+Ethernet frames (NE2000, 3C509B, the bridge's LAN side) and socket adapters' operations (ZXNETUSB / W5300, ESP
+modules, ZiFi, the Hayes modem: `connect`, `send`, `data`, `close`, ...) with their bytes, each with its TTD
+position (`frame`, `t_in_frame`) and emulated time. An always-on ring keeps the newest 8 MiB; a recording into a
+pcapng file runs from `start` to `stop` with no limit. Checked live on the Sprinter's NE2000 in NAT: the RTL kit's
+`IFUP` and `NSLOOKUP` gave 14 records (8 frames of `isa2.eth`: DHCP, ARP, DNS; 6 socket operations of
+`gateway-nat`: the router's own UDP), and a `start` / `PING` / `stop` wrote a pcapng of 6 packets.
+
+```bash
+curl -s "$B/$ID/network/traffic?last=8" | jq -r '.records[] | "#\(.index) f\(.frame) \(.adapter) \(.direction) \(.summary)"'
+#  #12 f4504 isa2.eth out ARP who-has 10.0.2.2 tell 10.0.2.15
+#  #41 f9122 zxnetusb in TCP data from 93.184.216.34:80, 1460 bytes: HTTP/1.0 200 OK
+curl -s "$B/$ID/network/traffic?since=42"            # poll: pass the previous tap.next_index
+curl -s "$B/$ID/network/traffic?format=pcapng" -o run.pcapng      # the ring for Wireshark (frames now; socket packets: phase T2)
+curl -s -X POST $B/$ID/network/traffic -H 'Content-Type: application/json' -d '{"action":"start","path":"/abs/run.pcapng"}'
+curl -s -X POST $B/$ID/network/traffic -d '{"action":"stop"}'
+```
+
+Filters: `adapter=isa2.eth` (or `zxnetusb`, `com.esp`, `isa1.esp`, `isa1.modem`, `gateway-nat`, `lan`),
+`kind=frame|socket`, `last=N` (0 = the whole ring). CLI: `network traffic [adapter] [N] [file.pcapng]`,
+`network traffic start <file.pcapng> | stop | clear`; Lua: `network_traffic{since=, adapter=, kind=, last=}`,
+`network_traffic_control(action, path, ring_bytes)`; Python: `network_traffic(...)`, `network_traffic_pcapng()`,
+`network_traffic_control(...)`; MCP: `inspect_state` aspect `network` (its `traffic` part) and `invoke_api`.
 
 ## Fitting the card
 

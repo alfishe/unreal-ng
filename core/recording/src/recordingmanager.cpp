@@ -29,10 +29,23 @@
 constexpr uint16_t kProfiWindowWidth = 352;
 constexpr uint16_t kProfiWindowHeight = 288;
 
+/// Boards whose hires modes store 2 px per ZX dot (Profi 512, ATM 640): the display fits every frame into the
+/// 352x288 window, so a file must too - at the framebuffer's own width the picture comes out twice as wide
 static bool RecordsProfiDisplay(const EmulatorContext* context, VideoCaptureRegion region)
 {
-    return context && region == VideoCaptureRegion::FullFrame &&
-           (context->config.mem_model == MM_PROFI || context->config.mem_model == MM_PROFI3);
+    if (!context || region != VideoCaptureRegion::FullFrame)
+        return false;
+    switch (context->config.mem_model)
+    {
+        case MM_PROFI:
+        case MM_PROFI3:
+        case MM_ATM3:
+        case MM_ATM710:
+        case MM_ATM450:
+            return true;
+        default:
+            return false;
+    }
 }
 
 static const char* GetRecordingModeString(RecordingMode mode)

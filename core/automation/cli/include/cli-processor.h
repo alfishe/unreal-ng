@@ -122,6 +122,7 @@ private:
     void HandleMemoryInfo(const ClientSession& session, Memory* memory);
     void HandleMemoryMap(const ClientSession& session, Memory* memory, const CONFIG& config, const std::vector<std::string>& args);
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
     void DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length);
     void WriteToPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, const std::vector<uint8_t>& bytes);

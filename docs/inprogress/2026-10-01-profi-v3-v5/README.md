@@ -1,6 +1,6 @@
 # Profi v3 and v5 as two machines
 
-**Created:** 2026-10-01 · **Status:** implemented on branch `profi-v3-v5` (phases 1-7) · see [TODO.md](TODO.md)
+**Created:** 2026-10-01 · **Status:** implemented and on master (phases 1-7) · see [TODO.md](TODO.md)
 
 ## What this is
 

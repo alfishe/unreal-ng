@@ -153,7 +153,7 @@ per-step DMA updates (TDD-02 §5.4).
 |---|---|---|---|
 | E1 | `POST /out {"port":"0x7FFD","value":"0x10"}`, with the full side effects of the decoder, recorded as a tool edit for TTD | Alt+B, Alt+M, TS-Conf board editing, setting a TS page | `{"port":"0x13AF","value":"0x20"}` maps page 0x20 into window 3 |
 | E2 | `GET /debug/pchist?depth=32` -> `[{page, address}]`, newest first | PC history panel (TDD-02 §4.11). Needs a per-instruction ring that is armed only while a debugger is attached (performance rule: zero cost otherwise, `AGENTS.md` Performance) | `[{"page":5,"address":"0x8123"}, ...]` |
-| E3 | `GET /debug/snapshot?disasm=21&memory=0x8000:96&stack=1` | One round trip per repaint, read under one pause, see §3.4 | as in `debugger-model/protocol.md:355-375` |
+| E3 | `GET /debug/snapshot?disasm=21&memory=0x8000:96&stack=1` | One round trip per repaint, read under one pause, see §3.4 | **Done 2026-10-04** ([debugger-snapshot](../2026-10-04-debugger-snapshot/tdd.md)): `GET /debug/snapshot?disasm=&stack=&memory=space:addr:len`, read paused or at a frame boundary, `seq` + `prev_regs`, on every surface |
 | E4 | Disk sector write: `PUT /disk/{drive}/sector/{cyl}/{side}/{sec}` | Disk editor writes, "save to TR-DOS sectors" | |
 | E5 | NVRAM read / write | Editor `ED_NVRAM` | |
 | E6 | TS-Conf CRAM and SFILE as device memory regions (`/memory/region/cram`, `/memory/region/sfile`) | Palette and sprite editing. The pattern exists: Sprinter `CollectMemoryRegions` | |
@@ -170,7 +170,7 @@ per-step DMA updates (TDD-02 §5.4).
 | D4 (done; condition open) | `POST /breakpoints` | `page` + `page_type` (the core already supports it), `address_end` (ranges), later `condition` | small (page, range); large (condition, needs the core engine) |
 | D5 | `GET /state/audio/ay/{chip}` | `latched_register`, and at board level `active_chip` | small |
 | D6 | Ports | #FE full byte, #EFF7, and on other models the extended port, e.g. in `/state/paging` or a new `GET /debug/ports` | small |
-| D7 | `GET /memory/{addr}` and `/memory/read/{addr}` | `format=binary` (application/octet-stream). Allow `length=65536` | small |
+| D7 | `GET /memory/{addr}` and `/memory/read/{addr}` | `format=binary` (application/octet-stream). Allow `length=65536` | **Done 2026-10-04** ([debugger-snapshot](../2026-10-04-debugger-snapshot/tdd.md)): `format=binary` on every memory read, up to 65536; Lua / Python `mem_read_bytes` |
 | D8 | `GET /memory/find` | `mask` / wildcard bytes; other spaces (page, CMOS) | small |
 | D9 | `GET /state/paging` (TS-Conf) | Correct `read_write` per window from the TS-Conf mapper | small, verify first |
 

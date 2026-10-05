@@ -2,10 +2,17 @@
 
 #include <algorithm>
 
+#include <cstdio>
+
 #include "common/network/dnsmessage.h"
+#include "common/network/hostframebridge.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputjournal.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/portdecoder.h"
+#include "emulator/io/network/vnet/ethernetgateway.h"
 
 using ttd::TTDInputEvent;
 using ttd::TTDInputKind;
@@ -44,12 +51,230 @@ VirtualNetwork::VirtualNetwork(EmulatorContext* context, std::unique_ptr<IHostNe
                                const VirtualNetworkConfig& config)
     : _context(context), _host(std::move(host)), _config(config), _dhcp(DhcpSettings(config))
 {
+    _ownTap = std::make_unique<NetworkTrafficTap>([context]() { return TrafficTimeOf(context); });
+    _tap = _ownTap.get();
 }
 
 VirtualNetwork::~VirtualNetwork()
 {
+    // The wire first: the gateway's sockets close through this network, the bridge's adapter with it
+    if (_hostFrames)
+        _hostFrames->Close();
+    _gateway.reset();
     if (_host)
         _host->CloseAll();
+}
+
+// ---------------------------------------------------------------------------
+// Traffic (network #91)
+// ---------------------------------------------------------------------------
+
+TrafficTime VirtualNetwork::TrafficTimeOf(const EmulatorContext* context)
+{
+    TrafficTime t;
+    if (!context)
+        return t;
+    const EmulatorState& st = context->emulatorState;
+    const Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
+    t.frame = st.frame_counter;
+    t.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
+    t.us = context->pPortDecoder ? context->pPortDecoder->EmulatedMicroseconds() : 0;
+    return t;
+}
+
+void VirtualNetwork::NameGuest(const INetGuest* guest, const std::string& name)
+{
+    if (guest)
+        _guestNames[guest] = name;
+}
+
+std::string VirtualNetwork::GuestName(const INetGuest* guest) const
+{
+    auto it = _guestNames.find(guest);
+    return it == _guestNames.end() ? std::string("socket") : it->second;
+}
+
+void VirtualNetwork::TapSocket(const Socket& s, bool out, const char* op, const NetEndpoint& peer, const uint8_t* data,
+                               uint32_t length, uint16_t localPort)
+{
+    _tap->Socket(GuestName(s.guest), out, op, s.id, s.proto, peer, localPort ? localPort : s.listenPort, data, length);
+}
+
+// ---------------------------------------------------------------------------
+// Frame-level cards: the wire, its gateway and the bridge to a host adapter
+// ---------------------------------------------------------------------------
+
+void VirtualNetwork::EnableFrames(const FrameSettings& settings)
+{
+    _frameSettings = settings;
+    if (!_gateway)
+    {
+        EmulatorContext* context = _context;
+        _gateway = std::make_unique<EthernetGateway>(*this, [context]() { return context ? context->emulatorState.frame_counter : 0; });
+        // Every frame on the wire reaches the traffic tap (the gateway's capture is the wire's one frame point)
+        _gateway->SetFrameObserver([this](const std::string& port, bool toCard, bool, const uint8_t* f, size_t n) {
+            _tap->Frame(port, !toCard, f, n);
+        });
+        NameGuest(_gateway.get(), "gateway-nat");   // the router's own NAT sockets
+    }
+    _gateway->SetReservedGuestPorts(settings.reservedGuestPorts);
+    FitBridge();
+}
+
+void VirtualNetwork::AttachStation(IEthernetPort* port)
+{
+    if (_gateway)
+        _gateway->Attach(port);
+}
+
+void VirtualNetwork::DetachStation(IEthernetPort* port)
+{
+    if (_gateway)
+        _gateway->Detach(port);
+}
+
+void VirtualNetwork::Transmit(IEthernetPort& from, const uint8_t* frame, size_t length)
+{
+    if (_gateway)
+        _gateway->Transmit(from, frame, length);
+}
+
+void VirtualNetwork::OnFrameDevices()
+{
+    if (_gateway)
+        _gateway->OnFrame();
+}
+
+void VirtualNetwork::ApplyHostFrame(const uint8_t* frame, size_t length)
+{
+    if (_gateway)
+        _gateway->FromLan(frame, length);
+}
+
+void VirtualNetwork::FitBridge()
+{
+    _bridgeError.clear();
+    if (_hostFrames)
+        _hostFrames->Close();
+    _macTranslator.reset();
+    if (!_frameSettings.bridge)
+    {
+        _gateway->SetMode(EthernetGateway::Mode::Nat);
+        _gateway->SetLanOutput({});
+        return;
+    }
+    _gateway->SetMode(EthernetGateway::Mode::Bridge);
+    if (_frameSettings.hostFrames)
+        _hostFrames = _frameSettings.hostFrames;
+    else
+    {
+        if (!_ownHostFrames)
+            _ownHostFrames = std::make_unique<HostFrameBridge>();
+        _hostFrames = _ownHostFrames.get();
+    }
+    std::string error;
+    if (!_hostFrames->Open(_frameSettings.bridgeAdapter, error))
+    {
+        // The gateway stays a plain switch: the cards see nothing from outside until the adapter opens (a replay of a
+        // bridged recording needs no adapter at all: its frames come from the journal)
+        _bridgeError = error;   // in the network report (ethernet_gateway.bridge.error)
+    }
+    if (_hostFrames->IsOpen() && _hostFrames->Translates())
+        _macTranslator = std::make_unique<MacTranslator>(_hostFrames->HostMac());
+    IHostFrames* frames = _hostFrames;
+    MacTranslator* translator = _macTranslator.get();
+    _gateway->SetLanOutput([this, frames, translator](const uint8_t* frame, size_t length) {
+        // A TTD replay sends nothing: the recording did
+        if (IsReplaying() || !frames->IsOpen())
+            return;
+        if (translator)
+        {
+            // Wi-Fi: the frame leaves with the host adapter's MAC
+            const std::vector<uint8_t> out = translator->Outbound(frame, length);
+            frames->Send(out.data(), out.size());
+        }
+        else
+            frames->Send(frame, length);
+    });
+}
+
+void VirtualNetwork::PumpBridge(bool replaying)
+{
+    if (!_gateway || !_hostFrames || !_hostFrames->IsOpen() || _gateway->GetMode() != EthernetGateway::Mode::Bridge)
+        return;
+    _hostFrames->SetStations(_gateway->StationMacs());
+    if (_macTranslator)
+    {
+        _macTranslator->SetCards(_gateway->StationMacs());
+        _hostFrames->SetGuestIps(_macTranslator->GuestIps());
+    }
+    std::vector<std::vector<uint8_t>> frames;
+    _hostFrames->Drain(frames);
+    if (replaying)
+        return;   // the journal owns input: the replay's frames come from the recording
+    for (std::vector<uint8_t>& f : frames)
+    {
+        // Wi-Fi: the card's MAC back in a frame for its address; the host's own traffic stays out. The journal keeps
+        // the frame as the card sees it, so a replay needs no translation
+        if (_macTranslator && !_macTranslator->Inbound(f))
+            continue;
+        // A wire never carries a frame under 60 bytes (the sender pads it), and the cards drop such runts. A host
+        // adapter can hand over shorter ones: Wi-Fi's 802.11-to-Ethernet conversion leaves the padding out
+        if (f.size() < 60)
+            f.resize(60, 0);
+        // Every frame from the LAN is an outside input: journaled while recording
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::NetFrame;
+        ttd::TTDNetInput net;
+        net.payloadLength = static_cast<uint32_t>(f.size());
+        if (_context && _context->pTimeTravelManager)
+            _context->pTimeTravelManager->SubmitLiveInput(ev, net, f.data(), net.payloadLength);
+        else
+            ApplyHostFrame(f.data(), f.size());
+    }
+}
+
+StateNode VirtualNetwork::DescribeBridge() const
+{
+    StateNode b = StateNode::Object();
+    if (!_gateway || _gateway->GetMode() != EthernetGateway::Mode::Bridge)
+        return b;
+    auto macText = [](const MacTranslator::Mac& m) {
+        char text[18];
+        std::snprintf(text, sizeof(text), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
+        return std::string(text);
+    };
+    b["adapter"] = _frameSettings.bridgeAdapter;
+    b["open"] = _hostFrames && _hostFrames->IsOpen();
+    std::string error = _bridgeError;
+    if (error.empty() && _hostFrames)
+        error = _hostFrames->LastError();
+    b["error"] = error;
+    b["library"] = _hostFrames ? _hostFrames->Library() : std::string();
+    b["translation"] = _macTranslator != nullptr;
+    if (_macTranslator)
+    {
+        b["host_mac"] = macText(_macTranslator->HostMac());
+        StateNode guests = StateNode::Array();
+        for (const auto& [ip, card] : _macTranslator->Guests())
+        {
+            StateNode g = StateNode::Object();
+            g["ip"] = NetIpToString(ip);
+            g["card_mac"] = macText(card);
+            guests.push(std::move(g));
+        }
+        b["guests"] = guests;
+    }
+    if (_hostFrames)
+    {
+        const IHostFrames::Counters c = _hostFrames->GetCounters();
+        b["sent"] = c.sent;
+        b["send_errors"] = c.sendErrors;
+        b["received"] = c.received;
+        b["filtered"] = c.filtered;
+        b["dropped"] = c.dropped;
+    }
+    return b;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +360,12 @@ void VirtualNetwork::Note(uint16_t id, NetProto proto, const char* action, const
 void VirtualNetwork::Deliver(Socket& s, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
                              const uint8_t* data, uint32_t length, uint32_t source)
 {
+    // Everything an adapter receives, the virtual network's own answers and the host's alike
+    static const char* const kInOps[] = {"none", "connected", "connect-failed", "data", "peer-closed", "reset",
+                                         "accepted", "datagram", "echo-reply", "listen-failed", "modem-lines"};
+    const auto opIndex = static_cast<size_t>(type);
+    TapSocket(s, false, opIndex < sizeof(kInOps) / sizeof(kInOps[0]) ? kInOps[opIndex] : "event",
+              (peer.addr || peer.port) ? peer : s.remote, data, length);
     switch (type)
     {
         case NetEventType::Connected: Note(s.id, s.proto, "connected", s.remote); break;
@@ -200,6 +431,7 @@ void VirtualNetwork::Connect(uint16_t id, const NetEndpoint& to)
         return;
     s->remote = to;
     s->connected = false;
+    TapSocket(*s, true, "connect", to, nullptr, 0);
 
     if (IsInternal(to.addr) || to.addr == 0 || to.addr == kBroadcast)
     {
@@ -224,6 +456,7 @@ void VirtualNetwork::ConnectTls(uint16_t id, const NetEndpoint& to, const std::s
         return;
     s->remote = to;
     s->connected = false;
+    TapSocket(*s, true, "connect-tls", to, nullptr, 0);
     if (IsInternal(to.addr) || to.addr == 0 || to.addr == kBroadcast)
     {
         Defer(id, NetEventType::ConnectFailed, NetEventStatus::Refused, to);
@@ -275,6 +508,7 @@ void VirtualNetwork::Send(uint16_t id, const uint8_t* data, uint32_t length)
     if (!s || (s->proto != NetProto::Tcp && s->proto != NetProto::Serial) || !data || length == 0)
         return;
     s->bytesOut += length;
+    TapSocket(*s, true, "send", s->remote, data, length);
     if (_host && s->connected && !IsReplaying())
         _host->TcpSend(s->hostId, data, length);
 }
@@ -286,6 +520,7 @@ void VirtualNetwork::SendTo(uint16_t id, uint16_t localPort, const NetEndpoint& 
     if (!s || !data)
         return;
     s->bytesOut += length;
+    TapSocket(*s, true, s->proto == NetProto::Icmp ? "echo" : "sendto", to, data, length, localPort);
 
     if (s->proto == NetProto::Icmp)
     {
@@ -377,6 +612,8 @@ bool VirtualNetwork::AnswerIcmpEcho(uint16_t id, const NetEndpoint& to, const ui
 void VirtualNetwork::ShutdownWrite(uint16_t id)
 {
     Socket* s = Find(id);
+    if (s && s->proto == NetProto::Tcp)
+        TapSocket(*s, true, "shutdown", s->remote, nullptr, 0);
     if (s && s->proto == NetProto::Tcp && _host && !IsReplaying())
         _host->TcpShutdownWrite(s->hostId);
 }
@@ -387,6 +624,7 @@ void VirtualNetwork::Listen(uint16_t id, uint16_t guestPort)
     if (!s || s->proto != NetProto::Tcp)
         return;
     s->listenPort = guestPort;
+    TapSocket(*s, true, "listen", NetEndpoint{}, nullptr, 0, guestPort);
 
     auto it = _listeners.find(guestPort);
     if (it == _listeners.end())
@@ -439,7 +677,10 @@ void VirtualNetwork::Close(uint16_t id)
     const Socket s = it->second;
     _sockets.erase(it);
     if (s.guest)
+    {
         Note(id, s.proto, "close", s.remote);
+        TapSocket(s, true, "close", s.remote, nullptr, 0);
+    }
 
     if (s.listenPort)
     {
@@ -523,6 +764,8 @@ void VirtualNetwork::Pump()
 {
     // While TTD replays, every answer comes from the journal
     const bool replaying = IsReplaying();
+    // The host LAN's frames for the cards (BRIDGE): host input like the socket answers below
+    PumpBridge(replaying);
     if (replaying)
     {
         _wasReplaying = true;

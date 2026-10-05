@@ -67,6 +67,7 @@ matches; it names the recipe(s) for that action.
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
 | Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
 | Searching, mapping or writing memory; named regions; ROM protect | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
+| A debugger front end's redraw in one call; raw (binary) memory dumps | [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | separate /registers + /disasm + /memory calls per redraw |
 | Typing or reading back a BASIC program | [run/basic-inject-extract.md](run/basic-inject-extract.md) | media files |
 | Reading raw sectors, tracks, catalog of a loaded disk | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | tape, snapshot |
 | Per-device volume, mute, solo, recording a sound source | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | the card recipes unless the card matters |
@@ -77,6 +78,7 @@ matches; it names the recipe(s) for that action.
 | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | Labels and symbols, sjasmplus listings, step / run to a source line, assemble into memory |
 | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | Code coverage and its gaps, the analyzer framework (TR-DOS events, raw FDC), coverage over a TTD timeline |
 | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | Memory find / map / info, named regions, write, ROM protect, paging state, disasm pages |
+| [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | `GET /debug/snapshot` (registers, prev_regs, pages, stack, time, code, memory at one moment, `seq`), `format=binary` memory reads, `mem_read_bytes`, `memory save` windows |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
@@ -154,10 +156,13 @@ call.
 | [machines/profi.md](machines/profi.md) | Profi v5 (`PROFI`) and v3 (`PROFI3`): board differences, `#7FFD`+`#DFFD` paging, sync PROM timing, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging, IDE hard disk |
 | [machines/tsconf.md](machines/tsconf.md) | TS-Conf (`TSL`): TS-BIOS, the `#xxAF` registers and memory map, TS video modes and TSU, DMA, SD slot `sd.zc`, `.spg` programs, `state tsconf` |
 | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | TS-Conf VDAC2 card (FT812): setup (`ENABLE_VDAC2`, `TS_VDAC2=1`, ROM image), games from an SD folder, the FT812 bus capture (`vdac2 capture`, `/vdac2/capture/*`, `capture_media vdac2_capture_*`) |
-| [machines/atm.md](machines/atm.md) | ATM710 + ATM3/ZX-Evo: `#FF77` control, `#FFF7` memory manager, CP/M bit, CMOS shaden ports, turbo, video modes, hard disk and CD slots |
+| [machines/atm/README.md](machines/atm/README.md) | The ATM family, what the three models share: creating them, port map, extended video modes (`M_ATM16`/`M_ATMHR`/`M_ATMTX`), CP/M bit, pitfalls |
+| [machines/atm/atm450.md](machines/atm/atm450.md) | `ATM450` (ATM Turbo 2 v4.50): `#FE` address latches, `#FDFD`, system ROM menu, 308-line frame, ATM IDE |
+| [machines/atm/atm710.md](machines/atm/atm710.md) | `ATM710` (ATM Turbo 2+ v7.10): `#FF77` control, `#FFF7` memory manager, `#FA`/`#FB`, keyboard controller, turbo, ATM IDE |
+| [machines/atm/atm3-zxevo-baseconf.md](machines/atm/atm3-zxevo-baseconf.md) | `ATM3` (ZX-Evo BaseConf): shadow ports, CMOS, Evo registers, NemoIDE + CD, SD slots `sd.zc`/`sd.ngs` and the mandatory reset, NedoOS |
 | [machines/sprinter-sound.md](machines/sprinter-sound.md) | Sprinter Sp2000 sound: one AY at 1.75 MHz, Covox / Covox-Blaster; play a WAV with DSS's `WAVPLAY.EXE` from a hard disk, `state/sprinter` `sound`, capture and AAC recording, the MAME comparison |
 | [machines/sprinter-isa.md](machines/sprinter-isa.md) | Sprinter Sp2000 ISA slots: window 3 pages `#D0-#D6`, the `#9FBD` latch, `[ISA]` slot config and create options, `state/isa`, ISA cycles from outside (`control/isa`, CLI `isa`, Lua / Python `isa_*`), the port trace codes |
-| [machines/sprinter-network.md](machines/sprinter-network.md) | Sprinter Sp2000 Ethernet: the NE2000 (RTL8019AS) in ISA slot 2 and the Ethernet gateway; the RTL8019AS kit (`IFUP`, `PING`, `NSLOOKUP`, `WGET`) end to end, the slot / card / gateway report, the ISA access journal, frame capture (pcap) and injection, TTD |
+| [machines/sprinter-network.md](machines/sprinter-network.md) | Sprinter Sp2000 Ethernet: the NE2000 (RTL8019AS) in ISA slot 2 and the Ethernet gateway; the RTL8019AS kit (`IFUP`, `PING`, `NSLOOKUP`, `WGET`) end to end, the slot / card / gateway report, the ISA access journal, frame capture (pcap) and injection, TTD; the bridge to the host LAN (wired and Wi-Fi) and its host permissions (macOS `/dev/bpf*`: a `chmod` lasts until reboot) |
 | [machines/sprinter-accelerator.md](machines/sprinter-accelerator.md) | Sprinter Sp2000 block accelerator: run `ACCTEST.EXE` from a DSS floppy, check its picture in the graphics RAM, the accelerator state |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |

@@ -70,8 +70,7 @@ TEST_F(IniFile_Test, SkipsFullLineComments)
 
 TEST_F(IniFile_Test, StripsInlineCommentsInValues)
 {
-    // The shipped parser carried a local SimpleIni patch: a backward scan from
-    // end of line truncates the value at the first ';', '#' or '//' marker -
+    // An inline comment runs from the first ';', '#' or '//' marker to the end of the line -
     // "intlen=128 ; t-states" must parse as 128 (see GetLongValueHandlesInlineComments)
     IniFile ini;
     ini.LoadData("[misc]\nShareCPU=1      ; 1 - only for fast CPUs\nmode=2 # hash style\npath=3 // C++ style\nplain=normalvalue\nempty= ; just a comment\n");
@@ -85,17 +84,28 @@ TEST_F(IniFile_Test, StripsInlineCommentsInValues)
     EXPECT_FALSE(ini.GetValue("misc", "empty") == nullptr);
 }
 
-TEST_F(IniFile_Test, InlineCommentBackwardScanFindsLastMarker)
+TEST_F(IniFile_Test, InlineCommentStartsAtTheFirstMarker)
 {
+    // A comment runs from the first marker to the end of the line; later markers are comment text.
+    // (Until 2026-10-04 a backward scan stopped at the LAST marker: "1 ; x # y" kept "1 ; x".)
     IniFile ini;
-    ini.LoadData("[misc]\nmixed=1 ; x # y\ncapture=video#.avi\n");
+    ini.LoadData("[misc]\nmixed=1 ; x # y\ncapture=video#.avi\nslashes=2 // a ; b # c\nhashfirst=3 # a ; b\n");
 
-    // The scan starts at the end of the line, so the LAST marker wins and
-    // earlier markers stay part of the value
-    EXPECT_STREQ(ini.GetValue("misc", "mixed"), "1 ; x");
-    // Shipped behavior: '#' inside a real value truncates it too - kept for
-    // compatibility (spectrum3 unreal.ini: "ffmpeg.vout=video#.avi" -> "video")
+    EXPECT_STREQ(ini.GetValue("misc", "mixed"), "1");
+    EXPECT_STREQ(ini.GetValue("misc", "slashes"), "2");
+    EXPECT_STREQ(ini.GetValue("misc", "hashfirst"), "3");
+    // '#' inside a value starts a comment too (spectrum3 unreal.ini: "ffmpeg.vout=video#.avi" -> "video")
     EXPECT_STREQ(ini.GetValue("misc", "capture"), "video");
+}
+
+TEST_F(IniFile_Test, CommentWithHexPortsDoesNotSwallowTheValue)
+{
+    // Regression (2026-10-04): the shipped TS-Conf line read as 0 because the comment holds "(#FB"
+    IniFile ini;
+    ini.LoadData("[SOUND]\nCovoxFB=1       ; TS-Conf: the board's 8-bit sound DAC (#FB and the #FE beeper bit share it)\n");
+
+    EXPECT_STREQ(ini.GetValue("SOUND", "CovoxFB"), "1");
+    EXPECT_EQ(ini.GetLongValue("SOUND", "CovoxFB", -1), 1);
 }
 
 TEST_F(IniFile_Test, HeritageHeaderYieldsStarSection)

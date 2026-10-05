@@ -7,7 +7,6 @@
 #include <sstream>
 
 #include "base/featuremanager.h"
-#include "common/network/hostframebridge.h"
 #include "common/network/hostnetbridge.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/io/keyboard/atm2kbc.h"
@@ -23,11 +22,13 @@
 #include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/io/serial/esp/espnetmodule.h"
 #include "emulator/io/serial/hayesmodempeer.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 NetworkManager::NetworkManager(EmulatorContext* context) : _context(context)
 {
+    _traffic = std::make_unique<NetworkTrafficTap>([context]() { return VirtualNetwork::TrafficTimeOf(context); });
 }
 
 NetworkManager::~NetworkManager()
@@ -464,12 +465,16 @@ void NetworkManager::Refit()
             host = std::make_unique<HostNetBridge>(options);
         }
         _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
+        _network->UseTap(_traffic.get());
         _context->pVirtualNetwork = _network.get();
     }
     if (plan.ethernetLink && _network)
     {
-        EmulatorContext* context = _context;
-        _gateway = std::make_unique<EthernetGateway>(*_network, [context]() { return context->emulatorState.frame_counter; });
+        // The frame cards' wire: the virtual network's gateway, NAT or bridged to a host adapter (network SN6)
+        VirtualNetwork::FrameSettings frames;
+        frames.bridge = _context->config.network.ethernetMode == 1;
+        frames.bridgeAdapter = _context->config.network.bridgeAdapter;
+        frames.hostFrames = _hostFramesOverride.get();
         // A modem that answers calls owns its guest port: the gateway leaves that Forward= rule to it
         std::vector<uint16_t> modemPorts;
         auto modemPort = [&modemPorts](const std::string& text) {
@@ -487,9 +492,9 @@ void NetworkManager::Refit()
             modemPort(card.peer);
             modemPort(card.peerB);
         }
-        _gateway->SetReservedGuestPorts(std::move(modemPorts));
-        _context->pEthernetGateway = _gateway.get();
-        FitBridge();
+        frames.reservedGuestPorts = std::move(modemPorts);
+        _network->EnableFrames(frames);
+        _context->pEthernetGateway = _network->Gateway();
     }
     if (plan.zxNetUsb)
     {
@@ -505,7 +510,41 @@ void NetworkManager::Refit()
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
     FitSlotCards(plan);
+    NameTrafficGuests();
     UpdateStatus();
+}
+
+void NetworkManager::NameTrafficGuests()
+{
+    if (!_network)
+        return;
+    // A port's peer: an ESP module's network stack, a modem's call, a TCP link
+    auto name = [this](const ISerialPeer* peer, const std::string& port) {
+        if (!peer)
+            return;
+        if (const auto* esp = dynamic_cast<const EspModule*>(peer))
+            _network->NameGuest(&esp->Stack(), port + ".esp");
+        else if (const auto* modem = dynamic_cast<const HayesModemPeer*>(peer))
+            _network->NameGuest(modem, port + ".modem");
+        else if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
+            _network->NameGuest(stream, port + ".tcp");
+    };
+    if (_card)
+        _network->NameGuest(&_card->Chip(), "zxnetusb");
+    if (_com)
+        name(_com->Peer(), "com");
+    name(_machinePeer.get(), "machine");
+    if (_atm2IoEsp)
+        name(_atm2IoEsp->Com().Peer(), "atm2ioesp");
+    if (_zifi)
+        name(_zifi->Line().Peer(), "zifi");
+    for (const SlotCard& card : _slotCards)
+    {
+        if (!card.serial)
+            continue;
+        for (int ch = 0; ch < card.serial->Channels(); ++ch)
+            name(card.serial->Com(ch).Peer(), card.slotId + (ch ? ".b" : ""));
+    }
 }
 
 PcSerialCard* NetworkManager::SerialCard(const std::string& slotId) const
@@ -533,10 +572,10 @@ void NetworkManager::FitSlotCards(const Plan& plan)
     // Kept across the refit (the Ethernet boards): only the cable is new
     for (SlotCard& card : _slotCards)
     {
-        if (card.ethernet && _gateway)
+        if (card.ethernet && Gateway())
         {
-            card.ethernet->SetLink(_gateway.get());
-            _gateway->Attach(card.ethernet.get());
+            card.ethernet->SetLink(_network.get());
+            _network->AttachStation(card.ethernet.get());
         }
     }
     std::vector<std::pair<std::string, Uart16550::State>> keep;
@@ -651,10 +690,10 @@ void NetworkManager::FitSlotCards(const Plan& plan)
                 _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
                 continue;
             }
-            if (_gateway)
+            if (Gateway())
             {
-                card.ethernet->SetLink(_gateway.get());
-                _gateway->Attach(card.ethernet.get());
+                card.ethernet->SetLink(_network.get());
+                _network->AttachStation(card.ethernet.get());
             }
             _slotCards.push_back(std::move(card));
         }
@@ -703,16 +742,11 @@ void NetworkManager::Unplug(bool keepSlotCards)
     // The adapters first: their sockets close through the virtual network
     if (_context)
         _context->pEthernetGateway = nullptr;
-    if (_hostFrames)
-        _hostFrames->Close();   // the bridge's adapter goes with the gateway; the object stays (a test's fake)
-    _macTranslator.reset();
-    _bridgeError.clear();
     for (SlotCard& card : _slotCards)
     {
         if (card.ethernet)
-            card.ethernet->SetLink(nullptr);
+            card.ethernet->SetLink(nullptr);   // the wire goes with the virtual network (its gateway and bridge too)
     }
-    _gateway.reset();
     // UART cards: their 16550 registers are kept for the card fitted next; the peer goes with the network
     for (const SlotCard& card : _slotCards)
     {
@@ -914,8 +948,7 @@ void NetworkManager::OnFrameDevices()
     // catches up at its next access); the cards in expansion slots always (their UARTs feed the slot's IRQ line)
     if (_network)
     {
-        if (_gateway)
-            _gateway->OnFrame();
+        _network->OnFrameDevices();   // the frame cards' wire: the gateway's timers and queued frames
         if (_com)
             _com->OnFrame();
         if (_machinePeer)
@@ -932,90 +965,8 @@ void NetworkManager::OnFrameDevices()
     }
 }
 
-void NetworkManager::FitBridge()
-{
-    _bridgeError.clear();
-    if (!_gateway || !_context)
-        return;
-    const auto& net = _context->config.network;
-    if (net.ethernetMode != 1)
-    {
-        _gateway->SetMode(EthernetGateway::Mode::Nat);
-        _gateway->SetLanOutput({});
-        return;
-    }
-    _gateway->SetMode(EthernetGateway::Mode::Bridge);
-    if (!_hostFrames)
-        _hostFrames = std::make_unique<HostFrameBridge>();
-    std::string error;
-    if (!_hostFrames->Open(net.bridgeAdapter, error))
-    {
-        // The gateway stays a plain switch: the cards see nothing from outside until the adapter opens (a replay of a
-        // bridged recording needs no adapter at all: its frames come from the journal)
-        _bridgeError = error;   // in the network report (ethernet_gateway.bridge.error)
-    }
-    IHostFrames* frames = _hostFrames.get();
-    _macTranslator.reset();
-    if (frames->IsOpen() && frames->Translates())
-        _macTranslator = std::make_unique<MacTranslator>(frames->HostMac());
-    MacTranslator* translator = _macTranslator.get();
-    EmulatorContext* context = _context;
-    _gateway->SetLanOutput([frames, translator, context](const uint8_t* frame, size_t length) {
-        // A TTD replay sends nothing: the recording did
-        if (context->pTimeTravelManager && context->pTimeTravelManager->OwnsInput())
-            return;
-        if (!frames->IsOpen())
-            return;
-        if (translator)
-        {
-            // Wi-Fi: the frame leaves with the host adapter's MAC
-            const std::vector<uint8_t> out = translator->Outbound(frame, length);
-            frames->Send(out.data(), out.size());
-        }
-        else
-            frames->Send(frame, length);
-    });
-}
-
-void NetworkManager::PumpBridge()
-{
-    if (!_gateway || !_hostFrames || !_hostFrames->IsOpen() || _gateway->GetMode() != EthernetGateway::Mode::Bridge)
-        return;
-    _hostFrames->SetStations(_gateway->StationMacs());
-    if (_macTranslator)
-    {
-        _macTranslator->SetCards(_gateway->StationMacs());
-        _hostFrames->SetGuestIps(_macTranslator->GuestIps());
-    }
-    std::vector<std::vector<uint8_t>> frames;
-    _hostFrames->Drain(frames);
-    ttd::TimeTravelManager* ttm = _context ? _context->pTimeTravelManager : nullptr;
-    for (std::vector<uint8_t>& f : frames)
-    {
-        // Wi-Fi: the card's MAC back in a frame for its address; the host's own traffic stays out. The journal keeps
-        // the frame as the card sees it, so a replay needs no translation
-        if (_macTranslator && !_macTranslator->Inbound(f))
-            continue;
-        // A wire never carries a frame under 60 bytes (the sender pads it), and the cards drop such runts. A host
-        // adapter can hand over shorter ones: Wi-Fi's 802.11-to-Ethernet conversion leaves the padding out
-        if (f.size() < 60)
-            f.resize(60, 0);
-        // Every frame from the LAN is an outside input: journaled while recording, refused while the journal drives
-        // the machine (a replay's frames come from the recording)
-        ttd::TTDInputEvent ev;
-        ev.kind = ttd::TTDInputKind::NetFrame;
-        ttd::TTDNetInput net;
-        net.payloadLength = static_cast<uint32_t>(f.size());
-        if (ttm)
-            ttm->SubmitLiveInput(ev, net, f.data(), net.payloadLength);
-        else
-            _gateway->FromLan(f.data(), f.size());
-    }
-}
-
 void NetworkManager::OnFrameHost()
 {
-    PumpBridge();
     if (_network)
     {
         // The host's answers (journaled inputs: after the boundary's checkpoint, like the keyboard's); the gateway
@@ -1273,48 +1224,11 @@ void NetworkManager::UpdateStatus()
             st.expansionSlots.push_back(std::move(s));
         }
     }
-    if (_gateway)
+    if (EthernetGateway* gateway = Gateway())
     {
-        st.ethernetGateway = _gateway->Describe();
-        if (_gateway->GetMode() == EthernetGateway::Mode::Bridge)
-        {
-            StateNode b = StateNode::Object();
-            b["adapter"] = _context ? std::string(_context->config.network.bridgeAdapter) : std::string();
-            b["open"] = _hostFrames && _hostFrames->IsOpen();
-            std::string error = _bridgeError;
-            if (error.empty() && _hostFrames)
-                error = _hostFrames->LastError();
-            b["error"] = error;
-            b["library"] = _hostFrames ? _hostFrames->Library() : std::string();
-            b["translation"] = _macTranslator != nullptr;
-            if (_macTranslator)
-            {
-                const MacTranslator::Mac& host = _macTranslator->HostMac();
-                char mac[18];
-                std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", host[0], host[1], host[2], host[3], host[4], host[5]);
-                b["host_mac"] = std::string(mac);
-                StateNode guests = StateNode::Array();
-                for (const auto& [ip, card] : _macTranslator->Guests())
-                {
-                    StateNode g = StateNode::Object();
-                    g["ip"] = NetIpToString(ip);
-                    std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", card[0], card[1], card[2], card[3], card[4], card[5]);
-                    g["card_mac"] = std::string(mac);
-                    guests.push(std::move(g));
-                }
-                b["guests"] = guests;
-            }
-            if (_hostFrames)
-            {
-                const IHostFrames::Counters c = _hostFrames->GetCounters();
-                b["sent"] = c.sent;
-                b["send_errors"] = c.sendErrors;
-                b["received"] = c.received;
-                b["filtered"] = c.filtered;
-                b["dropped"] = c.dropped;
-            }
-            st.ethernetGateway["bridge"] = b;
-        }
+        st.ethernetGateway = gateway->Describe();
+        if (gateway->GetMode() == EthernetGateway::Mode::Bridge)
+            st.ethernetGateway["bridge"] = _network->DescribeBridge();
     }
     if (_context)
         st.frame = _context->emulatorState.frame_counter;

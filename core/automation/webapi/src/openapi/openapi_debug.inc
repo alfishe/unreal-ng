@@ -58,15 +58,21 @@
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] =
-        "Number of bytes to read (default: 128, max: 4096)";
+        "Number of bytes to read (default: 128, max: 4096; with format=binary up to 65536, the whole address space)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["name"] = "format";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["description"] =
-        "'hexdump' (default, 16B/line + ASCII sidebar), 'full' (data array + hex) or 'sparse' (fill-run segments)";
+        "'hexdump' (default, 16B/line + ASCII sidebar), 'full' (data array + hex), 'sparse' (fill-run segments) or "
+        "'binary' (the raw bytes as application/octet-stream; headers X-Unreal-Space, X-Unreal-Address, X-Unreal-Length)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["description"] = "Memory content";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Space"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Address"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Length"]["schema"]["type"] = "integer";
 
     // GET /api/v1/emulator/{id}/memory/map - Sparse non-zero memory overview (TD-3)
     paths["/api/v1/emulator/{id}/memory/map"]["get"]["summary"] = "Sparse non-zero memory map";
@@ -159,8 +165,19 @@
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["description"] =
         "Number of bytes to read (default: 128, max: 16384)";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["name"] = "format";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["description"] =
+        "Omit for the JSON answer; 'binary' = the raw bytes as application/octet-stream";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["description"] =
         "Page content";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Space"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Address"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Length"]["schema"]["type"] = "integer";
 
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["summary"] = "Write to physical page";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["description"] =
@@ -228,6 +245,45 @@
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
 
     // Disassembly endpoint
+    // GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end (D7 + E3)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/debug/snapshot"]["get"];
+        op["summary"] = "Debugger snapshot: registers, previous registers, pages, stack, time, code and memory at one moment";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "Everything a debugger window redraws, in one request and from one moment: read while the emulator stays "
+            "paused (consistency 'paused'), at the next frame boundary of a running machine without pausing it "
+            "('frame'), or directly when it does not run ('stopped'). Fields: seq (grows at every stop, run start and "
+            "tool edit: an equal seq means nothing changed), cpu ('z80'), state (paused | running | stopped), pause "
+            "{reason none | pause | breakpoint | step, breakpoint_id, address}, consistency, regs (the GET /registers "
+            "object), prev_regs (the same at the previous stop; null before the first), pages[] {window, start, kind "
+            "rom | ram | cache, page}, stack {sp, words[]}, time {frame, t, frame_t, line, dot}, disasm[] (GET /disasm "
+            "instructions), memory[] {space, address, length, base64} or {space, address, error}. 503 when no "
+            "coherent moment came within 500 ms (the emulator is stepping on another thread).";
+        Json::Value& p = op["parameters"];
+        p[0]["name"] = "id";
+        p[0]["in"] = "path";
+        p[0]["required"] = true;
+        p[0]["schema"]["type"] = "string";
+        p[1]["name"] = "disasm";
+        p[1]["in"] = "query";
+        p[1]["description"] = "Lines from PC (default 0 = none, at most 100)";
+        p[1]["schema"]["type"] = "integer";
+        p[2]["name"] = "stack";
+        p[2]["in"] = "query";
+        p[2]["description"] = "Words from SP (default 8, 0 = none, at most 128)";
+        p[2]["schema"]["type"] = "integer";
+        p[3]["name"] = "memory";
+        p[3]["in"] = "query";
+        p[3]["description"] =
+            "Memory windows <space>:<address>:<length> (space cpu | ram | ram5 | rom2 | cache0, length at most 65536); "
+            "repeat the parameter or separate with commas; at most 8";
+        p[3]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The snapshot";
+        op["responses"]["400"]["description"] = "Bad parameters (the message says which)";
+        op["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";
+    }
+
     paths["/api/v1/emulator/{id}/disasm"]["get"]["summary"] = "Disassemble Z80 code";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["name"] = "id";
