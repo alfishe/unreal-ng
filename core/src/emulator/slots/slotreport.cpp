@@ -172,6 +172,10 @@ StateNode Slots(EmulatorContext* context)
         b["name"] = builtIn.name;
         b["kind"] = Describe(builtIn.kind).id;
         b["state"] = builtIn.state;
+        if (builtIn.removed)
+        {
+            b["removed"] = true;   // a socketed chip a card took out of its socket (Q7)
+        }
         if (!builtIn.source.empty())
         {
             b["source"] = builtIn.source;

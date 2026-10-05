@@ -118,13 +118,6 @@ protected:
 #ifdef UNREALNG_HAVE_OPL4
     SoundChip_Moonsound* _moonsound = nullptr;
 #endif
-    // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
-    // drives their frames and mixes their rows
-    std::vector<ICard*> _slotCards;
-    // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
-    std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
-    const int16_t* slotCardBuffer(AudioSourceType type) const;
-    bool wideMixNeeded() const;
     // SoundChip_SAA1099;
 
     // Pending GS personality switch request (gs_lightweight feature,
@@ -733,4 +726,16 @@ public:
     bool detachFromPorts();
 
     /// endregion </Port interconnection>
+
+    /// region <Slot-built cards: state>
+    // Kept at the end of the class, so the members above keep the offsets they had before slot-built cards
+private:
+    // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
+    // drives their frames and mixes their rows
+    std::vector<ICard*> _slotCards;
+    // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
+    std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
+    const int16_t* slotCardBuffer(AudioSourceType type) const;
+    bool wideMixNeeded() const;
+    /// endregion </Slot-built cards: state>
 };

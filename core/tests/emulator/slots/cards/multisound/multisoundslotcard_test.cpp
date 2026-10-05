@@ -8,7 +8,9 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "3rdparty/sam2695/tests/sf2builder.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/emulator.h"
@@ -141,7 +143,7 @@ TEST(MultiSoundSlotCard_Test, OptionsComeFromTheSlotOptions)
     EXPECT_EQ(o.ctrlMask, MultiSoundCtrlMask::Classic);
 }
 
-/// One Pentagon with the card (~40 ms: the card's GS loads its firmware): the card is built for its slot with the
+/// One Pentagon with the card (~10 ms: the card's GS loads its firmware): the card is built for its slot with the
 /// slot's options, the mixer's rate and the [MIDI] bank; the board AY stays fitted, shadowed
 TEST(MultiSoundSlotCard_Test, BuiltForItsSlotWithItsOptions)
 {
@@ -176,7 +178,7 @@ TEST(MultiSoundSlotCard_Test, BuiltForItsSlotWithItsOptions)
     ASSERT_NE(m.Context()->pSoundManager->getTurboSound(), nullptr) << "the Pentagon's AY stays in its socket";
 }
 
-/// Two ZX-Evo machines (~40 ms each): Q7, the card takes the YM2149 out of its socket unless the config keeps it
+/// Two ZX-Evo machines (~10 ms together): Q7, the card takes the YM2149 out of its socket unless the config keeps it
 TEST(MultiSoundSlotCard_Test, TakesTheZxEvoYm2149OutOfItsSocket)
 {
     {
@@ -371,6 +373,261 @@ TEST(MultiSoundSlotCard_Test, SsgToneReachesItsRow)
     EXPECT_GT(sound->device(AudioSourceType::MultiSoundSsg)->peak, 0.01f);
     EXPECT_LT(sound->device(AudioSourceType::MultiSoundFm)->peak, 0.001f) << "FM muted after the reset";
     EXPECT_LT(sound->device(AudioSourceType::AY1_All)->peak, 0.001f) << "the shadowed board AY got no write";
+}
+
+// endregion
+
+// region <Step 4: a program plays all five sources>
+
+namespace
+{
+
+/// Z80 code built in the test (the card's ports as a program uses them)
+class Program
+{
+public:
+    std::vector<uint8_t> code;
+
+    void Bytes(std::initializer_list<uint8_t> bytes)
+    {
+        code.insert(code.end(), bytes);
+    }
+    /// LD BC,port; LD A,value; OUT (C),A
+    void Out(uint16_t port, uint8_t value)
+    {
+        Bytes({ 0x01, static_cast<uint8_t>(port), static_cast<uint8_t>(port >> 8), 0x3E, value, 0xED, 0x79 });
+    }
+    void Ym(uint8_t reg, uint8_t value)
+    {
+        Out(0xFFFD, reg);
+        Out(0xBFFD, value);
+    }
+    void Saa(uint8_t reg, uint8_t value)
+    {
+        Out(0x01FF, reg);
+        Out(0x00FF, value);
+    }
+    uint16_t Here(uint16_t origin) const
+    {
+        return static_cast<uint16_t>(origin + code.size());
+    }
+};
+
+constexpr uint16_t kOrigin = 0x8000;
+constexpr uint16_t kMidiTable = 0x9000;
+constexpr uint8_t kLineHigh = 0xFF;   // R14 with IOA2 = 1 (the MIDI line idle)
+constexpr uint8_t kLineLow = 0xFB;    // IOA2 = 0
+
+/// R14 values, one per MIDI bit (start 0, eight data bits LSB first, stop 1), after two idle bits
+std::vector<uint8_t> MidiLine(std::initializer_list<uint8_t> bytes)
+{
+    std::vector<uint8_t> line = { kLineHigh, kLineHigh };
+    for (uint8_t byte : bytes)
+    {
+        line.push_back(kLineLow);
+        for (int bit = 0; bit < 8; bit++)
+            line.push_back(((byte >> bit) & 1) ? kLineHigh : kLineLow);
+        line.push_back(kLineHigh);
+    }
+    return line;
+}
+
+/// The whole program: control byte, a YM2203 FM note and an SSG tone on U4, an SAA tone, SounDrive samples, a
+/// General Sound command, then a MIDI Note On bit-banged on U4's IOA2 at 31250 baud (112 T-states a bit at the
+/// machine's base clock, x `clockRatio` under a turbo), DI; HALT at the end
+std::vector<uint8_t> MultiSoundProgram(uint8_t midiBits, int clockRatio)
+{
+    Program p;
+    p.Bytes({ 0xF3 });                           // DI
+    // Control byte: U4 selected, register reads, FM unmuted (bit 2 = 0), SAA clock on (bit 3 = 0)
+    p.Out(0xFFFD, 0xF2);
+    // U4 SSG: the MIDI line idle (R14 IOA2 = 1) before IOA becomes an output - the reset latch is 0, which would
+    // send a start bit - then tone A period #0100, mixer: tone A on, IOA an output, volume 15
+    p.Ym(0x0E, kLineHigh);
+    p.Ym(0x00, 0x00);
+    p.Ym(0x01, 0x01);
+    p.Ym(0x07, 0x7E);
+    p.Ym(0x08, 0x0F);
+    // U4 FM channel 1: algorithm 7 (four carriers), MUL 1, TL 0, AR 31, sustain at the top, block 4 F-number #26A
+    for (uint8_t op : { 0x00, 0x04, 0x08, 0x0C })
+    {
+        p.Ym(static_cast<uint8_t>(0x30 + op), 0x01);
+        p.Ym(static_cast<uint8_t>(0x40 + op), 0x00);
+        p.Ym(static_cast<uint8_t>(0x50 + op), 0x1F);
+        p.Ym(static_cast<uint8_t>(0x60 + op), 0x00);
+        p.Ym(static_cast<uint8_t>(0x70 + op), 0x00);
+        p.Ym(static_cast<uint8_t>(0x80 + op), 0x0F);
+    }
+    p.Ym(0xB0, 0x07);
+    p.Ym(0xA4, 0x22);
+    p.Ym(0xA0, 0x6A);
+    p.Ym(0x28, 0xF0);                            // key on, all four operators
+    // SAA: voice 0 at full amplitude, tone #80 octave 4, frequency enable, sound enable
+    p.Saa(0x00, 0xFF);
+    p.Saa(0x08, 0x80);
+    p.Saa(0x10, 0x04);
+    p.Saa(0x14, 0x01);
+    p.Saa(0x1C, 0x01);
+    // SounDrive channels 0 (left, #0F) and 2 (right, #4F)
+    p.Out(0x000F, 0xF0);
+    p.Out(0x004F, 0x10);
+    // General Sound command #F3 into the board's GS mailbox
+    p.Out(0x00BB, 0xF3);
+    // MIDI: select R14, then one OUT per bit from the table, 112 T-states (x clockRatio) apart
+    p.Out(0xFFFD, 0x0E);
+    p.Bytes({ 0x01, 0xFD, 0xBF });               // LD BC,#BFFD
+    p.Bytes({ 0x21, kMidiTable & 0xFF, kMidiTable >> 8 });   // LD HL,table
+    p.Bytes({ 0x16, midiBits });                 // LD D,count
+    const uint16_t loop = p.Here(kOrigin);
+    p.Bytes({ 0x7E, 0xED, 0x79, 0x23 });         // LD A,(HL); OUT (C),A; INC HL           7 + 12 + 6
+    // Per bit 49 + 7 N T-states: N = (112 x ratio - 49) / 7 times LD E,0
+    const int delays = (112 * clockRatio - 49) / 7;
+    for (int i = 0; i < delays; i++)
+        p.Bytes({ 0x1E, 0x00 });
+    const uint16_t next = static_cast<uint16_t>(p.Here(kOrigin) + 3);
+    p.Bytes({ 0xC3, static_cast<uint8_t>(next), static_cast<uint8_t>(next >> 8) });   // JP next   10
+    p.Bytes({ 0x15 });                           // DEC D                                   4
+    p.Bytes({ 0xC2, static_cast<uint8_t>(loop), static_cast<uint8_t>(loop >> 8) });    // JP NZ,loop   10
+    p.Bytes({ 0xF3, 0x76 });                     // DI; HALT
+    return p.code;
+}
+
+/// A bank with one preset (bank 0, program 0: a looped sine) written to a per-process scratch file
+std::string WriteTestBank()
+{
+    using namespace sam2695test;
+    Sf2Builder builder;
+    const int sine = builder.AddSample(SineSample("sine"));
+    builder.presets.push_back(SimplePreset("Sine", 0, 0, sine, { { G(sam2695::Gen::SampleModes), 1 } }));
+    const std::vector<uint8_t> bytes = builder.Build();
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("ms4-bank.sf2");
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    return path;
+}
+
+/// The report's entry for a slot / built-in
+const StateNode* ReportItem(const StateNode& report, const char* list, const char* key, const std::string& value)
+{
+    for (const StateNode& item : report.find(list)->items)
+    {
+        if (item.find(key) != nullptr && item.find(key)->s == value)
+            return &item;
+    }
+    return nullptr;
+}
+
+/// Creates the machine with the card and the test bank, lets the SAM2695's 50 ms boot window pass, runs the
+/// program and three more frames; checks the slot report, the bus effects and the five rows
+void PlayAllFiveSources(const std::string& folder, const std::string& builtInState)
+{
+    const std::string bank = WriteTestBank();
+    StagedMachine m(folder, "zxbus.1 = multisound", "[MIDI]\nBank = " + bank);
+    ASSERT_TRUE(m.Ok()) << folder;
+    MultiSoundSlotCard* card = m.Card();
+    ASSERT_NE(card, nullptr) << folder;
+    ASSERT_TRUE(card->Card().MidiBankLoaded()) << Report(*card).midi.bankError;
+
+    // The slot report: the card fitted, the board's AY shadowed (CardWins) or out of its socket (Q7)
+    const StateNode slots = DeviceState::Slots(m.Context());
+    const StateNode* slot = ReportItem(slots, "slots", "slot", "zxbus.1");
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->find("card")->s, "multisound");
+    EXPECT_EQ(slot->find("state")->s, "active");
+    EXPECT_EQ(slot->find("fit")->s, "real") << folder;
+    const StateNode* ay = ReportItem(slots, "builtIns", "id", "ay");
+    ASSERT_NE(ay, nullptr);
+    EXPECT_EQ(ay->find("state")->s, builtInState) << folder;
+    EXPECT_EQ(ay->find("removed") != nullptr && ay->find("removed")->b, builtInState.rfind("taken out", 0) == 0);
+
+    ParkCpu(m);
+    m.Machine().RunNFrames(4);
+
+    const EmulatorState& state = m.Context()->emulatorState;
+    const int ratio = state.hw_turbo_ratio_applied > 1 ? static_cast<int>(state.hw_turbo_ratio_applied) : 1;
+    const std::vector<uint8_t> midi = MidiLine({ 0x90, 0x3C, 0x64 });   // Note On, channel 1, middle C, velocity 100
+    const std::vector<uint8_t> code = MultiSoundProgram(static_cast<uint8_t>(midi.size()), ratio);
+    Z80* z80 = m.Context()->pCore->GetZ80();
+    for (size_t i = 0; i < code.size(); i++)
+        z80->DirectWrite(static_cast<uint16_t>(kOrigin + i), code[i]);
+    for (size_t i = 0; i < midi.size(); i++)
+        z80->DirectWrite(static_cast<uint16_t>(kMidiTable + i), midi[i]);
+    z80->halted = 0;   // leave the parking HALT
+    z80->pc = kOrigin;
+    m.Machine().RunNFrames(3);
+
+    const MultiSoundCardReport report = Report(*card);
+    EXPECT_FALSE(report.latches.fmMuted);
+    EXPECT_TRUE(report.latches.saaClock);
+    EXPECT_EQ(report.ym[0].ssgRegisters[7], 0x7E);
+    EXPECT_EQ(report.saa.registers[0x1C], 0x01);
+    EXPECT_EQ(report.gs.commandFromHost, 0xF3) << "the command reached the board's General Sound";
+    EXPECT_EQ(report.midi.bytesReceived, 3u) << folder << " clock ratio " << ratio;
+    EXPECT_EQ(report.midi.framingErrors, 0u);
+    EXPECT_GE(report.midi.activeVoices, 1u);
+
+    SoundManager* sound = m.Context()->pSoundManager;
+    const char* names[] = { "MS FM", "MS SSG", "MS SAA", "MS DAC", "MS MIDI" };
+    for (size_t i = 0; i < std::size(kMsRows); i++)
+        EXPECT_GT(sound->device(kMsRows[i])->peak, 0.005f) << folder << " " << names[i];
+
+    std::error_code ignored;
+    fs::remove(bank, ignored);
+}
+
+} // namespace
+
+/// Pentagon 128 (CardWins): ~25 ms - seven frames of a machine with the card and its GS firmware running
+TEST(MultiSoundSlotCard_Test, PentagonProgramPlaysAllFiveSources)
+{
+    PlayAllFiveSources("pentagon128k", "shadowed by zxbus.1");
+}
+
+/// ZX-Evo Baseconf (BoardWins, the YM2149 out of its socket): ~40 ms, as above
+TEST(MultiSoundSlotCard_Test, ZxEvoProgramPlaysAllFiveSources)
+{
+    PlayAllFiveSources("atm3", "taken out of its socket for zxbus.1");
+}
+
+/// The matrix's refusals hold for a config (first wins, the later card is not fitted): a second General Sound, a
+/// TurboSound FM in the socket the card would shadow (a pointless pair), the 128K edge without IORQGE. Four
+/// machines (~15 ms each)
+TEST(MultiSoundSlotCard_Test, MatrixRefusalsHoldAtCreation)
+{
+    auto disabled = [](StagedMachine& m, const std::string& slotId) {
+        for (const SlotManager::Slot& slot : m.Context()->pSlotManager->Current().entries)
+        {
+            if (slot.entry.slot == slotId)
+                return slot.entry.disabled;
+        }
+        return false;
+    };
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = multisound\nzxbus.2 = gs");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_NE(m.Card(), nullptr);
+        EXPECT_TRUE(disabled(m, "zxbus.2")) << "gs: the MultiSound's gs function is fitted first";
+        EXPECT_EQ(m.Context()->pSoundManager->getGeneralSound(), nullptr);
+    }
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = gs\nzxbus.2 = multisound");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Card("zxbus.2"), nullptr);
+        EXPECT_TRUE(disabled(m, "zxbus.2"));
+        EXPECT_NE(m.Context()->pSoundManager->getGeneralSound(), nullptr);
+    }
+    {
+        StagedMachine m("pentagon128k", "ay-socket = tsfm\nzxbus.1 = multisound");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Card(), nullptr) << "the TSFM it would shadow is configured: not fitted without confirmation";
+        EXPECT_TRUE(disabled(m, "zxbus.1"));
+    }
+    {
+        StagedMachine m("spectrum128", "edge.1 = multisound");
+        ASSERT_TRUE(m.Ok());
+        EXPECT_EQ(m.Card("edge.1"), nullptr) << "the 128K edge has no IORQGE";
+        EXPECT_TRUE(disabled(m, "edge.1"));
+    }
 }
 
 // endregion
