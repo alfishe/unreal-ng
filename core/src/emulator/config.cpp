@@ -812,8 +812,36 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
 
-	// AY / SSG tone voicing (FilterVoicing profile ID): headphones (default:
-	// classic bass + soft highs), classic (the pre-45812176 bass balance),
+	// AY / SSG stereo layout ([AY] Stereo): abc (default), acb or mono. A
+	// missing key resets to the default; unknown values warn and keep it
+	{
+		config.sound.ayStereo = AYStereoMode::ABC;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(ay, "Stereo", nullptr), line, sizeof line);
+		// The shipped inis carry an inline "; comment" after the value: only the first word counts
+		for (char* p = line; *p; p++)
+		{
+			if (*p == ' ' || *p == '\t' || *p == ';')
+			{
+				*p = '\0';
+				break;
+			}
+		}
+		if (line[0] != '\0')
+		{
+			if (StringHelper::CompareCaseInsensitive(line, "ABC", strlen("ABC")) == 0)
+				config.sound.ayStereo = AYStereoMode::ABC;
+			else if (StringHelper::CompareCaseInsensitive(line, "ACB", strlen("ACB")) == 0)
+				config.sound.ayStereo = AYStereoMode::ACB;
+			else if (StringHelper::CompareCaseInsensitive(line, "MONO", strlen("MONO")) == 0)
+				config.sound.ayStereo = AYStereoMode::Mono;
+			else
+				MLOGWARNING("Config: unsupported [AY] Stereo='%s', using ABC", line);
+		}
+	}
+
+	// AY / SSG tone voicing (FilterVoicing profile ID): classic (default: the
+	// pre-45812176 bass balance), headphones (classic bass + soft highs),
 	// flat (hardware line out), warm (softer bass and highs), tv (TV
 	// speaker) or small_speaker; alias
 	// legacy = classic. Hidden (untuned) profiles are rejected like unknown

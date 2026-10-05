@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "sysdefs.h"
+#include "common/sound/aystereomode.h"
 #include "common/sound/filters/filtervoicing.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 
@@ -665,13 +666,18 @@ struct CONFIG
 		/// taps, beta 9, ~90 dB). Read at sound-stack construction
 		bool decimatorHighFidelity = false;
 
-		/// AY / SSG tone voicing ([SOUND] AYVoicing = headphones (default) |
-		/// classic | flat | warm | tv | small_speaker; alias
+		/// AY / SSG tone voicing ([SOUND] AYVoicing = classic (default) |
+		/// headphones | flat | warm | tv | small_speaker; alias
 		/// legacy = classic): the fixed EQ after the chip model, before punch
 		/// (FilterVoicing, docs/inprogress/2026-09-25-ay-tone-voicing). The
 		/// default for a new sound stack; runtime changes (GUI, automation)
 		/// go through SoundManager::setAYVoicing and are not written back
 		FilterVoicing::Preset ayVoicing = FilterVoicing::DEFAULT_PRESET;
+
+		/// AY / SSG stereo layout ([AY] Stereo = ABC (default) | ACB | MONO):
+		/// applied to every AY and TSFM SSG chip of the machine when the sound
+		/// stack is built; runtime changes (GUI, automation) are not written back
+		AYStereoMode ayStereo = AYStereoMode::ABC;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;

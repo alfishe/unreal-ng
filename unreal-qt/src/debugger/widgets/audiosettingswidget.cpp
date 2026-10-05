@@ -169,9 +169,9 @@ void AudioSettingsWidget::createUI()
     });
     _ayVoicingCombo->setToolTip(
         "Real AY boards send very low bass and the thump of volume changes\n"
-        "straight to the output. Classic trims them; Flat is the hardware line out;\n"
+        "straight to the output. Classic (default) trims them; Flat is the hardware line out;\n"
         "TV speaker also drops the deep bass and softens the highs, like a TV set;\n"
-        "Headphones (default) keeps Classic bass and softens the harsh square-wave highs;\n"
+        "Headphones keeps Classic bass and softens the harsh square-wave highs;\n"
         "Warm sits between Headphones and TV speaker: softer bass and softer highs;\n"
         "Small speaker sounds like a clone's built-in speaker or a cheap amplifier.\n"
         "Recordings use the same setting.");

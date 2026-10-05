@@ -285,6 +285,13 @@ The answer has `board` (`v5` / `v3`), `port_map` (`ext_ports` = `cpm` / `sys` / 
 `baud`, `data_bits`, `status` flags, `bytes_in`, `bytes_out`, `overruns`, `com_interrupt_enable` = the `#B3` latch D0).
 It only reads: nothing is cleared or advanced, so it is safe in the middle of a TTD replay.
 
+## AY stereo scheme
+
+Profi wires its AY as ACB (A left, C centre, B right), so `configs/profi` and `configs/profi3` ship
+`[AY] Stereo=ACB`. Other values: `ABC`, `MONO`. The key is read when the machine is created; to change
+it on a running instance use the Qt Audio settings panel (Stereo combo) or the `Stereo` setting of the
+AY chip. Research: `docs/inprogress/2026-10-05-ay-stereo-scheme/research.md`.
+
 ## Pitfalls
 
 - **Many ports depend on the mode.** EXT mode = `#DFFD.5` (CPM) and

@@ -17,8 +17,8 @@ Design history and measurements:
 
 | If you… | Choose |
 |:--|:--|
-| listen on headphones or full-range speakers and want a comfortable sound (**default**) | **Headphones** |
-| want the bass balance the emulator had before the accurate output model, with untouched treble | **Classic** |
+| listen on headphones or full-range speakers and want a comfortable sound with softer highs | **Headphones** |
+| want the bass balance the emulator had before the accurate output model, with untouched treble (**default**) | **Classic** |
 | analyse the AY output, compare with a real board's line out, or measure levels / spectra | **Flat** |
 | find Headphones still bright or the bass still heavy, but TV speaker too thin | **Warm** |
 | want the sound most people knew in the 1980s–90s: the music through a TV set | **TV speaker** |
@@ -33,7 +33,7 @@ order of the menu in unreal-qt.
 |:--|:--|:--|:--|
 | **Flat** | `flat` | The AY as the hardware line output delivers it: full low bass, volume-change thumps included. Bit-identical to having no voicing at all | none (exact bypass) |
 | **Classic** | `classic` (also `legacy`) | Softer bass: the very low bass and the thump of volume changes are trimmed, with a gentle lift around 100 Hz. Treble untouched | 1st-order high-pass 64.2 Hz + peak 106.9 Hz / +3.06 dB / Q 1.0 |
-| **Headphones** (default) | `headphones` | Classic's bass plus gently softened highs, so the AY square waves are less harsh | Classic + low-pass 10 kHz, Q 0.5 |
+| **Headphones** | `headphones` | Classic's bass plus gently softened highs, so the AY square waves are less harsh | Classic + low-pass 10 kHz, Q 0.5 |
 | **Warm** | `warm` | Between Headphones and TV speaker: less deep bass and softer highs | 2nd-order high-pass 90 Hz, Q 0.6 + low-pass 8 kHz, Q 0.5 |
 | **TV speaker** | `tv` | The music through a TV set's small speaker: no deep bass, softened highs | 2nd-order high-pass 130 Hz + low-pass 6 kHz, both Q 0.7071 (Butterworth) |
 | **Small speaker** | `small_speaker` | A clone's built-in speaker or a cheap amplifier: thin, with a forward midrange and no highs | 2nd-order high-pass 250 Hz + peak 1.5 kHz / +3 dB / Q 1.0 + low-pass 4.5 kHz, Q 0.7071 |
@@ -118,13 +118,13 @@ ripple that Classic deliberately does not copy.
 
 (Flat's −0.1 dB here is the 5 Hz output coupling.)
 
-### Headphones (default)
+### Headphones
 
 The AY makes square waves: their edges carry strong harmonics up to the top of the audio band,
 which on headphones and modern full-range speakers sounds harsh and tires the ear over a long
 session. Headphones keeps Classic's bass and adds a gentle, critically damped low-pass at 10 kHz
-(Q 0.5: no resonance, the gentlest 2nd-order slope). It is the built-in default
-(`FilterVoicing::DEFAULT_PRESET`).
+(Q 0.5: no resonance, the gentlest 2nd-order slope). It is a choice, not the default: the built-in
+default is Classic (`FilterVoicing::DEFAULT_PRESET`).
 
 ### Warm
 
@@ -192,14 +192,14 @@ One setting per emulator instance. Its value is resolved in this order (highest 
 2. The unreal-qt user's saved preference, applied only to instances the GUI creates itself
 3. `[SOUND] AYVoicing=` in the machine's `unreal.ini` — any setting value from the
    [profile table](#profiles), case-insensitive
-4. Built-in default: `headphones`
+4. Built-in default: `classic`
 
 The shipped `unreal.ini` files do not set `AYVoicing`, so every machine starts with the
 built-in default unless you add the key:
 
 ```ini
 [SOUND]
-AYVoicing=classic      ; headphones (default) | classic | flat | warm | tv | small_speaker
+AYVoicing=classic      ; classic (default) | headphones | flat | warm | tv | small_speaker
 ```
 
 Runtime changes are never written back to the ini. An unknown value is rejected everywhere
@@ -212,7 +212,7 @@ every surface; applied at the next frame boundary):
 
 | Setting | Values | Default | What it does | Needs Sound HQ |
 |:--|:--|:--|:--|:--|
-| `ay_voicing` | see [Profiles](#profiles) | `headphones` | Tonal balance of the AY / SSG output | no |
+| `ay_voicing` | see [Profiles](#profiles) | `classic` | Tonal balance of the AY / SSG output | no |
 | `ay_punch` | `on` / `off` | `on` | Transient enhancement for the AY: a slight treble tilt plus a boost on note attacks, tuned gently for square waves. It was tuned by ear on Classic's bass; with Flat, unreal-qt shows a hint | yes |
 | `ay_room` | `off`, `15db`, `14db`, `13db`, `12db`, `9db`, `6db`, `3db`, `2db`, `1db` | `9db` | Headphone crossfeed: each ear also gets the other channel, delayed 3 ms and low-passed at 10 kHz, at the given level below the direct signal. Reduces fatigue from the hard left/right panning of ABC / ACB stereo. The default `9db` is a clear reduction; on very transient-heavy music `14db`–`15db` avoid the slight comb colouring stronger levels can add to fast attacks; `6db` and below approach mono (`1db` is almost mono); `off` keeps the full stereo separation | yes |
 | `beeper_punch` | `on` / `off` | `off` | Attack enhancement for the beeper (digidrums, 1-bit music) | yes |
@@ -272,14 +272,14 @@ A bad value returns, for example:
   group has its own *Punch*. The voicing dropdown stays enabled when Sound HQ is off; punch and
   room take effect only with Sound HQ. With Flat and Punch on, a hint notes that punch was tuned
   on Classic's bass.
-  Built-in defaults: Headphones, Punch on, Room −9 dB, beeper Punch off.
+  Built-in defaults: Classic, Punch on, Room −9 dB, beeper Punch off.
   Choices are saved in the application QSettings, group `Sound`, keys `ay_voicing`, `ay_punch`,
   `ay_room`, `beeper_punch`, and applied to instances the window creates
   (`EmulatorOrigin::CreatedByGui`). Instances created through automation and then shown in the
   GUI keep their own values. A value saved before the current defaults (for example
-  `ay_voicing` = `classic` or `ay_room` = `off`) is kept: it was an explicit choice.
+  `ay_voicing` = `headphones` or `ay_room` = `off`) is kept: it was an explicit choice.
 - **unreal-videowall:** no setting or settings file of its own. Each tile takes the voicing from
-  its machine's config (`[SOUND] AYVoicing`, default `headphones`); only the active tile is
+  its machine's config (`[SOUND] AYVoicing`, default `classic`); only the active tile is
   audible, so you hear the active emulator's config. Automation can still change the active tile
   at runtime.
 
@@ -317,7 +317,7 @@ A profile is one row in the table in `FilterVoicing::profile()` plus one value i
 | `core/tests/common/voicingstage_test.cpp` | switch equals an ideal continuous crossfade (±2 LSB), no click, history rules, cross-thread requests |
 | `core/tests/emulator/sound/soundmanager_test.cpp` | configured default live from frame 1, HQ/LQ, not reset on HQ return, gaps, rate change, TSFM FM untouched, punch/room handoff |
 | `core/tests/emulator/sound/soundcharactersettings_test.cpp` | the shared automation parser: defaults, round trips, accepted values in menu order, errors |
-| `core/tests/emulator/config_test.cpp` | `[SOUND] AYVoicing` parsing, the `headphones` default |
+| `core/tests/emulator/config_test.cpp` | `[SOUND] AYVoicing` parsing, the `classic` default |
 | `core/tests/emulator/recording/dsd_native_test.cpp` | DSD native mode applies the voicing |
 | `core/benchmarks/emulator/sound/filtervoicing_benchmark.cpp` | per-frame cost, switch-frame cost |
 

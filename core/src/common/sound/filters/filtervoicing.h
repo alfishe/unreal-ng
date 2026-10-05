@@ -73,9 +73,9 @@ public:
 
     /// The profile a new sound stack starts with when nothing else is set
     /// ([SOUND] AYVoicing missing or invalid, no saved GUI preference):
-    /// Classic bass with softened highs - the AY square waves are harsh
-    /// through today's headphones and full-range speakers
-    static constexpr Preset DEFAULT_PRESET = Preset::Headphones;
+    /// Classic, the balance the emulator always had; Headphones (Classic
+    /// bass plus softened highs) is a choice
+    static constexpr Preset DEFAULT_PRESET = Preset::Classic;
 
     /// The profile table. Classic is the least-squares fit to the old
     /// FilterDC response (1/3-octave smoothed, 20 Hz - 1 kHz): 0.39 dB mean,
