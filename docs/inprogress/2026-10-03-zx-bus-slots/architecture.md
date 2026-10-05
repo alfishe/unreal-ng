@@ -192,6 +192,14 @@ public:
 `ICard` deliberately mirrors `IIsaCard` / `IIoBusDevice` (Sprinter): an existing `IIoBusDevice` network device gets a
 thin `ICard` wrapper, as `IsaBusDeviceCard` does for ISA.
 
+**As built (MS-4, the ZX-MultiSound,** [tdd.md](tdd.md) §9**):** `core/src/emulator/slots/card.{h,cpp}`. `CardType` is
+`{id, create}` only (everything else is the reference data's `CardDef`); `CardContext` carries the emulator, the
+`CardDef`, the slot id and the planned options. `ICard` derives from `PortDevice`, so the claim table's owner pointer
+is the card: the bus cycles are `portDeviceOutMethod` / `portDeviceReadCycle(port, drives)` at the machine's now (the
+card keeps its own time base; the access path passes no `t`), plus `Peek(port, drives)`, `BusReset`, `FrameStart`,
+`FrameEnd(samples)`, `SetOutputRate`, `MixerRows`, `MixerBuffer`, `WantsWideMix`. TTD, media and `Describe` join the
+interface with the first card that needs them (MultiSound MS-5 / MS-6).
+
 ### 3.3 Functions
 
 A function is a short string from one enum-backed table (`ay-socket`, `gs`, `saa`, `soundrive`, `covox-fb`, `opl4`,
@@ -258,7 +266,8 @@ cards (reported as an incompatibility at plan time, not as shadowing) and a bus 
 
 **Socketed built-ins.** A built-in chip in a socket (the ZX-Evo YM2149, the AY of boards that socket it) can be
 *removed* by a plan, the physical fix for a bus fight (owner decision Q7: the MultiSound on ZX-Evo empties the
-socket).
+socket). As built (MS-4): the board AY device is not built and the table marks the built-in removed, so the board's
+decode of its ports no longer drives a read (`PortClaimTable::IsRemovedBuiltInRead`).
 
 **The `#DFFD` case (MultiSound on `CardWins`):** the card claims `#DFFD` writes without IORQGE; the write reaches the
 card and the machine's `#DFFD` paging, as on the real board.
@@ -275,6 +284,15 @@ lookup, the card's access, the board's stand-down decided once, the board decode
 the exact peripheral port map are claim tables too, but three role instances rather than one (raw address before the
 board, raw address after the board, decoded port): the board decode is not yet expressed as claims, so the single
 table and `Read` / `Write` arrive with the card declarations of SL-4. The Beta-128 exception stays in the override.
+
+**As built (MS-4):** `Read` / `Write` run in production for slot-built cards. Their claims join `_fullDecodeClaims` in
+slots `PortDecoder::kSlotCardSlotBase` (2) and up, after the two legacy observer slots, so the one inline bit test
+still covers every bus card; on a claimed port the cycle's single lookup tells the paths apart (first claim in a card
+slot: `ReadSlotCardCycle` / `WriteSlotCardCycle`, the table's resolution with the board decode as its board side; a
+hidden board gets no cycle, the trace still records the access; otherwise the legacy pass with R6). The table is
+configured from the card's bus (or its adapter's arbitration) and the machine's built-ins when the first card is
+attached; `IClaimSignals` (M1 address, TR-DOS) is `SlotManager`'s, bound while cards exist. A port a legacy observer
+covers first stays on the legacy path (no slot-built card shares a port with one today).
 
 ## 5. SlotManager: plan and apply
 
@@ -401,7 +419,12 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the fi
 **As built (SL-4):** `SlotManager` owns the decision and the slot report (`DeviceState::Slots`), not the card
 objects: it writes the fitted set into the CONFIG card fields `SoundManager` / `NetworkManager` / the Covox module
 read (`SlotManager::Apply`), and those keep building, mixing and wiring the cards. `ICard` objects come with the
-ZX-MultiSound and the restart path (SL-6). The board Covox (ATM, ZX-Evo, TS-Conf, Profi v3 / v5) is a switchable
+ZX-MultiSound and the restart path (SL-6).
+
+**As built (MS-4):** a card with a `CardType` (the ZX-MultiSound) has no legacy owner: `SlotManager::BuildCards` builds
+it (Core::Init, once the sound manager and the port decoder exist), attaches its claims to the decoder and its mixer
+rows to `SoundManager`, and `ReleaseCards` takes them out before the machine goes. The cards above keep their legacy
+owners until SL-6. The board Covox (ATM, ZX-Evo, TS-Conf, Profi v3 / v5) is a switchable
 built-in on the same Covox module; the SounDrive card's `mode` (1 / 2 / `both`, the emulator's decode) selects the
 module's decode.
 | Beta-128 / IDE / Kempston as *interfaces* on Sinclair machines | config flags | later cards (function `beta128`, `ide.*`, `kempston-*`); not in the first migration (tdd.md "later") |

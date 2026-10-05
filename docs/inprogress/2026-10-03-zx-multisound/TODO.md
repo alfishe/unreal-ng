@@ -2,7 +2,8 @@
 
 **Status:** design drafted 2026-10-03; owner decisions Q1-Q5 recorded. Card logic CL-0 / CL-1 built 2026-10-04
 (branch `multisound`): `MultiSoundLogic` agrees with the card's CPLD Verilog on every scenario and the
-full decode sweep. MS-3 `MultiSoundCard` assembled 2026-10-04 (not committed; no dependency on the slots framework). Depends on the
+full decode sweep. MS-3 `MultiSoundCard` assembled 2026-10-04 (not committed; no dependency on the slots framework). MS-4 puts it in
+a slot (2026-10-04, branch `zx-bus-slots`, not committed). Depends on the
 [ZX-bus slots](../2026-10-03-zx-bus-slots/TODO.md) (SL-1 to SL-5).
 
 ## Documents
@@ -96,10 +97,24 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [x] MS-3 `MultiSoundCard` (2026-10-04, not committed): self-contained card with port / time / audio API, five rows,
   `Describe`; `MultiSoundCard_Test`; GS host clock + `sharedVolumeWrite` + `resetAtHostNow`; `Ym2203Pair::renderChannels`
   cursor fix ([architecture.md](architecture.md) §1, [tdd-integration.md](tdd-integration.md) MS-3 row)
-- [ ] MS-4 slot adapter ([tdd-integration.md](tdd-integration.md) §3.1) and `SoundManager` rows (after slots SL-4)
+- [x] MS-4 slot adapter and `SoundManager` rows (2026-10-04, working tree of `zx-bus-slots`, not committed;
+  [tdd-integration.md](tdd-integration.md) §3.2, [architecture.md](architecture.md) §1 / §5 / §6 "As built"):
+  `MultiSoundSlotCard` (`ICard`), built by `SlotManager` from `[SLOTS] zxbus.N = multisound` (options, `[MIDI] Bank=`);
+  its claims resolved by the claim table (CardWins shadowing on the Pentagon, RdWr on the ZX-Evo with the YM2149 out
+  of its socket); five rows, HUD source, row state `shadowed by`; `MultiSoundSlotCard_Test` (a Z80 program plays FM,
+  SSG, SAA, DAC and a bit-banged MIDI note on a Pentagon and a ZX-Evo)
+  - [ ] owner review: the AY socket left unconfigured gives up its socketed chip at creation (ZX-Evo), an explicit
+    `ay-socket = ay` keeps it and the card is not fitted ([architecture.md](architecture.md) §6 "As built")
+  - [ ] owner review: the card's axis is `CPU_CLOCK_RATE` on every machine, not the machine's T-state rate
+    ([tdd-integration.md](tdd-integration.md) §3.2 deviation)
+  - [ ] the RTL asserts IORQGE on a `#BFFD` read too (no direction term), the reference data claims `#BFFD` for
+    writes only: a Pentagon read of `#BFFD` reaches the board (the shadowed AY). Decide whether the claim becomes
+    `InOut` with the card not driving (the matrix and its generated tables change)
 - [ ] MS-5..MS-8 TTD, surfaces, real software, docs (after slots SL-5); TTD needs the adapter's time base and the
-  pair's ratio phase in the card's blob set
+  pair's ratio phase in the card's blob set. Until MS-5 a TTD session recorded with the card fitted does not capture
+  the card (no session refusal yet)
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
-  effects path and the eight Reference-quality YM decimators are the suspects) before MS-4 registers it
+  effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
+  (machines without the card pay nothing)
 - [ ] `data/midi/generaluser-gs.sf2` + license tracked (Q4); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research

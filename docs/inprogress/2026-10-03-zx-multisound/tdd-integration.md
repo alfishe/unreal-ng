@@ -22,7 +22,7 @@ real software verified as a user runs it.
 | MS-1 | `Ym2203Pair` extracted from `SoundChip_TurboSoundFM` with `masterClockHz` + ratio accumulator and the I/O port listener; TSFM bit-identical (golden digests before / after, A/B benchmark). **Done 2026-10-04** (not committed): [architecture.md](architecture.md) §4.1 "As built"; `TsfmGolden_Test` digests identical before / after, TSFM suite + TTD corpus (`tsfm_tech_support` included) green, `Ym2203Pair_Test`. A/B `BM_TurboSoundFrame_*` (4 interleaved rounds x 3 repetitions, CPU-time medians, load average 85-125): Idle 2595 / 2621 us, PlayerLoad 2460 / 2473 us, PlayerLoad_Turbo 1195 / 1201 us before / after (+0.5-1.0 %, inside the 5 % round-to-round spread) | - |
 | MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical. **Done 2026-10-04** (not committed): `GSProfile` ([architecture.md](architecture.md) §4.2 "As built"), `SoundChip_GeneralSound_Profile_Test`, GS 1.05b in `data/rom/` | - |
 | MS-3 | `MultiSoundCard`, `MultiSoundLogic` wired to `Ym2203Pair`, `Saa1099`, GS, `MultiSoundDacs`, `MidiLine`, `sam2695::Synth`, `MultiSoundMixer`. **Done 2026-10-04** (not committed), without the slots framework: a self-contained class with an explicit port / time / audio API ([architecture.md](architecture.md) §1 "As built"); the `ICard` adapter and the `CardType` entry move to MS-4 (§3.1). `MultiSoundCard_Test` (13 tests: the requirements §1 worked example, FM muted after reset until bit 2 clears, `#FF` stops the SAA, `#DFFD`, ROM lock, DIP / `ctrlMask` options, the board weights per row, hard-panned SounDrive, GS / SounDrive on one DAC with the GS `#0B` bit, GS 1.05b boot + sample upload and playback, a bit-banged MIDI note on U4 and none from U10, "no bank", the TFM player trace); `Ym2203Pair_Test.PerChannelOutputsRenderAWholeSyncedFrameAtOnce` (the render cursor fix) | card logic CL-1, SAA-1, SAM-1, ML-2 |
-| MS-4 | Slot adapter (`ICard` + `CardType` entry `multisound`, §3.1) once slots SL-4 lands; the five `SoundManager` rows from `MultiSoundCard::Row`, HUD sources (`MultiSoundMixer` is in the card since MS-3) | MS-3, slots SL-4 |
+| MS-4 | Slot adapter (`ICard` + `CardType` entry `multisound`, §3.1) once slots SL-4 lands; the five `SoundManager` rows from `MultiSoundCard::Row`, HUD sources (`MultiSoundMixer` is in the card since MS-3). **Done 2026-10-04** (not committed): §3.2 "As built"; `MultiSoundSlotCard_Test` (10 tests: the card built for its slot with its options, the ZX-Evo YM2149 out of its socket, CardWins shadowing on the Pentagon, RdWr detection of the ZX-Evo's board ports, the rows, a Z80 program playing all five sources on a Pentagon and a ZX-Evo, the matrix refusals at creation) | MS-3, slots SL-4 |
 | MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests | MS-3, slots SL-5 |
 | MS-6 | Automation (card options through the slot surfaces; card state report `multisound` on every surface), OpenAPI, Qt card panel, recipe | MS-3, slots SL-6 |
 | MS-7 | Real-software verification (§6) with TTD recording on | MS-4, MS-5 |
@@ -85,6 +85,26 @@ private:
 - **Ports:** the claims of architecture §3 come from the refdata entry; the adapter forwards every claimed cycle, and
   `Iorqge(port)` answers the claim table where the arbitration needs the card's view (the claims already carry it).
 - **Rows:** `RowFrames()` frames per `FrameEnd`, the count `SoundManager` asked for.
+
+### 3.2 As built (MS-4, 2026-10-04)
+
+The slots framework gained what a card written for slots needs ([slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md) §9):
+`ICard` / `CardType` (`core/src/emulator/slots/card.{h,cpp}`), `SlotManager::BuildCards` / `ReleaseCards`, and the
+claim table's cycle resolution in production for slot-built cards. The adapter is
+`core/src/emulator/slots/cards/multisound/multisoundslotcard.{h,cpp}` (`MultiSoundSlotCard`).
+
+| Item | As built |
+|---|---|
+| Shape | `ICard` derives from `PortDevice`: the claim table hands the card its bus cycles through `portDeviceOutMethod` / `portDeviceReadCycle(port, drives)` (new on `PortDevice`; the default drives what `portDeviceInMethod` returns) at the machine's now, so the access path passes no time; `Peek`, `BusReset`, `FrameStart`, `FrameEnd(samples)`, `SetOutputRate`, `MixerRows`, `MixerBuffer`, `WantsWideMix`. TTD (`CollectTtdSerializers`), media and `Describe` on the interface come with MS-5 / MS-6 |
+| Time | the axis `SoundChip_Moonsound` uses: origin + `AudioTstate(z80->t)` x the host speed multiplier at `CPU_CLOCK_RATE` ticks per second (the axis of every sound device and of the mixer's sample count; turbo descaled), clamped monotonic; the origin moves by `config.frame` x the multiplier at each `FrameEnd`. **Deviation from §3.1:** `hostTickRate` is `CPU_CLOCK_RATE` (3.5 MHz) on every machine, not the machine's own T-state rate (3.5469 MHz on a 128K): the mixer turns `config.frame` T-states into `frame x rate / CPU_CLOCK_RATE` output samples on every model, so one T-state is 1 / 3.5 MHz of output on every model and the card must count on the same axis to fill the same samples; the YM pair's ratio is then 1 : 1 everywhere (architecture.md §2's 128K ratio assumed the other axis) |
+| Options | `dip` (`ym`, `saa`, `gs`, `sd`), `gsRam` (`1m` / `2m`), `ctrlMask` (`pro` / `classic`) from the slot (`OptionsFrom`); `[MIDI] Bank=` (new `CONFIG::midiBank`, resolved like a ROM path; empty = the card's default `midi/generaluser-gs.sf2`); the row rate = `SoundManager`'s core rate, followed on a rate change |
+| ROM lock | before each cycle the adapter gives the card `M1(z80->m1_pc)` (the IN / OUT instruction's opcode fetch); the claim table's `lockedOnRomFetch` reads the same address through `IClaimSignals`, so the SAA and SounDrive claims are skipped by both |
+| Rows | `MS FM`, `MS SSG`, `MS SAA`, `MS DAC`, `MS MIDI` (`AudioSourceType::MultiSound*`, mixer keys `ms_fm` .. `ms_midi`); volume / mute / solo / analyzer capture like any row; the wide float bus with the master limiter while the card is fitted; one HUD source `AudioSource::MultiSound` (Qt nudge "MultiSound", category `audio-multisound`); multitrack recording names. Rows exist only with the card |
+| Frames | `SoundManager` calls `FrameStart` at every frame start (all modes) and `FrameEnd(samplesThisFrame)` before mixing; turbo without audio `FrameEnd(0)` (the card still runs to the frame end) |
+| Bus reset | `SoundManager::reset` (machine reset) calls `BusReset`: the card's CPLD, YM pair, SAA, GS, DACs, MIDI line and SAM2695 share the ZX /RESET |
+
+Not in MS-4: the card is not in the TTD device set (MS-5; a session recorded with the card does not capture it), no
+automation state report or Qt panel (MS-6), the frame cost (~1 ms per frame, TODO) is not profiled.
 
 ## 4. TTD
 

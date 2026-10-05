@@ -496,3 +496,87 @@ loads: compare within a pair).
 | PortCard ATM3 no card OUT #00C4 | 30.7 | 30.9 | 29.8 | 29.9 | +0.3 % |
 | PortCard PENTAGON MoonSound OUT #00C4 | 31.1 | 31.3 | 30.3 | 30.2 | -0.4 % |
 | PortCard ATM3 MoonSound OUT #00C4 | 33.3 | 33.8 | 32.2 | 32.3 | +0.3 % |
+
+## 9. Slot-built cards: the ZX-MultiSound (MultiSound MS-4, 2026-10-04)
+
+The first card written for slots ([MultiSound tdd-integration.md](../2026-10-03-zx-multisound/tdd-integration.md) §3.2)
+needed the framework pieces SL-4 left for later. Not committed; per-step patches in the agent's scratch folder.
+
+| Step | What changed in the framework |
+|---|---|
+| 1 | `ICard` / `CardType` / `CardContext` (`slots/card.{h,cpp}`, architecture.md §3.2 "As built"); `SlotManager::BuildCards` / `ReleaseCards` / `FindCard` / `Cards` (Core::Init after the network manager, Core::Release first); `CardClaims(def, options)` public in `slotplanner.h`; `PortDevice::portDeviceReadCycle(port, drives)` (a card may assert IORQGE and leave the data bus alone; the table's read counts only drivers); `[MIDI] Bank=` (`CONFIG::midiBank`). **Plan at creation:** an INI that leaves `ay-socket` unconfigured lets a card take a socketed chip out (Q7, the ZX-Evo YM2149); `ay-socket = ay` keeps it and the card is not fitted. The removed chip is a `BuiltIn::removed` flag and `Apply` leaves the socket empty (`TurboSoundKind::None`) |
+| 2 | The claim table's `Read` / `Write` in production for slot-built cards (architecture.md §4.3 "As built (MS-4)"): `PortDecoder::ConfigureSlotBus` / `AttachSlotCard` / `DetachSlotCard` / `IsBuiltInShadowed` / `SetBuiltInRemoved` / `BindSlotSignals`, `ReadSlotCardCycle` / `WriteSlotCardCycle`; legacy low-byte lookups ignore card slots; `PortClaimTable::ClearBuiltIns`, `SetBuiltInRemoved`, `IsRemovedBuiltInRead`; `BM_PortSlotCard` |
+| 3 | `SoundManager::attachSlotCard` / `detachSlotCard` (rows into the registry, wide mix), card frames, `BusReset` on reset, `SetOutputRate` on a core-rate change, `setDeviceState` / `deviceState` (a shadowed socket chip's rows say `shadowed by zxbus.N`; the mixer report carries `state`); the step-2 signals object and removed-chip list moved out of `PortDecoder`'s layout (into `SlotManager` and the table's built-in list) |
+| 4 | Integration tests; the slot report's built-in carries `removed: true` |
+
+**Tests** (`core/tests/emulator/slots/cards/multisound/multisoundslotcard_test.cpp`, `MultiSoundSlotCard_Test`, 10,
+each under 50 ms): options from the slot, the card built with them and the bank, the ZX-Evo YM2149 taken out (and
+kept with `ay-socket = ay`), Pentagon CardWins shadowing (board AY gets no `#FFFD` / `#BFFD` cycle, card drives the
+read, passive SAA / SounDrive writes locked from the ROM), ZX-Evo RdWr on board ports (`#FFFD`, `#1F`), the five
+rows only with the card, a tone reaching its row, a Z80 program (control byte, YM2203 FM + SSG, SAA, SounDrive, a GS
+command, a MIDI Note On bit-banged on U4's IOA2 at 31250 baud) making all five rows non-silent on a Pentagon and a
+ZX-Evo, and the matrix refusals at creation (`multisound` + `gs` either order, `tsfm` in the socket, the 128K edge).
+Changed: `SlotManager_Test.NotEmulatedCardsAreDisabled` (the MultiSound is emulated).
+
+**Benchmarks.** `BM_PortIn` / `BM_PortOut` / `BM_PortCard`, every row; A = `140979aee` (the branch before MS-4,
+`bin/core-benchmarks-ms4base`), B = the final MS-4 code; `UNREAL_NICE=0`, `--benchmark_min_time=0.3s`, six rounds
+interleaved A B, B A, ...; 1-minute load per run start -> end: 16.1 -> 12.7, 12.7 -> 10.8, 10.8 -> 8.8, 8.8 -> 8.7,
+8.7 -> 8.0, 8.0 -> 9.4, 9.4 -> 10.0, 10.0 -> 10.3, 10.3 -> 11.6, 11.6 -> 17.6, 17.6 -> 16.9, 16.9 -> 14.8. Spread =
+(max - min) / median.
+
+| Benchmark (us per 1000 accesses, median of 6) | A | B | B/A | A spread | B spread |
+|---|--:|--:|--:|--:|--:|
+| PortIn 48K IN #00FF | 38.6 | 38.4 | -0.5 % | 5 % | 7 % |
+| PortIn 128k IN #00FF | 43.0 | 42.8 | -0.4 % | 5 % | 7 % |
+| PortIn PENTAGON IN #00FF | 40.6 | 39.2 | -3.4 % | 6 % | 6 % |
+| PortIn 48K IN #40FF | 51.7 | 51.3 | -0.8 % | 5 % | 6 % |
+| PortIn 128k IN #40FF | 53.4 | 53.5 | +0.3 % | 5 % | 4 % |
+| PortIn PENTAGON IN #40FF | 40.6 | 39.8 | -2.1 % | 5 % | 4 % |
+| PortIn 48K IN #00FE | 50.2 | 50.2 | +0.0 % | 5 % | 5 % |
+| PortIn 128k IN #00FE | 52.5 | 52.7 | +0.4 % | 5 % | 3 % |
+| PortIn PENTAGON IN #00FE | 45.7 | 42.9 | -6.1 % | 4 % | 4 % |
+| PortIn 48K IN #FFFD | 35.8 | 35.5 | -0.7 % | 3 % | 4 % |
+| PortIn 128k IN #FFFD | 39.6 | 39.5 | -0.2 % | 2 % | 3 % |
+| PortIn PENTAGON IN #FFFD | 37.1 | 34.7 | -6.4 % | 4 % | 4 % |
+| PortOut 48K OUT #00FF | 30.0 | 31.0 | +3.3 % | 3 % | 3 % |
+| PortOut 128k OUT #00FF | 28.6 | 30.5 | +6.5 % | 3 % | 3 % |
+| PortOut PENTAGON OUT #00FF | 28.9 | 27.9 | -3.6 % | 2 % | 3 % |
+| PortOut 48K OUT #40FF | 40.1 | 40.6 | +1.3 % | 4 % | 3 % |
+| PortOut 128k OUT #40FF | 38.4 | 39.4 | +2.5 % | 5 % | 3 % |
+| PortOut PENTAGON OUT #40FF | 28.8 | 27.8 | -3.2 % | 6 % | 3 % |
+| PortOut 48K OUT #00FE | 70.0 | 72.5 | +3.5 % | 5 % | 2 % |
+| PortOut 128k OUT #00FE | 70.8 | 72.9 | +3.1 % | 4 % | 1 % |
+| PortOut PENTAGON OUT #00FE | 41.6 | 40.7 | -2.2 % | 4 % | 2 % |
+| PortCard PENTAGON no card IN #00FD | 30.5 | 27.9 | -8.7 % | 4 % | 3 % |
+| PortCard ATM3 no card IN #00FD | 30.6 | 29.1 | -5.0 % | 5 % | 3 % |
+| PortCard PENTAGON MoonSound IN #00FD | 30.6 | 27.9 | -8.9 % | 7 % | 2 % |
+| PortCard ATM3 MoonSound IN #00FD | 30.7 | 29.0 | -5.7 % | 5 % | 2 % |
+| PortCard PENTAGON no card OUT #00FD | 40.0 | 38.8 | -3.0 % | 5 % | 3 % |
+| PortCard ATM3 no card OUT #00FD | 44.6 | 44.2 | -0.9 % | 4 % | 2 % |
+| PortCard PENTAGON MoonSound OUT #00FD | 40.0 | 38.9 | -2.8 % | 5 % | 2 % |
+| PortCard ATM3 MoonSound OUT #00FD | 44.7 | 44.2 | -1.2 % | 5 % | 4 % |
+| PortCard PENTAGON no card IN #00C4 | 30.6 | 28.3 | -7.6 % | 4 % | 2 % |
+| PortCard ATM3 no card IN #00C4 | 31.6 | 30.2 | -4.4 % | 5 % | 2 % |
+| PortCard PENTAGON MoonSound IN #00C4 | 37.9 | 36.0 | -5.2 % | 6 % | 2 % |
+| PortCard ATM3 MoonSound IN #00C4 | 37.0 | 36.5 | -1.5 % | 3 % | 2 % |
+| PortCard PENTAGON no card OUT #00C4 | 40.0 | 38.9 | -2.8 % | 4 % | 5 % |
+| PortCard ATM3 no card OUT #00C4 | 31.8 | 30.2 | -5.3 % | 5 % | 3 % |
+| PortCard PENTAGON MoonSound OUT #00C4 | 31.5 | 30.8 | -2.3 % | 5 % | 13 % |
+| PortCard ATM3 MoonSound OUT #00C4 | 35.1 | 33.2 | -5.4 % | 5 % | 14 % |
+
+- **Machines without a slot-built card** (every row above: no MultiSound fitted): no row on the Pentagon or the
+  ZX-Evo is slower (-0.9 to -8.9 %), the 48K / 128K reads are at parity (-0.8 to +0.4 %), the 48K / 128K writes are
+  +1.3 to +6.5 % (128K `OUT #00FF` +1.9 ns). The code these rows run did not change: the unclaimed path is the same
+  inline bit test, the claimed legacy path (MoonSound `#C4`) gained one compare and is 1.5-5.4 % faster. The
+  48K / 128K write rows moved with code placement, not with a code path: the step-2 binary (all the port-path
+  changes) measured them at parity on a quiet machine (load 7-9: 48K `OUT #00FF` 30.1 / 30.1 us, 128K 29.2 / 29.1),
+  the step-3 changes (mixer rows; the benchmark never runs the mixer) moved them to +9-10 %, and relocating the new
+  code (slot-card functions to the end of `portdecoder.cpp`, `SoundManager`'s new members to the end of the class,
+  the slot-bus signals and the removed-chip list out of `PortDecoder`) took them to +3-6 %. A quiet-machine rerun is
+  listed in TODO.md.
+- **With the card** (`BM_PortSlotCard`, B only, a `[SLOTS]` section on both sides): an unclaimed port costs the same
+  with and without the card (Pentagon / ATM3 `#00FD` IN 27.9 / 28.7-28.8, OUT 38.7-38.8 / 43.9 us); the card's own
+  `#FFFD` on the Pentagon (CardWins, the board hidden) IN 33.9 vs 31.3 us without the card, OUT 33.1 vs 30.8; on the
+  ZX-Evo (BoardWins, RdWr: the board decodes too, the board-port and removed-chip checks run) IN 54.2 vs 32.2, OUT
+  50.8 vs 33.1 us, about 20 ns per access - a few hundred accesses per frame, against the card's ~1 ms frame render.
+

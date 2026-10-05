@@ -62,6 +62,11 @@ adapter wraps it in MS-4 ([tdd-integration.md](tdd-integration.md) §3.1). Tests
 | MIDI | the pair's chip 0 (U4, selected by control bit 0 = 0) SSG listener is the `MidiLine`; the pair reports pin changes at the write's host tick, which is already the card axis, so the line feeds `Synth::WriteLine` unchanged. The synthesizer is configured with `resetDelay` (the chip's 50 ms boot window) and its effects path. A missing or unreadable bank leaves it silent; `Describe` says `no bank` and why |
 | Rows | `FrameEnd`: the GS to its frame end (its own buffer stays silent), the pair synced and rendered per channel (`renderChannels`), `Saa1099::EndFrame`, `MultiSoundDacs::EndFrame`, `Synth::Run` + `Render` (a short first frame holds the last level, the backlog covers later ones), then `MultiSoundMixer::Mix` into the five rows (int16 stereo, at most `MAX_SAMPLES_PER_FRAME` frames) |
 
+**As built (MS-4, 2026-10-04).** The card sits in a slot through `MultiSoundSlotCard` (`ICard`,
+[tdd-integration.md](tdd-integration.md) §3.2): `[SLOTS] zxbus.N = multisound` builds it at machine creation, its claims
+(§3, with the DIP options) go into the port decoder's claim table in its slot order and every cycle on them is
+resolved with the machine's bus arbitration (§6 "As built"); its five rows are `SoundManager` rows (§5).
+
 MS-2 open items, resolved:
 
 - **One owner of the GS mailbox: `SoundChip_GeneralSound`.** `MultiSoundLogic` decides whether a host cycle is a GS
@@ -288,6 +293,10 @@ FM`, `MS SSG`, `MS SAA`, `MS DAC` (GS + SounDrive), `MS MIDI`. The board weights
 inside the card before the rows, so the rows' unity volume equals the real board. New `AudioSourceType` values go
 before `Custom`; `AudioActivityIndicators::HUD_SOURCES` grows accordingly.
 
+**Registered (MS-4, 2026-10-04):** the five rows are `SoundManager` rows while the card is fitted (keys `ms_fm`,
+`ms_ssg`, `ms_saa`, `ms_dac`, `ms_midi`; one HUD source `MultiSound`); the master mix runs on the wide float bus with
+the limiter while the card is fitted ([tdd-integration.md](tdd-integration.md) §3.2).
+
 **As built (2026-10-04):** `MultiSoundMixer` (`.../multisound/multisoundmixer.{h,cpp}`, not registered yet; MS-4 wires
 the rows). `Mix(input, output)` takes one block of every source at the output rate and writes the five rows (int16,
 interleaved stereo; a sixth `external` output exists for the J3 line input, which has no emulated source).
@@ -324,6 +333,19 @@ Every weight is computed from the component values (`MultiSoundBoard::kWeight*` 
 The card's IORQGE claims on `#FFFD` / `#BFFD` shadow the machine's AY socket content (slots Q2). Its functions (DIP
 dependent): `ym` -> `ay-socket` role (shadowing) and `midi`; `saa`; `gs`; `soundrive`. See the slots
 [compatibility matrix](../2026-10-03-zx-bus-slots/compatibility-matrix.md).
+
+**As built (MS-4, 2026-10-04):**
+
+| Machine | Bus | What happens |
+|---|---|---|
+| Pentagon (and the other CardWins boards: Scorpion, Profi Scorpion, ATM behind the CPU-socket adapter) | CardWins | an IN / OUT on the card's IORQGE claims (`#FFFD` / `#BFFD` families, `#B3`, `#BB`) never reaches the board: the board AY stays fitted, gets no cycle and its mixer row reports `shadowed by zxbus.N` (the slot report's built-in `ay` too); the passive SAA (`#FF`), SounDrive (`#0F` family) and `#DFFD` writes reach the card and the board, the SAA and SounDrive ones skipped while the IN / OUT runs from `#0000-#3FFF` |
+| ZX-Evo Baseconf / TS-Conf | BoardWins | the card detects RD / WR (`RdWr`), so it sees the board's own ports (`#FFFD`, SounDrive `#1F`); the YM2149 is taken out of its socket (Q7): the board AY device is not built, the report says `taken out of its socket for zxbus.N` (`removed: true`), and the board's decode of `#FFFD` no longer drives the read, so the card alone answers |
+
+At creation a config that leaves the AY socket unconfigured lets the card take the chip out (the physical step Q7
+describes); `ay-socket = ay` keeps the chip and the card is not fitted, with the reason. A TSFM / TS configured in the
+socket under the card is a pointless pair (refused without confirmation, as automation without the flag), so a config
+that wants the card writes no `ay-socket` line or `ay-socket = ay` on the Pentagon. The `gs` and `soundrive`
+functions clash with a GS / SounDrive card as the matrix says (first wins).
 
 ## 7. TTD
 
