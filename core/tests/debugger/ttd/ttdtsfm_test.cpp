@@ -33,29 +33,6 @@
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 
-using BlobMap = std::unordered_map<uint8_t, std::vector<uint8_t>>;
-
-/// Minimal TurboSound-slot stand-in: the guard only asks for the id
-/// (and the blob map, which the tests build by hand).
-class FakeTurboSoundSlotDevice final : public ttd::TTDSerializable
-{
-public:
-    explicit FakeTurboSoundSlotDevice(ttd::PeripheralId id) : _id(id) {}
-
-    size_t TTDStateSize() const override { return sizeof(uint32_t); }
-    void TTDSaveState(uint8_t* dst) const override
-    {
-        const uint32_t marker = 0x5A5A5A5Au;
-        std::memcpy(dst, &marker, sizeof marker);
-    }
-    void TTDLoadState(const uint8_t* /*src*/) override {}
-    std::string TTDDeviceName() const override { return "FakeTurboSoundSlotDevice"; }
-    ttd::PeripheralId TTDPeripheralId() const override { return _id; }
-
-private:
-    ttd::PeripheralId _id;
-};
-
 class TtdTsfm_Test : public ::testing::Test
 {
 protected:
@@ -220,58 +197,8 @@ protected:
     }
 };
 
-// ===========================================================================
-// Decision core (TimeTravelManager::TurboSoundSessionKindMatches)
-// ===========================================================================
-
-TEST_F(TtdTsfm_Test, KindMatchesLegacySessionOnLegacyDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TurboSound), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-}
-
-TEST_F(TtdTsfm_Test, KindMatchesFmSessionOnFmDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TSFM), {}}};
-    FakeTurboSoundSlotDevice fm(ttd::PeripheralId::TSFM);
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, fm));
-}
-
-TEST_F(TtdTsfm_Test, KindRefusesFmSessionOnLegacyDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TSFM), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    EXPECT_FALSE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-}
-
-TEST_F(TtdTsfm_Test, KindRefusesLegacySessionOnFmDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TurboSound), {}}};
-    FakeTurboSoundSlotDevice fm(ttd::PeripheralId::TSFM);
-    EXPECT_FALSE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, fm));
-}
-
-TEST_F(TtdTsfm_Test, KindIgnoresSessionWithoutSlotBlob)
-{
-    // Recorded on a machine without any slot device: not a mismatch
-    // (RestoreAll's missingBlobs path already names that situation)
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::BetaDisk), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    FakeTurboSoundSlotDevice fm(ttd::PeripheralId::TSFM);
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, fm));
-}
-
-TEST_F(TtdTsfm_Test, KindRefusesDefensiveBothIdsSession)
-{
-    // One device occupies the slot; a session carrying both ids cannot come
-    // from a healthy writer - refuse rather than guess
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TurboSound), {}},
-                  {static_cast<uint8_t>(ttd::PeripheralId::TSFM), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    EXPECT_FALSE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-}
+// The decision core moved to SlotManager::TtdSlotSetMatches (ZX-bus slots SL-5): TtdSlots_Test covers the
+// socket cases (kind mismatch both ways, an empty socket, a session carrying both ids)
 
 // ===========================================================================
 // End to end: DeserializeSession wiring (plan gate: SessionKindMismatchRefused)
@@ -305,7 +232,7 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
         std::istringstream in(forged, std::ios::binary);
         std::string err;
         EXPECT_FALSE(_ttd->DeserializeSession(in, err));
-        EXPECT_NE(err.find("TurboSound slot mismatch"), std::string::npos) << err;
+        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ay / ts"), std::string::npos) << err;
     }
 
     // The live machine state is untouched by the refused load (restores only
@@ -333,7 +260,7 @@ TEST_F(TtdTsfm_Test, SessionWithSlotDeviceRefusedOnEmptySlot)
     std::istringstream in(data, std::ios::binary);
     std::string err;
     EXPECT_FALSE(empty.GetContext()->pTimeTravelManager->DeserializeSession(in, err));
-    EXPECT_NE(err.find("TurboSound slot mismatch"), std::string::npos) << err;
+    EXPECT_NE(err.find("ay-socket: recorded ay / ts, this machine none"), std::string::npos) << err;
 
     empty.Stop();
     empty.Release();

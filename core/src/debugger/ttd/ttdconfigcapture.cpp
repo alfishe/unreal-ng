@@ -5,6 +5,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/audio.h"
 
 namespace ttd
@@ -43,6 +44,11 @@ TTDConfigFingerprint CaptureConfigFingerprint(const EmulatorContext& context, ui
     fp.Add("fdc.turbo_vg", static_cast<uint64_t>(static_cast<int64_t>(c.fdcTurboVg)));
     if (context.pPortDecoder)
         context.pPortDecoder->AddTTDBoardSettings(fp);
+
+    // The slot set and every card's options (ZX-bus slots R-NF-2): `slots.<slot>`, `slots.builtin.<id>`; a
+    // checkpoint holds the devices of its slot set, so a difference affects a restore
+    if (context.pSlotManager)
+        context.pSlotManager->AddTtdFingerprint(fp);
 
     // Every model's ROM set, the Sprinter BIOS (its flash) among them
     if (romSignature)
