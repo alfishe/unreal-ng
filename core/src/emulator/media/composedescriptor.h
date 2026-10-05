@@ -90,6 +90,9 @@ struct ComposeTarget
     std::optional<bool> mbr;                ///< partition: mbr | none; unset: the slot's default
     std::optional<int64_t> fixedTimeUtc;    ///< reproducible builds: every timestamp this value
     std::string onBadName = "skip";         ///< skip | replace
+    int isoLevel = 1;                       ///< optical: 1 (8.3 names) or 2 (31 characters)
+    bool joliet = true;                     ///< optical: add a Joliet tree (long names)
+    bool relaxDepth = false;                ///< optical: allow more than 8 directory levels
 };
 
 struct ComposeWrites

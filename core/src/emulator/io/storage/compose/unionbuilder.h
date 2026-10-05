@@ -44,6 +44,8 @@ public:
     /// FAT: case-insensitive (the letters the short-name code pages know),
     /// trailing dots and spaces ignored, as FAT matches long names
     static std::string FatKey(const std::string& name);
+    /// ISO 9660 with Joliet: the name itself (Joliet keeps both "a.txt" and "A.TXT")
+    static std::string ExactKey(const std::string& name) { return name; }
 
     /// Merge `layers` (bottom first) into `out` (a fresh tree). Every
     /// shadowing, whiteout and opaque directory is listed in `report`. False

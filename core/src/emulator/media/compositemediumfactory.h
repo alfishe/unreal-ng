@@ -61,6 +61,7 @@ struct CompositeInfo
 /// The slot's side of the build (from OpenRequest / InsertOptions)
 struct CompositeBuildOptions
 {
+    std::optional<MediaKind> slotKind;       ///< the slot's kind (block / optical); none: the descriptor decides
     std::vector<FatType> allowedFs;          ///< the slot's fsCompatibility; empty: both
     std::optional<FatType> fs;               ///< an explicit request (`--fs`); else the descriptor, else auto
     FatType defaultFs = FatType::Fat16;      ///< the slot's defaultFs

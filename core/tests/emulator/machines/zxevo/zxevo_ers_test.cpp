@@ -1054,6 +1054,45 @@ TEST_F(ZXEvoErs_Test, CdBootRunsAutorunFromAnIso)
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9002), 0xC0);
 }
 
+/// ACC-C5 (media-multisource): the same CD boot from a composite CD, an ISO 9660 volume built from two host folders:
+/// one holds AUTORUN.ZX, the other a few files and a directory around it. The drive reads the synthesized PVD, root
+/// directory and file extent as from a pressed disc.
+/// Real-ROM boot plus a CD load: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, ErsBootsAutorunFromComposedIso)
+{
+    // AUTORUN.ZX at #6000: DI : LD (#9000),A : LD HL,#C0DE : LD (#9001),HL : JR $
+    const std::vector<uint8_t> code = {0xF3, 0x32, 0x00, 0x90, 0x21, 0xDE, 0xC0, 0x22, 0x01, 0x90, 0x18, 0xFE};
+    ScratchFolder folder("zxevo-cdboot-compose");
+    folder.File("boot/AUTORUN.ZX", std::string(code.begin(), code.end()));
+    folder.File("data/README.TXT", "a composed CD");
+    folder.File("data/GAMES/Long Game Name.trd", std::string(20000, 'g'));
+    folder.File("data/zz-last.bin", std::string(5000, 'z'));
+    const auto descriptor = folder.File("cd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: data, source: {folder: data}}\n"
+                                                            "  - {name: boot, source: {folder: boot}}\n");
+
+    Create();
+    MediaSource source;
+    source.path = Utf8(descriptor);
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = _context->pMediaManager->Insert("ide0.slave", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    ASSERT_EQ(_context->pMediaManager->GetMedium("ide0.slave")->Format(), "compose-iso");
+    ASSERT_TRUE(RunToMainMenu());
+
+    Tap(ZXKEY_D);  // "D. CD boot"
+
+    Z80* z80 = _context->pCore->GetZ80();
+    Memory* memory = _context->pMemory;
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return z80->pc == 0x600A; }, 600);
+    ASSERT_EQ(z80->pc, 0x600A) << "AUTORUN.ZX did not run";
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9000), 0xB0) << "entered with A = #B0 (slave)";
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9001), 0xDE);
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9002), 0xC0);
+}
+
 /// ERS-CD-2: the shipped ZX-Evo has its CD drive (the slave), and the ERS
 /// sees the disc go and come back. With the disc ejected, "D. CD boot" gets
 /// NOT READY / medium not present (sense 2/#3A) and keeps retrying READ (10);

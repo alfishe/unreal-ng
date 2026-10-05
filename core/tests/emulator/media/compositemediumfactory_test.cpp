@@ -165,9 +165,7 @@ TEST(CompositeMediumFactory_Test, LaterPhasesSayNotSupported)
     f.root.File("base/a.bin", "a");
     std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
-    for (const char* yaml : {"version: 1\nlayers: [{source: {iso: base.iso}}]\n",
-                             "version: 1\ntarget: {fs: iso9660}\nlayers: [{source: {folder: base}}]\n",
-                             "version: 1\npartitions: []\n"})
+    for (const char* yaml : {"version: 1\npartitions: []\n"})
     {
         const MediaResult r = CompositeMediumFactory::Build(f.Descriptor(yaml), {}, volume, info);
         EXPECT_EQ(r.error, MediaError::NotSupported) << yaml << " -> " << r.message;

@@ -1,6 +1,6 @@
 # Multi-source media — TODO
 
-**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C4 done ([phases/](phases/README.md)).
+**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C4 and C5a done ([phases/](phases/README.md)).
 PLAN.md row **#95**.
 
 ## Owner decisions (2026-10-05)
@@ -24,7 +24,8 @@ PLAN.md row **#95**.
 - [x] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`); Sprinter IDE slots `fsCompatibility = {Fat16}`
 - [x] C3 FAT image sources
 - [x] C4 graft
-- [ ] C5 ISO reader, ISO target; D-6 boot carry-over (El Torito, and FAT rebuilds: `BootPlan`, the `boot:` section; its
+- [x] C5a ISO reader, ISO sources, ISO target, optical composites, ACC-C5
+- [ ] C5b D-6 boot carry-over (El Torito, and FAT rebuilds: `BootPlan`, the `boot:` section; its
   tests are in C5's list, [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §3.5)
 - [ ] C6 provenance, attribution (`changes`), S1 flat (+ VHD writer, compact), S2 delta
 - [ ] C7 partitions

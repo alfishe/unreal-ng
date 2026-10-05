@@ -10,7 +10,7 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C2 | [c2-composite-descriptor.md](c2-composite-descriptor.md) | done |
 | C3 | [c3-image-sources.md](c3-image-sources.md) | done |
 | C4 | [c4-graft.md](c4-graft.md) | done |
-| C5 | ISO 9660 | — |
+| C5 | [c5-iso.md](c5-iso.md) | C5a done (ISO); C5b (boot carry-over) next |
 | C6 | provenance, attribution, S1 / S2 | — |
 | C7 | partitions | — |
 | C8 | S3 / S4, Qt flatten dialog | — |

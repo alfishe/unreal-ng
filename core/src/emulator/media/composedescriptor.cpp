@@ -353,7 +353,38 @@ namespace
                         Report(where, "expected skip or replace, got '" + *v + "'");
                 }
                 else if (key == "iso")
-                    ;  // ISO options: phase C5
+                {
+                    if (!child.is_map())
+                    {
+                        Report(where, "expected a map such as {level: 1, joliet: true}");
+                        continue;
+                    }
+                    for (ryml::ConstNodeRef option : child.children())
+                    {
+                        const std::string name = Text(option.key());
+                        const std::string at = where + "." + name;
+                        if (name == "level")
+                        {
+                            const auto v = Number(option, at, 2);
+                            if (v && *v >= 1)
+                                t.isoLevel = static_cast<int>(*v);
+                            else if (v)
+                                Report(at, "expected 1 or 2");
+                        }
+                        else if (name == "joliet")
+                        {
+                            if (const auto v = Bool(option, at))
+                                t.joliet = *v;
+                        }
+                        else if (name == "relaxDepth")
+                        {
+                            if (const auto v = Bool(option, at))
+                                t.relaxDepth = *v;
+                        }
+                        else
+                            Report(at, "unknown key, ignored");
+                    }
+                }
                 else
                     Report(where, "unknown key, ignored");
             }
@@ -729,7 +760,9 @@ std::string ComposeDescriptor::Normalized() const
     o << ",\"codepage\":" << (target.codePage ? JsonString(UnicodeHelper::CodePageName(*target.codePage)) : "null");
     o << ",\"partition\":" << (target.mbr ? (*target.mbr ? "\"mbr\"" : "\"none\"") : "null");
     o << ",\"fixedTime\":" << (target.fixedTimeUtc ? std::to_string(*target.fixedTimeUtc) : "null");
-    o << ",\"onBadName\":" << JsonString(target.onBadName) << "},\"layers\":[";
+    o << ",\"onBadName\":" << JsonString(target.onBadName);
+    o << ",\"iso\":{\"level\":" << target.isoLevel << ",\"joliet\":" << (target.joliet ? "true" : "false")
+      << ",\"relaxDepth\":" << (target.relaxDepth ? "true" : "false") << "}},\"layers\":[";
     for (size_t i = 0; i < layers.size(); i++)
     {
         const ComposeLayer& l = layers[i];
