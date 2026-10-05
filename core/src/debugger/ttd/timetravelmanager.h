@@ -1868,6 +1868,11 @@ private:
     /// _modelRamPages are skipped (they're NEVER_TOUCHED by construction).
     void RestoreRamPages(const std::vector<TTDPageRef>& ramPages);
 
+    /// Debugger-forced RAM windows 1/2 have no port latch: carry them in the
+    /// checkpoint / live snapshot and re-apply after UpdateZ80Banks() on restore
+    void CaptureBankOverrides(TTDBankOverrides& out) const;
+    void ApplyBankOverrides(const TTDBankOverrides& in);
+
     /// @brief Internal seek implementation without the Recording-state guard.
     ///
     /// Used by public SeekTo (which adds the guard) and by ResumeRecordingFrom
@@ -2016,6 +2021,7 @@ private:
     {
         TTDCpuState     cpu{};
         TTDChipsetState chipset{};
+        TTDBankOverrides bankOverrides{};  ///< debugger-forced windows 1/2
         uint32_t        z80TInFrame = 0;   ///< z80.t (host-side, not in TTDCpuState)
         std::vector<uint8_t> ram;          ///< model RAM, _modelRamPages × 16 KB
         /// Peripheral state, keyed by PeripheralId — same representation the
