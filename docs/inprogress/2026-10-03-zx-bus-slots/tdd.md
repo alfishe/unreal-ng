@@ -391,7 +391,7 @@ unchanged except where named):
 | 4 | MoonSound; on the Profi the card is refused with the reason (`#7E` is the palette, a fixed built-in the board wins), also from a legacy `MoonSound=1` - **the one intended behavior change** (the shipped Profi config has `MoonSound=0`) | `MoonSoundComesFromTheSlot` |
 | 5 | `covox-fb` and `soundrive`: the SounDrive `mode` option reaches the Covox module (`Covox::Fitment` gains `Mode1`, `Mode2`, `Mode1Mono`; `CONFIG::sound.sdMode`; port map rows per mode); `mode` gains the value `both` (the emulator's decode of both port sets, what the legacy `SD=1` fits). The board Covox of ATM450 / ATM710 / ATM3 / TSL and a newly declared one on PROFI / PROFI3 (`#5F` / `#3F`) are switchable built-ins: `builtin.covox = on | off` (default on with `[SLOTS]`; the legacy `CovoxFB` switches it where the machine has one, else it is a `covox-fb` card) | `CovoxCardsAndTheBoardCovoxComeFromTheSlots`, `SoundriveModeReachesTheCovox` |
 | 6 | `zxnetusb` / `zx-wifi` (`port=ef`); `NetworkManager` keeps the virtual network and its own checks for the runtime `RequestChange` path (SL-6), ATM2IOESP stays a `[NETWORK] Card` value (the INTERNAL connector, a later bus) | `NetworkCardsComeFromTheSlots` |
-| 7 | The 17 shipped `data/configs/*/unreal.ini` carry `[SLOTS]`; the legacy card keys are gone from them (`[NETWORK] Card=NONE` replaced by a comment) | changed (they rewrote the old keys): `emulatortesthelper.cpp` `StageTurboSoundKindIni` (rewrites `ay-socket`), `Config_Test.EveryShippedConfigFitsNeoGSWithGSTypeNGS` (checks the `[SLOTS]` `neogs`), the TSFM suites' `CreateFmEmulator` (accept `ay-socket = tsfm`) |
+| 7 | The 17 shipped `data/configs/*/unreal.ini` carry `[SLOTS]`; the legacy card keys are gone from them (`[NETWORK] Card=NONE` replaced by a comment) | changed (they rewrote the old keys): `emulatortesthelper.cpp` `StageTurboSoundKindIni` (rewrites `ay-socket`), `Config_Test.EveryShippedConfigFitsNeoGSWithGSTypeNGS` (checks the `[SLOTS]` `neogs`; since 2026-10-04 `ShippedConfigsFitTheirGeneralSoundCard`), the TSFM suites' `CreateFmEmulator` (accept `ay-socket = tsfm`) |
 
 **How the decision reaches the devices.** The cards are still built by their owners: `SoundManager` (mixer, AY
 socket, GS, MoonSound, Covox) and `NetworkManager` (virtual network). `SlotManager::Apply` writes the fitted set into
@@ -425,10 +425,20 @@ TTD corpus, CoreGolden and the bench-gate byte counts are part of `core-tests` a
 | pentagon128k, pentagon512k, scorpion, profscorp, ts-conf | `tsfm` | `zxbus.1 neogs`, `zxbus.2 moonsound`, `zxbus.3 soundrive mode=both` | ts-conf: `builtin.covox = on` |
 | atm3 | `ts` | as above | `builtin.covox = on` |
 | atm450, atm710 | `ts` | the same three on `cpu-socket.1-3` behind `atm-cpu-socket-zxbus` (fit `adapter`) | `builtin.covox = on` |
-| spectrum48 (retrofitted socket), spectrum128, spectrum2, spectrum2a, spectrum3 | `tsfm` | `edge.1 neogs` behind `zxbus-to-sinclair-edge`, `fit = unrealistic` | - |
-| zx-diagnostics (48K) | `tsfm` | as spectrum48 + `edge.2 moonsound`, `edge.3 soundrive mode=both` (fit `adapter`) | - |
-| profi, profi3 | `ay` | `profi-bus.1 neogs`, `profi-bus.2 soundrive mode=both`, both `fit = unrealistic` (the SounDrive keeps the shared Covox module in its four-channel form, as before; the Profi decoder does not route the card's ports) | `builtin.covox = on` |
-| sprinter | `ay` | `isa.1 neogs` behind `sprinter-isa-zxbus`, `fit = unrealistic` (reached only through an ISA ZX-bus adapter card, SL-8) | - |
+| spectrum48 (retrofitted socket), spectrum128, spectrum2, spectrum2a, spectrum3 | `tsfm` | none (no GS since 2026-10-04, see below) | - |
+| zx-diagnostics (48K) | `tsfm` | `edge.1 neogs` behind `zxbus-to-sinclair-edge` (`fit = unrealistic`), `edge.2 moonsound`, `edge.3 soundrive mode=both` (fit `adapter`) | - |
+| profi, profi3 | `ay` | `profi-bus.2 soundrive mode=both`, `fit = unrealistic` (no GS since 2026-10-04; the SounDrive keeps the shared Covox module in its four-channel form, as before; the Profi decoder does not route the card's ports) | `builtin.covox = on` |
+| sprinter | `ay` | none (no GS since 2026-10-04; `[ISA] Slot1=ZXBUS` keeps the empty ISA ZX-bus adapter card, SL-8) | - |
+
+**No General Sound on the Sinclair, Profi and Sprinter configs (owner decision 2026-10-04).** After step 7 the
+shipped 48K, 128K, +2, +2A, +3, Profi v5 / v3 and Sprinter configs dropped their NeoGS: on real hardware none of these
+buses takes a ZX-bus card without an adapter, so the card was fitted only as `fit = unrealistic`. Each config keeps a
+comment on how to add one in `[SLOTS]` (with the fit note) and keeps its `[NGS]` section, which `Config` still reads
+for a `neogs` slot. The golden `fitted-devices.txt` was regenerated: on these eight folders only the NeoGS mixer rows
+(`[NeoGS]`, `[NeoGS MP3]`), its ports (`#0033`, `#00B3`, `#00BB`) and its TTD blob (id 12) are gone; every other line
+and every other folder is unchanged. `Config_Test.ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout` and
+`ShippedConfigsFitTheirGeneralSoundCard` (formerly `ShippedConfigsFitNeoGS` / `EveryShippedConfigFitsNeoGSWithGSTypeNGS`)
+list the eight folders.
 
 **Benchmarks.** `BM_PortIn` / `BM_PortOut` / `BM_PortCard`; A = SL-3 final (`bin/core-benchmarks-final`), B = after
 step 2 / after step 6; `UNREAL_NICE=0`, `--benchmark_min_time=0.3s`, six interleaved rounds (A B, B A, ...). The

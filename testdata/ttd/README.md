@@ -172,6 +172,13 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-04 (zx-bus-slots, owner decision): the shipped 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs fit no
+General Sound any more. No fixture was re-recorded: `sprinter_boot` (Sprinter) and `greenberet-load` (128K) were
+recorded with the classic GS, and the tests that load them now fit the recorded card at creation
+(`GeneralSoundFitScope`, `core/tests/_helpers/soundcardscope.h`) instead of switching the shipped card. A re-record
+from the stock app needs the card in the instance's `[SLOTS]` first: the recorders' `switch_personality` changes a
+fitted card but cannot fill an empty slot (until SL-6).
+
 2026-10-04: the whole corpus (all seven fixtures) re-recorded after `ttd-engine` landed on master: the engine's
 peripheral ids moved to 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback; master kept 44-53), and master's
 newer ROM set, Profi `ExtPorts` fingerprint and Sprinter ISA blobs had changed every file. `v1-ci-gate.txt` and

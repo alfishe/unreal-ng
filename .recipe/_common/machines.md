@@ -123,7 +123,7 @@ General Sound and MoonSound are on `master`, selected by config keys:
 
 | Key | Values | Notes |
 |:--|:--|:--|
-| `[SOUND] GSType` | `NGS` (shipped default: NeoGS card), `Z80` (classic GS, Z80 LLE), `LW` (lightweight player), `BASS` (deprecated alias of `LW`), `NONE` | `GS=rom/gs105a.rom` for the Z80 card |
+| `[SOUND] GSType` | `NGS` (NeoGS card: shipped on the clones; the 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs ship none since 2026-10-04), `Z80` (classic GS, Z80 LLE), `LW` (lightweight player), `BASS` (deprecated alias of `LW`), `NONE` | `GS=rom/gs105a.rom` for the Z80 card |
 | `[SOUND] MoonSound` | `1` clones, `0` real Sinclairs | MoonSound (OPL4) engine; clone-only policy |
 
 Check `server.git_branch` / `server.git_commit` before asserting behavior that

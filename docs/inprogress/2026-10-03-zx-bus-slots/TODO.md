@@ -71,8 +71,10 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   (`mode` 1 / 2 / `both` reaches the Covox decode; the board Covox switchable, `builtin.covox`); (6) `zxnetusb` /
   `zx-wifi`; (7) the 17 shipped configs carry `[SLOTS]`. Every step a full green `core-tests` run; the shipped
   machines fit exactly master's devices (`SlotManagerShipped_Test`, golden `testdata/slots/fitted-devices.txt`)
-  - [ ] owner review: the per-slot fit override `<slot>.fit = unrealistic` in configs (shipped Sinclair / Profi /
-    Sprinter NeoGS, Profi SounDrive) and on every translated legacy key; `builtin.<id> = on | off`; the soundrive
+  - [x] owner decision 2026-10-04: no General Sound card in the shipped 48K / 128K / +2 / +2A / +3 / Profi v5, v3 /
+    Sprinter configs (a comment says how to add one); golden regenerated for these eight only ([tdd.md](tdd.md) §8)
+  - [ ] owner review: the per-slot fit override `<slot>.fit = unrealistic` in configs (shipped Profi SounDrive,
+    zx-diagnostics NeoGS) and on every translated legacy key; `builtin.<id> = on | off`; the soundrive
     `mode=both` value (the emulator decode); the retrofitted 48K AY socket; the Profi board Covox declaration
   - [ ] owner review: `SlotManager` decides and reports, the managers still build the cards (CONFIG fields as the
     hand-over); `ICard` objects with the ZX-MultiSound / SL-6

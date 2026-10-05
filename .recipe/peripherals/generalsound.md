@@ -13,7 +13,8 @@ at instance creation) and can be swapped at runtime
 | `NGS` | NeoGS FPGA card (`SoundChip_NeoGS`): SD slot, MP3 decoder, DMA |
 | `NONE` | card absent; the default when the key is missing (an unknown value warns and falls back to `NONE`) |
 
-The shipped configs under `data/configs/` all set `GSType=NGS`. Classic-card
+The shipped clone configs under `data/configs/` fit the NeoGS (`neogs` in `[SLOTS]`); the 48K / 128K / +2 / +2A /
++3, Profi (v5, v3) and Sprinter configs fit no GS since 2026-10-04 (owner decision), a user adds one in `[SLOTS]`. Classic-card
 firmware `[ROM] GS=` defaults to `rom/gs105a.rom` (`gs104.rom` also ships);
 `bootGS.rom` and `rom/neogs/` hold the NeoGS flash image. Other keys:
 `GSVol` (0-8192 ini scale, shipped 8000), `GSReset=1` makes a ZX reset

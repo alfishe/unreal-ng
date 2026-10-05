@@ -11,6 +11,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -304,32 +305,57 @@ TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
     EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::Mono);
 }
 
-TEST_F(Config_Test, ShippedConfigsFitNeoGS)
+namespace
 {
-    // Every shipped model fits the NeoGS card (the runner leaves GS out
-    // unless a scope keeps it)
+/// The shipped configs without a General Sound card. Owner decision 2026-10-04: the standard Sinclair models (48K,
+/// 128K, +2, +2A, +3), the Profi (v5, v3) and the Sprinter ship without the NeoGS / GS card - on real hardware none
+/// of them takes a ZX-bus card without an adapter (the Sinclair edge has no IORQGE, the Profi bus has no known
+/// adapter, the Sprinter needs an ISA ZX-bus adapter), so the card was fitted only as `fit = unrealistic`. A user
+/// still adds one in [SLOTS]. Every other shipped config keeps its NeoGS.
+bool ShipsWithoutGeneralSound(const std::string& folder)
+{
+    static const char* const kFolders[] = {"spectrum48", "spectrum128", "spectrum2", "spectrum2a",
+                                           "spectrum3",  "profi",       "profi3",    "sprinter"};
+    for (const char* name : kFolders)
+    {
+        if (folder == name)
+            return true;
+    }
+    return false;
+}
+} // namespace
+
+TEST_F(Config_Test, ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout)
+{
+    // Every shipped model fits the NeoGS card, except the eight shipped without a GS (ShipsWithoutGeneralSound:
+    // owner decision 2026-10-04), which fit none. (The runner leaves GS out unless a scope keeps it)
     SoundCardScope gs(TestSound::GeneralSound);
     size_t checked = 0;
+    size_t without = 0;
     for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
     {
         const fs::path ini = entry.path() / "unreal.ini";
         if (!fs::exists(ini))
             continue;
+        const std::string name = entry.path().filename().string();
         Config config(_context);
         ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
-        EXPECT_EQ(_context->config.sound.gsTypeKind, GSTypeKind::NGS) << entry.path().filename();
+        const bool none = ShipsWithoutGeneralSound(name);
+        EXPECT_EQ(_context->config.sound.gsTypeKind, none ? GSTypeKind::NONE : GSTypeKind::NGS) << name;
         checked++;
+        without += none ? 1 : 0;
     }
     EXPECT_GE(checked, 14u);
+    EXPECT_EQ(without, 8u) << "every machine of the owner decision has a shipped config";
 }
 
-TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
+TEST_F(Config_Test, ShippedConfigsFitTheirGeneralSoundCard)
 {
-    // Each shipped config with its General Sound card set to NeoGS: the
-    // parsed config selects NeoGS, and a SoundManager built from it fits the
-    // card under the mixer name "NeoGS" with its MP3 source. (ZX-bus slots
-    // SL-4 step 7: the card is a [SLOTS] entry, no longer [SOUND] GSType=;
-    // every shipped config names neogs there, so the copy is the shipped file)
+    // Each shipped config as shipped: the ones with a NeoGS name it in [SLOTS], the parsed config selects NeoGS, and
+    // a SoundManager built from it fits the card under the mixer name "NeoGS" with its MP3 source. The eight shipped
+    // without a GS (ShipsWithoutGeneralSound, owner decision 2026-10-04) name no GS card in [SLOTS] and the
+    // SoundManager fits no GS source at all. (ZX-bus slots SL-4 step 7: the card is a [SLOTS] entry, no longer
+    // [SOUND] GSType=, so the copy is the shipped file)
     SoundCardScope gs(TestSound::GeneralSound);
     for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
     {
@@ -337,12 +363,34 @@ TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
         if (!fs::exists(ini))
             continue;
         const std::string name = entry.path().filename().string();
+        const bool none = ShipsWithoutGeneralSound(name);
 
         std::ifstream in(ini, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         const size_t slotsSection = text.find("\n[SLOTS]");
         ASSERT_NE(slotsSection, std::string::npos) << name;
-        ASSERT_NE(text.find(" = neogs", slotsSection), std::string::npos) << name;
+        const size_t slotsEnd = text.find("\n[", slotsSection + 1);
+        const std::string slots = text.substr(slotsSection, slotsEnd - slotsSection);
+        if (none)
+        {
+            // A card entry is a "<slot> = <card>" line; the comments only mention how to add one
+            std::istringstream lines(slots);
+            for (std::string line; std::getline(lines, line);)
+            {
+                line = line.substr(0, line.find(';'));
+                const size_t eq = line.find('=');
+                if (eq == std::string::npos)
+                    continue;
+                std::string card = line.substr(eq + 1);
+                card.erase(0, card.find_first_not_of(" \t"));
+                card.erase(card.find_last_not_of(" \t\r") + 1);
+                EXPECT_TRUE(card != "neogs" && card != "gs" && card != "gs-lw") << name << ": " << line;
+            }
+        }
+        else
+        {
+            ASSERT_NE(slots.find(" = neogs"), std::string::npos) << name;
+        }
 
         // Written next to the original so relative paths resolve the same way
         const fs::path copy = entry.path() / "unreal-ngs-test.ini";
@@ -354,11 +402,11 @@ TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
         const bool loaded = config.LoadConfigFile(copy.string());
         fs::remove(copy);
         ASSERT_TRUE(loaded) << name;
-        EXPECT_EQ(_context->config.sound.gsTypeKind, GSTypeKind::NGS) << name;
+        EXPECT_EQ(_context->config.sound.gsTypeKind, none ? GSTypeKind::NONE : GSTypeKind::NGS) << name;
         EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software) << name;
 
         SoundManager sm(_context);
-        EXPECT_EQ(sm.fittedGeneralSoundKind(), GSTypeKind::NGS) << name;
+        EXPECT_EQ(sm.fittedGeneralSoundKind(), none ? GSTypeKind::NONE : GSTypeKind::NGS) << name;
         std::string gsName;
         bool mp3 = false;
         for (const AudioDeviceInfo& d : sm.devices())
@@ -367,8 +415,8 @@ TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
                 gsName = d.name;
             mp3 |= d.type == AudioSourceType::GeneralSoundMp3;
         }
-        EXPECT_EQ(gsName, "NeoGS") << name;
-        EXPECT_TRUE(mp3) << name;
+        EXPECT_EQ(gsName, none ? "" : "NeoGS") << name;
+        EXPECT_EQ(mp3, !none) << name;
     }
 }
 

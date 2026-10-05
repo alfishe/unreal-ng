@@ -305,6 +305,9 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
             // TSFM in the TurboSound slot where the helper can stage it (it
             // finds no config folder for the ATM models and machine variants:
             // those keep their own slot)
+            // The card fitted at creation: several models ship without a GS (owner decision 2026-10-04), and a
+            // switch cannot fill an empty slot
+            GeneralSoundFitScope fit(gs);
             Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(model, TurboSoundKind::FM);
             if (emulator == nullptr)
                 emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);

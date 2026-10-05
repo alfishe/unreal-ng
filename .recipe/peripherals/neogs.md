@@ -28,11 +28,13 @@ MCP actions in [mcp-tools.cpp](../../core/automation/mcp/src/mcp-tools.cpp)
 
 ## Is the card fitted?
 
-The card kind comes from `[SOUND] GSType=` at instance creation. Every
-shipped config under `data/configs/` sets `GSType=NGS` (`NGS`, `Z80`, `LW`,
-`BASS`, `NONE`; the table is in [generalsound.md](generalsound.md)). A config
-that leaves the key out gets `NONE` — that is the parser default, the
-shipped default is `NGS`. The card's own settings sit in the `[NGS]` block of
+The card kind comes from `[SOUND] GSType=` (or a `neogs` / `gs` / `gs-lw` card
+in `[SLOTS]`) at instance creation (`NGS`, `Z80`, `LW`, `BASS`, `NONE`; the
+table is in [generalsound.md](generalsound.md)). The shipped clone configs
+fit the NeoGS; the 48K / 128K / +2 / +2A / +3, Profi (v5, v3) and Sprinter
+configs fit none since 2026-10-04 (owner decision: none of their buses takes
+a ZX-bus card without an adapter). A config that leaves the key out gets
+`NONE` — that is the parser default. The card's own settings sit in the `[NGS]` block of
 the same `unreal.ini`:
 
 | Key | Values (shipped first) | Meaning |

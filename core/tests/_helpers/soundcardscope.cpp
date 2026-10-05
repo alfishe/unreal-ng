@@ -10,6 +10,9 @@ namespace
 /// One counter per TestSound bit (scopes nest and overlap)
 std::atomic<int> g_activeScopes[3]{};
 
+/// GeneralSoundFitScope's kind (GSTypeKind::NONE = 0: as configured)
+std::atomic<uint8_t> g_fitGeneralSound{0};
+
 template <typename F>
 void ForEachDevice(TestSound devices, F&& f)
 {
@@ -59,9 +62,26 @@ void SoundCardScope::InstallPolicy()
         // Devices a test asked for keep the configured value
         if (!Active(TestSound::GeneralSound))
             config.sound.gsTypeKind = GSTypeKind::NONE;
+        if (GeneralSoundFitScope::Kind() != GSTypeKind::NONE)
+            config.sound.gsTypeKind = GeneralSoundFitScope::Kind();
         if (!Active(TestSound::MoonSound))
             config.sound.moonsound = 0;
         if (!Active(TestSound::TurboSound))
             config.sound.turboSoundKind = TurboSoundKind::None;
     });
+}
+
+GeneralSoundFitScope::GeneralSoundFitScope(GSTypeKind kind)
+    : _previous(g_fitGeneralSound.exchange(static_cast<uint8_t>(kind), std::memory_order_acq_rel))
+{
+}
+
+GeneralSoundFitScope::~GeneralSoundFitScope()
+{
+    g_fitGeneralSound.store(_previous, std::memory_order_release);
+}
+
+GSTypeKind GeneralSoundFitScope::Kind()
+{
+    return static_cast<GSTypeKind>(g_fitGeneralSound.load(std::memory_order_acquire));
 }

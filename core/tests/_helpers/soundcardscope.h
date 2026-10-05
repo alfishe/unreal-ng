@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+enum class GSTypeKind : uint8_t;
+
 /// Sound devices the test runner leaves out of every machine by default
 enum class TestSound : uint8_t
 {
@@ -53,4 +55,27 @@ public:
 
 private:
     TestSound _devices;
+};
+
+/// Fits a General Sound card of the given kind in every machine created while it lives, whatever the config says.
+///
+/// For tests that load a recording made with a card on a model whose shipped config has none (owner decision
+/// 2026-10-04: the 48K, 128K, +2, +2A, +3, Profi v5 / v3 and Sprinter configs ship without a GS): the card has to be
+/// there at creation, as a user's [SLOTS] entry would put it - a personality switch (FitGeneralSoundCard) changes a
+/// fitted card but cannot fill an empty slot. The kind goes into the config field the slot set is translated from;
+/// NONE leaves the config alone. Implies a SoundCardScope for the GS.
+class GeneralSoundFitScope
+{
+public:
+    explicit GeneralSoundFitScope(GSTypeKind kind);
+    ~GeneralSoundFitScope();
+
+    GeneralSoundFitScope(const GeneralSoundFitScope&) = delete;
+    GeneralSoundFitScope& operator=(const GeneralSoundFitScope&) = delete;
+
+    /// The kind machines created now are fitted with (NONE: as configured)
+    static GSTypeKind Kind();
+
+private:
+    uint8_t _previous;
 };

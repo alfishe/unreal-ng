@@ -20,19 +20,20 @@
 # Device blob and file rows updated 2026-10-02 (TTD state registry gap 4): the Wd1793Context blob (id 35) on every Beta machine, 52 bytes per capture with its header; nothing else moved.
 # Journal and file rows updated 2026-10-03 (D40, journal segments): port OUTs leave the write journal (the port journal has them), and the file gains the journal segment table (20 bytes for one segment).
 # All rows 2026-10-04 (ttd-engine landed on master): exported again after the merge - master's device blobs (Profi, Sprinter ISA, ZiFi) and the engine's bm2_work_device_state / bm2_work_scanned_* / bm3_device_regions rows; blob rows move by a few bytes per capture.
+# 48K/idle device blob, device state and file rows updated 2026-10-04 (zx-bus-slots, owner decision): the shipped 48K config fits no NeoGS any more - its blob (id 12) leaves every capture; nothing else moved.
 48K/idle bm2_work_compress_calls_opf 3.966667 0
 48K/idle bm2_work_compress_input_bpf 16247.466667 0
 48K/idle bm2_work_decoded_opf 0.000000 0
 48K/idle bm2_work_delta_base_bpf 98304.000000 0
-48K/idle bm2_work_device_blobs_bpf 525.966667 0
-48K/idle bm2_work_device_state_bpf 24000.000000 0
+48K/idle bm2_work_device_blobs_bpf 337.016667 0
+48K/idle bm2_work_device_state_bpf 2464.000000 0
 48K/idle bm2_work_pages_visited_opf 6.000000 0
 48K/idle bm2_work_scanned_bpf 32768.000000 0
 48K/idle bm2_work_scanned_ram_bpf 0.000000 0
 48K/idle bm2_work_scanned_v1_lacks_bpf 0.000000 0
 48K/idle bm3_checkpoint_core_bpf 170.800000 0
 48K/idle bm3_coverage_bpf 52847.333333 25
-48K/idle bm3_device_blobs_bpf 534.600000 0
+48K/idle bm3_device_blobs_bpf 342.550000 0
 48K/idle bm3_device_regions_bpf 0.000000 0
 48K/idle bm3_device_regions_v1_lacks_bpf 0.000000 0
 48K/idle bm3_input_journal_bpf 0.000000 0
@@ -43,8 +44,8 @@
 48K/idle bm3_write_journal_bpf 21704.400000 0
 48K/idle bm4_resident_bpf 80450.950000 25
 48K/idle bm4_resident_bytes 4827057.000000 25
-48K/idle bm7_file_bpf 1281.583333 0
-48K/idle bm7_file_bytes 76895.000000 0
+48K/idle bm7_file_bpf 1104.816667 0
+48K/idle bm7_file_bytes 66289.000000 0
 48K/idle checkpoints 61.000000 0
 48K/idle frames 60.000000 0
 ATM3/idle bm2_work_compress_calls_opf 8.216667 0

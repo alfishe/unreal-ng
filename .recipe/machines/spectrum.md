@@ -76,8 +76,10 @@ inspect_state {"aspects":["contention"]}
 - **Card policy boundary**: the shipped Sinclair configs (`spectrum48`,
   `spectrum128`, `spectrum2`, `spectrum2a`, `spectrum3`) set `MoonSound=0`
   (a real Sinclair never had it; the Pentagon and Scorpion configs keep
-  `MoonSound=1`) and ship `GSType=NGS` like every model (NeoGS is the shipped
-  General Sound card on every model). `audio_gs` is a real `inspect_state`
+  `MoonSound=1`) and, since 2026-10-04 (owner decision), fit no General Sound
+  card either: no ZX-bus card works on the Sinclair edge connector. One can be
+  added in `[SLOTS]` (`edge.1 = neogs`, `edge.1.adapter = zxbus-to-sinclair-edge`,
+  `edge.1.fit = unrealistic`). `audio_gs` is a real `inspect_state`
   aspect (General Sound mailbox flags, MPAG page, DAC channels); check the
   instance's actual config values rather than trusting the model name.
 
