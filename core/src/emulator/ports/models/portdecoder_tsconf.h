@@ -144,6 +144,9 @@ public:
     TsConfState& GetState() { return _ts; }
     const TsConfState& GetState() const { return _ts; }
     TsConfInterrupts& GetInterrupts() { return _interrupts; }
+    /// The NMI button: TS-Conf generates no NMI - its znmi module is wired to nothing and /NMI floats
+    /// ([V] top.v:208,1111-1123 `nmi_n = 1'bZ`). The board takes the press and does nothing
+    bool RequestBoardNmi() override { return true; }
     TsConfEngine& GetEngine() { return _engine; }
     TsConfDma& GetDma() { return _dma; }
     /// Bring the engine (line starts, DRAM budget, DMA) up to the current CPU T-state

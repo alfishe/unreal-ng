@@ -475,3 +475,11 @@ TEST_F(PortDecoder_TSConf_Test, PS21_HostKeysReachTheAvrPs2Log)
     Out(0xDFF7, 0xF0);
     EXPECT_EQ(In(0xBFF7), 0x1C) << "set 2 make code of A";
 }
+
+/// NMI: TS-Conf has no NMI source ([V] top.v: znmi's ports are commented out, nmi_n = 1'bZ), so the machine's NMI
+/// button does nothing; it pulsed /NMI as on a Spectrum (TS-Conf audit, interrupts row 41)
+TEST_F(PortDecoder_TSConf_Test, NmiButtonDoesNothing)
+{
+    EXPECT_TRUE(_decoder->RequestBoardNmi()) << "the board takes the press";
+    EXPECT_FALSE(_z80->IsNmiPending()) << "and starts no NMI";
+}
