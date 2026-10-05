@@ -258,6 +258,16 @@ void SprinterMemory::AcceleratorWrite(uint16_t addr, uint8_t value)
     OnWrite(addr, value);
 }
 
+void SprinterMemory::RefreshZxShadow(uint8_t window)
+{
+    window &= 3;
+    if (_bank_mode[window] != BANK_RAM || _action[window] != BankAction::Plain || !_pld)
+        return;
+    const uint8_t* bytes = _bank_read[window];
+    for (uint32_t i = 0; i < PAGE_SIZE; ++i)
+        OnWrite(static_cast<uint16_t>((static_cast<uint32_t>(window) << 14) | i), bytes[i]);
+}
+
 void SprinterMemory::WriteIntercept::onWrite(uint16_t addr, uint8_t value, [[maybe_unused]] bool romPaged)
 {
     _owner.OnWrite(addr, value);

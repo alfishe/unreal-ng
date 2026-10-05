@@ -48,9 +48,17 @@ bool LoaderZ80::load()
         {
             if (planSnapshot())
             {
-                commitFromStage();
+                if (_decision.action == snapshot::Decision::Action::Take)
+                {
+                    result = _decision.Commit(_image, *_context, _report);
+                    freeStagingMemory();
+                }
+                else
+                {
+                    commitFromStage();
 
-                result = true;
+                    result = true;
+                }
             }
             else
             {
@@ -175,11 +183,20 @@ snapshot::Image LoaderZ80::BuildImage() const
     return image;
 }
 
+bool LoaderZ80::Stage()
+{
+    if (!validate() || !stageLoad())
+        return false;
+    _image = BuildImage();
+    return true;
+}
+
 bool LoaderZ80::planSnapshot()
 {
     _image = BuildImage();
     _report = snapshot::Report();
-    return snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    _decision = snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    return _decision.Proceeds();
 }
 
 bool LoaderZ80::save()

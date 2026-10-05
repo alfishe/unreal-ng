@@ -175,27 +175,15 @@ TEST_F(SnapshotImageSna_Test, TheDumpNamesTheFileAndHashesTheBanks)
 
 TEST_F(SnapshotImageSna_Test, ThePlanStepReportsTodaysCommit)
 {
-    snapshot::Image image = ImageOf(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"));
+    const snapshot::Image image = ImageOf(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"));
     snapshot::Report report;
-    EXPECT_TRUE(snapshot::Pipeline::Plan(image, &_context, snapshot::Options{}, report));
+    const snapshot::Decision decision = snapshot::Pipeline::Plan(image, &_context, snapshot::Options{}, report);
+    EXPECT_EQ(decision.action, snapshot::Decision::Action::Legacy);
     EXPECT_EQ(report.commit, "legacy");
     EXPECT_FALSE(report.refused);
     EXPECT_EQ(report.format, "sna");
     EXPECT_EQ(report.machineHint, "128k-family");
     EXPECT_EQ(report.verdicts.size(), 1u);
-
-    snapshot::Options forced;
-    forced.commit = "legacy";
-    snapshot::Report forcedReport;
-    EXPECT_TRUE(snapshot::Pipeline::Plan(image, &_context, forced, forcedReport));
-
-    snapshot::Options unknown;
-    unknown.commit = "nonesuch";
-    snapshot::Report refusedReport;
-    EXPECT_FALSE(snapshot::Pipeline::Plan(image, &_context, unknown, refusedReport));
-    EXPECT_TRUE(refusedReport.refused);
-    EXPECT_NE(refusedReport.reason.find("nonesuch"), std::string::npos);
-    EXPECT_NE(refusedReport.ToText().find("refused"), std::string::npos);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

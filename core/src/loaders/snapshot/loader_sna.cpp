@@ -62,7 +62,9 @@ bool LoaderSNA::load()
         {
             if (planSnapshot())
             {
-                result = applySnapshotFromStaging();
+                result = _decision.action == snapshot::Decision::Action::Take
+                             ? _decision.Commit(_image, *_context, _report)
+                             : applySnapshotFromStaging();
             }
         }
     }
@@ -139,11 +141,20 @@ snapshot::Image LoaderSNA::BuildImage() const
     return image;
 }
 
+bool LoaderSNA::Stage()
+{
+    if (!validate() || !loadToStaging())
+        return false;
+    _image = BuildImage();
+    return true;
+}
+
 bool LoaderSNA::planSnapshot()
 {
     _image = BuildImage();
     _report = snapshot::Report();
-    return snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    _decision = snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    return _decision.Proceeds();
 }
 
 /// endregion </Public methods>

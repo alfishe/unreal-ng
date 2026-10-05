@@ -185,15 +185,44 @@ bool LoaderSPG::load()
     // Snapshot pipeline: the image of the file and the plan step, then today's commit
     _snapshotImage = BuildSnapshotImage(_image, _path);
     _snapshotReport = snapshot::Report();
-    if (!snapshot::Pipeline::Plan(_snapshotImage, _context, _options, _snapshotReport))
+    _decision = snapshot::Pipeline::Plan(_snapshotImage, _context, _options, _snapshotReport);
+    if (!_decision.Proceeds())
     {
         _error = _snapshotReport.reason;
         return false;
     }
-    const bool committed = Commit(_context, _image, _error);
+    const bool committed = _decision.action == snapshot::Decision::Action::Take
+                               ? _decision.Commit(_snapshotImage, *_context, _snapshotReport)
+                               : Commit(_context, _image, _error);
     if (!committed)
-        _snapshotReport.Refuse(_error);
+    {
+        if (_error.empty())
+            _error = _snapshotReport.reason;
+        if (!_snapshotReport.refused)
+            _snapshotReport.Refuse(_error);
+    }
     return committed;
+}
+
+bool LoaderSPG::ReadSnapshotImage(const std::string& path, snapshot::Image& image, std::string& error)
+{
+    if (!FileHelper::FileExists(path))
+    {
+        error = "file not found: " + path;
+        return false;
+    }
+    const size_t size = FileHelper::GetFileSize(path);
+    std::vector<uint8_t> data(size, 0);
+    if (size && FileHelper::ReadFileToBuffer(path, data.data(), size) != size)
+    {
+        error = "cannot read " + path;
+        return false;
+    }
+    Image spg;
+    if (!Parse(data, spg, error))
+        return false;
+    image = BuildSnapshotImage(spg, path);
+    return true;
 }
 
 snapshot::Image LoaderSPG::BuildSnapshotImage(const Image& spg, const std::string& path)

@@ -4,6 +4,7 @@
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_sprinter.h"
+#include "sprinter/sprinterzxsnapshot.h"
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
 #include "emulator/io/sprinter/isa/cards/isazxbusadapter.h"
@@ -76,6 +77,9 @@ void ReleaseInstanceNumber(uint8_t number)
 
 PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecoder(context)
 {
+    // The machine's snapshot policy: a snapshot goes into the Spectrum mode through the cell table (PLAN #84)
+    SetSnapshotPolicy(&SprinterZxSnapshot::Instance());
+
     _rtc.SetCenturyRegister(0x32);
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
     _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
@@ -1057,6 +1061,34 @@ uint8_t PortDecoder_Sprinter::ComputePg3(const SprinterPldState& pld)
     return static_cast<uint8_t>((((pld.pn & 0x80) ? 0 : 1) << 5) | 0x10 | (extended ? 0x08 : 0) | (pld.pn & 0x07));
 }
 
+void PortDecoder_Sprinter::Latch7ffd(uint16_t port, uint8_t value)
+{
+    CatchUpScreen();  // bit 3: the Spectrum screen (font / attribute block) the beam reads
+    const uint8_t before = _pld.pn;
+    _pld.pn = value;
+    if (!(_pld.cnf & 0x80))
+        _pld.pn &= 0x3F;  // CNF_PN[7..6]_CLEAN
+    if (!(_pld.cnf & 0x80) && (_pld.cnf & 0x20))
+        _pld.pn &= 0xDF;  // CNF_PN[5]_CLEAN
+    if (_pld.cnf & 0x20)
+        _pld.pn &= 0xE0;  // CNF_PN[4..0]_CLEAN
+    if (JournalOn() && (value != _journalLast7ffd || before != _pld.pn))
+    {
+        _journalLast7ffd = value;
+        JournalEvent("port_7ffd", _pc, port, value, before,
+                     StringHelper::Format("#7FFD <- #%02X via port #%04X: latch #%02X -> #%02X%s", value, port, before,
+                                          _pld.pn, _pld.pn != value ? " (CNF clean rules dropped bits)" : ""));
+    }
+    UpdateBanks();
+}
+
+void PortDecoder_Sprinter::SetPagingFromSnapshot(uint8_t value, uint16_t pc)
+{
+    // The latch, not a port write: a program that locked its paging (PN5) must not keep a snapshot from restoring it
+    _pc = pc;
+    Latch7ffd(0x7FFD, value);
+}
+
 void PortDecoder_Sprinter::UpdateBanks()
 {
     _pld.pg3 = ComputePg3(_pld);
@@ -1398,26 +1430,8 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         }
         case SprinterCode::Port7FFD:
         case 0xC9:
-        {
-            CatchUpScreen();  // bit 3: the Spectrum screen (font / attribute block) the beam reads
-            const uint8_t before = _pld.pn;
-            _pld.pn = value;
-            if (!(_pld.cnf & 0x80))
-                _pld.pn &= 0x3F;  // CNF_PN[7..6]_CLEAN
-            if (!(_pld.cnf & 0x80) && (_pld.cnf & 0x20))
-                _pld.pn &= 0xDF;  // CNF_PN[5]_CLEAN
-            if (_pld.cnf & 0x20)
-                _pld.pn &= 0xE0;  // CNF_PN[4..0]_CLEAN
-            if (JournalOn() && (value != _journalLast7ffd || before != _pld.pn))
-            {
-                _journalLast7ffd = value;
-                JournalEvent("port_7ffd", _pc, port, value, before,
-                             StringHelper::Format("#7FFD <- #%02X via port #%04X: latch #%02X -> #%02X%s", value, port, before,
-                                                  _pld.pn, _pld.pn != value ? " (CNF clean rules dropped bits)" : ""));
-            }
-            UpdateBanks();
+            Latch7ffd(port, value);
             return;
-        }
         case SprinterCode::Border:
             CatchUpScreenToBorderLatch();  // the old color up to /IOWR rising (ScreenSprinter::CatchUpToBorderLatch)
             Default_Port_FE_Out(port, value, _pc);

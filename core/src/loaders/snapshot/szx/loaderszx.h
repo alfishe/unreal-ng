@@ -51,6 +51,8 @@ public:
     const snapshot::Report& GetSnapshotReport() const { return _snapshotReport; }
     /// A parsed stage as a SnapshotImage; nothing touches the machine
     static snapshot::Image BuildImage(const szx::Stage& stage, const std::string& path);
+    /// Read a file and build its image, without a machine or a commit (inspect)
+    static bool ReadImage(const std::string& path, snapshot::Image& image, std::string& error);
     /// SZX's per-block outcomes and warnings onto the pipeline's report (the two Outcome enums differ)
     static void AppendReport(const szx::Report& from, snapshot::Report& to);
 
@@ -85,4 +87,5 @@ private:
     snapshot::Options _options;
     snapshot::Image _image;
     snapshot::Report _snapshotReport;
+    snapshot::Decision _decision;
 };

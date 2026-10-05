@@ -11,9 +11,9 @@ Status: proposal written 2026-10-02 (documents only, no code). Open questions Q1
 |:--|:--|:--|:--|
 | P0 | Golden commit digests for every SNA / Z80 / SZX fixture × creatable model on `master`; pin the suspected defects (Pentagon 1024 lock, ATM / TS-Conf after a cold reset, 128K on 48K) as current behavior | S-M | **done 2026-10-05** (branch `snapshot-pipeline`): `testdata/loaders/golden/commit-digests.txt` (884 rows: 52 fixtures × 17 machines; ram / ports / cpu / ay / misc hashes), `core/tests/loaders/snapshot/snapshotgolden_test.cpp` (one test per machine, ~0.3 s each), helper `_helpers/snapshotdigest.{h,cpp}`; defects pinned in `SnapshotDefects_Test`, see "P0 findings" |
 | P1 | `SnapshotImage` + `SnapshotReport`; parsers (SNA, Z80, SZX, SPG, ZXP) fill the image; pipeline inside `LoadSnapshotStaged`; `LegacyCommit` = today's code | M | **done 2026-10-05** (branch `snapshot-pipeline`): `snapshotimage` / `snapshotreport` / `snapshotpipeline` in `core/src/loaders/snapshot/`; each loader builds its image from the staging and calls `snapshot::Pipeline::Plan` before its unchanged commit (SNA, Z80, SZX, SPG; ZXP builds one image per module, its group-level plan waits for Q7); `Emulator::LastSnapshotReport()` on every load path; SP-2 in `snapshotimage_test.cpp` (oracles: the raw bytes, libspectrum, the mhmt-verified SPG hashes); the P0 table is unchanged |
-| P2 | Plan step, `ISnapshotCommitPolicy`, named-policy registry, `GetSnapshotPolicy()` on the port decoder | S | open |
-| P3 | `commit` option + `inspect` on WebAPI / OpenAPI, MCP, CLI, Lua, Python; recipe `.recipe/media/load-snapshot.md` | S-M | open |
-| P4 | Sprinter ZX commit (= Sprinter Z5): cell-table mapping, refusal outside ZX mode, T-ZX-11 / T-ZX-12 | M | open |
+| P2 | Plan step, `ISnapshotCommitPolicy`, named-policy registry, `GetSnapshotPolicy()` on the port decoder | S | **done 2026-10-05** (branch `snapshot-pipeline`): `snapshotpolicy.{h,cpp}` (`Verdict` Decline / Take / Refuse, `ISnapshotCommitPolicy`, `SnapshotPolicies` registry); `Pipeline::Plan` returns a `Decision` (Legacy / Take / Refuse) in the proposal's order: the caller's name (unknown = refused with the known names; a named policy that declines = refused, never a silent fallback), the machine's policy, [fit checks: P5], the legacy commit; `PortDecoder::GetSnapshotPolicy()` (+ `SetSnapshotPolicy`), nullptr everywhere; every loader commits through the policy on Take; SP-4 with fake policies (`SnapshotPlan_Test`) |
+| P3 | `commit` option + `inspect` on WebAPI / OpenAPI, MCP, CLI, Lua, Python; recipe `.recipe/media/load-snapshot.md` | S-M | **done 2026-10-05** (branch `snapshot-pipeline`): `Emulator::LoadSnapshot(path, reportedPath, options)`, `InspectSnapshot`, `SnapshotLauncher` (`commit`, `report`, `Inspect`); WebAPI `snapshot/load {commit}` + `report`, `POST snapshot/inspect`, `info.report` (+ OpenAPI); MCP `load_software {commit, inspect}`; CLI `snapshot load --commit`, `snapshot inspect`, `snapshot info`; Lua `snapshot_load(path, commit)`, `snapshot_inspect`, `snapshot_report`; Python `snapshot_load(..., commit)`, `snapshot_inspect`, `snapshot_report` (module and `Emulator`); Qt shows a refusal's reason; checked live on the WebAPI, the CLI and Lua (Python is off in this build: its translation unit was syntax-checked against pybind11) |
+| P4 | Sprinter ZX commit (= Sprinter Z5): cell-table mapping, refusal outside ZX mode, T-ZX-11 / T-ZX-12 | M | **done 2026-10-05** (branch `snapshot-pipeline`): `SprinterZxSnapshot` (policy `sprinter-zx`, `Instance()` handed out by `PortDecoder_Sprinter` via `SetSnapshotPolicy`, and registered by name); `SprinterMemory::RefreshZxShadow`, `PortDecoder_Sprinter::SetPagingFromSnapshot` (the `#7FFD` latch extracted as `Latch7ffd`); the 38 SPRINTER golden rows that loaded now say `refused` (a fresh Sprinter is in no mode), the other 16 machines unchanged |
 | P5 | Fit checks and machine policies after the owner's answers: 128K on 48K (Q1), 48K on 128K (Q2), Pentagon 1024 compatibility, ATM family, TS-Conf | M | open |
 | P6 | Save path: capture → image → writer; 48K SNA writer stops touching live RAM | M | open |
 | P7 | One model-switch orchestrator for SZX / SPG / RZX; Qt uses it (Q6) | S | open |
@@ -55,3 +55,28 @@ review the diff, list the changed rows in the commit message.
 - SZX's `Outcome` and the report's differ in numbering: `LoaderSZX::AppendReport` is the one place that maps them.
 - Open for P2: the plan step takes `Options` (`commit`) and returns legacy or a refusal for an unknown name; the machine
   policy and the registry come next.
+
+## P2 / P3 notes (2026-10-05)
+
+- **No "transform" verdict yet.** A rewritten image only helps once the legacy commits read the image (P9), so the
+  interface has Decline / Take / Refuse only; the first policy that needs a transform (P5) brings it. The proposal's
+  `48k-on-128k` example assumed commits that read the image: it becomes a policy that Takes, or waits for P9.
+- **A policy that Takes writes the whole machine**: registers, memory, ports, border, screen redraw, the HALT detection the
+  legacy commits do. A shared "finish" helper for that comes with the first real policy (P4).
+- **ZX-Poly** still has no plan hook (group-level, Q7); `.zxp` loads as before.
+- **Inspect does not run the format's own model check** (an SZX saved on another model is only refused at commit), so
+  `would_load` can be true for it; `image.machine_hint` tells a script what the file was made on.
+
+## P4 notes (2026-10-05)
+
+- **The cell table, not "pages 0-7".** In BIOS 3.06's own ZX mode the cells `#F0-#F7` are `00 ED 02 EF F0 05 EE F1`; the
+  proposal's "SNA / Z80 write physical pages 0-7" is right at the DSS prompt and half right in a mode (banks 0, 2, 5 land
+  where the cells put them by accident). The test compares against the file's own bytes bank by bank.
+- **Windows 1 and 2** (cells `#E9` / `#EA`) show banks 5 and 2; if a mode ever made them differ from `#F5` / `#F2` the
+  commit writes both pages. They agree in every mode seen so far.
+- **The Spectrum screen shadow** is brought in step by replaying the write intercept over the page (bank 5 in window 1,
+  bank 7 in window 3 after `#7FFD` selects it); a mutation test (no replay) fails on the first screen byte.
+- **48K snapshot in a 128K mode** gets `#7FFD` = `#30` here (the Z80 loader's rule). Q2 (one shared rule for every machine)
+  is still open for the others.
+- **Not done:** the TR-DOS paging flag of an SNA 128 (the Sprinter follows its M1 trap rule), the interrupt shadow after
+  EI, and a snapshot taken on the Sprinter (saving needs TTD, out of scope in the ZX-mode design).

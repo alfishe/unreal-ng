@@ -64,6 +64,8 @@ public:
     const snapshot::Report& GetSnapshotReport() const { return _snapshotReport; }
     /// A parsed SPG as a SnapshotImage (memory model Physical); nothing touches the machine
     static snapshot::Image BuildSnapshotImage(const Image& image, const std::string& path);
+    /// Read a file and build its image, without a machine or a commit (inspect)
+    static bool ReadSnapshotImage(const std::string& path, snapshot::Image& image, std::string& error);
 
     /// Is this file an SPG we can load (the header only)? Opening one on another
     /// machine switches to the TS-Conf model first (the Qt window does, as for SZX)
@@ -87,4 +89,5 @@ private:
     snapshot::Options _options;
     snapshot::Image _snapshotImage;
     snapshot::Report _snapshotReport;
+    snapshot::Decision _decision;
 };

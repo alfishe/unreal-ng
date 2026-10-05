@@ -106,17 +106,43 @@ bool LoaderSZX::load()
     // Snapshot pipeline: the image of the file and the plan step, then today's commit
     _image = BuildImage(stage, _path);
     _snapshotReport = snapshot::Report();
-    if (!snapshot::Pipeline::Plan(_image, _context, _options, _snapshotReport))
+    _decision = snapshot::Pipeline::Plan(_image, _context, _options, _snapshotReport);
+    if (!_decision.Proceeds())
     {
         _error = _snapshotReport.reason;
         return false;
     }
-    const bool committed = Commit(_context, stage, _report, _error);
+    const bool committed = _decision.action == snapshot::Decision::Action::Take
+                               ? _decision.Commit(_image, *_context, _snapshotReport)
+                               : Commit(_context, stage, _report, _error);
+    if (!committed && _error.empty())
+        _error = _snapshotReport.reason;
     // SZX's own per-block outcomes ride on the pipeline's report
     AppendReport(_report, _snapshotReport);
     if (!committed)
         _snapshotReport.Refuse(_error);
     return committed;
+}
+
+bool LoaderSZX::ReadImage(const std::string& path, snapshot::Image& image, std::string& error)
+{
+    const size_t size = FileHelper::FileExists(path) ? FileHelper::GetFileSize(path) : 0;
+    if (size == 0)
+    {
+        error = "cannot read '" + path + "'";
+        return false;
+    }
+    std::vector<uint8_t> data(size);
+    if (FileHelper::ReadFileToBuffer(path, data.data(), size) != size)
+    {
+        error = "cannot read '" + path + "'";
+        return false;
+    }
+    Stage stage;
+    if (!SzxReader::Parse(data.data(), data.size(), stage, error))
+        return false;
+    image = BuildImage(stage, path);
+    return true;
 }
 
 void LoaderSZX::AppendReport(const Report& from, snapshot::Report& to)

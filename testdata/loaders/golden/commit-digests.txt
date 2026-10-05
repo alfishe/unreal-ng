@@ -833,33 +833,33 @@ z80/libspectrum/synth-plus2a.z80@TSL	ram=68bc9b4a ports=6d47f12c cpu=9bb72793 ay
 z80/libspectrum/synth-plus3.z80@TSL	ram=68bc9b4a ports=6d47f12c cpu=9bb72793 ay=00000000 misc=53f4a620
 z80/libspectrum/synth-scorpion.z80@TSL	ram=57afdb4a ports=6d47f12c cpu=ad69944d ay=00000000 misc=53f4a620
 z80/newbench.z80@TSL	ram=26581250 ports=0e5df37c cpu=4f0500f7 ay=00000000 misc=53fa6c72
-sna/7threality.sna@SPRINTER	ram=8059d771 ports=79db723d cpu=d648104a ay=00000000 misc=540315ed
-sna/Dizzy X.sna@SPRINTER	ram=0ea58029 ports=a63c295b cpu=234fd572 ay=00000000 misc=540315ed
-sna/Dizzy Y 2.sna@SPRINTER	ram=94b8ee94 ports=2fdd22cb cpu=64aa0a84 ay=00000000 misc=540315ed
-sna/Dizzy Y.sna@SPRINTER	ram=ca6c79c9 ports=a63c295b cpu=71c833c0 ay=00000000 misc=540315ed
-sna/IntTest+.sna@SPRINTER	ram=684de5ec ports=a63c295b cpu=3864cebd ay=00000000 misc=540315ed
-sna/Timing_Tests-48k_v1.0.sna@SPRINTER	ram=d27f8346 ports=a63c295b cpu=8da6d4e8 ay=00000000 misc=540315ed
-sna/across-the-edge-second.sna@SPRINTER	ram=91804440 ports=8d6d5ded cpu=cd8192ff ay=00000000 misc=540315ed
-sna/action.sna@SPRINTER	ram=5a3bc8d4 ports=658fe7ed cpu=2fb40b9a ay=00000000 misc=540315ed
-sna/aleste1.sna@SPRINTER	ram=9f614f46 ports=a63c295b cpu=d7e086b9 ay=00000000 misc=540315ed
-sna/atarin.sna@SPRINTER	ram=317f44ad ports=a63c295b cpu=ada383dd ay=00000000 misc=540315ed
-sna/atebit.sna@SPRINTER	ram=78c6d181 ports=8d6d5ded cpu=1c7dc811 ay=00000000 misc=540315ed
-sna/aytest_0.2.sna@SPRINTER	ram=3c263973 ports=915b4150 cpu=9e365f7b ay=00000000 misc=53fa6c72
-sna/earshaver-1.sna@SPRINTER	ram=1d7ca256 ports=a63c295b cpu=3e9e0d43 ay=00000000 misc=540315ed
-sna/eyeache1.sna@SPRINTER	ram=74369577 ports=a63c295b cpu=3869014b ay=00000000 misc=540315ed
-sna/insult-1.sna@SPRINTER	ram=21f41fb3 ports=ba709a63 cpu=74350020 ay=00000000 misc=540315ed
-sna/insult-2.sna@SPRINTER	ram=cf258a05 ports=a63c295b cpu=feaf3724 ay=00000000 misc=540315ed
-sna/insult-3.sna@SPRINTER	ram=d2b77b16 ports=a63c295b cpu=99a59fe3 ay=00000000 misc=540315ed
-sna/multifix.sna@SPRINTER	ram=58d5a5e1 ports=a63c295b cpu=1818f48a ay=00000000 misc=540315ed
-sna/s4b-1.sna@SPRINTER	ram=ab80403e ports=a63c295b cpu=8bb6c3b1 ay=00000000 misc=540315ed
-sna/s4b-2.sna@SPRINTER	ram=ac13873c ports=ba709a63 cpu=a59bf1cd ay=00000000 misc=540315ed
-sna/scroller_by_demarche.sna@SPRINTER	ram=27de0ea4 ports=a63c295b cpu=f657a6c3 ay=00000000 misc=540315ed
-sna/sil4aaab.sna@SPRINTER	ram=5ac09bcf ports=8d6d5ded cpu=c7b73b9a ay=00000000 misc=540315ed
-sna/test4.30.sna@SPRINTER	ram=b5607a83 ports=346b9e8a cpu=69fa5877 ay=00000000 misc=540032c4
-sna/vibrations.sna@SPRINTER	ram=623e798f ports=ca2d318d cpu=286c9e1c ay=00000000 misc=540315ed
-sna/z80-xcf-flavor.sna@SPRINTER	ram=e6f055eb ports=915b4150 cpu=b56aefd2 ay=00000000 misc=53fa6c72
-sna/z80flags.sna@SPRINTER	ram=c5b19d4f ports=915b4150 cpu=84c6d0bd ay=00000000 misc=53fa6c72
-sna/z80full.sna@SPRINTER	ram=d8a5fca1 ports=915b4150 cpu=0fdd704a ay=00000000 misc=53fa6c72
+sna/7threality.sna@SPRINTER	refused
+sna/Dizzy X.sna@SPRINTER	refused
+sna/Dizzy Y 2.sna@SPRINTER	refused
+sna/Dizzy Y.sna@SPRINTER	refused
+sna/IntTest+.sna@SPRINTER	refused
+sna/Timing_Tests-48k_v1.0.sna@SPRINTER	refused
+sna/across-the-edge-second.sna@SPRINTER	refused
+sna/action.sna@SPRINTER	refused
+sna/aleste1.sna@SPRINTER	refused
+sna/atarin.sna@SPRINTER	refused
+sna/atebit.sna@SPRINTER	refused
+sna/aytest_0.2.sna@SPRINTER	refused
+sna/earshaver-1.sna@SPRINTER	refused
+sna/eyeache1.sna@SPRINTER	refused
+sna/insult-1.sna@SPRINTER	refused
+sna/insult-2.sna@SPRINTER	refused
+sna/insult-3.sna@SPRINTER	refused
+sna/multifix.sna@SPRINTER	refused
+sna/s4b-1.sna@SPRINTER	refused
+sna/s4b-2.sna@SPRINTER	refused
+sna/scroller_by_demarche.sna@SPRINTER	refused
+sna/sil4aaab.sna@SPRINTER	refused
+sna/test4.30.sna@SPRINTER	refused
+sna/vibrations.sna@SPRINTER	refused
+sna/z80-xcf-flavor.sna@SPRINTER	refused
+sna/z80flags.sna@SPRINTER	refused
+sna/z80full.sna@SPRINTER	refused
 szx/libspectrum/bbg128.szx@SPRINTER	refused
 szx/libspectrum/synth-128.szx@SPRINTER	refused
 szx/libspectrum/synth-48.szx@SPRINTER	refused
@@ -874,14 +874,14 @@ szx/libspectrum/z80full-48k.szx@SPRINTER	refused
 szx/other/spectaculator-pentagon-crazylove.szx@SPRINTER	refused
 szx/other/zx-m8xxx-128k-shock.szx@SPRINTER	refused
 szx/other/zxmak2-pentagon-cpd-test.szx@SPRINTER	refused
-z80/BBG128.z80@SPRINTER	ram=643f57e1 ports=a743fcfb cpu=80cd1684 ay=00000000 misc=540315ed
-z80/Binary Love I.z80@SPRINTER	ram=151c70b9 ports=4971875b cpu=d301aa00 ay=00000000 misc=540315ed
-z80/Binary Love II.z80@SPRINTER	ram=d21846a5 ports=4971875b cpu=faafba0c ay=00000000 misc=540315ed
-z80/Binary Love III.z80@SPRINTER	ram=aecf7646 ports=4971875b cpu=449db2f4 ay=00000000 misc=540315ed
-z80/dizzyx.z80@SPRINTER	ram=a2f18a3c ports=4971875b cpu=4fe32c33 ay=00000000 misc=540315ed
-z80/libspectrum/synth-128.z80@SPRINTER	ram=68bc9b4a ports=dc0ac513 cpu=9bb72793 ay=00000000 misc=53f4a620
-z80/libspectrum/synth-pentagon.z80@SPRINTER	ram=68bc9b4a ports=dc0ac513 cpu=162a72b7 ay=00000000 misc=53f4a620
-z80/libspectrum/synth-plus2a.z80@SPRINTER	ram=68bc9b4a ports=dc0ac513 cpu=9bb72793 ay=00000000 misc=53f4a620
-z80/libspectrum/synth-plus3.z80@SPRINTER	ram=68bc9b4a ports=dc0ac513 cpu=9bb72793 ay=00000000 misc=53f4a620
-z80/libspectrum/synth-scorpion.z80@SPRINTER	ram=57afdb4a ports=dc0ac513 cpu=ad69944d ay=00000000 misc=53f4a620
-z80/newbench.z80@SPRINTER	ram=26581250 ports=ef2db6f0 cpu=4f0500f7 ay=00000000 misc=53fa6c72
+z80/BBG128.z80@SPRINTER	refused
+z80/Binary Love I.z80@SPRINTER	refused
+z80/Binary Love II.z80@SPRINTER	refused
+z80/Binary Love III.z80@SPRINTER	refused
+z80/dizzyx.z80@SPRINTER	refused
+z80/libspectrum/synth-128.z80@SPRINTER	refused
+z80/libspectrum/synth-pentagon.z80@SPRINTER	refused
+z80/libspectrum/synth-plus2a.z80@SPRINTER	refused
+z80/libspectrum/synth-plus3.z80@SPRINTER	refused
+z80/libspectrum/synth-scorpion.z80@SPRINTER	refused
+z80/newbench.z80@SPRINTER	refused

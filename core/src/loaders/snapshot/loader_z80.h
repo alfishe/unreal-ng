@@ -193,6 +193,7 @@ protected:
     snapshot::Options _options;
     snapshot::Image _image;
     snapshot::Report _report;
+    snapshot::Decision _decision;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -215,6 +216,8 @@ public:
     const snapshot::Report& GetSnapshotReport() const { return _report; }
     /// The staging as a SnapshotImage; nothing touches the machine
     snapshot::Image BuildImage() const;
+    /// Read and stage the file and build its image, without committing (inspect); false = not a loadable file
+    bool Stage();
 
 protected:
     bool validate();

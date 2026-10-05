@@ -239,10 +239,16 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     Qt status line "ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)"; all five surfaces
   - [ ] The launchers parse `int-sc`, not the `/sc-int` that SC256.ZX and SCORPION.ZX carry: the Scorpion INT is never
     applied (both launchers' option tables; research §4 corrected). Report upstream (the `.ZX` files or the parser)
-  - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
-    write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
-    2026-10-02 (owner: yes, via the shared pipeline, lower priority): built on the shared snapshot pipeline
-    ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84, T3) - its P0-P3 first, the Sprinter commit policy is its P4
+  - [x] Z5 (M) snapshots into the ZX mode through the cell table (2026-10-05, branch `snapshot-pipeline`; shared snapshot
+    pipeline P0-P4, PLAN #84): the Sprinter's own commit policy `sprinter-zx` (`sprinterzxsnapshot.{h,cpp}`, handed out by
+    the decoder, also `commit=sprinter-zx` by name): bank *n* -> the physical page cell `#F0 + n` names (`#F8 +` for 8-15),
+    `#7FFD` through the PLD latch, the Spectrum screen shadow brought in step, border, AY, CPU; no reset; refused outside a
+    Spectrum mode (`needs: zx_mode`), in a 48K mode for a 128K file (`mode:128k`), for banks the mode cannot reach
+    (`mode:mem512`), for a cell without RAM (`mode:page_table`). **The bug the table pinned:** the old commit wrote bank
+    *n* to physical page *n*, wrong even in BIOS 3.06's own ZX mode (cells `#F0-#F7` = `00 ED 02 EF F0 05 EE F1`: banks 1,
+    3, 4, 6, 7 are in `#ED #EF #F0 #EE #F1`) and fatal at the DSS prompt. T-ZX-11 / T-ZX-12 as
+    `sprinterzxsnapshot_test.cpp` (banks against the file's own bytes, the screen shadow byte by byte, nothing else in RAM
+    written); checked live on the WebAPI (`action.sna` runs). Recipe: `.recipe/machines/sprinter.md` §4
   - [ ] Z6 (M) `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, TTD replay test
   - Open questions Q1-Q7 for the owner: [tdd-zx-mode.md](tdd-zx-mode.md) §10
 - **Input and device extras (from [mame-gap-analysis.md](mame-gap-analysis.md), owner 2026-10-02: functional items

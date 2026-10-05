@@ -5,8 +5,9 @@
 ///
 /// The table records TODAY's behavior on purpose, defects included (a 128K file on a 48K machine, #7FFD locks on a
 /// Pentagon 1024, the ATM / TS-Conf pagers after a cold reset: proposal section 3). Every later pipeline step must
-/// reproduce it; a row may change only in a commit that says so. The defects the proposal suspects are named in
-/// the SnapshotDefects_Test cases below: each pins the CURRENT behavior and says what the fix changes.
+/// reproduce it; a row may change only in a commit that says so (P4: the 38 SPRINTER rows that loaded now say
+/// "refused", a fresh Sprinter is in no Spectrum mode). The defects the proposal suspects are named in the
+/// SnapshotDefects_Test cases below: each pins the CURRENT behavior and says what the fix changes.
 ///
 /// Update after an approved change: UNREAL_SNAPSHOT_GOLDEN_UPDATE=1 core-tests --gtest_filter='SnapshotGoldenRewrite*'
 /// rewrites the table (review the diff).
@@ -283,13 +284,15 @@ TEST(SnapshotDefects_Test, A128kFileIsAcceptedOnA48kMachine)
     EXPECT_EQ(r.p7ffd, 0x17) << "a 48K machine now holds a 128K paging byte";
 }
 
-// DEFECT (P4, the Sprinter's Z5): SNA writes physical pages 0-7 on the Sprinter, which are system pages, and nothing
-// refuses. Expected after P4: refused outside the ZX mode, the cell table inside it
-TEST(SnapshotDefects_Test, SprinterTakesASpectrumSnapshotIntoItsSystemPages)
+// FIXED (P4, the Sprinter's Z5, 2026-10-05): SNA used to write physical pages 0-7 on the Sprinter, wrong even in the BIOS's
+// own ZX mode (its cells put Spectrum banks 1 / 3 / 4 / 6 / 7 in pages #ED / #EF / #F0 / #EE / #F1) and fatal at the DSS
+// prompt. The machine's own policy ('sprinter-zx', sprinterzxsnapshot.h) now commits through the cell table, and refuses
+// outside a Spectrum mode; the cell-table behavior is tested in sprinterzxsnapshot_test.cpp. A fresh Sprinter is not in a
+// mode, so the load is refused and the golden rows of SPRINTER are "refused"
+TEST(SnapshotDefects_Test, SprinterRefusesASpectrumSnapshotOutsideItsZxMode)
 {
     const Loaded r = LoadOn(Find("SPRINTER"), TestPathHelper::GetTestDataPath(kAcrossTheEdge));
-    EXPECT_TRUE(r.ok);
-    EXPECT_EQ(r.bank3, 7u) << "bank 7 is physical page 7, a system page on this machine";
+    EXPECT_FALSE(r.ok);
 }
 
 // DEFECT (P5, Q2): a 48K SNA leaves #7FFD unlocked (#10) while a 48K Z80 locks it (#30); the two formats disagree.
