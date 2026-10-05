@@ -37,6 +37,7 @@
 #include "tape/tapemanagerwindow.h"
 #include "media/mediapanelwindow.h"
 #include "network/networkwindow.h"
+#include "network/trafficwindow.h"
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
@@ -167,6 +168,7 @@ private slots:
     void handleTapeManagerToggled(bool visible);
     void handleMediaPanelToggled(bool visible);
     void handleNetworkWindowToggled(bool visible);
+    void handleTrafficWindowToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
     /// Dock the FT812 Debug window level with the picture (opening: also when undocked)
     void placeFt812DebugWindow(bool opening);
@@ -367,6 +369,7 @@ private:
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
     NetworkWindow* networkWindow = nullptr;
+    TrafficWindow* trafficWindow = nullptr;
     Ft812DebugWindow* _ft812DebugWindow = nullptr;  // Debug -> FT812 Debug (VDAC2 machines only)
     DeviceScreenWrapper* _screenWrapper = nullptr;
     HudOverlayWrapper* _hudWrapper = nullptr;
