@@ -36,9 +36,10 @@ phase; master only after the owner's review.
 - [x] A3 `alasm`, every version 3.8 / 4.2 / 4.42 / 4.5 / 4.44 / 5.07-5.09 ([research-alasm.md](research-alasm.md)), and D-15 for all codecs (2026-10-05, branch `unreal-asm`): `tasm3` + `tasm4` merged into `tasm` (versions 3, 4); `DecodeOptions::subversion` / `catalog`, `EncodeOptions::subversion`, `DecodeResult::subversions`; version detection by re-tokenizing; conversion warnings for keywords the target lacks; `zxasm check` / `--version`; example `convert-version`; testdata `alasm/` (10 files); 429 real files byte-exact, canonical 99.6 %
   - [x] emulator oracle for ALASM (2026-10-05): a 4.5 → 5.07 conversion opens in ALASM 5.09 and shows the decoded text ([research-alasm.md](research-alasm.md) §6.1)
   - [ ] ALASM 2.x and 5.00-5.06 binaries (not found)
-- [ ] A4 `storm`, `zxasm`
+- [x] A4 `storm`, `zxasm` (2026-10-05, branch `unreal-asm`)
   - [x] `zxasm`, every version 2.4 … 4.20 (2026-10-05, branch `unreal-asm`): editor rules derived on 372 real sources (byte-exact all, canonical 99.86 %), version detection, testdata `zxasm/` ([research-zxasm.md](research-zxasm.md))
-  - [ ] `storm` (STORM 1.0beta … 1.3i: machine-code-like lines, packed labels; corpus of 42 files collected)
+  - [x] `storm`, versions 1.0beta / 1.2-1.3i: decoder and STORM's encoding rules (implied commands, number forms, packed labels, IX / IY offsets, sub-expressions) derived on 42 real sources (byte-exact all, rules exact 23 492 / 23 497), testdata `storm/` ([research-storm.md](research-storm.md))
+  - [ ] emulator oracle for ZX-ASM and STORM; a 1.0beta-saved STORM file
 - [ ] A5 IR, transforms, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe

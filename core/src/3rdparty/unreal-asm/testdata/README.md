@@ -12,5 +12,7 @@ Part of the library (decision D-14): every codec and plugin is tested on the fil
 
 | `zxasm/` | ZX-ASM / ZAsm sources of every version (hobeta; types `C`, `z`, `a`), names `<disk>__<file>`; `*.txt` = expected decoded text | from the program disks ([ZX-ASM 2.4](https://vtrd.in/system/ZXASM2_4.zip), [2.6](https://vtrd.in/system/ZASM2_6.zip), [3.10](https://zxart.ee/releasefile/id:249317/ZASM_310.ZIP), [3.15](https://zxart.ee/releasefile/id:249318/ZASM315.zip), [3.3 Final](https://vtrd.in/system/Z33_F9.zip), [4.20](https://vtrd.in/system/ZASM4_20.zip)) and from [Info Guide #10](https://zxart.ee/releasefile/id:426650/INFERN10.ZIP) and [EPV 1.1](https://zxart.ee/releasefile/id:250322/EPV_11.ZIP). Research: `docs/inprogress/2026-10-05-unreal-asm/research-zxasm.md` |
 
+| `storm/` | STORM sources (hobeta, type `C`, start #C00B), names `<disk>__<file>`; `*.txt` = expected decoded text | `STORM1_3__MAIN`, `STORM1_3__DPC` (STORM's own source) and `EMULTEST__EMUL` from the KLUG BBS archive ([klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw)); `ZX-FOR72__PLASM` from [ZX Format #7](https://zxart.ee/releasefile/id:429289/ZX-FORM7.ZIP); `DEJAVU4__LDISCROL` from [Deja Vu #4](https://zxart.ee/releasefile/id:425744/DEJAVU4.ZIP); `GC131IGS__HMEM` from [Global Commander 1.31 GS](https://zxart.ee/releasefile/id:587330/GC131IGS.zip). Research: `docs/inprogress/2026-10-05-unreal-asm/research-storm.md` |
+
 Each new codec adds its folder with files produced by the real assembler and a README section saying how they were
 made (source-formats.md §3 of the design).

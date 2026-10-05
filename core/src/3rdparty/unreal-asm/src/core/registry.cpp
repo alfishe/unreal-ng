@@ -5,6 +5,7 @@
 #include "codecs/alasm/alasmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
 #include "codecs/tasm/tasmcodec.h"
+#include "codecs/storm/stormcodec.h"
 #include "codecs/text/textcodec.h"
 #include "codecs/zxasm/zxasmcodec.h"
 
@@ -20,6 +21,7 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::TasmCodec>());
         r.Add(std::make_unique<codecs::AlasmCodec>());
         r.Add(std::make_unique<codecs::ZxasmCodec>());
+        r.Add(std::make_unique<codecs::StormCodec>());
         return r;
     }();
     return registry;

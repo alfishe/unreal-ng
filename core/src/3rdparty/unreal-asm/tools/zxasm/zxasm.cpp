@@ -6,8 +6,8 @@
 //   zxasm decode   <file> [-o out] [--codec id] [--version v] [--codepage cp]
 //   zxasm encode   <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr]
 //   zxasm files    <image.trd>                      list the files of a TR-DOS image
-//   zxasm check    <file> [--codec id] [--version v]  decode, encode back: byte-exact? how many lines the canonical
-//                                                   tokenizer alone reproduces
+//   zxasm check    <file> [--codec id] [--version v] [--show]  decode, encode back: byte-exact? how many lines the
+//                                                   canonical tokenizer alone reproduces (--show lists the others)
 //
 // Containers: a hobeta file (NAME.$A, ...) is unwrapped and its catalog fields used for detection; a file inside a
 // TR-DOS image is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
@@ -76,6 +76,7 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 struct Args
 {
     std::string command, file, output, codec, codePage, lineEnd, inner, version;
+    bool show = false;
 };
 
 bool Parse(int argc, char** argv, Args& args)
@@ -92,6 +93,11 @@ bool Parse(int argc, char** argv, Args& args)
             target = argv[++i];
             return true;
         };
+        if (a == "--show")
+        {
+            args.show = true;
+            continue;
+        }
         if (a == "-o" ? !value(args.output) : a == "--codec" ? !value(args.codec)
                                           : a == "--codepage" ? !value(args.codePage)
                                           : a == "--line-end" ? !value(args.lineEnd)
@@ -275,7 +281,10 @@ int main(int argc, char** argv)
                 one.lines = {line};
                 const EncodeResult kept = codec->Encode(one, {});
                 one.lines[0].attrs = {};
-                same += codec->Encode(one, {}).bytes == kept.bytes;
+                const bool equal = codec->Encode(one, {}).bytes == kept.bytes;
+                same += equal;
+                if (!equal && args.show)
+                    std::cout << "  canonical differs: " << line.text << "\n";
             }
             const SourceDocument& plain = decoded.document;
             std::string range;
