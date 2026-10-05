@@ -840,6 +840,95 @@ TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)
 
 // endregion
 
+// region <Model switch (SL-6, R-OP-9)>
+
+/// "slot = card" per fitted entry of a config's plan
+std::vector<std::string> FittedOf(const CONFIG& config)
+{
+    std::vector<std::string> fitted;
+    for (const SlotManager::Slot& slot : SlotManager::Plan(config, kAllGroups).entries)
+    {
+        if (!slot.entry.disabled)
+        {
+            fitted.push_back(slot.entry.slot + " = " + slot.entry.card);
+        }
+    }
+    return fitted;
+}
+
+/// A model switch carries the cards the new machine takes into the slots they had; the new machine's own configured
+/// cards fill the rest and give way where they conflict with a carried one (Q8 rules), the socketed YM2149 of the
+/// ZX-Evo leaves its socket for the carried MultiSound as at creation (Q7)
+TEST(SlotManager_Test, CarryKeepsTheCardsTheNewMachineTakes)
+{
+    auto pentagon = MakeConfig(MM_PENTAGON);
+    SetSlots(*pentagon, { { "zxbus.1", "multisound" } });
+    const SlotManager::Result from = SlotManager::Plan(*pentagon, kAllGroups);
+    ASSERT_TRUE(from.conflicts.empty()) << from.Refusal();
+
+    // The shipped ZX-Evo set
+    auto evo = MakeConfig(MM_ATM3);
+    SetSlots(*evo, { { "ay-socket", "ts" }, { "zxbus.1", "neogs" }, { "zxbus.2", "moonsound" }, { "zxbus.3", "soundrive" },
+                     { "zxbus.3.mode", "both" }, { "builtin.covox", "on" } });
+    const SlotManager::CarryReport report = SlotManager::Carry(from, *evo);
+    EXPECT_TRUE(report.carried);
+    EXPECT_EQ(report.kept, std::vector<std::string>{ "zxbus.1 = multisound" });
+    EXPECT_TRUE(report.dropped.empty()) << report.DroppedText();
+    EXPECT_EQ(report.DroppedText(), "");
+
+    // The carried card holds zxbus.1 (the ZX-Evo's NeoGS was there); the TurboSound board and the SounDrive give way
+    std::vector<std::string> fitted = FittedOf(*evo);
+    std::vector<std::string> expected = { "zxbus.1 = multisound" };
+#ifdef UNREALNG_HAVE_OPL4
+    expected.push_back("zxbus.2 = moonsound");
+#endif
+    EXPECT_EQ(fitted, expected);
+    const SlotManager::Result planned = SlotManager::Plan(*evo, kAllGroups);
+    EXPECT_TRUE(planned.conflicts.empty()) << planned.Refusal();
+    ASSERT_NE(planned.FindBuiltIn("ay"), nullptr);
+    EXPECT_TRUE(planned.FindBuiltIn("ay")->removed) << "Q7: no `ay-socket` line, the card takes the YM2149 out";
+    ASSERT_NE(planned.FindBuiltIn("covox"), nullptr);
+    EXPECT_TRUE(planned.FindBuiltIn("covox")->on) << "the new machine's own switch";
+    auto says = [&report](const std::string& text) {
+        return std::any_of(report.lines.begin(), report.lines.end(),
+                           [&text](const std::string& line) { return line.find(text) != std::string::npos; });
+    };
+    EXPECT_TRUE(says("ay-socket = ts gives way to the carried zxbus.1 = multisound"));
+    EXPECT_TRUE(says("zxbus.3 = soundrive gives way to the carried zxbus.1 = multisound"));
+    EXPECT_TRUE(says("zxbus.1 = multisound carried to"));
+}
+
+/// A carried card the new machine cannot take is dropped and reported with the reason; a card whose bus the new
+/// machine lacks goes where the planner puts it (behind the adapter that connects it), and is kept when it fits
+TEST(SlotManager_Test, CarryReportsTheCardsTheNewMachineCannotTake)
+{
+    auto evo = MakeConfig(MM_ATM3);
+    // The MultiSound's SounDrive switched off by its DIP switch: a SounDrive card fits next to it
+    SetSlots(*evo, { { "zxbus.1", "multisound" }, { "zxbus.1.dip", "ym,saa,gs" }, { "zxbus.2", "soundrive" } });
+    const SlotManager::Result from = SlotManager::Plan(*evo, kAllGroups);
+    ASSERT_TRUE(from.conflicts.empty()) << from.Refusal();
+    ASSERT_EQ(from.Fitted().size(), 2u);
+
+    auto spectrum = MakeConfig(MM_SPECTRUM128);
+    SetSlots(*spectrum, { { "ay-socket", "tsfm" } });
+    const SlotManager::CarryReport report = SlotManager::Carry(from, *spectrum);
+    ASSERT_EQ(report.dropped.size(), 1u) << report.DroppedText();
+    EXPECT_EQ(report.dropped[0].slot, "zxbus.1");
+    EXPECT_EQ(report.dropped[0].card, "multisound");
+    EXPECT_FALSE(report.dropped[0].reason.empty());
+    EXPECT_NE(report.DroppedText().find("zxbus.1 = multisound not carried: "), std::string::npos);
+    EXPECT_EQ(report.kept, std::vector<std::string>{ "zxbus.2 -> edge.2 = soundrive" });
+    EXPECT_EQ(FittedOf(*spectrum), (std::vector<std::string>{ "ay-socket = tsfm", "edge.2 = soundrive" }))
+        << "the 128K's own TSFM stays: the card that needed the socket empty did not come along";
+    const SlotManager::Result planned = SlotManager::Plan(*spectrum, kAllGroups);
+    const SlotManager::Slot* soundrive = planned.FindSlot("edge.2");
+    ASSERT_NE(soundrive, nullptr);
+    EXPECT_FALSE(soundrive->entry.adapter.empty()) << "behind the adapter that connects a ZX-bus card to the edge";
+}
+
+// endregion
+
+
 TEST(SlotManagerShippedList_Test, ShippedConfigFoldersAreListed)
 {
     std::vector<std::string> onDisk;

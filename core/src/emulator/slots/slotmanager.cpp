@@ -9,6 +9,7 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/config.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/media/mediamanager.h"
@@ -908,6 +909,204 @@ SlotManager::ChangePlan SlotManager::PlanChange(const SlotRequest& request) cons
 void SlotManager::SetBuildFaultForTests(const std::string& card)
 {
     BuildFault() = card;
+}
+
+std::string SlotManager::CarryReport::DroppedText() const
+{
+    std::string text;
+    for (const Dropped& card : dropped)
+    {
+        text += (text.empty() ? "" : "; ") + card.slot + " = " + card.card + " not carried: " + card.reason;
+    }
+    return text;
+}
+
+SlotManager::CarryReport SlotManager::Carry(const Result& from, CONFIG& config)
+{
+    CarryReport report;
+    if (from.machine == nullptr)
+    {
+        return report;
+    }
+    report.carried = true;
+    const std::string model = Config::GetModelFullName(config.mem_model);
+    const SlotConfig carried = ConfigOf(from);
+    const MachineDef* machine = Planner().FindMachine(config.mem_model);
+    if (machine == nullptr)
+    {
+        for (const SlotConfigEntry& entry : carried.entries)
+        {
+            report.dropped.push_back({ entry.slot, entry.card, model + " has no slot declaration" });
+            report.lines.push_back("Slots: " + entry.slot + " = " + entry.card + " not carried: " +
+                                   report.dropped.back().reason);
+        }
+        return report;
+    }
+
+    // Where each entry of the merged set came from
+    struct Origin
+    {
+        bool carried = false;
+        std::string oldSlot;
+    };
+    std::map<std::string, Origin> origin;
+    SlotConfig merged;
+    merged.section = true;
+    auto drop = [&](const std::string& oldSlot, const std::string& card, const std::string& reason) {
+        report.dropped.push_back({ oldSlot, card, reason });
+        report.lines.push_back("Slots: " + oldSlot + " = " + card + " not carried to " + model + ": " + reason);
+    };
+
+    // The carried cards first: the slot they had where the new machine has that bus, else where the planner puts
+    // the card, numbered after the slots kept on that bus, behind the adapter that connects it
+    std::map<std::string, int> highest;
+    std::vector<const SlotConfigEntry*> moved;
+    for (const SlotConfigEntry& entry : carried.entries)
+    {
+        if (FindBus(machine, BusOf(entry.slot)) != nullptr)
+        {
+            merged.entries.push_back(entry);
+            origin[entry.slot] = { true, entry.slot };
+            highest[BusOf(entry.slot)] = std::max(highest[BusOf(entry.slot)], NumberOf(entry.slot));
+        }
+        else
+        {
+            moved.push_back(&entry);
+        }
+    }
+    for (const SlotConfigEntry* entry : moved)
+    {
+        const CardDef* card = Planner().FindCard(entry->card);
+        std::string slot = card != nullptr ? Planner().SuggestSlot(*machine, *card) : std::string();
+        if (slot.empty() || entry->slot == kAySocket)
+        {
+            drop(entry->slot, entry->card, model + " has no " + (entry->slot == kAySocket ? "AY socket" : "slot for it"));
+            continue;
+        }
+        const std::string next = ".next";
+        if (slot.size() > next.size() && slot.compare(slot.size() - next.size(), next.size(), next) == 0)
+        {
+            const std::string bus = slot.substr(0, slot.size() - next.size());
+            slot = bus + "." + std::to_string(++highest[bus]);
+        }
+        SlotConfigEntry placed = *entry;
+        placed.slot = slot;
+        placed.adapter.clear();
+        const BusDef* bus = FindBus(machine, BusOf(slot));
+        if (bus != nullptr && bus->kind != card->bus)
+        {
+            for (const AdapterDef& adapter : Planner().Data().adapters)
+            {
+                if (adapter.cardSide == card->bus && adapter.machineSide == bus->kind)
+                {
+                    placed.adapter = adapter.id;
+                    break;
+                }
+            }
+        }
+        merged.entries.push_back(placed);
+        origin[slot] = { true, entry->slot };
+    }
+
+    auto erase = [&merged](const std::string& slot) {
+        merged.entries.erase(std::remove_if(merged.entries.begin(), merged.entries.end(),
+                                            [&slot](const SlotConfigEntry& e) { return e.slot == slot; }),
+                             merged.entries.end());
+    };
+    auto trial = std::make_unique<CONFIG>(config);
+    auto plan = [&]() {
+        *trial = config;
+        UseSlots(merged, *trial);
+        return Plan(*trial);
+    };
+    // A carried card the new machine does not take (a bus signal, a fixed built-in, not emulated there)
+    auto dropDisabled = [&](const Result& planned) {
+        for (const Slot& slot : planned.entries)
+        {
+            const auto it = origin.find(slot.entry.slot);
+            if (!slot.entry.disabled || it == origin.end() || !it->second.carried ||
+                std::none_of(merged.entries.begin(), merged.entries.end(), [&slot](const SlotConfigEntry& e) {
+                    return e.slot == slot.entry.slot && e.card == slot.entry.card;
+                }))
+            {
+                continue;
+            }
+            drop(it->second.oldSlot, slot.entry.card, slot.entry.disabledReason);
+            erase(slot.entry.slot);
+        }
+    };
+    // Conflicts (Q8): the new machine's own card gives way to a carried one; between two carried cards the later in
+    // slot order goes. Planned as the machine's creation will plan it
+    auto resolve = [&]() {
+        Result planned = plan();
+        for (size_t round = 0; !planned.conflicts.empty() && round <= merged.entries.size(); round++)
+        {
+            const Conflict& conflict = planned.conflicts.front();
+            const bool laterIsOwn = !origin[conflict.slot].carried;
+            const bool otherIsOwn = !origin[conflict.withSlot].carried;
+            const bool laterGoes = !(otherIsOwn && !laterIsOwn);
+            const std::string victim = laterGoes ? conflict.slot : conflict.withSlot;
+            const std::string victimCard = laterGoes ? conflict.card : conflict.withCard;
+            const std::string winner = laterGoes ? conflict.withSlot : conflict.slot;
+            const std::string winnerCard = laterGoes ? conflict.withCard : conflict.card;
+            if (origin[victim].carried)
+            {
+                drop(origin[victim].oldSlot, victimCard,
+                     "conflicts with " + winner + " = " + winnerCard + ": " + conflict.reason);
+            }
+            else
+            {
+                report.lines.push_back("Slots: the " + model + " config's " + victim + " = " + victimCard +
+                                       " gives way to the carried " + winner + " = " + winnerCard);
+            }
+            erase(victim);
+            planned = plan();
+        }
+        return planned;
+    };
+
+    // First the carried cards alone: the ones the new machine cannot take at all go before they could push out one
+    // of its own cards
+    dropDisabled(resolve());
+
+    // The new machine's own cards fill the slots the carried ones leave free
+    const Result own = Plan(config);
+    const SlotConfig target = ConfigOf(own);
+    for (const SlotConfigEntry& entry : target.entries)
+    {
+        if (std::none_of(merged.entries.begin(), merged.entries.end(),
+                         [&entry](const SlotConfigEntry& e) { return e.slot == entry.slot; }))
+        {
+            merged.entries.push_back(entry);
+            origin[entry.slot] = { false, entry.slot };
+        }
+    }
+    merged.builtIns = target.builtIns;
+    for (const SlotBuiltInSwitch& sw : carried.builtIns)
+    {
+        for (SlotBuiltInSwitch& mine : merged.builtIns)
+        {
+            if (mine.id == sw.id)
+            {
+                mine = sw;
+            }
+        }
+    }
+    dropDisabled(resolve());
+
+    for (const SlotConfigEntry& entry : merged.entries)
+    {
+        const auto it = origin.find(entry.slot);
+        if (it != origin.end() && it->second.carried)
+        {
+            const std::string where = it->second.oldSlot == entry.slot ? entry.slot : it->second.oldSlot + " -> " + entry.slot;
+            report.kept.push_back(where + " = " + entry.card);
+            report.lines.push_back("Slots: " + where + " = " + entry.card + " carried to " + model +
+                                   (entry.adapter.empty() ? "" : " behind " + entry.adapter));
+        }
+    }
+    UseSlots(merged, config);
+    return report;
 }
 
 // endregion

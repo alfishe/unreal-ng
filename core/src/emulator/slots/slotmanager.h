@@ -25,7 +25,8 @@
 ///
 /// No slot change in a running machine (Q6): a change is planned here (PlanChange: the plan engine over the current
 /// slot set, the TTD guard, the dirty media) and applied by a restart of the instance with the planned [SLOTS]
-/// (SlotChange::Run in slotchange.h, through the model-switch path).
+/// (SlotChange::Run in slotchange.h, through the model-switch path). A model switch carries the slot set to the new
+/// machine (Carry, R-OP-9).
 
 // Qt defines `slots` / `signals` as macros; this header names the slots namespace
 #pragma push_macro("slots")
@@ -190,6 +191,31 @@ public:
     /// Plans a change of this instance: its slot set, the media with unsaved changes (R-OP-6) and the TTD guard
     /// (R-OP-7: refused while a user recording runs, naming the session)
     ChangePlan PlanChange(const slots::SlotRequest& request) const;
+
+    /// What a model switch did with the cards of the old machine (R-OP-9)
+    struct CarryReport
+    {
+        struct Dropped
+        {
+            std::string slot;       ///< on the old machine
+            std::string card;
+            std::string reason;
+        };
+        bool carried = false;                 ///< the slot set was carried (false: the old machine had none)
+        std::vector<std::string> kept;        ///< "zxbus.1 = neogs" (old slot -> new slot when it moved)
+        std::vector<Dropped> dropped;         ///< the cards the new machine cannot take
+        std::vector<std::string> lines;       ///< for people, one per card
+
+        /// "zxbus.2 = multisound not carried: ..." lines joined; "" when nothing was dropped
+        std::string DroppedText() const;
+    };
+
+    /// A model switch (R-OP-9): the cards of `from` (the old machine's plan) planned against the new machine of
+    /// `config` (its INI loaded). The carried cards come first and keep their slot where the new machine has that bus
+    /// (else they go where the planner suggests, behind the adapter that connects them); the new machine's own
+    /// configured cards fill what the carried ones leave free and give way where they conflict; a carried card the
+    /// new machine cannot take is dropped and reported. Writes the merged set into `config` (UseSlots)
+    static CarryReport Carry(const Result& from, CONFIG& config);
 
 
     // endregion

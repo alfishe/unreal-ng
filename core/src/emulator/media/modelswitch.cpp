@@ -89,14 +89,21 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
                            : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
     // The new machine's config: the old instance's own override (a restart of the same model), the power-on RAM,
     // then the slot set
+    // (exact, or the old machine's cards carried and planned against the new model)
+    std::optional<SlotManager::Result> carried;
+    if (!request.slotSet && old->GetContext()->pSlotManager != nullptr)
+        carried = old->GetContext()->pSlotManager->Snapshot();
+    auto carryReport = std::make_shared<SlotManager::CarryReport>();
     std::function<void(CONFIG&)> configOverride =
         [instance = request.keepConfigOverride ? old->GetConfigOverride() : std::function<void(CONFIG&)>{},
-         ram = Config::RamPowerOnOverride(ramPowerOn), slotSet = request.slotSet](CONFIG& config) {
+         ram = Config::RamPowerOnOverride(ramPowerOn), slotSet = request.slotSet, carried, carryReport](CONFIG& config) {
             if (instance)
                 instance(config);
             ram(config);
             if (slotSet)
                 SlotManager::UseSlots(*slotSet, config);
+            else if (carried)
+                *carryReport = SlotManager::Carry(*carried, config);
         };
     std::shared_ptr<Emulator> created =
         request.ramKb > 0
@@ -160,7 +167,9 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     if (wasSelected)
         emulators.SetSelectedEmulatorId(created->GetId());
     out.emulator = created;
+    out.slotCarry = *carryReport;
     out.result = MediaResult::Success();
-    out.result.report = out.media.lines;
+    out.result.report = out.slotCarry.lines;
+    out.result.report.insert(out.result.report.end(), out.media.lines.begin(), out.media.lines.end());
     return out;
 }
