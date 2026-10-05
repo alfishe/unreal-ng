@@ -24,9 +24,7 @@ The archive is rebuilt in place (the file name never changes), so a download
 is identified by its checksum and the date of the newest file inside, not by
 a version number. Our copy of 2026-10-04: 31 016 955 bytes, 6648 files,
 SHA-256 `581abee8e2fbb1be3975696e07168b99926d1649ee62e6f3d6a680156d41dc97`,
-newest kernels dated 2026-10-03. It lives in the local collection
-`~/Downloads/zx-spectrum/os/nedoos/` (outside the repository, like every
-source we analyze).
+newest kernels dated 2026-10-03.
 
 The tests do not use the whole release. They use small slices of it kept in
 `testdata/machines/zxevo/nedoos/` (see the README there), taken from the
@@ -111,13 +109,16 @@ card fitted by the shipped config (`GSType=NGS`):
 - **The new kernel boots.** `sd_boot.$C` from 2026-10-03 reaches the shell and
   `nc.com`; `ngsplay.com` starts, uploads its driver to the NeoGS and plays
   MOD files (`allnite.mod` from `M:/downloads/mods`: four DAC channels move).
-- **A card with the games folder does not boot.** With `nedogame/` (6245 files,
-  67 MB) on the card, NedoOS stops with "SD card lost, Press RESET" (the ERS
-  shows its "GO SLEEP, STUPID USER" box before that); the old and the new kernel
-  behave the same, so it is the card, not the kernel. Without `nedogame/`
-  (about 9 MB, 400 files) it boots. Cause not found yet: the folder volume
-  (`HostFolderFat`, FAT16 with an MBR) or the kernel's FAT reader; to bisect by
-  file count and size. Until then use a trimmed card.
+- **The whole release fits a card.** `nedogame/` (6245 files, 67 MB) included, the card boots as
+  well. "SD card lost, Press RESET" came from swapping the card while NedoOS ran and
+  resetting once (the ERS asks the new card for its OCR before it is initialised); a second reset
+  boots, and a card inserted before the first reset never shows it. An earlier version of this
+  page blamed the folder size; that was wrong.
+- **A real floppy on ZX-Evo.** The ERS default makes drive A virtual and hides the floppy: press
+  `Y` once (virtual drive B), "TR-DOS boot", then `Enter` again on the listed BASIC file `boot`.
+  Details in [`.recipe/machines/atm/atm3-zxevo-baseconf.md`](../../../.recipe/machines/atm/atm3-zxevo-baseconf.md).
+- **A hard disk.** The template disk of the NedoOS tree has no boot block; `hddfdisk` writes it.
+  Procedure: [hdd-images/README.md](../../../testdata/machines/baseconf/hdd-images/README.md).
 - **Wait for the player.** After `ngsplay.com` is typed, the NeoGS reset and
   driver upload take about 15 s of emulated time; keys sent earlier land in the
   player's list at random.
