@@ -334,10 +334,16 @@ TEST_F(PortDecoder_TSConf_Test, CmosGating)
     EXPECT_EQ(_decoder->GetState().eff7, 0x80) << "#EFF7 is not writable inside DOS";
 }
 
-/// #FE: BORDER = {PAL_SEL[3:0], 0, c} (hs §3.4)
+/// #FE: BORDER = {PAL_SEL[3:0], 0, c} with the PAL_SEL latched at the line start (hs §3.4; [V] video_ports.v:109
+/// takes `palsel`, the copy latched at line_start_s, :160). A PAL_SEL write shows in #FE from the next line on;
+/// it was taken at once (TS-Conf audit, video row 16)
 TEST_F(PortDecoder_TSConf_Test, BorderWriteUsesPalSel)
 {
+    _z80->tt = 10u << 8;
     Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x05);
+    EXPECT_EQ(_decoder->GetState().regs[TsConfReg::Border], 0xF5) << "the line still has the reset PAL_SEL #0F";
+    _z80->tt = 300u << 8;  // line 1: PAL_SEL latched at its start
     Out(0x00FE, 0x05);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::Border], 0xA5);
 }

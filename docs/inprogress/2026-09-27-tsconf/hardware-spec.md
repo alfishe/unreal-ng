@@ -270,6 +270,9 @@ cleared on the trailing edge of the read), `[5]` FDR version (0), `[4:3]` 0,
 - `OUT (#FE)`: `BORDER = {PAL_SEL[3:0], 0, D[2:0]}` using the **latched**
   `PAL_SEL` ([V] `video_ports.v:109`) — equals `0xF0|c` only while
   `PAL_SEL[3:0] = 0xF` (reset). [U] `io.cpp:629` and [M] hardcode `0xF0|c`.
+  Latched means the copy taken at the line start (`video_ports.v:160`): a
+  `PAL_SEL` write shows in `#FE` writes from the next line on. (The emulator took
+  the register at once until the 2026-10-05 audit.)
 - DMA register writes while a transfer runs take effect live (§6.6).
 
 ## 4. Video

@@ -601,9 +601,9 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         case PortArm::KeyboardBorder:
             FlushVideo();
             PortFeOut(port, value, pc);
-            // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the latched PAL_SEL (§3.4)
-            _ts.regs[TsConfReg::Border] =
-                static_cast<uint8_t>(((_ts.regs[TsConfReg::PalSel] & 0x0F) << 4) | (value & 0x07));
+            // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the PAL_SEL latched at the line start (§3.4; [V]
+            // video_ports.v:109 takes `palsel`, :160): FlushVideo brought the line engine up to this write
+            _ts.regs[TsConfReg::Border] = static_cast<uint8_t>(((_ts.latPalSel & 0x0F) << 4) | (value & 0x07));
             break;
         case PortArm::Covox:
             DacWrite(value);  // any #xxFB, never gated ([V] zports.v:490)

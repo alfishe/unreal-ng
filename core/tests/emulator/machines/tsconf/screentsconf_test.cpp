@@ -174,10 +174,11 @@ TEST_F(ScreenTSConf_Test, VID3_ZxPaletteIndex)
     EXPECT_EQ(PixelAfterFrame(Fx(140) + 2, Fy(80)), ScreenTSConf::CramToRgba(ts.cram[0x28])) << "paper";
 }
 
-/// VID-4: BORDER from #FE uses PAL_SEL; drawn outside the window
+/// VID-4: BORDER from #FE uses PAL_SEL (as latched at the line start); drawn outside the window
 TEST_F(ScreenTSConf_Test, VID4_Border)
 {
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // the next line has latched it
     Out(0x00FE, 0x05);
     _decoder->GetState().cram[0xA5] = 0x03E0;  // green
     EXPECT_EQ(PixelAfterFrame(0, 0), ScreenTSConf::CramToRgba(0x03E0));
@@ -485,6 +486,7 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
 {
     TsConfState& ts = _decoder->GetState();
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // #FE takes the PAL_SEL latched at the line start: the next line's
     Out(0x00FE, 0x06);
     // The border: green. The fixture's RAM is tagged (page 5 is all 0x05), so the ZX ink is color 5 and
     // the paper 0: the border takes color 6, and nothing in the window is green
@@ -543,6 +545,7 @@ TEST_F(ScreenTSConf_Test, VID6_ModeChangeMidFrameKeepsTheDrawnLines)
 {
     TsConfState& ts = _decoder->GetState();
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // #FE takes the PAL_SEL latched at the line start: the next line's
     Out(0x00FE, 0x06);
     ts.cram[0xA6] = 0x03E0;  // the border: green, nothing else in the picture is
     const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
