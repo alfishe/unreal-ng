@@ -374,8 +374,8 @@ TEST_F(TsConfDma_Test, DMA14_SpiToRam)
     EXPECT_EQ(sent[1], 0xCD);
 }
 
-/// TSU-8: objects that do not fit the line's DRAM budget are dropped, in
-/// processing order
+/// TSU-8: objects past the line's DRAM budget are dropped, in processing
+/// order (one cut by the budget shows its fetched words, TSU-8b)
 TEST_F(TsConfDma_Test, TSU8_StarvedObjectsAreDropped)
 {
     const uint8_t spritePage = 0x20;
@@ -397,6 +397,39 @@ TEST_F(TsConfDma_Test, TSU8_StarvedObjectsAreDropped)
     EXPECT_EQ(out[16], 0x21);
     EXPECT_EQ(out[32], 0x00) << "the third sprite no longer fits";
     EXPECT_EQ(used, 4u);
+}
+
+/// TSU-8b: an object the budget cuts is drawn up to the cut, 4 pixels per DRAM word in bitmap order ([V]
+/// video_ts_render.v:84-107; [U] render_tile per cycle): it was dropped whole (TS-Conf audit, tsu row 39). With an
+/// X flip the bitmap's first pixels are the sprite's right side
+TEST_F(TsConfDma_Test, TSU8b_TheCutObjectIsDrawnUpToTheCut)
+{
+    const uint8_t spritePage = 0x20;
+    std::memset(_memory->RAMPageAddress(spritePage), 0x11, PAGE_SIZE);
+    Reg(TsConfReg::SGPage, spritePage);
+    Reg(TsConfReg::TConfig, 0x80);
+    for (uint32_t d = 0; d < 3; d++)
+    {
+        Ts().sfile[d * 3] = 0x2000;
+        Ts().sfile[d * 3 + 1] = static_cast<uint16_t>(d * 16);
+        Ts().sfile[d * 3 + 2] = static_cast<uint16_t>((d + 1) << 12);
+    }
+    for (bool flip : {false, true})
+    {
+        SCOPED_TRACE(flip);
+        Ts().sfile[2 * 3 + 1] = static_cast<uint16_t>(32 | (flip ? 0x8000 : 0));
+        TsConfLine set;
+        TsConfTsu::MapRing ring{};
+        std::vector<uint8_t> out(256);
+        uint32_t used = 0;
+        TsConfTsu::RenderLine(Ts(), set, _memory->RAMBase(), ring, 0, 256, out.data(), 5, used);
+        EXPECT_EQ(used, 5u);
+        for (uint32_t x = 32; x < 40; x++)
+        {
+            const bool drawn = flip ? x >= 36 : x < 36;
+            EXPECT_EQ(out[x], drawn ? 0x31 : 0x00) << "x " << x;
+        }
+    }
 }
 
 /// TTD-4: a transfer captured half-way (TsConfState + RAM) and restored ends
