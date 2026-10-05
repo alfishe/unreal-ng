@@ -270,6 +270,9 @@ cleared on the trailing edge of the read), `[5]` FDR version (0), `[4:3]` 0,
 - `OUT (#FE)`: `BORDER = {PAL_SEL[3:0], 0, D[2:0]}` using the **latched**
   `PAL_SEL` ([V] `video_ports.v:109`) — equals `0xF0|c` only while
   `PAL_SEL[3:0] = 0xF` (reset). [U] `io.cpp:629` and [M] hardcode `0xF0|c`.
+  Latched means the copy taken at the line start (`video_ports.v:160`): a
+  `PAL_SEL` write shows in `#FE` writes from the next line on. (The emulator took
+  the register at once until the 2026-10-05 audit.)
 - DMA register writes while a transfer runs take effect live (§6.6).
 
 ## 4. Video
@@ -334,10 +337,14 @@ Entry: `[14:10]` R, `[9:5]` G, `[4:0]` B, `[15]` VDAC mode flag.
   the 2-bit value is already 3, so levels 24-31 saturate ([V]
   `video_out.v:75-132`). Emulator: static time-average, i.e. [M]'s 32-entry
   `pwm_to_rgb` LUT.
-- **VDAC builds** (`5BIT`): bit 15 = 1 → direct 5-bit per channel; bit 15 = 0 →
-  PWM-compatible linear 0..24 curve ([U] `tsconf.cpp:49-62`). 3 / 4-bit DACs
-  take the top 3 / 4 bits. The emulator scales each DAC to full 255 (bit
-  replication: 31 = white; [U] keeps `Ccccc000`, max 248).
+- **VDAC builds** (`5BIT`): the board's CPLD converts each channel
+  ([V] `pentevo/vdac/vdac1/cpld/top.v`, module `lut`, the same table as the
+  VDAC2 card's): bit 15 = 1 → `{level, 3'b0}`, white = 248; bit 15 = 0 → the
+  PWM-compatible linear table round(v × 255 / 24), 255 from 24 ([U]
+  `tsconf.cpp:53-64` the same). 3 / 4-bit DACs have no build or board to check
+  against: the emulator takes the top 3 / 4 bits scaled to full 255. (Until the
+  2026-10-05 audit the 5-bit build was scaled to 255 too, white 255 and seven
+  linear levels one low.)
 - **Writes are immediate** (CRAM is dual-port, read per pixel): a mid-line
   write changes the rest of that line ([V] `zmaps.v:64-77`, `video_out.v:135-151`).
 - **Power-on contents** = `video/mem/video_cram.mif` loaded at FPGA
@@ -363,7 +370,8 @@ palette, `[14]` XF, `[15]` YF ([V] `video_ts.v:75-78,132,135`). **Tile number 0
 is skipped (transparent) unless TxZ is set** (`T1Z` = bit 3, `T0Z` = bit 2),
 then drawn like any tile ([V] `video_ts.v:202`). Pixel index =
 `{PAL_SEL[5:4] or [7:6], entry.pal[1:0], nibble}`. First tile starts at
-`-(Xoffs & 7) - 8`.
+`-(Xoffs & 7)` ([V] `video_ts.v:170`; [U] and unreal-ng the same - the `- 8`
+this line had until the 2026-10-05 audit was wrong).
 
 **Sprites** (SFILE, 85 descriptors = words 0-254):
 
@@ -425,6 +433,10 @@ act ~16 lines late, bits [2:0] immediately ([V] `video_ts.v:127-139,163,224`,
   set. **Frame, line and DMA events are deferred, not lost** — they fire after
   vdos ends ([V] `zint.v:89-91,194` code; the `zint.v:29-31` comment says
   otherwise and is wrong). [U] loses line INT during vdos, [M] loses frame+line+DMA.
+  The controller's `vdos` is `pre_vdos` ([V] `top.v:1106`): the gate and the
+  frozen pulse counter start at the trapped VG93 I/O cycle, one M1 before the
+  RAM page #FF is mapped. A frame pulse running then has its remaining clocks
+  after vdos; one whose event falls inside vdos runs its 32 clocks from the end.
 - In the VDAC2 build with `V_CONFIG[2]` set the line source becomes the FT812
   INT — not modeled (D1).
 
@@ -454,8 +466,8 @@ Code = `{ctrl[7], ctrl[2:0]}` ([V] `dma.v:223-227`):
 |:--|:--|:--|:--|
 | 0x1 | RAM → RAM copy | 2 | yes |
 | 0x9 | BLT1: copy, keep dst where **source** byte (ASZ=1) / nibble (ASZ=0) is 0 | 3 | yes |
-| 0x2 / 0xA | SPI → RAM / RAM → SPI (little-endian, 2 SPI bytes per word) | ~8 (SPI 16 fclk/byte) | yes |
-| 0x3 / 0xB | IDE → RAM / RAM → IDE (16-bit words, data register; §8.3) | 1 DRAM + 1 IDE bus cycle (6 fclk) | `IDE_HDD` build only (emulator: when an IDE board is fitted) |
+| 0x2 / 0xA | SPI → RAM / RAM → SPI (little-endian, 2 SPI bytes per word) | 1 DRAM; the word takes 34 fclk (two 17-fclk exchanges, `spi.v`; the DRAM cycle overlaps the second byte's shift, the DMA's `spi_stb` being the SPI start) whatever the video load | yes |
+| 0x3 / 0xB | IDE → RAM / RAM → IDE (16-bit words, data register; §8.3) | 1 DRAM + 1 IDE bus cycle (6 fclk; the emulator takes 12 fclk per word: the bus cycle on the 4-fclk grid, then the DRAM cycle) | `IDE_HDD` build only (emulator: when an IDE board is fitted) |
 | 0x4 | FILL: read the first word once per transaction, then write it | 1 after first read | yes |
 | 0x6 | BLT2: dst += src per byte (ASZ=1) / nibble (ASZ=0); wraps, saturates if `OPT` | 3 | `XTR_FEAT` |
 | 0x7 | wait-port (AVR) transfer via `DMAWPD/DMAWPA` | AVR-paced | yes (out of v1 scope) |
@@ -539,7 +551,7 @@ branch and is reused (technical-design §3.11).
   takes effect at the **next M1** (`pre_vdos`) ([V] `zports.v:640-651`, `zmem.v:100-116`).
 - **vdos off**: an IN/OUT to 1F/3F/5F/7F (not FF) while vdos; immediate.
 - While vdos: writes to FF only update the drive-select bits; window 0 = RAM
-  page 0xFF writable; INT output gated (§5); CMOS reachable (§9).
+  page 0xFF writable; INT output gated (§5); CMOS writable, its reads float (§9).
 - The "virtual drive" is therefore **Z80 code in RAM page 0xFF** (placed by the
   BIOS/software); the emulator only implements the swap — nothing is served
   host-side.
@@ -634,7 +646,7 @@ for an empty unit (#FFFF), and the transfer completes.
 
 | Device | Decode | Notes |
 |:--|:--|:--|
-| Gluk CMOS | low byte `F7`, A8 = 1; `#DFF7` address (A13 = 0), `#BFF7` data (A14 = 0), `#EFF7` (A12 = 0) | `#EFF7` writable only outside DOS, only bit 7 used (CMOS enable). CMOS reachable when `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` — i.e. **not** from the TR-DOS ROM, yes inside vdos ([V] `zports.v:719-732`; [U] allows any DOS state — divergence) |
+| Gluk CMOS | low byte `F7`, A8 = 1; `#DFF7` address (A13 = 0), `#BFF7` data (A14 = 0), `#EFF7` (A12 = 0) | `#EFF7` writable only outside DOS, only bit 7 used (CMOS enable). CMOS reachable when `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` — i.e. **not** from the TR-DOS ROM; inside vdos the AVR takes writes and sees reads, but a read gives `#FF`: `porthit` takes `#xxF7` only while `!dos` (`zports.v:330`) and vdos is always in DOS ([V] `zports.v:719-732`; [U] answers in any DOS state — divergence; unreal-ng answered inside vdos until the 2026-10-05 audit) |
 | Gluk extension | CMOS regs **0xF0-0xFF**; mode selected by writing F0 | 0 config version, 1 bootloader version, 2 PS/2 keyboard scancode log, 3 config/modes; reg 0x0C = 0 disables EEPROM mode first (`zx-evo-docs/GluExt`) |
 | Kempston mouse | `xxDF`: A8 = 0 → `{wheel[3:0], 1, btn[2:0]}`; A8 = 1 → A10 ? Y : X | `#FADF/#FBDF/#FFDF` ([V] `zkbdmus.v:107`) |
 | Kempston joystick | `0x1F`, 8-bit | only when `!DOS && !FDD_VIRT[7]` ([V] `zports.v:334,450-455`) |
@@ -676,7 +688,7 @@ for an empty unit (#FFFF), and the transfer completes.
 | Dot clock | 7 MHz; TXT pixels 14 MHz |
 | T/line, lines, T/frame | 224, 320, 71680 (48.828 Hz, 20480 µs) |
 | Frame INT default | line 0, tact 1 |
-| Line INT | dot 447 of each line (all 320) |
+| Line INT | the strobe on dot 447 (`line_start_s`, the line's last fclk); latched from raster tact 224 n, the next line's first tact (all 320; the last line's at tact 0 of the next frame) |
 | DRAM | 448 accesses/line; urgent video > CPU > video > TM > TS > DMA > refresh |
 | Clock switch | **immediate** after the `OUT` I/O cycle (`top.v:228`; the `zclock.v:22` "at RFSH" comment is not implemented) |
 | 14 MHz external I/O (AY, VG93) | fixed stall of 8 fclk (one 3.5 MHz tact) per access ([V] `zclock.v:75-90`) — not a switch to 7 MHz |
@@ -697,7 +709,7 @@ for an empty unit (#FFFF), and the transfer completes.
 | Sprites | `snum < 85` | ≤85 | ≤85 | 85 (SFILE = 256 words) → all agree |
 | Tile 0 | skipped unless TxZ | — | — | skipped unless TxZ → [V] |
 | T_CONFIG[1:0] | `t0ys_en/t1ys_en` | interleave | interleave | bit 0 = 360 TS window, bit 1 unused → [V] |
-| Line INT position | `line_t` += 224 | every line | HBlank start | dot 447, all 320 lines → [V] |
+| Line INT position | `line_t` += 224 | every line | HBlank start | strobe on dot 447, latched from raster tact 224 n (the next line's first tact; [U] the same), all 320 lines → [V] |
 | INT during vdos | frame deferred, line lost, DMA deferred | all lost | — | all deferred → [V] |
 | Reset HS_INT | 2 | 0 | 0 | 1 → [V] |
 | DMA writes while busy | dropped | — | — | live / relaunch → [V] |
@@ -707,11 +719,16 @@ for an empty unit (#FFFF), and the transfer completes.
 | Clock switch | immediate | immediate | immediate | immediate → [V] |
 | zclk = 3 | 14 MHz | 28 MHz (bug) | 14 | 14 → [V] |
 | AY clock | fixed | fixed | fixed | fixed 1.75 (no `ayclk` decode) → [V] |
-| CMOS in DOS | allowed | — | — | blocked in DOS, allowed in vdos → [V] |
+| CMOS in DOS | allowed | — | — | blocked in DOS; inside vdos writes reach the AVR, reads float (`#FF`) → [V] |
 | 0x77 read | 0x00 | — | inserted/WP bits | 0x00 → [V] |
 | Floating bus | — | — | attribute byte | 0xFF → [V] |
 | BLT2 | additive+sat | absent | nibble blend | byte/nibble add, OPT saturates, XTR_FEAT → [V] (D1 superset) |
 | SPG versions | 0x00-0x02, 0x10 | v1.0 | — | accept v1.0 and v1.1 |
+| CPU DRAM cycles in the budget | reads and writes (`memcpucyc`, `z80_main.inl:143-150`) | — | — | reads and writes to writable RAM ([V] `zmem.v:121`) |
+| Border via `#FE`, which PAL_SEL | bank F (fixed) | bank F | — | the PAL_SEL latched at the line start (`video_ports.v:109,160`) → [V] |
+| 5-bit VDAC levels | `{level, 3'b0}` / rounded table | — | — | the board CPLD's table ([V] `pentevo/vdac/vdac1/cpld/top.v`), as [U] |
+| Frame INT pulse during vdos | frozen | — | — | frozen from `pre_vdos` ([V] `zint.v:194`, `top.v:1106`) |
+| INT vector moment | re-checked 3 tacts later | — | — | at the INTA IORQ; `int_sel` kept when nothing is left ([V] `zint.v:117-132`) |
 
 ## 13. Corrections from v1 (2026-09-27)
 

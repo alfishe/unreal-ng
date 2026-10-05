@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -7,6 +8,27 @@
 /// Forward declarations
 struct FramebufferDescriptor;
 struct EncoderConfig;
+
+/// @brief A buffer an encoder lends to the producer of a frame, so the finished picture is written INTO the encoder's
+/// own memory (the pixel buffer a hardware encoder reads, the queue slot an ffmpeg pipe writes) and never copied
+/// again. 4 bytes per pixel, rows `stride` bytes apart.
+struct FrameTarget
+{
+    uint8_t* data = nullptr;
+    size_t stride = 0;        ///< Bytes between row starts (>= width * 4)
+    uint32_t width = 0;
+    uint32_t height = 0;
+    bool swapRedBlue = false; ///< The encoder wants B,G,R,A byte order (the emulator frame is R,G,B,A)
+    void* handle = nullptr;   ///< The encoder's own bookkeeping; the producer hands it back untouched
+};
+
+/// Outcome of EncoderBase::AcquireFrameTarget
+enum class FrameTargetResult
+{
+    Ready,        ///< `target` is filled: write the picture, then SubmitFrameTarget (or ReleaseFrameTarget)
+    Dropped,      ///< The encoder takes no frame now (writer stuck, queue full in real-time mode): skip this frame
+    Unsupported   ///< No lending (the default): hand the frame over with OnVideoFrame
+};
 
 /// @brief Abstract base class for all recording encoders
 ///
@@ -54,6 +76,27 @@ public:
         (void)framebuffer;
         (void)timestampSec;
     }
+
+    /// @brief Zero-copy input: lend the producer a buffer of exactly width x height pixels to write the frame into.
+    /// The producer calls SubmitFrameTarget (with the frame's timestamp) or ReleaseFrameTarget, on the same thread,
+    /// before the next frame. Only an encoder whose memory the producer can write directly overrides this
+    virtual FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target)
+    {
+        (void)width;
+        (void)height;
+        (void)target;
+        return FrameTargetResult::Unsupported;
+    }
+
+    /// @brief The lent buffer holds the finished frame: encode it (takes it back)
+    virtual void SubmitFrameTarget(FrameTarget& target, double timestampSec)
+    {
+        (void)target;
+        (void)timestampSec;
+    }
+
+    /// @brief Take a lent buffer back without encoding it
+    virtual void ReleaseFrameTarget(FrameTarget& target) { (void)target; }
 
     /// @brief Called for each audio buffer
     /// @param samples Interleaved stereo samples (int16_t)

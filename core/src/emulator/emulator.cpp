@@ -3516,6 +3516,62 @@ bool Emulator::RunAtFrameBoundary(const std::function<void()>& work, uint32_t ti
     return _mainloop && _isRunning && _mainloop->RunAtFrameBoundary(work, timeoutMs);
 }
 
+void Emulator::NoteDebugChange()
+{
+    _debugSeq.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> lock(_debugSeqMutex);  // a waiter between its check and its wait sees it
+    }
+    _debugSeqChanged.notify_all();
+}
+
+uint64_t Emulator::WaitDebugChange(uint64_t since, uint32_t timeoutMs)
+{
+    std::unique_lock<std::mutex> lock(_debugSeqMutex);
+    _debugSeqChanged.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&]() { return DebugSeq() != since; });
+    return DebugSeq();
+}
+
+Emulator::CoherentMoment Emulator::RunAtCoherentMoment(const std::function<void()>& work, uint32_t timeoutMs)
+{
+    if (RunWhileParked(work))
+        return CoherentMoment::Paused;
+    // Not started and nobody steps it: nothing can change it
+    if (!IsRunning() && !IsDirectStepping())
+    {
+        work();
+        return CoherentMoment::Stopped;
+    }
+    // Running: the emulation thread takes it between two frames, without a pause
+    if (IsRunning() && !IsPaused() && RunAtFrameBoundary(work, timeoutMs))
+        return CoherentMoment::Frame;
+    // It paused meanwhile, or a direct step runs on another thread: wait for the park, briefly
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (RunWhileParked(work))
+            return CoherentMoment::Paused;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return CoherentMoment::Busy;
+}
+
+const char* Emulator::CoherentMomentName(CoherentMoment moment)
+{
+    switch (moment)
+    {
+        case CoherentMoment::Paused:
+            return "paused";
+        case CoherentMoment::Stopped:
+            return "stopped";
+        case CoherentMoment::Frame:
+            return "frame";
+        case CoherentMoment::Busy:
+            break;
+    }
+    return "busy";
+}
+
 Emulator::DebugStop Emulator::LastStop() const
 {
     std::lock_guard<std::mutex> lock(_prevStopMutex);

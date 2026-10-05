@@ -110,6 +110,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"debug-snapshot", &CLIProcessor::HandleDebugSnapshot},  // One coherent debugger snapshot (DebugSnapshot)
+                        {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
+                        {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
+                        {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -614,7 +617,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
-    oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... - Registers, pages, time, code, stack, memory at one moment" << NEWLINE;
+    oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] - Registers, pages, time, code, stack, memory, PC history at one moment" << NEWLINE;
+    oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
+    oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
+    oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;
     oss << "Breakpoint commands:" << NEWLINE;
@@ -719,7 +725,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
-    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac)" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac, --profile 4k)" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;
@@ -758,6 +764,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;
     oss << "  disk sector <drv> <cyl> <side> <sec> - Read sector data" << NEWLINE;
+    oss << "  disk write <drv> <cyl> <side> <sec> <hex> [--offset N] - Write bytes into the sector's data field (debugger)" << NEWLINE;
     oss << "  disk track <drv> <cyl> <side>        - Read track summary" << NEWLINE;
     oss << "  disk sysinfo <drv>     - Show TR-DOS system info (sector 9)" << NEWLINE;
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;

@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "common/network/hostframes.h"
+#include "emulator/io/network/traffic/trafficstream.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
@@ -146,6 +147,10 @@ public:
     /// Everything the machine's network adapters send and receive (network #91): the always-on ring and the file
     /// recording; it outlives a refit (a settings change replaces the virtual network, not the tap)
     NetworkTrafficTap& Traffic() { return *_traffic; }
+    /// The tap as a live pcapng stream on a TCP port (Wireshark: -i TCP@127.0.0.1:<port>); one per machine
+    TrafficStream& Stream() { return *_stream; }
+    /// The address the stream (and every host listener) binds: [NETWORK] RemoteAccess
+    uint32_t StreamListenAddress() const;
     /// The host adapter of BRIDGE mode (tests: a fake instead of libpcap; set before the gateway is fitted)
     void SetHostFrames(std::unique_ptr<IHostFrames> frames) { _hostFramesOverride = std::move(frames); }
 
@@ -347,6 +352,7 @@ private:
     /// A test's host adapter for BRIDGE (a fake instead of libpcap), handed to every virtual network fitted after it
     std::unique_ptr<IHostFrames> _hostFramesOverride;
     std::unique_ptr<NetworkTrafficTap> _traffic;
+    std::unique_ptr<TrafficStream> _stream;
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

@@ -1,3 +1,4 @@
+#include "debugger/media/sectorwrite.h"
 #include <common/filehelper.h>
 #include <common/stringhelper.h>
 #include <emulator/emulator.h>
@@ -65,6 +66,10 @@ void CLIProcessor::HandleDisk(const ClientSession& session, const std::vector<st
     else if (subcommand == "sector")
     {
         HandleDiskSector(session, context, args);
+    }
+    else if (subcommand == "write")
+    {
+        HandleDiskWrite(session, emulator, args);
     }
     else if (subcommand == "track")
     {
@@ -300,6 +305,78 @@ void CLIProcessor::HandleDiskList(const ClientSession& session, EmulatorContext*
         ss << NEWLINE;
     }
 
+    session.SendResponse(ss.str());
+}
+
+// disk write <drive> <cyl> <side> <sec> <hex...> [--offset N]: a debugger's write into the sector's data field
+// (core SectorWrite, the WebAPI PUT /disk/{drive}/sector/...)
+void CLIProcessor::HandleDiskWrite(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                                   const std::vector<std::string>& args)
+{
+    const std::string usage = "Usage: disk write <drive> <cyl> <side> <sec> <hex> [--offset N]";
+    std::vector<std::string> rest;
+    uint32_t offset = 0;
+    for (size_t i = 5; i < args.size(); ++i)
+    {
+        if (args[i] == "--offset" && i + 1 < args.size())
+        {
+            try
+            {
+                offset = static_cast<uint32_t>(std::stoul(args[++i], nullptr, 0));
+            }
+            catch (const std::exception&)
+            {
+                session.SendResponse(usage + NEWLINE);
+                return;
+            }
+        }
+        else
+            rest.push_back(args[i]);
+    }
+    if (args.size() < 6 || rest.empty())
+    {
+        session.SendResponse(usage + NEWLINE);
+        return;
+    }
+    std::string error;
+    uint8_t drive = 0;
+    if (!SectorWrite::ParseDrive(args[1], drive, error))
+    {
+        session.SendResponse("Error: " + error + NEWLINE);
+        return;
+    }
+    int cylinder = 0, side = 0, sector = 0;
+    try
+    {
+        cylinder = std::stoi(args[2]);
+        side = std::stoi(args[3]);
+        sector = std::stoi(args[4]);
+    }
+    catch (const std::exception&)
+    {
+        session.SendResponse(usage + NEWLINE);
+        return;
+    }
+    std::string hex;
+    for (const std::string& part : rest)
+        hex += part;
+    std::vector<uint8_t> bytes;
+    if (!SectorWrite::ParseHex(hex, bytes, error))
+    {
+        session.SendResponse("Error: " + error + NEWLINE);
+        return;
+    }
+    const SectorWrite::Result result =
+        SectorWrite::Write(emulator.get(), drive, cylinder, side, sector, offset, bytes, "cli");
+    if (!result.ok)
+    {
+        session.SendResponse("Error: " + result.error + NEWLINE);
+        return;
+    }
+    std::ostringstream ss;
+    ss << "Wrote " << bytes.size() << " byte(s) to " << static_cast<char>('A' + drive) << ": cylinder " << cylinder
+       << ", side " << side << ", sector " << sector << " at offset " << offset << " (" << result.sectorSize
+       << "-byte sector, " << result.moment << ")" << NEWLINE;
     session.SendResponse(ss.str());
 }
 

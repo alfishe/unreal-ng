@@ -5,6 +5,8 @@
 #include "cli-memory-region.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/pchistory/pchistory.h"
+#include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 
@@ -21,6 +23,7 @@
 #include <emulator/platform.h>
 
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -1896,6 +1899,124 @@ void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<st
 }
 
 
+// HandlePortOut - out <port> <value>: a debugger's port write through the machine's decoder (core PortWrite, the
+// WebAPI POST /ports/out)
+void CLIProcessor::HandlePortOut(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    if (args.size() != 2)
+    {
+        session.SendResponse("Usage: out <port> <value>   (numbers: 0x13AF, #13AF, 13AFh or decimal)" + std::string(NEWLINE));
+        return;
+    }
+    uint16_t port = 0;
+    uint8_t value = 0;
+    std::string error;
+    if (!PortWrite::Parse(args[0], args[1], port, value, error))
+    {
+        session.SendResponse("out: " + error + NEWLINE);
+        return;
+    }
+    const PortWrite::Result result = PortWrite::Write(emulator.get(), port, value, "cli");
+    if (!result.ok)
+    {
+        session.SendResponse("out: " + result.error + NEWLINE);
+        return;
+    }
+    char text[64];
+    std::snprintf(text, sizeof(text), "Port #%04X <- #%02X (%s)", port, value, result.moment.c_str());
+    session.SendResponse(std::string(text) + NEWLINE);
+}
+
+// HandlePcHistory - pchist [depth] | pchist on | off: the PC history, newest first (core PcHistory, the WebAPI
+// GET / POST /debug/pchist); the first read starts recording
+void CLIProcessor::HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    if (!args.empty() && (args[0] == "on" || args[0] == "off"))
+    {
+        const std::string error = PcHistory::SetArmed(emulator.get(), args[0] == "on");
+        session.SendResponse((error.empty() ? std::string("PC history ") + (args[0] == "on" ? "started (empty)" : "stopped")
+                                            : "pchist: " + error) + NEWLINE);
+        return;
+    }
+    size_t depth = 16;
+    try
+    {
+        if (!args.empty())
+            depth = std::stoul(args[0], nullptr, 0);
+    }
+    catch (const std::exception&)
+    {
+        session.SendResponse("Usage: pchist [depth] | pchist on | pchist off" + std::string(NEWLINE));
+        return;
+    }
+    const PcHistory::Result result = PcHistory::Report(emulator.get(), depth);
+    if (!result.error.empty())
+    {
+        session.SendResponse("pchist: " + result.error + NEWLINE);
+        return;
+    }
+    std::ostringstream ss;
+    const StateNode& report = result.report;
+    ss << "PC history: " << report.find("entries")->items.size() << " of " << report.find("total")->i
+       << (report.find("started_now")->b ? " (recording started now)" : "") << NEWLINE;
+    for (const StateNode& entry : report.find("entries")->items)
+        ss << "  " << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << entry.find("address")->i
+           << "  " << entry.find("kind")->s << std::dec << entry.find("page")->i << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
+// HandleDebugWait - debug-wait [since] [--timeout ms]: long-poll on the debugger snapshot's seq (core
+// DebugSnapshot::Wait, the WebAPI GET /debug/wait)
+void CLIProcessor::HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    uint64_t since = emulator->DebugSeq();
+    uint32_t timeoutMs = 10000;
+    try
+    {
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (args[i] == "--timeout" && i + 1 < args.size())
+                timeoutMs = std::min<uint32_t>(static_cast<uint32_t>(std::stoul(args[++i])), 60000);
+            else
+                since = std::stoull(args[i]);
+        }
+    }
+    catch (const std::exception&)
+    {
+        session.SendResponse("Usage: debug-wait [since] [--timeout ms]" + std::string(NEWLINE));
+        return;
+    }
+    const StateNode answer = DebugSnapshot::Wait(emulator.get(), since, timeoutMs);
+    const StateNode* pause = answer.find("pause");
+    std::ostringstream ss;
+    ss << (answer.find("changed")->b ? "Changed: seq " : "No change: seq ") << answer.find("seq")->i << ", "
+       << answer.find("state")->s;
+    if (pause && pause->find("reason")->s == "breakpoint")
+        ss << " at breakpoint #" << pause->find("breakpoint_id")->i << " (" << std::hex << std::uppercase
+           << std::setw(4) << std::setfill('0') << pause->find("address")->i << ")";
+    else if (pause && pause->find("reason")->s != "none")
+        ss << " (last stop: " << pause->find("reason")->s << ")";
+    session.SendResponse(ss.str() + NEWLINE);
+}
+
 // HandleDebugSnapshot - one coherent debugger snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot) as text
 void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args)
 {
@@ -1918,9 +2039,11 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
                 options.stack = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
             else if (args[i] == "--memory" && value)
                 options.memory.push_back(args[++i]);
+            else if (args[i] == "--pchist" && value)
+                options.pchist = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
             else
             {
-                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]..." + std::string(NEWLINE));
+                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N]" + std::string(NEWLINE));
                 return;
             }
         }
@@ -1981,6 +2104,15 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
         if (const StateNode* words = stack->find("words"))
             for (const StateNode& w : words->items)
                 o << " " << std::setw(4) << w.i;
+        o << NEWLINE;
+    }
+    if (const StateNode* history = s.find("pchist"))
+    {
+        o << "PC history:";
+        if (const StateNode* entries = history->find("entries"))
+            for (const StateNode& e : entries->items)
+                o << " " << std::hex << std::setw(4) << num(&e, "address") << std::dec << ":" << text(&e, "kind")
+                  << num(&e, "page");
         o << NEWLINE;
     }
     if (const StateNode* code = s.find("disasm"))

@@ -138,7 +138,7 @@ TEST_F(Vdac2Card_Test, ClockIndependentOfCpuTurbo)
     EXPECT_EQ(Read32(kRegClock) - start, TsConfEngine::kFrameTacts * kHz48MHz / Vdac2Card::kRasterHz);
 }
 
-/// msel = 0: the line INT keeps the line starts (tact 224 n - 1) with the
+/// msel = 0: the line INT keeps the line ends (tact 224 n) with the
 /// card fitted, and FT812 edges do not reach it
 TEST_F(Vdac2Card_Test, LineInterruptFromLineStartsWithoutMsel)
 {
@@ -146,7 +146,7 @@ TEST_F(Vdac2Card_Test, LineInterruptFromLineStartsWithoutMsel)
     StartSmallScanWithSwapInterrupt();
     Tick(TsConfEngine::kFrameTacts - _position);  // a fresh frame
     _decoder->WriteRegister(TsConfReg::IntMask, TsConfInt::Line);
-    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kLineTacts), TsConfEngine::kLineTacts - 1);
+    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kLineTacts), TsConfEngine::kLineTacts);
 }
 
 /// msel = 1: no line starts; the FT812's INT_SWAP edge starts the line INT,
@@ -186,8 +186,8 @@ TEST_F(Vdac2Card_Test, MselIsLatchedAtTheLineStart)
     Tick(TsConfEngine::kFrameTacts - _position + 10);  // tact 10 of line 0
     _decoder->WriteRegister(TsConfReg::IntMask, TsConfInt::Line);
     _decoder->WriteRegister(TsConfReg::VConfig, kMsel);  // line 0 already latched msel = 0
-    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kLineTacts), TsConfEngine::kLineTacts - 1 - 10)
-        << "line 0 still ends with its line-start INT";
+    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kLineTacts), TsConfEngine::kLineTacts - 10)
+        << "line 0 still ends with its line-end INT";
     EXPECT_EQ(_decoder->GetInterrupts().AcknowledgeInterrupt(_z80->t), 0xFD);
     Tick(1);
     EXPECT_EQ(TactsUntilLineInt(3 * TsConfEngine::kLineTacts, 3), UINT32_MAX) << "lines 1.. drive from the FT812";

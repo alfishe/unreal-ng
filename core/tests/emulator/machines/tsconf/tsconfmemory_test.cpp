@@ -104,10 +104,10 @@ TEST_F(TsConfMemory_Test, CCH2_SysConfigCopiesTheCacheBit)
 {
     Reg(TsConfReg::SysConfig, 0x04);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::CacheConfig], 0x0F);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the invalidation snoop";
+    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "the DRAM write counter + the invalidation snoop";
     Reg(TsConfReg::SysConfig, 0x01);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::CacheConfig], 0x00);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 0u);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write counter stays";
 }
 
 namespace
@@ -171,4 +171,43 @@ TEST_F(TsConfMemory_Test, TIM1_NoWaitsOffDram)
     Reg(TsConfReg::SysConfig, 0x06);  // 14 MHz + cache in every window
     RunCode(nops);                    // fills
     EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(nops); }), 64 * 4.0) << "every fetch hits";
+}
+
+// The debugger's "writable" per window (Memory::IsWindowWritable, debugger additions D9): what the mapper does with a
+// CPU write - window 0 RAM is writable only with W0_WE, ROM never, windows 1-3 always
+TEST_F(TsConfMemory_Test, WindowWritableFollowsTheMapper)
+{
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap);  // ROM in window 0
+    EXPECT_FALSE(_memory->IsWindowWritable(0));
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap | TsConfMemConfig::W0Ram);  // RAM, W0_WE off
+    EXPECT_FALSE(_memory->IsWindowWritable(0)) << "RAM without W0_WE: writes go nowhere";
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap | TsConfMemConfig::W0Ram | TsConfMemConfig::W0We);
+    EXPECT_TRUE(_memory->IsWindowWritable(0));
+    EXPECT_TRUE(_memory->IsWindowWritable(1));
+    EXPECT_TRUE(_memory->IsWindowWritable(3));
+}
+
+/// TIM-6: a CPU write to RAM takes a DRAM cycle ([V] zmem.v:121 ramreq = ... || (memwr && ramwr_en)), so it comes
+/// off the line's free budget like a read; a write to ROM or to a write-protected window starts none. Writes were
+/// not counted: write-heavy code left the DMA and the TSU more cycles than the hardware ([U] counts them too)
+TEST_F(TsConfMemory_Test, TIM6_CpuWritesTakeADramCycle)
+{
+    TsConfState& ts = _decoder->GetState();
+    uint32_t before = ts.cpuAccesses;
+    Poke(0x8000, 0x11);
+    EXPECT_EQ(ts.cpuAccesses, before + 1) << "RAM in window 2";
+
+    before = ts.cpuAccesses;
+    Poke(0x0100, 0x22);
+    EXPECT_EQ(ts.cpuAccesses, before) << "ROM in window 0";
+
+    Reg(TsConfReg::MemConfig, 0x0C);  // window 0 = RAM, write-protected
+    before = ts.cpuAccesses;
+    Poke(0x0100, 0x33);
+    EXPECT_EQ(ts.cpuAccesses, before) << "a write-protected window starts no DRAM cycle";
+
+    Reg(TsConfReg::MemConfig, 0x0E);
+    before = ts.cpuAccesses;
+    Poke(0x0100, 0x44);
+    EXPECT_EQ(ts.cpuAccesses, before + 1);
 }

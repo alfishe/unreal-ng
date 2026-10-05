@@ -87,6 +87,10 @@ private slots:
     void runToPixel();
     void runToInterrupt();
     void resetEmulator();
+    void portOut();
+    void showDeviceMemory();
+    void showDiskSector();
+    void showPcHistory();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
@@ -154,6 +158,10 @@ private:
     QAction* frameStepAction;
     QAction* waitInterruptAction;
     QAction* resetAction;
+    QAction* portOutAction;
+    QAction* deviceMemoryAction;
+    QAction* diskSectorAction;
+    QAction* pcHistoryAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;

@@ -33,7 +33,11 @@ struct Result
 /// all-RAM read at the last page; a CPU read wraps at #FFFF. An error names the reason
 Result Bytes(EmulatorContext* context, const std::string& space, uint32_t address, uint32_t length);
 
+/// A number as the debugger surfaces take it: decimal, 0x13AF, #13AF, $13AF or 13AFh; false when it is none of them
+/// or above #FFFFFFFF
+bool ParseNumber(const std::string& text, uint32_t& out);
+
 /// "<space>:<address>:<length>" as the snapshot and the CLI take it ("cpu:0x8000:256", "ram5:0:6912"); numbers in
-/// decimal, 0x.., #.. or $..
+/// decimal, 0x.., #.., $.. or ..h (ParseNumber)
 bool ParseWindow(const std::string& text, std::string& space, uint32_t& address, uint32_t& length, std::string& error);
 }  // namespace MemoryRead

@@ -1,5 +1,6 @@
 #include "tsconftsu.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "emulator/platforms/tsconf/tsconfengine.h"
@@ -80,9 +81,12 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
         const uint32_t tile = entry & 0x0FFF;
         if (tile == 0 && !drawZero)
             continue;  // skipped: no graphics fetch
-        if (used + 2 > budget)
+        // Two words; a cut tile shows the 4 pixels of its first word ([V] video_ts_render.v:84-107)
+        const uint32_t words = std::min<uint32_t>(2, budget > used ? budget - used : 0);
+        if (!words)
             return false;
-        used += 2;
+        used += words;
+        const uint32_t fetched = words * 4;
 
         const uint32_t fy = (entry & 0x8000) ? 7 - tileLine : tileLine;
         const uint8_t index = static_cast<uint8_t>(bank | (((entry >> 12) & 0x03) << 4));
@@ -92,6 +96,8 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
             if (x < 0 || x >= static_cast<int32_t>(width))
                 continue;
             const uint32_t fx = (entry & 0x4000) ? 7 - static_cast<uint32_t>(px) : static_cast<uint32_t>(px);
+            if (fx >= fetched)
+                continue;  // its word was not fetched
             const uint32_t bx = (tile & 0x3F) * 8 + fx;
             const uint32_t by = (tile >> 6) * 8 + fy;
             const uint8_t nibble = BitmapNibble(ram, gPage, bx, by);
@@ -112,6 +118,8 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
                 }
             }
         }
+        if (fetched < 8)
+            return false;  // the budget ran out inside this tile
     }
     return true;
 }
@@ -138,9 +146,12 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_u
         const uint32_t fy = (w0 & 0x8000) ? yMax - line : line;
         const uint32_t spriteWidth = (((w1 >> 9) & 0x07) + 1) * 8;
         const uint32_t cost = spriteWidth / 4;  // 4 bpp: 4 pixels per word
-        if (used + cost > budget)
+        // A cut sprite shows the pixels of the words it got, in bitmap order ([V] video_ts_render.v:84-107)
+        const uint32_t words = std::min(cost, budget > used ? budget - used : 0u);
+        if (!words)
             return false;
-        used += cost;
+        used += words;
+        const uint32_t fetched = words * 4;
 
         const bool xFlip = w1 & 0x8000;
         const uint32_t tile = w2 & 0x0FFF;
@@ -150,9 +161,10 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_u
         for (uint32_t fx = 0; fx < spriteWidth; fx++)
         {
             const uint32_t sx = ((w1 & 0x1FF) + fx) & 0x1FF;
-            if (sx >= width)
+            const uint32_t bitmapX = xFlip ? spriteWidth - 1 - fx : fx;
+            if (sx >= width || bitmapX >= fetched)
                 continue;
-            const uint32_t bx = (tile & 0x3F) * 8 + (xFlip ? spriteWidth - 1 - fx : fx);
+            const uint32_t bx = (tile & 0x3F) * 8 + bitmapX;
             const uint8_t nibble = BitmapNibble(ram, sgPage, bx, bitmapY);
             if (nibble)
             {
@@ -169,6 +181,8 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_u
                 }
             }
         }
+        if (words < cost)
+            return false;  // the budget ran out inside this sprite
     }
     return true;
 }

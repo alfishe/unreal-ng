@@ -128,4 +128,40 @@ bool IsNativeCombination(const std::string& format, const std::string& container
     return (container == "mp4" || container == "mov") && OneOf(video, {"h264", "h265", "hevc"}) &&
            (audio.empty() || audio == "aac");
 }
+
+std::string NormalizeProfile(const std::string& profile)
+{
+    const std::string key = ToLower(profile);
+    if (key.empty() || key == "native")
+        return "native";
+    if (key == "4k" || key == "uhd" || key == "2160p")
+        return "4k";
+    if (key == "1080p" || key == "1440p")
+        return key;
+    return "";
+}
+
+std::string ValidateProfile(const std::string& profile, const std::string& format)
+{
+    const std::string canonical = NormalizeProfile(profile);
+    if (canonical.empty())
+        return "Unknown profile '" + profile + "' (native, 1080p, 1440p, 4k).";
+    if (canonical == "native")
+        return "";
+    if (!OneOf(ToLower(format), {"h264", "h.264", "avc", "h265", "h.265", "hevc"}))
+        return "The " + canonical + " profile takes h264 or h265 only (format '" + format + "').";
+    return "";
+}
+
+std::string NormalizeAcceleration(const std::string& acceleration)
+{
+    const std::string key = ToLower(acceleration);
+    if (key.empty() || key == "auto")
+        return "auto";
+    if (key == "hardware" || key == "gpu")
+        return "hardware";
+    if (key == "software" || key == "cpu")
+        return "software";
+    return "";
+}
 }  // namespace RecordingRequest

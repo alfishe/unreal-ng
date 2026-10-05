@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -196,4 +197,21 @@ TEST(NetworkTrafficTap_Test, TheVirtualNetworkRecordsFramesAndSocketOperations)
     EXPECT_NE(std::find(seen.begin(), seen.end(), "zxnetusb > send"), seen.end());
     EXPECT_NE(std::find(seen.begin(), seen.end(), "zxnetusb < data"), seen.end()) << "the server's answer";
     EXPECT_EQ(seen.back(), "zxnetusb > close");
+}
+
+/// T2: the pcapng carries a socket conversation as packets too, on the adapter's own interface
+TEST(NetworkTrafficTap_Test, PcapngCarriesSocketOperationsAsPackets)
+{
+    NetworkTrafficTap tap([]() { return TrafficTime{}; });
+    const NetEndpoint peer{NetIp(93, 184, 216, 34), 80};
+    tap.Socket("zxnetusb", true, "connect", 3, NetProto::Tcp, peer, 0, nullptr, 0);
+    tap.Socket("zxnetusb", false, "connected", 3, NetProto::Tcp, peer, 0, nullptr, 0);
+    const char* get = "GET / HTTP/1.0\r\n\r\n";
+    tap.Socket("zxnetusb", true, "send", 3, NetProto::Tcp, peer, 0, reinterpret_cast<const uint8_t*>(get), std::strlen(get));
+    tap.Socket("zxnetusb", true, "listen", 4, NetProto::Tcp, NetEndpoint{}, 8080, nullptr, 0);
+    const Pcapng p = Parse(tap.Pcapng({}));
+    EXPECT_EQ(std::count(p.types.begin(), p.types.end(), 1u), 1);
+    ASSERT_EQ(p.packets.size(), 4u) << "SYN, SYN-ACK, ACK, the request; a listen gives none";
+    EXPECT_EQ(p.packets[0][47], 0x02) << "SYN";
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(p.packets[3].data() + 54), std::strlen(get)), get);
 }

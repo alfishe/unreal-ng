@@ -24,6 +24,7 @@
 #include "common/network/nettypes.h"
 #include "emulator/state/statenode.h"
 
+
 struct TrafficTime
 {
     uint64_t frame = 0;       ///< the machine frame (TTD position, with tInFrame)
@@ -59,7 +60,7 @@ class NetworkTrafficTap
 public:
     static constexpr size_t kDefaultRingBytes = 8u << 20;   ///< owner Q1: 8 MiB of packet bytes
 
-    explicit NetworkTrafficTap(std::function<TrafficTime()> clock) : _clock(std::move(clock)) {}
+    explicit NetworkTrafficTap(std::function<TrafficTime()> clock);
     ~NetworkTrafficTap();
 
     NetworkTrafficTap(const NetworkTrafficTap&) = delete;
@@ -86,7 +87,8 @@ public:
     size_t RingBytes() const;
     uint64_t NextIndex() const;
 
-    /// The ring as a pcapng file (frames; socket operations follow with phase T2)
+    /// The ring as a pcapng file: frames as they are, socket operations as synthetic TCP / UDP / ICMP packets
+    /// (SocketPacketizer), every packet with its record's TTD position as the comment
     std::vector<uint8_t> Pcapng(const Filter& filter) const;
 
     // --- The file (unbounded, from Start to Stop) --------------------------------------------------------------------
@@ -95,6 +97,15 @@ public:
     void StopFile();
     bool FileOpen() const;
     std::string FilePath() const;
+
+    // --- Live readers (the stream for Wireshark, network #91 T3) ------------------------------------------------------
+
+    /// A new live reader: its stream starts with the pcapng header and the ring as it is now, then every new record
+    static constexpr size_t kMaxLivePending = 16u << 20;   ///< a reader that falls this far behind is dropped
+    uint32_t AttachLive();
+    /// The reader's bytes since the last call (moved into `out`); false when the reader is gone (dropped: too slow)
+    bool TakeLive(uint32_t id, std::vector<uint8_t>& out);
+    void DetachLive(uint32_t id);
 
     /// The report every automation surface prints: ring size and budget, counters, the file
     StateNode Describe() const;
@@ -117,6 +128,19 @@ private:
 
     std::unique_ptr<std::ofstream> _file;   ///< non-ASCII paths through FileHelper::ToFsPath (Windows)
     std::string _filePath;
-    std::map<std::string, uint32_t> _fileInterfaces;   ///< adapter -> pcapng interface id in the file
     uint64_t _fileRecords = 0;
+
+    /// One pcapng writer state (interfaces seen, socket conversations): the ring's export, the file, every live reader
+    struct Encoder;
+    std::unique_ptr<Encoder> _fileEncoder;
+    struct LiveReader
+    {
+        uint32_t id = 0;
+        std::unique_ptr<Encoder> encoder;
+        std::vector<uint8_t> pending;
+        bool dropped = false;
+    };
+    std::vector<LiveReader> _live;
+    uint32_t _nextLiveId = 1;
+    uint64_t _liveDropped = 0;
 };

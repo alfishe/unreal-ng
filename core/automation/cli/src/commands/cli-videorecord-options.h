@@ -5,6 +5,7 @@
 ///
 ///   videorecord start [format] [file] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
 ///                     [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
+///                     [--profile native|1080p|1440p|4k] [--acceleration auto|hardware|software]
 
 #include <algorithm>
 #include <cctype>
@@ -30,6 +31,8 @@ struct StartOptions
     std::string audio;       ///< normalized audio codec, "" = video only
     uint32_t videoBitrate = 0;
     uint32_t audioBitrate = 0;
+    std::string profile = "native";       ///< normalized output profile (a fixed frame takes h264 / h265 only)
+    std::string acceleration = "auto";    ///< normalized encoder acceleration
 };
 
 /// Whole-token base-10 unsigned value
@@ -135,11 +138,29 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
             }
             (arg == "--video-bitrate" ? out.videoBitrate : out.audioBitrate) = value;
         }
+        else if (arg == "--profile" && hasValue)
+        {
+            out.profile = RecordingRequest::NormalizeProfile(args[++i]);
+            if (out.profile.empty())
+            {
+                error = "Unknown profile '" + args[i] + "': use native, 1080p, 1440p or 4k.";
+                return false;
+            }
+        }
+        else if (arg == "--acceleration" && hasValue)
+        {
+            out.acceleration = RecordingRequest::NormalizeAcceleration(args[++i]);
+            if (out.acceleration.empty())
+            {
+                error = "Unknown acceleration '" + args[i] + "': use auto, hardware or software.";
+                return false;
+            }
+        }
         else if (arg.size() > 2 && arg.compare(0, 2, "--") == 0)
         {
             error = "Unknown or incomplete option '" + arg +
                     "'. Options: --fps N, --scale N, --region full|screen, --audio-rate N|auto, --audio CODEC, --video-bitrate KBPS, "
-                    "--audio-bitrate KBPS.";
+                    "--audio-bitrate KBPS, --profile native|1080p|1440p|4k, --acceleration auto|hardware|software.";
             return false;
         }
         else if (positional == 0)
@@ -160,6 +181,8 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
 inline bool Validate(const StartOptions& options, std::string& error)
 {
     error = RecordingRequest::ValidateAudio(options.format, options.filename, options.audio);
+    if (error.empty())
+        error = RecordingRequest::ValidateProfile(options.profile, options.format);
     if (error.empty())
         error = RecordingRequest::ValidateBitrates(options.videoBitrate, options.audioBitrate, options.audio);
     return error.empty();

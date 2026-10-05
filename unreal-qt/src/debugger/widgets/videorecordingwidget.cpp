@@ -28,6 +28,7 @@
 #include "encoders/dsd/dsd_encoder.h"
 #include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
+#include "widgets/recordingsettings.h"
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -313,7 +314,13 @@ void VideoRecordingWidget::createVideoTab()
     _nativeBackendRadio = new QRadioButton("Native (Hardware)");
     _ffmpegBackendRadio = new QRadioButton("FFmpeg");
     _autoBackendRadio = new QRadioButton("Auto (Recommended)");
-    _autoBackendRadio->setChecked(true);
+    {
+        // The shared engine choice (this dialog and the recording toolbar)
+        RecordingSettings saved;
+        saved.load();
+        (saved.backend == 1 ? _nativeBackendRadio : saved.backend == 2 ? _ffmpegBackendRadio : _autoBackendRadio)
+            ->setChecked(true);
+    }
     _backendGroup->addButton(_nativeBackendRadio);
     _backendGroup->addButton(_ffmpegBackendRadio);
     _backendGroup->addButton(_autoBackendRadio);
@@ -393,6 +400,31 @@ void VideoRecordingWidget::createVideoTab()
                            "6× fits H.264 (1920×1080), 8× fits H.265 (2560×1440).");
     regionLayout->addWidget(_sizeCombo);
     outputLayout->addLayout(regionLayout);
+
+    // Output profile and encoder acceleration. A fixed frame (1080p / 1440p / 4K) holds the picture fitted into it -
+    // as large as the frame allows with the aspect kept, nearest neighbor, black bars, the algorithm of the emulator window -
+    // and takes H.264 / H.265 only; the size factor above applies to the native profile
+    auto* profileLayout = new QHBoxLayout();
+    profileLayout->addWidget(new QLabel("Profile:"));
+    _profileCombo = new QComboBox();
+    _profileCombo->addItem("Native (size factor)", "native");
+    _profileCombo->addItem("1080p (1920×1080)", "1080p");
+    _profileCombo->addItem("1440p (2560×1440)", "1440p");
+    _profileCombo->addItem("4K (3840×2160)", "4k");
+    _profileCombo->setToolTip("Native: the picture at its own size times the size factor.\n"
+                              "1080p / 1440p / 4K: a fixed frame, the picture scaled sharply into it\n"
+                              "(fit with the aspect kept, nearest neighbor, black bars, no blur). H.264 / H.265 only.");
+    profileLayout->addWidget(_profileCombo);
+
+    outputLayout->addLayout(profileLayout);
+
+    {
+        RecordingSettings saved;
+        saved.load();
+        const int profileIdx = _profileCombo->findData(saved.profile);
+        _profileCombo->setCurrentIndex(profileIdx >= 0 ? profileIdx : 0);
+        _sizeCombo->setEnabled(_profileCombo->currentData().toString() == "native");
+    }
 
     // Audio settings
     auto* audioLayout = new QHBoxLayout();
@@ -529,6 +561,8 @@ void VideoRecordingWidget::connectSignals()
             this, [this](int) { updateRealtimeEstimate(); });
     connect(_browseButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBrowseFile);
     connect(_includeAudioCheck, &QCheckBox::checkStateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
+    connect(_profileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { onProfileChanged(); });
     connect(_multiTrackButton, &QPushButton::clicked, this, &VideoRecordingWidget::onMultiTrackConfigure);
     connect(_benchmarkButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBenchmark);
 
@@ -811,6 +845,12 @@ void VideoRecordingWidget::onBackendChanged()
     bool ffmpegActive = _ffmpegBackendRadio->isChecked() || _autoBackendRadio->isChecked();
     _ffmpegPathEdit->setEnabled(ffmpegActive);
     _detectButton->setEnabled(ffmpegActive);
+
+    // The engine is chosen here and shared by every recording UI (the recording toolbar follows it)
+    RecordingSettings saved;
+    saved.load();
+    saved.backend = _nativeBackendRadio->isChecked() ? 1 : _ffmpegBackendRadio->isChecked() ? 2 : 0;
+    saved.save();
 
     // Rebuild container list for this backend
     populateContainers();
@@ -1163,6 +1203,31 @@ void VideoRecordingWidget::updateRealtimeEstimate()
     }
 }
 
+void VideoRecordingWidget::onProfileChanged()
+{
+    const QString profile = _profileCombo->currentData().toString();
+    _sizeCombo->setEnabled(profile == "native" && !(_context && _context->pRecordingManager &&
+                                                    _context->pRecordingManager->IsRecording()));
+
+    RecordingSettings saved;
+    saved.load();
+    saved.profile = profile;
+    saved.save();
+
+    // A fixed frame takes H.264 / H.265: move off any other codec (VP9, AV1, GIF...) when the lists allow
+    if (profile != "native")
+    {
+        const QString current = _videoCodecCombo->currentText();
+        if (!current.startsWith("H.26"))
+        {
+            const int h264 = _videoCodecCombo->findText("H.264");
+            if (h264 >= 0)
+                _videoCodecCombo->setCurrentIndex(h264);
+        }
+    }
+    updateRealtimeEstimate();
+}
+
 void VideoRecordingWidget::onStartRecording()
 {
     validateContext();
@@ -1345,6 +1410,20 @@ void VideoRecordingWidget::onStartRecording()
     // Configure recording manager
     RecordingManager* rm = _context->pRecordingManager;
     rm->SetVideoEnabled(true);
+
+    // Output profile + encoder acceleration (a fixed frame takes H.264 / H.265 only)
+    const QString profileId = _profileCombo->currentData().toString();
+    if (profileId != "native" && videoCodec != "h264" && videoCodec != "h265" && videoCodec != "hevc")
+    {
+        QMessageBox::warning(this, "Profile",
+                             QString("The %1 profile takes H.264 or H.265 only. Pick one of them in the Video list "
+                                     "(any container that holds it) or switch the profile to Native.")
+                                 .arg(_profileCombo->currentText()));
+        return;
+    }
+    rm->SetOutputProfile(profileId.toStdString());
+    // No switch of its own: recording follows View > GPU acceleration (on = a GPU encoder when there is one)
+    rm->SetEncoderAcceleration(UiGpuAcceleration() ? EncoderAcceleration::Auto : EncoderAcceleration::Software);
 
     // Capture region + output size; resolution derives from the region
     rm->SetCaptureRegion(_captureCombo->currentIndex() == 1 ? VideoCaptureRegion::MainScreen
@@ -1624,7 +1703,8 @@ void VideoRecordingWidget::updateRecordingControls()
     _includeAudioCheck->setEnabled(notRecording && audioSupported);
     _qualityCombo->setEnabled(notRecording);
     _captureCombo->setEnabled(notRecording);
-    _sizeCombo->setEnabled(notRecording);
+    _sizeCombo->setEnabled(notRecording && _profileCombo->currentData().toString() == "native");
+    _profileCombo->setEnabled(notRecording);
     _filePathEdit->setEnabled(notRecording);
     _browseButton->setEnabled(notRecording);
     _backendGroup->setExclusive(false);

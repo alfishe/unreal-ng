@@ -57,9 +57,9 @@ public:
         _waitCpu = cpu;
         _arbiter = arbiter;
     }
-    /// A CPU write at addr has just been done: its DRAM wait, if it went to
-    /// DRAM (a RAM window that takes writes). The decoder's write overlay calls
-    /// it while the 14 MHz waits are on
+    /// A CPU write at addr has just been done: if it went to DRAM (a RAM window
+    /// that takes writes) it counts in the DRAM budget and, at 14 MHz, waits.
+    /// The decoder's write overlay calls it on every write
     void AfterWrite(uint16_t addr);
     /// The next read is an opcode fetch (M1): the decoder's M1 hook says so
     /// right before it, so an M1 miss waits one fclk longer than a data read

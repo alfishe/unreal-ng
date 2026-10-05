@@ -1198,6 +1198,22 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.network.ethernetMode = 1;
 	else if (netValue[0] != '\0' && !(StringHelper::CompareCaseInsensitive(netValue, "NAT", 3) == 0 && netValue[3] == '\0'))
 		MLOGWARNING("Config: [NETWORK] EthernetMode=%s: NAT | BRIDGE - NAT used", netValue);
+	// The traffic tap's live stream for Wireshark: off (default) | auto (a free port) | <port>
+	config.network.trafficStreamPort = -1;
+	netValue[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "TrafficStream", nullptr), netValue, sizeof netValue);
+	if (StringHelper::CompareCaseInsensitive(netValue, "AUTO", 4) == 0 && netValue[4] == '\0')
+		config.network.trafficStreamPort = 0;
+	else if (netValue[0] >= '1' && netValue[0] <= '9')
+	{
+		const long port = std::strtol(netValue, nullptr, 10);
+		if (port > 0 && port < 65536)
+			config.network.trafficStreamPort = static_cast<int32_t>(port);
+		else
+			MLOGWARNING("Config: [NETWORK] TrafficStream=%s: off | auto | a TCP port - off used", netValue);
+	}
+	else if (netValue[0] != '\0' && !(StringHelper::CompareCaseInsensitive(netValue, "OFF", 3) == 0 && netValue[3] == '\0'))
+		MLOGWARNING("Config: [NETWORK] TrafficStream=%s: off | auto | a TCP port - off used", netValue);
 	config.network.bridgeAdapter[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "BridgeAdapter", nullptr), config.network.bridgeAdapter,
 	                sizeof config.network.bridgeAdapter);

@@ -32,14 +32,15 @@ struct ITsConfLineSource
 /// | Source    | INT_MASK bit | Vector | Event (raster tact in the 71680-tact frame) |
 /// |:--|:--|:--|:--|
 /// | Frame     | 0 (reset 1)  | 0xFF   | VS_INT * 224 + HS_INT (none when HS_INT >= 224 or VS_INT >= 320); a 32 CPU-clock pulse |
-/// | Line      | 1            | 0xFD   | 224 n - 1 on every one of the 320 lines; the VDAC2 FT812 INT_N edge on msel lines (ITsConfLineSource) |
+/// | Line      | 1            | 0xFD   | 224 n, the end of every one of the 320 lines (the last at tact 0 of the next frame); the VDAC2 FT812 INT_N edge on msel lines (ITsConfLineSource) |
 /// | DMA       | 2            | 0xFB   | DMA completion (phase 5)                                 |
 /// | Wait-port | 3            | 0xF9   | the AVR's strobe (ZiFi / enhanced RS-232 ISR not zero: RaiseWaitPort) |
 ///
 /// Priority frame > line > DMA > wait-port; an acknowledge clears only the
 /// source it served. An event latches only while its mask bit is set;
-/// clearing a mask bit clears that latch. While vdos the output is gated and
-/// the latches keep their events (deferred, not lost).
+/// clearing a mask bit clears that latch. While vdos - from the trapped VG93
+/// access on (pre_vdos) - the output is gated, the latches keep their events
+/// and the frame pulse stands still (deferred, not lost).
 ///
 /// Raster tact = Z80::t / current_z80_frequency_multiplier: the frame always
 /// has 71680 raster tacts, the CPU runs 1, 2 or 4 clocks per tact (SYS_CONFIG).
@@ -53,6 +54,8 @@ public:
     static constexpr uint32_t kLines = 320;
     static constexpr uint32_t kFrameTacts = kLineTacts * kLines;  // 71680
     static constexpr uint32_t kFramePulseClocks = 32;
+    /// CPU clocks from sampling /INT to the INTA cycle's IORQ, where the source is chosen
+    static constexpr uint32_t kAcknowledgeClocks = 3;
 
     TsConfInterrupts(EmulatorContext* context, TsConfState& state) : _context(context), _ts(state) {}
 
@@ -64,6 +67,12 @@ public:
     void RaiseDma();
     /// The AVR's wait-port strobe (TS firmware: on every main-loop pass while its ZiFi ISR is not zero)
     void RaiseWaitPort();
+    /// vdos starts at a trapped VG93 access (pre_vdos) at CPU clock t: the output is gated and the frame pulse's
+    /// counter stands still from here ([V] zint.v:194 `!vdos`, top.v:1106 vdos = pre_vdos)
+    void OnVdosEnter(uint32_t t);
+    /// vdos ends at CPU clock t: a frame pulse frozen by it runs on for the clocks it had left, one whose event
+    /// fell inside vdos starts its 32 clocks here
+    void OnVdosExit(uint32_t t);
     /// The line INT's other source (the VDAC2 card), nullptr = line starts only
     void SetLineSource(ITsConfLineSource* source) { _lineSource = source; }
     static constexpr size_t kMaxLineEdges = 8;
@@ -86,6 +95,8 @@ public:
 
     /// Raster tact reached at frame T-state t
     uint32_t RasterAt(uint32_t t) const;
+    /// Latch the events up to frame T-state t (before a write changes the mask or the frame INT position)
+    void CatchUpTo(uint32_t t) { CatchUp(RasterAt(t)); }
 
 private:
     /// Latch the events of raster tacts [intLastRaster, raster]
@@ -94,6 +105,10 @@ private:
     void CatchUpLineWithSource(uint32_t from, uint32_t raster, bool latch);
     /// Is the frame pulse (32 CPU clocks from its event) still running at t?
     bool FramePulseActive(uint32_t t) const;
+    /// vdos (or the trapped access that starts it) holds the output and the frame pulse
+    bool VdosFrozen() const;
+    /// The frozen interval [intVdosClock, t) ends at CPU clock t: move the frame pulse past it
+    void ThawFramePulse(uint32_t t);
     uint32_t Multiplier() const;
 
     EmulatorContext* _context;

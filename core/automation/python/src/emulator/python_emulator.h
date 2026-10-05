@@ -3,10 +3,14 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/media/sectorwrite.h"
+#include "debugger/pchistory/pchistory.h"
+#include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
+#include <algorithm>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -1063,10 +1067,38 @@ namespace PythonBindings
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
             }, "Write 16-bit word to memory")
-            .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory) -> py::object {
+            .def("debug_wait", [](Emulator& self, std::optional<uint64_t> since, uint32_t timeoutMs) -> py::object {
+                const uint64_t from = since ? *since : self.DebugSeq();
+                StateNode answer;
+                {
+                    py::gil_scoped_release release;  // other Python threads keep running while this one waits
+                    answer = DebugSnapshot::Wait(&self, from, std::min<uint32_t>(timeoutMs, 60000));
+                }
+                return StateNodeToPy(answer);
+            }, "Long-poll: block until the debugger snapshot's seq moves past `since` (default: the current one) or "
+               "timeout_ms (at most 60000) passes -> dict {seq, changed, state, pause}",
+               py::arg("since") = py::none(), py::arg("timeout_ms") = 10000)
+            .def("pc_history", [](Emulator& self, unsigned depth) -> py::object {
+                const PcHistory::Result result = PcHistory::Report(&self, depth);
+                if (result.busy)
+                    throw std::runtime_error(result.error);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                return StateNodeToPy(result.report);
+            }, "PC history (debugger additions tdd §7): the newest instructions the CPU started with their window's page "
+               "-> dict {armed, started_now, total, capacity, entries [{address, kind, page}]}; the first call starts "
+               "recording (costs nothing until then)", py::arg("depth") = 32)
+            .def("pc_history_arm", [](Emulator& self, bool on) {
+                const std::string error = PcHistory::SetArmed(&self, on);
+                if (!error.empty())
+                    throw std::runtime_error(error);
+            }, "Start (empty) or stop the PC history", py::arg("on"))
+            .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory,
+                                      unsigned pchist) -> py::object {
                 DebugSnapshot::Options options;
                 options.disasm = std::min(disasm, 100u);
                 options.stack = stack;
+                options.pchist = pchist;
                 options.memory = memory;
                 options.rawBytes = true;
                 DebugSnapshot::Result result = DebugSnapshot::Build(&self, options);
@@ -1099,7 +1131,8 @@ namespace PythonBindings
             }, "One coherent debugger snapshot (core DebugSnapshot, GET /debug/snapshot): seq, state, pause, consistency, "
                "regs, prev_regs, pages, stack, time, disasm, memory windows ('cpu:0x8000:256', 'ram5:0:6912') with their "
                "bytes; ValueError when refused",
-               py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>())
+               py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>(),
+               py::arg("pchist") = 0)
             .def("mem_read_bytes", [](Emulator& self, uint32_t addr, uint32_t len, const std::string& space) -> py::bytes {
                 const MemoryRead::Result read = MemoryRead::Bytes(self.GetContext(), space, addr, len);
                 if (!read.error.empty())
@@ -1108,6 +1141,21 @@ namespace PythonBindings
             }, "Read raw bytes (MemoryRead): the CPU view (wraps at 0xFFFF, up to 65536), a page 'ram5' / 'rom2' / "
                "'cache0' (stops at the page's end) or 'ram' (every RAM page back to back); ValueError with the reason",
                py::arg("addr"), py::arg("len"), py::arg("space") = "cpu")
+            .def("port_out", [](Emulator& self, int64_t port, int64_t value) {
+                uint16_t p = 0;
+                uint8_t v = 0;
+                std::string error;
+                if (port < 0 || value < 0)
+                    throw py::value_error("port and value must not be negative");
+                if (!PortWrite::Parse(std::to_string(port), std::to_string(value), p, v, error))
+                    throw py::value_error(error);
+                const PortWrite::Result result = PortWrite::Write(&self, p, v, "python");
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Write a port through the machine's decoder like a CPU OUT (PortWrite: paging, TS-Conf registers, AY, "
+               "border), without breakpoints or device waits, as a TTD tool edit; paused, stopped or running. "
+               "ValueError for a bad port (0..0xFFFF) / value (0..0xFF), RuntimeError when no coherent moment came",
+               py::arg("port"), py::arg("value"))
             .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len) -> py::bytes {
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");
@@ -2686,12 +2734,14 @@ namespace PythonBindings
                 return py::bytes(reinterpret_cast<const char*>(file.data()), file.size());
             }, py::arg("adapter") = "", "The traffic ring as a pcapng file (bytes) for Wireshark")
             .def("network_traffic_control", [](Emulator& self, const std::string& action, const std::string& path,
-                                               uint64_t ringBytes) {
+                                               uint64_t value) {
                 std::string error;
-                if (!TrafficAccess::Control(self.GetContext(), action, path, ringBytes, error))
+                if (!TrafficAccess::Control(self.GetContext(), action, path, value, error))
                     throw py::value_error(error);
-            }, py::arg("action"), py::arg("path") = "", py::arg("ring_bytes") = 0,
-               "clear | start (record into the pcapng file `path`, unbounded) | stop | ring (set ring_bytes)")
+            }, py::arg("action"), py::arg("path") = "", py::arg("value") = 0,
+               "clear | start (record into the pcapng file `path`, unbounded) | stop | ring (value: its bytes) | stream (the "
+               "live pcapng stream for Wireshark on TCP port `value`, 0 = any free one; network_traffic()['stream'] has it) | "
+               "stream-stop")
             .def("network_adapters", [](Emulator&) -> py::object {
                 return StateNodeToPy(EthernetAccess::Adapters());
             }, "The host adapters the bridge can use (ethernet_mode='bridge'): name, ipv4, wireless, bridgeable; library, error")
@@ -2975,6 +3025,22 @@ namespace PythonBindings
                 if (!sec || !sec->hasData) return py::bytes();
                 return py::bytes(reinterpret_cast<char*>(sec->data), sec->dataSize);
             }, "Read sector data (128..1024 bytes depending on the sector's ID field)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
+            .def("disk_write_sector", [](Emulator& self, int drive, int cyl, int side, int sector, const py::bytes& data,
+                                         uint32_t offset) {
+                if (drive < 0 || drive > 3)
+                    throw py::value_error("bad drive (0-3)");
+                const std::string text = data;
+                const std::vector<uint8_t> bytes(text.begin(), text.end());
+                const SectorWrite::Result result = SectorWrite::Write(&self, static_cast<uint8_t>(drive), cyl, side,
+                                                                      sector + 1, offset, bytes, "python");
+                if (result.busy)
+                    throw std::runtime_error(result.error);
+                if (!result.ok)
+                    throw py::value_error(result.error);
+            }, "Write bytes into a sector's data field (SectorWrite: data CRC follows, the image counts as modified, a TTD "
+               "tool edit). sector is 0-based as in disk_read_sector (ID - 1). ValueError when refused (empty drive, "
+               "write-protected, no such sector, past the data field), RuntimeError when no coherent moment came",
+               py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"), py::arg("data"), py::arg("offset") = 0)
             .def("disk_read_sector_hex", [](Emulator& self, int drive, int track, int sector) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || drive < 0 || drive > 3) return "";
@@ -4874,6 +4940,8 @@ namespace PythonBindings
                 }
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
+                // A write reaches the page (the mapper's view: ROM, TS-Conf W0_WE, ...)
+                bank["writable"] = memory.IsWindowWritable(static_cast<uint8_t>(i));
                 banks.append(bank);
             }
 
@@ -5349,6 +5417,8 @@ namespace PythonBindings
                 float fps = 50.0f;
                 int scale = 1;
                 std::string region = "full";
+                std::string profileName;
+                std::string accelerationName;
                 std::string audio;
                 long videoBitrate = 0;
                 long audioBitrate = 0;
@@ -5382,6 +5452,10 @@ namespace PythonBindings
                         scale = opts["scale"].cast<int>();
                     if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
                         region = opts["region"].cast<std::string>();
+                    if (opts.contains("profile") && py::isinstance<py::str>(opts["profile"]))
+                        profileName = opts["profile"].cast<std::string>();
+                    if (opts.contains("acceleration") && py::isinstance<py::str>(opts["acceleration"]))
+                        accelerationName = opts["acceleration"].cast<std::string>();
                 }
 
                 std::string extension = format;
@@ -5407,8 +5481,15 @@ namespace PythonBindings
                     d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
                     return d;
                 }
+                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
+                const std::string profile = RecordingRequest::NormalizeProfile(profileName);
+                const std::string acceleration = RecordingRequest::NormalizeAcceleration(accelerationName);
                 {
-                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
+                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
+                                             RecordingRequest::ValidateProfile(profile, format);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
                     if (codecError.empty())
                         codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
                                                                         static_cast<uint32_t>(audioBitrate), audio);
@@ -5426,6 +5507,9 @@ namespace PythonBindings
                 if (scale < 1) scale = 1;
                 if (scale > 4) scale = 4;
                 rm->SetScaleFactor(static_cast<uint32_t>(scale));
+
+                rm->SetOutputProfile(profile);
+                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
 
                 rm->SetCaptureRegion((region == "screen" || region == "main")
                                          ? VideoCaptureRegion::MainScreen
@@ -5455,6 +5539,13 @@ namespace PythonBindings
                 d["format"] = format;
                 d["fps"] = fps;
                 d["scale"] = scale;
+                d["profile"] = profile;
+                d["acceleration"] = acceleration;
+                if (rm->HasFixedOutput())
+                {
+                    d["output_width"] = rm->GetOutputWidth();
+                    d["output_height"] = rm->GetOutputHeight();
+                }
                 d["region"] = region;
                 d["audio"] = rm->HasAudio();
                 d["audio_codec"] = audio;
@@ -5509,6 +5600,8 @@ namespace PythonBindings
             d["recent_fps"] = stats.recentFps;
             d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
             d["video_codec"] = rm->GetVideoCodec();
+            d["profile"] = rm->GetOutputProfile();
+            d["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
             d["audio"] = rm->HasAudio();
             d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
             d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
@@ -5550,6 +5643,8 @@ namespace PythonBindings
             d["recent_fps"] = stats.recentFps;
             d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
             d["video_codec"] = rm->GetVideoCodec();
+            d["profile"] = rm->GetOutputProfile();
+            d["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
             d["audio"] = rm->HasAudio();
             d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
             d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;

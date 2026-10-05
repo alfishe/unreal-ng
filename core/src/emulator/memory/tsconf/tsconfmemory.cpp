@@ -181,9 +181,13 @@ void TsConfMemory::DramWait(TsConfArbiter::Access kind)
 void TsConfMemory::AfterWrite(uint16_t addr)
 {
     const uint8_t bank = static_cast<uint8_t>(addr >> 14);
-    if (!_waitCpu || _bank_mode[bank] != BANK_RAM || _bank_write[bank] == _memory + TRASH_MEMORY_OFFSET)
+    if (_bank_mode[bank] != BANK_RAM || _bank_write[bank] == _memory + TRASH_MEMORY_OFFSET)
         return;  // ROM is a separate chip; a write-protected window starts no DRAM cycle
-    DramWait(TsConfArbiter::Access::Write);
+    // A RAM write takes a DRAM cycle the DMA and the TSU cannot use ([V] zmem.v:121 memwr && ramwr_en)
+    if (_ts)
+        _ts->cpuAccesses++;
+    if (_waitCpu) [[unlikely]]
+        DramWait(TsConfArbiter::Access::Write);
 }
 
 inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)

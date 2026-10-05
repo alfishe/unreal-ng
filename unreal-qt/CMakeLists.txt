@@ -611,6 +611,23 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.h"
+        # The debugger's Device memory dialog (debugger additions TODO A2q)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/devicememorydialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/devicememorydialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/devicememorydialog.h"
+        # The debugger's Disk sector dialog (debugger additions tdd §3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disksectordialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.h"
+        # The debugger's PC history dialog (debugger additions tdd §7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.h"
+        # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/core/trafficpanelmodel.cpp"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
@@ -625,6 +642,7 @@ if (TESTS)
     )
     target_include_directories(unreal-qt-tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/QHexView-5.0/include"
         "${ROOT_DIR}/core/src"
         "${ROOT_DIR}/core/src/common"
         "${ROOT_DIR}/core/src/emulator"
@@ -633,6 +651,7 @@ if (TESTS)
     target_link_libraries(unreal-qt-tests PRIVATE
         unrealng::core
         Qt6::Widgets
+        QHexView
         gtest
     )
     if (APPLE)

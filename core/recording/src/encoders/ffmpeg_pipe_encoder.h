@@ -59,6 +59,11 @@ public:
     /// @param framebuffer Frame data (BGRA format)
     /// @param timestampSec Presentation timestamp (emulated time)
     void OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestampSec) override;
+    /// Zero-copy input: the producer writes the frame straight into a queue slot (R,G,B,A, tightly packed).
+    /// Blocks for queue space in non-realtime mode, drops (Dropped) when the queue is full in realtime mode
+    FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target) override;
+    void SubmitFrameTarget(FrameTarget& target, double timestampSec) override;
+    void ReleaseFrameTarget(FrameTarget& target) override;
 
     /// @brief Write audio samples to ffmpeg via pipe
     /// @param samples Interleaved stereo samples (int16_t)
@@ -175,6 +180,12 @@ private:
         std::vector<uint8_t> data;
     };
     std::deque<FrameData> _videoQueue;
+    // Frame buffers the writer is done with, reused by the next frames: a 4K frame is 33 MB, allocating (and page
+    // faulting) one per frame costs more than the pipe write. Guarded by _queueMutex
+    std::vector<std::vector<uint8_t>> _framePool;
+    std::vector<uint8_t> _lentFrame;  ///< The slot AcquireFrameTarget lent (one at a time)
+    std::vector<uint8_t> takeFrameBuffer(size_t size);   // call with _queueMutex held
+    void recycleFrameBuffer(std::vector<uint8_t>&& buffer);  // call with _queueMutex held
     std::deque<FrameData> _audioQueue;
 
     std::atomic<bool> _cancelRequested{false};   // Hard abort: in-flight writes give up
@@ -183,7 +194,11 @@ private:
     std::atomic<bool> _blocking{false};          // Blocking backpressure (non-realtime mode)
 
     // Limits
-    const size_t MAX_QUEUE_FRAMES = 60;
+    // The video queue holds at most 60 frames, and at most ~512 MiB of them: a 4K frame is 33 MB, 60 of them would be
+    // 2 GB of queue (set from the frame size at Start)
+    static constexpr size_t kMaxQueueFrames = 60;
+    static constexpr size_t kQueueBudgetBytes = static_cast<size_t>(512) * 1024 * 1024;
+    size_t MAX_QUEUE_FRAMES = kMaxQueueFrames;
 
     // Output file
     std::string _outputFilename;

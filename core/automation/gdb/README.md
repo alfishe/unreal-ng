@@ -133,6 +133,8 @@ Access RAM pages directly using extended address format `0x01PPAAAA`:
 
 - Default port: `2000` (127.0.0.1 only - unauthenticated!)
 - Config: `unreal.ini` → `[automation]` → `gdb_port`, `gdb_bind`, `gdb_autoattach`
+- `UNREAL_GDB_PORT` overrides the port (like `UNREAL_WEBAPI_PORT`, `UNREAL_CLI_PORT`, `UNREAL_MCP_PORT`, ...), so
+  several instances on one machine each listen on their own
 
 ## Build
 

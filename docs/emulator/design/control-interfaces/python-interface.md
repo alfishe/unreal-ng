@@ -203,7 +203,7 @@ class Emulator:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
 
     def memory_regions(self) -> dict:
-        """Device memory regions (the Sprinter's 'vram')"""
+        """Device memory regions (the Sprinter's 'vram'; TS-Conf 'cram' and 'sfile'; 'cmos' with a CMOS clock; ZX-Evo 'eeprom')"""
 
     def region_read(self, name, offset=0, length=256) -> bytes: ...
     def region_write(self, name, offset, data) -> int:
@@ -543,6 +543,9 @@ emu.disk_info(0)         # None without a disk, else geometry/catalog details
 # Raw sector access (read-only)
 emu.disk_read_sector(0, 0, 0, 1)      # drive 0, cyl 0, side 0, sector 1
 emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
+# Write into a sector's data field (SectorWrite: CRC recalculated, image modified, TTD tool edit); the sector
+# number is 0-based like disk_read_sector's (ID - 1). ValueError when refused, RuntimeError on a 503-like busy
+emu.disk_write_sector(0, 0, 0, 8, b"MYDISK", offset=245)  # TR-DOS sector ID 9: the disk title
 ```
 
 ### Mouse Input
@@ -776,6 +779,18 @@ data = emu.mem_read_bytes(0, 65536)           # the whole CPU view as bytes (wra
 data = emu.mem_read_bytes(0x1800, 768, space="ram5")  # a page window; "ram" = all RAM pages back to back
 # ValueError with the reason on a bad space, address or length
 emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
+
+# A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
+# breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
+emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
+
+# PC history: the newest instructions with their window's page; the first call starts recording
+h = emu.pc_history(depth=16)                  # dict {armed, started_now, total, capacity, entries [{address, kind, page}]}
+emu.pc_history_arm(False)                     # stop (True: restart empty); emu.debug_snapshot(pchist=16) carries it too
+
+# Long-poll: block (GIL released) until the debugger snapshot's seq moves past `since` (default: now) or the timeout
+w = emu.debug_wait(since=snap["seq"], timeout_ms=5000)   # dict {seq, changed, state, pause}
+# ValueError for a bad port (0..0xFFFF) or value (0..0xFF); RuntimeError when no coherent moment came (503 case)
 
 # Get memory configuration
 info = emu.memory_info()
@@ -1353,7 +1368,8 @@ emu.paging_state()                   # tagged paging latches + bank table (P1-2)
                                      #  'latches': [{'port','latch','tags','device','gate','value',
                                      #               'decoded': {'ram_bank':..,'shadow_screen':..,...}}],
                                      #  'banks': [{'bank','address_range','type','page',
-                                     #             'name','role','signature','contended'}]}
+                                     #             'name','role','signature','contended',
+                                     #             'writable'}]}  # writable: a CPU write reaches the page
                                      # ROM bank rows carry the §5.2 identification: name = recognized
                                      # content (SHA-256 catalog), role = the model's layout slot; a
                                      # role/name mismatch is the one-glance wrong-ROM signal.
@@ -1410,6 +1426,10 @@ emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict
 emu.video_record("start", {"format": "h264", "filename": "run.mp4", "audio": "aac"})  # with sound
                                      # (True = aac; video_bitrate / audio_bitrate in kbps). No
                                      # "audio" = video only; gif + audio is refused
+emu.video_record("start", {"format": "h264", "filename": "run.mkv", "profile": "4k", "acceleration": "software"})
+                                     # profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
+                                     # picture fitted into it (aspect kept, nearest, black bars; h264 /
+                                     # h265 only). acceleration: "auto" | "hardware" | "software"
 emu.video_record("stop")             # also "pause" / "resume"
 emu.video_record_status()             # recording state + live stats (frames, duration, fps,
                                      # audio, audio_codec, audio_sample_rate, audio_duration)

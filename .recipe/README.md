@@ -66,7 +66,7 @@ matches; it names the recipe(s) for that action.
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
 | Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
-| Searching, mapping or writing memory; named regions; ROM protect | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
+| Searching, mapping or writing memory; named regions; ROM protect; writing a port (paging) | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
 | A debugger front end's redraw in one call; raw (binary) memory dumps | [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | separate /registers + /disasm + /memory calls per redraw |
 | Typing or reading back a BASIC program | [run/basic-inject-extract.md](run/basic-inject-extract.md) | media files |
 | Reading raw sectors, tracks, catalog of a loaded disk | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | tape, snapshot |
@@ -77,7 +77,7 @@ matches; it names the recipe(s) for that action.
 | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | Call-trace, opcode and memory profilers, frame cost: start, run, read, stop; which one answers which question |
 | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | Labels and symbols, sjasmplus listings, step / run to a source line, assemble into memory |
 | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | Code coverage and its gaps, the analyzer framework (TR-DOS events, raw FDC), coverage over a TTD timeline |
-| [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | Memory find / map / info, named regions, write, ROM protect, paging state, disasm pages |
+| [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | Memory find / map / info, named regions, write, ROM protect, paging state, a port write through the decoder (`ports/out`), disasm pages |
 | [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | `GET /debug/snapshot` (registers, prev_regs, pages, stack, time, code, memory at one moment, `seq`), `format=binary` memory reads, `mem_read_bytes`, `memory save` windows |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |

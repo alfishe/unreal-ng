@@ -2128,7 +2128,14 @@ StateNode Network(EmulatorContext* context)
         ret["ethernet_gateway"] = st.ethernetGateway;
     // Everything the adapters sent and received (network #91): the ring, its counters, a file recording
     if (manager)
+    {
         ret["traffic"] = manager->Traffic().Describe();
+        StateNode s = StateNode::Object();
+        s["running"] = manager->Stream().Running();
+        s["port"] = static_cast<uint64_t>(manager->Stream().Port());
+        s["clients"] = static_cast<uint64_t>(manager->Stream().Clients());
+        ret["traffic"]["stream"] = s;
+    }
     if (!st.notes.empty())
     {
         StateNode& notes = ret["not_fitted"];

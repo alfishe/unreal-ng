@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconftsu.h"
 
 class TsConfDma_Test : public TsConfFixture
@@ -56,6 +57,40 @@ protected:
             lines++;
         }
         return lines;
+    }
+
+    /// Run the engine in steps of `step` tacts until the transfer ends (cap: 3 frames)
+    /// @return raster tacts it took, to within one step
+    uint32_t RunDmaTacts(uint32_t step)
+    {
+        uint32_t tacts = 0;
+        while (Dma().Busy() && tacts < 3 * TsConfEngine::kFrameTacts)
+        {
+            _position += step;
+            if (_position >= TsConfEngine::kFrameTacts)
+            {
+                Engine().OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+                _position -= TsConfEngine::kFrameTacts;
+            }
+            Engine().CatchUp(_position);
+            tacts += step;
+        }
+        return tacts;
+    }
+
+    /// SPI -> RAM, 256 words (one sector), from the top of the graphics window in the given video mode
+    uint32_t SpiSectorTacts(uint8_t vConfig)
+    {
+        Dma().SetSpi([](bool, uint8_t) -> uint8_t { return 0x5A; });
+        Reg(TsConfReg::VConfig, vConfig);
+        Engine().OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+        _position = 80 * TsConfEngine::kLineTacts;
+        Engine().CatchUp(_position);
+        Destination(0x50000);
+        Reg(TsConfReg::DmaLen, 0xFF);
+        Reg(TsConfReg::DmaNum, 0);
+        Reg(TsConfReg::DmaCtrl, 0x02);
+        return RunDmaTacts(4);
     }
 
     uint32_t _position = 0;
@@ -269,6 +304,30 @@ TEST_F(TsConfDma_Test, DMA12_PacingFollowsTheVideoBandwidth)
     EXPECT_GT(full256, noGfx);
 }
 
+/// DMA-12b: the video takes its DRAM cycles inside its fetch window only ([V] arbiter.v:171-189): the left border
+/// gives the DMA every cycle. The line's video cost was spread over all 224 tacts, so a transfer started in the
+/// border ran slower there and faster in the window (TS-Conf audit, dma row 43)
+TEST_F(TsConfDma_Test, DMA12b_BorderGivesFullRate)
+{
+    Reg(TsConfReg::VConfig, 0x42);  // 256C 320x200: lines 76..275, fetch from DRAM cycle ~103
+    Engine().OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    _position = 100 * TsConfEngine::kLineTacts;
+    Engine().CatchUp(_position);
+    const TsConfArbiter::Fetch fetch = TsConfArbiter::FetchOf(Engine().Line(100), 100);
+    ASSERT_TRUE(fetch.active);
+    ASSERT_GT(fetch.h0, 100u) << "tacts 0..49 = DRAM cycles 0..99 are all left of the fetch";
+
+    Source(0x40000);
+    Destination(0x50000);
+    Reg(TsConfReg::DmaLen, 0xFF);
+    Reg(TsConfReg::DmaNum, 0xFF);
+    Reg(TsConfReg::DmaCtrl, 0x01);  // RAM copy, 2 cycles per word
+    const uint32_t before = Ts().dmaDst;
+    Engine().CatchUp(_position + 50);
+    EXPECT_EQ(Ts().dmaDst - before, 50u) << "100 free DRAM cycles / 2";
+    Dma().Reset();
+}
+
 /// DMA-13: DMA writes do not invalidate the CPU cache
 TEST_F(TsConfDma_Test, DMA13_DmaLeavesTheCacheStale)
 {
@@ -315,8 +374,8 @@ TEST_F(TsConfDma_Test, DMA14_SpiToRam)
     EXPECT_EQ(sent[1], 0xCD);
 }
 
-/// TSU-8: objects that do not fit the line's DRAM budget are dropped, in
-/// processing order
+/// TSU-8: objects past the line's DRAM budget are dropped, in processing
+/// order (one cut by the budget shows its fetched words, TSU-8b)
 TEST_F(TsConfDma_Test, TSU8_StarvedObjectsAreDropped)
 {
     const uint8_t spritePage = 0x20;
@@ -338,6 +397,39 @@ TEST_F(TsConfDma_Test, TSU8_StarvedObjectsAreDropped)
     EXPECT_EQ(out[16], 0x21);
     EXPECT_EQ(out[32], 0x00) << "the third sprite no longer fits";
     EXPECT_EQ(used, 4u);
+}
+
+/// TSU-8b: an object the budget cuts is drawn up to the cut, 4 pixels per DRAM word in bitmap order ([V]
+/// video_ts_render.v:84-107; [U] render_tile per cycle): it was dropped whole (TS-Conf audit, tsu row 39). With an
+/// X flip the bitmap's first pixels are the sprite's right side
+TEST_F(TsConfDma_Test, TSU8b_TheCutObjectIsDrawnUpToTheCut)
+{
+    const uint8_t spritePage = 0x20;
+    std::memset(_memory->RAMPageAddress(spritePage), 0x11, PAGE_SIZE);
+    Reg(TsConfReg::SGPage, spritePage);
+    Reg(TsConfReg::TConfig, 0x80);
+    for (uint32_t d = 0; d < 3; d++)
+    {
+        Ts().sfile[d * 3] = 0x2000;
+        Ts().sfile[d * 3 + 1] = static_cast<uint16_t>(d * 16);
+        Ts().sfile[d * 3 + 2] = static_cast<uint16_t>((d + 1) << 12);
+    }
+    for (bool flip : {false, true})
+    {
+        SCOPED_TRACE(flip);
+        Ts().sfile[2 * 3 + 1] = static_cast<uint16_t>(32 | (flip ? 0x8000 : 0));
+        TsConfLine set;
+        TsConfTsu::MapRing ring{};
+        std::vector<uint8_t> out(256);
+        uint32_t used = 0;
+        TsConfTsu::RenderLine(Ts(), set, _memory->RAMBase(), ring, 0, 256, out.data(), 5, used);
+        EXPECT_EQ(used, 5u);
+        for (uint32_t x = 32; x < 40; x++)
+        {
+            const bool drawn = flip ? x >= 36 : x < 36;
+            EXPECT_EQ(out[x], drawn ? 0x31 : 0x00) << "x " << x;
+        }
+    }
 }
 
 /// TTD-4: a transfer captured half-way (TsConfState + RAM) and restored ends
@@ -367,19 +459,41 @@ TEST_F(TsConfDma_Test, TTD4_RestoreMidTransfer)
 }
 
 /// TIM-3: DRAM cycles per word ([V] dma.v, spi.v): RAM copy 2, BLT 3, fill 1
-/// (2 for the first word), SPI 10 (two 17-fclk bytes + the DRAM cycle)
+/// (2 for the first word), SPI and IDE 1 - their device phase is time, not DRAM
+/// (DeviceFclk: SPI two 17-fclk exchanges, the DRAM write overlapping the
+/// second; IDE the ~6-fclk bus cycle + the DRAM cycle)
 TEST_F(TsConfDma_Test, TIM3_WordCosts)
 {
     Launch(0x40000, 0x50000, 0xFF, 0xFF, 0x01);
     EXPECT_EQ(Dma().WordCost(), 2u) << "RAM";
+    EXPECT_EQ(Dma().DeviceFclk(), 0u) << "RAM: DRAM-bound only";
     Dma().Reset();
     Dma().SetSpi([](bool, uint8_t) -> uint8_t { return 0xFF; });
     Launch(0, 0x50000, 0xFF, 0xFF, 0x02);
-    EXPECT_EQ(Dma().WordCost(), 10u) << "SPI -> RAM";
+    EXPECT_EQ(Dma().WordCost(), 1u) << "SPI -> RAM: one DRAM write";
+    EXPECT_EQ(Dma().DeviceFclk(), 34u) << "two SPI exchanges";
     Dma().Reset();
     Launch(0x40000, 0x50000, 0xFF, 0xFF, 0x81);  // BLT1 (ASZ)
     EXPECT_EQ(Dma().WordCost(), 3u) << "blit";
     Dma().Reset();
+}
+
+/// TIM-3b: an SPI word takes 34 fclk whatever the DRAM load ([V] spi.v: an exchange is the start clock + 16;
+/// dma.v: the DMA's spi_stb is the SPI start, so the DRAM write of a word overlaps its second byte's shift).
+/// It was charged 10 DRAM cycles of the line's free budget: 15% slow without video, ~1.8x slow in 256C
+/// (TS-Conf audit, dma rows 30-31)
+TEST_F(TsConfDma_Test, TIM3b_SpiWordIs34Fclk)
+{
+    const uint32_t tacts = SpiSectorTacts(0x20 | 0x02);  // NOGFX
+    EXPECT_NEAR(static_cast<double>(tacts), 256 * 34 / 8.0, 6.0) << "256 words x 34 fclk = 1088 tacts";
+}
+
+TEST_F(TsConfDma_Test, TIM3c_SpiPacingIgnoresTheVideo)
+{
+    const uint32_t noGfx = SpiSectorTacts(0x20 | 0x02);
+    const uint32_t full256 = SpiSectorTacts(0x02 | 0xC0);  // 256C in the 360-wide window
+    EXPECT_NEAR(static_cast<double>(full256), static_cast<double>(noGfx), 8.0)
+        << "the video leaves the DMA its one DRAM cycle per 34 fclk";
 }
 
 /// The VDAC builds are XTR_FEAT builds: BLT2 is there after a reset

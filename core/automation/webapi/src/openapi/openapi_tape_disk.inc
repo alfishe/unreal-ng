@@ -334,6 +334,40 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["responses"]["200"]["description"] =
         "Sector data with address mark, CRC status, and base64-encoded content";
 
+    // PUT /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec} - a debugger's sector write (SectorWrite)
+    {
+        const char* kSector = "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}";
+        Json::Value& op = paths[kSector]["put"];
+        op["summary"] = "Write bytes into a sector's data field (debugger)";
+        op["tags"].append("Disk Inspection");
+        op["description"] =
+            "The sector is found by its ID (the R byte of its address mark, 1-based on TR-DOS) on the track of the "
+            "cylinder and side, whatever the interleave. The bytes go into its data field at offset the way the "
+            "WD1793 WRITE SECTOR puts them there: the data CRC is recalculated, the address mark is kept, the image "
+            "counts as modified (save on eject). Refused (400 with the reason): an empty drive, a write-protected "
+            "disk, a missing track or sector, an ID-only sector, bytes past the data field. It runs at a coherent "
+            "moment (paused, stopped or between two frames) and a TTD recording keeps it as a debugger-edit marker. "
+            "Example: drive A, 0/0/9, {\"offset\":245,\"hex\":\"4D594449534B\"} renames a TR-DOS disk to MYDISK.";
+        op["parameters"] = paths[kSector]["get"]["parameters"];
+        op["requestBody"]["required"] = true;
+        Json::Value& body = op["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["properties"]["offset"]["type"] = "integer";
+        body["properties"]["offset"]["description"] = "Offset in the data field (default 0)";
+        body["properties"]["hex"]["type"] = "string";
+        body["properties"]["hex"]["description"] = "Bytes as hex, spaces and commas allowed (one of hex, data, base64)";
+        body["properties"]["data"]["type"] = "array";
+        body["properties"]["data"]["items"]["type"] = "integer";
+        body["properties"]["data"]["description"] = "Bytes 0..255";
+        body["properties"]["base64"]["type"] = "string";
+        body["properties"]["base64"]["description"] = "Bytes as base64";
+        op["responses"]["200"]["description"] =
+            "Written: {drive, cylinder, side, sector, offset, bytes_written, sector_size, moment}";
+        op["responses"]["400"]["description"] = "Bad request or refused (the message names the reason)";
+        op["responses"]["404"]["description"] = "No such emulator";
+        op["responses"]["503"]["description"] = "No coherent moment within 500 ms: try again";
+    }
+
     // GET /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw - Read raw sector
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["summary"] =
         "Read raw sector bytes";

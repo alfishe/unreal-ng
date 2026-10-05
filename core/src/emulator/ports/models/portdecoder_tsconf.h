@@ -9,6 +9,7 @@
 #include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/devicememory.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
 #include "emulator/platforms/tsconf/tsconfarbiter.h"
@@ -170,6 +171,11 @@ public:
     uint8_t ReadRegister(uint8_t reg);
     /// A #7FFD write (§2.3)
     void Write7FFD(uint8_t value);
+    /// A CRAM (`cram`) or SFILE word changes outside DMA - the FM window, a debugger's region write: the screen
+    /// catches up first, a CRAM word rebuilds the palette and enters the video change log
+    void CommitTableWord(bool cram, uint8_t index, uint16_t word);
+    /// The regions `cram` and `sfile` (tsconfmemoryregions.h)
+    void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) override;
 
     /// Re-derive everything that follows from the state (banks, hooks,
     /// overlays, clock, screen) - after a reset and a TTD restore
@@ -206,8 +212,8 @@ private:
         PortDecoder_TSConf& _owner;
     };
 
-    /// 14 MHz write waits (TsConfArbiter): a write-only overlay installed
-    /// while the CPU runs at 14 MHz
+    /// CPU writes to DRAM: counted in the DRAM budget, and the 14 MHz write
+    /// waits (TsConfArbiter); a write-only overlay, always installed
     class DramWriteWait : public HostBusOverlay
     {
     public:
@@ -256,6 +262,8 @@ private:
     bool _poweredOn = false;
 
     FmWindow _fmWindow{*this};
+    std::unique_ptr<IDeviceMemoryRegion> _cramRegion;
+    std::unique_ptr<IDeviceMemoryRegion> _sfileRegion;
     CacheWriteSnoop _cacheSnoop{*this};
     DramWriteWait _dramWriteWait{*this};
 

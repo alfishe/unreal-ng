@@ -174,10 +174,11 @@ TEST_F(ScreenTSConf_Test, VID3_ZxPaletteIndex)
     EXPECT_EQ(PixelAfterFrame(Fx(140) + 2, Fy(80)), ScreenTSConf::CramToRgba(ts.cram[0x28])) << "paper";
 }
 
-/// VID-4: BORDER from #FE uses PAL_SEL; drawn outside the window
+/// VID-4: BORDER from #FE uses PAL_SEL (as latched at the line start); drawn outside the window
 TEST_F(ScreenTSConf_Test, VID4_Border)
 {
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // the next line has latched it
     Out(0x00FE, 0x05);
     _decoder->GetState().cram[0xA5] = 0x03E0;  // green
     EXPECT_EQ(PixelAfterFrame(0, 0), ScreenTSConf::CramToRgba(0x03E0));
@@ -357,17 +358,18 @@ TEST_F(ScreenTSConf_Test, TSO2_RendererMatchesTheReference)
 }
 
 /// VDAC ([MISC] TS_VDAC, hs §0.1 / §4.3): with a video DAC, CRAM bit 15 set
-/// sends the channel's bits through the DAC (3 / 4 / 5 bit, full scale 255),
-/// clear gives the PWM-compatible linear curve (0..24, then full); no VDAC
-/// keeps the 2-bit DAC + PWM average. STATUS reports the build, the VDAC
-/// builds have BLT2, and the renderer follows the setting
+/// sends the channel's bits through the DAC, clear gives the PWM-compatible
+/// linear curve (0..24, then full); the 5-bit board's CPLD is the VDAC2 table
+/// (VDAC2_CardTable); no VDAC keeps the 2-bit DAC + PWM average. STATUS
+/// reports the build, the VDAC builds have BLT2, and the renderer follows the
+/// setting
 TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
 {
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x0010, 0), 0xFFAA0000u) << "no VDAC: unchanged";
     EXPECT_EQ(ScreenTSConf::CramToRgba(12 << 10, 3), 0xFF00007Fu) << "linear: 12 of 24";
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, 3), 0xFFFFFFFFu) << "linear saturates from 24";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 3), 0xFF000083u) << "5 bit: 16 of 31";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (31 << 10), 3), 0xFF0000FFu) << "5 bit: 31 is full";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 3), 0xFF000080u) << "5 bit: 16 << 3";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (31 << 10), 3), 0xFF0000F8u) << "5 bit: 31 is 248 (the CPLD's {in, 3'b0})";
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 1), 0xFF000091u) << "3 bit: code 4 of 7";
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | 16, 2), 0xFF880000u) << "4 bit: code 8 of 15";
 
@@ -384,25 +386,31 @@ TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
     _context->config.ts_vdac = 0;
 }
 
-/// D6 (vdac2-tdd.md §2.1): the VDAC2 build (STATUS 7) shows the Evo colors
-/// through the card's CPLD table exactly: PAL_SEL = 1 is level << 3 (top 248),
-/// PAL_SEL = 0 is the card's linear table, round(v * 255 / 24), full from 24
+/// D6 (vdac2-tdd.md §2.1): the VDAC2 build (STATUS 7) and the 5-bit VDAC build
+/// (STATUS 3) show the Evo colors through the board's CPLD table exactly - the
+/// two CPLDs have the same `lut` (vdac/vdac1/cpld/top.v, vdac/vdac2/cpld/top.v):
+/// PAL_SEL = 1 is level << 3 (top 248), PAL_SEL = 0 is the linear table,
+/// round(v * 255 / 24), full from 24. The 5-bit build used to scale 31 to 255
+/// and truncate the linear curve (seven levels one low): TS-Conf audit, video row 44
 TEST_F(ScreenTSConf_Test, VDAC2_CardTable)
 {
     static constexpr uint8_t kCard[25] = {0,   10,  21,  31,  42,  53,  63,  74,  85,  95,  106, 117, 127,
                                           138, 149, 159, 170, 181, 191, 202, 213, 223, 234, 245, 255};
-    for (uint32_t v = 0; v < 32; v++)
+    for (uint8_t vdac : {uint8_t(3), uint8_t(7)})
     {
-        const uint32_t linear = v < 25 ? kCard[v] : 255u;
-        EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(v), 7), 0xFF000000u | (linear << 16))
-            << "linear blue " << v;
-        EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(0x8000 | (v << 10)), 7), 0xFF000000u | (v << 3))
-            << "direct red " << v;
+        SCOPED_TRACE(int(vdac));
+        for (uint32_t v = 0; v < 32; v++)
+        {
+            const uint32_t linear = v < 25 ? kCard[v] : 255u;
+            EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(v), vdac), 0xFF000000u | (linear << 16))
+                << "linear blue " << v;
+            EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(0x8000 | (v << 10)), vdac), 0xFF000000u | (v << 3))
+                << "direct red " << v;
+        }
+        EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, vdac), 0xFFFFFFFFu) << "linear saturates";
+        EXPECT_EQ(ScreenTSConf::CramToRgba(0xFFFF, vdac), 0xFFF8F8F8u) << "direct white is 248";
+        EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, vdac), 0xFF007500u) << "117 where a truncating curve gives 116";
     }
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, 7), 0xFFFFFFFFu) << "linear saturates";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0xFFFF, 7), 0xFFF8F8F8u) << "direct white is 248";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, 7), 0xFF007500u) << "117 where the truncating curve gives 116";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, 3), 0xFF007400u) << "the 5-bit VDAC build keeps its curve";
 }
 
 /// TIM-5: a DMA CRAM write lands at its dot. A RAM -> CRAM transfer of 200
@@ -478,6 +486,7 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
 {
     TsConfState& ts = _decoder->GetState();
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // #FE takes the PAL_SEL latched at the line start: the next line's
     Out(0x00FE, 0x06);
     // The border: green. The fixture's RAM is tagged (page 5 is all 0x05), so the ZX ink is color 5 and
     // the paper 0: the border takes color 6, and nothing in the window is green
@@ -536,6 +545,7 @@ TEST_F(ScreenTSConf_Test, VID6_ModeChangeMidFrameKeepsTheDrawnLines)
 {
     TsConfState& ts = _decoder->GetState();
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // #FE takes the PAL_SEL latched at the line start: the next line's
     Out(0x00FE, 0x06);
     ts.cram[0xA6] = 0x03E0;  // the border: green, nothing else in the picture is
     const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);

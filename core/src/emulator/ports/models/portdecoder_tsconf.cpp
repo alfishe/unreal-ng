@@ -25,6 +25,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
+#include "emulator/platforms/tsconf/tsconfmemoryregions.h"
 #include "emulator/platforms/tsconf/vdac2card.h"
 #include "emulator/video/screen.h"
 
@@ -341,7 +342,11 @@ PortDecoder_TSConf::PortArm PortDecoder_TSConf::ClassifyPort(uint16_t port) cons
         case 0xFF:
             return fdcOpen ? PortArm::Fdc : PortArm::ZxBus;
         case 0xF7:
-            return (port & 0x0100) ? PortArm::Gluk : PortArm::ZxBus;
+            // Outside DOS the mainboard owns every #xxF7 ([V] zports.v:330 porthit && !dos; A8 = 0 reads #FF,
+            // :474-475); in DOS the ZX-Bus, but the CMOS ports (A8 = 1) still reach the AVR inside vdos (:720-721)
+            if (!_ts.dos || (_ts.vdos && (port & 0x0100)))
+                return PortArm::Gluk;
+            return PortArm::ZxBus;
         case 0xDF:
             return PortArm::Mouse;
         case 0x57:
@@ -600,9 +605,9 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         case PortArm::KeyboardBorder:
             FlushVideo();
             PortFeOut(port, value, pc);
-            // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the latched PAL_SEL (§3.4)
-            _ts.regs[TsConfReg::Border] =
-                static_cast<uint8_t>(((_ts.regs[TsConfReg::PalSel] & 0x0F) << 4) | (value & 0x07));
+            // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the PAL_SEL latched at the line start (§3.4; [V]
+            // video_ports.v:109 takes `palsel`, :160): FlushVideo brought the line engine up to this write
+            _ts.regs[TsConfReg::Border] = static_cast<uint8_t>(((_ts.latPalSel & 0x0F) << 4) | (value & 0x07));
             break;
         case PortArm::Covox:
             DacWrite(value);  // any #xxFB, never gated ([V] zports.v:490)
@@ -678,6 +683,13 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
         FlushVideo();
     else if (reg >= TsConfReg::DmaSAl && reg <= TsConfReg::DmaNum)
         CatchUpEngine();  // the DMA runs up to the write
+    else if (reg == TsConfReg::IntMask || reg == TsConfReg::HsInt || reg == TsConfReg::VsIntL || reg == TsConfReg::VsIntH)
+    {
+        // The interrupt events up to the write happened under the old mask / position (the controller evaluates
+        // them lazily): a line end at tact 0 must not latch because the mask is set later in that tact
+        if (_context->pCore && _context->pCore->GetZ80())
+            _interrupts.CatchUpTo(_context->pCore->GetZ80()->t);
+    }
     _ts.regs[reg] = value;
 
     switch (reg)
@@ -809,17 +821,29 @@ uint8_t PortDecoder_TSConf::FdcAccess(uint8_t port, bool isWrite, uint8_t value)
         else
             result = PeripheralPortIn(port);
     }
+    if (systemPort && !isWrite)
+    {
+        // VGSYS: {INTRQ, DRQ, 111111}, driven while DOS || VG_OPEN whatever the chip select ([V] zports.v:330,
+        // 344-347,447-448) - also for a virtual drive and inside vdos
+        result = static_cast<uint8_t>((chipSelected ? result : PeripheralPortIn(port)) | 0x3F);
+    }
     if (isWrite && systemPort)
         _ts.vgDrive = value & 0x03;
 
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (_ts.dos && !_ts.vdos && virtualDrive)
     {
+        // The interrupt controller's vdos is pre_vdos: it holds INT from this access on ([V] top.v:1106)
+        if (!_ts.preVdos && z80)
+            _interrupts.OnVdosEnter(z80->t);
         _ts.preVdos = 1;
         RefreshM1Hook();
     }
     else if (_ts.vdos && !systemPort)
     {
         _ts.vdos = 0;
+        if (z80)
+            _interrupts.OnVdosExit(z80->t);
         UpdateBanks();
         RefreshM1Hook();
     }
@@ -839,14 +863,22 @@ bool PortDecoder_TSConf::CmosReachable() const
 
 uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
 {
-    // Only the data port (#BFF7, A14 = 0) drives the bus
-    if ((port & 0x4000) == 0 && CmosReachable())
-        return _evoAvr.ReadData();
+    // Only the data port (#BFF7, A14 = 0) answers. Inside vdos the AVR gets the read (portf7_rd allows vdos,
+    // [V] zports.v:721) but the FPGA does not drive the bus: porthit takes #xxF7 only while !dos (:330), and vdos
+    // is always in DOS - the CPU reads #FF
+    if ((port & 0x0100) && (port & 0x4000) == 0 && CmosReachable())  // portf7_rd needs A8 = 1 (zports.v:721)
+    {
+        const uint8_t value = _evoAvr.ReadData();
+        return _ts.dos ? 0xFF : value;
+    }
     return 0xFF;
 }
 
 void PortDecoder_TSConf::DecodeF7Out(uint16_t port, uint8_t value)
 {
+    if (!(port & 0x0100))
+        return;  // portf7_wr needs A8 = 1 ([V] zports.v:720): the mainboard takes A8 = 0 and does nothing
+
     // Gating as latched before this cycle
     const bool cmos = CmosReachable();
 
@@ -1025,23 +1057,38 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
             return;
         }
         const uint8_t index = static_cast<uint8_t>(offset >> 1);
-        const uint16_t word = static_cast<uint16_t>((value << 8) | ts.fmStash);
-        _owner.FlushVideo();  // CRAM is read per dot; SFILE per line (TSU)
-        if (offset < 0x200)
-        {
-            ts.cram[index] = word;
-            _owner._cramVersion++;
-            if (_owner._context->pScreen)  // the video change log (DMA CRAM writes count in /state/tsconf dma)
-                _owner._context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);
-        }
-        else
-            ts.sfile[index] = word;
+        _owner.CommitTableWord(offset < 0x200, index, static_cast<uint16_t>((value << 8) | ts.fmStash));
     }
     else
     {
         // 0x400-0x4FF: +0x400+n is OUT (n << 8 | #AF)
         _owner.WriteRegister(static_cast<uint8_t>(offset), value);
     }
+}
+
+void PortDecoder_TSConf::CommitTableWord(bool cram, uint8_t index, uint16_t word)
+{
+    FlushVideo();  // CRAM is read per dot; SFILE per line (TSU)
+    if (cram)
+    {
+        _ts.cram[index] = word;
+        _cramVersion++;
+        if (_context->pScreen)  // the video change log (DMA CRAM writes count in /state/tsconf dma)
+            _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);
+    }
+    else
+        _ts.sfile[index] = word;
+}
+
+void PortDecoder_TSConf::CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out)
+{
+    if (!_cramRegion)
+    {
+        _cramRegion = std::make_unique<TsConfTableRegion>(*this, true);
+        _sfileRegion = std::make_unique<TsConfTableRegion>(*this, false);
+    }
+    out.push_back(_cramRegion.get());
+    out.push_back(_sfileRegion.get());
 }
 
 void PortDecoder_TSConf::RefreshCache()
@@ -1092,12 +1139,7 @@ void PortDecoder_TSConf::ApplyClock()
         _tsMemory->SetDramWaits(waits14 ? z80 : nullptr, &_arbiter);
     _arbiter.Reset();
     if (Core* core = _context->pCore)
-    {
-        if (waits14)
-            core->AddBusOverlay(&_dramWriteWait);
-        else
-            core->RemoveBusOverlay(&_dramWriteWait);
-    }
+        core->AddBusOverlay(&_dramWriteWait);  // every CPU write: the DRAM budget, at 14 MHz also its wait
     RefreshM1Hook();
     if (_state->hw_turbo_ratio == ratio)
         return;

@@ -404,13 +404,17 @@ GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 GET /api/v1/emulator/{id}/debug/snapshot      One coherent debugger picture (?disasm=N lines from PC, ?stack=N words, ?memory=space:addr:len repeatable or comma-separated, at most 8): seq, cpu, state, pause {reason, breakpoint_id, address}, consistency (paused | frame | stopped), regs (= /registers), prev_regs (at the previous stop), pages[], stack, time {frame, t, frame_t, line, dot}, disasm[] (= /disasm lines), memory[] {space, address, length, base64}; 503 when no coherent moment came within 500 ms
+POST /api/v1/emulator/{id}/stepout | skip_until | steps | stepover | run_*   Run-control calls: 409 "Run-control held by <surface>" while another surface (GDB) holds the claim (every call that advances the CPU); the long ones run on a pool of 4 threads of their own, so the two HTTP workers keep answering meanwhile (same reply, sent when the call finishes)
+GET  /api/v1/emulator/{id}/debug/pchist        PC history, newest first (?depth=, default 32, at most 1024): {armed, started_now, total, capacity, entries [{address, kind rom|ram|cache, page}]} - one entry per instruction the CPU starts with its window's page; the first read starts recording (it costs nothing until then); POST {"enabled": false|true} stops / restarts it empty; also GET /debug/snapshot?pchist=N
+GET  /api/v1/emulator/{id}/debug/wait          Long-poll (?since=seq, default the current one; ?timeout_ms=0..60000, default 10000): answers when the debugger snapshot's seq moves past since (a stop, a run start, a tool edit) or at the timeout -> {seq, changed, state, pause}; no server thread waits
+POST /api/v1/emulator/{id}/ports/out          A debugger's port write through the machine's decoder (body: {"port": "0x13AF", "value": "0x20"}, numbers or text 0x13AF / #13AF / 13AFh / decimal): every side effect of a CPU OUT (paging, TS-Conf registers, AY, border, a card's port), but no port or memory breakpoint fires, device waits are dropped and TTD keeps it as a tool edit; runs paused, stopped or between two frames of a running machine -> {port, value, moment: paused | stopped | frame}; 503 when no coherent moment came within 500 ms
 POST /api/v1/emulator/{id}/memory/find        Search memory for a byte pattern (body: {"pattern_hex": "CD ?? 00" (?? any byte, A? any nibble) | "pattern": [..], "mask_hex": "FF 00 FF", "space": "cpu|ram|ram5|rom2|cache0", "start", "end", "max", "alignment"}); matches: address or page {kind, page} + offset, context_start, context (4 before, the match, 4 after)
 GET  /api/v1/emulator/{id}/state/screen        Screen state: video mode, resolution, border, shadow screen, active screen + RAM pages, contention, flash (?verbose=true adds per-screen RAM page + Z80 mapping and decoded #7FFD)
 GET  /api/v1/emulator/{id}/state/screen/mode   Video mode: picture format, memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77
 GET  /api/v1/emulator/{id}/state/screen/flash  FLASH phase and timing
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
 GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…), the `latch` live-value binding (p7FFD, p1FFD, pEFF7, pFE = the ULA port, … or null), and for a latched row `latch_value` (last written) with `latch_fields` (decoded: border / mic / ear for #FE, ram_bank / … for #7FFD)
-GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
+GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal) and `writable` / `read_write` per window (does a CPU write reach the page, as the mapper decides: ROM, TS-Conf window 0 without W0_WE), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
 GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone; layers[] = the layer pixel under the beam (id, x, x_end, y)
 GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, beam window, dots per T) and framebuffer placement (mapped, family)
 GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too. TS-Conf: layer 0 = the graphics mode, layer 1 = "tsu" (present while tiles or sprites are on) - the answer's layer names the object ("tsu.s0" / "tsu.t0" / "tsu.s1" / "tsu.t1" / "tsu.s2") with its tilemap word or three SFILE words (space sprite_ram), graphics byte and CRAM cell; a transparent TSU pixel answers available: false
@@ -418,7 +422,7 @@ GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] 
 GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL, TS-Conf text, the Sprinter's text squares): lines[] text/codes/attrs; unavailable in bitmap modes
 GET  /api/v1/emulator/{id}/video/changes      [?frames=1|2] - video change log, every machine: per frame the latches at its start, writes[] (t, line, t_in_line, pc, changes {latch: "old -> new"}), tables (palette / mode_table write counts with first / last T)
 GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binary|base64 - the picture as raw pixels (R,G,B,A; the Sprinter's u16 pens with index); X-Width / X-Height headers
-GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
+GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"; TS-Conf palette "cram" and sprite table "sfile", 512 bytes each, word n at offset 2n, low byte first; "cmos" on every machine with a CMOS clock, a write is a guest write; ZX-Evo "eeprom", 4 KiB): name, size, pages, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
 GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
@@ -546,9 +550,11 @@ GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statis
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
 POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
                                                "format", "filename", "fps", "scale", "region",
-                                               "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate"})
+                                               "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate",
+                                               "profile": "native|1080p|1440p|4k" (a fixed frame, h264/h265 only),
+                                               "acceleration": "auto|hardware|software"})
 GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
-                                               audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration)
+                                               audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration; profile, acceleration)
 ```
 
 #### Disassembly Response
@@ -1504,6 +1510,7 @@ forwards to these routes.
 POST /api/v1/emulator/{id}/tape/*         ✅ Implemented — see [Tape Control](#tape-control)
 POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
 POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
+PUT  /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}   Write into a sector's data field ({"offset": 245, "hex": "4D59..."} | "data": [..] | "base64"): sector by its ID, data CRC recalculated, image modified, TTD tool edit; 400 with the reason when refused (empty drive, write-protected, no such sector, past the data field), 503 when busy
 ```
 
 ### ZX-bus Slots
