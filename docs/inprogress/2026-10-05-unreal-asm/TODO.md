@@ -39,7 +39,8 @@ phase; master only after the owner's review.
 - [x] A4 `storm`, `zxasm` (2026-10-05, branch `unreal-asm`)
   - [x] `zxasm`, every version 2.4 … 4.20 (2026-10-05, branch `unreal-asm`): editor rules derived on 372 real sources (byte-exact all, canonical 99.86 %), version detection, testdata `zxasm/` ([research-zxasm.md](research-zxasm.md))
   - [x] `storm`, versions 1.0beta / 1.2-1.3i: decoder and STORM's encoding rules (implied commands, number forms, packed labels, IX / IY offsets, sub-expressions) derived on 42 real sources (byte-exact all, rules exact 23 492 / 23 497), testdata `storm/` ([research-storm.md](research-storm.md))
-  - [ ] emulator oracle for ZX-ASM and STORM; a 1.0beta-saved STORM file
+  - [x] emulator oracle for ZX-ASM (ZAsm 3.15) and STORM (1.3): files written by the codecs' rules load and show the decoded text (2026-10-05; research-zxasm.md / research-storm.md §6.1)
+  - [ ] a STORM file saved by 1.0beta (start #C003)
 - [ ] A5 IR, transforms, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe

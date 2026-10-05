@@ -93,10 +93,17 @@ same text, so only the kept bytes reproduce them.
 | `STORM1_3__MAIN` | STORM's own source: sub-expressions, postfix operators |
 | `STORM1_3__DPC` | STORM's own source: the keyword table `TBTK`; the five separator bytes of §5 |
 
+### 6.1 Checked in the emulator
+
+`EMUL` with five lines added (`TEST    LD A,(IX+13),B,5,DE,-33`, `JR NZ,$-3:JR C,$+2:CP C`, `TBUF    DS (TEST+1)*2`, a
+Russian comment, `DB "ПРИВЕТ",#0D,0`), written entirely by the codec's rules with `zxasm encode` (type C, start
+#C00B), loads in STORM 1.3 (BREAK, L, the name) and shows the text line for line, the leading empty line included
+(STORM shows `EX AF,AF` for the token pair `AF AF`, as the codec does). Own emulator instance, TTD recorded;
+screenshots kept with the research materials.
+
 ## 7. Open items
 
 | Item | Note |
 |---|---|
 | A file saved by 1.0beta (start #C003) | none found; the codec reads it as version `1.0` from the catalog |
-| Emulator oracle | a file written by the codec, loaded into STORM 1.3 on screen |
 | Exported plain-text files (Spectrum Expert) | text with CR lines: the `text` codec reads them |

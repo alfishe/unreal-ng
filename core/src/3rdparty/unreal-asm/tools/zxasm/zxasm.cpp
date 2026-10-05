@@ -121,6 +121,24 @@ std::string Lower(std::string text)
     return text;
 }
 
+/// The catalog's start field each assembler writes for a saved source (the research documents of each codec)
+uint16_t CatalogStart(const std::string& codec, const std::string& version, char type)
+{
+    if (codec == "tasm")
+        return version == "2.0" ? 38750 : version == "3" ? 39221 : version == "4.0" ? 40872 : 0;
+    if (codec == "storm")
+        return version == "1.0" ? 0xC003 : 0xC00B;
+    if (codec == "zxasm")
+    {
+        if (type == 'a')
+            return 0x6D73;   // extension "sm"
+        if (type == 'z')
+            return 0x7361;   // extension "as"
+        return version == "2" ? 0xA1DF : 35151;
+    }
+    return 0;
+}
+
 /// Hobeta / TR-DOS image -> the file's bytes and catalog hints; false with a message when the container is broken or
 /// the named file is missing. Plain host files pass through.
 bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
@@ -343,7 +361,7 @@ int main(int argc, char** argv)
             file.type = outExtension[1];
             const std::string version = !args.version.empty() ? args.version
                                         : codec->Info().subversions.empty() ? std::string() : codec->Info().subversions.back().id;
-            file.start = codec->Info().id == "tasm" && version == "3" ? 40872 : 0;   // TASM 3 saves sources with this start
+            file.start = CatalogStart(codec->Info().id, version, file.type);
             file.length = static_cast<uint16_t>(encoded.bytes.size());
             file.data = encoded.bytes;
             encoded.bytes = containers::WriteHobeta(file);

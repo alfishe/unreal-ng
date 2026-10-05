@@ -85,10 +85,17 @@ newest is chosen. Keywords `#C6`-`#C9` mean Lite or 3.15+, `#CA`-`#CC` mean 3.15
 | `ZASM315__fcnv1.$a` | 3.15 | `#CA`-`#CC` keywords |
 | `Z4_20__ovlib.$a` | 3.15 | 4.20; one line the rules write differently |
 
+### 6.1 Checked in the emulator
+
+`fcnv1` with four lines added (`Test   ld (hl),a:inc hl:djnz Test`, `       LD   A,(IX+5) ;комментарий`,
+`       db "  строка  ",13`, `       chd "b:test"`), written entirely by the codec's rules (no kept bytes) with
+`zxasm encode --version 3.15` (type `a`, extension "sm"), opens in ZAsm 3.15 (File > Load) and shows the text line for
+line: keyword case, blank runs, the blank after the opening quote, Russian text, the 3.15-only `CHD`. Own emulator
+instance, TTD recorded; screenshots kept with the research materials.
+
 ## 7. Open items
 
 | Item | Note |
 |---|---|
 | ZX ASM 1.x, the 3.01 program | not found |
 | 3.0's own table | packed in its loader; the 3.0 files decode with the 3.10 indices, which the 3.0 ReadMe confirms |
-| Emulator oracle | a converted file in ZAsm on screen |
