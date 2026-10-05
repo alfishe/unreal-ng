@@ -4,14 +4,16 @@
 D-2 nothing vendored; D-3 the library `unreal-asm` in `core/src/3rdparty/unreal-asm`, symbols are one consumer;
 D-4 codecs and format conversion first, dialect conversion plugins after. No code. PLAN.md row **#97**.
 
-## Open questions (one at a time)
+## Questions (asked one at a time)
 
-- [ ] Q-1 the first codecs (proposed: TASM 3 + 4)
-- [ ] Q-2 plugin form (proposed: compiled-in modules, one registry)
-- [ ] Q-3 the dialect the IR is closest to (proposed: sjasmplus)
-- [ ] Q-4 the first dialect pair (proposed: ALASM → sjasmplus)
-- [ ] Q-5 host encoding of decoded text (proposed: UTF-8, original code page recorded)
-- [ ] Q-6 CLI name (proposed: `zxasm`)
+- [x] Q-1 the first codecs: TASM 3 + TASM 4 (D-5, 2026-10-05)
+- [x] Q-2 plugin form: compiled-in modules, one registry (D-6, 2026-10-05)
+- [x] Q-3 the IR is neutral, designed from all dialects (D-7, 2026-10-05)
+- [x] Every catalog codec stays queued; TASM first, the rest at lower priority (D-8, 2026-10-05)
+- [x] Q-4 the first dialect pair: TASM → sjasmplus (D-9, 2026-10-05)
+- [x] sjasmplus is the first output target implemented (D-10, 2026-10-05)
+- [x] Q-5 decoded text is UTF-8, original code page recorded (D-11, 2026-10-05)
+- [x] Q-6 CLI name: `zxasm` (D-12, 2026-10-05)
 - [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2)
 
 ## Phases ([tdd.md](tdd.md) §8)

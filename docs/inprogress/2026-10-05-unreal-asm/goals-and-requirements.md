@@ -71,18 +71,26 @@ A user has `GAME.$H` (ALASM 4.4) on a TR-DOS disk.
 | D-1 | Every format is one codec that **decodes and encodes**; no read-only or write-only formats. |
 | D-2 | **Nothing is vendored.** Prior art ([prior-art.md](prior-art.md)) is a reference for the formats only; every codec and plugin is a fresh implementation with its own tests. |
 | D-3 | The work is a **cross-assembler source library**, `unreal-asm`, in `core/src/3rdparty/unreal-asm`. Symbols are one consumer of it. |
+| D-5 | **The first codecs are TASM 3 and TASM 4** (answer to Q-1). |
+| D-6 | **Plugins are compiled-in modules**: one folder each (code + tests), registered by one line; run-time loading may come later (answer to Q-2). |
+| D-7 | **The IR is neutral**: designed from all dialects at once, not modeled on one (answer to Q-3). Every construct of every dialect of the catalog has an IR form or an explicit `Raw` fallback; no dialect's spelling is the IR's spelling. |
+| D-8 | **Every codec of the catalog stays in the development queue**: TASM 3 / 4 first (D-5), then ALASM, STORM, ZX-ASM, XAS, MASM, GENS, Zeus, ADS at lower priority - none is dropped. |
+| D-9 | **The first dialect pair is TASM → sjasmplus** (answer to Q-4). |
+| D-10 | **The sjasmplus codec is the first output target implemented**: its text codec and dialect backend come first among the targets (owner, 2026-10-05; "sjasm" read as sjasmplus). |
+| D-11 | **Decoded text on the host is always UTF-8**; the original code page (CP866 / KOI8-R / CP1251 / ASCII) is recorded in the document so encoding back is exact (answer to Q-5). |
+| D-12 | **The CLI is `zxasm`** (`decode`, `encode`, `convert`, `detect`, `batch`, `formats`, `dialects`, `symbols`) (answer to Q-6). |
 | D-4 | Order: first **text conversion between formats and their sub-versions** (codecs), then **assembler syntax conversion** as separate plugin modules in the framework. |
 
 ## 4. Open questions (asked one at a time)
 
 | ID | Question | Proposed answer |
 |---|---|---|
-| Q-1 | The first codecs | TASM 3 + TASM 4 (most prior art: the owner's 2012 converter, ZX-M8XXX, TRD test data), then ALASM, STORM, ZX-ASM |
-| Q-2 | Plugin form | modules compiled into the library, registered in one table; no run-time loading for now |
-| Q-3 | The common dialect the IR is closest to | sjasmplus (the richest modern Z80 syntax; most conversions end there) |
-| Q-4 | The first dialect pair | ALASM → sjasmplus (largest body of surviving sources), then TASM → sjasmplus |
-| Q-5 | The text encoding of decoded sources on the host | UTF-8 always, with the original code page (CP866 / KOI8-R / ASCII) recorded in the document so encoding back is exact |
-| Q-6 | The CLI name | `zxasm` (`decode`, `encode`, `convert`, `formats`, `dialects`, `symbols`) |
+| Q-1 | *(decided: D-5, TASM 3 + TASM 4)* | — |
+| Q-2 | *(decided: D-6, compiled-in modules)* | — |
+| Q-3 | *(decided: D-7, a neutral IR)* | — |
+| Q-4 | *(decided: D-9, TASM → sjasmplus)* | — |
+| Q-5 | *(decided: D-11, UTF-8)* | — |
+| Q-6 | *(decided: D-12, `zxasm`)* | — |
 
 ## 5. Use cases
 

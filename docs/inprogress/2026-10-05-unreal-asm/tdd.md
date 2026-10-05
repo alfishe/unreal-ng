@@ -151,12 +151,12 @@ Lua / Python `asm_*`, Qt disk browser actions). The symbol module's adapters: [s
 | Phase | Work | Ends with |
 |---|---|---|
 | A0 | Design (this folder); open questions Q-1 … Q-6 | decisions recorded |
-| A1 | Library skeleton (CMake, tests, CLI), document model, code pages, `text` codec, registry, detection | round trip of text files in every code page and line end |
+| A1 | Library skeleton (CMake, tests, CLI), document model, code pages, `text` codec, registry, detection; the **sjasmplus text codec** as the first output target (D-10) | round trip of text files in every code page and line end |
 | A2 | `tasm3`, `tasm4` (research documents first), sub-version conversion | byte-exact on the corpus; TASM in the emulator loads the converted files |
 | A3 | `alasm4`, `alasm5` (research: settle `#96` / `#9F`) | the same |
 | A4 | `storm`, `zxasm` | the same |
-| A5 | IR, transforms, `sjasmplus` frontend + backend, `alasm` frontend; ALASM → sjasmplus | binary equality on the corpus |
-| A6 | `tasm`, `storm`, `zxasm` frontends; `pasmo`, `z88dk` backends; research codecs `xas`, `masm`, `gens3`, `zeus`, `ads` | per pair / codec |
+| A5 | Neutral IR (D-7: the construct matrix filled for every dialect first, then the node set frozen), transforms, `sjasmplus` frontend + backend, `tasm` frontend; TASM → sjasmplus first (D-5), ALASM → sjasmplus after A3 | binary equality on the corpus |
+| A6 | `alasm`, `storm`, `zxasm` frontends; `pasmo`, `z88dk` backends; research codecs `xas`, `masm`, `gens3`, `zeus`, `ads` (queued at lower priority, D-8: none dropped) | per pair / codec |
 | A7 | Emulator adapters and surfaces; Qt disk browser actions; recipe `.recipe/analysis/asm-sources.md` | live checks |
 | A8 | Symbols on the library ([symbols/tdd.md](symbols/tdd.md) phases S1-S5 re-based; tokenized label tables come from the source codecs) | symbol acceptance |
 | A9 | Benchmarks, results; docs `docs/features/asm-sources.md` | numbers meet NFR-1, NFR-2 |

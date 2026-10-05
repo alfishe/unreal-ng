@@ -49,5 +49,7 @@ flowchart LR
 
 ## Status
 
-Design (2026-10-05). Decided: the library and its place, one codec per format that decodes and encodes, nothing
-vendored. Open questions are asked one at a time ([TODO.md](TODO.md)). No code.
+Design (2026-10-05). Decided (D-1…D-12, [goals-and-requirements.md](goals-and-requirements.md) §3): the library and
+its place; one codec per format, decode and encode; nothing vendored; TASM 3 / 4 first, every other codec queued;
+compiled-in plugins; a neutral IR; TASM → sjasmplus first, sjasmplus the first output target; UTF-8 on the host; the
+`zxasm` CLI. Still open: the symbol module's P-2…P-7 ([TODO.md](TODO.md)). No code.

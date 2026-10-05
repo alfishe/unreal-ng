@@ -15,6 +15,12 @@ once, on the IR.
 
 ## 2. The IR
 
+The IR is **neutral** (decision D-7): it is designed from every dialect of the catalog at once and copies no
+dialect's spelling. Directive kinds, label scopes, number forms and expression operators are the union of what the
+dialects have; what only one dialect has gets its own node kind (or `Other` with the dialect named) rather than
+being forced into another dialect's construct. The construct matrix (§4) is filled for **all** dialects before the
+IR node set is frozen (phase A5).
+
 A `Program` is a list of `IrLine`s; each keeps its source position.
 
 | Node | Holds | Example (any dialect) |
