@@ -88,6 +88,10 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     ("sprinter_boot", "SPRINTER", None, 0),
 ]
 CORPUS_DIR = "testdata/ttd"
+# Sessions recorded by the engine (the application's default recorder since the
+# Phase 5 switch) are in the engine's format and live apart from v1's corpus;
+# v1's corpus is re-recorded with the application started with UNREAL_TTD_BACKEND=v1
+ENGINE_CORPUS_DIR = "testdata/ttd/engine"
 
 # Per-fixture extras. "out": where the fixture lives when it is not a Pentagon
 # corpus file (testdata/machines/<machine>/ttd, next to the machine's other
@@ -332,16 +336,20 @@ def main() -> int:
 
     for name, model, snapshot, settle in fixtures:
         options = FIXTURE_OPTIONS.get(name, {})
-        out_path = os.path.join(out_dir, f"{name}.ttd")
-        if "out" in options and args.out_dir == CORPUS_DIR:
-            out_path = from_root(options["out"])
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
         print(f"\n[{name}]")
         emu_id = args.emulator_id
         try:
             if emu_id is None:
                 emu_id = api.create_instance(model)
                 print(f"  fresh {model} instance: {emu_id}")
+            backend = api.get(f"/emulator/{emu_id}/ttd/status").get("backend") or "v1"
+            out_path = os.path.join(out_dir, f"{name}.ttd")
+            if args.out_dir == CORPUS_DIR and backend == "engine":
+                out_path = os.path.join(from_root(ENGINE_CORPUS_DIR), f"{name}.ttd")
+            elif "out" in options and args.out_dir == CORPUS_DIR:
+                out_path = from_root(options["out"])
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            print(f"  recorder: {backend}")
             if "gs" in options:
                 api.post(f"/emulator/{emu_id}/control/audio/gs",
                          {"action": "switch_personality", "personality": options["gs"]})

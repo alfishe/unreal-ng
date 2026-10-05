@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <fstream>
 #include <optional>
+#include <type_traits>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
@@ -477,6 +478,7 @@ StateNode StatusBodyOf(const S* manager)
                                 "port_replay_value_mismatches", "port_replay_divergences"})
             ret[key] = 0;
         ret["ttd_available"] = false;
+        ret["backend"] = StateNode();
         return ret;
     }
 
@@ -507,6 +509,8 @@ StateNode StatusBodyOf(const S* manager)
     ret["port_replay_value_mismatches"] = static_cast<uint64_t>(info.portReplayValueMismatches);
     ret["port_replay_divergences"] = static_cast<uint64_t>(info.portReplayDivergences);
     ret["ttd_available"] = true;
+    // Which implementation records on this instance (Phase 5): "engine" or "v1"
+    ret["backend"] = std::is_same<S, TimeTravelController>::value ? "engine" : "v1";
     ret["loaded_from_file"] = info.loadedFromFile;
     ret["source_path"] = info.sourcePath;
     ret["captured_at_unix_ms"] = info.capturedAtUnixMs;

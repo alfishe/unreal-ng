@@ -705,6 +705,10 @@
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
+    schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
+        "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "
+        "UNREAL_TTD_BACKEND=v1); null when time travel is not available";
     // The write journal (D40): the same fields in /ttd/status, /ttd/journal and the build response
     {
         Json::Value journal;

@@ -21,6 +21,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include <atomic>
+#include <cstdlib>
 
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -1930,7 +1931,14 @@ rzx::RzxSession* Emulator::LoadedRzxSession()
 
 namespace
 {
-std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{Emulator::TimeTravelBackend::Engine};
+/// The engine unless the process is started with UNREAL_TTD_BACKEND=v1 (the
+/// previous recorder: re-recording v1's fixture corpus, a comparison, a fallback)
+Emulator::TimeTravelBackend InitialTimeTravelBackend()
+{
+    const char* value = std::getenv("UNREAL_TTD_BACKEND");
+    return value && std::string(value) == "v1" ? Emulator::TimeTravelBackend::V1 : Emulator::TimeTravelBackend::Engine;
+}
+std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{InitialTimeTravelBackend()};
 }
 
 void Emulator::SetDefaultTimeTravelBackend(TimeTravelBackend backend)
