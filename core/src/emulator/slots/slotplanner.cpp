@@ -1080,7 +1080,9 @@ private:
         return slots;
     }
 
-    /// D10: functions the removed cards offered that the new card does not
+    /// D10: functions the removed cards offered that nothing offers once the plan is applied: not the new card, not a
+    /// card that stays, not a built-in that is active afterwards (removing a MultiSound that took the AY role over
+    /// un-shadows the board AY: `ay-socket` is not lost; a socket the plan or an earlier card emptied stays empty)
     void CollectLostFunctions()
     {
         std::array<bool, static_cast<size_t>(Function::Count)> lost{};
@@ -1101,6 +1103,43 @@ private:
             for (const FunctionUse& use : _functions)
             {
                 lost[static_cast<size_t>(use.function)] = false;
+            }
+        }
+        bool socketTaken = _card != nullptr && _card->bus == BusKind::AySocket && !_card->socketDefault;
+        for (const SlotEntry& entry : _slots)
+        {
+            if (entry.disabled || IsRemoved(entry.slot) || (_request.op == SlotRequest::Op::Remove && entry.slot == _request.slot))
+            {
+                continue;
+            }
+            const CardDef* card = _planner.FindCard(entry.card);
+            if (entry.slot == kAySocketBus && (card == nullptr || !card->socketDefault))
+            {
+                socketTaken = true;   // a socket board, or the chip taken out (`none`)
+            }
+            if (card == nullptr)
+            {
+                continue;
+            }
+            for (const FunctionUse& use : ActiveFunctions(*card, entry.options))
+            {
+                lost[static_cast<size_t>(use.function)] = false;
+            }
+        }
+        for (const BuiltInDef& builtIn : _machine.builtIns)
+        {
+            const std::string_view id = builtIn.id;
+            const bool switchedOff = std::any_of(_plan.builtInSwitchedOff.begin(), _plan.builtInSwitchedOff.end(),
+                                                 [id](const SwitchedOffBuiltIn& off) { return off.builtIn == id; });
+            const bool outOfSocket = std::any_of(_plan.removedFromSocket.begin(), _plan.removedFromSocket.end(),
+                                                 [id](const RemovedFromSocket& out) { return out.builtIn == id; });
+            if (switchedOff || outOfSocket || (builtIn.socket != nullptr && socketTaken))
+            {
+                continue;
+            }
+            for (Function function : builtIn.functions)
+            {
+                lost[static_cast<size_t>(function)] = false;
             }
         }
         for (size_t i = 0; i < lost.size(); i++)

@@ -360,6 +360,36 @@ TEST(SlotPlanner_Test, ReplacingWithLessReportsLostFunctions)
     EXPECT_EQ(socket->card, "tsfm");
 }
 
+/// D10 lists only what really disappears: a function the board still offers afterwards is not lost. Removing a
+/// MultiSound that took the AY role over (`ym`, by IORQGE) un-shadows the board AY, so `ay-socket` stays; on the ZX-Evo
+/// the card had the YM2149 taken out of its socket (Q7) and the socket stays empty, so `ay-socket` is lost there
+TEST(SlotPlanner_Test, RemovalListsOnlyFunctionsThatDisappear)
+{
+    SlotRequest remove;
+    remove.op = SlotRequest::Op::Remove;
+    remove.slot = "zxbus.1";
+    const SlotPlan pentagon = Planner().Plan(MM_PENTAGON, { Entry("zxbus.1", "multisound") }, remove);
+    ASSERT_TRUE(pentagon.allowed) << ToText(pentagon);
+    EXPECT_EQ(pentagon.lostFunctions,
+              (std::vector<Function>{ Function::Gs, Function::Saa, Function::Soundrive, Function::Midi }))
+        << "the board AY comes back un-shadowed\n" << ToText(pentagon);
+
+    SlotEntry emptySocket;
+    emptySocket.slot = "ay-socket";
+    emptySocket.card = std::string(kEmptySocket);
+    const SlotPlan evo = Planner().Plan(MM_ATM3, { emptySocket, Entry("zxbus.1", "multisound") }, remove);
+    ASSERT_TRUE(evo.allowed) << ToText(evo);
+    EXPECT_NE(std::find(evo.lostFunctions.begin(), evo.lostFunctions.end(), Function::AySocket), evo.lostFunctions.end())
+        << "the YM2149 stays out of its socket\n" << ToText(evo);
+
+    // The same for a replacement: a GS card displacing the MultiSound brings the board AY back too
+    const SlotPlan replace = Planner().Plan(MM_PENTAGON, { Entry("zxbus.1", "multisound") }, Plug("zxbus.2", "gs", "", true));
+    ASSERT_TRUE(replace.allowed) << ToText(replace);
+    EXPECT_EQ(std::find(replace.lostFunctions.begin(), replace.lostFunctions.end(), Function::AySocket),
+              replace.lostFunctions.end())
+        << ToText(replace);
+}
+
 TEST(SlotPlanner_Test, BusFitNeedsAdapterOrOverride)
 {
     // 48K: the edge carries /IORQULA, so a GS behind the edge adapter really works (fit: adapter)
