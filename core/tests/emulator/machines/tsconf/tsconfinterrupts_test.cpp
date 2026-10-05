@@ -434,3 +434,33 @@ TEST_F(TsConfInterrupts_Test, INT3c_TheMaskWriteSeesTheEventsBeforeIt)
     EXPECT_FALSE(Ints().IsIntAsserted(223));
     EXPECT_TRUE(Ints().IsIntAsserted(224));
 }
+
+/// INT-12: the source is chosen at the acknowledge ([V] zint.v:117-132: int_sel latches at intack_s, the IORQ of the
+/// INTA cycle about 3 clocks after /INT was sampled): a frame pulse that ends in between is gone, the line INT gives
+/// the vector. With nothing left, int_sel keeps its last value (no else, no reset). The source was chosen at the
+/// sampling instant (TS-Conf audit, interrupts row 20)
+TEST_F(TsConfInterrupts_Test, INT12_ThePulseEndingBeforeTheAcknowledge)
+{
+    Reg(TsConfReg::IntMask, TsConfInt::Frame | TsConfInt::Line);
+    Reg(TsConfReg::VsIntL, 1);
+    Reg(TsConfReg::HsInt, 76);  // raster tact 300: the pulse runs on clocks 300..331
+    ASSERT_TRUE(Ints().IsIntAsserted(330)) << "the line event at 224 and the frame pulse";
+    EXPECT_EQ(Ints().AcknowledgeInterrupt(330), 0xFD) << "at the IORQ (clock 333) the frame pulse is over";
+    EXPECT_FALSE(Ints().IsIntAsserted(334)) << "both latches are clear";
+}
+
+TEST_F(TsConfInterrupts_Test, INT12b_NothingLeftKeepsTheLastSource)
+{
+    Reg(TsConfReg::IntMask, TsConfInt::Frame | TsConfInt::Line);
+    Reg(TsConfReg::VsIntL, 2);
+    Reg(TsConfReg::HsInt, 0);  // raster tact 448: the pulse on 448..479
+    ASSERT_TRUE(Ints().IsIntAsserted(230));
+    ASSERT_EQ(Ints().AcknowledgeInterrupt(230), 0xFD) << "the line event at 224";
+    ASSERT_TRUE(Ints().IsIntAsserted(478)) << "the frame pulse (and the line event at 448)";
+    ASSERT_EQ(Ints().AcknowledgeInterrupt(478), 0xFD) << "the frame pulse ends before the IORQ: the line at 448";
+    Reg(TsConfReg::IntMask, TsConfInt::Frame);
+    Reg(TsConfReg::VsIntL, 3);
+    Reg(TsConfReg::HsInt, 0);  // tact 672: 672..703
+    ASSERT_TRUE(Ints().IsIntAsserted(702));
+    EXPECT_EQ(Ints().AcknowledgeInterrupt(702), 0xFD) << "nothing at the IORQ: int_sel is still the line's";
+}

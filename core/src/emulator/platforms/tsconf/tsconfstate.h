@@ -129,7 +129,8 @@ struct TsConfState
     int32_t intFrameRaster;     ///< raster tact of the latched frame INT (its 32-clock pulse runs from there; negative after a rollover)
     uint32_t intVdosClock;      ///< CPU clock of the frame where vdos (pre_vdos) froze the frame pulse; valid while frozen
     uint8_t intPending;         ///< latched sources, TsConfInt bits
-    uint8_t intReserved[3];     ///< keeps the struct free of padding
+    uint8_t intSel;             ///< int_sel: the source the last acknowledge served (0 frame .. 3 wait-port), kept when none is left
+    uint8_t intReserved[2];     ///< keeps the struct free of padding
     /// endregion
 
     /// region <Line engine (§4.1, §4.2), TsConfEngine>

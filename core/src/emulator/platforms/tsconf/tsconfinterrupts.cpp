@@ -165,7 +165,7 @@ void TsConfInterrupts::ThawFramePulse(uint32_t t)
     }
 }
 
-uint8_t TsConfInterrupts::AcknowledgeInterrupt([[maybe_unused]] uint32_t t)
+uint8_t TsConfInterrupts::AcknowledgeInterrupt(uint32_t t)
 {
     static constexpr struct
     {
@@ -178,15 +178,23 @@ uint8_t TsConfInterrupts::AcknowledgeInterrupt([[maybe_unused]] uint32_t t)
         {TsConfInt::WaitPort, 0xF9},
     };
 
-    for (const auto& source : kPriority)
+    // The source is chosen at the INTA cycle's IORQ, about 3 clocks after /INT was sampled ([V] zint.v:117-132,
+    // int_sel latched at intack_s): a frame pulse that ends in between is gone (intctr_fin)
+    const uint32_t ack = t + kAcknowledgeClocks;
+    CatchUp(RasterAt(ack));
+    if ((_ts.intPending & TsConfInt::Frame) && !VdosFrozen() && !FramePulseActive(ack))
+        _ts.intPending &= static_cast<uint8_t>(~TsConfInt::Frame);
+
+    for (uint8_t sel = 0; sel < 4; sel++)
     {
-        if (_ts.intPending & source.bit)
+        if (_ts.intPending & kPriority[sel].bit)
         {
-            _ts.intPending &= static_cast<uint8_t>(~source.bit);
-            return source.vector;
+            _ts.intPending &= static_cast<uint8_t>(~kPriority[sel].bit);
+            _ts.intSel = sel;
+            return kPriority[sel].vector;
         }
     }
-    return 0xFF;  // nothing latched any more: the bus floats
+    return kPriority[_ts.intSel & 0x03].vector;  // nothing left: int_sel keeps its last source (no else branch)
 }
 
 void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)

@@ -54,6 +54,8 @@ public:
     static constexpr uint32_t kLines = 320;
     static constexpr uint32_t kFrameTacts = kLineTacts * kLines;  // 71680
     static constexpr uint32_t kFramePulseClocks = 32;
+    /// CPU clocks from sampling /INT to the INTA cycle's IORQ, where the source is chosen
+    static constexpr uint32_t kAcknowledgeClocks = 3;
 
     TsConfInterrupts(EmulatorContext* context, TsConfState& state) : _context(context), _ts(state) {}
 
