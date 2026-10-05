@@ -56,7 +56,7 @@ uses the record's TTD position.
 | CLI | `network traffic [filter] [file.pcapng]` | `network traffic clear` |
 | Lua / Python | `network_traffic{...}`, `network_traffic_pcapng()` | `network_traffic_clear()` |
 | MCP | `inspect_state` aspect `network` + `invoke_api` | |
-| Qt | Debug > Network traffic: list, filter, decode, hex, Seek here, Save pcapng | |
+| Qt | Tools > Network traffic (Ctrl+6): list, filter, decode, hex, Seek here, Save pcapng | Clear, Record to file, stream |
 | Live | a pcapng stream for Wireshark (section 8 Q3) | |
 
 `GET /network/frames` becomes a view of the tap (frame records only).
