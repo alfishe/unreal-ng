@@ -1,6 +1,8 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04; owner decision Q8 (conflicting configs refuse the machine), slot-built cards under TTD (MultiSound MS-5) and the quiet-machine A/B rerun built 2026-10-05 (not committed). PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04; owner decision Q8 (conflicting configs refuse the machine), slot-built cards under TTD (MultiSound MS-5) and the quiet-machine A/B rerun built 2026-10-05; SL-6 (slot changes applied
+by a restart, the model switch carrying the slot set, the General Sound personality on the plan) built 2026-10-05 (not
+committed). PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -13,7 +15,7 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [reference-data.md](reference-data.md): the matrix as a reference data collection in the code (`core/src/emulator/slots/refdata/`)
 - [research.md](research.md) (+ machines, cards): SL-0 findings and code inventory
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
-- [open-questions.md](open-questions.md): owner decisions Q1-Q8
+- [open-questions.md](open-questions.md): owner decisions Q1-Q8, open Q9-Q10 (SL-6)
 
 ## Pause (owner decision 2026-10-04) - lifted
 
@@ -82,7 +84,9 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     master (the Profi decoder never routes the card's ports): drop it once a fitted-device change is acceptable
   - [ ] quiet-machine rerun of the SL-4 A/B (step 6 vs step 0 under load 17-34: -3.4 .. +3.7 %, no port path changed)
   - [ ] runtime card changes (`requestGeneralSoundCardSwitch`, `NetworkManager::RequestChange`) bypass the slot set
-    and its report until SL-6 builds the restart path
+    and its report until SL-6 builds the restart path - the GS switch is planned and followed by the plan since SL-6
+    ([tdd.md](tdd.md) §14); `NetworkManager::RequestChange` still bypasses it (SL-7 puts the network card change on
+    `SlotChange::Run`)
   - [ ] recipes / user docs still name the legacy keys (`[SOUND] GSType`, `TurboSound`, `[NETWORK] Card`): SL-7
   - [ ] side note (not slots): the old ts-conf line `CovoxFB=1 ; ... (#FB and the #FE beeper bit ...)` parsed as 0
     (IniFile strips the inline comment at the last `#`); the converted config says `builtin.covox = on`, same devices
@@ -113,7 +117,25 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   - [ ] two instances of one module (MultiSound + GS / SAA cards): needs the v1 per-id checkpoint gone (TTD Phase 5);
     until then the planner refuses them as a conflict (Q8; `TtdMultiSound_Test.TwoInstancesOfOneModuleRefusedByThePlanner`),
     and the MultiSound's own GS records under id 60, so a GS card next to a card with its GS switched off is fine
-  - [ ] the GS runtime switch leaves the plan (and the fingerprint) naming the configured personality until SL-6
-- [ ] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it
+  - [x] the GS runtime switch leaves the plan (and the fingerprint) naming the configured personality until SL-6 -
+    closed by SL-6: the switch moves the plan's GS slot and the fingerprint, `TtdDevicesMatchPlan` checks the personality
+- [x] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it
+  (2026-10-05, working tree of `zx-bus-slots`, not committed; [tdd.md](tdd.md) §14): `SlotManager::PlanChange` (the plan
+  engine over the current set, dirty media, the TTD guard of R-OP-7 wired, the new `[SLOTS]` checked as creation checks
+  it) and `SlotChange::Run` (`slots/slotchange.{h,cpp}`: refused / dry run / the same model rebuilt through
+  `ModelSwitch` with the planned set and the instance's own create override; the old machine keeps running if the new
+  one fails, e.g. a card that cannot be built - `BuildCards` refuses the machine now); `SlotManager::Carry` (a model
+  switch carries the cards, re-places them behind an adapter where the bus is missing, drops and reports what the new
+  machine cannot take, `ModelSwitchResult::slotCarry`); `GeneralSoundRequest` (the personality as a slot replace) and the
+  running machine's frame-boundary switch planned and followed (plan + TTD fingerprint). Tests `SlotChange_Test.*` (8),
+  `SlotManager_Test.Carry*` (2), `ModelSwitch_Test.CarriesTheSlotSet`,
+  `TtdSlots_Test.RuntimePersonalitySwitchMovesThePlanAndTheFingerprint`; full `core-tests` green
+  - [ ] owner question Q9 ([open-questions.md](open-questions.md)): a model switch merges the carried cards with the new
+    machine's own configured cards (built: A); removals are not carried
+  - [ ] owner question Q10: the surfaces' and the `gs_lightweight` feature's in-place personality switch - restart (R-OP-8
+    as written) or keep it for the personality only
+  - [ ] side note (not slots): `EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind` segfaults alone
+    within 40 repeats (`BreakpointManager::GetBreakpointById` on the emulation thread while the test stops the machine);
+    it cost one `core-tests` shard once during SL-6
 - [ ] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc
 - [ ] SL-8 Sprinter ISA slots in the report; ZX-bus adapter as a bus host (ISA I5)

@@ -19,7 +19,7 @@
 | **SL-3** | Rule migration: R6, `OverrideDecodeForFullDecodeClaim`, self-decoding dispatch, the exact port map's peripheral entries become claims; the three old mechanisms removed one at a time | each removal its own merge with the TTD corpus and machine boot tests green | L; **built 2026-10-04**, see §7 |
 | **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L; **built 2026-10-04**, see §8 |
 | **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M; **built 2026-10-04**, see §10 |
-| **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M |
+| **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M; **built 2026-10-05**, see §14 |
 | **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M |
 | **SL-8** | Sprinter: `isa1` / `isa2` in the slot report, the ZX-bus adapter as a `zxbus` host (ISA phase I5 folded in) | Sprinter ISA tests unchanged; a GS card behind the adapter listed as `zxbus` in the report | M |
 
@@ -70,13 +70,18 @@ one to one, except as noted in §5.
 
 ### 2.3 Apply (`slotmanager_apply_test.cpp`)
 
+As built in SL-6 (§14) the tests are named after the files under test: `SlotChange_Test.*` in
+`core/tests/emulator/slots/slotchange_test.cpp`, the model switch in `modelswitch_test.cpp` and `slotmanager_test.cpp`,
+the running machine's personality switch in `slotttd_test.cpp`.
+
 | Test | Checks |
 |---|---|
-| `SlotManagerApply_Test.ChangeRestartsMachine` | an allowed plug restarts the instance with the new slot set; no card object is created in the running machine |
-| `SlotManagerApply_Test.FailedStartRestoresPreviousConfig` | a card factory throws at start: the previous configuration is started again, the reply carries the error |
-| `SlotManagerApply_Test.MediaCarriedAcrossRestart` | media in kept cards survive the restart; removed NeoGS: `sd.ngs` reported as stranded, dirty medium refused without a disposition |
-| `SlotManagerApply_Test.GsPersonalitySwitchIsSlotReplace` | the GS personality switch goes through the plan and a restart |
-| `SlotManagerApply_Test.ModelSwitchCarriesSlots` | Pentagon -> ZX-Evo keeps fitting cards; ZX-Evo -> 128K reports the MultiSound as not fitting |
+| `SlotManagerApply_Test.ChangeRestartsMachine` | an allowed plug restarts the instance with the new slot set; no card object is created in the running machine (built: `SlotChange_Test.PlugRestartsTheMachineWithTheNewSet`, `DisplacementNeedsTheReplaceFlag`, `DryRunChangesNothingAndOptionsRestartToo`, `RequestsThatCannotApplyAreRefused`) |
+| `SlotManagerApply_Test.FailedStartRestoresPreviousConfig` | a card factory throws at start: the previous configuration is started again, the reply carries the error (built: `SlotChange_Test.FailedStartKeepsTheMachine`; the new machine is created next to the old one, so the old one never stops) |
+| `SlotManagerApply_Test.MediaCarriedAcrossRestart` | media in kept cards survive the restart; removed NeoGS: `sd.ngs` reported as stranded, dirty medium refused without a disposition (built: `SlotChange_Test.MediaCarriedAcrossTheRestart`) |
+| `SlotManagerApply_Test.GsPersonalitySwitchIsSlotReplace` | the GS personality switch goes through the plan and a restart (built: `SlotChange_Test.GsPersonalitySwitchIsSlotReplace`, and for the running machine's frame-boundary switch `TtdSlots_Test.RuntimePersonalitySwitchMovesThePlanAndTheFingerprint`) |
+| `SlotManagerApply_Test.ModelSwitchCarriesSlots` | Pentagon -> ZX-Evo keeps fitting cards; ZX-Evo -> 128K reports the MultiSound as not fitting (built: `ModelSwitch_Test.CarriesTheSlotSet`, `SlotManager_Test.CarryKeepsTheCardsTheNewMachineTakes`, `CarryReportsTheCardsTheNewMachineCannotTake`) |
+| `SlotManagerApply_Test.RefusedWhileTtdRecords` | added in SL-6: the change API refuses while a user recording runs, naming the session (built: `SlotChange_Test.RefusedWhileTtdRecords`) |
 
 ### 2.4 TTD (`slotttd_test.cpp`, after `slots/slotttd.cpp`)
 
@@ -741,3 +746,94 @@ did not see the card either. Tests: `TtdMultiSound_Test.*` (`core/tests/debugger
 the card in `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel`. No device format changed:
 corpus, bench gate and `CoreGolden` unchanged.
 
+
+## 14. SL-6 as built (2026-10-05)
+
+Every slot change is planned against the instance's slot set and applied by restarting the machine (owner decision Q6,
+R-OP-3 / R-OP-8); a model switch carries the slot set (R-OP-9); the General Sound personality is on the plan.
+
+| File | Content |
+|---|---|
+| `core/src/emulator/slots/slotmanager.{h,cpp}` | `ConfigOf(Result)` (the fitted set as `[SLOTS]`: given options, adapter, fit override, every switchable built-in), `UseSlots(SlotConfig, CONFIG&)` (the `[SLOTS]` section and the card fields it stands for, as the parser leaves them), `PlanChange` (static: the plan engine over the fitted set, the new `[SLOTS]`, checked as the machine's creation checks it; instance: plus the media with unsaved writes and the TTD guard), `Carry` + `CarryReport` (model switch), `GeneralSoundRequest` / `GeneralSoundSwitchRefusal` / `FollowGeneralSoundSwitch` (personality), `Snapshot()` (a copy under a mutex for another thread), `BuildCards()` returns false with `BuildError()` when a card cannot be built, `SetBuildFaultForTests` |
+| `core/src/emulator/slots/slotchange.{h,cpp}` | `SlotChange::Run(SlotChangeRequest)` -> `SlotChangeResult` (status `applied` / `dry-run` / `refused` / `recording` / `no-machine` / `failed`, message, the change plan, the restarted emulator, the previous id, whether the old one ran, the media report, stranded media) |
+| `core/src/emulator/media/modelswitch.{h,cpp}` | `ModelSwitchRequest::slotSet` (the new machine's exact set: a restart), `keepConfigOverride` (the old instance's own create override applied again: same model), carrying by default; `ModelSwitchResult::slotCarry` (kept / dropped cards), the slot lines first in `result.report` |
+| `core/src/emulator/emulator.h` | `GetConfigOverride()` |
+| `core/src/emulator/cpu/core.cpp` | a card that cannot be built refuses the machine with the reason (`Core::GetInitError`) |
+| `core/src/emulator/sound/soundmanager.cpp` | the personality request asks the plan; a done switch (and the `gs_lightweight` card fitted at creation) moves the plan |
+| `core/src/emulator/slots/slotttd.cpp` | `TtdDevicesMatchPlan` compares the General Sound personality too |
+
+**A change, step by step.** `SlotChange::Run` finds the instance and its `SlotManager`, which plans the request
+(`slots::SlotRequest`: plug / remove / set options, `replaceIfIncompatible`, `dryRun`, `mediaDisposition`) with the
+media that hold unsaved writes as `PlanContext::dirtyMedia`. Refused: a TTD user recording runs (R-OP-7, the
+`ChangeRefusal()` text naming the session, status `recording`, also for a dry run); the plan engine refuses it or it
+needs the replace flag (`refused: ...` / `needs replaceIfIncompatible: ...`, the plan listing every card it would
+remove with its full options for an undo); a card the plan would plug in but disable for an accidental port clash
+(R-COMP-6), since a configuration with such a pair is not created (Q8); the resulting `[SLOTS]` planned as at creation
+(`Plan` on a copy of the configuration) has a conflict or a card the emulator cannot build. Allowed and not a dry run:
+`ModelSwitch::Run` with the same model and RAM, `slotSet` = the new set, `keepConfigOverride`, the removed cards' dirty
+media handled by the disposition (none: refuse; save; discard). The new machine is created next to the old one; if
+that fails (a card cannot be built: `SlotChange_Test.FailedStartKeepsTheMachine`), the old one has never stopped and
+keeps its slot set, and the result says why. Applied, the old machine is released, the media move by id
+(`MediaManager::TakeMediaSet` / `AdoptMediaSet`: the live medium with its unsaved writes), the removed card's media are
+reported closed (or detached), and the new emulator (a new id, as after a model switch) is created, not started:
+`wasRunning` tells the caller to start it. The new set is the new instance's `[SLOTS]` (its create override), so the next
+change or model switch plans from it.
+
+**The model switch carries the slot set** (`SlotManager::Carry`, run inside the new machine's config override, after
+its INI is loaded and the process hook has run): the old machine's cards (its plan's fitted entries, `ConfigOf`) come
+first, each in the slot it had when the new machine has that bus, else where the planner puts the card
+(`SuggestSlot`, numbered after the kept slots of that bus) behind the adapter that connects its bus. Planned alone first,
+the carried cards the new machine cannot take at all (a missing bus signal without the override, a fixed built-in, a
+card not emulated there) are dropped with the reason before they could push out one of its own cards. Then the new
+machine's own configured cards (its `[SLOTS]`, or its legacy keys, with the fields code changed after the INI) fill the
+slots left free, and in a conflict (Q8) the new machine's card gives way to the carried one; between two carried cards
+the later in slot order goes. Built-in switches: the new machine's, overridden by the carried ones with the same id. The
+report (`ModelSwitchResult::slotCarry`, lines also in `result.report`): kept cards (`zxbus.2 -> edge.2 = soundrive`),
+dropped ones with the reason (`zxbus.1 = multisound not carried to ZX-Spectrum 128k: ...`), the new machine's cards that
+gave way. Example (`CarryKeepsTheCardsTheNewMachineTakes`): Pentagon `zxbus.1 = multisound` -> the shipped ZX-Evo set:
+the MultiSound holds `zxbus.1` (the ZX-Evo's NeoGS was there), its `ay-socket = ts` and SounDrive give way, the MoonSound
+stays, the YM2149 leaves its socket for the card (Q7).
+
+**General Sound personality.** As a slot change (R-OP-8): `SlotManager::GeneralSoundRequest(current, config, kind)`
+builds the plug of `gs` / `gs-lw` / `neogs` into the slot the fitted GS card is in, replacing it (the replace flag
+set: replacing that card is the request; the RAM option as the legacy keys give it), and `SlotChange::Run` applies it by
+the restart. The surfaces' existing frame-boundary switch (`SoundManager::requestGeneralSoundCardSwitch`, used by the
+WebAPI, CLI, MCP, Lua, Python, Qt and the `gs_lightweight` feature) stays in place until SL-7 moves the surfaces (owner
+question in [TODO.md](TODO.md)), but now runs through the plan: a real change is refused when the plan refuses it or
+would remove anything besides the card in the GS slot, and a done switch (`switchGeneralSoundCard`, also the lightweight
+card the feature fits at creation) moves the plan's GS slot and the TTD fingerprint with it - the fingerprint equals the
+one of a machine created with that card. `TtdDevicesMatchPlan` therefore checks the personality now (before: any GS
+device matched a GS slot).
+
+**Deviations from the design, with the reason:**
+
+1. **"Restore of the previous configuration if the start fails"** needs no restore: the model-switch path creates the
+   new machine first, so the old one keeps running until the new one exists.
+2. **No in-place restart:** an applied change gives a new emulator id, as a model switch does (`previousEmulatorId` in
+   the result); the symbolic id and the selection carry over.
+3. **A card the plan plugs in but disables (D7)** is refused as a change: since Q8 a configuration with such a pair is
+   not created, so applying it would fail at the restart.
+4. **A model switch merges** the carried cards with the new machine's own configured cards (owner question in
+   [TODO.md](TODO.md)); removals are not carried: a card the user took out of the old machine comes back if the new
+   machine's config fits it.
+5. **The instance's create-time override** (machine variant board, create options, a test's `[SLOTS]`) is applied again
+   on a restart (same model), not on a model switch (as before: it belongs to the old model).
+6. **A fitted card that cannot be built** (its factory fails or throws) refuses the machine now (before: silently left
+   out), with the reason in the create error.
+
+**Tests** (each under 50 ms; a restart builds a second machine, 3-34 ms): `SlotChange_Test.*` (8:
+`PlugRestartsTheMachineWithTheNewSet`, `DisplacementNeedsTheReplaceFlag`, `DryRunChangesNothingAndOptionsRestartToo`,
+`RefusedWhileTtdRecords`, `FailedStartKeepsTheMachine`, `MediaCarriedAcrossTheRestart`,
+`RequestsThatCannotApplyAreRefused`, `GsPersonalitySwitchIsSlotReplace`), `SlotManager_Test.CarryKeepsTheCardsTheNewMachineTakes`,
+`CarryReportsTheCardsTheNewMachineCannotTake`, `ModelSwitch_Test.CarriesTheSlotSet`,
+`TtdSlots_Test.RuntimePersonalitySwitchMovesThePlanAndTheFingerprint`; changed: `TtdSlots_Test.RegistryFollowsThePlan`
+(a lightweight card under a `gs` slot is a mismatch now; under a `gs-lw` slot it matches). Full `core-tests` green after
+every step (one run of step 3 lost a shard to `EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind`, a
+debugger race outside the slot code - the test alone segfaults within 40 repeats in `BreakpointManager::GetBreakpointById`
+on the emulation thread while the test thread stops the machine; the rerun was green). MinGW `-fsyntax-only -Werror` clean
+on every changed core translation unit. No benchmark: no per-instruction or per-port path changed, and no `CONFIG` /
+`EmulatorContext` field was added.
+
+**Not in SL-6:** the surfaces (SL-7: `SlotControl` over `SlotChange::Run` and `PlanChange`, 1:1 with the request and
+result types above); `NetworkManager::RequestChange` (the runtime network card change) still bypasses the slot set;
+snapshots that carry a slot set (architecture.md §8).

@@ -118,7 +118,9 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   through `SlotManager`'s cards, recording refused when a slot-built card's device is missing, the bank in the
   fingerprint and the session guard, `TtdMultiSound_Test` (7), the card in the model contract test
   - [ ] a MultiSound fixture in the TTD corpus (Pentagon, ZX-Evo): needs the recorder to fit the card (slot surfaces,
-    SL-7 / MS-6) and `TTD_Corpus_Test` to create the fixture's slot set
+    SL-7 / MS-6) and `TTD_Corpus_Test` to create the fixture's slot set. Since slots SL-6 the core can fit it into a
+    running instance (`SlotChange::Run`, a plug applied by a restart, [slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md)
+    §14); a model switch carries it (Pentagon -> ZX-Evo keeps it, ZX-Evo -> 128K reports it as not carried)
   - [ ] the ids 58-60 / region 17 were free on this branch: a merge with master renumbers them if master took them
 - [ ] MS-6..MS-8 surfaces, real software, docs
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695

@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-03 |
 | **For** | the ZX-bus slot design (PLAN row #82); first consumer: [ZX-MultiSound](../2026-10-03-zx-multisound/) |
-| **Order** | most important first (Q8 added 2026-10-05) |
+| **Order** | most important first (Q8 added 2026-10-05; Q9, Q10 open, from SL-6) |
 
 ## Q1. What happens when a card is incompatible with cards already plugged in?
 
@@ -136,4 +136,38 @@ SounDrive) then started without the MultiSound, and nothing on screen said why.
 `zxbus.N = multisound` line. The MultiSound is fitted only in tests (test-local configs, or slot entries the test
 builds). A user who wants it writes the line into a config that has no conflicting card, for example without
 `ay-socket = tsfm` and without a NeoGS / SounDrive card.
+
+## Q9. What does a model switch do with the new machine's own configured cards? (open, SL-6)
+
+A model switch carries the old machine's cards (Q6, R-OP-9). The new machine's config also names cards: the shipped
+Pentagon fits a TurboSound FM, a NeoGS, a MoonSound and a SounDrive; the shipped 48K only a TurboSound FM.
+
+- **A (built in SL-6):** merge. The carried cards come first; the new machine's own cards fill the slots and functions
+  they leave free and give way where they conflict. 48K -> Pentagon gives the Pentagon its shipped cards, as before
+  SL-6; Pentagon -> ZX-Evo keeps the Pentagon's cards and adds the ZX-Evo's that do not clash. A card the user removed
+  from the old machine comes back if the new machine's config fits it (removals are not carried).
+- **B:** carry only. The new machine gets exactly the carried cards (planned against it); its own configured cards are
+  ignored. 48K -> Pentagon gives a Pentagon with only the TurboSound FM.
+- **C:** carry only what the user changed (the difference between the instance's set and its model's config), merged
+  with the new machine's config. Needs the instance to remember its changes.
+
+**Recommendation: A.** It keeps a model switch of an untouched machine as it was (the shipped config of the target),
+and every card the user plugged in follows it. If removals should follow too, C on top of A later.
+
+## Q10. Does the running machine's General Sound personality switch stay in place? (open, SL-6)
+
+R-OP-8 makes the personality switch a slot replace applied by a restart. SL-6 built that (`GeneralSoundRequest` +
+`SlotChange::Run`). The surfaces (WebAPI `switch_personality`, CLI `gs`, MCP, Lua, Python, the Qt audio settings) and
+the `gs_lightweight` feature still use the frame-boundary switch of the running machine, which keeps the running
+program, hands the card's mailbox over and replays an uploaded module; SL-6 routes it through the plan and makes the
+plan and the TTD fingerprint follow it.
+
+- **A:** SL-7 moves every surface to the restart (R-OP-8 as written); the running program is lost on a switch, the
+  `gs_lightweight` feature becomes a slot replace too.
+- **B:** keep the in-place switch for the personality only (one card, one slot, the same function and ports; planned and
+  followed as built), the restart for everything else.
+
+**Recommendation: B** for the `gs_lightweight` feature (an emulation shortcut, not a hardware change: restarting the
+machine for it would surprise), **A** for the explicit personality switch on the surfaces, so a user-visible card change
+behaves like every other slot change.
 

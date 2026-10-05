@@ -370,6 +370,19 @@ new machine fails to start, the previous configuration is restored and started a
 error. There is no card creation or destruction inside a running machine, so no frame-boundary queue, no partial
 state and no rollback of live objects.
 
+**As built (SL-6,** [tdd.md](tdd.md) §14**):** the sketch's `Plan` / `Request` are `SlotManager::PlanChange(request)`
+(pure over the instance's slot set: the plan engine, the dirty media, the TTD guard, the resulting `[SLOTS]` checked as
+the machine's creation checks it) and `SlotChange::Run(SlotChangeRequest)` (`core/src/emulator/slots/slotchange.h`):
+refusal, dry run, or the restart through `ModelSwitch::Run` with the same model, `ModelSwitchRequest::slotSet` = the new
+set and `keepConfigOverride` (the instance's own create override - a machine variant's board, a create option - applies
+again). The new machine is created next to the old one, so a failed start (a card that cannot be built:
+`SlotManager::BuildCards` now refuses the machine) leaves the old one running with its slot set; an applied change gives
+a new emulator id, as a model switch does. `SlotChangeResult` carries the status (`applied`, `dry-run`, `refused`,
+`recording`, `no-machine`, `failed`), the plan, the restarted emulator, the media report: the type SL-7's surfaces expose
+1:1. A plan that would leave the new card disabled for an accidental port clash is refused as a change (Q8 would refuse
+the configuration at the restart). The General Sound personality switch is the request
+`SlotManager::GeneralSoundRequest` builds (a plug of the other personality into the GS slot, replacing that card).
+
 **UI flow:** the Qt slot window calls `Plan` with `replaceIfIncompatible = true`; a plan with `fit = Unrealistic`
 first shows the "not possible on real hardware" explanation and a confirm button; applying shows a warning toast
 listing removed / shadowed / lost with an Undo action that replays the removed cards' configurations.
@@ -405,13 +418,19 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: the machine is
 - **Model switch:** `ModelSwitch::Run` today rebuilds everything from the target model's INI. New: the current slot set
   is carried as the request list and planned against the new machine; non-fitting cards are reported in the switch
   result (R-OP-9), exactly as stranded media are reported today.
+- **As built (SL-6,** [tdd.md](tdd.md) §14**):** `SlotManager::Carry` in the new machine's config override. The carried
+  cards keep their slot where the new machine has that bus, else go where the planner puts them behind the adapter that
+  connects them; the ones the new machine cannot take are dropped first, with the reason; the new machine's own
+  configured cards fill the free slots and give way to a carried card in a conflict (Q8 rules). The switch result's
+  `slotCarry` (kept, dropped, the new config's cards that gave way) also goes into its report lines. Removals are not
+  carried (owner question, [TODO.md](TODO.md)).
 
 ## 7. Ownership of existing devices
 
 | Device | Today | After migration |
 |---|---|---|
 | AY / TS / TSFM | `SoundManager::_turboSound` from `[SOUND] TurboSound` | the `ay-socket` slot's content; `SoundManager` keeps mixing |
-| GS / LW / NeoGS | `SoundManager::_gs`, runtime personality switch | cards `gs`, `gs-lw`, `neogs` (function `gs`); the personality switch becomes a slot replace (one plan, applied by a restart) |
+| GS / LW / NeoGS | `SoundManager::_gs`, runtime personality switch | cards `gs`, `gs-lw`, `neogs` (function `gs`); the personality switch becomes a slot replace (one plan, applied by a restart). As built (SL-6): `SlotManager::GeneralSoundRequest` + `SlotChange::Run`; the surfaces' frame-boundary switch stays until SL-7, planned at the request and followed by the plan and the TTD fingerprint |
 | MoonSound | `SoundManager` behind `[SOUND] MoonSound` | card `moonsound`; Profi's `#7E` clash becomes a declared built-in claim (palette) -> the card is disabled with the reason, no INI comment needed |
 | Covox / SounDrive | one `Covox` device, `Fitment {Mono, Quad}` | cards `covox-fb` (`#FB`) and `soundrive` (mode 1 + mode 2 ports) built on the same `Covox` module |
 | ZXNETUSB, ZX-WiFi | `NetworkManager::MakePlan` / `Refit` | cards `zxnetusb`, `zx-wifi`; `NetworkManager` keeps the virtual network and peers, `SlotManager` decides fitting |
@@ -448,8 +467,8 @@ module's decode.
   instances by slot (`zxbus.1.saa`); a configuration with two instances of one id lands only after `ttd-engine` (and
   its id-keyed map is replaced by the device key). Until then the plan refuses such a set with that reason.
 - **As built in SL-5** ([tdd.md](tdd.md) §10): the fingerprint fields as above plus `slots.builtin.<id>` per
-  switchable built-in; `SlotManager` refuses changes while recording through `ChangeRefusal()` (`Request` comes with
-  SL-6). The cards are still built by `SoundManager`: `RegisterMachinePeripherals` registers them as before, names
+  switchable built-in; `SlotManager` refuses changes while recording through `ChangeRefusal()` (wired in SL-6:
+  `PlanChange` refuses every change and dry run while a user recording runs, `SlotChangeStatus::Recording`). The cards are still built by `SoundManager`: `RegisterMachinePeripherals` registers them as before, names
   each engine device by its slot (`ay-socket.tsfm`, `zxbus.1.neogs`) and checks the registry against the plan. The
   load guard compares per card position (AY socket, GS card, MoonSound) from the blob ids, since a v1 file carries no
   slot set; the TurboSound and GS guards are folded into it, the Sprinter ISA check is still the decoder's (SL-8).
