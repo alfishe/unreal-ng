@@ -8,7 +8,8 @@
 // and at every write (tone levels, latched numbers and counters, LFSRs and dividers,
 // envelope state, summed output), the band-limited audio at 44.1 kHz in 10 ms frames, and the final
 // TTD blob. A digest change means the chip behaves differently: rerun the
-// co-simulation before refreshing a digest here.
+// co-simulation before refreshing a digest here. (Exception: a blob layout change alone moves only
+// the blob digests - MS-7 layout version 2 added the held output level; state and audio unchanged.)
 //
 // Runtime: each stream is about 50 ms of chip time, run event-driven (well under the
 // 50 ms test budget in Release; the sampling dominates).
@@ -217,32 +218,32 @@ constexpr Saa1099RenderMode Authentic = Saa1099RenderMode::Authentic;
 
 const Saa1099GoldenCase kGolden[] = {
     // clang-format off
-    {"all-voices",               HiFi,      0x6BDBC193AC8CB16Dull, 0x9DD1F02EB020FFEBull, 0xC66DD74A15B28A89ull},
-    {"amplitude-zero",           HiFi,      0x4C84ABD64FD8E70Full, 0x70E445B7A25A8AB4ull, 0x09D5246CC7D7D2DDull},
-    {"env-buffered",             HiFi,      0x7832E9968C4E6C8Dull, 0x8E6223D7E8303201ull, 0xD11E142846969FA3ull},
-    {"env-external",             HiFi,      0xEB5C04D525B2E593ull, 0x22345163827ED2EDull, 0xE9229282EF7103B3ull},
-    {"env-resolution-switch",    HiFi,      0xFBEA57E7AF2616FAull, 0xCF7662A0CBB45BA9ull, 0xF31C1988FD773D7Aull},
-    {"env-shapes-3bit",          HiFi,      0x1701626DAC0ADA3Full, 0x76A08EAC46865AE9ull, 0xBCFD695E96C773ECull},
-    {"env-shapes-3bit-inverted", HiFi,      0x9BCEA184588EEBA3ull, 0x212DC773578CA9B6ull, 0xAC91BF56BD5F6F2Eull},
-    {"env-shapes-4bit",          HiFi,      0x7493192D6B567310ull, 0x50EDC8CCB9C1A0EDull, 0xF535D4CF77D023F1ull},
-    {"env-shapes-4bit-inverted", HiFi,      0x258295BDEDDCA3E8ull, 0x05B8E1CA621C65C6ull, 0x1F7C6A5AEC6CBF57ull},
-    {"mixer",                    HiFi,      0x9F970939A615B09Bull, 0xBF0BCA1E22970F28ull, 0xBDA16B1BA8A316EDull},
-    {"noise-from-tone",          HiFi,      0xB140609188E12550ull, 0x003A2F847E36B791ull, 0xBE5506BCAD9086BEull},
-    {"octave-latch",             HiFi,      0xC10A2FF5361C88A7ull, 0xD97CD2CA9B76EA91ull, 0xF4D9912495EE57CAull},
-    {"random-1",                 HiFi,      0x0A92639ECE600846ull, 0xED5127A72A245F2Eull, 0x8B82818B02BD9044ull},
-    {"random-2",                 HiFi,      0x89C6F1018B2DA6BAull, 0x7BFD5951D9063D4Full, 0x671306B7C710C137ull},
-    {"random-3",                 HiFi,      0x4F86BE900AA04C21ull, 0xA8AD371D302C3D0Eull, 0x234221E4F254EC71ull},
-    {"random-4",                 HiFi,      0xB764A952580B3935ull, 0xDF3896A4B47A7B51ull, 0x52CE5263998135F5ull},
-    {"random-5",                 HiFi,      0xCA216070910DD408ull, 0x2737EC203E8218AFull, 0xA000EACC1A4D0482ull},
-    {"random-6",                 HiFi,      0xE6AB9145BD1DAA47ull, 0x027DA43CB46C3D19ull, 0x9302646D4C242ACCull},
-    {"random-quiet-9",           HiFi,      0x4D07AFDC93294177ull, 0x424A16B08BEB19ABull, 0x8DA437809C2A4F60ull},
-    {"random-quiet-10",          HiFi,      0xB80E2861FF90E688ull, 0xAE4649DF287AA555ull, 0x26D8ED3563279AFBull},
-    {"random-raw-7",             HiFi,      0x1CD6BE47605B5003ull, 0xA82B7ABFDC2BBE62ull, 0xEC5A30550BFA8A71ull},
-    {"random-raw-8",             HiFi,      0x942EF6D3E38338B4ull, 0x7C0A7F5DFFD72820ull, 0x3879F16C14766159ull},
-    {"sync-reset",               HiFi,      0x4BD3FD78F58DF5ECull, 0xE276E99785508D4Dull, 0xF4A6AD818841D699ull},
-    {"tone-periods",             HiFi,      0x2330066EBBA40772ull, 0x3B7864D13ACCE23Dull, 0x6C670764461B437Dull},
-    {"all-voices",               Authentic, 0xE4917ADFD5439B0Eull, 0x1F61CCE2F3687E19ull, 0xC66DD74A15B28A89ull},
-    {"env-shapes-4bit-inverted", Authentic, 0x0A24761C9682EA5Full, 0xDF21714AC619BAE4ull, 0x1F7C6A5AEC6CBF57ull},
+    {"all-voices",               HiFi,      0x6BDBC193AC8CB16Dull, 0x9DD1F02EB020FFEBull, 0xF1737BAC02CB5212ull},
+    {"amplitude-zero",           HiFi,      0x4C84ABD64FD8E70Full, 0x70E445B7A25A8AB4ull, 0x7E5E4DF24F021638ull},
+    {"env-buffered",             HiFi,      0x7832E9968C4E6C8Dull, 0x8E6223D7E8303201ull, 0xDB060872F6FECA0Aull},
+    {"env-external",             HiFi,      0xEB5C04D525B2E593ull, 0x22345163827ED2EDull, 0xB93E1B301D5F94ACull},
+    {"env-resolution-switch",    HiFi,      0xFBEA57E7AF2616FAull, 0xCF7662A0CBB45BA9ull, 0xD9077C5D58E8D537ull},
+    {"env-shapes-3bit",          HiFi,      0x1701626DAC0ADA3Full, 0x76A08EAC46865AE9ull, 0x50AA713714D94495ull},
+    {"env-shapes-3bit-inverted", HiFi,      0x9BCEA184588EEBA3ull, 0x212DC773578CA9B6ull, 0x436930E125951D7Bull},
+    {"env-shapes-4bit",          HiFi,      0x7493192D6B567310ull, 0x50EDC8CCB9C1A0EDull, 0x37840F9E6214F7B0ull},
+    {"env-shapes-4bit-inverted", HiFi,      0x258295BDEDDCA3E8ull, 0x05B8E1CA621C65C6ull, 0xF09ECED3A14699FEull},
+    {"mixer",                    HiFi,      0x9F970939A615B09Bull, 0xBF0BCA1E22970F28ull, 0x07E39E2D18BB884Cull},
+    {"noise-from-tone",          HiFi,      0xB140609188E12550ull, 0x003A2F847E36B791ull, 0x082266C08E432187ull},
+    {"octave-latch",             HiFi,      0xC10A2FF5361C88A7ull, 0xD97CD2CA9B76EA91ull, 0x3B0A84ED584EC64Full},
+    {"random-1",                 HiFi,      0x0A92639ECE600846ull, 0xED5127A72A245F2Eull, 0x35D7445A4765C3F1ull},
+    {"random-2",                 HiFi,      0x89C6F1018B2DA6BAull, 0x7BFD5951D9063D4Full, 0x129C7F1F285E1532ull},
+    {"random-3",                 HiFi,      0x4F86BE900AA04C21ull, 0xA8AD371D302C3D0Eull, 0x4AF3D3E544826610ull},
+    {"random-4",                 HiFi,      0xB764A952580B3935ull, 0xDF3896A4B47A7B51ull, 0xC559FECACDE7D2DCull},
+    {"random-5",                 HiFi,      0xCA216070910DD408ull, 0x2737EC203E8218AFull, 0xC9883EA5F0CEBB17ull},
+    {"random-6",                 HiFi,      0xE6AB9145BD1DAA47ull, 0x027DA43CB46C3D19ull, 0x1104F0A427ADA17Dull},
+    {"random-quiet-9",           HiFi,      0x4D07AFDC93294177ull, 0x424A16B08BEB19ABull, 0xCAF0D6E1571D9489ull},
+    {"random-quiet-10",          HiFi,      0xB80E2861FF90E688ull, 0xAE4649DF287AA555ull, 0xFD7D757581193E62ull},
+    {"random-raw-7",             HiFi,      0x1CD6BE47605B5003ull, 0xA82B7ABFDC2BBE62ull, 0x1AE0615E72A35FBCull},
+    {"random-raw-8",             HiFi,      0x942EF6D3E38338B4ull, 0x7C0A7F5DFFD72820ull, 0xEC9CB40BD2C11FC8ull},
+    {"sync-reset",               HiFi,      0x4BD3FD78F58DF5ECull, 0xE276E99785508D4Dull, 0xE957C5DC1EB7E9A0ull},
+    {"tone-periods",             HiFi,      0x2330066EBBA40772ull, 0x3B7864D13ACCE23Dull, 0x240B31A19DD44FE4ull},
+    {"all-voices",               Authentic, 0xE4917ADFD5439B0Eull, 0x1F61CCE2F3687E19ull, 0xD7790E343426011Bull},
+    {"env-shapes-4bit-inverted", Authentic, 0x0A24761C9682EA5Full, 0xDF21714AC619BAE4ull, 0xB17412AAB7B0AE9Aull},
     // clang-format on
 };
 

@@ -129,7 +129,7 @@ public:
     /// Highest summed level of one side: six voices at 120
     static constexpr int32_t kMaxLevel = 720;
     /// TTD blob layout version (first byte of the blob)
-    static constexpr uint8_t kStateVersion = 1;
+    static constexpr uint8_t kStateVersion = 2;   ///< 2: the output level (held while the clock is stopped)
 
     Saa1099() = default;
     ~Saa1099() override;
@@ -147,7 +147,8 @@ public:
     void Reset(uint64_t t);
 
     /// Chip clock gate (MultiSound control byte bit 3): stopped, the counters freeze
-    /// and the output holds its last level
+    /// and the output holds its last level - register writes are latched and act on the
+    /// output only once the clock runs again
     void SetClockEnabled(uint64_t t, bool enabled);
     bool ClockEnabled() const { return _s.clockEnabled; }
 

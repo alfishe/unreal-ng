@@ -639,10 +639,11 @@ types:
           board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
           on the v5 board; its peer is MachineSerialPeer),
           53 Saa1099 (a Philips
-          SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
+          SAA1099, 157 bytes: u1 layout version 2, 32 registers, address latch, sound enable, sync, clock gate, per tone
           generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
           divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
-          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip),
+          chip clocks, s4 left and s4 right output level (held while the clock gate is stopped); layout in
+          saa1099.cpp; only inside a card that carries the chip),
           54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
           then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
           u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
