@@ -107,7 +107,8 @@ emulated frame, while a macOS screen capture needs the Screen Recording permissi
 - **Drive it by hand.** Scripting the window from a terminal (System Events / CGEvent key presses) is
   unreliable: the wine window does not keep the keyboard focus when another application takes it back.
   For a side-by-side check a person operates the original and unreal-ng is driven through the WebAPI.
-- **Newer programs may refuse it.** `zifi.spg` 0.733 stops in it with "Error: Please update TS Conf." (the
+- **Newer programs may refuse it.** `zifi.spg` 0.733 (sources:
+  [andrewinsidelazarev/ZiFi-ESP32-S3-Zero](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero), `ZiFi SPG/`) stops in it with "Error: Please update TS Conf." (the
   program checks the TS-Conf version the emulator reports); the screen layout, sprites and the mouse
   cursor are still shown, which is enough for video comparisons.
 - **It is not the hardware.** The fork differs from the TS-Conf Verilog in a number of places
