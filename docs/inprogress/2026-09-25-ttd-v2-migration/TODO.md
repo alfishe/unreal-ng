@@ -165,6 +165,12 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
   - [x] 1c (2026-10-04) Qt panel, GDB, ZX-Poly group control on `TTDControl`; Sprinter port search and ZX-Poly input journaling through `ITimeTravelHooks`
   - [ ] DeZog on the engine's model (with Step 2: DebuggerLive and the edit restart go)
   - [x] Item 3 (2026-10-04): clean stop on `timetravel` / `debugmode` off (FR-17) instead of B9's refusal; `last_stop_reason`
+  - [ ] Item 2: the playback controller `ttd::TimeTravelController` (owner decision 2026-10-04: clone v1's playback into the engine module, v1 stays the reference)
+    - [ ] C1 skeleton: recording into the engine only, core hooks
+    - [ ] C2 seek / steps / replay, A/B against v1
+    - [ ] C3 queries (find-last, reverse step / continue, coverage, port events, journal build)
+    - [ ] C4 files, clip export, bookmarks / markers, status
+    - [ ] C5 `TTDControl` on the controller, surface contract on both backends
 - [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events
 - [ ] Step 3 — Black-box setting in unreal-qt (off for automation); session file location in the UI, default `scratch/ttd/`
 - [ ] Step 4 — v1 only in the verification tools
