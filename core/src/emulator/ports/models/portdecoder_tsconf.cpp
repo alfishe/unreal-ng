@@ -25,6 +25,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
+#include "emulator/platforms/tsconf/tsconfmemoryregions.h"
 #include "emulator/platforms/tsconf/vdac2card.h"
 #include "emulator/video/screen.h"
 
@@ -1025,23 +1026,38 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
             return;
         }
         const uint8_t index = static_cast<uint8_t>(offset >> 1);
-        const uint16_t word = static_cast<uint16_t>((value << 8) | ts.fmStash);
-        _owner.FlushVideo();  // CRAM is read per dot; SFILE per line (TSU)
-        if (offset < 0x200)
-        {
-            ts.cram[index] = word;
-            _owner._cramVersion++;
-            if (_owner._context->pScreen)  // the video change log (DMA CRAM writes count in /state/tsconf dma)
-                _owner._context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);
-        }
-        else
-            ts.sfile[index] = word;
+        _owner.CommitTableWord(offset < 0x200, index, static_cast<uint16_t>((value << 8) | ts.fmStash));
     }
     else
     {
         // 0x400-0x4FF: +0x400+n is OUT (n << 8 | #AF)
         _owner.WriteRegister(static_cast<uint8_t>(offset), value);
     }
+}
+
+void PortDecoder_TSConf::CommitTableWord(bool cram, uint8_t index, uint16_t word)
+{
+    FlushVideo();  // CRAM is read per dot; SFILE per line (TSU)
+    if (cram)
+    {
+        _ts.cram[index] = word;
+        _cramVersion++;
+        if (_context->pScreen)  // the video change log (DMA CRAM writes count in /state/tsconf dma)
+            _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);
+    }
+    else
+        _ts.sfile[index] = word;
+}
+
+void PortDecoder_TSConf::CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out)
+{
+    if (!_cramRegion)
+    {
+        _cramRegion = std::make_unique<TsConfTableRegion>(*this, true);
+        _sfileRegion = std::make_unique<TsConfTableRegion>(*this, false);
+    }
+    out.push_back(_cramRegion.get());
+    out.push_back(_sfileRegion.get());
 }
 
 void PortDecoder_TSConf::RefreshCache()

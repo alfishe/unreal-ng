@@ -104,11 +104,53 @@ The parameter parsing (hex forms, range checks) is one core function, so every s
 - The TS-Conf example of §1.1 (#13AF = #20 -> window 3 shows page #20).
 - MCP unit test for `port_out`; WebAPI live check with curl (core-tests cannot link drogon).
 
-## 2. The rest (outline; designed when reached)
+## 2. E6: TS-Conf CRAM and SFILE as device memory regions
+
+### 2.1 The problem in one example
+
+The TS-Conf palette (CRAM, 256 colors of 15 bits) and the sprite table (SFILE, 85 sprites of 3 words) live inside
+the chip, not in RAM. A program writes them through the FM window (a 4 KB window it maps over RAM with `FMADDR`)
+or by DMA. A debugger can read them (`/state/tsconf` shows the palette), but cannot change a color or move a
+sprite.
+
+After this step:
+
+```text
+GET  /api/v1/emulator/{id}/memory/region/cram?offset=2&length=2        -> color 1, low byte first
+POST /api/v1/emulator/{id}/memory/region/cram {"offset":2,"hex":"1F00"}  -> color 1 becomes pure blue
+```
+
+### 2.2 Design
+
+The device memory regions (`devicememory.h`, Sprinter `vram`) already reach every surface: WebAPI
+`/memory/regions` and `/memory/region/{name}`, CLI `memory region`, Lua / Python `region_read` / `region_write`,
+MCP `inspect_state` `memory_region` (writes through `invoke_api`). So this step only gives the TS-Conf decoder two
+regions. The Qt debugger has no view of device memory regions at all yet (the Sprinter `vram` neither); that view
+is its own item (TODO A2q), for every machine at once, not a TS-Conf special case.
+
+| Region | Size | Layout | A write |
+|---|---|---|---|
+| `cram` | 512 bytes | word n (color n) at offset 2n, low byte first: bits 14-10 R, 9-5 G, 4-0 B, bit 15 the VDAC flag | the screen catches up first (the change shows from the current dot), the palette is rebuilt, the video change log notes it |
+| `sfile` | 512 bytes | word n at offset 2n, low byte first; sprite d is words 3d, 3d+1, 3d+2 | the screen catches up first (SFILE is read per line) |
+
+The layout is the FM window's (offsets #000-#1FF and #200-#3FF of the window), so an address seen in a program's
+FM write is the region offset. A region write changes one byte of a word directly; it does not use the FM
+window's "even byte waits for the odd one" latch, so it never disturbs a program's half-done FM write. The
+decoder's `CommitTableWord` is the one place a CRAM / SFILE word changes outside DMA; the FM window calls it too.
+
+Writes are tool edits (`DeviceMemory::Write` already wraps them in `EditMemoryFromTool`); the TS-Conf device
+state that TTD keeps carries CRAM and SFILE.
+
+### 2.3 Tests
+
+`TsConfRegions_Test`: both regions listed with their sizes; a `cram` write changes `GetState().cram`, the palette
+version and the rendered color; an `sfile` write changes the sprite word; reading is side-effect free; an FM-window
+write and a region write give the same word; a TTD restore after the edit keeps it.
+
+## 3. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| E6 | TS-Conf CRAM and SFILE as device memory regions (`/memory/region/cram`, `/memory/region/sfile`), read and write | the Sprinter `CollectMemoryRegions` pattern; writes are tool edits |
 | E4 | Disk sector write `PUT /disk/{drive}/sector/{cyl}/{side}/{sec}` | marks the image modified; a tool edit for TTD |
 | E5 | NVRAM (CMOS) read and write | check what `/rtc/cells` already covers first |
 | F4 | `/stepout`, `/skip_until` (and the long `/steps`) start the run and report through events, not by holding an HTTP worker | the same pattern as Continue |

@@ -413,7 +413,7 @@ GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] 
 GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL, TS-Conf text, the Sprinter's text squares): lines[] text/codes/attrs; unavailable in bitmap modes
 GET  /api/v1/emulator/{id}/video/changes      [?frames=1|2] - video change log, every machine: per frame the latches at its start, writes[] (t, line, t_in_line, pc, changes {latch: "old -> new"}), tables (palette / mode_table write counts with first / last T)
 GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binary|base64 - the picture as raw pixels (R,G,B,A; the Sprinter's u16 pens with index); X-Width / X-Height headers
-GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
+GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"; TS-Conf palette "cram" and sprite table "sfile", 512 bytes each, word n at offset 2n, low byte first): name, size, pages, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
 GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)

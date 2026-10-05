@@ -17,7 +17,9 @@
             "Memory a device owns outside the CPU's RAM / ROM pages, by name: regions[] of name, description, size, "
             "size_hex, page_size, pages, writable and write_path (how a write reaches the device). The Sprinter has "
             "'vram' (256 KB video RAM: row x 1024 + column; mode table at columns #300-#39F, palettes at #3E0-#3FF, "
-            "R, G, B per pen); other machines list none yet.";
+            "R, G, B per pen); TS-Conf has 'cram' (palette) and 'sfile' (sprite table), 512 bytes each: word n at "
+            "offset 2n, low byte first, the FM window's layout (CRAM: bits 14-10 R, 9-5 G, 4-0 B, bit 15 VDAC; sprite "
+            "d = SFILE words 3d..3d+2). Other machines list none yet.";
         idParam(kList, "get");
         paths[kList]["get"]["responses"]["200"]["description"] = "Regions (an empty list on machines without any)";
         paths[kList]["get"]["responses"]["404"]["description"] = "Emulator not found";

@@ -203,7 +203,7 @@ class Emulator:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
 
     def memory_regions(self) -> dict:
-        """Device memory regions (the Sprinter's 'vram')"""
+        """Device memory regions (the Sprinter's 'vram'; TS-Conf 'cram' and 'sfile')"""
 
     def region_read(self, name, offset=0, length=256) -> bytes: ...
     def region_write(self, name, offset, data) -> int:

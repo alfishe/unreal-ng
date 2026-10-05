@@ -156,7 +156,7 @@ per-step DMA updates (TDD-02 §5.4).
 | E3 | `GET /debug/snapshot?disasm=21&memory=0x8000:96&stack=1` | One round trip per repaint, read under one pause, see §3.4 | **Done 2026-10-04** ([debugger-snapshot](../2026-10-04-debugger-snapshot/tdd.md)): `GET /debug/snapshot?disasm=&stack=&memory=space:addr:len`, read paused or at a frame boundary, `seq` + `prev_regs`, on every surface |
 | E4 | Disk sector write: `PUT /disk/{drive}/sector/{cyl}/{side}/{sec}` | Disk editor writes, "save to TR-DOS sectors" | |
 | E5 | NVRAM read / write | Editor `ED_NVRAM` | |
-| E6 | TS-Conf CRAM and SFILE as device memory regions (`/memory/region/cram`, `/memory/region/sfile`) | Palette and sprite editing. The pattern exists: Sprinter `CollectMemoryRegions` | |
+| E6 | TS-Conf CRAM and SFILE as device memory regions (`/memory/region/cram`, `/memory/region/sfile`) | Palette and sprite editing. The pattern exists: Sprinter `CollectMemoryRegions` | **Done 2026-10-04** ([debugger-additions](../2026-10-04-debugger-additions/tdd.md) §2): regions `cram` / `sfile`, 512 bytes each in the FM window's layout, on every region surface; Qt region view open (TODO A2q) |
 | E7 | Label import scans (XAS / ALASM) | Ctrl+A import menu | low priority |
 | E8 | Long-poll fallback: `GET /debug/wait?since=<seq>&timeout_ms=1000` | Stop notification without WebSocket, for simple clients. Must not hold a worker thread; drogon supports async callbacks | answers `{"seq":42,"reason":"breakpoint","id":3}` or `{"timeout":true}` |
 

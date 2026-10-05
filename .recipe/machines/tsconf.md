@@ -64,6 +64,13 @@ curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '{sys_config, cache_en, fm_maps:
      dma: (.dma | {programmed_source, source, programmed_destination, destination, ctrl}),
      line_tiles: (.video.line | {t0_gpage, t1_gpage}), dma_regs: .regs[26:32]}'
 curl -s "$BASE/emulator/$EMU/video/pixel?layer=1&x=100&y=50" | jq '.layer, .sources'  # which TSU object drew a pixel
+# Palette and sprite table as memory regions "cram" / "sfile" (512 bytes each: word n at offset 2n, low byte first;
+# CRAM word = bits 14-10 R, 9-5 G, 4-0 B, bit 15 VDAC; sprite d = SFILE words 3d..3d+2 - the FM window's layout)
+curl -s "$BASE/emulator/$EMU/memory/region/cram?offset=0&length=32&format=hex" | jq -r .hex       # colors 0-15
+curl -s -X POST "$BASE/emulator/$EMU/memory/region/cram" -H 'Content-Type: application/json' \
+     -d '{"offset":2,"hex":"1F00"}'                                                            # color 1 = pure blue
+# A page register as the program sets it: a port write through the decoder (RAM page #20 into window 3)
+curl -s -X POST "$BASE/emulator/$EMU/ports/out" -H 'Content-Type: application/json' -d '{"port":"0x13AF","value":"0x20"}'
 curl -s -X POST "$BASE/emulator/$EMU/snapshot/load" -H 'Content-Type: application/json' \
      -d '{"path":"testdata/machines/tsconf/spg/sprites.spg"}' | jq .emulator_id
 # (from any model: switches to TSL; "switch_model":false refuses with 409)
