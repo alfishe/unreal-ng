@@ -385,6 +385,10 @@ struct TTDSeekResult
     TTDTimePoint      arrivedAt     {};
     TTDSeekHaltReason haltReason    = TTDSeekHaltReason::Target;
     TTDExternalEvent  blockingMarker{};  ///< Valid iff haltReason == ExternalEvent.
+    /// OutOfRange before the history (D12): the earliest position kept, where
+    /// "jump to start" goes. Frame 0 when not set
+    TTDTimePoint      earliest      {};
+    bool              beforeEarliest = false;
 };
 
 struct TTDClipExportOptions

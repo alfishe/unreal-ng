@@ -709,6 +709,10 @@
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
         "The engine (D8): a seek, step or reverse query while recording paused the recording; state is detached. "
         "Resuming at its end (resume, or running into it) continues the same recording; stop ends it. Always false on v1";
+    schemas["TTDStatusResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
+        "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
+        "released by the history limit or never recorded. null when there is no history";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
         "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "
@@ -856,6 +860,10 @@
     schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("target");
     schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("external_event");
     schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("out_of_range");
+    schemas["TTDSeekResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDSeekResponse"]["properties"]["earliest"]["description"] =
+        "Present when the target lies before the earliest position kept (halt_reason out_of_range, D12; "
+        "the engine): that position, with message naming it. The machine has not moved";
     schemas["TTDSeekResponse"]["properties"]["blocking_marker"]["$ref"] =
         "#/components/schemas/TTDMarker";
     schemas["TTDSeekResponse"]["properties"]["blocking_marker"]["description"] =

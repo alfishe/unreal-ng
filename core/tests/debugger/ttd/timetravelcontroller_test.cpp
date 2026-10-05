@@ -337,8 +337,16 @@ TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
     const uint64_t last = _v1->SessionEndPosition().frame;
     for (uint64_t frame : {last - 14, last - 6, last - 1})
         ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span / 2}));
+    // D12: a seek before the earliest kept position names it and moves nothing
+    const ttd::TTDTimePoint before = _controller->CurrentPosition();
     ttd::TTDSeekResult r;
     EXPECT_FALSE(_controller->SeekTo({last - 30, 0}, &r)) << "dropped history is not reachable";
+    EXPECT_EQ(r.haltReason, ttd::TTDSeekHaltReason::OutOfRange);
+    EXPECT_TRUE(r.beforeEarliest);
+    EXPECT_EQ(r.earliest, _controller->GetCheckpoint(0)->time);
+    EXPECT_EQ(r.arrivedAt, before);
+    EXPECT_EQ(_controller->CurrentPosition(), before);
+    EXPECT_EQ(_controller->GetSessionInfo().sessionStartFrame, r.earliest.frame);
 }
 
 /// The controller's time is the engine's frame table (C3): on a Sprinter that

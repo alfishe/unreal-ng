@@ -482,6 +482,7 @@ StateNode StatusBodyOf(const S* manager)
         ret["ttd_available"] = false;
         ret["backend"] = StateNode();
         ret["recording_paused"] = false;
+        ret["earliest"] = StateNode();
         return ret;
     }
 
@@ -534,6 +535,17 @@ StateNode StatusBodyOf(const S* manager)
     // switched off); null otherwise
     ret["last_stop_reason"] = StringOrNull(info.lastStopReason);
     ret["recording_paused"] = info.recordingPaused;
+    // D12: the earliest position kept - where "jump to start" goes (branch 0: the trunk)
+    if (info.checkpointCount)
+    {
+        StateNode earliest = StateNode::Object();
+        earliest["branch"] = 0;
+        earliest["frame"] = info.sessionStartFrame;
+        earliest["tinframe"] = 0;
+        ret["earliest"] = earliest;
+    }
+    else
+        ret["earliest"] = StateNode();
     // Why time travel is not available for this machine at all (null when it is)
     ret["unavailable_reason"] = StringOrNull(info.unavailableReason);
     AddWriteJournalOf(ret, *manager);
@@ -809,6 +821,13 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
     else if (result.haltReason == TTDSeekHaltReason::OutOfRange)
         reason = "out_of_range";
     reply.body["halt_reason"] = reason;
+    if (result.beforeEarliest)
+    {
+        // D12: before the history, the answer names where it starts
+        reply.body["earliest"] = TimePointNode(result.earliest);
+        reply.body["message"] = "frame " + std::to_string(result.earliest.frame) +
+                                " is the earliest position kept (the older frames were released or never recorded)";
+    }
     if (result.haltReason == TTDSeekHaltReason::ExternalEvent)
     {
         StateNode marker = TimePointNode(result.blockingMarker.time);

@@ -2701,12 +2701,18 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
     const int64_t atOrBefore = TimelineIndexAtOrBefore(target);
     if (atOrBefore < 0)
     {
-        // Every checkpoint is strictly greater than target — target is
-        // before the first captured frame. This shouldn't be reachable
-        // (we'd have failed the sessionEnd check above if target was
-        // out of bounds, and target < first checkpoint means target < (0,0)
-        // which is impossible for an unsigned coordinate). Defensive.
-        MLOGWARNING("TimeTravelController::SeekTo — target precedes the first checkpoint");
+        // Before the earliest kept position (a history limit released the
+        // older frames, or the target precedes the recording): the machine
+        // stays where it is, and the answer names where history starts (D12)
+        if (outResult)
+        {
+            outResult->arrivedAt = CurrentPosition();
+            outResult->earliest = _timeline.front().time;
+            outResult->beforeEarliest = true;
+        }
+        MLOGWARNING("TimeTravelController::SeekTo — target frame %llu is before the earliest kept frame %llu",
+                    static_cast<unsigned long long>(target.frame),
+                    static_cast<unsigned long long>(_timeline.front().time.frame));
         return false;
     }
 

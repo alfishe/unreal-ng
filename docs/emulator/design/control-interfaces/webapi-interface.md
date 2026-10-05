@@ -1679,7 +1679,7 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
 }
 ```
 
-`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it.
+`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it. A target before the earliest position kept (`earliest` in `GET /ttd/status`) fails with `out_of_range`; on the engine the reply also carries `earliest` and a `message` naming it, and the machine has not moved.
 
 **port-events request:** searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
 

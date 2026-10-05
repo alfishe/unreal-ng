@@ -168,6 +168,12 @@ TEST_P(TTDControl_Test, StartStopAndStatusReportTheSession)
     EXPECT_TRUE(Bool(r, "stopped"));
     EXPECT_EQ(Str(r, "state"), "idle");
     EXPECT_FALSE(Bool(Run("stop"), "stopped"));
+    // D12: the earliest position kept, where "jump to start" goes
+    const TTDReply status = Run("status");
+    const StateNode* earliest = status.body.find("earliest");
+    ASSERT_NE(earliest, nullptr);
+    if (Int(status, "checkpoint_count") > 0)
+        EXPECT_EQ(earliest->find("frame")->i, Int(status, "session_start_frame"));
 }
 
 TEST_P(TTDControl_Test, StartWithoutTheJournalOptionKeepsTheChoice)
