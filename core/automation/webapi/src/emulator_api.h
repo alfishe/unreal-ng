@@ -237,6 +237,8 @@ public:
 
     // Static port-map introspection: devices x ports x gates + live routing flags
     ADD_METHOD_TO(EmulatorAPI::getPortsMap, "/api/v1/emulator/{id}/ports", drogon::Get);
+    // A debugger's port write through the decoder (PortWrite)
+    ADD_METHOD_TO(EmulatorAPI::postPortOut, "/api/v1/emulator/{id}/ports/out", drogon::Post);
 
 
     // Beam (raster) position + frame timing from the machine model
@@ -997,6 +999,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// respond to which ports under which gating) + live routing flags
     /// (trdos_active, mouse_ports_decoded, shadow_monitor_paged)
     void getPortsMap(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void postPortOut(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
     // endregion Screen State Methods

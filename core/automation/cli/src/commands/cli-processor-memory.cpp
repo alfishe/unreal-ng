@@ -5,6 +5,7 @@
 #include "cli-memory-region.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 
@@ -21,6 +22,7 @@
 #include <emulator/platform.h>
 
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -1895,6 +1897,40 @@ void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<st
     session.SendResponse(ss.str() + NEWLINE);
 }
 
+
+// HandlePortOut - out <port> <value>: a debugger's port write through the machine's decoder (core PortWrite, the
+// WebAPI POST /ports/out)
+void CLIProcessor::HandlePortOut(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    if (args.size() != 2)
+    {
+        session.SendResponse("Usage: out <port> <value>   (numbers: 0x13AF, #13AF, 13AFh or decimal)" + std::string(NEWLINE));
+        return;
+    }
+    uint16_t port = 0;
+    uint8_t value = 0;
+    std::string error;
+    if (!PortWrite::Parse(args[0], args[1], port, value, error))
+    {
+        session.SendResponse("out: " + error + NEWLINE);
+        return;
+    }
+    const PortWrite::Result result = PortWrite::Write(emulator.get(), port, value, "cli");
+    if (!result.ok)
+    {
+        session.SendResponse("out: " + result.error + NEWLINE);
+        return;
+    }
+    char text[64];
+    std::snprintf(text, sizeof(text), "Port #%04X <- #%02X (%s)", port, value, result.moment.c_str());
+    session.SendResponse(std::string(text) + NEWLINE);
+}
 
 // HandleDebugSnapshot - one coherent debugger snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot) as text
 void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args)

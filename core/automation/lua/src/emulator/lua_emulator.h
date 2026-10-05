@@ -10,6 +10,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include <sol/sol.hpp>
@@ -870,6 +871,23 @@ public:
             if (!read.error.empty())
                 return {sol::make_object(s, sol::lua_nil), sol::make_object(s, read.error)};
             return {sol::make_object(s, std::string(read.bytes.begin(), read.bytes.end())), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // A debugger's port write through the decoder (PortWrite): port_out(0x13AF, 0x20) -> true | nil, error
+        lua.set_function("port_out", [this](sol::this_state s, int64_t port, int64_t value) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            uint16_t p = 0;
+            uint8_t v = 0;
+            std::string error;
+            if (port < 0 || value < 0 || !PortWrite::Parse(std::to_string(port), std::to_string(value), p, v, error))
+                return {sol::make_object(s, sol::lua_nil),
+                        sol::make_object(s, error.empty() ? std::string("port and value must not be negative") : error)};
+            const PortWrite::Result result = PortWrite::Write(emulator, p, v, "lua");
+            if (!result.ok)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {

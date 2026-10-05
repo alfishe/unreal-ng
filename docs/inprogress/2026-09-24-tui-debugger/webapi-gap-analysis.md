@@ -151,7 +151,7 @@ per-step DMA updates (TDD-02 §5.4).
 
 | # | Endpoint | Why | Example |
 |---|---|---|---|
-| E1 | `POST /out {"port":"0x7FFD","value":"0x10"}`, with the full side effects of the decoder, recorded as a tool edit for TTD | Alt+B, Alt+M, TS-Conf board editing, setting a TS page | `{"port":"0x13AF","value":"0x20"}` maps page 0x20 into window 3 |
+| E1 | `POST /out {"port":"0x7FFD","value":"0x10"}`, with the full side effects of the decoder, recorded as a tool edit for TTD | Alt+B, Alt+M, TS-Conf board editing, setting a TS page | **Done 2026-10-04** ([debugger-additions](../2026-10-04-debugger-additions/tdd.md) §1): `POST /ports/out {"port":"0x13AF","value":"0x20"}` maps page 0x20 into window 3; no breakpoints, no device waits, a TTD tool edit; paused, stopped or at a frame boundary; MCP `port_out`, CLI `out`, Lua / Python `port_out`, Qt "Port OUT..." |
 | E2 | `GET /debug/pchist?depth=32` -> `[{page, address}]`, newest first | PC history panel (TDD-02 §4.11). Needs a per-instruction ring that is armed only while a debugger is attached (performance rule: zero cost otherwise, `AGENTS.md` Performance) | `[{"page":5,"address":"0x8123"}, ...]` |
 | E3 | `GET /debug/snapshot?disasm=21&memory=0x8000:96&stack=1` | One round trip per repaint, read under one pause, see §3.4 | **Done 2026-10-04** ([debugger-snapshot](../2026-10-04-debugger-snapshot/tdd.md)): `GET /debug/snapshot?disasm=&stack=&memory=space:addr:len`, read paused or at a frame boundary, `seq` + `prev_regs`, on every surface |
 | E4 | Disk sector write: `PUT /disk/{drive}/sector/{cyl}/{side}/{sec}` | Disk editor writes, "save to TR-DOS sectors" | |

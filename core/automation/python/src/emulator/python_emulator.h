@@ -3,6 +3,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
@@ -997,6 +998,21 @@ namespace PythonBindings
             }, "Read raw bytes (MemoryRead): the CPU view (wraps at 0xFFFF, up to 65536), a page 'ram5' / 'rom2' / "
                "'cache0' (stops at the page's end) or 'ram' (every RAM page back to back); ValueError with the reason",
                py::arg("addr"), py::arg("len"), py::arg("space") = "cpu")
+            .def("port_out", [](Emulator& self, int64_t port, int64_t value) {
+                uint16_t p = 0;
+                uint8_t v = 0;
+                std::string error;
+                if (port < 0 || value < 0)
+                    throw py::value_error("port and value must not be negative");
+                if (!PortWrite::Parse(std::to_string(port), std::to_string(value), p, v, error))
+                    throw py::value_error(error);
+                const PortWrite::Result result = PortWrite::Write(&self, p, v, "python");
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Write a port through the machine's decoder like a CPU OUT (PortWrite: paging, TS-Conf registers, AY, "
+               "border), without breakpoints or device waits, as a TTD tool edit; paused, stopped or running. "
+               "ValueError for a bad port (0..0xFFFF) / value (0..0xFF), RuntimeError when no coherent moment came",
+               py::arg("port"), py::arg("value"))
             .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len) -> py::bytes {
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");

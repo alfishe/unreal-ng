@@ -110,6 +110,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"debug-snapshot", &CLIProcessor::HandleDebugSnapshot},  // One coherent debugger snapshot (DebugSnapshot)
+                        {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -608,6 +609,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
     oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... - Registers, pages, time, code, stack, memory at one moment" << NEWLINE;
+    oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;
     oss << "Breakpoint commands:" << NEWLINE;

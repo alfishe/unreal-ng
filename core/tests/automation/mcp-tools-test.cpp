@@ -568,6 +568,32 @@ TEST_F(McpTools_Test, ControlExecution_BreakpointAdd_PostsBreakpointsWithAddress
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/breakpoints"));
 }
 
+TEST_F(McpTools_Test, ControlExecution_PortOut_PostsPortAndValue)
+{
+    Json::Value reply;
+    reply["port"] = "0x13AF";
+    reply["value"] = "0x20";
+    reply["moment"] = "paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/ports/out"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "port_out";
+    args["port"] = "#13AF";
+    args["value"] = "0x20";
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/ports/out"));
+    EXPECT_EQ(_caller->calls.back().body["port"].asString(), "#13AF") << "the text goes to the server as given";
+    EXPECT_EQ(_caller->calls.back().body["value"].asString(), "0x20");
+    EXPECT_EQ(result.text, "Port 0x13AF <- 0x20 (paused)");
+
+    Json::Value missing;
+    missing["action"] = "port_out";
+    missing["port"] = "0x7FFD";
+    EXPECT_TRUE(RunTool(*_registry, "control_execution", missing, *_caller).isError);
+}
+
 // ===========================================================================
 // inspect_state
 // ===========================================================================

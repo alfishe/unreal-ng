@@ -87,6 +87,7 @@ private slots:
     void runToPixel();
     void runToInterrupt();
     void resetEmulator();
+    void portOut();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
@@ -154,6 +155,7 @@ private:
     QAction* frameStepAction;
     QAction* waitInterruptAction;
     QAction* resetAction;
+    QAction* portOutAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;

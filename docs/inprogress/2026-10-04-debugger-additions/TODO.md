@@ -7,7 +7,7 @@ one starts. Master only after the owner has seen the result.
 | Step | Work | Status |
 |---|---|---|
 | A0 | Design (this folder) | done 2026-10-04 |
-| A1 | E1 port write: core `PortWrite`, `RunAtCoherentMoment`, every surface, Qt, docs, OpenAPI, tests | open |
+| A1 | E1 port write: core `PortWrite`, `RunAtCoherentMoment`, every surface, Qt, docs, OpenAPI, tests | done 2026-10-04: `PortWrite_Test` (6) + MCP test; mutation check (no out-of-time scope -> the TS-Conf wait test fails; no breakpoint gate -> the breakpoint test fails); WebAPI and CLI live-checked; Lua / Python compile-checked; GDB paging pseudo-registers now go through `PortWrite` too |
 | A2 | E6 TS-Conf CRAM / SFILE regions | open |
 | A3 | E4 disk sector write | open |
 | A4 | E5 NVRAM | open |

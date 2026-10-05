@@ -26,3 +26,38 @@
     paths["/api/v1/emulator/{id}/ports"]["get"]["responses"]["200"]["description"] =
         "Port map: model, entries[{port,mask,match,device,gate,tags[],latch}], "
         "live{trdos_active,mouse_ports_decoded,mouse_routing_note,shadow_monitor_paged}";
+
+    // A debugger's port write through the decoder (debugger additions tdd §1, PortWrite)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ports/out"]["post"];
+        op["summary"] = "Write a port through the machine's decoder (debugger)";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "The machine's own port decoder handles the write, so it has every side effect a CPU OUT has: paging "
+            "(#7FFD, #1FFD, TS-Conf #13AF...), TS-Conf registers (a DMA start included), AY, border, a floppy "
+            "controller command, a card's port. Unlike a CPU OUT: no port or memory breakpoint fires, device wait "
+            "states are dropped (the CPU's clock stays where it was), and a TTD recording keeps it as a tool edit "
+            "(a debugger-edit marker with the device states it changed). It runs where nothing else drives the "
+            "machine: paused (moment 'paused'), never started ('stopped') or between two frames of a running "
+            "machine ('frame', no pause). The snapshot's seq grows. Example: {\"port\":\"0x13AF\",\"value\":\"0x20\"} "
+            "maps RAM page #20 into window 3 on TS-Conf.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["requestBody"]["required"] = true;
+        Json::Value& body = op["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["required"].append("port");
+        body["required"].append("value");
+        body["properties"]["port"]["description"] = "0..#FFFF: a number, or text 0x13AF, #13AF, 13AFh or decimal";
+        body["properties"]["port"]["oneOf"][0]["type"] = "integer";
+        body["properties"]["port"]["oneOf"][1]["type"] = "string";
+        body["properties"]["value"]["description"] = "0..#FF: a number or text, as port";
+        body["properties"]["value"]["oneOf"][0]["type"] = "integer";
+        body["properties"]["value"]["oneOf"][1]["type"] = "string";
+        op["responses"]["200"]["description"] = "Written: {port: \"0x13AF\", value: \"0x20\", moment: paused | stopped | frame}";
+        op["responses"]["400"]["description"] = "Bad body, port or value (the message names it)";
+        op["responses"]["404"]["description"] = "No such emulator";
+        op["responses"]["503"]["description"] = "No coherent moment within 500 ms (another client is stepping the emulator): try again";
+    }

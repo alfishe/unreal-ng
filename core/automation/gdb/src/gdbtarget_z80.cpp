@@ -1,6 +1,7 @@
 #include "gdbtarget_z80.h"
 #include "gdbpacket.h"
 
+#include <debugger/ports/portwrite.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/cpu/z80.h>
@@ -357,22 +358,19 @@ void GDBTargetZ80::writeCPURegister(EmulatorContext* ctx, int regnum, uint16_t v
         return;
     }
 
-    // Paging pseudo-registers (15+) - route through port decoder
-    PortDecoder* ports = ctx->pPortDecoder;
-    if (!ports)
-        return;
-
+    // Paging pseudo-registers (15+): a debugger port write through the decoder (PortWrite: no breakpoint fires,
+    // a tool edit for TTD)
     uint8_t byteValue = static_cast<uint8_t>(value);
     switch (regnum)
     {
         case 15:  // Port 0x7FFD
-            ports->DecodePortOut(0x7FFD, byteValue, 0);
+            PortWrite::Write(ctx->pEmulator, 0x7FFD, byteValue, "gdb");
             break;
         case 16:  // Port 0x1FFD
-            ports->DecodePortOut(0x1FFD, byteValue, 0);
+            PortWrite::Write(ctx->pEmulator, 0x1FFD, byteValue, "gdb");
             break;
         case 17:  // Port 0xFE
-            ports->DecodePortOut(0x00FE, byteValue, 0);
+            PortWrite::Write(ctx->pEmulator, 0x00FE, byteValue, "gdb");
             break;
         default:
             break;

@@ -1,9 +1,7 @@
 #include "debugsnapshot.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
-#include <thread>
 #include <string>
 #include <vector>
 
@@ -233,8 +231,9 @@ const char* BankKind(MemoryBankModeEnum mode)
     }
 }
 
-/// Every part, read now: the caller guarantees nothing runs the machine meanwhile
-StateNode Capture(Emulator* emulator, const Options& options, const char* consistency)
+/// Every part, read now: the caller guarantees nothing runs the machine meanwhile. `consistency` is the caller's
+/// to fill (where it ran Capture); the key is placed here to keep the field order
+StateNode Capture(Emulator* emulator, const Options& options)
 {
     EmulatorContext* context = emulator->GetContext();
     Z80* z80 = context->pCore->GetZ80();
@@ -253,7 +252,7 @@ StateNode Capture(Emulator* emulator, const Options& options, const char* consis
         pause["address"] = static_cast<int>(stop.breakpoint.address);
     }
     node["pause"] = pause;
-    node["consistency"] = std::string(consistency);
+    node["consistency"] = std::string();
     node["regs"] = Registers(context);
     Z80State previous;
     node["prev_regs"] = emulator->PreviousStopRegisters(previous) ? RegistersOf(previous) : StateNode();
@@ -346,28 +345,12 @@ Result Build(Emulator* emulator, const Options& options)
     if (!result.error.empty())
         return result;
 
-    const auto paused = [&]() {
-        return emulator->RunWhileParked([&]() { result.snapshot = Capture(emulator, options, "paused"); });
-    };
-    if (paused())
-        return result;
-    // Not started and nobody steps it: nothing can change it
-    if (!emulator->IsRunning() && !emulator->IsDirectStepping())
+    const Emulator::CoherentMoment where = emulator->RunAtCoherentMoment(
+        [&]() { result.snapshot = Capture(emulator, options); }, 500);
+    if (where != Emulator::CoherentMoment::Busy)
     {
-        result.snapshot = Capture(emulator, options, "stopped");
+        result.snapshot["consistency"] = std::string(Emulator::CoherentMomentName(where));
         return result;
-    }
-    // Running: the emulation thread takes it between two frames, without a pause
-    if (emulator->IsRunning() && !emulator->IsPaused() &&
-        emulator->RunAtFrameBoundary([&]() { result.snapshot = Capture(emulator, options, "frame"); }, 500))
-        return result;
-    // It paused meanwhile, or a direct step runs on another thread: wait for the park, briefly
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (paused())
-            return result;
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     result.busy = true;
     result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";

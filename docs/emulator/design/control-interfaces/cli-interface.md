@@ -396,6 +396,7 @@ reference: [command-interface.md](./command-interface.md).
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
 | `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
+| `out <port> <value>` | A debugger's port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border): no breakpoints, no device waits, a TTD tool edit; paused, stopped or running. Numbers: `0x13AF`, `#13AF`, `13AFh` or decimal. |
 | `debug-snapshot` | One coherent debugger snapshot: registers, pages, time, code, stack, memory (`--disasm N`, `--stack N`, `--memory space:addr:len`, repeatable). |
 | `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--active`, `--no-border`). |
 | `ports` | Static port map with live routing flags: port/mask/match/device/gate rows from the machine's port decoder, plus TR-DOS active, mouse routing and the Scorpion Shadow Monitor latch. |

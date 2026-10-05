@@ -495,6 +495,7 @@ The `memory` command provides unified access to emulator memory with two address
 | `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
 | `memory info` | | Show memory configuration |
 | `find <pattern>` | Z80 pattern search | Search the Z80 address space for a byte pattern (see below) |
+| `out <port> <value>` | port write | A debugger's port write through the machine's decoder, like a CPU OUT (the WebAPI `POST /ports/out`): `out #13AF #20` maps RAM page #20 into window 3 on TS-Conf; no breakpoints, no device waits, a TTD tool edit; prints `Port #13AF <- #20 (paused)` |
 | `debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]...` | debugger snapshot | Registers, pages, time, code from PC, stack and memory windows read at one moment (the WebAPI `GET /debug/snapshot`) |
 
 **Page Types**: `ram` | `rom` | `cache` | `misc`

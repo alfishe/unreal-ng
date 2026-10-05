@@ -742,7 +742,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits"})
+                               "bp_list", "bp_reset_hits", "port_out"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -784,6 +784,10 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
+    schema["properties"]["port"]["type"] = "string";
+    schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
+    schema["properties"]["value"]["type"] = "string";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms";
     schema["required"].append("action");
 
     registry.Register(
@@ -791,6 +795,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
         "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
         "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
+        "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
+        "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
         "Stepping actions automatically include the new register snapshot.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -884,6 +890,30 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (args.isMember(key))
                             body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
+                    return;
+                }
+                if (action == "port_out")
+                {
+                    if (!args.isMember("port") || !args.isMember("value"))
+                    {
+                        done(ToolResult::Error("port_out requires 'port' and 'value'"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["port"] = args["port"];
+                    body["value"] = args["value"];
+                    caller.Call("POST", Endpoint(id, "/ports/out"), &body, [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error("port_out failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response)));
+                            return;
+                        }
+                        const std::string text = "Port " + response.get("port", "").asString() + " <- " +
+                                                 response.get("value", "").asString() + " (" +
+                                                 response.get("moment", "").asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
                     return;
                 }
                 if (action == "bp_remove" || action == "bp_enable" || action == "bp_disable")

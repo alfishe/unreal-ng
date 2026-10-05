@@ -739,6 +739,11 @@ data = emu.mem_read_bytes(0x1800, 768, space="ram5")  # a page window; "ram" = a
 # ValueError with the reason on a bad space, address or length
 emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 
+# A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
+# breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
+emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
+# ValueError for a bad port (0..0xFFFF) or value (0..0xFF); RuntimeError when no coherent moment came (503 case)
+
 # Get memory configuration
 info = emu.memory_info()
 # Returns: {

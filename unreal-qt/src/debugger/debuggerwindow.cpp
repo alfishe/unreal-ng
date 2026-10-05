@@ -6,7 +6,9 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QLineEdit>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
@@ -16,6 +18,7 @@
 #include "debugger/breakpointeditor.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
 #include "emulator/emulator.h"
@@ -122,6 +125,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
     toolBar->addAction(resetAction);
+    portOutAction = new QAction("Port OUT...", this);
+    portOutAction->setToolTip("Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit");
+    toolBar->addAction(portOutAction);
     breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
     visualizationAction = new QAction("Visualization", this);
@@ -145,6 +151,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(runToPixelAction, &QAction::triggered, this, &DebuggerWindow::runToPixel);
     connect(runToInterruptAction, &QAction::triggered, this, &DebuggerWindow::runToInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
+    connect(portOutAction, &QAction::triggered, this, &DebuggerWindow::portOut);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
     connect(visualizationAction, &QAction::triggered, this, &DebuggerWindow::showVisualizationWindow);
@@ -1196,6 +1203,34 @@ void DebuggerWindow::waitInterrupt()
     {
         continueExecution();
     }
+}
+
+void DebuggerWindow::portOut()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    const QString text = QInputDialog::getText(this, "Port OUT", "Port and value (e.g. #13AF #20, 0x7FFD 16):",
+                                               QLineEdit::Normal, QString(), &ok);
+    if (!ok || text.trimmed().isEmpty()) return;
+
+    const QStringList parts = text.split(QRegularExpression("[\\s,]+"), Qt::SkipEmptyParts);
+    uint16_t port = 0;
+    uint8_t value = 0;
+    std::string error = "enter a port and a value";
+    if (parts.size() != 2 ||
+        !PortWrite::Parse(parts[0].toStdString(), parts[1].toStdString(), port, value, error))
+    {
+        QMessageBox::warning(this, "Port OUT", QString::fromStdString(error));
+        return;
+    }
+    const PortWrite::Result result = PortWrite::Write(_emulator, port, value, "qt");
+    if (!result.ok)
+    {
+        QMessageBox::warning(this, "Port OUT", QString::fromStdString(result.error));
+        return;
+    }
+    updateState();
 }
 
 void DebuggerWindow::runTStates()

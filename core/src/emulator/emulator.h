@@ -691,6 +691,19 @@ public:
     /// Run `work` on the emulation thread at the next frame boundary of a running machine (MainLoop::RunAtFrameBoundary);
     /// false when no frame boundary came within `timeoutMs` (paused, stopped) - `work` then never runs
     bool RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs);
+    /// Where RunAtCoherentMoment ran its work
+    enum class CoherentMoment : uint8_t
+    {
+        Paused,   ///< on the caller's thread while the emulation stayed parked (RunWhileParked)
+        Stopped,  ///< on the caller's thread: never started and nobody steps it
+        Frame,    ///< on the emulation thread between two frames of a running machine
+        Busy,     ///< nowhere: no such moment within the timeout (another client is stepping it)
+    };
+    /// Run `work` once where nothing else changes the machine meanwhile (the debugger snapshot, a tool's port
+    /// write): paused, stopped or at a frame boundary, waiting up to `timeoutMs` for one of them
+    CoherentMoment RunAtCoherentMoment(const std::function<void()>& work, uint32_t timeoutMs);
+    /// "paused", "stopped", "frame" or "busy"
+    static const char* CoherentMomentName(CoherentMoment moment);
 
     /// Every debugger breakpoint hit goes through here (the Z80's instruction start, memory reads and writes,
     /// port reads and writes). On the emulator's own run it pauses, notifies and parks the emulation thread

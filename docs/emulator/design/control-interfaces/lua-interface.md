@@ -580,6 +580,11 @@ bytes = mem_read_bytes(0x1800, 768, "ram5") -- a page window ("ram5", "rom2", "c
 bytes, err = mem_read_bytes(0, 1, "ram9")   -- nil, "this machine has no page ram9"
 page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 
+-- A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
+-- breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
+ok, err = port_out(0x13AF, 0x20)            -- TS-Conf: RAM page #20 into window 3 -> true
+ok, err = port_out(0x7FFD, 256)             -- nil, "bad value '256' (0..#FF)"
+
 -- Get memory configuration
 info = memory_info()
 -- Returns: {

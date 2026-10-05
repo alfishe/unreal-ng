@@ -20,6 +20,7 @@
 #include <emulator/memory/memorymap.h>
 #include <debugger/debugmanager.h>
 #include <debugger/memory/memoryread.h>
+#include <debugger/ports/portwrite.h>
 #include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -2602,6 +2603,56 @@ void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void
     if (!result.error.empty())
         return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
     auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.snapshot));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ports/out {"port": "0x13AF", "value": "0x20"}
+/// A debugger's port write through the machine's decoder (PortWrite): the side effects of a CPU OUT, no breakpoint,
+/// no device waits, a tool edit for TTD. Port and value: a JSON number or text (0x13AF, #13AF, 13AFh, decimal)
+void EmulatorAPI::postPortOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    const auto json = req->getJsonObject();
+    if (!json || !json->isMember("port") || !json->isMember("value"))
+        return reply(HttpStatusCode::k400BadRequest, "body must be JSON with 'port' and 'value'");
+    // A JSON number goes in as decimal text: one parser for every surface
+    auto text = [](const Json::Value& value) {
+        if (value.isIntegral() && !value.isBool())
+            return value.isInt64() && value.asInt64() < 0 ? std::string("-") : std::to_string(value.asUInt64());
+        return value.isString() ? value.asString() : std::string();
+    };
+    uint16_t port = 0;
+    uint8_t value = 0;
+    std::string error;
+    if (!PortWrite::Parse(text((*json)["port"]), text((*json)["value"]), port, value, error))
+        return reply(HttpStatusCode::k400BadRequest, error);
+
+    const PortWrite::Result result = PortWrite::Write(emulator.get(), port, value, "webapi");
+    if (!result.ok)
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest,
+                     result.error);
+    char portHex[8];
+    char valueHex[8];
+    std::snprintf(portHex, sizeof(portHex), "0x%04X", port);
+    std::snprintf(valueHex, sizeof(valueHex), "0x%02X", value);
+    Json::Value body;
+    body["port"] = portHex;
+    body["value"] = valueHex;
+    body["moment"] = result.moment;
+    auto resp = HttpResponse::newHttpJsonResponse(body);
     addCorsHeaders(resp);
     callback(resp);
 }
