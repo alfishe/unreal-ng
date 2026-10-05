@@ -335,7 +335,17 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // so the trap is active in both debug and release sessions.
     if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
     {
-        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
+        // While TTD records (a black box: an explicit recording masks the
+        // shortcut) the trap is an edit with what it did - the block's bytes,
+        // the registers, the tape cursor and its time - so a replay repeats it
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        const bool recorded = ttd && ttd->IsRecording();
+        if (recorded)
+            ttd->BeginToolEdit();
+        const bool consumed = _context->pTapeFastLoad->HandleLDBytesTrap(*this);
+        if (recorded)
+            ttd->EndToolEdit(consumed ? "fast tape" : nullptr);
+        if (consumed)
         {
             // Trap consumed the invocation — the routine never executes
             return true;
@@ -354,7 +364,15 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // Drains pending sector bytes directly into memory via Z80::wd() when armed.
     if (pc == 0x3FEC && _context->pDiskFastLoad != nullptr)
     {
-        if (_context->pDiskFastLoad->HandleSectorDrainTrap(*this))
+        // Recorded as an edit like the tape trap above (the FDC's state is in it)
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        const bool recorded = ttd && ttd->IsRecording();
+        if (recorded)
+            ttd->BeginToolEdit();
+        const bool consumed = _context->pDiskFastLoad->HandleSectorDrainTrap(*this);
+        if (recorded)
+            ttd->EndToolEdit(consumed ? "fast disk" : nullptr);
+        if (consumed)
         {
             // Trap consumed the sector drain loop invocation
             return true;

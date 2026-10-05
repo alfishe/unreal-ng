@@ -138,7 +138,7 @@ public:
     /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
     void OnLoad(TTDLoadKind kind, const char* reason) override;
     bool QueueSnapshotLoad(std::function<void()> load) override;
-    void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
+    void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) override;
     void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
     const TTDInputJournal& InputJournal() const override { return _inputJournal; }
@@ -277,6 +277,19 @@ public:
     /// Deallocates write journal when TimeTravel feature is disabled.
     void UpdateFeatureCache() override;
     void StopForFeatureChange(const char* feature) override;
+    bool LocksAcceleration() const override { return !_blackBox; }
+    void OnAccelerationChanging(bool accelerating) override;
+
+    /// @brief The black box (Phase 5, Step 3; D29): a recording that keeps the
+    /// last @p minutes and never holds the machine at real speed - before an
+    /// acceleration (host speed above 1x, turbo mode, turbo tape's warp) it
+    /// stops, its history kept, and once nothing accelerates a new session
+    /// starts. The fast loaders' traps are recorded edits. Real-time clocks still run on emulated time. Applies to
+    /// the next StartRecording; off: an explicit recording (the lock)
+    void SetBlackBox(bool on, uint32_t minutes = 5);
+    bool IsBlackBox() const { return _blackBox; }
+    /// Whether host speed or turbo mode is on now
+    bool AccelerationActive() const;
 
     // -----------------------------------------------------------------------
     // Session configuration (v2 optimizations)
@@ -759,6 +772,8 @@ public:
     /// @param kind   Source classification (UI / automation hint).
     /// @param reason Short human-readable description. May be nullptr.
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) override;
+    /// The same, stamped at @p at (a tool edit's event sits where the edit began)
+    void RecordExternalEventAt(TTDExternalEventKind kind, const char* reason, const TTDTimePoint& at);
 
     /// A tool's edit of the machine while recording (Emulator::EditMemoryFromTool,
     /// Phase 3): BeginToolEdit before the edit, EndToolEdit after it. The edit
@@ -1766,6 +1781,8 @@ private:
     void SyncMediaReadJournal();
     std::map<uint8_t, std::vector<uint8_t>> _toolEditBefore;   ///< device states when a tool edit began
     bool _toolEditOpen = false;
+    TTDTimePoint _toolEditAt{};   ///< where the edit began: its event's time (a trap's instruction boundary)
+    uint32_t _toolEditTt = 0;     ///< the CPU clock (Z80::tt) when it began: a trap also spends time
     std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< v1 marker index -> edit bytes
     /// Apply a tool edit's bytes (a replay crossing it)
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
@@ -2055,6 +2072,10 @@ private:
 
     bool _recordingLockEngaged = false;
     uint8_t _savedHostSpeedMultiplier = 1;  // restored on release
+    bool _accelerationLocked = false;       // this session's lock covers acceleration (not a black box)
+    bool _blackBox = false;                 // SetBlackBox
+    uint32_t _blackBoxMinutes = 5;
+    bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
 };
 
 } // namespace ttd

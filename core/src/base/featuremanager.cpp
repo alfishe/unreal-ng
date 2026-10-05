@@ -75,9 +75,10 @@ bool FeatureManager::isTtdRecordingActive() const
         return true;
     }
 
+    // A black box records without holding acceleration (D29)
     if (_context && _context->pTimeTravelHooks)
     {
-        if (_context->pTimeTravelHooks->IsRecording())
+        if (_context->pTimeTravelHooks->IsRecording() && _context->pTimeTravelHooks->LocksAcceleration())
             return true;
     }
 
@@ -121,21 +122,20 @@ void FeatureManager::onTtdRecordingStopped()
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
+    std::string requestedId;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (const auto* feature = findFeature(idOrAlias))
+            requestedId = feature->id;
+    }
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+
     // FR-17: switching time travel or debug mode off stops a recording cleanly first,
     // instead of refusing. Outside the lock: the stop parks the machine, whose thread
     // may need it
-    if (!enabled)
-    {
-        std::string id;
-        {
-            std::lock_guard<std::recursive_mutex> lock(_mutex);
-            if (const auto* feature = findFeature(idOrAlias))
-                id = feature->id;
-        }
-        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-        if (ttd && (id == Features::kTimeTravel || id == Features::kDebugMode) && ttd->IsRecording())
-            ttd->StopForFeatureChange(id.c_str());
-    }
+    if (!enabled && ttd && (requestedId == Features::kTimeTravel || requestedId == Features::kDebugMode) &&
+        ttd->IsRecording())
+        ttd->StopForFeatureChange(requestedId.c_str());
 
     std::string changedId;
     {

@@ -2560,7 +2560,7 @@ void TimeTravelManager::BeginToolEdit()
 
 void TimeTravelManager::EndToolEdit(const char* source)
 {
-    if (!_toolEditOpen || _state != TTDSessionState::Recording)
+    if (!_toolEditOpen || _state != TTDSessionState::Recording || !source)
     {
         _toolEditOpen = false;
         return;

@@ -147,7 +147,9 @@ public:
     virtual void OnModelTransfer(const char* reason) = 0;
     /// Something outside the guest happened (tape control, a disk write, a NeoGS card)
     virtual void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) = 0;
-    /// A tool's edit of the machine: Begin before it, End after it (Emulator::EditMemoryFromTool)
+    /// A tool's edit of the machine: Begin before it, End after it (Emulator::EditMemoryFromTool,
+    /// and a fast loader's trap: what it wrote, the registers and the time it spent).
+    /// End without a source: nothing was edited (a trap declined)
     virtual void BeginToolEdit() = 0;
     virtual void EndToolEdit(const char* source) = 0;
     /// A device was swapped for another one (the General Sound card)
@@ -198,5 +200,15 @@ public:
     /// stops cleanly first - the machine parked, everything up to this instant kept - and
     /// status names the reason (last_stop_reason "feature-off:<feature>"). Not recording: nothing
     virtual void StopForFeatureChange(const char* feature) = 0;
+
+    // The black box (Phase 5, Step 3; D29)
+    /// Whether the recording holds the machine at real speed (host speed 1x;
+    /// turbo, fast tape, turbo tape and fast disk off). A black box does not:
+    /// it stops while an acceleration runs instead (OnAccelerationChanging)
+    virtual bool LocksAcceleration() const = 0;
+    /// An acceleration is about to start (@p accelerating, before it takes
+    /// effect) or has ended (after it). A black box stops before it, its
+    /// history kept, and starts a new session once nothing accelerates
+    virtual void OnAccelerationChanging(bool accelerating) = 0;
 };
 }  // namespace ttd

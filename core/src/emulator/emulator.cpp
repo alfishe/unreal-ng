@@ -678,10 +678,17 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
     // TTD v1 (P1.6): speed change invalidates the recording because frame
     // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
     // Simpler to invalidate than to model; revisit if it proves annoying.
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnConfigurationChange(ttd::TTDConfigChangeKind::SpeedMultiplier, "speed-multiplier-change");
+    // A black box stops before the machine runs faster and starts again at 1x (D29)
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    if (ttd && multiplier != 1)
+        ttd->OnAccelerationChanging(true);
+    if (ttd)
+        ttd->OnConfigurationChange(ttd::TTDConfigChangeKind::SpeedMultiplier, "speed-multiplier-change");
 
-    return _core->SetSpeedMultiplier(multiplier);
+    const bool changed = _core->SetSpeedMultiplier(multiplier);
+    if (ttd && multiplier == 1)
+        ttd->OnAccelerationChanging(false);
+    return changed;
 }
 
 void Emulator::SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor)

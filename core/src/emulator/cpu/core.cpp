@@ -7,6 +7,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/upd765.h"
@@ -967,6 +968,9 @@ uint8_t Core::GetHostSpeedMultiplier() const
 //
 void Core::EnableTurboMode(bool withAudio)
 {
+    // A TTD black box stops before the machine runs in turbo (D29)
+    if (!_context->config.turbo_mode && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnAccelerationChanging(true);
     _context->config.turbo_mode = true;
     _context->config.turbo_mode_audio = withAudio;
 
@@ -1003,11 +1007,16 @@ void Core::DisableTurboMode()
         std::lock_guard<std::mutex> lock(_turboHostHoldMutex);
         _turboHostHold.Release();
     }
+    const bool wasTurbo = _context->config.turbo_mode;
     _context->config.turbo_mode = false;
 
     // Restore the previous DSP quality
     if (_context->pSoundManager)
         _context->pSoundManager->setTurboLowQualityOverride(false);
+
+    // A stopped TTD black box records again once nothing accelerates (D29)
+    if (wasTurbo && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnAccelerationChanging(false);
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, host output released");
 

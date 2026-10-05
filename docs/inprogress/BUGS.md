@@ -45,6 +45,30 @@ Once the program writes `#FE` (the D13 test does `LD A,2; OUT (#FE),A`) both pic
   not `#FE` was ever written.
 - A test that reproduces the case above and fails before the fix.
 
+## 🔴 [Open] #2: Running forward from a session's mid-frame baseline diverges the TurboSound FM state
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** -
+* **Commit ID:** -
+* **Found by:** the black-box fast-tape test (Phase 5, Step 3 of the TTD v2 migration, branch `ttd-engine`), 2026-10-05.
+
+### Description
+A recording that starts mid-frame takes its baseline checkpoint there. Seeking to that first checkpoint and running
+the machine forward (detached, the recorded history playing) reaches a later position with CPU and RAM equal to the
+live run but the TurboSound FM device (TTD id 4, two YM2203) different at byte 51 of its 2,008-byte state - chip 0's
+clock phase, right after the latch. Restores from frame-start checkpoints and replays from them are exact; only the
+mid-frame baseline is affected. The FM chips are synced lazily behind the CPU (`TTDSyncedTime`) and save their
+render cursor relative to the CPU's time, so a restore at a position that is not a frame start may leave the clock
+phase where the live chip did not have it.
+
+### Repro
+Pentagon (TSFM in the TurboSound slot), the TTD controller: run 12,345 T-states, `StartRecording`, run 3 frames and
+20,000 T-states, note the position and the device states, `StopRecording`, `SeekTo(checkpoint 0)`, step until the
+noted position: device 4 differs.
+
+### Requirements / Acceptance Criteria
+- Running forward from any checkpoint, the baseline included, reproduces every device state of the live run.
+- A test for the mid-frame baseline that fails before the fix.
+
 2026-10-04
 ## 🔴 [Open] #1: unreal-qt runs at 2x-4x speed while a TTD recording is active (recording must hold 1x)
 * **Date Opened:** 2026-10-04

@@ -1003,3 +1003,134 @@ TEST_F(TimeTravelController_Test, WhileRecordingASnapshotLoadIsAllowedAModelSwit
     EXPECT_EQ(report.reason, refusal);
     EXPECT_TRUE(_controller->IsRecording());
 }
+
+/// Step 3 (D29): the black box records without holding the machine at real
+/// speed. Before an acceleration (turbo mode, host speed) takes effect it
+/// stops, its history kept; once nothing accelerates a new session starts. The
+/// fast loaders do not stop it (their traps are recorded edits). It keeps the
+/// last N minutes. An explicit recording still refuses accelerations
+TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
+{
+    FeatureManager* features = _b->GetFeatureManager();
+    _controller->SetBlackBox(true, 1);
+    ASSERT_TRUE(_controller->StartRecording());
+    const unsigned frameMicros = _b->GetContext()->config.frame_duration_us;
+    EXPECT_EQ(_controller->GetSessionInfo().historyLimitFrames, uint64_t(60) * 1000000 / frameMicros)
+        << "one minute of frames";
+    _b->RunNFrames(4, /*skipBreakpoints=*/true);
+
+    // A fast loader: allowed, the black box goes on
+    ASSERT_TRUE(features->setFeature(Features::kFastTape, true));
+    EXPECT_TRUE(features->isEnabled(Features::kFastTape)) << "not masked by a black box";
+    EXPECT_TRUE(_controller->IsRecording());
+
+    // Turbo: allowed; the black box stops first and keeps its history
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, true));
+    EXPECT_TRUE(_b->GetContext()->pCore->IsTurboMode());
+    EXPECT_FALSE(_controller->IsRecording());
+    EXPECT_EQ(_controller->GetSessionInfo().lastStopReason, "acceleration");
+    EXPECT_GE(_controller->GetCheckpointCount(), 4u) << "the history before the acceleration stays";
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_GE(_controller->GetCheckpointCount(), 4u);
+
+    // Off again: a new session
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, false));
+    EXPECT_TRUE(_controller->IsRecording()) << "records again once nothing accelerates";
+    EXPECT_EQ(_controller->GetCheckpointCount(), 1u) << "a new session: its baseline";
+
+    // Host speed the same way
+    EXPECT_TRUE(_b->SetSpeedMultiplier(4));
+    EXPECT_FALSE(_controller->IsRecording());
+    EXPECT_EQ(_b->GetContext()->pCore->GetHostSpeedMultiplier(), 4);
+    EXPECT_EQ(_controller->GetCheckpointCount(), 1u) << "kept, not invalidated";
+    EXPECT_TRUE(_b->SetSpeedMultiplier(1));
+    EXPECT_TRUE(_controller->IsRecording());
+
+    // An explicit recording holds the lock
+    _controller->StopRecording();
+    _controller->SetBlackBox(false);
+    ASSERT_TRUE(features->setFeature(Features::kFastTape, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    EXPECT_FALSE(features->setFeature(Features::kTurboMode, true)) << "refused while an explicit recording runs";
+    EXPECT_FALSE(_b->SetSpeedMultiplier(4));
+    EXPECT_TRUE(_controller->IsRecording());
+}
+
+/// Step 3 (D29) with the fast loaders: in a black box a fast tape load's trap
+/// is an edit with the block's bytes, the registers, the tape cursor and the
+/// time it spent; a seek across it, and the machine playing the history
+/// forward, land where the machine was live
+TEST_F(TimeTravelController_Test, AFastTapeTrapInTheBlackBoxIsReplayed)
+{
+    EmulatorContext* context = _b->GetContext();
+    Memory* memory = context->pMemory;
+    Z80* z80 = context->pCore->GetZ80();
+
+    // One TAP block: flag #FF and 256 bytes
+    std::vector<uint8_t> block(258);
+    block[0] = 0xFF;
+    uint8_t checksum = 0xFF;
+    for (size_t i = 1; i <= 256; ++i)
+    {
+        block[i] = static_cast<uint8_t>(i * 7 + 3);
+        checksum ^= block[i];
+    }
+    block[257] = checksum;
+    const std::string tap = TestPathHelper::GetUniqueTestScratchPath("blackbox-trap.tap");
+    {
+        std::ofstream out(tap, std::ios::binary);
+        const uint8_t length[2] = {static_cast<uint8_t>(block.size() & 0xFF), static_cast<uint8_t>(block.size() >> 8)};
+        out.write(reinterpret_cast<const char*>(length), 2);
+        out.write(reinterpret_cast<const char*>(block.data()), static_cast<std::streamsize>(block.size()));
+    }
+    ASSERT_TRUE(_b->LoadTape(tap));
+
+    // The ROM's LD-BYTES entry as the trap recognizes it
+    uint8_t* rom = memory->GetPhysicalAddressForZ80Page(0);
+    const uint8_t signature1[8] = {0x14, 0x08, 0x15, 0xF3, 0x3E, 0x0F, 0xD3, 0xFE};
+    const uint8_t signature2[3] = {0xDB, 0xFE, 0x1F};
+    std::memcpy(rom + 0x0556, signature1, sizeof(signature1));
+    std::memcpy(rom + 0x0556 + 12, signature2, sizeof(signature2));
+
+    // A wait of about three frames (LD BC,8000; w: DEC BC; LD A,B; OR C; JR NZ,w), then
+    // LD A,#FF; LD DE,256; LD IX,#9000; SCF; CALL #0556; LD HL,0; loop: INC HL; JR loop
+    const uint8_t program[] = {0x01, 0x40, 0x1F, 0x0B, 0x78, 0xB1, 0x20, 0xFB, 0x3E, 0xFF, 0x11, 0x00, 0x01, 0xDD,
+                               0x21, 0x00, 0x90, 0x37, 0xCD, 0x56, 0x05, 0x21, 0x00, 0x00, 0x23, 0x18, 0xFD};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8100 + i), program[i]);
+    z80->pc = 0x8100;
+    z80->sp = 0xBF00;
+
+    ASSERT_TRUE(_b->GetFeatureManager()->setFeature(Features::kFastTape, true));
+    _controller->SetBlackBox(true, 5);
+    ASSERT_TRUE(_controller->StartRecording());
+    const size_t events = _controller->GetSessionInfo().externalEventCount;
+    _b->RunTStates(3 * 71680 + 30000, /*skipBreakpoints=*/true);
+    ASSERT_EQ(memory->DirectReadFromZ80Memory(0x9000), block[1]) << "the trap loaded the block";
+    ASSERT_EQ(_controller->GetSessionInfo().externalEventCount, events + 1) << "as one edit";
+    const ttd::TTDTimePoint afterTrap = _controller->CurrentPosition();
+    const MachineState liveAfterTrap = CaptureState(context, *_controller);
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint later = _controller->CurrentPosition();
+    const MachineState liveLater = CaptureState(context, *_controller);
+    _controller->StopRecording();
+
+    auto expectSame = [&](const MachineState& seen, const MachineState& live, const char* where) {
+        EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0)
+            << where << ": CPU (pc " << seen.cpu.pc << " vs " << live.cpu.pc << ", hl " << seen.cpu.hl << " vs "
+            << live.cpu.hl << ")";
+        EXPECT_TRUE(seen.ram == live.ram) << where << ": RAM";
+        EXPECT_TRUE(seen.devices == live.devices) << where << ": devices";
+    };
+    ASSERT_TRUE(_controller->SeekTo(afterTrap, nullptr));
+    expectSame(CaptureState(context, *_controller), liveAfterTrap, "a seek across the trap");
+    ASSERT_TRUE(_controller->SeekTo(later, nullptr));
+    expectSame(CaptureState(context, *_controller), liveLater, "a seek frames later");
+
+    // The machine playing the history forward from before the trap
+    ASSERT_TRUE(_controller->SeekTo(_controller->GetCheckpoint(1)->time, nullptr));
+    while (_controller->CurrentPosition() < later)
+        _b->RunSingleCPUCycle(true);
+    EXPECT_EQ(_controller->CurrentPosition(), later);
+    expectSame(CaptureState(context, *_controller), liveLater, "running across the trap");
+}

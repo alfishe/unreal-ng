@@ -275,6 +275,8 @@ public:
     /// Deallocates write journal when TimeTravel feature is disabled.
     void UpdateFeatureCache() override;
     void StopForFeatureChange(const char* feature) override;
+    bool LocksAcceleration() const override { return true; }   // v1 has no black box
+    void OnAccelerationChanging(bool) override {}
 
     // -----------------------------------------------------------------------
     // Session configuration (v2 optimizations)

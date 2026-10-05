@@ -158,6 +158,16 @@ bool TimeTravelController::StartRecording()
     // The machine's ROM set: the engine's configuration and restore checks compare with it
     _replayRomSignature = ComputeRomSignature();
 
+    // The black box keeps its window (D29): the last N minutes of frames
+    if (_blackBox)
+    {
+        const unsigned frameMicros = _context && _context->config.frame_duration_us ? _context->config.frame_duration_us : 20000;
+        const uint64_t frames = uint64_t(_blackBoxMinutes) * 60 * 1000000 / frameMicros;
+        _historyLimitFrames.store(frames, std::memory_order_release);
+        _historyLimitBytes.store(0, std::memory_order_release);
+        ApplyHistoryPolicy();
+    }
+
     // Fresh session — clear any stale auto-pause signal from a previous
     // Detached window.
     _autoPauseRequested.store(false, std::memory_order_release);
@@ -176,7 +186,8 @@ bool TimeTravelController::StartRecording()
     // the CPU thread), so we must not race with emulation. Pause blocks
     // until the Z80 thread has parked.
     Emulator* emu = _context->pEmulator;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    // On the machine's own thread (a black box around turbo tape's warp) it is not running a frame now
+    const bool wasRunning = !OnMachineThread() && emu && emu->IsRunning() && !emu->IsPaused();
     if (wasRunning)
     {
         emu->Pause(false);
@@ -388,7 +399,7 @@ void TimeTravelController::StopRecording()
     // beside a frame (same pause discipline as StartRecording, TDD section
     // 7.2). From the machine's own thread the wait returns at once.
     Emulator* emu = _context ? _context->pEmulator : nullptr;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    const bool wasRunning = !OnMachineThread() && emu && emu->IsRunning() && !emu->IsPaused();
     if (wasRunning)
     {
         emu->Pause(false);
@@ -658,6 +669,15 @@ void TimeTravelController::EngageRecordingLock()
         return;
     _recordingLockEngaged = true;
 
+    // Devices with a host-time dependence (the RTC) switch to emulated time
+    // here, before StartRecording captures its baseline - a black box too
+    _accelerationLocked = !_blackBox;
+    if (!_accelerationLocked)
+    {
+        _peripherals.NotifyRecording(true);
+        return;
+    }
+
     // Host speed control back to 1x, applied now rather than at the next frame
     // boundary so no recorded T-state runs dilated. Callers have the CPU parked
     Core* core = _context->pCore;
@@ -688,6 +708,9 @@ void TimeTravelController::ReleaseRecordingLock()
     _recordingLockEngaged = false;
 
     _peripherals.NotifyRecording(false);
+    if (!_accelerationLocked)
+        return;   // a black box held nothing else
+    _accelerationLocked = false;
 
     // Lifts the FeatureManager gate first: the speed restore below is checked by it
     if (_context->pFeatureManager)
@@ -1284,6 +1307,55 @@ void TimeTravelController::OnFrameBoundary()
         }
         MaybePublishAtFrameBoundary();
     }
+}
+
+void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
+{
+    _blackBox = on;
+    _blackBoxMinutes = minutes ? minutes : 5;
+    _blackBoxSuspended = false;
+}
+
+bool TimeTravelController::AccelerationActive() const
+{
+    if (!_context)
+        return false;
+    // The fast loaders are not among them: their traps are recorded edits
+    return _context->pCore && (_context->pCore->GetHostSpeedMultiplier() != 1 || _context->pCore->IsTurboMode());
+}
+
+void TimeTravelController::OnAccelerationChanging(bool accelerating)
+{
+    if (!_blackBox)
+        return;
+    if (accelerating)
+    {
+        // Before the acceleration takes effect: nothing accelerated is recorded
+        if (_state == TTDSessionState::Recording)
+        {
+            StopRecording();
+            _lastStopReason = "acceleration";
+            _blackBoxSuspended = true;
+            MLOGINFO("TimeTravelController: the black box stops while an acceleration runs (history kept)");
+        }
+        return;
+    }
+    if (_blackBoxSuspended && !AccelerationActive() && _state != TTDSessionState::Recording)
+    {
+        _blackBoxSuspended = false;
+        if (StartRecording())
+            MLOGINFO("TimeTravelController: the black box records again (a new session)");
+    }
+}
+
+void TimeTravelController::OnConfigurationChange(TTDConfigChangeKind kind, const char* reason)
+{
+    // The black box's history was recorded at 1x and stays valid when the host
+    // speed changes afterwards (the speed is pacing; OnAccelerationChanging
+    // handles the recording)
+    if (kind == TTDConfigChangeKind::SpeedMultiplier && _blackBox)
+        return;
+    InvalidateSession(reason);
 }
 
 bool TimeTravelController::CutAtFrameStart(uint64_t frame) const
@@ -2260,7 +2332,8 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 // Kinds: 1 a machine RAM page (index = page), 2 a device-memory piece (id =
 // TTDRegionId, index = piece), 3 a device's whole state (id = v1 id), 4 the
 // CPU (TTDCpuState), 5 the chipset latches (TTDChipsetState; its counters are
-// the machine time and stay as they are, the paging is decoded from it)
+// the machine time and stay as they are, the paging is decoded from it), 6 the
+// CPU time the edit spent (a fast loader's trap: u32, Z80::tt units)
 namespace
 {
 enum : uint8_t
@@ -2270,6 +2343,7 @@ enum : uint8_t
     kEditDeviceState = 3,
     kEditCpu = 4,
     kEditChipset = 5,
+    kEditClock = 6,
 };
 void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
                    uint32_t length)
@@ -2305,6 +2379,9 @@ void TimeTravelController::BeginToolEdit()
     _toolEditOpen = _state == TTDSessionState::Recording;
     if (!_toolEditOpen)
         return;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    _toolEditAt = {_context->emulatorState.frame_counter, TInFrameNow()};
+    _toolEditTt = z80 ? z80->tt : 0;
     for (const auto& [id, device] : _peripherals.Devices())
         if (device && device->TTDStateSize() != 0)
             device->TTDSaveStateTo(_toolEditBefore[id]);
@@ -2312,9 +2389,11 @@ void TimeTravelController::BeginToolEdit()
 
 void TimeTravelController::EndToolEdit(const char* source)
 {
-    if (!_toolEditOpen || _state != TTDSessionState::Recording)
+    // No source: the edit did not happen (a fast loader's trap declined)
+    if (!_toolEditOpen || _state != TTDSessionState::Recording || !source)
     {
         _toolEditOpen = false;
+        _toolEditBefore.clear();
         return;
     }
     _toolEditOpen = false;
@@ -2363,10 +2442,15 @@ void TimeTravelController::EndToolEdit(const char* source)
         const TTDChipsetState chipset =
             CaptureChipsetState(_context->emulatorState, static_cast<uint32_t>(z80->t));
         PutEditRecord(payload, kEditChipset, 0, 0, reinterpret_cast<const uint8_t*>(&chipset), sizeof(chipset));
+        // A trap runs its effect in no time steps: the replay advances the clock as it did, last
+        if (const uint32_t spent = z80->tt - _toolEditTt)
+            PutEditRecord(payload, kEditClock, 0, 0, reinterpret_cast<const uint8_t*>(&spent), sizeof(spent));
     }
 
+    // The event sits where the edit began: a replay applies it before the
+    // instruction that starts there, as the trap stood in for it
     const size_t before = _externalEvents.Size();
-    RecordExternalEvent(TTDExternalEventKind::DebuggerEdit, source);
+    RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source, _toolEditAt);
     if (_externalEvents.Size() > before)
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
 }
@@ -2417,12 +2501,25 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
             chipset.frame_counter = st.frame_counter;
             RestoreChipsetState(chipset, &st);
         }
+        else if (kind == kEditClock && length == sizeof(uint32_t) && _context && _context->pCore)
+        {
+            uint32_t spent = 0;
+            std::memcpy(&spent, bytes, sizeof(spent));
+            _context->pCore->GetZ80()->tt += spent;
+        }
     }
     if (_memory)
         _memory->UpdateZ80Banks();
 }
 
 void TimeTravelController::RecordExternalEvent(TTDExternalEventKind kind, const char* reason)
+{
+    if (!_context)
+        return;
+    RecordExternalEventAt(kind, reason, {_context->emulatorState.frame_counter, TInFrameNow()});
+}
+
+void TimeTravelController::RecordExternalEventAt(TTDExternalEventKind kind, const char* reason, const TTDTimePoint& at)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (!_context)
@@ -2435,13 +2532,9 @@ void TimeTravelController::RecordExternalEvent(TTDExternalEventKind kind, const 
     if (_state != TTDSessionState::Recording)
         return;
 
-    const EmulatorState& st = _context->emulatorState;
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-
     TTDExternalEvent ev;
-    ev.time.frame    = st.frame_counter;
-    ev.time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
-    ev.kind          = kind;
+    ev.time = at;
+    ev.kind = kind;
 
     // Truncate-and-copy the reason string into the inline buffer. strncpy
     // returns `dest` and zero-pads the remainder when src is shorter than
