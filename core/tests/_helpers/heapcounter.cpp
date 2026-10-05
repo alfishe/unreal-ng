@@ -18,6 +18,7 @@ namespace
 {
     std::atomic<bool> g_counting{false};
     std::atomic<int64_t> g_net{0};
+    std::atomic<int64_t> g_allocations{0};
 }  // namespace
 
 #ifdef HEAP_COUNTER_AVAILABLE
@@ -27,7 +28,10 @@ void* operator new(size_t size)
     if (!p)
         throw std::bad_alloc();
     if (g_counting.load(std::memory_order_relaxed))
+    {
         g_net.fetch_add(static_cast<int64_t>(BlockSize(p)), std::memory_order_relaxed);
+        g_allocations.fetch_add(1, std::memory_order_relaxed);
+    }
     return p;
 }
 
@@ -73,6 +77,7 @@ namespace HeapCounter
     void Start()
     {
         g_net = 0;
+        g_allocations = 0;
         g_counting = true;
     }
 
@@ -84,5 +89,10 @@ namespace HeapCounter
     int64_t Net()
     {
         return g_net.load();
+    }
+
+    int64_t Allocations()
+    {
+        return g_allocations.load();
     }
 }  // namespace HeapCounter

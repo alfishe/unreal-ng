@@ -19,4 +19,6 @@ namespace HeapCounter
     void Start();
     void Stop();
     int64_t Net();
+    /// Allocations made in the window, freed or not ("no allocation per call" checks)
+    int64_t Allocations();
 }  // namespace HeapCounter

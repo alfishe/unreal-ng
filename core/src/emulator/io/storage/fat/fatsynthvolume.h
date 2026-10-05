@@ -1,13 +1,14 @@
 #pragma once
 
-/// @file hostfolderfat.h
-/// @brief A host folder presented as a FAT16 / FAT32 disk, sector by sector.
+/// @file fatsynthvolume.h
+/// @brief A FAT16 / FAT32 volume synthesized from a FileTree, sector by sector.
 ///
-/// Built from a FolderSnapshot. Nothing is copied: every file is laid out as
-/// one contiguous run of clusters, the FAT is computed for each sector read,
-/// directories are generated once at build time, and file data is read from
-/// the host file when the guest reads it. The volume itself is read-only;
-/// guest writes go to the change layer on top (SessionWriteMap).
+/// Nothing is copied: every file is laid out as one contiguous run of
+/// clusters, the FAT is computed for each sector read, directories are
+/// generated once at build time, and file data is read from wherever the
+/// tree says it lives (a host file, an extent of a source device) when the
+/// guest reads it, straight into the caller's buffer (ExtentReader). The
+/// volume itself is read-only; guest writes go to the change layer on top.
 ///
 /// Layout, in LBA order:
 ///   0            MBR, one partition (type #06 / #04 FAT16, #0C FAT32) at 2048
@@ -21,21 +22,23 @@
 ///
 /// Cluster counts stay clear of the FAT type limits that strict readers
 /// (ChaN FatFs, used by the ZX Next firmware) check: FAT16 4 086-65 525,
-/// FAT32 >= 65 526. Design: docs/inprogress/2026-09-28-storage-manager/
-/// technical-design.md §6.
+/// FAT32 >= 65 526. HostFolderFat is this volume over one host folder.
+/// Design: docs/inprogress/2026-09-28-storage-manager/technical-design.md §6,
+/// docs/inprogress/2026-10-05-media-multisource/tdd.md §5.
 
 #include <cstdint>
-#include <fstream>
-#include <list>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "common/unicodehelper.h"
-#include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/compose/extentreader.h"
+#include "emulator/io/storage/compose/filetree.h"
 #include "emulator/io/storage/iblockdevice.h"
 #include "emulator/media/mediatypes.h"
+
+class SourcePool;
 
 struct FatVolumeOptions
 {
@@ -49,14 +52,18 @@ struct FatVolumeOptions
     std::optional<int64_t> fixedTimeUtc;       ///< tests: every timestamp this value
 };
 
-class HostFolderFat : public IBlockDevice
+class FatSynthVolume : public IBlockDevice
 {
 public:
-    /// Build the volume. False with `error` when it cannot be built (the
-    /// folder does not fit the FAT type); `report` lists names that could not
-    /// be stored
-    static std::unique_ptr<HostFolderFat> Build(const FolderSnapshot& snapshot, const FatVolumeOptions& options,
-                                                std::string* error, std::vector<std::string>* report);
+    /// Build the volume over `tree`, whose file data `pool` serves.
+    /// `sourceIdentity` is the identity of everything the tree was built from
+    /// (the content id mixes it with the options); `description` names the
+    /// source in Describe(). Nullptr with `error` when the tree does not fit
+    /// the FAT type; `report` lists names that could not be stored
+    static std::unique_ptr<FatSynthVolume> Build(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool,
+                                                 const FatVolumeOptions& options, uint64_t sourceIdentity,
+                                                 std::string description, std::string* error,
+                                                 std::vector<std::string>* report);
 
     uint64_t SectorCount() const override { return _totalSectors; }
     bool ReadSector(uint64_t lba, uint8_t* dst) override;
@@ -79,8 +86,14 @@ public:
                static_cast<uint64_t>(_usedClusters) * _sectorsPerCluster;
     }
 
+    const FileTree& Tree() const { return *_tree; }
     /// Problems met while serving reads (a host file that shrank or vanished)
-    const std::vector<std::string>& Warnings() const { return _warnings; }
+    const std::vector<std::string>& Warnings() const;
+
+protected:
+    FatSynthVolume() = default;
+    bool Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool, const FatVolumeOptions& options,
+              uint64_t sourceIdentity, std::string description, std::string* error, std::vector<std::string>* report);
 
 private:
     struct Run
@@ -88,28 +101,22 @@ private:
         uint32_t firstCluster = 0;
         uint32_t clusters = 0;
         bool isDirectory = false;
-        size_t index = 0;  ///< into _directories or _files
+        uint32_t index = 0;  ///< into _directories, or the tree node of a file
     };
-    struct FileSource
-    {
-        std::filesystem::path hostPath;
-        std::string displayPath;
-        uint64_t size = 0;
-        bool warned = false;
-    };
-
-    HostFolderFat() = default;
 
     void BuildBootSector(uint8_t* sector, bool backup) const;
     void BuildFsInfo(uint8_t* sector) const;
     void BuildMbr(uint8_t* sector) const;
     void BuildFatSector(uint64_t fatSector, uint8_t* sector) const;
     void ReadData(uint64_t cluster, uint32_t sectorInCluster, uint8_t* dst);
-    void ReadFile(size_t index, uint64_t offset, uint8_t* dst);
     const Run* FindRun(uint64_t cluster) const;
 
     FatVolumeOptions _options;
-    std::string _folder;
+    std::string _description;
+    std::shared_ptr<const FileTree> _tree;
+    std::shared_ptr<SourcePool> _pool;
+    std::unique_ptr<ExtentReader> _reader;
+
     uint64_t _volumeStart = 0;
     uint64_t _volumeSectors = 0;
     uint64_t _totalSectors = 0;
@@ -123,14 +130,5 @@ private:
     uint64_t _contentId = 0;
 
     std::vector<std::vector<uint8_t>> _directories;  ///< [0] = root
-    std::vector<FileSource> _files;
     std::vector<Run> _runs;                          ///< sorted by firstCluster
-
-    struct OpenFile
-    {
-        size_t index;
-        std::ifstream stream;
-    };
-    std::list<OpenFile> _openFiles;  ///< most recently used first, at most kMaxOpenFiles
-    std::vector<std::string> _warnings;
 };
