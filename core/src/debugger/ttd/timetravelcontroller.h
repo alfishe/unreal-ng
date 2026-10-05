@@ -1393,35 +1393,13 @@ private:
     /// the current frame boundary. Caller pushes it onto _timeline.
     void CaptureNow(TTDCheckpoint& out);
 
-    /// @brief Intern every model-RAM page as the baseline. Used by the first
-    /// capture of a session so subsequent frames can AddRef clean pages.
-    void CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages);
 
-    /// @brief Update outRamPages for the next checkpoint: dirty pages get
-    /// freshly Intern'd, clean pages AddRef the previous checkpoint's slot.
-    /// Pages beyond _modelRamPages stay NEVER_TOUCHED.
-    ///
-    /// @param isKeyFrame  When true, every model RAM page is re-interned as
-    ///                   Full (I-frame path). When false, only dirty pages
-    ///                   are touched (P-frame path).
-    static bool IsPageAllZero(const uint8_t* page);
 
-    void UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
-                        const std::vector<TTDPageRef>& prevRamPages,
-                        std::vector<TTDPageRef>& outRamPages,
-                        bool isKeyFrame);
 
     /// @brief Release every page ref held by a checkpoint (used when
     /// invalidating or thinning).
     void ReleaseCheckpointRefs(TTDCheckpoint& cp);
 
-    /// @brief Update the previous-page cache with current RAM contents.
-    ///
-    /// Called after each checkpoint capture. The cache stores uncompressed
-    /// RAM so the next frame can compute XOR deltas without decompressing
-    /// the slots from the previous checkpoint. This eliminates the O(chain_depth)
-    /// recursive decompression that would otherwise occur on every dirty page.
-    void UpdatePrevPageCache();
 
     /// @brief Read the active model's RAM page count from the Memory / config.
     /// Called once at StartRecording.
@@ -1458,11 +1436,6 @@ private:
     /// @param cp Checkpoint to apply. Read-only; no refs are taken or released.
     void RestoreCheckpoint(const TTDCheckpoint& cp);
 
-    /// @brief Memcpy every referenced RAM page from the page store into the
-    /// live Memory backing store. Pages marked NEVER_TOUCHED are skipped
-    /// (their live RAM content IS the historical content). Pages beyond
-    /// _modelRamPages are skipped (they're NEVER_TOUCHED by construction).
-    void RestoreRamPages(const std::vector<TTDPageRef>& ramPages);
 
     /// @brief Internal seek implementation without the Recording-state guard.
     ///
@@ -1864,23 +1837,6 @@ private:
     TTDCoverageIndex _coverageIndex;
     bool _enableCoverageIndex = true;
 
-    /// Previous-checkpoint page cache for XOR delta computation during capture.
-    ///
-    /// OPTIMIZATION: During forward recording, computing XOR deltas requires
-    /// the previous page content. Without caching, InternXor must decompress
-    /// the previous slot (and its entire delta chain back to the I-frame),
-    /// causing O(chain_depth) decompression per dirty page per frame.
-    ///
-    /// With this cache, we store the uncompressed 4KB sub-pages from the
-    /// previous checkpoint. The cache is:
-    ///   - Populated after each checkpoint capture (current RAM → cache)
-    ///   - Used by UpdateRamPages to call InternXorCached instead of InternXor
-    ///   - Invalidated on session start/stop/invalidate
-    ///
-    /// Layout: [page0_sub0, page0_sub1, page0_sub2, page0_sub3, page1_sub0, ...]
-    /// Size: _modelRamPages * 4 * 4KB = _modelRamPages * 16KB (e.g., 128KB for 128KB model)
-    std::vector<uint8_t> _prevPageCache;
-    bool _prevPageCacheValid = false;
 
     /// Reusable scratch buffer for CollectAndClear (avoids per-frame alloc).
     std::vector<uint16_t> _dirtyScratch;

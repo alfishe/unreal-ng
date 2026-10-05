@@ -551,10 +551,6 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _evictedCheckpoints = 0;
     _forceNextKeyFrame = true;
 
-    // Clear previous-page cache (only allocated during active recording)
-    _prevPageCache.clear();
-    _prevPageCache.shrink_to_fit();
-    _prevPageCacheValid = false;
 
     // Reset the dirty tracker too — the session-scoped _everDirty set is part
     // of the captured history's validity contract.
@@ -1276,295 +1272,47 @@ void TimeTravelController::CaptureNow(TTDCheckpoint& out)
     assert(_context && _memory && _dirtyTracker);
 
     _captureWork = TTDCaptureWork{};
-    _pageStore.ResetWork();
 
-    // --- Time coordinate ---
+    // --- Time coordinate: checkpoints sit at frame boundaries (TDD §4.1) ---
     const EmulatorState& st = _context->emulatorState;
     out.time.frame     = st.frame_counter;
-    out.time.tInFrame  = 0;  // Checkpoints always sit at frame boundaries (TDD §4.1)
-    out.globalT        = st.frame_counter;  // At frame boundary globalT == frame
+    out.time.tInFrame  = 0;
+    out.globalT        = st.frame_counter;
 
-    // --- CPU + chipset ---
-    // Z80 inherits from Z80State (see z80.h:322), so a Z80* IS-A Z80State.
+    // --- CPU + chipset (the chipset holds the frame-end overshoot) ---
     Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (cpu)
     {
         out.cpu     = CaptureCpuState(*static_cast<Z80State*>(cpu));
         out.cpu.nmi_pending = cpu->IsNmiPending() ? 1 : 0;
     }
-    // The CPU resumes where the frame's last instruction left it, a few
-    // T-states in (the overshoot) - restored with the checkpoint
     out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
 
-    // --- Model-specific chipset state (TDD §6.4) ---
-    // Whatever the active model registered serializes itself here. The
-    // framework stays model-agnostic: it never names a machine, it just walks
-    // the registry.
-    //
+    // --- Device state, through the registry (TDD §6.4); the engine takes the raw states ---
     _peripherals.CaptureAll(out.peripheralBlobs);
     for (const auto& blob : out.peripheralBlobs)
         _captureWork.deviceBlobBytes += blob.second.size();
     _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
 
-    // --- Port-read journal position: the reads before it happened before
-    // this point, so a replay from here starts handing out records at it ---
+    // --- Port journal positions: a replay from here starts handing out records at them ---
     out.portReadCursor = _portJournalRecorded ? _portReads.Size() : 0;
     out.portWriteCursor = _portJournalRecorded ? _portWrites.Size() : 0;
 
-    // --- RAM pages ---
-    // First capture of a session: Intern every model-RAM page as the baseline
-    // (this is an I-frame by definition). Subsequent captures follow the
-    // I/P pattern: every kKeyFrameInterval-th frame is a key frame, others
-    // are delta frames that only re-intern dirty pages.
-    const bool isKeyFrame = _timeline.empty()
-                            || _forceNextKeyFrame
-                            || (out.time.frame - _lastKeyFrameIdx >= kKeyFrameInterval);
-    out.frameKind = isKeyFrame ? TTDFrameKind::KeyFrame : TTDFrameKind::DeltaFrame;
-
+    // --- Memory: the pieces written since the last capture go to the engine (all of them
+    // on the first capture of a session, a rescan) ---
     const bool baseline = _timeline.empty();
-    if (baseline)
-    {
-        CaptureBaselineRamPages(out.ramPages);
-        out.keyFrameAnchor = out.time.frame;
-        _lastKeyFrameIdx = out.time.frame;
-        _forceNextKeyFrame = false;
-    }
-    else
-    {
-        const TTDCheckpoint& prev = _timeline.back();
+    out.frameKind = baseline ? TTDFrameKind::KeyFrame : TTDFrameKind::DeltaFrame;
+    out.keyFrameAnchor = baseline ? out.time.frame : _timeline.back().keyFrameAnchor;
+    _dirtyScratch.clear();
+    _dirtyTracker->CollectAndClear(_dirtyScratch);
 
-        if (isKeyFrame)
-        {
-            out.keyFrameAnchor = out.time.frame;
-            _lastKeyFrameIdx = out.time.frame;
-            _forceNextKeyFrame = false;
-        }
-        else
-        {
-            out.keyFrameAnchor = _lastKeyFrameIdx;
-        }
+    FeedShadow(out, baseline);
 
-        // Collect dirty pages from the tracker. The buffer is reused across
-        // frames to avoid per-frame allocation (CollectAndClear appends).
-        _dirtyScratch.clear();
-        _dirtyTracker->CollectAndClear(_dirtyScratch);
-
-        UpdateRamPages(_dirtyScratch, prev.ramPages, out.ramPages, isKeyFrame);
-    }
-
-    // Update previous-page cache for next frame's XOR delta computation.
-    // This caches current RAM content so we can compute XOR deltas without
-    // decompressing the slots we just created.
-    UpdatePrevPageCache();
-
-    if (_shadowEngine)
-        FeedShadow(out, baseline);
-
-    const TTDCodecPageStore::Work& storeWork = _pageStore.GetWork();
-    _captureWork.bytesScanned = storeWork.bytesScanned;
-    _captureWork.compressCalls = storeWork.compressCalls;
-    _captureWork.compressInputBytes = storeWork.compressInputBytes;
-    _captureWork.slotsDecoded = storeWork.slotsDecoded;
+    // The engine keeps the device states; the first checkpoint keeps its blobs for the
+    // recorded machine's description (status), the others need none
+    if (!baseline)
+        out.peripheralBlobs.clear();
     _perf.lastCaptureWork = _captureWork;
-}
-
-void TimeTravelController::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
-{
-    // Baseline = I-frame: every model RAM page is captured as 4 × Full
-    // sub-pages. This is the only place where we pay the full uncompressed
-    // cost up front (modulo zstd-1 compression, which typically achieves
-    // 2-3x ratio on real emulator state).
-    outRamPages.resize(_modelRamPages);
-    for (uint16_t p = 0; p < _modelRamPages; ++p)
-    {
-        _captureWork.pagesVisited++;
-        // Memory owns the RAM backing; RAMPageAddress returns a host pointer
-        // to the 16 KB page. We split it into 4 × 4 KB sub-pages and intern
-        // each one independently. Most baseline pages compress well with
-        // zstd-1; the codec store handles the Full encoding automatically.
-        const uint8_t* pageData = _memory->RAMPageAddress(p);
-        if (pageData == nullptr)
-        {
-            // Should never happen — Memory always allocates the full model
-            // RAM backing. Defensive: mark as never-touched so restore skips.
-            outRamPages[p].SetNeverTouched();
-            continue;
-        }
-
-        // Intern each of the 4 × 4 KB sub-pages as Full snapshots.
-        for (uint32_t s = 0; s < 4; ++s)
-        {
-            const uint8_t* sub = pageData + (s * TTDCodecPageStore::kPageSize);
-            outRamPages[p].pageSlots[s] = _pageStore.InternFull(sub);
-        }
-    }
-}
-
-/// @brief Is a 16 KB RAM page entirely zero?
-/// Cheap pre-check that keeps a key frame from paying the intern + hash cost
-/// for RAM the guest never populated.
-bool TimeTravelController::IsPageAllZero(const uint8_t* page)
-{
-    if (page == nullptr)
-        return true;
-
-    const size_t words = (4 * TTDCodecPageStore::kPageSize) / sizeof(uint64_t);
-    const uint64_t* p64 = reinterpret_cast<const uint64_t*>(page);
-    for (size_t i = 0; i < words; ++i)
-    {
-        if (p64[i] != 0)
-            return false;
-    }
-    return true;
-}
-
-void TimeTravelController::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
-                                const std::vector<TTDPageRef>& prevRamPages,
-                                std::vector<TTDPageRef>& outRamPages,
-                                bool isKeyFrame)
-{
-    // ------------------------------------------------------------------
-    // Refcount invariant: every slot index that appears in any
-    // _timeline checkpoint's ramPages[*].pageSlots[s] MUST have a matching
-    // live refcount in the page store, INCLUDING the delta-chain refs
-    // that XorPrev slots hold against their prevSlot (the latter are
-    // managed internally by InternXor / Release — see
-    // ttdcodecpagestore.cpp).
-    //
-    // outRamPages.assign(prevRamPages) COPIES slot indices but does NOT
-    // bump refcounts. The logic below must therefore AddRef every slot
-    // that outRamPages will keep referencing. There is no "phantom ref"
-    // to release later — outRamPages's references must each be paid for
-    // with an explicit AddRef or replaced with a freshly-interned slot
-    // (whose Intern returns refcount=1).
-    //
-    // Concretely, for each sub-page we do exactly ONE of:
-    //   (a) Clean: AddRef the existing slot  → outRamPages shares prev.
-    //   (b) Dirty P-frame: InternXor          → outRamPages gets new slot.
-    //   (c) Dirty I-frame: InternFull         → outRamPages gets new slot.
-    // In none of these branches do we Release prevSlot — prevRamPages
-    // (the previous checkpoint, still in _timeline) keeps its own ref,
-    // and the codec store tracks any delta-chain ref internally.
-    // ------------------------------------------------------------------
-    outRamPages.assign(prevRamPages.begin(), prevRamPages.end());
-
-    // dirtyPages is in ascending order (CollectAndClear guarantee), so a
-    // two-pointer walk avoids a hash-set lookup per page.
-    size_t dirtyCursor = 0;
-    for (uint16_t p = 0; p < _modelRamPages; ++p)
-    {
-        _captureWork.pagesVisited++;
-        const bool dirty = (dirtyCursor < dirtyPages.size() && dirtyPages[dirtyCursor] == p);
-        if (dirty)
-            ++dirtyCursor;
-
-        // A key frame must be a SELF-CONTAINED snapshot, so it re-interns every
-        // page that holds data - not just the ones dirtied since the previous
-        // checkpoint.
-        //
-        // Sharing prev's slots for clean pages is correct only while the chain
-        // still reaches the session's first checkpoint, the one place that ever
-        // captured RAM in full. Anything that re-anchors a timeline (truncate +
-        // resume-from-here, a restored session, a dropped baseline) leaves key
-        // frames inheriting refs for pages that were never captured, and their
-        // content is gone for good - the symptom being a seek that restores
-        // correct registers into empty memory.
-        //
-        // Untouched pages stay cheap: an all-zero page is recognised by the
-        // store and interned as a shared Zero slot, so the cost of a key frame
-        // is proportional to the RAM that actually holds something.
-        bool capture = dirty;
-        if (isKeyFrame && !dirty)
-        {
-            const uint8_t* pageData = _memory->RAMPageAddress(p);
-            if (pageData != nullptr && !IsPageAllZero(pageData))
-                capture = true;
-        }
-
-        if (!capture)
-        {
-            // Clean page (I-frame OR P-frame): share prev's slots via AddRef.
-            // The I-frame path deliberately does NOT re-intern clean pages —
-            // doing so would (a) waste storage duplicating unchanged content
-            // and (b) drop prevRamPages's ref via a spurious Release, which
-            // was the root cause of the backward-seek screen-corruption bug.
-            // Sharing is correctness-equivalent because restore reads the
-            // same bytes regardless of who else references the slot.
-            const TTDPageRef& prevRef = prevRamPages[p];
-            if (!prevRef.IsNeverTouched())
-            {
-                for (uint32_t s = 0; s < 4; ++s)
-                {
-                    if (prevRef.pageSlots[s] != TTDPageRef::kNeverTouched)
-                    {
-                        _pageStore.AddRef(prevRef.pageSlots[s]);
-                    }
-                }
-                // outRamPages[p].pageSlots[s] already copied from prevRef above.
-            }
-            // else: was NEVER_TOUCHED, still NEVER_TOUCHED — nothing to do.
-            continue;
-        }
-
-        // Page carrying data: re-intern each sub-page. I-frame uses InternFull so
-        // the new slot is an independent anchor (no delta-chain dependency);
-        // P-frame uses InternXor which falls back to Full automatically when
-        // XOR doesn't compress well. Both paths leave prevRamPages's slots
-        // untouched — the previous checkpoint must remain restorable.
-        const uint8_t* pageData = _memory->RAMPageAddress(p);
-        if (pageData == nullptr)
-        {
-            outRamPages[p].SetNeverTouched();
-            continue;
-        }
-
-        for (uint32_t s = 0; s < 4; ++s)
-        {
-            const uint8_t* sub = pageData + (s * TTDCodecPageStore::kPageSize);
-            const uint32_t prevSlot = prevRamPages[p].pageSlots[s];
-
-            if (isKeyFrame || prevSlot == TTDPageRef::kNeverTouched)
-            {
-                // I-frame dirty page, or first-ever capture of this sub-page:
-                // emit an independent Full snapshot so future P-frames can
-                // build fresh XOR chains off a known-good anchor.
-                outRamPages[p].pageSlots[s] = _pageStore.InternFull(sub);
-            }
-            else
-            {
-                // P-frame dirty page: XOR against prev.
-                // OPTIMIZATION: Use cached previous page to avoid decompression
-                const size_t cacheOffset = (p * 4 + s) * TTDCodecPageStore::kPageSize;
-                if (_prevPageCacheValid && cacheOffset + TTDCodecPageStore::kPageSize <= _prevPageCache.size())
-                {
-                    // Use cached path - no decompression needed
-                    outRamPages[p].pageSlots[s] = _pageStore.InternXorCached(
-                        prevSlot, sub, &_prevPageCache[cacheOffset]);
-                }
-                else
-                {
-                    // Fallback to decompression path (first frame or cache miss)
-                    outRamPages[p].pageSlots[s] = _pageStore.InternXor(prevSlot, sub);
-                }
-            }
-        }
-    }
-
-    // Safety net for configurations whose page bound is wrong. The walk above
-    // consumes dirtyPages in ascending order, so anything left over sits at a
-    // page index at or beyond _modelRamPages and was NOT captured. Silently
-    // dropping it is how the 48K screen went missing; make it loud instead.
-    // Logged once per session to keep a mis-sized model from flooding the log.
-    if (dirtyCursor < dirtyPages.size() && !_dirtyPageOverflowReported)
-    {
-        _dirtyPageOverflowReported = true;
-        MLOGWARNING("TimeTravelController::UpdateRamPages — %zu dirty page(s) at or beyond the page bound %u were not "
-                    "captured (first is page %u). The model's RAM page set is wider than ResolveModelRamPages() "
-                    "reports; recordings for this configuration are incomplete.",
-                    dirtyPages.size() - dirtyCursor,
-                    static_cast<unsigned>(_modelRamPages),
-                    static_cast<unsigned>(dirtyPages[dirtyCursor]));
-    }
 }
 
 void TimeTravelController::ReleaseCheckpointRefs(TTDCheckpoint& cp)
@@ -1583,36 +1331,6 @@ void TimeTravelController::ReleaseCheckpointRefs(TTDCheckpoint& cp)
             }
         }
     }
-}
-
-void TimeTravelController::UpdatePrevPageCache()
-{
-    if (!_memory || _modelRamPages == 0)
-    {
-        _prevPageCacheValid = false;
-        return;
-    }
-
-    // Allocate cache on first use: _modelRamPages * 4 sub-pages * 4KB each
-    const size_t cacheSize = static_cast<size_t>(_modelRamPages) * 4 * TTDCodecPageStore::kPageSize;
-    if (_prevPageCache.size() != cacheSize)
-    {
-        _prevPageCache.resize(cacheSize);
-    }
-
-    // Copy current RAM state into cache
-    for (uint16_t p = 0; p < _modelRamPages; ++p)
-    {
-        const uint8_t* pageData = _memory->RAMPageAddress(p);
-        if (pageData)
-        {
-            const size_t cacheOffset = static_cast<size_t>(p) * 4 * TTDCodecPageStore::kPageSize;
-            std::memcpy(&_prevPageCache[cacheOffset], pageData, PAGE_SIZE);
-            _captureWork.deltaBaseBytes += PAGE_SIZE;
-        }
-    }
-
-    _prevPageCacheValid = true;
 }
 
 uint16_t TimeTravelController::ResolveModelRamPages() const
@@ -1720,123 +1438,67 @@ void TimeTravelController::ReleaseModelPeripherals()
 void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
 {
     assert(_context && _memory);
-    _shadowRescan = true;   // live memory now differs from the shadow engine's delta base
-    if (_shadowEngine)
-        _shadowEngine->ForgetMemory();
-
-    MLOGINFO("TimeTravelController::RestoreCheckpoint — frame=%llu, globalT=%llu, ramPages=%zu",
-             static_cast<unsigned long long>(cp.time.frame),
-             static_cast<unsigned long long>(cp.globalT),
-             cp.ramPages.size());
-
-    // --- Step 1: CPU registers (TDD §8.1 step 2a) ---
-    // Z80 inherits from Z80State (see z80.h), so Z80* IS-A Z80State*.
-    // Host-side fields (MemIf pointers, trace cursors, isDebugMode,
-    // prev_pc/m1_pc/last_branch/nextpc) are preserved by RestoreCpuState —
-    // they remain valid because we're not tearing down the emulator.
     using PerfClock = std::chrono::steady_clock;
     auto elapsedNs = [](PerfClock::time_point from, PerfClock::time_point to) {
         return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(to - from).count());
     };
     const PerfClock::time_point restoreStart = PerfClock::now();
 
-    // Phase 3 A/B (SetReplaySource): the CPU, the chipset, every memory
-    // region and every device from the engine's checkpoint of this frame;
-    // what follows from them (frame timing, banks, screen) is shared
-    const int64_t engineIndex = _replayEngine ? _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0}) : -1;
-    const TTDEngineCheckpoint* engineCp = engineIndex >= 0 ? _replayEngine->Checkpoint(size_t(engineIndex)) : nullptr;
-    if (_replayEngine && !engineCp)
-        MLOGWARNING("TimeTravelController::RestoreCheckpoint — the replay engine has no checkpoint of frame %llu",
+    // The engine is the store (Phase 5, C1c): its checkpoint of this frame holds the
+    // CPU, the chipset, every memory region and every device
+    const int64_t engineIndex = _engine->CheckpointIndexOf({0, cp.time.frame, 0});
+    const TTDEngineCheckpoint* engineCp = engineIndex >= 0 ? _engine->Checkpoint(size_t(engineIndex)) : nullptr;
+    if (!engineCp)
+    {
+        MLOGWARNING("TimeTravelController::RestoreCheckpoint — the engine has no checkpoint of frame %llu",
                     static_cast<unsigned long long>(cp.time.frame));
-    const TTDCpuState& cpuState = engineCp ? engineCp->cpu : cp.cpu;
-    const TTDChipsetState& chipsetState = engineCp ? engineCp->chipset : cp.chipset;
+        return;
+    }
 
+    // --- CPU registers (TDD §8.1 step 2a). Host-side fields (MemIf pointers,
+    // trace cursors, isDebugMode, prev_pc/m1_pc/last_branch/nextpc) are kept ---
     Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (cpu)
     {
-        RestoreCpuState(cpuState, static_cast<Z80State*>(cpu));
-        cpu->SetNmiPending(cpuState.nmi_pending != 0);
+        RestoreCpuState(engineCp->cpu, static_cast<Z80State*>(cpu));
+        cpu->SetNmiPending(engineCp->cpu.nmi_pending != 0);
     }
 
-    // --- Step 2: Chipset port latches + counters (TDD §8.1 step 2b) ---
-    // RestoreChipsetState is a pure field copy into emulatorState. It does
-    // NOT re-run the port decoder — that's the next sub-step.
-    RestoreChipsetState(chipsetState, &_context->emulatorState);
+    // --- Chipset port latches + counters (a pure field copy into emulatorState) ---
+    RestoreChipsetState(engineCp->chipset, &_context->emulatorState);
 
-    // The CPU's in-frame position (the frame-end overshoot) - before the
-    // peripherals load, so devices rebuild their timelines around the
-    // position the machine really resumes at
+    // The CPU's in-frame position (the frame-end overshoot), then the frame geometry
+    // (frame limit, INT window) from the restored multiplier
     if (cpu)
     {
-        cpu->t = GetChipsetCpuTInFrame(chipsetState);
-
-        // Frame geometry (frame limit, INT window) derives from the restored
-        // multiplier; every run path reads it from the CPU
+        cpu->t = GetChipsetCpuTInFrame(engineCp->chipset);
         static_cast<Z80*>(cpu)->RecomputeFrameTiming();
     }
 
-    // --- Step 2a2: Model-specific chipset state (TDD §6.4) ---
-    // MUST run before UpdateZ80Banks: model serializers restore latches that
-    // feed the paging chain (on Scorpion the ProfROM plane and the #1FFD
-    // service/RAM0 bits), so rebuilding banks first would page from stale
-    // values and then never re-derive.
-    // A device set that differs from the checkpoint's (FR-4) leaves devices
-    // in the live machine's state; say so instead of restoring silently
+    // --- Every region (machine RAM, device memories), then the devices, then the
+    // banks the restored latches select ---
+    const PerfClock::time_point memoryStart = PerfClock::now();
+    _engine->ForgetMemory();
+    CheckEngineCheckpoint(size_t(engineIndex), false);
+    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex));
     const PerfClock::time_point devicesStart = PerfClock::now();
-    if (engineCp)
-    {
-        // Every region (machine RAM, device memories) first, then the devices
-        _replayEngine->ForgetMemory();
-        CheckEngineCheckpoint(size_t(engineIndex), false);
-        const TTDRestoreResult memory = _replayEngine->RestoreToMemory(size_t(engineIndex));
-        const TTDRestoreResult result = _replayEngine->RestoreDevices(
-            size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
-        if (!memory.Ok() || result.status != TTDRestoreStatus::Exact)
-            MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
-                        static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
-                        memory.message.empty() ? "" : "; ", result.message.c_str());
-        _memory->UpdateZ80Banks();
-        _shadowRescan = true;
-        ResyncScreenState();
-        return;
-    }
-    const TTDRestoreReport devices = _peripherals.RestoreAll(cp.peripheralBlobs);
-    const PerfClock::time_point devicesEnd = PerfClock::now();
-    if (!devices.Complete())
-        MLOGWARNING("TimeTravelController::RestoreCheckpoint — frame %llu: device set differs from the checkpoint "
-                    "(%zu restored, %zu without state, %zu size mismatches, %zu unclaimed)",
-                    static_cast<unsigned long long>(cp.time.frame), devices.restored, devices.missingBlobs,
-                    devices.sizeMismatches, devices.unclaimedBlobs);
-
-    // --- Step 2b: Rebuild memory banking from restored port latches ---
-    // Memory::UpdateZ80Banks reads the latches we just wrote and rebuilds
-    // the four-bank mapping (ROM/RAM page in each 16 KB slot). Pentagon 128K
-    // uses only p7FFD; extended models would extend this (Phase 2 carry).
+    const TTDRestoreResult devices =
+        _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
+    if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
+        MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
+                    static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
+                    memory.message.empty() ? "" : "; ", devices.message.c_str());
     _memory->UpdateZ80Banks();
+    _shadowRescan = true;   // live memory now differs from the engine's delta base
+    const PerfClock::time_point devicesEnd = PerfClock::now();
 
-    // --- Step 3: RAM page content (TDD §8.1 step 2c) ---
-    // Memcpy every referenced page from the COW page store into the live
-    // Memory backing store. The optimization to skip pages whose content
-    // already matches is deferred (TDD §8.1 "often a handful of pages";
-    // restore is rare, not a per-frame hot path).
-    RestoreRamPages(cp.ramPages);
-    const PerfClock::time_point memoryEnd = PerfClock::now();
-
-    // --- Step 5: Screen (TDD §8.1 step 2e) ---
-    // The screen renderer caches derived state (active screen bank from
-    // p7FFD, border color from pFE, framebuffer pixels) that the field
-    // copies above do NOT update — the restore bypassed the port decoder.
-    // ResyncScreenState re-derives it (the snapshot loader, loader_z80.cpp,
-    // uses the same pattern for the same reason). Pixels are not touched:
-    // what a position shows is decided by ComposeDisplay alone.
+    // --- Screen: the renderer's derived state (active screen bank, border) ---
     ResyncScreenState();
 
-    _perf.lastRestoreCpuChipsetNs = elapsedNs(restoreStart, devicesStart);
+    _perf.lastRestoreCpuChipsetNs = elapsedNs(restoreStart, memoryStart);
+    _perf.lastRestoreMemoryNs = elapsedNs(memoryStart, devicesStart);
     _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
-    _perf.lastRestoreMemoryNs = elapsedNs(devicesEnd, memoryEnd);
-    _perf.lastRestoreScreenNs = elapsedNs(memoryEnd, PerfClock::now());
-
-    // t_states and frame_counter were already restored by RestoreChipsetState.
+    _perf.lastRestoreScreenNs = elapsedNs(devicesEnd, PerfClock::now());
 }
 
 void TimeTravelController::ResyncScreenState()
@@ -1875,50 +1537,6 @@ void TimeTravelController::ResyncScreenState()
     //    changes the border, attributes or screen bank mid-frame, and
     //    ComposeDisplay renders the real picture for user-facing positions.
     _context->pScreen->InitFrame();
-}
-
-void TimeTravelController::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
-{
-    const uint16_t pages = std::min<uint16_t>(_modelRamPages,
-                                              static_cast<uint16_t>(ramPages.size()));
-    for (uint16_t p = 0; p < pages; ++p)
-    {
-        const TTDPageRef& ref = ramPages[p];
-        if (ref.IsNeverTouched())
-            continue;  // Live RAM content is correct for this page.
-
-        uint8_t* pageData = _memory->RAMPageAddress(p);
-        if (!pageData)
-        {
-            MLOGWARNING("TimeTravelController::RestoreRamPages — null RAMPageAddress for page %u",
-                        static_cast<unsigned>(p));
-            continue;
-        }
-
-        // Restore each of the 4 × 4 KB sub-pages individually. GetPage
-        // returns false on CRC mismatch — log and continue with zero-fill
-        // for the affected sub-page so the rest of the page is still restored.
-        // The caller (RestoreCheckpoint) can detect the corruption via
-        // subsequent verification (e.g., CaptureRestoreSelfTest hash compare).
-        for (uint32_t s = 0; s < 4; ++s)
-        {
-            const uint32_t slot = ref.pageSlots[s];
-            if (slot == TTDPageRef::kNeverTouched)
-            {
-                // Sub-page was never touched in session — leave live bytes alone.
-                continue;
-            }
-
-            uint8_t* subDst = pageData + (s * TTDCodecPageStore::kPageSize);
-            if (!_pageStore.GetPage(slot, subDst))
-            {
-                MLOGWARNING("TimeTravelController::RestoreRamPages — CRC mismatch on page=%u sub=%u slot=%u; zero-filling",
-                            static_cast<unsigned>(p), static_cast<unsigned>(s),
-                            static_cast<unsigned>(slot));
-                std::memset(subDst, 0, TTDCodecPageStore::kPageSize);
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3480,10 +3098,6 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     TruncateTimelineAfter(from);
 
-    // The delta base cache mirrors the RAM of the old session end, not of the
-    // checkpoint the timeline now ends at: the next delta must be computed
-    // against that checkpoint's decoded slots instead (the capture refills the cache)
-    _prevPageCacheValid = false;
 
     // ------------------------------------------------------------------
     // Step 3: truncate input journal after the resume point. Events exactly
@@ -5775,7 +5389,6 @@ bool TimeTravelController::DeserializeSessionImpl(std::istream& in, std::string&
     // Anything derived from the old session: the decoded frame, the delta
     // base for a later resume, the key-frame anchor and the ever-dirty set
     ClearFrameCache();
-    _prevPageCacheValid = false;
     _forceNextKeyFrame = true;
     if (_dirtyTracker)
         _dirtyTracker->ResetSession();

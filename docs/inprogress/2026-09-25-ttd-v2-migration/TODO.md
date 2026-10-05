@@ -169,7 +169,8 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
     - [ ] C1 skeleton: recording into the engine only, core hooks
       - [x] C1a (2026-10-04) session types out of v1's header (`ttdsessiontypes.h`)
       - [x] C1b (2026-10-04) `TimeTravelController` = a copy of v1 with its own engine as store and restore source; A/B on two machines matches v1 (`TimeTravelController_Test`); map of v1: [phase-5-v1-map.md](phase-5-v1-map.md)
-      - [ ] C1c capture straight into the engine, restore only from it: v1's page store out of the controller
+      - [x] C1c (2026-10-04) capture straight into the engine, restore only from it; v1's page capture / restore out of the controller (the page store stays only for the v1 file format until C4)
+      - [ ] C1d per-event sink for the hot path (memory / port writes, coverage): v1 and the controller both receive them; A/B benchmark
     - [ ] C2 seek / steps / replay, A/B against v1
     - [ ] C3 queries (find-last, reverse step / continue, coverage, port events, journal build)
     - [ ] C4 files, clip export, bookmarks / markers, status
