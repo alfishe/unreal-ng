@@ -69,6 +69,38 @@ noted position: device 4 differs.
 - Running forward from any checkpoint, the baseline included, reproduces every device state of the live run.
 - A test for the mid-frame baseline that fails before the fix.
 
+## 🔴 [Open] #3: A bookmark at the current position fails after `ttd stop` (and while recording)
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** -
+* **Commit ID:** -
+* **Found by:** the Phase 5 recipe re-run (TTD v2 migration, branch `ttd-engine`), 2026-10-05; the same on v1 and on the engine.
+
+### Description
+`POST /ttd/bookmarks {"label": "symptom"}` without a position takes the current position. After `ttd/stop` the
+machine stands inside the frame after the last checkpoint (or ahead of the history while recording), so the add answers
+409 "bookmark position (frame=1027, tInFrame=2125) is beyond the session end (frame=1027)". The recipes
+(`bug-hunt-ttd.md` Phase 1, `ttd-reverse-debugging.md` step 2, `ttd-visual-inspection.md`, `ttd-recording.md` "defaults to
+current position") expect it to work. It works after a seek, find-last or reverse-continue.
+
+### Requirements / Acceptance Criteria
+- A bookmark without a position works right after `stop` (the history reaches to where it stopped) and while
+  recording, or the recipes say what to do instead; a test on both backends.
+
+## 🔴 [Open] #4: `GET /ttd/status` lags the recording's head while the machine runs
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** -
+* **Commit ID:** -
+* **Found by:** the Phase 5 recipe re-run, 2026-10-05 (engine; v1 not checked).
+
+### Description
+While a recording runs, `current_end_frame` / `checkpoint_count` in the status trail `position.session_end` (seen: 167 /
+309 / 1 against 308 / 408 / 30); they catch up when the machine pauses or the recording stops. The status of a
+running machine is the published snapshot (`GetPublishedSessionInfo`, refreshed on a throttle), which
+`ttd-recording.md` calls the "live head".
+
+### Requirements / Acceptance Criteria
+- The status of a running recording is at most about one refresh period behind, or the docs say it is a snapshot.
+
 2026-10-04
 ## 🔴 [Open] #1: unreal-qt runs at 2x-4x speed while a TTD recording is active (recording must hold 1x)
 * **Date Opened:** 2026-10-04

@@ -3962,9 +3962,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Time-travel debugging (TTD): record execution, then move backward and forward through it. Typical flow: "
         "'start' -> run the program (control_execution) -> 'stop' -> 'find_last' / 'reverse_continue' / 'seek' / step "
         "actions to inspect the past (inspect_state shows the machine at that point) -> 'resume' to continue live from "
-        "there. While recording, the host speed is held at 1x and turbo / fast tape / fast disk are off; loading a "
-        "snapshot, tape or disk, reloading the ROM, or changing speed on a stopped session wipes the history; reset stops "
-        "the recording and keeps it. Also: agent bookmarks and coverage index queries.",
+        "there. While recording, the host speed is held at 1x and turbo / fast tape / fast disk are off; a tape or disk "
+        "load and a ROM reload are refused while recording and wipe a stopped session's history; a snapshot load is part "
+        "of the recording (the engine; v1 refuses it); seek / step / find_last while recording pause it (the engine); "
+        "reset stops the recording and keeps it. Also: agent bookmarks and coverage index queries.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();

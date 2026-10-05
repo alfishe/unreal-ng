@@ -1,8 +1,10 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
-Precondition: a recorded session that is **stopped/detached** — see [ttd-recording.md](ttd-recording.md).
-`find-last`, `reverse-step` and `reverse-continue` return `409` while
-recording is active; the coverage queries answer at any time. Session rules
+Precondition: a recorded session — see [ttd-recording.md](ttd-recording.md).
+On the engine (`backend: "engine"`, the default) `find-last`, `reverse-step`
+and `reverse-continue` while recording pause the recording and answer; on v1
+they return `409` until the recording is stopped. The coverage queries answer
+at any time. Session rules
 (states, what wipes history, markers):
 [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
@@ -28,7 +30,7 @@ time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind"
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
 
-# reverse travel (session must be stopped/detached):
+# reverse travel (pauses a running recording on the engine; v1: stop it first):
 time_travel {"action":"find_last","addr":16384,"access":"write"}
 time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","access":"write",
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
@@ -188,6 +190,7 @@ Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
   `phys_page` in the result, and takes an optional `phys_page` filter;
   coverage endpoints likewise take Z80 ranges plus an optional `phys_page`.
 - **Reverse travel across a marker** (tape transport command, WD1793
-  sector/track write, debugger memory edit) halts with the marker
-  description — replay cannot reproduce the event, so it will not cross it.
+  sector/track write, debugger memory edit): the engine replays them and
+  crosses; v1 halts with the marker description, as its replay cannot
+  reproduce the event.
   Keyboard/mouse input is journaled and is not a barrier.

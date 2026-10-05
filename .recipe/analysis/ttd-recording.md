@@ -26,7 +26,7 @@ inspect_state {"aspects":["ttd"]}                              # status + positi
 time_travel   {"action":"stop"}                                # history retained → idle
 time_travel   {"action":"invalidate","reason":"next scenario"} # drop history
 
-# navigate (refused while recording — stop first)
+# navigate (while recording on the engine this pauses the recording; v1 refuses it - stop first)
 time_travel {"action":"position"}
 time_travel {"action":"seek","frame":12000}                    # optional "tinframe"
 time_travel {"action":"step_back_frame"}
@@ -290,9 +290,10 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
 - **Memory budget**: development mode costs ~64 MB journal + page store;
   long captures grow — check `page_store_used_bytes` and dump+invalidate
   between scenarios.
-- **Markers stop backward replay** by design (external inputs can't be
-  un-happened); list them with `GET /ttd/markers` before wondering why a
-  seek halted early.
+- **Markers**: on the engine tape commands, disk writes and tool edits are
+  replayed and do not stop a seek or a reverse search; on v1 they stop
+  backward replay (list them with `GET /ttd/markers` before wondering why a
+  seek halted early).
 - **A snapshot load is part of the recording** on the engine
   (`backend: "engine"`, the default): while recording, the machine finishes
   its frame, the snapshot loads at the boundary, and seeks before / after it
@@ -301,7 +302,8 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   drops a stopped session.
 - **Other loads wipe the session.** Tape load, disk load/create, ROM reload
   and a host speed change on a stopped session drop the whole history (and
-  are refused while recording). Dump first if you need the recording.
+  are refused while recording, also while a recording is paused for
+  browsing). Dump first if you need the recording.
 - **Reset keeps history.** A reset (or a disk autostart's quick reset)
   stops the recording and keeps what was captured; a machine sitting in
   history goes back to `idle`.

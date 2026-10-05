@@ -1156,3 +1156,22 @@ TEST_F(TimeTravelController_Test, ADebuggerForcedWindowComesBackWithASeek)
     ASSERT_TRUE(_controller->SeekTo(_controller->GetCheckpoint(1)->time, nullptr));
     EXPECT_EQ(memory->GetDebuggerBankOverride(1), MEMORY_UNMAPPABLE) << "none before it";
 }
+
+/// D8 with the guards: a recording paused for browsing is still protected - a
+/// tape load is refused and the history stays (it goes on from where it paused)
+TEST_F(TimeTravelController_Test, APausedRecordingIsStillGuarded)
+{
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(4, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(1)->time.frame, 0}, nullptr));
+    ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    const size_t kept = _controller->GetCheckpointCount();
+
+    EXPECT_FALSE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadTape).empty());
+    std::string error;
+    EXPECT_FALSE(_b->LoadTape(TestPathHelper::GetTestDataPath("contention/halt2int-v3/halt2int.tap"), &error));
+    EXPECT_NE(error.find("stop the recording first"), std::string::npos) << error;
+    EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "the paused recording's history stays";
+    EXPECT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    EXPECT_TRUE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot).empty()) << "a snapshot load is an event";
+}

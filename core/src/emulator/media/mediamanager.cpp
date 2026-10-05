@@ -1030,7 +1030,8 @@ MediaResult MediaManager::CheckRecording(bool endRecording)
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (!ttd)
         return MediaResult::Success();
-    if (ttd->IsRecording())
+    // A recording, also one paused for browsing (its guard answers while it is paused)
+    if (ttd->IsRecording() || !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
     {
         if (!endRecording)
             return MediaResult::Fail(MediaError::Recording,

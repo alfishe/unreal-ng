@@ -77,7 +77,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/
      -d '{"frame":3520}' | jq '{reached, arrived_at}'
 
 # inspect that exact frame
-curl -s "$BASE/emulator/$EMU_ID/state/registers" | jq '{pc, af, hl}'
+curl -s "$BASE/emulator/$EMU_ID/registers" | jq '{pc: .special.pc, af: .main.af, hl: .main.hl}'
 curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=scratch/frame-3520.png" | jq '{saved, file}'
 
 # byte-level checks at this frame
@@ -111,9 +111,10 @@ one call instead of a seek and a capture per frame (see
 - `ttd/seek`/`step-*` while `state: "recording"` pause the recording
   (`recording_paused: true`; resume at the paused point continues it). On
   `backend: v1` they answer `409`: call `ttd/stop` first (history is retained).
-- Load the software **before** `ttd/start`: a snapshot, tape or disk load
-  (and disk create, ROM reload) wipes the recorded history. A reset does
-  not — it stops the recording and keeps it.
+- Load the software **before** `ttd/start`: a tape or disk load (and disk
+  create, ROM reload) is refused while recording and wipes a stopped
+  session's history. A snapshot load on the engine is part of the recording
+  (v1 refuses it). A reset stops the recording and keeps it.
 - While recording, the host speed is held at 1x and turbo / fast tape /
   fast disk are off, so a recording plays at real speed. See
   [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).

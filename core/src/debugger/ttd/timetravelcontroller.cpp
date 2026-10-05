@@ -1120,10 +1120,11 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 
 std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
 {
-    // Only a recording the user started is protected. A debugger's live history
-    // (DebuggerLive, DeZog) is a rolling background history: any outside change
-    // drops it and the debugger restarts it on the next resume or step.
-    if (!IsRecording() || IsDebuggerLive())
+    // Only a recording the user started is protected - also while it is paused
+    // for browsing (D8): it goes on from where it paused. A debugger's live
+    // history (DebuggerLive, DeZog) is a rolling background history: any
+    // outside change drops it and the debugger restarts it on the next resume or step.
+    if (!(IsRecording() || _recordingPaused) || IsDebuggerLive())
         return {};
 
     switch (action)

@@ -53,7 +53,7 @@ curl -s -X PUT "$BASE/emulator/$EMU_ID/feature/porttrace" \
 Error envelope (same everywhere):
 
 ```json
-{ "error": "Conflict", "message": "Cannot scrub while recording is active …" }
+{ "error": "Conflict", "message": "Cannot insert a tape while TTD is recording: … stop the recording first." }
 ```
 
 HTTP codes carry meaning: `400` bad body/state, `404` unknown instance,
@@ -96,7 +96,7 @@ Tool catalog (16: 14 smart tools + the 2 router tools):
 | `joystick_input` | Kempston joystick press/release/set/tap/status |
 | `media` | media slots by slot name: list, info, insert, eject, swap, save, export and more (see [use-media-slots.md](../media/use-media-slots.md)) |
 | `rzx_playback` | RZX input recordings: play / stop / status |
-| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary, port_events, file_info, history_limit |
+| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary, port_events, file_info, history_limit, journal_on/off, journal_build, export_clip |
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |
 | `debug_code` | disassemble, assemble, find_bytes, trace (calltrace) |
 | `analyze_performance` | coverage_*, frame_cost, profiler suites, porttrace |

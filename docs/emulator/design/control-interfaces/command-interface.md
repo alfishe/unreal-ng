@@ -2807,7 +2807,7 @@ Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0.
 
 Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recording pauses at frame ~300 and the machine shows frame 100; `ttd status` prints `Recording paused: yes`; `ttd seek` to the paused point and `ttd resume` - recording goes on as if never paused.
 
-**A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
+**A recording protects itself.** While a session is `recording` - also while it is paused for browsing (`recording_paused`, the engine) - anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
 
 | Refused while recording | Why |
 | :--- | :--- |
