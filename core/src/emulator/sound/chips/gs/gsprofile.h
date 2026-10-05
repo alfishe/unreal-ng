@@ -24,6 +24,25 @@
 #include "emulator/sound/chips/gs/gsdacsink.h"
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
 
+/// Host time supplied by the board instead of the emulator's CPU clock
+/// (GSProfile::hostClock). A board that runs on its own time axis (the
+/// ZX-MultiSound card, driven through explicit port and frame calls) gives
+/// the GS the axis it is driven on; without it the card reads the machine's
+/// Z80 (GSHostClock). All three values are on the board's axis, frame-relative
+/// like the emulator's AudioTstate: the board rebases it at every frame start.
+class IGSHostClock
+{
+public:
+    virtual ~IGSHostClock() = default;
+
+    /// Host time now (ticks since the board's current frame start)
+    virtual uint64_t GsHostTacts() const = 0;
+    /// Host ticks per second
+    virtual uint32_t GsHostTickRate() const = 0;
+    /// Length of the current host frame in ticks
+    virtual uint64_t GsHostFrameTacts() const = 0;
+};
+
 /// How the card CPU's address space reaches ROM and RAM
 enum class GSMemoryMap : uint8_t
 {
@@ -87,6 +106,10 @@ struct GSProfile
     /// Optional DAC sink (not owned); nullptr = the card's own stereo mix
     IGSDacSink* dacSink = nullptr;
 
+    /// Optional host time source (not owned); nullptr = the machine's Z80
+    /// clock and frame geometry (GSHostClock)
+    const IGSHostClock* hostClock = nullptr;
+
     /// region <Derived timing (card units)>
     uint64_t UnitsPerSecond() const { return std::lcm(static_cast<uint64_t>(cpuClockHz), static_cast<uint64_t>(intClockHz)); }
     int64_t UnitsPerCpuCycle() const { return static_cast<int64_t>(UnitsPerSecond() / cpuClockHz); }
@@ -101,8 +124,9 @@ struct GSProfile
 
     /// The ZX-MultiSound GS: 16 MHz CPU, INT from the 12 MHz DDS / 321 low for
     /// 33 clocks (2.75 us), 1 MB (1024) or 2 MB (2048), #B3 / #BB only, GS
-    /// 1.05b firmware, DACs shared through `sink`
-    static GSProfile MultiSound(size_t ramKB, IGSDacSink* sink = nullptr)
+    /// 1.05b firmware, DACs shared through `sink`, host time from `clock`
+    /// (the card's own axis; nullptr = the machine's Z80)
+    static GSProfile MultiSound(size_t ramKB, IGSDacSink* sink = nullptr, const IGSHostClock* clock = nullptr)
     {
         GSProfile p;
         p.name = "multisound";
@@ -118,6 +142,7 @@ struct GSProfile
         p.undecodedPortRead = 0xFF;
         p.romPath = kMultiSoundRomPath;
         p.dacSink = sink;
+        p.hostClock = clock;
         return p;
     }
 

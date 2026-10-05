@@ -306,9 +306,11 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     if (!_channels)
         return 0;
 
-    // The cursor trails the synced master clock by the render lag; far outside that window the owner lost the
-    // timeline (a gap in rendering, a speed change): re-anchor
-    if (_renderT < _chipT - 4 * kRenderLag || _renderT > _chipT)
+    // The cursor trails the synced master clock: by the render lag right after a render, by the lag plus the time
+    // synced since then before the next one (a board that syncs a whole frame and then renders it is a frame
+    // behind here, with that frame's words queued). Only a cursor ahead of the chips, or behind by more than the
+    // word queue can hold, means the owner lost the timeline (a gap in rendering, a speed change): re-anchor
+    if (_renderT < _chipT - kMaxRenderBehind || _renderT > _chipT)
         _renderT = _chipT - kRenderLag;
 
     FilterDecimator& master = _channels->ssg[0][0];

@@ -193,6 +193,21 @@ public:
     void sendData(uint8_t data) override;    // OUT #B3: sets the host->GS pending bit
     void triggerNMI() override;              // OUT #33 bit6
 
+    /// Shared DACs (GSProfile::dacSink): another source on the board wrote
+    /// this channel's volume register, which the GS shares (MultiSound: a
+    /// SounDrive write sets it to 63, and GS port #0B reads volume 3 bit 5).
+    /// The card runs to the host's now first, so its earlier accesses see the
+    /// old value; the sink is not told (the board already has the write)
+    void sharedVolumeWrite(int channel, uint8_t volume);
+
+    /// Bus /RESET of a board with its own host clock (GSProfile::hostClock):
+    /// the power-on reset (reset()) at the host's now. The card's time 0 is
+    /// anchored to the host's current tact and the rest of the host frame is
+    /// what the frame end still runs, so the firmware starts at the reset's
+    /// time (reset() alone keeps the frame base: the card would replay the
+    /// frame's elapsed time from the reset state, the #33 semantics)
+    void resetAtHostNow();
+
     /// region <Runtime personality switch (SoundManager::switchGeneralSoundCard)>
     GSForwardMailbox snapshotMailbox() const override;
     void restoreMailbox(const GSForwardMailbox& snapshot) override;
@@ -338,6 +353,8 @@ private:
     void sinkSample(int channel, uint8_t value);  // DAC sink path (profile.dacSink)
     void sinkVolume(int channel, uint8_t volume);
     uint64_t hostTimeNow() const;      // card time now -> host time (AudioTstate domain)
+    double hostUnitsPerTact() const;   // card units per host tact (profile.hostClock or the machine's clock)
+    uint64_t hostTactsNow(uint64_t fallback) const;  // host time now (profile.hostClock or the machine's Z80)
 
     // TTD serialization internals
     void serializeFixedState(uint8_t* dst) const;
