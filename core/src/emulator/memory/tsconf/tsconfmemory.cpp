@@ -163,7 +163,8 @@ inline bool TsConfMemory::CountDramRead(uint16_t addr)
 
 /// 14 MHz: a CPU access that goes to DRAM waits for the arbiter
 /// (TsConfArbiter: the zmem.v wait by the DRAM phase its request falls in,
-/// plus the cycles video holds). The request comes 3 fclk after T1; the
+/// plus the cycles video holds, plus the refused cycles that stop the clock
+/// in this machine cycle). The request comes 3 fclk after T1; the
 /// 14 MHz clock is not locked to the DRAM phases and every stall shifts it,
 /// so the phase comes from the stretched counter itself - 2 fclk per clock, a
 /// frame starting at c0
@@ -178,12 +179,45 @@ void TsConfMemory::DramWait(TsConfArbiter::Access kind)
         _waitCpu->AddWaitTicks(fclks * fclkTicks);
 }
 
+/// A machine cycle that takes no DRAM cycle while refused cycles may stop the clock (the CPU is in a read or
+/// not: TsConfArbiter::Settle). Out of line: only while a refused window is open
+void TsConfMemory::RefusedWait(TsConfArbiter::Access kind)
+{
+    const uint32_t fclkTicks = _waitCpu->rate / 2;
+    if (!fclkTicks)
+        return;
+    const uint32_t start = _waitCpu->tt - 3u * _waitCpu->rate;  // T1 of the access
+    const uint32_t fclks = _arbiter->Settle(start / fclkTicks, kind);
+    if (fclks)
+        _waitCpu->AddWaitTicks(fclks * fclkTicks);
+}
+
+/// Before an opcode fetch (the clock is at its T1): stops of the refused cycles that delayed it
+void TsConfMemory::RefusedBeforeM1()
+{
+    const uint32_t fclkTicks = _waitCpu->rate / 2;
+    if (!fclkTicks)
+        return;
+    const uint32_t fclks = _arbiter->SettleBeforeM1(_waitCpu->tt / fclkTicks);
+    if (fclks)
+        _waitCpu->AddWaitTicks(fclks * fclkTicks);
+}
+
 void TsConfMemory::AfterWrite(uint16_t addr)
 {
     const uint8_t bank = static_cast<uint8_t>(addr >> 14);
-    if (!_waitCpu || _bank_mode[bank] != BANK_RAM || _bank_write[bank] == _memory + TRASH_MEMORY_OFFSET)
-        return;  // ROM is a separate chip; a write-protected window starts no DRAM cycle
-    DramWait(TsConfArbiter::Access::Write);
+    if (_bank_mode[bank] != BANK_RAM || _bank_write[bank] == _memory + TRASH_MEMORY_OFFSET)
+    {
+        // ROM is a separate chip; a write-protected window starts no DRAM cycle
+        if (_waitCpu && _arbiter && _arbiter->Refusing()) [[unlikely]]
+            RefusedWait(TsConfArbiter::Access::Write);
+        return;
+    }
+    // A RAM write takes a DRAM cycle the DMA and the TSU cannot use ([V] zmem.v:121 memwr && ramwr_en)
+    if (_ts)
+        _ts->cpuAccesses++;
+    if (_waitCpu) [[unlikely]]
+        DramWait(TsConfArbiter::Access::Write);
 }
 
 inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
@@ -200,6 +234,8 @@ inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
         _nextIsM1 = false;
         if (dram)
             DramWait(m1 ? TsConfArbiter::Access::M1 : TsConfArbiter::Access::Read);
+        else if (_arbiter && _arbiter->Refusing()) [[unlikely]]
+            RefusedWait(m1 ? TsConfArbiter::Access::M1 : TsConfArbiter::Access::Read);
     }
     return value;
 }

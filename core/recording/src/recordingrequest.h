@@ -42,8 +42,8 @@ std::string ValidateBitrates(uint32_t videoKbps, uint32_t audioKbps, const std::
 bool IsNativeCombination(const std::string& format, const std::string& container, const std::string& audioCodec);
 
 /// Output profile: "" / "native" (the picture at its own size times scale), "1080p", "1440p" or "4k" (aliases "uhd",
-/// "2160p"): a fixed frame, the picture scaled sharply into it (nearest, integer factor, black bars). Returns the
-/// canonical id ("native", "1080p", "1440p", "4k"), or "" for an unknown name
+/// "2160p"): a fixed frame, the picture fitted into it (as large as the frame allows, aspect kept, nearest, black
+/// bars). Returns the canonical id ("native", "1080p", "1440p", "4k"), or "" for an unknown name
 std::string NormalizeProfile(const std::string& profile);
 
 /// "" when the (normalized) profile can be recorded as this format, otherwise the reason. A fixed frame takes

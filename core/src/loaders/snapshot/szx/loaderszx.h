@@ -27,6 +27,9 @@
 #include <string>
 
 #include "loaders/snapshot/szx/szxformat.h"
+#include "loaders/snapshot/snapshotimage.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "loaders/snapshot/snapshotreport.h"
 
 class EmulatorContext;
 
@@ -40,6 +43,18 @@ public:
 
     const szx::Report& GetReport() const { return _report; }
     const std::string& GetError() const { return _error; }
+
+    /// What the caller asked for (call before load(); the default lets the plan decide)
+    void SetOptions(const snapshot::Options& options) { _options = options; }
+    /// The pipeline's view of the last load: the image of the file and the report (the plan's verdicts + SZX's blocks)
+    const snapshot::Image& GetSnapshotImage() const { return _image; }
+    const snapshot::Report& GetSnapshotReport() const { return _snapshotReport; }
+    /// A parsed stage as a SnapshotImage; nothing touches the machine
+    static snapshot::Image BuildImage(const szx::Stage& stage, const std::string& path);
+    /// Read a file and build its image, without a machine or a commit (inspect)
+    static bool ReadImage(const std::string& path, snapshot::Image& image, std::string& error);
+    /// SZX's per-block outcomes and warnings onto the pipeline's report (the two Outcome enums differ)
+    static void AppendReport(const szx::Report& from, snapshot::Report& to);
 
     /// The machine an SZX file was saved on, from its header alone (the GUI
     /// creates that machine before loading). False: not an SZX file, or a
@@ -69,4 +84,8 @@ private:
     std::string _path;
     szx::Report _report;
     std::string _error;
+    snapshot::Options _options;
+    snapshot::Image _image;
+    snapshot::Report _snapshotReport;
+    snapshot::Decision _decision;
 };

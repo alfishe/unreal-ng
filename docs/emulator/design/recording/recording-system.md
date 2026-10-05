@@ -537,11 +537,12 @@ void MainLoop::OnFrameEnd()
 | `native` (default) | the picture (region, TS-Conf / Profi geometry) times `SetScaleFactor` (1-4) | nearest-neighbor upscale in the encoder |
 | `1080p` / `1440p` / `4k` | fixed 1920x1080 / 2560x1440 / 3840x2160 | the picture is scaled in `CaptureFrame` by `FrameScaler`; encoders get `scaleFactor = 1` and the fixed size |
 
-`FrameScaler` (core/recording/src/common/framescaler.*) is the algorithm of the UI window (Nearest sampling) made
-pixel-exact: the largest integer factor k that fits the frame (352x288 in 3840x2160: k = 7, 2464x2016), centered, black
-bars. A picture larger than the frame (a videowall window above 1080p) is sampled nearest with its aspect kept. Cost:
-the output buffer is reused, the bars are drawn once (only the picture rectangle is rewritten per frame), one source
-row is expanded once and the other k-1 rows of its block are a `memcpy`. A fixed frame takes H.264 / H.265 only
+`FrameScaler` (core/recording/src/common/framescaler.*) is the algorithm of the UI window (Nearest sampling): the
+picture is FITTED into the frame with its aspect kept - as large as the frame allows (352x288 in 3840x2160: 2640x2160,
+bars left and right), centered, black bars - and every output pixel takes the nearest source pixel (a picture larger
+than the frame, a videowall window above 1080p, is sampled the same way). An exact whole multiple (1080p in 4K, 2x)
+is the fast path of exact k x k blocks. Cost: the output buffer is reused, the bars are drawn once (only the picture
+rectangle is rewritten per frame), a source row is gathered once and the output rows that map to it are a `memcpy`. A fixed frame takes H.264 / H.265 only
 (`RecordingRequest::ValidateProfile`); the picture size may change mid-recording (TS-Conf windows, a resized
 videowall) without leaving the file's size. `native` costs nothing extra.
 

@@ -514,8 +514,8 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
 
     switch (slot)
     {
-        case 1: memory->SetRAMPageToBank1(bank); break;
-        case 2: memory->SetRAMPageToBank2(bank); break;
+        case 1:
+        case 2: memory->SetDebuggerRAMPageToBank(slot, bank); break;
         case 3: memory->SetRAMPageToBank3(bank, true); break;
         default: return;
     }

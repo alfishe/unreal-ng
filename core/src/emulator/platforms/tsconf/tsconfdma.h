@@ -67,6 +67,9 @@ public:
 
     /// DRAM accesses one word of the running transfer costs (0: it makes no progress)
     uint32_t WordCost() const;
+    /// fclk one word's device phase takes besides its DRAM cycle (SPI, IDE), 0 for the DRAM-only devices:
+    /// that time passes whatever the DRAM load, only the one DRAM cycle comes off the line's free budget
+    uint32_t DeviceFclk() const;
 
     /// The running transfer writes CRAM, which the picture reads at the dot (TIM-5)
     bool WritesCram() const;
@@ -80,9 +83,10 @@ public:
         if (!_ram)
             return 0;
         uint32_t used = 0;
-        for (uint32_t cost = WordCost(); cost && used + cost <= credit; cost = WordCost())
+        for (uint32_t cost = WordCost(); cost && used + cost <= credit && DeviceReady(); cost = WordCost())
         {
             before(used);
+            SpendDevice();
             Word();
             used += cost;
         }
@@ -90,6 +94,10 @@ public:
     }
 
 private:
+    /// The device phase of the next word has had its time (always for the DRAM-only devices)
+    bool DeviceReady() const;
+    void SpendDevice();
+
     enum Device : uint8_t
     {
         Ram = 0x1,

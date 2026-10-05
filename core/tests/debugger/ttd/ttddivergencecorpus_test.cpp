@@ -76,9 +76,10 @@ Emulator* MakeTtdEmulator(const std::string& modelName = "PENTAGON",
 // capture → store → restore path produces bit-identical state.
 // =========================================================================
 
-TEST(TTD_Divergence_Corpus_Test, DizzyY_48K_CaptureRestoreRoundTrip)
+// (named DizzyY_48K_* until 2026-10-05: the snapshot is a 128K one, a 48K machine now refuses it)
+TEST(TTD_Divergence_Corpus_Test, DizzyY_128K_CaptureRestoreRoundTrip)
 {
-    Emulator* emu = MakeTtdEmulator("48K");
+    Emulator* emu = MakeTtdEmulator("128k");
     ASSERT_NE(emu, nullptr);
     auto cleanup = [&]() { EmulatorTestHelper::CleanupEmulator(emu); };
 
@@ -175,9 +176,9 @@ TEST(TTD_Divergence_Corpus_Test, AccuracyCoinZX_SelfModifying_FramesMatch)
 // fixture having visible per-frame action.
 // =========================================================================
 
-TEST(TTD_Divergence_Corpus_Test, DizzyY_48K_FramebufferDeterminism)
+TEST(TTD_Divergence_Corpus_Test, DizzyY_128K_FramebufferDeterminism)
 {
-    Emulator* emu = MakeTtdEmulator("48K");
+    Emulator* emu = MakeTtdEmulator("128k");
     ASSERT_NE(emu, nullptr);
     auto cleanup = [&]() { EmulatorTestHelper::CleanupEmulator(emu); };
 

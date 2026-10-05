@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include "loaders/snapshot/snapshotimage.h"
 
 #include <array>
 #include <string>
@@ -116,6 +117,11 @@ public:
     bool Apply(const std::array<EmulatorContext*, ZXPSnapshot::MODULE_COUNT>& contexts);
 
     const ZXPSnapshot& GetSnapshot() const { return _snapshot; }
+
+    /// One module of the parsed file as a SnapshotImage (a .zxp holds four machines, so four images; the group-level
+    /// plan - master only and replicate, or refuse - comes with the ZX-Poly decision, proposal Q7). Nothing touches
+    /// a machine; call after Parse()
+    snapshot::Image BuildImage(size_t module) const;
     const std::string& GetError() const { return _error; }
     /// endregion </Methods>
 

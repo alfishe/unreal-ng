@@ -186,7 +186,7 @@ vector table entry at `I=0x80`).
 |:--|:--|
 | INT-1 | reset: one frame INT per frame, first at frame tact 1, vector 0xFF, pulse 32 T at 3.5 MHz (an `EI` at tact 33 misses it) |
 | INT-2 | `VS_INT=100, HS_INT=10` → frame INT at tact 22410; `HS_INT=224` or `VS_INT=320` → no frame INT |
-| INT-3 | `INT_MASK=0x02` → exactly 320 line INTs per frame, vector 0xFD, first at tact 223 (`224·1 − 1`) |
+| INT-3 | `INT_MASK=0x02` → exactly 320 line INTs per frame, vector 0xFD, at raster tact 224 n, the end of each line (was 224 n − 1 until the 2026-10-05 audit: one tact early) |
 | INT-4 | frame + line pending together (frame at tact 223 via `HS_INT=223`) → first ack 0xFF, second 0xFD; only the served latch clears |
 | INT-5 | mask clears pending: line INT latched while DI, write `INT_MASK=0` then 0x02 → no INT until the next event |
 | INT-6 | IM1: vector ignored, jump 0x38, highest latch cleared; IM0 with 0xFF = RST 38 |
@@ -348,7 +348,7 @@ but off, as in the emulated standard `quartus` firmware (no XTR_FEAT), so code
 line, minus the graphics fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window
 dots, none with NOGFX), the TSU (8 map words per layer, 2 per tile, width / 4
 per sprite line) and the CPU's DRAM reads (counted by `TsConfMemory`; cache
-hits and ROM take none; **CPU writes are not counted - v1 approximation**);
+hits and ROM take none; CPU writes to writable RAM count too since the 2026-10-05 audit, [V] `zmem.v:121`, test TIM6 - an always-on write overlay, A/B within noise);
 the DMA gets the rest. The TSU gets 448 minus video minus the CPU of its
 previous line and drops what does not fit (**TSU-8**).
 Tests `tsconfdma_test.cpp`: DMA-1…14 (DMA-3 also the in-block wrap), TSU-8,
@@ -396,7 +396,7 @@ clears (with a frame cap).
 > **2026-09-29, Nemo IDE (D2 decided: emulated; hardware-spec §8.3,
 > technical-design §3.11).** On the shared IDE core (`f5fc5f05`). TSConf's own
 > work: `TryIdePortIn/Out` first in its decoder, `[HDD] Scheme=NEMO-DIVIDE`
-> and `IdeStall=0` in the ts-conf ini, `PeripheralId::AtaChannel` (17) in its
+> and `IdeStall=0` in the ts-conf ini (1 since 2026-10-05, as the RTL), `PeripheralId::AtaChannel` (17) in its
 > TTD ids, and three small additions to the shared `IdeAdapter`
 > (`DmaReadWord`, `DmaWriteWord`, a "this access reached the drive" flag) with
 > their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
@@ -414,7 +414,7 @@ clears (with a frame cap).
   drive; #FF drive bits always latch; the trap starts vdos at the next M1, a
   VG93 register access ends it ([V] zports.v:638-651). State `vgDrive`,
   `preVdos` in `TsConfState`.
-- Nemo IDE: `[HDD] IdeStall` (0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
+- Nemo IDE: `[HDD] IdeStall` (1 = on, the default since 2026-10-05; 0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
   (+1 / +2 / +3 T at 3.5 / 7 / 14 MHz); DMA 0x3 / 0xB end to end.
 - Tests `tsconfstorage_test.cpp` (SPI-1, SD-0 on TS-Conf, the SPI DMA sector
   read, VDOS-1, VDOS-2, IDE-4, DMA-15) and `tsconfslot_test.cpp` (SLOT-1).
@@ -567,11 +567,24 @@ has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
   frame, so TTD needs nothing. Other emulators model none of it (MAME: a
   flat 2 T per miss; Unreal: dead code; Xpeccy: nothing). The 3.5 / 7 MHz
   stall (stall357) never fires in any mode, so it is not modeled.
+  **Revised 2026-10-05 (TS-Conf RTL audit, RTL simulation
+  `tools/machines/tsconf/rtl-sim`):** a refused cycle stops the clock only in
+  the fclk the CPU is not seen in a memory read, so it stretches the machine
+  cycle it falls in (a write's T3, the next M1) and costs 1 fclk instead of 4
+  when the next read's MREQ / RD arrive inside it. The arbiter keeps the
+  refused window open after the grant, simulates it fclk by fclk against the
+  machine cycles that follow (ROM and cache-hit reads, opcode fetches through
+  the M1 hook) and charges each stop to the cycle whose clock edge it delays.
+  `TsConfArbiter_Test.ARB6_CpuWaitsMatchTheRtl`: all 1170 simulated 14 MHz
+  tests, every machine cycle fclk for fclk.
 - **TIM-2**: 14 MHz I/O to the AY (#FD with A15 = 1) or an open VG93
   (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
 - **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the
   DRAM cycle), IDE 2 → 3; RAM 2, BLT 3, fill 1 (+1), CRAM / SFILE 2 were
-  already the Verilog's.
+  already the Verilog's. **Revised 2026-10-05 (TS-Conf audit, dma rows
+  30-31):** SPI and IDE cost 1 DRAM cycle; their device phase is time (34 /
+  12 fclk per word, `TsConfDma::DeviceFclk`), not DRAM budget, so the SD rate
+  no longer drops with the video mode (tests TIM3b, TIM3c).
 - **TIM-4**: nothing to add - no stock video mode takes 8 of 8 DRAM cycles
   (ZX 1, 16C 2, 256C 4, TXT 4 per block, video_mode.v), so the CPU never stalls
   at 3.5 / 7 MHz, and the TSU ranks below the CPU.

@@ -43,11 +43,12 @@ uint32_t ScreenTSConf::Vdac2Level(uint32_t level, bool direct)
     // turns each channel into 8 bits for its ADV7125 DAC (tslabs/zx-evo,
     // pentevo/vdac/vdac2/cpld/top.v, module lut). PAL_SEL - CRAM bit 15 of the
     // pixel - selects the conversion:
-    //   PAL_SEL = 1: {in, 3'b0}, so the top level is 248, not 255 (the other
-    //                VDAC builds scale their 3/4/5 DAC bits to full scale)
+    //   PAL_SEL = 1: {in, 3'b0}, so the top level is 248, not 255
     //   PAL_SEL = 0: a table of the PWM-compatible levels 0..24, 255 above;
-    //                it is round(v * 255 / 24), one more than the truncating
-    //                formula of the other builds at 11, 14, 17, 19, 20, 22, 23
+    //                it is round(v * 255 / 24), one more than a truncating
+    //                formula at 11, 14, 17, 19, 20, 22, 23
+    // The 5-bit VDAC board's CPLD (pentevo/vdac/vdac1/cpld/top.v, module lut) is
+    // the same table: the 5-bit build (STATUS 3) goes through here too
     // vdac2-tdd.md §2.1 / §12 D6
     static constexpr uint8_t kLinear[32] = {0,   10,  21,  31,  42,  53,  63,  74,  85,  95,  106,
                                             117, 127, 138, 149, 159, 170, 181, 191, 202, 213, 223,
@@ -63,20 +64,59 @@ uint32_t ScreenTSConf::CramToRgba(uint16_t cram, uint8_t vdac)
     {
         if (vdac == 0)
             v = kPwm.level[v];                  // no VDAC: 2-bit DAC + PWM, time-averaged
-        else if (vdac == 7)
-            v = Vdac2Level(v, (cram & 0x8000) != 0);
+        else if (vdac == 7 || vdac == 3)
+            v = Vdac2Level(v, (cram & 0x8000) != 0);  // the VDAC / VDAC2 board's CPLD (one table)
         else if (!(cram & 0x8000))
             v = v >= 24 ? 255 : v * 255 / 24;   // PWM-compatible linear curve (hs §4.3)
         else
         {
-            // The DAC's bits of the channel, its full scale = 255 ([U] tsconf.cpp
-            // keeps Ccccc000 for 5 bits; the bit replication here makes 31 white)
-            const uint32_t bits = vdac == 1 ? 3u : (vdac == 2 ? 4u : 5u);
+            // 3 / 4-bit DACs (no build or board to check against): the DAC's bits of the channel scaled to full
+            const uint32_t bits = vdac == 1 ? 3u : 4u;
             const uint32_t code = v >> (5 - bits);
             v = code * 255 / ((1u << bits) - 1);
         }
     }
     return 0xFF000000u | (level[2] << 16) | (level[1] << 8) | level[0];
+}
+
+ScreenTSConf::ZxSource ScreenTSConf::ZxSourceOf(uint16_t gxOffs, uint32_t pixel)
+{
+    // c = G_X_OFFS[6:2] fetches are skipped, the window starts f = G_X_OFFS[1:0] pixels into the stream. The 16-pixel
+    // group m shows fetch c + 2m in the colors of fetch c + 2m + 1; fetch k reads the byte pair at column
+    // 2 ((k >> 1) & 15), pixel bytes when k is even, attributes when odd - an odd c swaps them on the whole line. Past
+    // the 16th group the 33rd fetch gives the pixels and the colors stay those of fetch c + 31
+    const uint32_t c = (gxOffs >> 2) & 0x1F;
+    const uint32_t s = pixel + (gxOffs & 0x03);
+    const uint32_t m = s >> 4;
+    const uint32_t half = (s >> 3) & 1;
+    const uint32_t pixelFetch = c + 2 * m;
+    const uint32_t colorFetch = m < 16 ? pixelFetch + 1 : c + 31;
+    ZxSource source;
+    source.pixelColumn = static_cast<uint8_t>(2 * ((pixelFetch >> 1) & 0x0F) + half);
+    source.colorColumn = static_cast<uint8_t>(2 * ((colorFetch >> 1) & 0x0F) + half);
+    source.pixelFromAttr = pixelFetch & 1;
+    source.colorFromPixels = !(colorFetch & 1);
+    source.bit = static_cast<uint8_t>(7 - (s & 7));
+    return source;
+}
+
+ScreenTSConf::TxtSource ScreenTSConf::TxtSourceOf(uint16_t gxOffs, uint32_t pixel)
+{
+    // n = G_X_OFFS >> 2: the first character pair shown is (n + 3) >> 2, the window starts 2 G_X_OFFS[1:0] hires
+    // pixels in. Its low 2 bits are the fetch phase (char, attr, glyph 0, glyph 1; [V] video_mode.v f_txt_sel):
+    // other than 0 the next pair's code fetch overwrites glyph slots - phase 1 and 2 show both raw codes (1 in the
+    // previous pair's attributes), phase 3 the second
+    const uint32_t n = gxOffs >> 2;
+    const uint32_t phase = n & 3;
+    const uint32_t s = pixel + 2 * (gxOffs & 0x03);
+    const uint32_t pair = (((n + 3) >> 2) + (s >> 4)) & 0x3F;
+    const uint32_t half = (s >> 3) & 1;
+    TxtSource source;
+    source.codeColumn = static_cast<uint8_t>(2 * pair + half);
+    source.attrColumn = static_cast<uint8_t>(phase == 1 ? (2 * pair + 126 + half) & 0x7F : 2 * pair + half);
+    source.glyph = phase == 0 || (phase == 3 && half == 0);
+    source.bit = static_cast<uint8_t>(7 - (s & 7));
+    return source;
 }
 
 VideoModeEnum ScreenTSConf::ModeOf(uint8_t vConfig)
@@ -311,11 +351,13 @@ void ScreenTSConf::GraphicsSpan(const TsConfLine& set, uint32_t wx, uint32_t cou
             const uint8_t* pixelRow = page + (((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2));
             const uint8_t* attrRow = page + 0x1800 + (y >> 3) * 32;
             const bool flashPhase = (_context->emulatorState.frame_counter >> 4) & 1;  // every 16 frames (hs §4.1)
-            for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF)
+            // G_X_OFFS picks the fetches, not a pixel position (ZxSourceOf)
+            for (uint32_t i = 0; i < count; i++)
             {
-                const uint32_t x = gx & 0xFF;
-                const uint8_t attr = attrRow[x >> 3];
-                bool ink = (pixelRow[x >> 3] >> (7 - (x & 7))) & 1;
+                const ZxSource src = ZxSourceOf(set.gxOffs, wx + i);
+                const uint8_t attr = src.colorFromPixels ? pixelRow[src.colorColumn] : attrRow[src.colorColumn];
+                const uint8_t bits = src.pixelFromAttr ? attrRow[src.pixelColumn] : pixelRow[src.pixelColumn];
+                bool ink = (bits >> src.bit) & 1;
                 if ((attr & 0x80) && flashPhase)
                     ink = !ink;
                 visible0[i] = ink;
@@ -351,6 +393,25 @@ void ScreenTSConf::GraphicsSpan(const TsConfLine& set, uint32_t wx, uint32_t cou
         {
             const uint8_t* row = ram + (vPage << 14) + ((gy >> 3) & 0x3F) * 256;
             const uint8_t* font = ram + ((vPage ^ 1) << 14) + (gy & 7);
+            if (set.gxOffs)
+            {
+                // G_X_OFFS picks the fetches and their phase, not a pixel position (TxtSourceOf)
+                auto pixel = [&](uint32_t px, uint8_t& index, uint8_t& visible) {
+                    const TxtSource src = TxtSourceOf(set.gxOffs, px);
+                    const uint8_t code = row[src.codeColumn];
+                    const uint8_t bits = src.glyph ? font[code * 8] : code;
+                    const uint8_t attr = row[128 + src.attrColumn];
+                    const bool on = (bits >> src.bit) & 1;
+                    visible = on;
+                    index = static_cast<uint8_t>(palBank | (on ? (attr & 0x0F) : (attr >> 4)));
+                };
+                for (uint32_t i = 0; i < count; i++)
+                {
+                    pixel(2 * (wx + i), index0[i], visible0[i]);
+                    pixel(2 * (wx + i) + 1, index1[i], visible1[i]);
+                }
+                break;
+            }
             // The character cell changes every 8 pixels: its font byte and
             // colors are looked up once per cell
             uint32_t cell = ~0u;
@@ -387,6 +448,9 @@ bool ScreenTSConf::DirectSpan(const TsConfState& ts, const TsConfLine& set, uint
     const uint8_t vConfig = set.vConfig;
     if ((set.tsu && !(vConfig & 0x10)) || (vConfig & 0x08))
         return false;  // TSU pixels to mix, or GFXOVR (invisible dots show the border)
+    const uint8_t mode = vConfig & 0x03;
+    if ((mode == 0 && (set.gxOffs & 0x7F)) || (mode == 3 && set.gxOffs))
+        return false;  // G_X_OFFS in ZX / TXT is not a pixel scroll: GraphicsSpan draws the RTL's fetch order
 
     const bool text = (vConfig & 0x03) == 3;
     const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
@@ -413,7 +477,8 @@ bool ScreenTSConf::DirectSpan(const TsConfState& ts, const TsConfLine& set, uint
         const uint32_t gy = set.cntRow & 0x1FF;
         const uint8_t* ram = _context->pMemory->RAMBase();
         const uint32_t vPage = set.vPage;
-        uint32_t gx = (gfxFrom - win.x0 + set.gxOffs) & 0x1FF;
+        // ZX ignores G_X_OFFS[8:7]; TXT has none here (see above): only 16C and 256C scroll by it
+        uint32_t gx = (gfxFrom - win.x0 + ((mode == 1 || mode == 2) ? set.gxOffs : 0u)) & 0x1FF;
         switch (vConfig & 0x03)
         {
             case 0:  // ZX: ink / paper colours once per 8-dot cell

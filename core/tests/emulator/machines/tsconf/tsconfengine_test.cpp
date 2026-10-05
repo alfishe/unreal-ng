@@ -159,9 +159,11 @@ TEST(TsConfEngineRender_Test, ENG4_SameStateRenderedOrDecimated)
     EXPECT_EQ(std::memcmp(&rendered, &decimated, sizeof(TsConfState)), 0);
 }
 
-/// ENG-1: the per-line DRAM budget - 448 accesses; video takes its share of
-/// the window (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window dots), none on
-/// NOGFX or border lines; the CPU's reads come off the rest and the DMA gets
+/// ENG-1: the per-line DRAM budget - 448 accesses; video takes its blocks while
+/// video_go is high, w + 4 dots ([V] video_sync.v:237, video_mode.v:84-89,
+/// 128-133): ceil((w + 4) / len) x need - ZX 1 of 8, 16C 1 of 4, 256C 1 of 2,
+/// TXT 4 of 8 (was w >> shift, 1-4 low: TS-Conf audit, dma row 42); none on
+/// NOGFX or border lines; the CPU's accesses come off the rest and the DMA gets
 /// what is left: a RAM copy (2 accesses per word) moves (448 - video - CPU) / 2
 /// words over a whole line
 TEST_F(TsConfEngine_Test, ENG1_LineBudget)
@@ -171,7 +173,7 @@ TEST_F(TsConfEngine_Test, ENG1_LineBudget)
         uint8_t vConfig;
         uint16_t video;
     };
-    for (const Case& c : {Case{0x00, 256 / 8}, Case{0x41, 320 / 4}, Case{0x42, 320 / 2}, Case{0x83, 320 / 2}, Case{0x22, 0}})
+    for (const Case& c : {Case{0x00, 33}, Case{0x41, 81}, Case{0x42, 162}, Case{0x83, 164}, Case{0xC2, 182}, Case{0x22, 0}})
     {
         SCOPED_TRACE(int(c.vConfig));
         Reg(TsConfReg::VConfig, c.vConfig);

@@ -179,5 +179,78 @@ bool LoaderSPG::load()
             return false;
         }
     }
-    return Parse(_data, _image, _error) && Commit(_context, _image, _error);
+    if (!Parse(_data, _image, _error))
+        return false;
+
+    // Snapshot pipeline: the image of the file and the plan step, then today's commit
+    _snapshotImage = BuildSnapshotImage(_image, _path);
+    _snapshotReport = snapshot::Report();
+    _decision = snapshot::Pipeline::Plan(_snapshotImage, _context, _options, _snapshotReport);
+    if (!_decision.Proceeds())
+    {
+        _error = _snapshotReport.reason;
+        return false;
+    }
+    const bool committed = _decision.action == snapshot::Decision::Action::Take
+                               ? _decision.Commit(_snapshotImage, *_context, _snapshotReport)
+                               : Commit(_context, _image, _error);
+    if (!committed)
+    {
+        if (_error.empty())
+            _error = _snapshotReport.reason;
+        if (!_snapshotReport.refused)
+            _snapshotReport.Refuse(_error);
+    }
+    return committed;
+}
+
+bool LoaderSPG::ReadSnapshotImage(const std::string& path, snapshot::Image& image, std::string& error)
+{
+    if (!FileHelper::FileExists(path))
+    {
+        error = "file not found: " + path;
+        return false;
+    }
+    const size_t size = FileHelper::GetFileSize(path);
+    std::vector<uint8_t> data(size, 0);
+    if (size && FileHelper::ReadFileToBuffer(path, data.data(), size) != size)
+    {
+        error = "cannot read " + path;
+        return false;
+    }
+    Image spg;
+    if (!Parse(data, spg, error))
+        return false;
+    image = BuildSnapshotImage(spg, path);
+    return true;
+}
+
+snapshot::Image LoaderSPG::BuildSnapshotImage(const Image& spg, const std::string& path)
+{
+    snapshot::Image image;
+    image.format = "spg";
+    image.sourcePath = path;
+    image.formatVersion = std::to_string(spg.version >> 4) + "." + std::to_string(spg.version & 0x0F);
+    image.machineHint = "tsconf";
+    image.memoryModel = snapshot::MemoryModel::Physical;
+    image.timingHint = "tsconf";
+
+    for (const Block& block : spg.blocks)
+        image.physical.push_back(snapshot::PhysicalRun{block.address, block.data});
+
+    // The CPU: the header's PC / SP / interrupt flag, and the state the format promises at start (see the class doc)
+    snapshot::Cpu& cpu = image.cpu;
+    cpu.pc = spg.pc;
+    cpu.sp = spg.sp;
+    cpu.iy = 0x5C3A;
+    cpu.hl2 = 0x2758;
+    cpu.i = 0x3F;
+    cpu.im = 1;
+    cpu.iff1 = cpu.iff2 = spg.interrupts;
+    image.paging.p7FFD = 0x10;
+    image.extensions.push_back({"spg:header", "tsconf-registers", 0,
+                                "page at #C000 = " + std::to_string(spg.page3) + ", SYS_CONFIG[1:0] = " +
+                                    std::to_string(spg.clock) + ", RAM 5 / 2 at #4000 / #8000, BASIC-48 ROM at #0000",
+                                {}});
+    return image;
 }

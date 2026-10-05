@@ -55,7 +55,8 @@ protected:
 
     void SetUp() override
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+        // Dizzy Y is a 128K snapshot: a 48K machine refuses it (the snapshot plan's fit check)
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("128k", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
 
         const std::string path = TestPathHelper::GetTestDataPath(kSnapshot);

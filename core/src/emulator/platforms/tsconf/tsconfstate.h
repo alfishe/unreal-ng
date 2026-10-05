@@ -127,8 +127,10 @@ struct TsConfState
     /// region <Interrupt controller (§5), TsConfInterrupts>
     uint32_t intLastRaster;     ///< raster tact (0..71679) the events are evaluated up to
     int32_t intFrameRaster;     ///< raster tact of the latched frame INT (its 32-clock pulse runs from there; negative after a rollover)
+    uint32_t intVdosClock;      ///< CPU clock of the frame where vdos (pre_vdos) froze the frame pulse; valid while frozen
     uint8_t intPending;         ///< latched sources, TsConfInt bits
-    uint8_t intReserved[3];     ///< keeps the struct free of padding
+    uint8_t intSel;             ///< int_sel: the source the last acknowledge served (0 frame .. 3 wait-port), kept when none is left
+    int16_t intFrameAdjust;     ///< CPU clocks added to intFrameRaster x multiplier: a pulse carried across a clock switch
     /// endregion
 
     /// region <Line engine (§4.1, §4.2), TsConfEngine>
@@ -166,6 +168,7 @@ struct TsConfState
     uint8_t dmaFlags;           ///< TsConfDmaFlag bits
     uint8_t dmaReserved;        ///< keeps the struct free of padding
     uint16_t cpuLineAccesses;   ///< CPU DRAM reads of the previous line (the TSU's budget)
+    uint32_t dmaDeviceFclk;     ///< fclk the SPI / IDE device phase may still use (time, not DRAM)
     /// endregion
 
     /// region <Virtual TR-DOS (§8.2)>
@@ -182,4 +185,4 @@ struct TsConfState
     uint16_t FmBase() const { return static_cast<uint16_t>((regs[TsConfReg::FMaps] & 0x0F) << 12); }
 };
 
-static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12 + 16 + 32 + 4, "TsConfState must stay padding-free (TTD blob)");
+static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 16 + 16 + 36 + 4, "TsConfState must stay padding-free (TTD blob)");

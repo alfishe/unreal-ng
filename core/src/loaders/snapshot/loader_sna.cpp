@@ -60,11 +60,101 @@ bool LoaderSNA::load()
     {
         if (loadToStaging())
         {
-            result = applySnapshotFromStaging();
+            if (planSnapshot())
+            {
+                result = _decision.action == snapshot::Decision::Action::Take
+                             ? _decision.Commit(_image, *_context, _report)
+                             : applySnapshotFromStaging();
+            }
         }
     }
 
     return result;
+}
+
+/// The staging as a format-neutral image (logical banks; a 48K file's PC is taken off its stack, as the commit does)
+snapshot::Image LoaderSNA::BuildImage() const
+{
+    snapshot::Image image;
+    image.format = "sna";
+    image.sourcePath = _path;
+    image.timingHint = _snapshotMode == SNA_48 ? "48k" : "128k";
+    image.machineHint = _snapshotMode == SNA_48 ? "48k" : "128k-family";
+    image.memoryModel = _snapshotMode == SNA_48 ? snapshot::MemoryModel::Mem48k : snapshot::MemoryModel::Mem128k;
+    image.formatVersion = _snapshotMode == SNA_48 ? "48" : "128";
+
+    for (uint16_t bank = 0; bank < 8; ++bank)
+    {
+        if (_memoryPagesUsed[bank])
+            image.banks[bank] = std::vector<uint8_t>(_memoryPages[bank], _memoryPages[bank] + PAGE_SIZE);
+    }
+
+    snapshot::Cpu& cpu = image.cpu;
+    const snaHeader& h = _header;
+    cpu.af = static_cast<uint16_t>(h.a << 8 | h.f);
+    cpu.bc = static_cast<uint16_t>(h.b << 8 | h.c);
+    cpu.de = static_cast<uint16_t>(h.d << 8 | h.e);
+    cpu.hl = static_cast<uint16_t>(h.h << 8 | h.l);
+    cpu.ix = static_cast<uint16_t>(h.hx << 8 | h.lx);
+    cpu.iy = static_cast<uint16_t>(h.hy << 8 | h.ly);
+    cpu.af2 = static_cast<uint16_t>(h._a << 8 | h._f);
+    cpu.bc2 = static_cast<uint16_t>(h._b << 8 | h._c);
+    cpu.de2 = static_cast<uint16_t>(h._d << 8 | h._e);
+    cpu.hl2 = static_cast<uint16_t>(h._h << 8 | h._l);
+    cpu.sp = static_cast<uint16_t>(h.hsp << 8 | h.lsp);
+    cpu.i = h.i;
+    cpu.r = h.r;
+    // Byte 19 bit 2 is IFF2; the commit sets IFF1 from the same bit (the format was born as an NMI-taken image)
+    cpu.iff2 = (h.flag19 & 0b100u) != 0;
+    cpu.iff1 = cpu.iff2;
+    cpu.im = h.imod & 0x03u;
+    image.border = static_cast<uint8_t>(h.border & 0b111u);
+
+    if (_snapshotMode == SNA_128)
+    {
+        cpu.pc = _ext128Header.reg_PC;
+        image.paging.p7FFD = _ext128Header.port_7FFD;
+        image.trdosPaged = _ext128Header.is_TRDOS != 0;
+    }
+    else
+    {
+        // The PC is on the stack: the low byte at SP, the high at SP + 1 (banks 5, 2, 0 at #4000, #8000, #C000)
+        auto byteAt = [&](uint16_t address, uint8_t& out) {
+            const uint16_t bank = address >= 0xC000 ? 0 : address >= 0x8000 ? 2 : address >= 0x4000 ? 5 : 0xFFFF;
+            const auto it = image.banks.find(bank);
+            if (it == image.banks.end())
+                return false;
+            out = it->second[address & 0x3FFF];
+            return true;
+        };
+        uint8_t lo = 0, hi = 0;
+        if (byteAt(cpu.sp, lo) && byteAt(static_cast<uint16_t>(cpu.sp + 1), hi))
+        {
+            cpu.pc = static_cast<uint16_t>(hi << 8 | lo);
+            cpu.sp = static_cast<uint16_t>(cpu.sp + 2);
+        }
+        else
+        {
+            image.warnings.push_back("the stack pointer is in the ROM: the PC cannot be read off the stack here");
+        }
+    }
+    return image;
+}
+
+bool LoaderSNA::Stage()
+{
+    if (!validate() || !loadToStaging())
+        return false;
+    _image = BuildImage();
+    return true;
+}
+
+bool LoaderSNA::planSnapshot()
+{
+    _image = BuildImage();
+    _report = snapshot::Report();
+    _decision = snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    return _decision.Proceeds();
 }
 
 /// endregion </Public methods>

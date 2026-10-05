@@ -536,3 +536,26 @@ The corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` was re-recorded (no
 | `SprinterZxMode_Test.LauncherModes_ReportAndJournal` (`UNREAL_SPRINTER_HDD`) | the real launcher: SP, P128, ORIGIN as a user starts them; best match `certain`, CNF `#07` / `#4E` / `#4E`, options, ROM set, `/ret-fn`; the launcher's CNF write in the live journal and the same write (PC, value) from the TTD recording of the SP launch; Ctrl+Alt+Del journaled |
 | `TTDSprinterMachine_Test.PortJournal_RecordsAndAnswersPortEvents` | no GS card, the journals record, `port-events` answers, `source=ttd` works, replay with 0 divergences / mismatches |
 | `CliSprinterMachine_Test.ZxModeAndJournalRenderAsText` | `state sprinter zx`, `journal`, on / off / clear, errors |
+
+## 13. As built: Z5, snapshots into the ZX mode (2026-10-05, branch `snapshot-pipeline`)
+
+Through the shared snapshot pipeline (PLAN #84, steps P0-P4): the Sprinter owns a commit policy, `SprinterZxSnapshot`
+(`core/src/emulator/ports/models/sprinter/sprinterzxsnapshot.{h,cpp}`), named `sprinter-zx`. The decoder hands it out as
+the machine's policy, so every load from every surface and the Qt window (drag and drop, Open Snapshot) reaches it with no
+routing of its own; `commit=sprinter-zx` asks for it by name, `commit=legacy` bypasses it.
+
+- **Refusals** (nothing is written; `report.needs` is machine-readable): outside a Spectrum mode `zx_mode`; a 128K file where
+  CNF bit 5 turns `#7FFD` off `mode:128k`; banks 8-15 without the 512 KB paging or `#1FFD` `mode:mem512`; a bank whose cell
+  holds page `#40` / `#41` `mode:page_table`; an SPG `model:TSL`.
+- **Commit** (§3.5 as designed, with these as-built details): bank *n* into the page of cell `#F0 + n` (`#F8 +` for 8-15) and,
+  if windows 1 / 2 (cells `#E9` / `#EA`) name another page for banks 5 / 2, into that too; the Spectrum screen shadow in video
+  RAM replayed through the write intercept (`SprinterMemory::RefreshZxShadow`: window 1 for bank 5, window 3 for bank 7 after
+  `#7FFD` selects 7); `#7FFD` through the PLD latch (`PortDecoder_Sprinter::SetPagingFromSnapshot`, which a locked paging does
+  not turn away), `#30` for a 48K snapshot; the border through port `#FE`; AY 0; the CPU, the HALT detection and, for Z80 v3 /
+  SZX, the position in the frame. No reset. Not restored, reported as *ignored*: `#1FFD`, `#EFF7`, the TR-DOS flag, the EI shadow.
+- **Found:** BIOS 3.06's own ZX mode has cells `#F0-#F7` = `00 ED 02 EF F0 05 EE F1`, so the old commit (bank *n* into page
+  *n*) was wrong for five banks of eight even there.
+- **Tests:** T-ZX-11 and T-ZX-12 are `SprinterZxSnapshot_Test` (`core/tests/emulator/machines/sprinter/sprinterzxsnapshot_test.cpp`,
+  BIOS 3.06's ZX mode, no hard disk): banks against the file's own bytes, the screen shadow byte by byte, nothing else in RAM
+  written, refusals; one mutation (no shadow replay) fails it. The picture check is live: `action.sna` runs on the Sprinter as
+  on a Pentagon 128. Recipe: `.recipe/machines/sprinter.md` §4.

@@ -209,6 +209,9 @@ public:
     uint8_t LookupCode(uint16_t port, bool isRead) const;
     /// Window 3's cell index from #7FFD / #1FFD / CNF (MAME update_memory pg3)
     static uint8_t ComputePg3(const SprinterPldState& pld);
+    /// A snapshot restores the Spectrum paging latch: #7FFD's effect (the CNF clean rules, the banks), by the latch
+    /// itself so a locked paging (PN5) does not turn the write away. `pc` is the PC the journal names
+    void SetPagingFromSnapshot(uint8_t value, uint16_t pc);
 
     /// The standard configuration's code semantics (reached through SprinterPldStandard)
     uint8_t StandardReadCode(uint8_t code, uint16_t port);
@@ -216,6 +219,8 @@ public:
 
     /// Re-derive window 3's cell and map the windows
     void UpdateBanks();
+    /// The #7FFD latch update: the CNF clean rules, the journal, the banks (port is only for the journal)
+    void Latch7ffd(uint16_t port, uint8_t value);
 
     /// Density latch (codes #16 / #17): what the WD1793 runs at
     bool IsFdcHighDensity() const { return _pld.fdcHd != 0; }

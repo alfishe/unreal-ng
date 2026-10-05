@@ -469,6 +469,56 @@ TEST_F(McpTools_Test, LoadSoftware_Snapshot_PostsSnapshotLoadWithPath)
               "/games/harrier.sna");
 }
 
+TEST_F(McpTools_Test, LoadSoftware_Snapshot_CarriesTheCommitChoice)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/load"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["path"] = "/games/harrier.sna";
+    args["commit"] = "legacy";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["commit"].asString(), "legacy");
+
+    // No commit given: the body says nothing, the plan decides
+    Json::Value plain;
+    plain["path"] = "/games/other.sna";
+    RunTool(*_registry, "load_software", plain, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body.isMember("commit"));
+}
+
+TEST_F(McpTools_Test, LoadSoftware_Inspect_AsksWhatALoadWouldDoAndLoadsNothing)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/inspect"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["path"] = "/games/harrier.sna";
+    args["inspect"] = true;
+    args["commit"] = "sprinter-zx";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/inspect");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "/games/harrier.sna");
+    EXPECT_EQ(call->body["commit"].asString(), "sprinter-zx");
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/snapshot/load")) << "inspect writes nothing";
+}
+
+TEST_F(McpTools_Test, LoadSoftware_CommitIsAName)
+{
+    Json::Value args;
+    args["path"] = "/games/harrier.sna";
+    args["commit"] = "x&y=1";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("name"), std::string::npos);
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
 TEST_F(McpTools_Test, LoadSoftware_Rzx_PostsRzxPlay)
 {
     Json::Value args;

@@ -21,6 +21,9 @@
 #include <memory>
 #include <string>
 
+#include "emulator/state/statenode.h"
+#include "loaders/snapshot/snapshotreport.h"
+
 class Emulator;
 
 struct SnapshotLoadRequest
@@ -28,6 +31,9 @@ struct SnapshotLoadRequest
     std::string emulatorId;
     std::string path;
     bool switchModel = true;  ///< the file needs another model: switch (true) or refuse (false)
+    /// Who commits the snapshot into the machine: "" = the plan decides (the machine's policy, else today's commit),
+    /// "legacy" = today's commit, or a registered policy name (snapshot pipeline, PLAN #84)
+    std::string commit;
     /// The old machine is about to be released (a GUI unbinds its views)
     std::function<void(Emulator& old)> beforeRelease;
 };
@@ -42,12 +48,19 @@ struct SnapshotLoadResult
     std::string requiredModel;           ///< the model the file needs ("TSL"), empty = any
     uint32_t requiredRamKb = 0;
     bool modelMismatch = false;          ///< refused: needs requiredModel and switching was off
+    /// What the snapshot pipeline did: the commit that ran, or the refusal and why, the verdicts, the format's blocks
+    snapshot::Report report;
 };
 
 class SnapshotLauncher
 {
 public:
     static SnapshotLoadResult Load(const SnapshotLoadRequest& request);
+
+    /// What loading `path` on the emulator would do, touching nothing: the file's image (banks as hashes, registers,
+    /// paging, extensions) and the plan (who would commit, or the refusal and why). `commit` as in the request
+    static bool Inspect(const std::string& emulatorId, const std::string& path, const std::string& commit,
+                        StateNode& result, std::string& error);
 
     /// The model a snapshot file needs (false + error: the file is unreadable
     /// or not of its type); an empty model = it loads on any machine

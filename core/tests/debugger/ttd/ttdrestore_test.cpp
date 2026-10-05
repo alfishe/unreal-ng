@@ -376,6 +376,39 @@ TEST_F(TTD_Restore_Test, Restore_PreservesPortLatchesAndPaging)
     //  for v1 and matches the divergence corpus strategy.)
 }
 
+TEST_F(TTD_Restore_Test, Restore_PreservesDebuggerForcedWindows1And2)
+{
+    // DeZog's SET_SLOT maps windows 1/2 (0x4000/0x8000) to any RAM page. No port
+    // latch describes that, so a restore could neither bring it back nor drop it.
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    ASSERT_GE(_ttd->GetModelRamPages(), 8u);
+
+    const uint16_t derived1 = _memory->GetRAMPageForBank1();
+    const uint16_t derived2 = _memory->GetRAMPageForBank2();
+    const uint16_t forced1 = (derived1 == 7) ? 6 : 7;
+    const uint16_t forced2 = (derived2 == 4) ? 3 : 4;
+
+    _ttd->OnFrameBoundary();
+    const size_t cleanIdx = _ttd->GetCheckpointCount() - 1;
+
+    _memory->SetDebuggerRAMPageToBank(1, forced1);
+    _memory->SetDebuggerRAMPageToBank(2, forced2);
+    _ttd->OnFrameBoundary();
+    const size_t forcedIdx = _ttd->GetCheckpointCount() - 1;
+
+    // Back to the checkpoint taken before the edit: the edit must go away
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(cleanIdx));
+    EXPECT_EQ(_memory->GetRAMPageForBank1(), derived1);
+    EXPECT_EQ(_memory->GetRAMPageForBank2(), derived2);
+    EXPECT_EQ(_memory->GetDebuggerBankOverride(1), MEMORY_UNMAPPABLE);
+
+    // And forward to the one that carries it
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(forcedIdx));
+    EXPECT_EQ(_memory->GetRAMPageForBank1(), forced1);
+    EXPECT_EQ(_memory->GetRAMPageForBank2(), forced2);
+}
+
 TEST_F(TTD_Restore_Test, Restore_PreservesCounters)
 {
     // t_states and frame_counter are restored by RestoreChipsetState.

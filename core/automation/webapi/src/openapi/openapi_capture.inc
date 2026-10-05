@@ -353,7 +353,7 @@
         props["profile"]["description"] =
             "start: output profile. native (default) = the picture at its own size times scale. 1080p / 1440p / 4k "
             "(3840x2160; aliases uhd, 2160p) = a fixed frame: the picture is scaled sharply into it - nearest "
-            "neighbor, the largest integer factor that fits, aspect kept, black bars, no blur (the algorithm of the "
+            "neighbor, as large as the frame allows with the aspect kept, black bars, no blur (the algorithm of the "
             "UI window). Takes format h264 or h265 only (400 otherwise), in any container; scale is ignored. "
             "The default video bitrate of 4k is 35000 kbps";
         for (const char* name : {"auto", "hardware", "software"})

@@ -46,8 +46,9 @@ sound track has exactly the frames' length.
 ## 4K / 1080p profile (sharp scale, GPU or software encoder)
 
 `profile` records a fixed frame: `1080p` (1920x1080), `1440p` (2560x1440) or `4k` (3840x2160). The picture is
-scaled into it with nearest neighbor and the largest integer factor that fits (352x288 -> 7x), centered, black
-bars - no blur, the same sampling as the emulator window. h264 / h265 only, any container (mp4/mov native on
+fitted into it with its aspect kept (as large as the frame allows: a 4:3 picture takes the full height of a 16:9
+frame, bars left and right), centered, nearest-neighbor sampling - no blur, the same as the emulator window; a whole
+multiple (1080p in 4K) is exact blocks, any other factor makes source pixels k and k+1 output pixels wide. h264 / h265 only, any container (mp4/mov native on
 macOS, mkv and the others through ffmpeg); `scale` is ignored; the default 4k bitrate is 35000 kbps.
 `acceleration`: `auto` (GPU encoder when there is one), `hardware` (GPU only, fails without), `software`
 (libx264 / libx265).

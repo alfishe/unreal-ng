@@ -1,6 +1,7 @@
 #include "framescaler.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 
 namespace FrameScaler
@@ -11,29 +12,23 @@ Layout ComputeLayout(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH)
     if (srcW == 0 || srcH == 0 || dstW == 0 || dstH == 0)
         return layout;
 
-    const uint32_t fit = std::min(dstW / srcW, dstH / srcH);
-    if (fit >= 1)
+    // Fit: the biggest picture of the source's aspect inside the output
+    if (static_cast<uint64_t>(srcW) * dstH <= static_cast<uint64_t>(srcH) * dstW)
     {
-        layout.scale = fit;
-        layout.width = srcW * fit;
-        layout.height = srcH * fit;
+        layout.height = dstH;
+        layout.width = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<uint64_t>(srcW) * dstH / srcH));
     }
     else
     {
-        // Larger than the output: the biggest picture of the source's aspect that fits
-        if (static_cast<uint64_t>(srcW) * dstH <= static_cast<uint64_t>(srcH) * dstW)
-        {
-            layout.height = dstH;
-            layout.width = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<uint64_t>(srcW) * dstH / srcH));
-        }
-        else
-        {
-            layout.width = dstW;
-            layout.height = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<uint64_t>(srcH) * dstW / srcW));
-        }
+        layout.width = dstW;
+        layout.height = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<uint64_t>(srcH) * dstW / srcW));
     }
     layout.offsetX = (dstW - layout.width) / 2;
     layout.offsetY = (dstH - layout.height) / 2;
+
+    // An exact whole multiple (1080p in 4K: 2x): every pixel is a k x k block, the fast row-repeat path
+    if (layout.width % srcW == 0 && layout.height % srcH == 0 && layout.width / srcW == layout.height / srcH)
+        layout.scale = layout.width / srcW;
     return layout;
 }
 
@@ -109,6 +104,71 @@ void SwapRow(const uint32_t* src, uint32_t* dst, uint32_t count)
 }
 }  // namespace
 
+namespace
+{
+/// The picture of `layout` into rows `strideWords` words apart (row 0 of the output at `dst`); the bars are the
+/// caller's.
+/// An exact multiple repeats each converted source row k times; any other size samples nearest, a source row is
+/// gathered once and the output rows that map to the same source row are a memcpy of it
+void DrawPicture(const uint32_t* src, uint32_t srcW, uint32_t srcH, const Layout& layout, uint32_t* dst,
+                 size_t strideWords, bool swapRedBlue)
+{
+    auto rowAt = [&](uint32_t y) { return dst + static_cast<size_t>(y) * strideWords; };
+
+    if (layout.scale >= 1)
+    {
+        const uint32_t k = layout.scale;
+        thread_local std::vector<uint32_t> swapped;
+        for (uint32_t sy = 0; sy < srcH; sy++)
+        {
+            const uint32_t* srcRow = src + static_cast<size_t>(sy) * srcW;
+            if (swapRedBlue)
+            {
+                swapped.resize(srcW);
+                SwapRow(srcRow, swapped.data(), srcW);
+                srcRow = swapped.data();
+            }
+            uint32_t* firstRow = rowAt(layout.offsetY + sy * k) + layout.offsetX;
+            ExpandRow(srcRow, srcW, k, firstRow);
+            for (uint32_t r = 1; r < k; r++)
+                std::memcpy(rowAt(layout.offsetY + sy * k + r) + layout.offsetX, firstRow,
+                            static_cast<size_t>(layout.width) * sizeof(uint32_t));
+        }
+        return;
+    }
+
+    thread_local std::vector<uint32_t> columnMap;
+    columnMap.resize(layout.width);
+    for (uint32_t x = 0; x < layout.width; x++)
+        columnMap[x] = static_cast<uint32_t>(static_cast<uint64_t>(x) * srcW / layout.width);
+
+    uint32_t previousSource = UINT32_MAX;
+    for (uint32_t y = 0; y < layout.height; y++)
+    {
+        const uint32_t sy = static_cast<uint32_t>(static_cast<uint64_t>(y) * srcH / layout.height);
+        uint32_t* out = rowAt(layout.offsetY + y) + layout.offsetX;
+        if (sy == previousSource)
+        {
+            std::memcpy(out, rowAt(layout.offsetY + y - 1) + layout.offsetX,
+                        static_cast<size_t>(layout.width) * sizeof(uint32_t));
+            continue;
+        }
+        previousSource = sy;
+        const uint32_t* row = src + static_cast<size_t>(sy) * srcW;
+        if (swapRedBlue)
+        {
+            for (uint32_t x = 0; x < layout.width; x++)
+                out[x] = SwapRedBlue(row[columnMap[x]]);
+        }
+        else
+        {
+            for (uint32_t x = 0; x < layout.width; x++)
+                out[x] = row[columnMap[x]];
+        }
+    }
+}
+}  // namespace
+
 bool ScaleInto(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, size_t dstStride, uint32_t dstW,
                uint32_t dstH, bool swapRedBlue)
 {
@@ -135,40 +195,7 @@ bool ScaleInto(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, s
         }
     }
 
-    if (layout.scale >= 1)
-    {
-        const uint32_t k = layout.scale;
-        thread_local std::vector<uint32_t> swapped;
-        for (uint32_t sy = 0; sy < srcH; sy++)
-        {
-            const uint32_t* srcRow = srcWords + static_cast<size_t>(sy) * srcW;
-            if (swapRedBlue)
-            {
-                swapped.resize(srcW);
-                SwapRow(srcRow, swapped.data(), srcW);
-                srcRow = swapped.data();
-            }
-            uint32_t* firstRow = rowAt(layout.offsetY + sy * k) + layout.offsetX;
-            ExpandRow(srcRow, srcW, k, firstRow);
-            for (uint32_t r = 1; r < k; r++)
-                std::memcpy(rowAt(layout.offsetY + sy * k + r) + layout.offsetX, firstRow,
-                            static_cast<size_t>(layout.width) * sizeof(uint32_t));
-        }
-    }
-    else
-    {
-        for (uint32_t y = 0; y < layout.height; y++)
-        {
-            const uint32_t* srcRow =
-                srcWords + static_cast<size_t>(static_cast<uint64_t>(y) * srcH / layout.height) * srcW;
-            uint32_t* dstRow = rowAt(layout.offsetY + y) + layout.offsetX;
-            for (uint32_t x = 0; x < layout.width; x++)
-            {
-                const uint32_t p = srcRow[static_cast<size_t>(static_cast<uint64_t>(x) * srcW / layout.width)];
-                dstRow[x] = swapRedBlue ? SwapRedBlue(p) : p;
-            }
-        }
-    }
+    DrawPicture(srcWords, srcW, srcH, layout, reinterpret_cast<uint32_t*>(dst), dstStride / 4, swapRedBlue);
     return true;
 }
 
@@ -206,29 +233,7 @@ const uint8_t* Scaler::Scale(const uint8_t* src, uint32_t srcW, uint32_t srcH, u
     uint32_t* outWords = reinterpret_cast<uint32_t*>(_output.data());
     const size_t dstStride = dstW;
 
-    if (layout.scale >= 1)
-    {
-        const uint32_t k = layout.scale;
-        for (uint32_t sy = 0; sy < srcH; sy++)
-        {
-            uint32_t* firstRow = outWords + (static_cast<size_t>(layout.offsetY) + static_cast<size_t>(sy) * k) *
-                                                dstStride + layout.offsetX;
-            ExpandRow(srcWords + static_cast<size_t>(sy) * srcW, srcW, k, firstRow);
-            for (uint32_t r = 1; r < k; r++)
-                std::memcpy(firstRow + r * dstStride, firstRow, static_cast<size_t>(layout.width) * sizeof(uint32_t));
-        }
-    }
-    else
-    {
-        // Nearest downscale; x mapping computed once per picture row
-        for (uint32_t y = 0; y < layout.height; y++)
-        {
-            const uint32_t* srcRow = srcWords + static_cast<size_t>(static_cast<uint64_t>(y) * srcH / layout.height) * srcW;
-            uint32_t* dstRow = outWords + (static_cast<size_t>(layout.offsetY) + y) * dstStride + layout.offsetX;
-            for (uint32_t x = 0; x < layout.width; x++)
-                dstRow[x] = srcRow[static_cast<size_t>(static_cast<uint64_t>(x) * srcW / layout.width)];
-        }
-    }
+    DrawPicture(srcWords, srcW, srcH, layout, outWords, dstStride, false);
 
     return _output.data();
 }

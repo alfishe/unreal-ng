@@ -380,6 +380,49 @@ inspect_state {"aspects":["screen_ocr"]}
 #     ...
 ```
 
+#### A snapshot into the Spectrum mode (verified 2026-10-05)
+
+A `.sna` / `.z80` / `.szx` loads into the running Spectrum mode through the PLD's cell table: Spectrum bank *n* goes to the
+physical page that cell `#F0 + n` names (`#F8 +` for banks 8-15), `#7FFD` is written through the PLD (its clean rules apply),
+the border, AY and CPU follow, and the Spectrum screen shadow in video RAM is brought in step. The machine is **not**
+reset (a reset would leave the Spectrum mode). The cells are the mode's own: in BIOS 3.06's ZX mode they read
+`#F0-#F7 = 00 ED 02 EF F0 05 EE F1`, so bank 1 lands in page `#ED`, not in page 1.
+
+```text
+# at the BIOS prompt, or at the DSS prompt: no Spectrum mode, nothing to load into -> refused, nothing written
+load_software {"path":"scratch/action.sna"}
+#   refused '...action.sna': the Sprinter is not in the Spectrum (ZX) mode: it is at the DSS prompt or in the BIOS,
+#   where there is no Spectrum memory to load into. Start a ZX mode first (the BIOS menu: ESC at the boot prompt; or
+#   `spectrum p128.zx` from DSS), then load the snapshot          (HTTP 400, report.needs = "zx_mode")
+
+type_input {"action":"tap","key":"pc.esc"}                  # ESC at the BIOS prompt: the 128 menu
+load_software {"path":"scratch/action.sna"}                 # in a mode: Take
+#   Loaded snapshot action.sna (uploaded) ...  report.commit = "sprinter-zx"
+#     bank 0 - applied - physical page #00 (cell #F0)
+#     bank 1 - applied - physical page #ED (cell #F1)
+#     ... bank 7 - applied - physical page #F1 (cell #F7)
+#     7FFD - applied - #19 -> latch #19 (window 3 = bank 1)
+#     border - applied - 0
+#     CPU - applied - PC #63C7, SP #61A3
+```
+
+`load_software {"path":..., "inspect":true}` (WebAPI `POST /snapshot/inspect`) answers the same question before loading:
+`would_load`, `would_commit` and the reason. What the commit does in each case:
+
+| Case | Result |
+|:--|:--|
+| not in a Spectrum mode (DSS, the BIOS prompt, Flex Navigator) | refused, `needs: zx_mode`; no RAM byte changes |
+| a 128K snapshot, the mode has `#7FFD` paging off (a 48K mode: SP, P48 ...) | refused, `needs: mode:128k`, the reason names a mode that works |
+| banks 8-15 without the 512 KB paging or `#1FFD` paging | refused, `needs: mode:mem512` |
+| a bank whose cell holds the port table page `#40` or the launcher's marker page `#41` | refused, `needs: mode:page_table` |
+| a 48K snapshot in a 128K mode | loaded; `#7FFD` = `#30` (48K ROM, bank 0 on top, paging locked: the state a 128K is in running a 48K program) |
+| an SPG (TS-Conf program) | refused, `needs: model:TSL` |
+| `commit` = `legacy` | the old commit: banks into physical pages 0-7. Only for someone who knows why |
+
+Not restored (listed as *ignored* in the report): `#1FFD` of a +2A/+3 snapshot (the Sprinter's `#1FFD` is the Scorpion's),
+`#EFF7`, the TR-DOS paging flag of an SNA 128 (the Sprinter's TR-DOS follows its own M1 trap rule), the interrupt shadow
+after EI. Checked live: `action.sna` (a starfield demo) runs on the Sprinter's BIOS ZX mode as on a Pentagon 128.
+
 ### 5. Inspect the machine
 
 ```text
