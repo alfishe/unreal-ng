@@ -54,8 +54,17 @@ first; tests that assert the current wrong value are named and change with the f
 
 ## Unclear (needs an RTL simulation or a hardware test)
 
-- 14 MHz data-read wait: unreal-ng +4..+7 fclk vs the `zmem.v` comment's +2..+5 ([interrupts.md](interrupts.md) row 33).
-- `stall357` (3.5 / 7 MHz DRAM stall) never applied; analysis says it cannot trigger in the four modes (row 35).
+- ~~14 MHz data-read wait (row 33).~~ **Settled by simulation** (`tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim`:
+  the real zclock / zsignals / zmem / arbiter with a bus-cycle Z80): unreal-ng's +4..+7 fclk is right - the Z80 takes
+  read data one half-clock after M1 data, from the cache data register; the `zmem.v` comment table is right for M1
+  and 2 fclk short for reads. All 118 instruction loops in every video mode match fclk for fclk.
+- ~~`stall357` (row 35).~~ **Settled:** it never fires at 3.5 / 7 MHz (384 simulated cases); no DRAM waits there,
+  as unreal-ng has it.
+- **New (from the simulation):** a refused video cycle in 256C / TXT, after the CPU took a block's spare cycles, is
+  charged by unreal-ng to the next DRAM access (4 fclk); the RTL stretches the machine cycle it falls in, and only
+  1-3 of its 4 fclk when it overlaps the start of the next read (a race on the Z80's MREQ / RD delay). Differences
+  of -6..+6 fclk in rare access patterns (3 writes then a read in TXT, an isolated write in 256C); no instruction
+  loop hits it. `results/cpu-waits.txt` has the cases.
 - 3 / 4-bit VDAC curves: no such board or firmware to compare ([video.md](video.md) row 46).
 - Whether the fetch window 4 dots wider than the picture costs DRAM slots ([video.md](video.md) row 47).
 - IDE DMA hangs on real VDAC firmware, works in unreal-ng with an IDE scheme ([dma.md](dma.md) row 32).
