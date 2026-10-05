@@ -180,10 +180,42 @@ FileClass MediaTargets::Classify(const std::string& path)
     }
     if (ComposeDescriptor::IsDescriptorName(path))
     {
-        // A composite medium: a FAT volume built from the layers it names
-        file.kinds = {FileKind::SdCard, FileKind::Hdd};
+        // A composite medium: what it builds follows its target - an ISO 9660 CD, a FAT disk, or either
         file.format = "compose";
         file.evidence.push_back("a composition descriptor (*.ucompose)");
+        const ComposeDescriptor d = ComposeDescriptor::Load(FileHelper::ToFsPath(path));
+        if (!d.Ok())
+        {
+            file.kinds = {FileKind::SdCard, FileKind::Hdd};
+            file.evidence.push_back("it does not parse: " + d.error);
+            return file;
+        }
+        const bool iso = d.target.kind == MediaKind::Optical || d.target.fs == ComposeTarget::Fs::Iso9660;
+        const bool fat = d.target.kind == MediaKind::Block || d.target.fs == ComposeTarget::Fs::Fat16 ||
+                         d.target.fs == ComposeTarget::Fs::Fat32;
+        const bool onlyIso = !d.layers.empty() && std::all_of(d.layers.begin(), d.layers.end(), [](const ComposeLayer& l) {
+            return l.source.kind == ComposeSource::Kind::Iso;
+        });
+        if (iso && !fat)
+        {
+            file.kinds = {FileKind::Optical};
+            file.evidence.push_back("its target is an ISO 9660 CD");
+        }
+        else if (fat)
+        {
+            file.kinds = {FileKind::SdCard, FileKind::Hdd};
+            file.evidence.push_back("its target is a FAT disk");
+        }
+        else if (onlyIso)
+        {
+            file.kinds = {FileKind::Optical, FileKind::SdCard, FileKind::Hdd};
+            file.evidence.push_back("no target kind, every layer an ISO: a CD first");
+        }
+        else
+        {
+            file.kinds = {FileKind::SdCard, FileKind::Hdd, FileKind::Optical};
+            file.evidence.push_back("no target kind: a FAT disk, or an ISO 9660 CD in a CD drive");
+        }
         return file;
     }
 

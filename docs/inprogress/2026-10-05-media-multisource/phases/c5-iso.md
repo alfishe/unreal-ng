@@ -165,8 +165,8 @@ Benchmark: `IsoSynthSeqRead` (a file read block by block through the `CdImage`) 
   - Each runs in under 50 ms, the 4.4 GiB sparse multi-extent file included.
   - `IsoImageSource` is covered through `ComposeIso_Test`, so it has no separate test file.
 - **ACC-C5:** `ZXEvoErs_Test.ErsBootsAutorunFromComposedIso`. The ZX-Evo ERS's CD boot reads the composite CD (two
-  folders, `AUTORUN.ZX` in one) on `ide0.slave` and runs `AUTORUN.ZX` (191 ms, boot-bound). The goals' wording asks
-  for NedoOS to list the CD; that needs NedoOS's ISO driver in the fixtures and is not covered.
+  folders, `AUTORUN.ZX` in one) on `ide0.slave` and runs `AUTORUN.ZX` (191 ms, boot-bound). The goals' wording also
+  asks for NedoOS to list the CD: that needs NedoOS's ISO driver in the fixtures, and is a P2 item in TODO.md.
 - **Benchmarks** (`core/benchmarks/emulator/io/isosynth_benchmark.cpp`: 200 files of 4 KiB and a 1 MiB file, medians
   of 5):
 
@@ -177,8 +177,11 @@ Benchmark: `IsoSynthSeqRead` (a file read block by block through the `CdImage`) 
   | `IsoSynthSeqReadBlock` (2048-byte blocks, the drive's unit) | 2668 ns |
   | `IsoSynthBuild` (scan + union + layout of both trees) | 897 µs |
 
-- **Not yet:** `media targets` does not offer a descriptor to a CD slot (it does not read the descriptor's target
-  kind); inserting into the CD slot by name works.
+- **`media targets`** reads a descriptor's target:
+  - an ISO target goes to the CD drives only, a FAT one to the SD and IDE disks;
+  - a descriptor without a target kind is offered to all of them, the disks first, or the CD drive first when
+    every layer is an ISO;
+  - test: `MediaTargets_Test.DescriptorFollowsItsTarget`.
 
 ## 10. As built (C5b)
 
