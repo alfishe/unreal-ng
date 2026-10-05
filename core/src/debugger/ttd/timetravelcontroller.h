@@ -698,9 +698,22 @@ public:
     /// Constant for a session whatever turbo is engaged.
     uint32_t FrameSpan() const;
 
-    /// @brief A position as one absolute count of TTD time units since frame 0
-    /// (the write journal's globalT; find-last's beforeGlobalT)
-    uint64_t GlobalT(const TTDTimePoint& at) const { return at.frame * FrameSpan() + at.tInFrame; }
+    /// @brief A position as one absolute count of TTD time units: machine time
+    /// on the engine's frame table (Phase 5, C3), so a frame of another length
+    /// (Sprinter 320 / 312 lines) keeps the order. The write journal's globalT,
+    /// find-last's beforeGlobalT, the journal segments and the engine's events
+    /// share it. Without a session: frame x FrameSpan() + tInFrame
+    uint64_t GlobalT(const TTDTimePoint& at) const;
+    /// @brief The position of machine time @p globalT (the inverse of GlobalT)
+    TTDTimePoint TimePointAt(uint64_t globalT) const;
+    /// @brief The first barrier in (@p from, @p to] on the engine's event log,
+    /// as a v1 marker (C3): what a replay cannot reproduce. Tape control and
+    /// debugger edits with their bytes are input the replay applies, not barriers
+    std::optional<TTDExternalEvent> FirstBarrierBetween(const TTDTimePoint& from, const TTDTimePoint& to) const;
+    /// @brief The engine gets what v1's journals hold since the last boundary
+    /// (bus records, input, markers, facts): at a stop, and before a replay
+    /// while recording
+    void FlushToEngine();
 
     /// @brief Upper bound of the recorded timeline.
     ///
@@ -1710,6 +1723,7 @@ private:
     bool _shadowArmed = false;
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
+    TTDExternalEvent _barrierScratch;   ///< EnumerateM1InRange's barrier, as a v1 marker
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
     std::vector<TTDPendingFact> _shadowFacts;   ///< the live machine's facts since the last boundary
     /// A fact at the current instant (normalized past the frame's end)

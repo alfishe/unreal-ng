@@ -175,6 +175,10 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
       - [ ] A file written while recording ends at a resume from the past (the old future stays in it); with branches (Step 2) it continues as one
       - [ ] Time base: the controller still keys write-journal records and query bounds by v1 GlobalT (frame x current span); move to the engine's frame table with C3
     - [ ] C3 queries (find-last, reverse step / continue, coverage, port events, journal build)
+      - [x] C3a (2026-10-05) time base: `GlobalT` / `TimePointAt` are machine time on the engine's frame table (frames after it continue with the current span); every `frame x span` in the queries goes through them; equal to v1 for fixed-length frames. Test: Sprinter 320 / 312 lines, every frame start where the engine put it, round trip (mutant: frame x span fails)
+      - [x] C3b (2026-10-05) barriers in find-last, the M1 walk and frame writes from the engine's event log (`FirstBarrierBetween`, as a v1 marker); the seek's v1 branch is gone; `FlushToEngine` at a stop and before a replay while recording. Tape control and debugger edits with their bytes are input there, not barriers (v1 stopped at them). Tests: `QueriesStopAtTheSameBarrierAsV1`, `TapeControlIsNoBarrierForTheController` (mutant caught)
+      - [ ] C3c write queries and journal build on the engine's write index
+      - [ ] Side note: on SPRINTER neither v1 nor the controller journals memory writes (0 records in 14 frames); check whether its CPU library writes bypass the debug write path
     - [ ] C4 files, clip export, bookmarks / markers, status
     - [ ] C5 `TTDControl` on the controller, surface contract on both backends
 - [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events

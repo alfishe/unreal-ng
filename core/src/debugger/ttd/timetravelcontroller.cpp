@@ -89,14 +89,6 @@ namespace
 
 namespace ttd {
 
-namespace
-{
-/// Session time point of an absolute t-state (frame length frameT)
-TTDTimePoint TimePointOf(uint64_t globalT, uint32_t frameT)
-{
-    return TTDTimePoint{globalT / frameT, static_cast<uint32_t>(globalT % frameT)};
-}
-}  // namespace
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -417,23 +409,9 @@ void TimeTravelController::StopRecording()
     _portReads.Stop();
     _portWrites.Stop();
     SyncPortJournalHook();
-    // The shadow engine gets the last frame's journals too (a replay from the
-    // last checkpoint reads them); it otherwise gets them at the next boundary
-    if (_shadowEngine && _shadowEngine->IsSessionOpen())
-    {
-        if (_portJournalRecorded)
-        {
-            TTDPortRecord r;
-            for (; _shadowBusReads < _portReads.Size() && _portReads.Get(_shadowBusReads, r); ++_shadowBusReads)
-                _shadowEngine->AppendBusRead(r);
-            for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
-                _shadowEngine->AppendBusWrite(r);
-        }
-        FeedV1Events(*_shadowEngine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr,
-                     &_toolEditPayloads, &_shadowFacts);
-        _shadowFacts.clear();
-        _shadowEvents.facts = 0;
-    }
+    // The engine gets the last frame's journals too (a replay from the last
+    // checkpoint reads them); it otherwise gets them at the next boundary
+    FlushToEngine();
     SyncMediaReadJournal();   // no more recording into the engine
     FinishShadowFiles();
     MLOGINFO("TimeTravelController::StopRecording — timeline retained with %zu checkpoints",
@@ -879,7 +857,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
     info.writeJournalSegments = JournalSegments();
     for (const TTDJournalSegment& s : info.writeJournalSegments)
-        info.writeJournalSpans.emplace_back(TimePointOf(s.from, FrameSpan()), TimePointOf(s.to, FrameSpan()));
+        info.writeJournalSpans.emplace_back(TimePointAt(s.from), TimePointAt(s.to));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
 
     PublishSessionInfo(info);
@@ -1570,10 +1548,51 @@ void TimeTravelController::ResyncScreenState()
 // Silent replay mode (Phase 2 Item 2; parent TDD §8.2 + Appendix C)
 // ---------------------------------------------------------------------------
 
+void TimeTravelController::FlushToEngine()
+{
+    if (!_engine->IsSessionOpen())
+        return;
+    if (_portJournalRecorded)
+    {
+        TTDPortRecord r;
+        for (; _shadowBusReads < _portReads.Size() && _portReads.Get(_shadowBusReads, r); ++_shadowBusReads)
+            _engine->AppendBusRead(r);
+        for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
+            _engine->AppendBusWrite(r);
+    }
+    FeedV1Events(*_engine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr, &_toolEditPayloads,
+                 &_shadowFacts);
+    _shadowFacts.clear();
+    _shadowEvents.facts = 0;
+}
+
+std::optional<TTDExternalEvent> TimeTravelController::FirstBarrierBetween(const TTDTimePoint& from,
+                                                                          const TTDTimePoint& to) const
+{
+    const TTDEvent* ev = _engine->Events().FirstBarrierIn(GlobalT(from), GlobalT(to));
+    if (!ev)
+        return std::nullopt;
+    // As a v1 marker: kind 0x0100 + TTDExternalEventKind, the reason as payload
+    TTDExternalEvent out;
+    out.time = TimePointAt(ev->machineTime);
+    const uint16_t kind = static_cast<uint16_t>(ev->kind);
+    out.kind = kind >= 0x0100 && kind < 0x0200 ? static_cast<TTDExternalEventKind>(kind - 0x0100)
+                                               : TTDExternalEventKind::Other;
+    if (ev->payload)
+    {
+        const std::vector<uint8_t>& reason = _engine->Payloads().Bytes(ev->payload);
+        std::memcpy(out.reason, reason.data(), std::min(reason.size(), sizeof(out.reason) - 1));
+    }
+    return out;
+}
+
 void TimeTravelController::EnterReplayMode()
 {
     if (_inReplayMode)
         return;  // Idempotent + nest-safe: no second hold
+    // A replay while recording (a resume from the past) reads the current frame's input from the engine
+    if (_state == TTDSessionState::Recording)
+        FlushToEngine();
 
     if (!_context)
     {
@@ -2376,6 +2395,51 @@ uint32_t TimeTravelController::FrameSpan() const
     return _context->config.frame * (units ? units : 1);
 }
 
+uint64_t TimeTravelController::GlobalT(const TTDTimePoint& at) const
+{
+    // The engine's frame table (Phase 5, C3): a frame starts where the one
+    // before it ended, whatever its length. Frames after the table continue
+    // with the current span, frames before it count back from its first
+    const TTDFrameTable& frames = _engine->Frames();
+    TTDMachineTime start = 0;
+    if (!_engine->IsSessionOpen() || frames.Empty())
+        return at.frame * FrameSpan() + at.tInFrame;
+    if (frames.Start(at.frame, start))
+        return start + at.tInFrame;
+    const uint64_t span = FrameSpan();
+    if (at.frame > frames.LastFrame())
+    {
+        frames.Start(frames.LastFrame(), start);
+        return start + (at.frame - frames.LastFrame()) * span + at.tInFrame;
+    }
+    frames.Start(frames.FirstFrame(), start);
+    const uint64_t back = (frames.FirstFrame() - at.frame) * span;
+    return (start > back ? start - back : 0) + at.tInFrame;
+}
+
+TTDTimePoint TimeTravelController::TimePointAt(uint64_t globalT) const
+{
+    const uint64_t span = FrameSpan();
+    const TTDFrameTable& frames = _engine->Frames();
+    TTDMachineTime first = 0;
+    if (!_engine->IsSessionOpen() || frames.Empty() || !frames.Start(frames.FirstFrame(), first))
+        return TTDTimePoint{globalT / span, static_cast<uint32_t>(globalT % span)};
+    if (globalT < first)
+    {
+        // Before the held history: frames of the current span counted back from it
+        const uint64_t back = (first - globalT + span - 1) / span;
+        if (back > frames.FirstFrame() || back * span > first)
+            return TTDTimePoint{globalT / span, static_cast<uint32_t>(globalT % span)};
+        return TTDTimePoint{frames.FirstFrame() - back, static_cast<uint32_t>(globalT - (first - back * span))};
+    }
+    TTDPosition p;
+    _engine->PositionOf(globalT, p);
+    // Past the last recorded frame's span: the frames after it
+    if (p.frame == frames.LastFrame() && p.tInFrame >= span)
+        return TTDTimePoint{p.frame + p.tInFrame / span, static_cast<uint32_t>(p.tInFrame % span)};
+    return TTDTimePoint{p.frame, static_cast<uint32_t>(p.tInFrame)};
+}
+
 void TimeTravelController::RunToTInFrame(uint32_t targetTInFrame)
 {
     if (!_context || !_context->pEmulator)
@@ -2700,7 +2764,7 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
     // before that frame boundary.
     // ------------------------------------------------------------------
     // The engine's data: a sealed replay has no barrier but a v1 record without its data
-    if (_replayEngine && target.tInFrame > restoredTInFrame)
+    if (target.tInFrame > restoredTInFrame)
     {
         // A replay: every setting and medium counts (Phase 3, Step 4); after
         // the replay, which restores the checkpoint again
@@ -2728,36 +2792,6 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
         }
         ReplayWithinFrame(cp.time.frame, target.tInFrame);
         checkForReplay();
-    }
-    else if (target.tInFrame > restoredTInFrame)
-    {
-        if (const TTDExternalEvent* barrier = _externalEvents.FirstMarkerInInterval(cp.time, target))
-        {
-            MLOGINFO("TimeTravelController::SeekTo — marker barrier at (frame=%llu,tInFrame=%u) "
-                     "kind=%s reason='%.63s'; stopping replay at marker",
-                     static_cast<unsigned long long>(barrier->time.frame),
-                     static_cast<unsigned>(barrier->time.tInFrame),
-                     TTDExternalEventKindToString(barrier->kind),
-                     barrier->reason);
-
-            // Replay only as far as the marker — its effect is reproducible
-            // up to but not including the marker itself.
-            if (barrier->time.tInFrame > 0)
-                ReplayWithinFrame(cp.time.frame, barrier->time.tInFrame);
-
-            SetState(TTDSessionState::Detached);
-
-            if (outResult)
-            {
-                outResult->reached        = false;
-                outResult->arrivedAt      = barrier->time;
-                outResult->haltReason     = TTDSeekHaltReason::ExternalEvent;
-                outResult->blockingMarker = *barrier;
-            }
-            return false;
-        }
-
-        ReplayWithinFrame(cp.time.frame, target.tInFrame);
     }
 
     // ------------------------------------------------------------------
@@ -5680,7 +5714,7 @@ bool TimeTravelController::RegenerateFrameWrites(uint64_t frame, std::vector<TTD
         return false;
     const auto it = _timeline.begin() + static_cast<std::ptrdiff_t>(index);
     const uint32_t frameT = FrameSpan();
-    if (_externalEvents.FirstMarkerInInterval(it->time, TTDTimePoint{frame, frameT}))
+    if (FirstBarrierBetween(it->time, TTDTimePoint{frame, frameT}))
         return false;
 
     RestoreCheckpointForReplay(*it);
@@ -5920,7 +5954,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     if (beforeGlobalT == UINT64_MAX)
     {
         const TTDTimePoint now = CurrentPosition();
-        beforeGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+        beforeGlobalT = GlobalT(now);
     }
 
     // TD-8: every answer below also says which part of history it covered -
@@ -5943,7 +5977,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     // ------------------------------------------------------------------
     if (q.access == TTDAccessType::Io && _portJournalRecorded)
     {
-        const TTDTimePoint before = TimePointOf(beforeGlobalT, frameT);
+        const TTDTimePoint before = TimePointAt(beforeGlobalT);
         TTDPortJournal::ReadCache cache;
         TTDPortRecord rec;
         for (uint64_t k = _portWrites.LowerBound({before.frame, before.tInFrame + 1}, cache); k > 0; --k)
@@ -5981,8 +6015,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
 
     // Convert beforeGlobalT to a TTDTimePoint for checkpoint lookup.
     TTDTimePoint targetTime;
-    targetTime.frame    = beforeGlobalT / frameT;
-    targetTime.tInFrame = static_cast<uint32_t>(beforeGlobalT % frameT);
+    targetTime = TimePointAt(beforeGlobalT);
 
     // Clamp target frame to session bounds.
     const uint64_t sessionEndFrame = _timeline.back().time.frame;
@@ -6045,13 +6078,13 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                     --first;
                 if (auto rec = _writeJournal->FindLastInRange(startT(first), upTo, journalPred))
                 {
-                    answer.time = TimePointOf(rec->globalT, frameT);
+                    answer.time = TimePointAt(rec->globalT);
                     answer.pc = rec->m1pc;
                     answer.value = rec->value;
                     answer.physPage = PhysPage{rec->physPage};
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
-                    reportWindow(answer.time, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
+                    reportWindow(answer.time, std::min(TimePointAt(beforeGlobalT), SessionEndPosition()));
                     return answer;   // from the journal: the machine stays where it is
                 }
                 i = first;   // the loop steps to the frame before the run
@@ -6076,7 +6109,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         intervalEnd.frame    = cp.time.frame;
         intervalEnd.tInFrame = replayEndT;
 
-        if (const TTDExternalEvent* barrier = _externalEvents.FirstMarkerInInterval(cp.time, intervalEnd))
+        if (const std::optional<TTDExternalEvent> barrier = FirstBarrierBetween(cp.time, intervalEnd))
         {
             MLOGINFO("TimeTravelController::FindLastAccess — marker barrier at "
                      "(frame=%llu, tInFrame=%u) blocks interval %zu",
@@ -6181,8 +6214,7 @@ bool TimeTravelController::StepBackInstruction()
     // Find the most recent Execute (M1) access strictly before the current
     // position. That is the previous instruction boundary.
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
-    const uint64_t nowGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+    const uint64_t nowGlobalT = GlobalT(now);
 
     // Refuse at position (0, 0) — no prior instruction exists.
     if (now.frame == 0 && now.tInFrame == 0)
@@ -6297,8 +6329,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
 
     const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t sessionEndGlobalT =
-        static_cast<uint64_t>(_timeline.back().time.frame) * frameT
-        + _timeline.back().time.tInFrame;
+        GlobalT(_timeline.back().time);
     if (endGlobalT > sessionEndGlobalT)
         endGlobalT = sessionEndGlobalT;
     if (startGlobalT >= endGlobalT)
@@ -6306,12 +6337,10 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
 
     // Decompose endpoints into (frame, tInFrame).
     TTDTimePoint startTime;
-    startTime.frame    = startGlobalT / frameT;
-    startTime.tInFrame = static_cast<uint32_t>(startGlobalT % frameT);
+    startTime = TimePointAt(startGlobalT);
 
     TTDTimePoint endTime;
-    endTime.frame    = endGlobalT / frameT;
-    endTime.tInFrame = static_cast<uint32_t>(endGlobalT % frameT);
+    endTime = TimePointAt(endGlobalT);
 
     // Find the checkpoint at-or-before endTime. This is the latest interval
     // we'll scan. (Same upper_bound pattern as SeekToInternal.)
@@ -6344,9 +6373,10 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
         TTDTimePoint intervalEnd;
         intervalEnd.frame    = cp.time.frame;
         intervalEnd.tInFrame = replayEndT;
-        if (const TTDExternalEvent* barrier =
-                _externalEvents.FirstMarkerInInterval(cp.time, intervalEnd))
+        if (const std::optional<TTDExternalEvent> found = FirstBarrierBetween(cp.time, intervalEnd))
         {
+            _barrierScratch = *found;
+            const TTDExternalEvent* barrier = &_barrierScratch;
             MLOGINFO("TimeTravelController::EnumerateM1InRange — marker barrier at "
                      "(frame=%llu, tInFrame=%u) blocks interval %zu",
                      static_cast<unsigned long long>(barrier->time.frame),
@@ -6361,7 +6391,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
         // Record the earliest globalT actually scanned (for the caller's
         // "we covered this much" logic).
         const uint64_t intervalStartGlobalT =
-            static_cast<uint64_t>(cp.time.frame) * frameT;
+            GlobalT(TTDTimePoint{cp.time.frame, 0});
         result.earliestScannedGlobalT =
             (i == 0) ? intervalStartGlobalT : result.earliestScannedGlobalT;
         if (i == endCpIdx)
@@ -6393,8 +6423,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
         for (const TTDSearchResult& h : hits)
         {
             TTDM1Record m1;
-            m1.globalT  = static_cast<uint64_t>(h.time.frame) * frameT
-                          + h.time.tInFrame;
+            m1.globalT  = GlobalT(h.time);
             m1.pc       = h.pc;
             m1.physPage = h.physPage;
             intervalM1s.push_back(m1);
@@ -6479,7 +6508,7 @@ bool TimeTravelController::ReverseStepInstructions(uint32_t n)
     const TTDTimePoint now = CurrentPosition();
     const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
-        static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+        GlobalT(now);
 
     if (now.frame == 0 && now.tInFrame == 0)
     {
@@ -6526,8 +6555,7 @@ bool TimeTravelController::ReverseStepInstructions(uint32_t n)
     const TTDM1Record& target = m1s[targetIdx];
 
     TTDTimePoint targetTime;
-    targetTime.frame    = target.globalT / frameT;
-    targetTime.tInFrame = static_cast<uint32_t>(target.globalT % frameT);
+    targetTime = TimePointAt(target.globalT);
 
     if (!SeekTo(targetTime))
     {
@@ -6567,7 +6595,7 @@ bool TimeTravelController::ReverseStepTStates(uint64_t n)
     const TTDTimePoint now = CurrentPosition();
     const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
-        static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+        GlobalT(now);
 
     if (n >= nowGlobalT)
     {
@@ -6602,8 +6630,7 @@ bool TimeTravelController::ReverseStepTStates(uint64_t n)
 
     const TTDM1Record& target = *it;
     TTDTimePoint targetTime;
-    targetTime.frame    = target.globalT / frameT;
-    targetTime.tInFrame = static_cast<uint32_t>(target.globalT % frameT);
+    targetTime = TimePointAt(target.globalT);
 
     if (!SeekTo(targetTime))
     {
@@ -6648,9 +6675,8 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     }
 
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
-        static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+        GlobalT(now);
 
     // TD-8: the scan walks back from `now` and ends at the match, at a barrier
     // it cannot replay across, or at the session start.
@@ -6722,9 +6748,9 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
             }
 
             // Enumerate only this frame, clipped to the current position.
-            const uint64_t frameStart = frame * frameT;
+            const uint64_t frameStart = GlobalT(TTDTimePoint{frame, 0});
             const uint64_t frameEnd =
-                std::min<uint64_t>(nowGlobalT, frameStart + frameT);
+                std::min<uint64_t>(nowGlobalT, GlobalT(TTDTimePoint{frame + 1, 0}));
             if (frameStart >= frameEnd)
             {
                 if (frame == 0) break;
@@ -6745,8 +6771,7 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
             {
                 result.matched = true;
                 result.pc      = hit->pc;
-                result.arrivedAt.frame    = hit->globalT / frameT;
-                result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                result.arrivedAt = TimePointAt(hit->globalT);
                 reportWindow(result.arrivedAt);
                 if (frameBarrier.reason[0] != '\0')
                     result.blockingMarker = frameBarrier;
@@ -6789,7 +6814,7 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
         // timeline starts at coverFirst - 1 or earlier. Frames below coverFirst
         // are UNKNOWN, not empty, and skipping them silently loses hits that
         // happened during the session's opening frames.
-        const uint64_t prefixEnd = std::min<uint64_t>(nowGlobalT, coverFirst * frameT);
+        const uint64_t prefixEnd = std::min<uint64_t>(nowGlobalT, GlobalT(TTDTimePoint{coverFirst, 0}));
         if (prefixEnd > 0)
         {
             std::vector<TTDM1Record> prefixM1s;
@@ -6806,8 +6831,7 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
             {
                 result.matched = true;
                 result.pc      = hit->pc;
-                result.arrivedAt.frame    = hit->globalT / frameT;
-                result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                result.arrivedAt = TimePointAt(hit->globalT);
                 reportWindow(result.arrivedAt);
                 if (prefixBarrier.reason[0] != '\0')
                     result.blockingMarker = prefixBarrier;
@@ -6866,8 +6890,7 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
 
     result.matched    = true;
     result.pc         = it->pc;
-    result.arrivedAt.frame    = it->globalT / frameT;
-    result.arrivedAt.tInFrame = static_cast<uint32_t>(it->globalT % frameT);
+    result.arrivedAt = TimePointAt(it->globalT);
     reportWindow(result.arrivedAt);
 
     if (!SeekTo(result.arrivedAt))

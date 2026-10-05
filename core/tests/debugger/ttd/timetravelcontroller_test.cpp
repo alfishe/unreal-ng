@@ -29,6 +29,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 
 namespace
 {
@@ -331,4 +332,118 @@ TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
         ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span / 2}));
     ttd::TTDSeekResult r;
     EXPECT_FALSE(_controller->SeekTo({last - 30, 0}, &r)) << "dropped history is not reachable";
+}
+
+/// The controller's time is the engine's frame table (C3): on a Sprinter that
+/// switches to 312-line frames and back, every frame start is where the engine
+/// put it and positions convert there and back
+TEST(TimeTravelController_TimeBase_Test, MachineTimeFollowsTheFrameTable)
+{
+    SoundCardScope soundCards;
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    auto* sprinter = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    ASSERT_NE(sprinter, nullptr);
+    auto controller = std::make_unique<ttd::TimeTravelController>(context);
+    context->pTimeTravelHooks = controller.get();
+    context->ttdWriteSink = controller.get();
+
+    ASSERT_TRUE(controller->StartRecording());
+    emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    sprinter->GetPldState().frameLines = 1;   // 312 lines from the next frame start
+    emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    sprinter->GetPldState().frameLines = 0;
+    emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    controller->StopRecording();
+
+    const ttd::TTDFrameTable& frames = controller->GetEngine().Frames();
+    ASSERT_GE(frames.Count(), 13u);
+    uint64_t previous = 0;
+    bool shorter = false;
+    for (uint64_t f = frames.FirstFrame(); f <= frames.LastFrame(); ++f)
+    {
+        ttd::TTDMachineTime start = 0;
+        ASSERT_TRUE(frames.Start(f, start));
+        EXPECT_EQ(controller->GlobalT({f, 0}), start) << "frame " << f;
+        if (f > frames.FirstFrame())
+            shorter |= start - previous != controller->FrameSpan();
+        previous = start;
+        for (uint32_t t : {0u, 1000u, 50000u})
+            EXPECT_EQ(controller->TimePointAt(controller->GlobalT({f, t})), (ttd::TTDTimePoint{f, t})) << "frame " << f;
+    }
+    EXPECT_TRUE(shorter) << "some frames are not FrameSpan() long: frame x span would misplace them";
+
+    context->pTimeTravelHooks = context->pTimeTravelManager;
+    context->ttdWriteSink = context->pTimeTravelManager;
+    controller.reset();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+/// Record 14 frames on both machines with a marker of @p kind in the middle of frame 8
+void RecordWithMarker(Emulator* a, Emulator* b, ttd::TimeTravelManager* v1, ttd::TimeTravelController* controller,
+                      ttd::TTDExternalEventKind kind)
+{
+    ASSERT_TRUE(v1->StartRecording());
+    ASSERT_TRUE(controller->StartRecording());
+    for (int f = 0; f < 14; ++f)
+    {
+        if (f == 8)
+        {
+            a->RunTStates(30000, /*skipBreakpoints=*/true);
+            b->RunTStates(30000, /*skipBreakpoints=*/true);
+            v1->RecordExternalEvent(kind, "outside");
+            controller->RecordExternalEvent(kind, "outside");
+        }
+        a->RunNFrames(1, /*skipBreakpoints=*/true);
+        b->RunNFrames(1, /*skipBreakpoints=*/true);
+    }
+    v1->StopRecording();
+    controller->StopRecording();
+}
+
+/// A search for code that never ran: it walks back until something stops it
+ttd::TTDSearchQuery NeverExecuted()
+{
+    ttd::TTDSearchQuery q;
+    q.access = ttd::TTDAccessType::Execute;
+    q.addrFrom = q.addrTo = 0x9999;
+    return q;
+}
+}  // namespace
+
+/// Barriers in queries come from the engine's event log (C3): a marker the
+/// replay cannot reproduce stops a backward search where v1's marker does,
+/// named the same way
+TEST_F(TimeTravelController_Test, QueriesStopAtTheSameBarrierAsV1)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordWithMarker(_a, _b, _v1, _controller.get(), ttd::TTDExternalEventKind::Other));
+    ttd::TTDExternalEvent markerA, markerB;
+    ttd::TTDSearchWindow windowA, windowB;
+    EXPECT_FALSE(_v1->FindLastAccess(NeverExecuted(), &markerA, &windowA).has_value());
+    EXPECT_FALSE(_controller->FindLastAccess(NeverExecuted(), &markerB, &windowB).has_value());
+    EXPECT_EQ(markerA.time, markerB.time);
+    EXPECT_EQ(markerA.kind, markerB.kind);
+    EXPECT_STREQ(markerA.reason, markerB.reason);
+    EXPECT_EQ(windowA.from, windowB.from);
+    EXPECT_EQ(windowA.to, windowB.to);
+    EXPECT_GT(windowB.from.frame, _controller->GetCheckpoint(0)->time.frame) << "stopped at the marker";
+}
+
+/// Tape control is input the engine's replay applies, not a barrier: the
+/// controller searches across it to the session start, where v1 stops
+TEST_F(TimeTravelController_Test, TapeControlIsNoBarrierForTheController)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordWithMarker(_a, _b, _v1, _controller.get(), ttd::TTDExternalEventKind::TapeControl));
+    ttd::TTDExternalEvent markerA;
+    ttd::TTDSearchWindow windowA, windowB;
+    EXPECT_FALSE(_v1->FindLastAccess(NeverExecuted(), &markerA, &windowA).has_value());
+    EXPECT_FALSE(_controller->FindLastAccess(NeverExecuted(), nullptr, &windowB).has_value());
+    EXPECT_GT(windowA.from.frame, _v1->GetCheckpoint(0)->time.frame) << "v1 stops at the tape marker";
+    EXPECT_EQ(windowB.from, _controller->GetCheckpoint(0)->time) << "the controller reaches the session start";
 }
