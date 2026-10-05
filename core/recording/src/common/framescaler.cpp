@@ -269,6 +269,142 @@ void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h,
     }
 }
 
+namespace
+{
+/// The NV12 picture at a factor that is not whole (352x288 in 3840x2160 is 7.5x): the same nearest mapping as
+/// DrawPicture - output pixel (x, y) of the picture is source pixel (x * srcW / width, y * srcH / height) - with the
+/// color conversion done once per distinct source row, and the 2x2 chroma blocks averaged under the output pixels
+/// exactly as the full-frame conversion does (byte-identical to scaling to RGBA and converting the whole frame)
+bool ScaleIntoNv12Fit(const uint8_t* src, uint32_t srcW, uint32_t srcH, const Layout& layout, uint8_t* yDst,
+                      size_t yStride, uint8_t* uvDst, size_t uvStride, uint32_t dstW, uint32_t dstH)
+{
+    const uint32_t picX0 = layout.offsetX;
+    const uint32_t picX1 = layout.offsetX + layout.width;
+    const uint32_t picY0 = layout.offsetY;
+    const uint32_t picY1 = layout.offsetY + layout.height;
+
+    // Source column under each output column of the picture; source row under each output row (-1 = a bar)
+    thread_local std::vector<uint32_t> columnMap;
+    columnMap.resize(layout.width);
+    for (uint32_t x = 0; x < layout.width; x++)
+        columnMap[x] = static_cast<uint32_t>(static_cast<uint64_t>(x) * srcW / layout.width);
+    auto rowIndex = [&](uint32_t y) -> int {
+        return (y < picY0 || y >= picY1)
+                   ? -1
+                   : static_cast<int>(static_cast<uint64_t>(y - picY0) * srcH / layout.height);
+    };
+    auto colIndex = [&](uint32_t x) -> int { return (x < picX0 || x >= picX1) ? -1 : static_cast<int>(columnMap[x - picX0]); };
+
+    // ---- Y plane: a source row converted once, gathered once, repeated for the output rows that map to it ----
+    thread_local std::vector<uint8_t> lumaRow;
+    lumaRow.resize(srcW);
+    int previousRow = -2;
+    for (uint32_t y = 0; y < dstH; y++)
+    {
+        uint8_t* out = yDst + static_cast<size_t>(y) * yStride;
+        const int sy = rowIndex(y);
+        if (sy < 0)
+        {
+            std::memset(out, 16, dstW);
+            previousRow = -2;
+            continue;
+        }
+        if (sy == previousRow)
+        {
+            std::memcpy(out, yDst + static_cast<size_t>(y - 1) * yStride, dstW);
+            continue;
+        }
+        previousRow = sy;
+        const uint8_t* row = src + static_cast<size_t>(sy) * srcW * 4;
+        for (uint32_t x = 0; x < srcW; x++)
+            lumaRow[x] = LumaOf(row[x * 4], row[x * 4 + 1], row[x * 4 + 2]);
+        std::memset(out, 16, picX0);
+        uint8_t* d = out + picX0;
+        for (uint32_t x = 0; x < layout.width; x++)
+            d[x] = lumaRow[columnMap[x]];
+        std::memset(out + picX1, 16, dstW - picX1);
+    }
+
+    // ---- UV plane ----
+    const uint32_t chromaW = dstW / 2;
+    thread_local std::vector<int> col0;
+    thread_local std::vector<int> col1;
+    col0.resize(chromaW);
+    col1.resize(chromaW);
+    for (uint32_t cx = 0; cx < chromaW; cx++)
+    {
+        col0[cx] = colIndex(2 * cx);
+        col1[cx] = colIndex(2 * cx + 1);
+    }
+    thread_local std::vector<uint8_t> chromaU;
+    thread_local std::vector<uint8_t> chromaV;
+    chromaU.resize(srcW);
+    chromaV.resize(srcW);
+
+    int prevRow0 = -2;
+    int prevRow1 = -2;
+    for (uint32_t cy = 0; cy < dstH / 2; cy++)
+    {
+        const int r0 = rowIndex(2 * cy);
+        const int r1 = rowIndex(2 * cy + 1);
+        uint8_t* out = uvDst + static_cast<size_t>(cy) * uvStride;
+        if (cy > 0 && r0 == prevRow0 && r1 == prevRow1)
+        {
+            std::memcpy(out, uvDst + static_cast<size_t>(cy - 1) * uvStride, dstW);
+            continue;
+        }
+        prevRow0 = r0;
+        prevRow1 = r1;
+
+        // Both output rows under one source row: the chroma of a pair of columns inside one source pixel is that
+        // pixel's chroma, converted once per source pixel
+        const bool pureRow = r0 == r1 && r0 >= 0;
+        if (pureRow)
+        {
+            const uint8_t* srcRow = src + static_cast<size_t>(r0) * srcW * 4;
+            for (uint32_t x = 0; x < srcW; x++)
+                ChromaOf(srcRow[x * 4], srcRow[x * 4 + 1], srcRow[x * 4 + 2], chromaU[x], chromaV[x]);
+        }
+
+        for (uint32_t cx = 0; cx < chromaW; cx++)
+        {
+            const int c0 = col0[cx];
+            const int c1 = col1[cx];
+            if (pureRow && c0 == c1 && c0 >= 0)
+            {
+                out[2 * cx] = chromaU[c0];
+                out[2 * cx + 1] = chromaV[c0];
+                continue;
+            }
+            if (r0 < 0 && r1 < 0)
+            {
+                out[2 * cx] = 128;  // a bar row: black
+                out[2 * cx + 1] = 128;
+                continue;
+            }
+
+            int rSum = 0;
+            int gSum = 0;
+            int bSum = 0;
+            auto add = [&](int sr, int sc) {
+                if (sr < 0 || sc < 0)
+                    return;  // a bar adds black (0, 0, 0)
+                const uint8_t* px = src + (static_cast<size_t>(sr) * srcW + static_cast<size_t>(sc)) * 4;
+                rSum += px[0];
+                gSum += px[1];
+                bSum += px[2];
+            };
+            add(r0, c0);
+            add(r0, c1);
+            add(r1, c0);
+            add(r1, c1);
+            ChromaOf(rSum / 4, gSum / 4, bSum / 4, out[2 * cx], out[2 * cx + 1]);
+        }
+    }
+    return true;
+}
+}  // namespace
+
 bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yDst, size_t yStride, uint8_t* uvDst,
                    size_t uvStride, uint32_t dstW, uint32_t dstH)
 {
@@ -278,15 +414,7 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
         return false;
 
     if (layout.scale == 0)
-    {
-        // No integer factor (a picture above the output): scale to packed, convert the whole frame
-        thread_local std::vector<uint8_t> packed;
-        packed.resize(static_cast<size_t>(dstW) * dstH * 4);
-        if (!ScaleInto(src, srcW, srcH, packed.data(), static_cast<size_t>(dstW) * 4, dstW, dstH, false))
-            return false;
-        PackedToNv12(packed.data(), static_cast<size_t>(dstW) * 4, dstW, dstH, yDst, yStride, uvDst, uvStride);
-        return true;
-    }
+        return ScaleIntoNv12Fit(src, srcW, srcH, layout, yDst, yStride, uvDst, uvStride, dstW, dstH);
 
     const uint32_t k = layout.scale;
     const uint32_t picX0 = layout.offsetX;
