@@ -445,6 +445,20 @@ public:
     rzx::RzxSession* LoadedRzxSession();
     /// `ext` (no dot, any case) is an RZX recording
     static bool IsRzxExtension(const std::string& ext);
+
+    /// Which time-travel implementation records and replays on instances
+    /// created from now on (Phase 5): the engine's controller (the default) or
+    /// v1's manager. Both objects exist on every instance; the selected one is
+    /// what the core (hooks, write sink) and the verbs (TTDControl) drive. The
+    /// core-tests binary selects V1 (v1's own tests, the reference); tests of
+    /// the engine select it per test
+    enum class TimeTravelBackend : uint8_t
+    {
+        Engine,
+        V1
+    };
+    static void SetDefaultTimeTravelBackend(TimeTravelBackend backend);
+    static TimeTravelBackend DefaultTimeTravelBackend();
     bool SaveSnapshot(const std::string& path);
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start

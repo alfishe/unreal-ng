@@ -207,7 +207,7 @@ public:
     /// observer has asked since the last publication). So the numbers lag the
     /// running machine by at most one interval plus a frame; while the machine
     /// is paused they are exact.
-    TTDSessionInfo GetPublishedSessionInfo() const;
+    TTDSessionInfo GetPublishedSessionInfo() const override;
     static constexpr uint32_t kPublishIntervalMs = 100;
 
     /// @brief The session summary for automation status reads, from any thread.
@@ -220,7 +220,7 @@ public:
     /// which is exact for a parked recording (the machine's thread publishes
     /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
     /// a frame old while it runs. Never blocks, never pauses the machine.
-    TTDSessionInfo ReadSessionInfo() const;
+    TTDSessionInfo ReadSessionInfo() const override;
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact

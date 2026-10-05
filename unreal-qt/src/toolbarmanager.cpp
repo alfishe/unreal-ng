@@ -297,9 +297,9 @@ bool ToolBarManager::isTtdRecording() const
         return false;
     // Leased: an automation thread may remove the instance at any moment
     const Emulator::ContextLease lease = emu->LeaseContext();
-    if (!lease || !lease->pTimeTravelManager)
+    if (!lease || !lease->pTimeTravelHooks)
         return false;
-    return lease->pTimeTravelManager->IsRecording();  // atomic state, any thread
+    return lease->pTimeTravelHooks->IsRecording();  // atomic state, any thread
 }
 
 void ToolBarManager::setVideoRecordingActive(bool active)

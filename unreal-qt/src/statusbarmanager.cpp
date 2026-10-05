@@ -2,7 +2,7 @@
 #include "emulator/rzx/rzxlauncher.h"
 #include "debugger/debugmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "widgets/rzxpopover.h"
 #include "widgets/statusbarvideomode.h"
 
@@ -788,7 +788,7 @@ void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)
 /// history (Detached): where it is between the session's first and last frame
 void StatusBarManager::updateTtd(EmulatorContext* context)
 {
-    ttd::TimeTravelManager* ttd = context ? context->pTimeTravelManager : nullptr;
+    ttd::ITimeTravelHooks* ttd = context ? context->pTimeTravelHooks : nullptr;
     if (!ttd || ttd->GetState() != ttd::TTDSessionState::Detached)
     {
         _ttd->hide();
@@ -797,7 +797,7 @@ void StatusBarManager::updateTtd(EmulatorContext* context)
 
     // The published snapshot: this poll runs beside the machine's thread
     const ttd::TTDSessionInfo info = ttd->GetPublishedSessionInfo();
-    const uint64_t frame = ttd->CurrentPosition().frame;
+    const uint64_t frame = ttd::TTDSessionView(context).CurrentPosition().frame;
     const uint64_t span = info.currentEndFrame > info.sessionStartFrame ? info.currentEndFrame - info.sessionStartFrame : 0;
     const uint64_t done = frame > info.sessionStartFrame ? std::min(frame - info.sessionStartFrame, span) : 0;
     const double percent = span ? 100.0 * static_cast<double>(done) / static_cast<double>(span) : 100.0;

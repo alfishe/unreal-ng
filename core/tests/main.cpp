@@ -5,6 +5,7 @@
 #include <ctime>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "_helpers/soundcardscope.h"
 
@@ -57,6 +58,8 @@ static void PinTimeZone()
 int main(int argc, char **argv)
 {
   PinTimeZone();
+  // v1 records here: its own tests and the reference; engine tests select the engine per test
+  Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
   ::testing::InitGoogleTest(&argc, argv);
 
   // Sound devices (AY / TurboSound / TSFM, General Sound, MoonSound) are left

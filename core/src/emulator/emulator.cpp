@@ -20,6 +20,9 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include <atomic>
+
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/notifications.h"
@@ -285,19 +288,24 @@ bool Emulator::Init()
     // also exposes GetState() == Idle until StartRecording() is called.
     if (result)
     {
+        // Both implementations exist; the selected one is what the core and the
+        // verbs drive (Phase 5): the engine's controller by default
         ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
-        if (ttdManager != nullptr)
+        _context->pTimeTravelManager = ttdManager;
+        if (DefaultTimeTravelBackend() == TimeTravelBackend::Engine)
         {
-            _context->pTimeTravelManager = ttdManager;
-            _context->pTimeTravelHooks = ttdManager;
-            _context->ttdWriteSink = ttdManager;
-            MLOGDEBUG("Emulator::Init - TTD manager created");
+            ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
+            _context->pTimeTravelController = controller;
+            _context->pTimeTravelHooks = controller;
+            _context->ttdWriteSink = controller;
+            MLOGDEBUG("Emulator::Init - time travel: the engine's controller");
         }
         else
         {
-            MLOGWARNING("Emulator::Init - TTD manager creation failed (non-fatal)");
+            _context->pTimeTravelHooks = ttdManager;
+            _context->ttdWriteSink = ttdManager;
+            MLOGDEBUG("Emulator::Init - time travel: v1's manager");
         }
-        // TTD manager creation is non-fatal — emulator works without it.
     }
 
     /// region <Sanity checks>
@@ -495,12 +503,18 @@ void Emulator::ReleaseNoGuard()
 
     // Release TTD manager. The manager's destructor releases all page-store
     // refs held by the timeline before the page store itself goes away.
+    _context->pTimeTravelHooks = nullptr;
+    if (_context->pTimeTravelController)
+    {
+        delete _context->pTimeTravelController;   // clears the sinks it set
+        _context->pTimeTravelController = nullptr;
+    }
     if (_context->pTimeTravelManager)
     {
-        _context->pTimeTravelHooks = nullptr;
         delete _context->pTimeTravelManager;
         _context->pTimeTravelManager = nullptr;
     }
+    _context->ttdWriteSink = nullptr;
 
     // Stop and release main loop
     if (_mainloop != nullptr)
@@ -1912,6 +1926,21 @@ rzx::RzxSession* Emulator::LoadedRzxSession()
 {
     std::lock_guard<std::mutex> lock(_rzxSessionMutex);
     return _rzxSession && _rzxSession->Status().loaded ? _rzxSession.get() : nullptr;
+}
+
+namespace
+{
+std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{Emulator::TimeTravelBackend::Engine};
+}
+
+void Emulator::SetDefaultTimeTravelBackend(TimeTravelBackend backend)
+{
+    g_defaultTimeTravelBackend.store(backend);
+}
+
+Emulator::TimeTravelBackend Emulator::DefaultTimeTravelBackend()
+{
+    return g_defaultTimeTravelBackend.load();
 }
 
 bool Emulator::IsRzxExtension(const std::string& ext)

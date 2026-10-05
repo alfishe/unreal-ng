@@ -27,6 +27,7 @@
 
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttdcontrol.h>
+#include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdbookmarks.h>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdfileinfo.h>
@@ -189,7 +190,7 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
         return;
     }
 
-    if (!context->pTimeTravelManager)
+    if (!ttd::HasTimeTravelSession(context))
     {
         session.SendResponse(std::string("Error: TTD engine not available in this build") + NEWLINE);
         return;
@@ -377,7 +378,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
 
 void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext* context)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
     ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
 
     std::stringstream ss;
@@ -456,7 +458,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
 void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
     if (mgr->IsRecording())
     {
         session.SendResponse(std::string("TTD: Already recording (no-op)") + NEWLINE);
@@ -490,7 +493,8 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
 void CLIProcessor::HandleTTDJournal(const ClientSession& session, EmulatorContext* context,
                                      const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
     const std::string action = args.size() > 1 ? args[1] : "status";
     if (action == "on" || action == "off")
     {
@@ -575,7 +579,8 @@ bool ParseTTDByteCount(const std::string& text, uint64_t& out)
 void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorContext* context,
                                          const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
     ttd::TTDSessionInfo info = mgr->ReadSessionInfo();
     uint64_t frames = info.historyLimitFrames;
     uint64_t bytes = info.historyLimitBytes;
@@ -631,7 +636,8 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
 
 void CLIProcessor::HandleTTDStop(const ClientSession& session, EmulatorContext* context)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
     if (!mgr->IsRecording())
     {
         session.SendResponse(std::string("TTD: Not recording (no-op)") + NEWLINE);
@@ -736,7 +742,8 @@ void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* 
 void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
                                       const std::vector<std::string>& args)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
 
     const std::string action = args.size() > 1 ? args[1] : "list";
 
@@ -892,7 +899,8 @@ void CLIProcessor::HandleTTDResume(const ClientSession& session, EmulatorContext
 
 void CLIProcessor::HandleTTDPosition(const ClientSession& session, EmulatorContext* context)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
 
     ttd::TTDTimePoint pos = mgr->CurrentPosition();
     ttd::TTDTimePoint end = mgr->SessionEndPosition();
@@ -908,7 +916,8 @@ void CLIProcessor::HandleTTDPosition(const ClientSession& session, EmulatorConte
 
 void CLIProcessor::HandleTTDMarkers(const ClientSession& session, EmulatorContext* context)
 {
-    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    const ttd::TTDSessionView view(context);
+    const ttd::TTDSessionView* mgr = &view;
     const ttd::TTDExternalEventJournal& journal = mgr->GetExternalEvents();
 
     std::stringstream ss;

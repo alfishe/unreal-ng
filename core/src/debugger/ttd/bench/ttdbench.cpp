@@ -146,6 +146,8 @@ public:
                 c.input.mouse = set.mouse ? MOUSE_TYPE_KEMPSTON : MOUSE_TYPE_NONE;
         };
 
+        // The harness measures v1 with the engine in shadow: v1 must be the recorder
+        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
         EmulatorManager* manager = EmulatorManager::GetInstance();
         _emulator = config.ramKB ? manager->CreateEmulatorWithModelAndRAM("ttd-bench", config.model, config.ramKB,
                                                                           LoggerLevel::LogError, &error, configOverride)

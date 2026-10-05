@@ -1,5 +1,6 @@
 #pragma push_macro("slots")
 #undef slots
+#include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdfileinfo.h"
@@ -343,7 +344,7 @@ void TtdWidget::applyHistoryLimit()
     if (!_activeEmulator || !_historyCombo)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
         return;
     (void)ttd::TTDControl(context).Execute(
         {"history-limit", {{"frames", "0"}, {"bytes", std::to_string(_historyCombo->currentData().toULongLong())}}});
@@ -420,14 +421,14 @@ void TtdWidget::updateTelemetry()
     // Leased for this handler: an automation thread may remove the instance
     const Emulator::ContextLease lease = _activeEmulator->LeaseContext();
     EmulatorContext* context = lease.get();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
     {
         _statusLabel->setText(tr("TTD: Unavailable"));
         _scrubberContainer->setVisible(false);
         return;
     }
 
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TTDSessionRef ttd(context);
     // The published snapshot, never the live session: this 100 ms timer runs
     // while the machine's thread records (and automation may stop or
     // invalidate the session at the same time)
@@ -608,9 +609,9 @@ void TtdWidget::onRecordToggled()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // The panel's journal toggle sets the journal choice; start keeps it
-    (void)ttd::TTDControl(context).Execute({context->pTimeTravelManager->IsRecording() ? "stop" : "start", {}});
+    (void)ttd::TTDControl(context).Execute({ttd::TTDSessionRef(context)->IsRecording() ? "stop" : "start", {}});
     updateTelemetry();
 }
 
@@ -618,7 +619,7 @@ void TtdWidget::onLoadSession()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
 
     QString fileName = QFileDialog::getOpenFileName(this, tr("Load TTD Session"), QString(),
                                                    tr("Time Travel Session (*.ttd)"));
@@ -673,8 +674,8 @@ void TtdWidget::onExportSession()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    ttd::TTDSessionRef ttd(context);
 
     QString fileName = QFileDialog::getSaveFileName(this, tr("Export TTD Session"), QString(),
                                                    tr("Time Travel Session (*.ttd)"));
@@ -706,8 +707,8 @@ void TtdWidget::onClearSession()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    ttd::TTDSessionRef ttd(context);
 
     // B9: clearing while recording would drop the history being recorded
     if (ttd->IsRecording())
@@ -733,7 +734,7 @@ void TtdWidget::performSeekToFrame(uint64_t targetFrame)
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // The verb parks the machine and leaves it paused at the target
     (void)ttd::TTDControl(context).Execute({"seek", {{"frame", std::to_string(targetFrame)}}});
 
@@ -745,9 +746,9 @@ void TtdWidget::onJumpStart()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // Read before the seek pauses the machine: the published snapshot
-    const ttd::TTDSessionInfo info = context->pTimeTravelManager->GetPublishedSessionInfo();
+    const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
     performSeekToFrame(info.sessionStartFrame);
 }
 
@@ -755,7 +756,7 @@ void TtdWidget::onStepBack()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     const ttd::TTDReply stepped = ttd::TTDControl(context).Execute({"step-back", {}});
     if (stepped.Ok() && stepped.body.find("stepped")->b)
     {
@@ -768,7 +769,7 @@ void TtdWidget::onStepForward()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     const ttd::TTDReply stepped = ttd::TTDControl(context).Execute({"step-forward", {}});
     if (stepped.Ok() && stepped.body.find("stepped")->b)
     {
@@ -781,9 +782,9 @@ void TtdWidget::onJumpEnd()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // Read before the seek pauses the machine: the published snapshot
-    const ttd::TTDSessionInfo info = context->pTimeTravelManager->GetPublishedSessionInfo();
+    const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
     performSeekToFrame(info.currentEndFrame);
 }
 
@@ -791,7 +792,7 @@ void TtdWidget::onResumeFromHere()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // From exactly where the machine stands; the verb runs it again
     (void)ttd::TTDControl(context).Execute({"resume", {}});
     _activeEmulator->Start();
@@ -815,7 +816,7 @@ void TtdWidget::onJournalToggled(bool on)
     if (!_activeEmulator)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
         return;
     (void)ttd::TTDControl(context).Execute({"journal", {{"enabled", on ? "true" : "false"}}});
     updateTelemetry();
@@ -826,9 +827,9 @@ void TtdWidget::buildJournal(uint64_t fromFrame, uint64_t toFrame)
     if (!_activeEmulator || _journalBuildRunning)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
         return;
-    if (context->pTimeTravelManager->IsRecording())
+    if (ttd::TTDSessionRef(context)->IsRecording())
     {
         QMessageBox::information(this, tr("Build Journal"),
                                  tr("Stop the recording first: the journal is built by replaying recorded history."));

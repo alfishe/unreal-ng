@@ -707,8 +707,8 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     // so we must pause the Z80 thread before writing when recording is
     // active. The cost is one paused frame boundary (~20 ms worst case);
     // a no-op when no session is recording.
-    const bool ttdRecording = ctx && ctx->pTimeTravelManager
-                              && ctx->pTimeTravelManager->IsRecording();
+    const bool ttdRecording = ctx && ctx->pTimeTravelHooks
+                              && ctx->pTimeTravelHooks->IsRecording();
     const bool wasRunning = ttdRecording && emulator->IsRunning() && !emulator->IsPaused();
     if (wasRunning)
     {
@@ -716,8 +716,8 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
         emulator->WaitForPauseConfirmation(1000);
     }
 
-    if (ctx && ctx->pTimeTravelManager)
-        ctx->pTimeTravelManager->RecordExternalEvent(
+    if (ctx && ctx->pTimeTravelHooks)
+        ctx->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::DebuggerEdit, "WebAPI memory write");
 
     for (Json::ArrayIndex i = 0; i < data.size(); i++)

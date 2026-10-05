@@ -7,6 +7,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -898,10 +899,9 @@ bool DezogDebugAdapter::waitForTarget(uint32_t timeoutMs) const
 
 namespace
 {
-ttd::TimeTravelManager* ttdManagerOf(Emulator& emulator)
+ttd::TTDSessionRef ttdManagerOf(Emulator& emulator)
 {
-    EmulatorContext* context = emulator.GetContext();
-    return context ? context->pTimeTravelManager : nullptr;
+    return ttd::TTDSessionRef(emulator.GetContext());
 }
 }  // namespace
 
@@ -941,7 +941,7 @@ void DezogDebugAdapter::onSessionClosed()
 
     // End the live-history mode: recording stops, the timeline is kept for
     // the scrubber/.ttd flows (§6.3.1).
-    if (ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator))
+    if (ttd::TTDSessionRef mgr = ttdManagerOf(*emulator))
         mgr->EndDebuggerLiveHistory();
 
     if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
@@ -991,7 +991,7 @@ bool DezogDebugAdapter::isHistoryAvailable() const
     if (!isHistoryEnabled())
         return false;
     auto emulator = resolveEmulator();
-    return emulator && ttdManagerOf(*emulator) != nullptr;
+    return emulator && static_cast<bool>(ttdManagerOf(*emulator));
 }
 
 bool DezogDebugAdapter::isHistoryRecording() const
@@ -999,7 +999,7 @@ bool DezogDebugAdapter::isHistoryRecording() const
     auto emulator = resolveEmulator();
     if (!emulator)
         return false;
-    ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(*emulator);
     return mgr && mgr->IsRecording();
 }
 
@@ -1008,7 +1008,7 @@ void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
     if (!isHistoryEnabled())
         return;
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
     if (!mgr)
         return;
 
@@ -1026,7 +1026,7 @@ void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)
     if (!isHistoryEnabled())
         return;
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
     if (!mgr || !mgr->IsRecording())
         return;
 
@@ -1068,7 +1068,7 @@ void DezogDebugAdapter::leaveHistory(Emulator& emulator)
         presentFrame = _present.first;
     }
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
 
     // Browsing is read-only under DebuggerLive: the machine never moved and
     // recording never stopped, so there is nothing to restore or restart -
@@ -1099,7 +1099,7 @@ void DezogDebugAdapter::leaveHistory(Emulator& emulator)
 bool DezogDebugAdapter::resolveHistoryIndex(Emulator& emulator, uint32_t index, uint64_t& frameOut,
                                             uint32_t& entryIdxOut)
 {
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
     if (!mgr)
         return false;
 
@@ -1193,7 +1193,7 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     if (!emulator || !emulator->IsPaused())
         return std::nullopt;
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(*emulator);
     if (!mgr || mgr->GetCheckpointCount() == 0)
         return std::nullopt;
 

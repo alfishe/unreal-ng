@@ -366,14 +366,14 @@ namespace PythonBindings
     inline bool SubmitGSInput(Emulator& self, ttd::TTDInputKind kind, int value = 0)
     {
         auto* ctx = self.GetContext();
-        if (!ctx || !ctx->pTimeTravelManager || value < 0 || value > 255)
+        if (!ctx || !ctx->pTimeTravelHooks || value < 0 || value > 255)
             return false;
         if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound())
             return false;
         ttd::TTDInputEvent ev;
         ev.kind = kind;
         ev.value = static_cast<uint8_t>(value);
-        return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+        return ctx->pTimeTravelHooks->SubmitLiveInput(ev);
     }
 
     /// region <Kempston Mouse helpers (automation-interfaces §4.6)>

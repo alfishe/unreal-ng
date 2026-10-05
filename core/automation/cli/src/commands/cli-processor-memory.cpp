@@ -78,8 +78,8 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
         // one barrier. The marker is no-op unless a TTD session is Recording.
         // See parent TDD §5.1.
         EmulatorContext* ctx = emulator->GetContext();
-        if (ctx && ctx->pTimeTravelManager)
-            ctx->pTimeTravelManager->RecordExternalEvent(
+        if (ctx && ctx->pTimeTravelHooks)
+            ctx->pTimeTravelHooks->RecordExternalEvent(
                 ttd::TTDExternalEventKind::DebuggerEdit, "CLI memory write");
 
         HandleMemoryWrite(session, memory, args);

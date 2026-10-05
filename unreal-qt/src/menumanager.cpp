@@ -1432,7 +1432,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         // The same predicate the core refuses on (FeatureManager::setFeature,
         // Core::SetSpeedMultiplier), so the menu never offers what the core rejects
         bool ttdActive = (featureManager && featureManager->isTtdRecordingActive()) ||
-                         (context && context->pTimeTravelManager && context->pTimeTravelManager->IsRecording());
+                         (context && context->pTimeTravelHooks && context->pTimeTravelHooks->IsRecording());
         // Shortcuts change what the guest code does: off while recording AND while
         // replaying or positioned in history
         // An RZX playback holds them off the same way (the recording's CPU path)

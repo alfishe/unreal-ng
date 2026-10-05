@@ -3512,12 +3512,12 @@ public:
         auto submitGS = [this](ttd::TTDInputKind kind, int value) -> bool {
             if (!effectiveEmulator() || value < 0 || value > 255) return false;
             auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
+            if (!ctx || !ctx->pTimeTravelHooks) return false;
             if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound()) return false;
             ttd::TTDInputEvent ev;
             ev.kind = kind;
             ev.value = static_cast<uint8_t>(value);
-            return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+            return ctx->pTimeTravelHooks->SubmitLiveInput(ev);
         };
 
         lua.set_function("gs_reset", [submitGS]() { return submitGS(ttd::TTDInputKind::GSReset, 0); });

@@ -37,12 +37,12 @@ const char* GsTraceSideName(GSTraceSide side)
 // journaled for TTD replay. False while TTD replay owns input
 bool SubmitGSInput(EmulatorContext* context, ttd::TTDInputKind kind, uint8_t value = 0)
 {
-    if (!context->pTimeTravelManager)
+    if (!context->pTimeTravelHooks)
         return false;
     ttd::TTDInputEvent ev;
     ev.kind = kind;
     ev.value = value;
-    return context->pTimeTravelManager->SubmitLiveInput(ev);
+    return context->pTimeTravelHooks->SubmitLiveInput(ev);
 }
 
 const char* const kGSInputRefused = "Error: GS input refused - TTD replay owns input.";

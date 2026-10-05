@@ -13,6 +13,7 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttdcontrol.h>
+#include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <3rdparty/message-center/messagecenter.h>
@@ -554,7 +555,7 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     caps += "multiprocess-;";
 
     // Advertise reverse debugging support when TTD is available
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         caps += "ReverseStep+;";
         caps += "ReverseContinue+;";
@@ -860,13 +861,14 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
     else if (cmd.starts_with("ttd "))
     {
         std::string subcmd = cmd.substr(4);
-        if (!_context || !_context->pTimeTravelManager)
+        if (!_context || !_context->pTimeTravelHooks)
         {
             response = "TTD not available\n";
         }
         else
         {
-            auto* ttd = _context->pTimeTravelManager;
+            const ttd::TTDSessionView view(_context);
+            const ttd::TTDSessionView* ttd = &view;
 
             if (subcmd == "status")
             {
@@ -1091,9 +1093,9 @@ std::string GDBSession::handleWriteRegisters(const std::string& data)
     }
 
     // Refuse writes in TTD detached state (read-only historical view)
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
+        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";  // Read-only in detached state
@@ -1149,9 +1151,9 @@ std::string GDBSession::handleWriteRegister(const std::string& params)
     }
 
     // Refuse writes in TTD detached state
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
+        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";
@@ -1250,9 +1252,9 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
     }
 
     // Refuse writes in TTD detached state
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
+        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";
@@ -1544,12 +1546,12 @@ std::string GDBSession::handleInterrupt()
 
 std::string GDBSession::handleBackwardStep()
 {
-    if (!_context || !_context->pTimeTravelManager)
+    if (!_context || !_context->pTimeTravelHooks)
     {
         return "E01";  // TTD not available
     }
 
-    auto* ttd = _context->pTimeTravelManager;
+    auto* ttd = _context->pTimeTravelHooks;
     auto state = ttd->ReadSessionInfo().state;
 
     if (state == ttd::TTDSessionState::Idle)
@@ -1576,12 +1578,12 @@ std::string GDBSession::handleBackwardStep()
 
 std::string GDBSession::handleBackwardContinue()
 {
-    if (!_context || !_context->pTimeTravelManager)
+    if (!_context || !_context->pTimeTravelHooks)
     {
         return "E01";  // TTD not available
     }
 
-    auto* ttd = _context->pTimeTravelManager;
+    auto* ttd = _context->pTimeTravelHooks;
     auto state = ttd->ReadSessionInfo().state;
 
     if (state == ttd::TTDSessionState::Idle)

@@ -51,6 +51,8 @@ std::string createSessionEmulator(const std::string& path, const std::string& mo
     if (!model.empty() && model != recorded)
         return path + " was recorded on " + recorded + ", not " + model;
 
+    // The clip comes from a v1 session file: v1 replays it
+    Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
     EmulatorManager* manager = EmulatorManager::GetInstance();
     emulator = manager->CreateEmulatorWithModel(id, recorded, LoggerLevel::LogError, &err);
     if (!emulator)

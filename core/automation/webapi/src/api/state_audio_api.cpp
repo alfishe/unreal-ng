@@ -687,7 +687,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         ttd::TTDInputEvent ev;
         ev.kind = inputKind;
         ev.value = static_cast<uint8_t>(value);
-        if (!context->pTimeTravelManager || !context->pTimeTravelManager->SubmitLiveInput(ev))
+        if (!context->pTimeTravelHooks || !context->pTimeTravelHooks->SubmitLiveInput(ev))
         {
             Json::Value error;
             error["error"] = "Conflict";
