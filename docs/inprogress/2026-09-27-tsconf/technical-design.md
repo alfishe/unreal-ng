@@ -368,7 +368,7 @@ Decisions (recorded; change only with the user):
 | # | Decision | Rationale |
 |:--|:--|:--|
 | D1 | Superset of all firmware builds (XTR_FEAT always on); `TS_VDAC` selects DAC curve + STATUS `VDAC_VER` (OFF → 0, 5BIT → 3, VDAC2 → 7); FT812/ESP32 not modeled | software checks VDAC_VER; ancestor precedent |
-| D2 | **Nemo IDE emulated** (decided 2026-09-29) through the shared IDE core: `IdeAdapter` scheme `NEMO-DIVIDE` (the same decode as ZX-Evo BaseConf), `[HDD] Scheme=NEMO-DIVIDE` in the ts-conf ini; the TSConf-only CPU stall emulated but **off by default** (`[HDD] IdeStall=0`); IDE fitted regardless of `TS_VDAC` (superset, D1) | the shared core is on master (`f5fc5f05`; ATM3 uses the scheme), so IDE costs decoder calls, two DMA word methods and the stall; the design was deferred (v1.0) only because no IDE core existed |
+| D2 | **Nemo IDE emulated** (decided 2026-09-29) through the shared IDE core: `IdeAdapter` scheme `NEMO-DIVIDE` (the same decode as ZX-Evo BaseConf), `[HDD] Scheme=NEMO-DIVIDE` in the ts-conf ini; the TSConf-only CPU stall emulated, **on by default** since 2026-10-05 (`[HDD] IdeStall=1`, as the RTL; it was off until the TS-Conf audit); IDE fitted regardless of `TS_VDAC` (superset, D1) | the shared core is on master (`f5fc5f05`; ATM3 uses the scheme), so IDE costs decoder calls, two DMA word methods and the stall; the design was deferred (v1.0) only because no IDE core existed |
 | D3 | Model key stays **`TSL`** (existing `mem_model` short name, ini, API, AGENTS.md); **`TSCONF` accepted as an alias** at model lookup (the scope confirmed with the user on 2026-09-27 named `TSCONF`) | no config/API churn; both names work |
 | D4 | **Soundrive not emulated** — absent from the hardware; the 2026-09-27 scope "Covox/Soundrive (full set)" is satisfied by Covox + beeper + AY + GS | a Soundrive would make software behave differently from the real machine |
 | D5 | No `ayclk` decode — AY fixed 1.75 MHz | `ay_mod` hardwired in [V] |
@@ -597,7 +597,7 @@ precedent), registered in the factory + `IsModelSupported`
 | `lo = 1F` | `!DOS && !FDD_VIRT[7]` | Kempston joystick (8-bit) |
 | `lo = F7`, A8 = 1 | EFF7/CMOS gating (spec §9): `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` | Gluk CMOS — reuse `EvoAvr` (`memory/atm/evoavr.h`: the same board AVR, already on the shared `Ds12887` chip with extension regs F0-FF); only the gating rule is TSConf's. Add `PeripheralId::Ds12887` (18) to the decoder's TTD ids like ATM3, and `[EVO] NvramFile` handling like `PortDecoder_ATM3` (PLAN #60(c)) |
 | `xxDF` | always | Kempston mouse (`Default_Port_KempstonMouse_In`, wheel nibble) |
-| IDE: `rrr10000`, `rrr01000`, #C8, #11 | always (checked **first**, like `portdecoder_atm3.cpp:245`) | `TryIdePortIn/Out` → `IdeAdapter` `NEMO-DIVIDE`; a real bus cycle adds the stall when `IdeStall=1` (§3.11) |
+| IDE: `rrr10000`, `rrr01000`, #C8, #11 | always (checked **first**, like `portdecoder_atm3.cpp:245`) | `TryIdePortIn/Out` → `IdeAdapter` `NEMO-DIVIDE`; a real bus cycle adds the stall unless `IdeStall=0` (§3.11) |
 | `xxEF` | — | 0xFF (D7) |
 | other | — | 0xFF |
 
@@ -777,7 +777,7 @@ cache-miss waits.
     triggers move only on Z80 port accesses ([V] `zports.v:784-808`). The TSConf DMA
     engine calls them for codes 0x3/0xB; with `Scheme=NONE` those codes stay
     "not built" (hang).
-  - **CPU stall**: `[HDD] IdeStall=0|1` (default 0 = bypass), read by the
+  - **CPU stall**: `[HDD] IdeStall=0|1` (default 1 = on, as the RTL; 0 = bypass), read by the
     TSConf decoder only (other IDE boards use the Z80's own strobes and have
     no stall). With 1, every real IDE bus cycle from the CPU (CS0/CS1 ports;
     not #11, not a #10 served from the latch) adds 1 / 2 / 3 T at 3.5 / 7 /

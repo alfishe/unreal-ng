@@ -668,7 +668,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (const char* scheme = inimanager.GetValue(hdd, "Scheme", nullptr); scheme && !ParseIdeScheme(scheme, config.ide_scheme))
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
 		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
-		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
+		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 1) != 0 ? 1 : 0;
 		// Units 0-1: ide0 master / slave; units 2-3: ide1 (the Sprinter's second channel)
 		static const char* const kUnitSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
 		for (int unit = 0; unit < 4; unit++)

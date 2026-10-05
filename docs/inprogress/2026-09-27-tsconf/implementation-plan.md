@@ -396,7 +396,7 @@ clears (with a frame cap).
 > **2026-09-29, Nemo IDE (D2 decided: emulated; hardware-spec §8.3,
 > technical-design §3.11).** On the shared IDE core (`f5fc5f05`). TSConf's own
 > work: `TryIdePortIn/Out` first in its decoder, `[HDD] Scheme=NEMO-DIVIDE`
-> and `IdeStall=0` in the ts-conf ini, `PeripheralId::AtaChannel` (17) in its
+> and `IdeStall=0` in the ts-conf ini (1 since 2026-10-05, as the RTL), `PeripheralId::AtaChannel` (17) in its
 > TTD ids, and three small additions to the shared `IdeAdapter`
 > (`DmaReadWord`, `DmaWriteWord`, a "this access reached the drive" flag) with
 > their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
@@ -414,7 +414,7 @@ clears (with a frame cap).
   drive; #FF drive bits always latch; the trap starts vdos at the next M1, a
   VG93 register access ends it ([V] zports.v:638-651). State `vgDrive`,
   `preVdos` in `TsConfState`.
-- Nemo IDE: `[HDD] IdeStall` (0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
+- Nemo IDE: `[HDD] IdeStall` (1 = on, the default since 2026-10-05; 0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
   (+1 / +2 / +3 T at 3.5 / 7 / 14 MHz); DMA 0x3 / 0xB end to end.
 - Tests `tsconfstorage_test.cpp` (SPI-1, SD-0 on TS-Conf, the SPI DMA sector
   read, VDOS-1, VDOS-2, IDE-4, DMA-15) and `tsconfslot_test.cpp` (SLOT-1).

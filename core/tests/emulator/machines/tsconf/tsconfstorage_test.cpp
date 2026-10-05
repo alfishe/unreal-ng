@@ -214,7 +214,10 @@ TEST_F(TsConfStorage_Test, IDE4_Stall)
         In(port);
         return _z80->t - before;
     };
-    EXPECT_EQ(cost(0x00F0), 0u) << "IdeStall=0 (default): bypass";
+    // On by default, as the RTL (zclock.v:96 ide_stall in the IDE build; owner decision 2026-10-05, was off - D2)
+    EXPECT_EQ(cost(0x00F0), 1u) << "status register at 3.5 MHz";
+    _context->config.ide_stall = 0;
+    EXPECT_EQ(cost(0x00F0), 0u) << "IdeStall=0: bypass";
 
     _context->config.ide_stall = 1;
     EXPECT_EQ(cost(0x00F0), 1u) << "status register at 3.5 MHz";

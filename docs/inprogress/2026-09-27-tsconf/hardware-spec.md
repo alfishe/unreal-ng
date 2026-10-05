@@ -632,9 +632,10 @@ from the latch). In Z80 T-states of the current clock:
 | 14 MHz | clock toggles every fclk except while stalled | 3 T |
 
 The 7 MHz value depends on where the access falls against the clock phase;
-the emulator takes the upper value. The stall is emulated, **off by default**
-(`[HDD] IdeStall=0`): software does not depend on it, and default timing then
-matches the ancestor emulator. `IdeStall=1` adds it, for timing studies.
+the emulator takes the upper value. The stall is emulated and **on by default**
+(`[HDD] IdeStall=1`), as in the RTL's IDE build (`top.v:557`, `zclock.v:96`);
+`IdeStall=0` bypasses it (the ancestor emulator's timing). Owner decision
+2026-10-05 after the TS-Conf audit; it was off by default before (D2).
 
 **IDE DMA** (codes 0x3 IDE → RAM, 0xB RAM → IDE; [V] `dma.v:98, 136, 250-251,
 441-445`, `ide.v`). The DMA moves **16-bit words** to and from the data

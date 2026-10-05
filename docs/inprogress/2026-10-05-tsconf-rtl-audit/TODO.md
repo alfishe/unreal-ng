@@ -36,8 +36,8 @@ first; tests that assert the current wrong value are named and change with the f
   `Uart16550::AccessCycles`. Doing it right moves that model (the main-loop phase, the service cycles, its TTD state)
   into the shared `EvoAvr` for both ports and both machines (TS-Conf, ATM3), then counts the Gluk service in the
   AVR listing - not a local patch.
-- IDE stall off by default (`IdeStall=0`) - row 38. The RTL has it on in the IDE build (`top.v:557`); the default
-  was decision D2 (technical-design, 2026-09-29) - **the owner decides** whether the default follows the RTL.
+- ~~IDE stall off by default (`IdeStall=0`) - row 38.~~ **Fixed:** on by default as the RTL (`top.v:557`), owner
+  decision 2026-10-05 (was D2, off); `IdeStall=0` stays as the bypass. Test IDE4.
 - ~~The NMI button works on TS-Conf, whose board never drives /NMI - row 41.~~ **Fixed:** `RequestBoardNmi` takes the press and does nothing (test `NmiButtonDoesNothing`); the debugger's direct NMI request stays.
 - ~~A frame pulse running across a CPU clock switch is cut short - row 25.~~ **Fixed:** `TsConfInterrupts::BeforeClockSwitch / AfterClockSwitch` carry the counted clocks across (`intFrameAdjust` keeps the CPU-clock part, the blob size is unchanged); tests CLK3, CLK3b.
 - The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at

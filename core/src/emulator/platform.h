@@ -608,7 +608,7 @@ struct CONFIG
 	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
-	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
+	uint8_t ide_stall = 1;			// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (1 = on, the default, as the RTL; 0 = bypass)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
