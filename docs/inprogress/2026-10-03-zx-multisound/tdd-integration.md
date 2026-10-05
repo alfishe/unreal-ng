@@ -198,6 +198,35 @@ Each run as a user would run it, TTD recording on (rolling limit), results in th
 | Ball Quest | Pentagon | clicks with `ctrlMask = pro` (as the real card), clean with `classic` |
 | ZX-Evo TurboSound shadowing | ZX-Evo | the built-in TurboSound row reports `shadowed`, silent; the card plays |
 
+### 6.1 Results (MS-7, 2026-10-05)
+
+Run on a freshly built `unreal-qt` of its own (WebAPI on its own ports), card created with `slots`, TTD recording
+(rolling limit) started before every program, `[MIDI] Bank` = the shipped default. Levels are RMS of the per-source
+capture (`ms_fm`, `ms_ssg`, `ms_saa`, `ms_dac`, `ms_midi`, 0..1 full scale). The images and the exact keys are in the
+test images' README (untracked, `testdata/sound/multisound/software/README.md`).
+
+| Program | Machine | Sources heard | Checks | Result | TTD check | Notes |
+|---|---|---|---|---|---|---|
+| TFM tune `uzhos.scl` | Pentagon | FM (L = R 0.058) | FM unmuted by the player's control byte; this tune uses no SSG | pass | seek back + replay: screen digest equal; `ms_fm` equal to the sample after 0.6 s | the first 0.6 s differ only by the coupling filters' history (render layer, not state) |
+| TSFM `tech_support.sna` | Pentagon | FM 0.057, SSG L 0.016 / R 0.014 | FM + SSG; ACB panning by a register program on the same card: A -> L only (0.061 / 0.000), B centre (0.0315 / 0.0315), C -> R only | pass | - | |
+| TSFM `tech_support.sna` | ZX-Evo (ATM3) | FM 0.051, SSG 0.014 | the YM2149 is "taken out of its socket" (Q7): no board AY row at all; the card plays | pass | - | the tdd's "built-in row shadowed" became socket removal (Q7) |
+| Ball Quest `BQ.TRD` | ATM3 (`BQ   ATM`); Pentagon `BQ   16C` | SSG | the game writes `#F0-#F7` to `#FFFD` at frames 1747 / 1835 / 1847-48 / 2912-2926 / 3077-3109 (the spacing of issue #11's clicks at 18 / 20 / 42 / 45 s); with `pro` the card switches to U4 and unmutes FM there (state by TTD seek), with `classic` (needs `dip` without `saa`) it does not | logic as the real card; audio `pro` = `classic` bit-exact: **no click** | port events from the TTD journal | owner decision 2026-10-05: the click is **not** modeled (FM mute stays silence); the real level is the YM3014B's all-zero word, `S2..S0 = 000` "not allowed" in the datasheet. Pentagon `16C` shows a black screen (no 16-colour mode) |
+| SAA test `1099test.trd` | Pentagon | SAA | all 8 test pages audible, SAA clock on; per page L / R follow the voices' amplitudes (L-only, R-only and both pages) | pass | - | keys 1-6 (channel toggles) unreliable through automation taps |
+| `kissme2.trd` | Pentagon | SSG only | no SAA write, no control byte | not a card program | - | probably detects a ZXM-SoundCard |
+| LnxTracker Demo `lnxtdemo.SCL` | Pentagon | SSG songs: SSG; SAA songs: silent | the program writes only `#FE` / `#FF` to `#FFFD` (its per-frame AY driver), never a control byte with bit 3 = 0, so the SAA clock never starts (reset state, §3.3) | **bug found and fixed** (SAA output with the clock stopped) | - | a ZXM-SoundCard program; silent SAA is what the card does. Before the fix the stopped SAA played its amplitude writes as a 3-7 Hz step "tune" |
+| VGMPLAY `saa-tones.vgm` | TS-Conf, WC | SAA | SAA clock started by the plugin's control byte; L-only / R-only / both segments in turn | pass | - | |
+| VGMPLAY YM2203 VGM | TS-Conf, WC | FM 0.032, SSG 0.016 | FM + SSG | pass | - | |
+| VGMPLAY `saa-dual.vgm` | TS-Conf, WC | SAA (chip 0's part) | a proper dual-SAA VGM (dual flag, 63 commands per chip); on the card's one SAA the plugin plays chip 0 | pass (chip 0); key 2 not effective | - | key 2 shows `SAA:2` but the plugin keeps writing chip 0's stream (register trace): plugin behavior, v0.9.03-beta |
+| ZX MIDI Player v3 + test files `midi-test.trd` | Pentagon 3.5 MHz | MIDI | the line decoded from the TTD port journal: note-ons of `scale` 15/15, `chanprog` 75/75, `drums` 96/96, `controls` 7/7 in file order; 0 framing errors; synth bytes = decoded bytes | pass | seek: the synthesizer report equal live / replayed; `ms_midi` equal except the render layers (coupling filters, reverb / chorus tails) | output device "TS chip 2" (= `#FE` = U4) |
+| same | ZX-Evo 3.5 / 7 MHz | MIDI | as above, every note of the four files | pass | - | 1 framing error at start: the player makes IOA an output (R7) before it writes R14, the line sits low (a break) - the same on the card |
+| same | ZX-Evo 14 MHz | MIDI garbled | the player's bits are 592 T apart instead of 448 (23.6 kbaud): synth framing errors | **program / machine** | - | the ZX-Evo's 14 MHz DRAM waits (the RTL-simulated model) slow the player's delay loop, which assumes none; owner question |
+| WC `GSPLAYER.WMF` `.MID` (`-midi_chip=2`) | TS-Conf 14 MHz | MIDI | `chanprog` notes arrive (72 / 75 seen by polling), no framing error after the start | pass | - | 1 framing error at start: R7 before R14, as above |
+| Mod Player v2.5 `mplv2_5.trd` | Pentagon | GS (16 MHz, 1024 KB) | L / R correlation -0.05: hard L / R split | pass | - | |
+| Soundrive Player `emdig1.scl` | Pentagon | DAC | channel 0 left, channel 2 right (DAC L 0.19 / R 0.12) | pass | - | |
+| `MODS20SP.SCL`, `xball.TRD` | Pentagon | - / SSG | the disk holds the player only (no MODs); X Ball's SounDrive part not reached in 24 s | not checked | - | |
+
+Not run in MS-7: Z-Player 5, the other GS / SAA / TSFM disks of the README, WC MOD / TFC / ETC plugins.
+
 ## 7. Risks
 
 | Risk | Mitigation |

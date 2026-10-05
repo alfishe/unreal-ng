@@ -125,7 +125,17 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [x] MS-6 surfaces (2026-10-05, working tree of `zx-bus-slots`, not committed; [tdd-integration.md](tdd-integration.md)
   §5.1): `DeviceState::MultiSound` / `Midi` on every surface, MIDI panic as TTD input `MidiPanic`, Qt slot window card
   options, MIDI activity window, HUD icon; recipe [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md)
-- [ ] MS-7 / MS-8 real software (tdd-integration §6), docs
+- [x] MS-7 real software, first pass (2026-10-05, [tdd-integration.md](tdd-integration.md) §6.1): TSFM, SAA, GS,
+  SounDrive, MIDI (3.5 / 7 / 14 MHz, line decoded from the TTD journal), VGMPLAY, Ball Quest; TTD seek checks on the TSFM
+  and MIDI runs. Found and fixed: the SAA output moved on register writes with its clock stopped (LnxTracker Demo;
+  `Saa1099_Test.ClockGateHoldsOutputAcrossRegisterWrites`); the AY socket's mixer rows read "AY 1 / AY 2" for a
+  TurboSound FM or TurboSound that replaced the board AY (owner report: "board AY active" with Ball Quest)
+- [x] Ball Quest click with `ctrlMask = pro`: **not modeled** (owner decision 2026-10-05). The card's logic does what
+  the RTL does (the `#F0-#F7` writes switch the chip and unmute FM), the FM mute output stays silence
+- [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
+- [ ] owner question: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits); confirm
+  on a real board before changing anything
+- [ ] MS-8 docs
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
   effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
   (machines without the card pay nothing)

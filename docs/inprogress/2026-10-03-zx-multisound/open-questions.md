@@ -62,3 +62,8 @@ firmware: the errata of rev.A / A1 (missing MREQ wire, swapped L/R on the 3.5 mm
 that makes the GS unstable) and the board-level reset glitch from issue #9 (the YM2203 prescaler left wrong after a
 too-short RESET) are not reproduced. The YM2203 is reset properly, the stereo channels are the right way round, and
 the GS runs stable. These faults are listed in the hardware reference as real-world notes only.
+
+**Ball Quest click (2026-10-05, MS-7): decided, not modeled.** The emulated card does what the RTL does with the
+game's `#F0-#F7` writes (chip select, FM unmute), but the click itself comes from the analog level of the YM3014B while
+its serial input is held low (an all-zero word: `S2..S0 = 000`, "not allowed" in the datasheet), which no source
+documents. Owner decision: keep the FM mute output silent.
