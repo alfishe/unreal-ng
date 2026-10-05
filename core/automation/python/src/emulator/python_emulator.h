@@ -3732,10 +3732,15 @@ namespace PythonBindings
                     throw std::runtime_error(reply.message);  // recording: stop it first
             }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
-            .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::object {
-                return TtdSeekPy(TtdRunPy(self, "seek", {{"frame", std::to_string(frame)}, {"tinframe", std::to_string(tInFrame)}}));
-            }, "Seek to a point in the timeline (the machine stays paused there; ttd_resume continues)",
-               py::arg("frame"), py::arg("tinframe") = 0)
+            .def("ttd_seek", [](Emulator& self, uint64_t frame, std::optional<uint32_t> tInFrame) -> py::object {
+                // Without a T-state: the frame's end on the engine (D13), its start on v1
+                std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+                if (tInFrame)
+                    options["tinframe"] = std::to_string(*tInFrame);
+                return TtdSeekPy(TtdRunPy(self, "seek", options));
+            }, "Seek to a point in the timeline (the machine stays paused there; ttd_resume continues). "
+               "Without tinframe the engine lands at the frame's end, v1 at its start",
+               py::arg("frame"), py::arg("tinframe") = py::none())
 
             .def("ttd_step_back", [](Emulator& self) -> bool {
                 const ttd::TTDReply reply = TtdRunPy(self, "step-back");

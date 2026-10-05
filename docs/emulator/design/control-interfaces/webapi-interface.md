@@ -1584,6 +1584,8 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).
 
+**A seek to a frame without `tinframe`** lands at that frame's **end** on the engine (`backend: engine`, D13): the machine state and the picture are the frame's final ones, the same as `{frame N+1, tinframe 0}`; `arrived_at` names it `{N, <length of frame N>}`. When the history ends inside frame N (a recording paused at the present) it lands at that end. `POST /ttd/step-forward` / `step-back` from there count counts from `{N+1, 0}`. With `tinframe` (also 0) it lands exactly there and shows what the beam drew up to that point - at a frame's start, the previous frame's final picture. v1 lands at the frame's start without `tinframe` and shows the frame's final picture there. Scripts that seek a frame and read memory see one frame later on the engine; ask for `tinframe 0` to keep the frame's start.
+
 | Method | Path | Body / Query | Response fields | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET`  | `/ttd/status` | — | See "status response" below. | ✅ Implemented |

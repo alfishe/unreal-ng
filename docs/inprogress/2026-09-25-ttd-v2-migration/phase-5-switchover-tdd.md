@@ -330,7 +330,7 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 - `Status` reports `earliest: {branch, frame, tinframe}` (the earliest kept position, D11) next to `session_start_frame`, which keeps its name and now means the same thing. Qt "Jump to start" (`ttdwidget.cpp:653-659`) and the slider minimum use it. A seek before it answers `OutOfRange` with the earliest position in the message.
 - A seek to `{frame: N}` **without** `tinframe` lands at the end of frame N: machine state and picture agree. The WebAPI stops turning a missing `tinframe` into 0 (`ttd_api.cpp:731`); CLI `ttd seek N`, Lua / Python `ttd_seek(N)` and the Qt slider follow. `arrived_at` reports `{frame: N, tinframe: <length of frame N>}`, which names the same machine time as `{frame: N+1, tinframe: 0}`; the engine accepts both.
 - `{frame: N, tinframe: T}` gives the state at T and the picture up to the beam, as today.
-- This is a visible change for scripts that seek `{frame: N}` and read memory: they now see one frame later. The recipes that do so are updated (§4.6).
+- This is a visible change for scripts that seek `{frame: N}` and read memory: they now see one frame later. The recipes that do so are updated (§4.6). Done 2026-10-05; the engine's display rule changed with it: every position shows the beam's picture up to it, so `{N+1, 0}` shows frame N's final picture.
 
 #### 4.3.6 What is still refused while recording
 

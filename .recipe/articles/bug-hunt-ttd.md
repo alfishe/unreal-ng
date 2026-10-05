@@ -139,10 +139,10 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/scan?from_frame=11000&to_frame=1180
 ### Phase 3 — replay and confirm
 
 ```bash
-# rewind to just before the write and watch it happen
+# rewind to just before the write (the frame's start) and watch it happen
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
      -H 'Content-Type: application/json' \
-     -d '{"frame": 11781}' | jq '{reached, arrived_at}'
+     -d '{"frame": 11781, "tinframe": 0}' | jq '{reached, arrived_at}'
 
 # arm a watchpoint-style breakpoint on the address, then resume live
 curl -s -X POST "$BASE/emulator/$EMU_ID/breakpoints" \

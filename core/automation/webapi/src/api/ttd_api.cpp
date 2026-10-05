@@ -238,7 +238,7 @@ void EmulatorAPI::invalidateTTD(const HttpRequestPtr& req,
 
 /// @brief POST /api/v1/emulator/{id}/ttd/seek
 ///
-/// JSON body: { "frame": <uint64>, "tinframe": <uint32, optional default 0> }
+/// JSON body: { "frame": <uint64>, "tinframe": <uint32, optional; without it the engine lands at the frame's end (D13)> }
 ///
 /// Response:
 ///   { "reached": true/false,

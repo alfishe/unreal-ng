@@ -704,6 +704,15 @@ public:
     /// will fail. Returns {0,0} when the timeline is empty.
     TTDTimePoint SessionEndPosition() const;
 
+    /// @brief Where "frame N" without a T-state lands (D13): the end of frame
+    /// N, {N+1, 0}, when the history reaches it; otherwise the history's end
+    /// if that lies inside frame N (a recording's present counts as its end).
+    /// A frame past the history gives {N+1, 0}, which a seek refuses
+    TTDTimePoint FrameEndPosition(uint64_t frame) const;
+    /// @brief Frame N's length in tInFrame units (the frame table's, so a
+    /// frame whose length changed reports its own); FrameSpan() outside the session
+    uint32_t FrameLength(uint64_t frame) const;
+
     /// @brief Test whether OnFrameBoundary auto-paused the emulator and
     ///        clear the request.
     ///

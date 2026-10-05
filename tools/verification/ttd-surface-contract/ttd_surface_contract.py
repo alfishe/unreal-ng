@@ -272,14 +272,42 @@ def run_contract(c: Contract) -> None:
     def paused() -> bool:
         return bool(c.api.instance_info(c.base.split("/")[-1]).get("is_paused", False))
 
+    if engine:
+        # D13: a frame without a T-state is the frame's end - named {target, its length},
+        # the machine at {target + 1, 0} - on every surface
+        # The machine stands at {target + 1, 0}; position shows the CPU's own T-state,
+        # past the instruction that crossed the frame boundary (at most 23 T-states)
+        def at_frame_end(cur) -> bool:
+            return cur["frame"] == target + 1 and cur["tinframe"] <= 23
+        status, web = c.web("POST", "/ttd/seek", {"frame": target})
+        _, pos = c.web("GET", "/ttd/position")
+        c.check(status == 200 and web.get("arrived_at", {}).get("frame") == target
+                and web.get("arrived_at", {}).get("tinframe", 0) > 0
+                and at_frame_end(pos["current"]),
+                f"WebAPI seek to a frame lands at its end ({web.get('arrived_at')}, at {pos['current']})")
+        lua = c.lua(f"local r = ttd_seek({target}); print(r.arrived_at.frame .. '|' .. tostring(r.arrived_at.tinframe > 0))")
+        _, pos = c.web("GET", "/ttd/position")
+        c.check(lua == f"{target}|true" and at_frame_end(pos["current"]),
+                f"Lua seek to a frame lands at its end ({lua!r}, at {pos['current']})")
+        c.cli.run(f"ttd seek {target}")
+        _, pos = c.web("GET", "/ttd/position")
+        c.check(at_frame_end(pos["current"]),
+                f"CLI seek to a frame lands at its end (at {pos['current']})")
+        py = c.py_json(f"emu.ttd_seek({target})")
+        _, pos = c.web("GET", "/ttd/position")
+        c.check(isinstance(py, dict) and py.get("arrived_at", {}).get("frame") == target
+                and at_frame_end(pos["current"]),
+                f"Python seek to a frame lands at its end ({py}, at {pos['current']})")
+
+    # The frame's start: tinframe 0 on every surface
     c.api.set_running(c.base.split("/")[-1], True)
-    lua = c.lua(f"local r = ttd_seek({target}); print(tostring(r.reached) .. '|' .. r.arrived_at.frame .. '|' .. r.state)")
+    lua = c.lua(f"local r = ttd_seek({target}, 0); print(tostring(r.reached) .. '|' .. r.arrived_at.frame .. '|' .. r.state)")
     c.check(lua == f"true|{target}|detached", f"Lua seek reaches the target ({lua!r})")
     lua_paused = paused()
     _, web = c.web("GET", "/ttd/position")
     c.check(web["current"]["frame"] == target, f"WebAPI position after the Lua seek ({web['current']['frame']})")
     c.api.set_running(c.base.split("/")[-1], True)
-    _, web = c.web("POST", "/ttd/seek", {"frame": target})
+    _, web = c.web("POST", "/ttd/seek", {"frame": target, "tinframe": 0})
     c.check(paused() == lua_paused, f"the machine is left the same way after a Lua and a WebAPI seek (paused {lua_paused})")
     cli = c.cli.run("ttd step-back")
     c.check(f"frame={target - 1}," in cli, f"CLI step-back ({cli.strip()!r})")

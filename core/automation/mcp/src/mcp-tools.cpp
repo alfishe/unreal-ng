@@ -3571,8 +3571,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe";
     schema["properties"]["tinframe"]["type"] = "integer";
-    schema["properties"]["tinframe"]["default"] = 0;
-    schema["properties"]["tinframe"]["description"] = "T-states within 'frame' for seek / resume / bookmark_add (default 0)";
+    schema["properties"]["tinframe"]["description"] =
+        "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
+        "on the engine (the frame's final state and picture); give 0 for the frame's start";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
     schema["properties"]["tstates"]["type"] = "integer";

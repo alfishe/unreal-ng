@@ -58,11 +58,12 @@ E=$B/emulator/$ID
 curl -s -X POST $E/pause
 curl -s -X POST $E/run_frames -H 'Content-Type: application/json' -d '{"count":40}'
 curl -s -X POST $E/ttd/start -H 'Content-Type: application/json' -d '{}'
-#   → {"already_active":false,"started":true,"state":"recording","write_journal_enabled":true}
+#   → {"already_active":false,"history_limit_bytes":0,"history_limit_frames":0,"started":true,"state":"recording","write_journal_enabled":false}
 curl -s -X POST $E/run_frames -H 'Content-Type: application/json' -d '{"count":120}'
 curl -s -X POST $E/ttd/stop
 curl -s -X POST $E/ttd/seek -H 'Content-Type: application/json' -d '{"frame":60}'
-#   → {"arrived_at":{"frame":60,"tinframe":0},"halt_reason":"target","reached":true,"state":"detached"}
+#   → {"arrived_at":{"frame":60,"tinframe":430080},"halt_reason":"target","reached":true,"state":"detached"}
+#     (a frame alone is its end: the machine stands at frame 61, T-state 0)
 curl -s $E/state/sprinter | jq .pld.state            # → "loading": frame 60 is inside the PLD load
 curl -s -X POST $E/ttd/dump -H 'Content-Type: application/json' -d "{\"path\":\"$PWD/scratch/sprinter.ttd\"}"
 #   → {"bytes":1104056,"ok":true,...}                 # 121 checkpoints
@@ -75,10 +76,10 @@ curl -s -X POST $E/ttd/dump -H 'Content-Type: application/json' -d "{\"path\":\"
   ...
   Port journals:          off - NeoGS: its ZX-DMA serves host memory reads without IN (not isolated by the first version)
 > ttd seek 100
-TTD: Seek reached target (frame=100, tInFrame=0)
+TTD: Seek reached target (frame=100, tInFrame=430080)
 > ttd position
-  Current: (frame=100, tInFrame=36)
-  End:     (frame=161, tInFrame=0)
+  Current: (frame=101, tInFrame=18)
+  End:     (frame=123, tInFrame=0)
 ```
 
 ## Inspecting a dump

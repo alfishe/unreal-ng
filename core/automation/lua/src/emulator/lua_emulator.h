@@ -3868,8 +3868,11 @@ public:
         });
 
         lua.set_function("ttd_seek", [this](sol::this_state ts, uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::object {
-            return TtdSeekValue(ts, TtdRun("seek", {{"frame", std::to_string(frame)},
-                                                    {"tinframe", std::to_string(tInFrameOpt.value_or(0))}}));
+            // Without a T-state: the frame's end on the engine (D13), its start on v1
+            std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+            if (tInFrameOpt)
+                options["tinframe"] = std::to_string(*tInFrameOpt);
+            return TtdSeekValue(ts, TtdRun("seek", options));
         });
 
         lua.set_function("ttd_step_back", [this]() -> bool {

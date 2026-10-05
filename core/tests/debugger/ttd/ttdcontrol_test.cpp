@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -20,6 +21,11 @@
 #include "debugger/ttd/ttdexternalevents.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
+#include "emulator/video/screen.h"
+#include "debugger/ttd/ttdcheckpoint.h"
 
 using ttd::TTDControl;
 using ttd::TTDControlError;
@@ -317,7 +323,8 @@ TEST_P(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
     const int64_t first = static_cast<int64_t>(Info().sessionStartFrame);
     ASSERT_GT(last, first + 2);
 
-    TTDReply r = Run("seek", {{"frame", std::to_string(first + 2)}});
+    // The frame's start (without a T-state the engine lands at its end, D13)
+    TTDReply r = Run("seek", {{"frame", std::to_string(first + 2)}, {"tinframe", "0"}});
     ASSERT_TRUE(r.Ok()) << r.message;
     EXPECT_TRUE(Bool(r, "reached"));
     EXPECT_EQ(Str(r, "halt_reason"), "target");
@@ -555,6 +562,73 @@ TEST_P(TTDControl_Test, FileVerbsReportMissingAndUnreadableFiles)
     EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "2"}}).error, TTDControlError::BadRequest);  // no path
     Record(2);
     EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "1"}, {"path", missing}}).error, TTDControlError::Conflict);
+}
+
+/// D13: a seek to a frame without a T-state lands at the frame's end on the
+/// engine - the state of {N+1, 0} and the frame's final picture - and is named
+/// {N, length of N}; v1 keeps the frame's start. With a T-state nothing changes
+TEST_P(TTDControl_Test, AFrameWithoutATStateIsItsEnd)
+{
+    // A program that changes the screen all the time: DI; LD A,2; OUT (#FE),A;
+    // again: LD HL,#5800; loop: INC (HL); INC L; JR NZ,loop; JR again
+    const uint8_t program[] = {0xF3, 0x3E, 0x02, 0xD3, 0xFE, 0x21, 0x00, 0x58, 0x34, 0x2C, 0x20, 0xFC, 0x18, 0xF7};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+
+    auto picture = [&]() {
+        uint32_t* buffer = nullptr;
+        size_t size = 0;
+        _context->pScreen->GetFramebufferData(&buffer, &size);
+        return std::vector<uint32_t>(buffer, buffer + size / sizeof(uint32_t));
+    };
+    auto cpu = [&]() { return ttd::CaptureCpuState(*_context->pCore->GetZ80()); };
+
+    ASSERT_TRUE(Run("start").Ok());
+    std::vector<std::vector<uint32_t>> pictureAtEnd;   // the final picture of each recorded frame
+    const uint64_t first = _context->emulatorState.frame_counter;
+    for (int f = 0; f < 8; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        pictureAtEnd.push_back(picture());
+    }
+    _emulator->RunTStates(30000, /*skipBreakpoints=*/true);
+    if (!GetParam())
+        ASSERT_TRUE(Run("stop").Ok()) << "v1 browses a stopped session only";
+    const uint64_t n = first + 4;
+
+    // The frame's start, asked for explicitly: unchanged on both
+    TTDReply r = Run("seek", {{"frame", std::to_string(n + 1)}, {"tinframe", "0"}});
+    ASSERT_TRUE(Bool(r, "reached")) << r.message;
+    const ttd::TTDCpuState startOfNext = cpu();
+    const std::vector<uint32_t> pictureOfNext = picture();
+
+    r = Run("seek", {{"frame", std::to_string(n)}});
+    ASSERT_TRUE(Bool(r, "reached")) << r.message;
+    const StateNode* at = r.body.find("arrived_at");
+    ASSERT_NE(at, nullptr);
+    if (!GetParam())
+    {
+        EXPECT_EQ(at->find("frame")->i, int64_t(n)) << "v1: the frame's start";
+        EXPECT_EQ(at->find("tinframe")->i, 0);
+        return;
+    }
+    EXPECT_EQ(at->find("frame")->i, int64_t(n)) << "named in frame N";
+    EXPECT_GT(at->find("tinframe")->i, 60000) << "at its length";
+    const ttd::TTDCpuState end = cpu();
+    EXPECT_EQ(std::memcmp(&end, &startOfNext, sizeof(end)), 0) << "{N} is {N+1, 0}";
+    EXPECT_TRUE(picture() == pictureOfNext);
+    EXPECT_TRUE(picture() == pictureAtEnd[n - first]) << "the frame's final picture";
+    EXPECT_FALSE(picture() == pictureAtEnd[n - first - 1]) << "the screen changes every frame";
+
+    // The last frame: the history ends inside it (the recording paused at the present)
+    const uint64_t last = first + 8;
+    r = Run("seek", {{"frame", std::to_string(last)}});
+    ASSERT_TRUE(Bool(r, "reached")) << r.message;
+    EXPECT_EQ(r.body.find("arrived_at")->find("frame")->i, int64_t(last));
+    EXPECT_GT(r.body.find("arrived_at")->find("tinframe")->i, 0) << "where the history ends";
+    // Past the history
+    EXPECT_FALSE(Bool(Run("seek", {{"frame", std::to_string(last + 5)}}), "reached"));
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),

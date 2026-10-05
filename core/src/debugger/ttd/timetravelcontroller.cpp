@@ -2484,6 +2484,22 @@ void TimeTravelController::RunToTInFrame(uint32_t targetTInFrame)
     }
 }
 
+TTDTimePoint TimeTravelController::FrameEndPosition(uint64_t frame) const
+{
+    const TTDTimePoint next{frame + 1, 0};
+    if (_timeline.empty())
+        return next;
+    const TTDTimePoint end = _state == TTDSessionState::Recording ? CurrentPosition() : SessionEndPosition();
+    return end < next && end.frame >= frame ? end : next;
+}
+
+uint32_t TimeTravelController::FrameLength(uint64_t frame) const
+{
+    if (_timeline.empty() || frame < _timeline.front().time.frame)
+        return FrameSpan();
+    return static_cast<uint32_t>(GlobalT({frame + 1, 0}) - GlobalT({frame, 0}));
+}
+
 TTDTimePoint TimeTravelController::SessionEndPosition() const
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
@@ -2538,11 +2554,13 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     TTDSeekResult& result = outResult ? *outResult : localResult;
     const bool ok = SeekToInternal(target, &result);
 
-    // A marker halt still moved the machine, so it is shown too. Positioning
-    // by frame number (tInFrame 0) shows the frame's final picture; any other
-    // point shows what the beam drew up to it (display rule, design §3).
+    // A marker halt still moved the machine, so it is shown too. Every
+    // position shows what the beam drew up to it, as a live machine has it
+    // there: at a frame's start that is the previous frame's final picture.
+    // "Frame N" asks for frame N's end (D13), which shows frame N's picture
+    // with the machine state that goes with it
     if (ok || result.haltReason == TTDSeekHaltReason::ExternalEvent)
-        PresentPosition(ok && target.tInFrame == 0);
+        PresentPosition(false);
 
     return ok;
 }

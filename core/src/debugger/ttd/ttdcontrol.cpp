@@ -804,17 +804,32 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
             return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
         target = {frame, static_cast<uint32_t>(t)};
     }
+    // D13 (the engine): a frame without a T-state is the frame's end - machine
+    // state and picture are then the frame's final ones
+    const bool frameEnd = std::is_same<S, TimeTravelController>::value && !bookmark && !tText;
 
     // Park the machine so its thread cannot advance past the restored checkpoint; it
     // stays paused at the target (Detached) until resume
     PauseAndConfirm();
+    [[maybe_unused]] const uint64_t requestedFrame = target.frame;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+        if (frameEnd)
+            target = _manager->FrameEndPosition(requestedFrame);
     TTDSeekResult result;
     const bool reached = _manager->SeekTo(target, &result);
     NotifyFrameRefresh();
 
     TTDReply reply;
     reply.body["reached"] = reached;
-    reply.body["arrived_at"] = TimePointNode(result.arrivedAt);
+    TTDTimePoint arrived = result.arrivedAt;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+    {
+        // The end of frame N is named in frame N: {N, its length}, the same machine time as {N+1, 0}
+        if (frameEnd && reached && arrived == TTDTimePoint{requestedFrame + 1, 0} &&
+            requestedFrame >= _manager->GetSessionInfo().sessionStartFrame)
+            arrived = {requestedFrame, _manager->FrameLength(requestedFrame)};
+    }
+    reply.body["arrived_at"] = TimePointNode(arrived);
     const char* reason = "target";
     if (result.haltReason == TTDSeekHaltReason::ExternalEvent)
         reason = "external_event";

@@ -15,6 +15,7 @@
 #include <QSignalBlocker>
 #include <QStyleOptionSlider>
 #include <atomic>
+#include <map>
 #include <memory>
 #include <thread>
 #include <QFileInfo>
@@ -689,7 +690,8 @@ void TtdWidget::onLoadSession()
     }
     else
     {
-        (void)control.Execute({"seek", {{"frame", std::to_string(loaded.body.find("session_start_frame")->i)}}});
+        (void)control.Execute({"seek", {{"frame", std::to_string(loaded.body.find("session_start_frame")->i)},
+                                        {"tinframe", "0"}}});
         _mainWindow->refreshViewport();
     }
     updateTelemetry();
@@ -755,13 +757,17 @@ void TtdWidget::onClearSession()
     updateTelemetry();
 }
 
-void TtdWidget::performSeekToFrame(uint64_t targetFrame)
+void TtdWidget::performSeekToFrame(uint64_t targetFrame, bool frameStart)
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !ttd::HasTimeTravelSession(context)) return;
-    // The verb parks the machine and leaves it paused at the target
-    (void)ttd::TTDControl(context).Execute({"seek", {{"frame", std::to_string(targetFrame)}}});
+    // The verb parks the machine and leaves it paused at the target. A frame
+    // alone is the frame's end on the engine (D13); the start is asked for by T-state 0
+    std::map<std::string, std::string> options{{"frame", std::to_string(targetFrame)}};
+    if (frameStart)
+        options["tinframe"] = "0";
+    (void)ttd::TTDControl(context).Execute({"seek", options});
 
     _mainWindow->refreshViewport();
     updateTelemetry();
@@ -774,7 +780,7 @@ void TtdWidget::onJumpStart()
     if (!context || !ttd::HasTimeTravelSession(context)) return;
     // Read before the seek pauses the machine: the published snapshot
     const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
-    performSeekToFrame(info.sessionStartFrame);
+    performSeekToFrame(info.sessionStartFrame, /*frameStart=*/true);
 }
 
 void TtdWidget::onStepBack()

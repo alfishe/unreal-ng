@@ -919,8 +919,8 @@ local status = ttd_status()
 **Navigation:**
 
 ```lua
-ttd_seek(4823)                   -- seek to frame 4823, tinframe 0
-ttd_seek(4823, 14982)            -- seek to (frame, tinframe)
+ttd_seek(4823)                   -- frame 4823's end on the engine (state and picture of {4824, 0}), its start on v1
+ttd_seek(4823, 14982)            -- seek to (frame, tinframe); ttd_seek(4823, 0) is the frame's start
 -- --> { reached = true, arrived_at = {frame = 4823, tinframe = 14982},
 --       halt_reason = "target",          -- "target" | "external_event" | "out_of_range"
 --       blocking_marker = {frame, tinframe, kind, reason},  -- only for external_event

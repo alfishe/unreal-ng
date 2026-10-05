@@ -68,7 +68,9 @@ The same flow over curl — right choice when a bash/Python pipeline drives
 the inspection loop.
 
 ```bash
-# record → stop → seek to the frame of interest
+# record → stop → seek to the frame of interest: a frame alone lands at its end
+# (its final picture and the machine state that goes with it, backend engine);
+# add "tinframe":0 for the frame's start
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" -H 'Content-Type: application/json' -d '{}' | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop"  | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/json' \

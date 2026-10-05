@@ -833,14 +833,15 @@
     // ---------------------------------------------------------------------
     schemas["TTDSeekRequest"]["type"] = "object";
     schemas["TTDSeekRequest"]["description"] =
-        "Request body for POST /ttd/seek. Either frame (with optional tinframe, "
-        "defaulting to the frame boundary) or bookmark must be present — a "
-        "bookmark label resolves to its stored (frame, tinframe) first.";
+        "Request body for POST /ttd/seek. Either frame (with optional tinframe) "
+        "or bookmark must be present — a bookmark label resolves to its stored "
+        "(frame, tinframe) first. A frame without tinframe is the frame's end on "
+        "the engine (D13: state and picture of {frame+1, 0}; arrived_at names it "
+        "{frame, its length}), its start on v1; tinframe 0 is the frame's start.";
     schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["format"] = "uint32";
-    schemas["TTDSeekRequest"]["properties"]["tinframe"]["default"] = 0;
     schemas["TTDSeekRequest"]["properties"]["bookmark"]["type"] = "string";
     schemas["TTDSeekRequest"]["properties"]["bookmark"]["description"] =
             "TD-4 bookmark label to seek to (alternative to frame). Unknown "

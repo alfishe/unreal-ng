@@ -151,7 +151,9 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/position" | jq '.'
 # → {"current": {"frame": 12345, "tinframe": 0},
 #    "session_end": {"frame": 12402, "tinframe": 0}, "state": "detached"}
 
-# Seek to an absolute point (frame + optional intra-frame t-state)
+# Seek to an absolute point (frame + optional intra-frame t-state). A frame
+# alone is the frame's end on the engine: arrived_at {frame, <its length>},
+# the state and picture of {frame+1, 0}; "tinframe": 0 is the frame's start
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
      -H 'Content-Type: application/json' \
      -d '{"frame": 12000}' | jq '{reached, arrived_at, halt_reason}'
