@@ -1136,10 +1136,10 @@ void Z80::NotifyInstructionStart()
     // actually capturing. This is the only record that a frame executed a
     // given address - instruction fetches are not journalled - so without
     // it a reverse breakpoint has no choice but to replay every frame.
-    if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    if (_context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
-        _context->pTimeTravelManager->RecordExecutedCoverage(
-            _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Executed,
+                                      ttd::MakeCoverageKey(_memory->GetPhysPageForZ80Address(m1_pc), m1_pc));
     }
 
     // Phase 4 - access probe for Execute access type (TDD 9.2).

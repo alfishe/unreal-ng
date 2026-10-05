@@ -17,6 +17,8 @@
 #include <functional>
 #include <string>
 
+#include "ttdphyspage.h"
+
 namespace ttd
 {
 struct TTDInputEvent;
@@ -90,6 +92,19 @@ enum class TTDMachineTaskResult : uint8_t
     RanNow,   ///< run at once (synchronous mode)
     Queued,   ///< runs at the next instruction boundary on the machine's thread
     Refused   ///< the journal owns input (a replay, or Detached in the past)
+};
+
+/// The per-event writes the core reports while time travel records (Phase 5, C1d):
+/// memory writes on the debug write path and port OUTs. Set once per machine in
+/// EmulatorContext::ttdWriteSink; the recorder checks its own state. Coverage takes
+/// a different route (EmulatorContext::ttdCoverage, an inline record) because it
+/// runs on every instruction fetch and read
+class ITTDWriteSink
+{
+public:
+    virtual ~ITTDWriteSink() = default;
+    virtual void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal, uint16_t m1pc, PhysPage physPage) = 0;
+    virtual void RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc) = 0;
 };
 
 class ITimeTravelHooks

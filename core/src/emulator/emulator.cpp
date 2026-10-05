@@ -290,6 +290,7 @@ bool Emulator::Init()
         {
             _context->pTimeTravelManager = ttdManager;
             _context->pTimeTravelHooks = ttdManager;
+            _context->ttdWriteSink = ttdManager;
             MLOGDEBUG("Emulator::Init - TTD manager created");
         }
         else

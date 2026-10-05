@@ -51,7 +51,7 @@ class EthernetGateway;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class ITimeTravelHooks; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
+namespace ttd { class TimeTravelManager; class ITimeTravelHooks; class ITTDWriteSink; class TTDCoverageIndex; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
@@ -319,6 +319,12 @@ public:
     // StartRecording and cleared by StopRecording / InvalidateSession, all of
     // which run on the control thread with the emulator paused.
     bool ttdCoverageActive = false;
+    /// The recording session's coverage index while it records with coverage on, null
+    /// otherwise (Phase 5, C1d): the core records into it inline, like a direct call
+    ttd::TTDCoverageIndex* ttdCoverage = nullptr;
+    /// Who takes memory writes (debug write path) and port OUTs while time travel
+    /// records: v1's manager or the engine's controller (Phase 5, C1d)
+    ttd::ITTDWriteSink* ttdWriteSink = nullptr;
     /// endregion </Child object references>
 
     /// region <Run-control claim (GDB TDD 3.3 / parent TDD 7.2)>

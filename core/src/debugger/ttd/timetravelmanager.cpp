@@ -114,6 +114,10 @@ TimeTravelManager::TimeTravelManager(EmulatorContext* context)
 
 TimeTravelManager::~TimeTravelManager()
 {
+    if (_context && _context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = nullptr;
+    if (_context && _context->ttdWriteSink == this)
+        _context->ttdWriteSink = nullptr;
     if (_context && _context->ttdPortReads == &_portReads)
         _context->ttdPortReads = nullptr;
     if (_context && _context->ttdPortWrites == &_portWrites)
@@ -584,6 +588,7 @@ void TimeTravelManager::EngageCaptureFeatures()
 void TimeTravelManager::SetState(TTDSessionState next)
 {
     _state = next;
+    SyncCoverageSink();
     if (next == TTDSessionState::Recording)
         EngageRecordingLock();
     else if (next == TTDSessionState::Idle)
@@ -5874,6 +5879,17 @@ void TimeTravelManager::SetEnableCoverageIndex(bool enable)
     // sets it otherwise.
     if (_context && _state == TTDSessionState::Recording)
         _context->ttdCoverageActive = enable;
+    SyncCoverageSink();
+}
+
+void TimeTravelManager::SyncCoverageSink()
+{
+    if (!_context)
+        return;
+    if (_state == TTDSessionState::Recording && _enableCoverageIndex)
+        _context->ttdCoverage = &_coverageIndex;
+    else if (_context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = nullptr;
 }
 
 void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,

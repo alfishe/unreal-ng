@@ -93,7 +93,7 @@ namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
 
 namespace ttd {
 
-class TimeTravelManager final : public ITimeTravelHooks
+class TimeTravelManager final : public ITimeTravelHooks, public ITTDWriteSink
 {
 public:
     /// @brief I-frame / P-frame discriminator.
@@ -1008,6 +1008,9 @@ public:
     /// @brief Is per-frame coverage collection enabled for new sessions?
     inline bool IsCoverageIndexEnabled() const { return _enableCoverageIndex; }
     void SetEnableCoverageIndex(bool enable);
+    /// EmulatorContext::ttdCoverage: this session's coverage index while it records with
+    /// coverage on, null otherwise - the core's inline record needs no state check
+    void SyncCoverageSink();
 
 private:
     /// @brief Make the current position visible: compose its picture
@@ -1056,13 +1059,13 @@ private:
 public:
 
     void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                           uint16_t m1pc, PhysPage physPage);
+                           uint16_t m1pc, PhysPage physPage) override;
     
     /// @brief Hot-path capture: record a port OUT (used for IO probe).
     ///
     /// Same threading/lifecycle as RecordMemoryWrite but for port writes
     /// (decoder::DecodePortOut path). Marked with isIo=1 in the record.
-    void RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc);
+    void RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc) override;
     
     /// @brief Reverse-search entry point (TDD §9.1).
     ///

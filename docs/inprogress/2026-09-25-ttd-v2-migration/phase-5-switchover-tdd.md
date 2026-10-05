@@ -524,6 +524,7 @@ Decided in 1b:
   | C5 | `TTDControl` on the controller; the surface contract on both backends |
 
   Then the switch (item 4: `Emulator::Init` creates the controller), the go/no-go gate, Steps 2 and 3, and Step 4 (v1 to the verification library).
+- **C1d: the hot path reaches whichever recorder runs.** Memory writes (debug write path) and port OUTs go to `EmulatorContext::ttdWriteSink`, an `ITTDWriteSink` (v1's manager or the controller; a virtual call where v1 had a direct, non-inline one). Coverage stays inline: `EmulatorContext::ttdCoverage` points at the recording session's `TTDCoverageIndex` only while it records with coverage on (`SyncCoverageSink` at every state change), so the per-instruction record needs neither a call nor a state check. A/B (TTDMatrix PENTAGON/game and ATM3/idle, interleaved, two rounds, load 20-60): the before / after spread is inside the run-to-run spread (e.g. journal + coverage overhead 19.9 / 19.4 % before, 23.5 / 17.4 % after on PENTAGON/game); a quiet rerun belongs to the go/no-go gate.
 - **The contract check runs against the live application** (`tools/verification/ttd-surface-contract/`): `core-tests` cannot host the WebAPI, Lua or Python. `TTDControl_Test` covers the verbs; the script covers each surface's mapping. Python automation is off in the default build (`ENABLE_PYTHON_AUTOMATION`); its bindings are compiled in a separate build directory with it on.
 
 ## 8. Risks and open questions

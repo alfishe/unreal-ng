@@ -420,9 +420,9 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
     // 3. Phase 4 — IO write journal (TDD §9.3) + access probe (§9.2).
     // OnPortOutComplete is the single common path called by ALL subclass
     // DecodePortOut overrides after the hardware write completes.
-    if (_context->pTimeTravelManager != nullptr)
+    if (_context->ttdWriteSink != nullptr)
     {
-        _context->pTimeTravelManager->RecordIoWrite(port, value, pc);
+        _context->ttdWriteSink->RecordIoWrite(port, value, pc);
     }
     if (_context->ttdProbe.IsArmed())
     {
