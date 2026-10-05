@@ -22,11 +22,13 @@
 #include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/io/serial/esp/espnetmodule.h"
 #include "emulator/io/serial/hayesmodempeer.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 NetworkManager::NetworkManager(EmulatorContext* context) : _context(context)
 {
+    _traffic = std::make_unique<NetworkTrafficTap>([context]() { return VirtualNetwork::TrafficTimeOf(context); });
 }
 
 NetworkManager::~NetworkManager()
@@ -463,6 +465,7 @@ void NetworkManager::Refit()
             host = std::make_unique<HostNetBridge>(options);
         }
         _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
+        _network->UseTap(_traffic.get());
         _context->pVirtualNetwork = _network.get();
     }
     if (plan.ethernetLink && _network)
@@ -507,7 +510,41 @@ void NetworkManager::Refit()
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
     FitSlotCards(plan);
+    NameTrafficGuests();
     UpdateStatus();
+}
+
+void NetworkManager::NameTrafficGuests()
+{
+    if (!_network)
+        return;
+    // A port's peer: an ESP module's network stack, a modem's call, a TCP link
+    auto name = [this](const ISerialPeer* peer, const std::string& port) {
+        if (!peer)
+            return;
+        if (const auto* esp = dynamic_cast<const EspModule*>(peer))
+            _network->NameGuest(&esp->Stack(), port + ".esp");
+        else if (const auto* modem = dynamic_cast<const HayesModemPeer*>(peer))
+            _network->NameGuest(modem, port + ".modem");
+        else if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
+            _network->NameGuest(stream, port + ".tcp");
+    };
+    if (_card)
+        _network->NameGuest(&_card->Chip(), "zxnetusb");
+    if (_com)
+        name(_com->Peer(), "com");
+    name(_machinePeer.get(), "machine");
+    if (_atm2IoEsp)
+        name(_atm2IoEsp->Com().Peer(), "atm2ioesp");
+    if (_zifi)
+        name(_zifi->Line().Peer(), "zifi");
+    for (const SlotCard& card : _slotCards)
+    {
+        if (!card.serial)
+            continue;
+        for (int ch = 0; ch < card.serial->Channels(); ++ch)
+            name(card.serial->Com(ch).Peer(), card.slotId + (ch ? ".b" : ""));
+    }
 }
 
 PcSerialCard* NetworkManager::SerialCard(const std::string& slotId) const

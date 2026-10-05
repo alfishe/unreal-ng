@@ -1,6 +1,7 @@
 # Network traffic for the debuggers
 
-**Status:** task recorded 2026-10-04 (owner); design and build right after SN6
+**Status:** design settled ([design.md](design.md)); T1 built 2026-10-04 (the tap, ring, file, every automation
+surface); T2-T4 next. Recorded 2026-10-04 (owner)
 ([sn6-bridge-design.md](../2026-10-02-sprinter-network/sn6-bridge-design.md)). PLAN #91.
 
 ## Goal

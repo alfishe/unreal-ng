@@ -61,6 +61,7 @@
 #include <emulator/config.h>
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
@@ -3237,6 +3238,31 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        // Everything the network adapters sent and received (TrafficAccess, network #91)
+        lua.set_function("network_traffic", [this](sol::this_state s, sol::optional<sol::table> q) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            TrafficAccess::Query query;
+            if (q)
+            {
+                query.since = (*q).get_or("since", uint64_t{0});
+                query.adapter = (*q).get_or("adapter", std::string());
+                query.kind = (*q).get_or("kind", std::string());
+                query.last = (*q).get_or("last", 64u);
+            }
+            return StateNodeToLua(s, TrafficAccess::Records(emulator->GetContext(), query));
+        });
+        lua.set_function("network_traffic_control", [this](sol::this_state s, const std::string& action, sol::optional<std::string> path,
+                                                           sol::optional<uint64_t> ringBytes) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            if (!TrafficAccess::Control(emulator->GetContext(), action, path.value_or(""), ringBytes.value_or(0), error))
+                return mouseError(s, error);
+            sol::variadic_results r;
+            r.push_back(sol::make_object(s, true));
+            return r;
         });
         // The host adapters the bridge can use (ethernet_mode=bridge, network SN6)
         lua.set_function("network_adapters", [](sol::this_state s) -> sol::object {

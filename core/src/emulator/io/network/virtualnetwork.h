@@ -39,6 +39,7 @@
 #include "emulator/io/network/ethernet/ethernetlink.h"
 #include "emulator/state/statenode.h"
 #include "emulator/io/network/netstate.h"
+#include "emulator/io/network/traffic/networktraffictap.h"
 #include "emulator/io/network/vnet/dhcpserver.h"
 
 class EmulatorContext;
@@ -156,6 +157,19 @@ public:
     /// BRIDGE: the host adapter's part of the report (adapter, open, error, library, counters, Wi-Fi translation);
     /// an empty object in NAT
     StateNode DescribeBridge() const;
+
+    // --- Traffic (network #91): everything every adapter sends and receives, recorded here --------------
+
+    NetworkTrafficTap& Traffic() { return *_tap; }
+    const NetworkTrafficTap& Traffic() const { return *_tap; }
+    /// Record into the machine's tap (NetworkManager owns it: the ring and a file recording outlive a refit that
+    /// replaces this network); without one the network keeps its own
+    void UseTap(NetworkTrafficTap* tap) { _tap = tap ? tap : _ownTap.get(); }
+    /// Machine time for the tap: frame, TTD units in the frame, emulated microseconds
+    static TrafficTime TrafficTimeOf(const EmulatorContext* context);
+    /// The name a socket adapter's traffic shows ("zxnetusb", "com.esp", "isa1.esp", "isa1.modem"); unnamed: "socket"
+    void NameGuest(const INetGuest* guest, const std::string& name);
+    std::string GuestName(const INetGuest* guest) const;
 
     /// Close every socket, forget leases and listeners (machine reset, adapter
     /// removed). The sockets of `keep` stay: a ZX-Bus reset resets the card,
@@ -309,7 +323,13 @@ private:
     void FitBridge();
     void PumpBridge(bool replaying);
 
+    void TapSocket(const Socket& s, bool out, const char* op, const NetEndpoint& peer, const uint8_t* data,
+                   uint32_t length, uint16_t localPort = 0);
+
     EmulatorContext* _context = nullptr;
+    std::unique_ptr<NetworkTrafficTap> _ownTap;
+    NetworkTrafficTap* _tap = nullptr;
+    std::map<const INetGuest*, std::string> _guestNames;
     std::unique_ptr<IHostNet> _host;
     // The frame cards' wire (network SN6 / #91): the gateway, and in BRIDGE the host adapter
     std::unique_ptr<EthernetGateway> _gateway;

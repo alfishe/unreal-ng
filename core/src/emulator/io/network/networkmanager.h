@@ -143,6 +143,9 @@ public:
     static bool IsFrameCardKind(const std::string& kind) { return kind == "ne2000" || kind == "el3c509b"; }
     /// The switch + router of the frame-level cards (null without one, or with the network off)
     EthernetGateway* Gateway() const { return _network ? _network->Gateway() : nullptr; }
+    /// Everything the machine's network adapters send and receive (network #91): the always-on ring and the file
+    /// recording; it outlives a refit (a settings change replaces the virtual network, not the tap)
+    NetworkTrafficTap& Traffic() { return *_traffic; }
     /// The host adapter of BRIDGE mode (tests: a fake instead of libpcap; set before the gateway is fitted)
     void SetHostFrames(std::unique_ptr<IHostFrames> frames) { _hostFramesOverride = std::move(frames); }
 
@@ -325,6 +328,8 @@ private:
     void FitMachineSerial(const Plan& plan);
     void FitAtm2IoEsp(const Plan& plan);
     void FitSlotCards(const Plan& plan);
+    /// The names the traffic tap shows for the socket adapters ("zxnetusb", "com.esp", "isa1.esp", "isa1.modem")
+    void NameTrafficGuests();
     void UnplugSlotCards();
     void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;
 
@@ -341,6 +346,7 @@ private:
     std::vector<std::pair<std::string, Uart16550::State>> _serialKeep;
     /// A test's host adapter for BRIDGE (a fake instead of libpcap), handed to every virtual network fitted after it
     std::unique_ptr<IHostFrames> _hostFramesOverride;
+    std::unique_ptr<NetworkTrafficTap> _traffic;
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

@@ -2107,6 +2107,9 @@ StateNode Network(EmulatorContext* context)
     }
     if (st.ethernetGateway.isObject())
         ret["ethernet_gateway"] = st.ethernetGateway;
+    // Everything the adapters sent and received (network #91): the ring, its counters, a file recording
+    if (manager)
+        ret["traffic"] = manager->Traffic().Describe();
     if (!st.notes.empty())
     {
         StateNode& notes = ret["not_fitted"];

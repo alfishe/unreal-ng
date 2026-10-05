@@ -174,6 +174,47 @@
         paths[kAdapters]["get"]["responses"]["200"]["description"] = "The adapters (empty with error when unavailable)";
         paths[kAdapters]["get"]["responses"]["404"]["description"] = "Emulator not found";
 
+        const char* kTraffic = "/api/v1/emulator/{id}/network/traffic";
+        paths[kTraffic]["get"]["summary"] = "Get the network traffic of every adapter";
+        paths[kTraffic]["get"]["tags"].append("Network");
+        paths[kTraffic]["get"]["description"] =
+            "Everything the machine's network adapters sent and received, recorded at the virtual network (network #91): "
+            "frame cards' Ethernet frames (NE2000, 3C509B, the bridge's LAN side) and socket adapters' operations (W5300 / "
+            "ZXNETUSB, ESP modules, ZiFi, the Hayes modem: connect, send, data, close, ...). An always-on ring (8 MiB of "
+            "packet bytes by default). format=json (default): tap (ring size, counters, the file recording) and records[] "
+            "with index, frame, t_in_frame (the TTD position), time_us (emulated), kind (frame / socket), direction "
+            "(out = from the adapter), adapter (isa2.eth, lan, zxnetusb, com.esp, isa1.esp, isa1.modem, gateway-nat, ...), "
+            "op / socket / proto / peer for socket records, length, summary, hex. since=N: records from index N (poll with "
+            "the previous tap.next_index); adapter=, kind=frame|socket, last=N (default 64, 0 = all). format=pcapng: the "
+            "ring as a pcapng file for Wireshark (one interface per adapter, emulated time, the TTD position as each "
+            "packet's comment; socket operations follow as synthetic packets in a later phase).";
+        paths[kTraffic]["get"]["parameters"][0]["name"] = "id";
+        paths[kTraffic]["get"]["parameters"][0]["in"] = "path";
+        paths[kTraffic]["get"]["parameters"][0]["required"] = true;
+        paths[kTraffic]["get"]["parameters"][0]["schema"]["type"] = "string";
+        for (const char* q : {"since", "adapter", "kind", "last", "format"})
+        {
+            Json::Value p;
+            p["name"] = q;
+            p["in"] = "query";
+            p["schema"]["type"] = "string";
+            paths[kTraffic]["get"]["parameters"].append(p);
+        }
+        paths[kTraffic]["get"]["responses"]["200"]["description"] = "The records (JSON) or a pcapng file";
+        paths[kTraffic]["get"]["responses"]["404"]["description"] = "Emulator not found";
+        paths[kTraffic]["post"]["summary"] = "Control the network traffic recording";
+        paths[kTraffic]["post"]["tags"].append("Network");
+        paths[kTraffic]["post"]["description"] =
+            "Body {\"action\": \"clear\"} empties the ring; {\"action\": \"start\", \"path\": \"/abs/run.pcapng\"} records every "
+            "packet into that pcapng file from now on, unbounded, until {\"action\": \"stop\"}; {\"action\": \"ring\", "
+            "\"ring_bytes\": 33554432} sets the ring's budget. Replies with the tap's state.";
+        paths[kTraffic]["post"]["parameters"][0]["name"] = "id";
+        paths[kTraffic]["post"]["parameters"][0]["in"] = "path";
+        paths[kTraffic]["post"]["parameters"][0]["required"] = true;
+        paths[kTraffic]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kTraffic]["post"]["responses"]["200"]["description"] = "Done";
+        paths[kTraffic]["post"]["responses"]["400"]["description"] = "Unknown action, no path for start, the file cannot be written";
+
         const char* kFrame = "/api/v1/emulator/{id}/network/frame";
         paths[kFrame]["post"]["summary"] = "Inject an Ethernet frame towards a card";
         paths[kFrame]["post"]["tags"].append("Network");
