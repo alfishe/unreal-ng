@@ -161,7 +161,7 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
     - [x] Group 4a (2026-10-04): find-last, reverse-continue, port-events
     - [x] Group 4b (2026-10-04): coverage probe / scan / summary
     - [x] Group 5 (2026-10-04): dump, load, file-info, export-clip
-    - [ ] Export clip on Lua, Python, CLI (automation parity; WebAPI / MCP only today)
+    - [x] Export clip on every automation surface (2026-10-04): CLI `ttd export-clip`, Lua / Python `ttd_export_clip`, MCP `time_travel` `export_clip` (WebAPI only before)
   - [ ] 1c GDB, DeZog, Qt, ZX-Poly group control and the Sprinter port search on `TTDControl`
 - [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events
 - [ ] Step 3 — Black-box setting in unreal-qt (off for automation); session file location in the UI, default `scratch/ttd/`

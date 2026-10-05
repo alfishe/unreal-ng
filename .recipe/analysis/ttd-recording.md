@@ -232,7 +232,8 @@ curl -s "$BASE/ttd/file-info?path=scratch/session-001.ttd" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/port-events" -H 'Content-Type: application/json' \
      -d '{"event":"key","arg":"enter","newest":true,"limit":3}' | jq -c '.hits[] | {frame, tinframe, port, value, pc}'
 
-# Lossless frame clip, written inside the core (one call instead of seek + capture per frame)
+# Lossless frame clip, written inside the core (one call instead of seek + capture per frame;
+# MCP time_travel "export_clip")
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: application/json' \
      -d '{"from":100,"to":200,"path":"scratch/clip1"}' | jq '{ok, frames, bytes, planeb, width, height, seconds}'
 ```
@@ -248,7 +249,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `pc`, plus `ay_register` for AY events).
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
   optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
-  There is no dedicated MCP action: use `invoke_api`.
+  The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,
+  `path`, `chunk`), CLI `ttd export-clip <from> <to> <dir> [--chunk N]`, Lua `ttd_export_clip(from, to, dir)`,
+  Python `emu.ttd_export_clip(from_frame, to_frame, path)`.
 
 ### Coverage heatmap (when did my code run?)
 

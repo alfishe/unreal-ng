@@ -1029,6 +1029,12 @@ ttd_file_info("/tmp/session.ttd")
 --       peripherals_from_header }
 --     or { ok = false, path, error = "..." }
 -- Provision the machine it needs first: its model, its General Sound card (machine.general_sound).
+
+-- Frames from..to as a lossless clip in a directory (final picture, plane B when zxdlss
+-- is on, frame meta), one call instead of a seek and a capture per frame; not while recording
+ttd_export_clip(1200, 1500, "/tmp/clip")         --> {ok, frames, bytes, planeb, width, height, seconds, path}
+ttd_export_clip(1200, 1500, "/tmp/clip", 250)    -- 250 frames per zstd chunk (default 500)
+-- failure: {ok = false, error = "<why>"}
 ```
 
 **Coverage index queries:**

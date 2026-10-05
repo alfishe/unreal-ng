@@ -2435,6 +2435,48 @@ TEST_F(McpTools_Test, TimeTravel_DumpAndLoad_PostPath)
     EXPECT_EQ(call->body["path"].asString(), "/tmp/s.ttd");
 }
 
+TEST_F(McpTools_Test, TimeTravel_ExportClip_PostsTheRangeAndDirectory)
+{
+    Json::Value written;
+    written["ok"] = true;
+    written["path"] = "/tmp/clip";
+    written["frames"] = 301;
+    written["bytes"] = 123456;
+    written["planeb"] = false;
+    written["width"] = 352;
+    written["height"] = 288;
+    written["seconds"] = 0.5;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/export-clip"] = {200, written};
+
+    Json::Value args;
+    args["action"] = "export_clip";
+    args["from_frame"] = 100;
+    args["to_frame"] = 400;
+    args["path"] = "/tmp/clip";
+    args["chunk"] = 250;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("301 frame(s), 352x288"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/export-clip");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["from"].asUInt64(), 100u);
+    EXPECT_EQ(call->body["to"].asUInt64(), 400u);
+    EXPECT_EQ(call->body["path"].asString(), "/tmp/clip");
+    EXPECT_EQ(call->body["chunk"].asUInt(), 250u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_ExportClip_NeedsRangeAndPath)
+{
+    Json::Value args;
+    args["action"] = "export_clip";
+    args["from_frame"] = 100;
+    args["path"] = "/tmp/clip";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("requires 'from_frame', 'to_frame' and 'path'"), std::string::npos) << result.text;
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/export-clip"), nullptr);
+}
+
 TEST_F(McpTools_Test, TimeTravel_FileInfo_GetsWithoutATargetAndSummarizesTheMachine)
 {
     Json::Value info;

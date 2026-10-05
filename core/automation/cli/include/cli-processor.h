@@ -407,6 +407,8 @@ private:
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
+    void HandleTTDExportClip(const ClientSession& session, EmulatorContext* context,
+                             const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,

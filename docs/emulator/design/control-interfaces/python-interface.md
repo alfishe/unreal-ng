@@ -1239,6 +1239,13 @@ emu.ttd_file_info('/tmp/session.ttd')
 #     'peripherals_from_header': ...}
 #    or {'ok': False, 'path': ..., 'error': '...'}
 # Provision the machine it needs first: its model, its General Sound card (machine['general_sound']).
+
+# Frames from..to as a lossless clip in a directory (final picture, plane B when zxdlss
+# is on, frame meta), one call instead of a seek and a capture per frame; not while recording
+emu.ttd_export_clip(1200, 1500, '/tmp/clip')              # -> {'ok', 'frames', 'bytes', 'planeb', 'width',
+                                                         #     'height', 'seconds', 'path'}
+emu.ttd_export_clip(1200, 1500, '/tmp/clip', chunk=250)  # 250 frames per zstd chunk (default 500)
+# failure: {'ok': False, 'error': '<why>'}; ValueError for arguments that do not parse
 ```
 
 **Coverage index queries:**

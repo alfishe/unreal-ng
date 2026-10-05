@@ -2628,6 +2628,8 @@ Record a per-frame checkpoint timeline of the running emulator, then seek backwa
 
 All `ttd` subcommands act on the currently selected emulator instance. Frame numbers are absolute (the emulator's frame counter), and `tinframe` is the t-state offset inside that frame (default 0).
 
+**One implementation behind every surface.** The CLI, WebAPI (and MCP through it), Lua and Python turn their input into a verb of `ttd::TTDControl` (`core/src/debugger/ttd/ttdcontrol.h`) and print its reply in their own form. Checks, refusals and their messages are therefore the same everywhere: a refusal while recording is the same sentence on the CLI (`Error: ...`), the WebAPI (409 with `message`), Lua (`false, reason` or `ok = false, error`) and Python (`RuntimeError`, or `ValueError` for a bad argument). Numbers take decimal or hex as `0x..`, `#..` or `$..`. `tools/verification/ttd-surface-contract/` checks the surfaces against each other on a running application.
+
 #### Command Reference
 
 | Command | Aliases | Arguments | Description | Implementation Status |
@@ -2653,6 +2655,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd port-events` | `ttd pe` | `<event> [arg] [option=value ...]` | "When did the program ...": searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events: `key [KEY]`, `ear`, `ay-read [R]`, `ay-write [R]`, `ay-select [R]`, `border`, `beeper`, `in`, `out`. Options: `limit=N`, `newest=true`, `from=F[:T]`, `to=F[:T]`, `port=`, `port_mask=`, `value=`, `value_mask=`, `match=any\|equals\|any-clear\|any-set`, `trigger=every\|rising\|change`, `stream_mask=M`, `ay_register=R`, `file=<path.ttd>` (search a saved session without loading it). Prints each hit: frame, T-state, PC, port, value (and the AY register). See "Port events" below. | ✅ Implemented |
 | `ttd dump` | `ttd save` | `<path>` | Write the session to a `.ttd` file (readable by `tools/verification/ttd-analyzer`). Prints the byte count. | ✅ Implemented |
 | `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is `idle`, so use `ttd seek` to position the emulator. | ✅ Implemented |
+| `ttd export-clip` | `ttd clip` | `<from> <to> <dir> [--chunk N]` | Write frames `from..to` as a lossless clip into the directory `dir` (created if missing): the final picture of every frame, plane B when the `zxdlss` feature is on, and the frame meta, zstd-compressed in chunks of N frames (default 500). One call instead of a seek and a capture per frame; not while recording. Prints frames, size, bytes and whether plane B was written. See "Exporting a clip" below. | ✅ Implemented |
 | `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--limit L] [--bucket-size S]` | Query the coverage index. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
 | `ttd help` | `ttd ?`, `ttd` alone | — | Print the subcommand list. | ✅ Implemented |
 
@@ -2718,6 +2721,27 @@ carried its device set: the reader then walks to the first checkpoint for it).
 
 Provisioning a matching machine: read the info, create an instance of `machine.model`,
 fit `machine.general_sound`, then `ttd load`.
+
+**Exporting a clip (`ttd export-clip`).** A range of recorded frames written as a
+lossless clip in one call: the core seeks once and renders every frame of the range,
+instead of a client seeking and capturing frame by frame. The directory gets the final
+picture of each frame, plane B when the `zxdlss` feature is on (the second field of a
+de-flickered picture), and the frame meta, zstd-compressed in chunks of `chunk` frames.
+The machine is paused for the export and stays where the export left it; refused while
+recording, like every move in the timeline.
+
+| Surface | Call |
+|---|---|
+| CLI | `ttd export-clip <from> <to> <dir> [--chunk N]` (alias `ttd clip`) |
+| WebAPI | `POST /api/v1/emulator/{id}/ttd/export-clip` with `{"from": F, "to": T, "path": "<dir>", "chunk": N}` |
+| Lua | `ttd_export_clip(from, to, dir, [chunk])` |
+| Python | `emu.ttd_export_clip(from_frame, to_frame, path, chunk=None)` |
+| MCP | `time_travel` action `export_clip` with `from_frame`, `to_frame`, `path`, optional `chunk` |
+
+The answer: `ok`, `frames`, `bytes`, `planeb`, `width`, `height`, `seconds`, `path`;
+`error` when `ok` is false (400 on the WebAPI, `ok = false` in Lua and Python;
+Python raises `ValueError` for arguments that do not parse). A recording in progress
+is a 409 / `Error:` with the same sentence as a seek.
 
 **Halt reasons** (seek results; the WebAPI, Lua and Python return them as `halt_reason`):
 

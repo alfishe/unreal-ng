@@ -263,6 +263,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDLoad(session, context, args);
     }
+    else if (subcommand == "export-clip" || subcommand == "clip")
+    {
+        HandleTTDExportClip(session, context, args);
+    }
     else if (subcommand == "find-last" || subcommand == "fl")
     {
         HandleTTDFindLast(session, context, args);
@@ -338,6 +342,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
     ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
     ss << "  ttd load <path>                  Load a .ttd session for playback (alias: open)" << NEWLINE;
+    ss << "  ttd export-clip <from> <to> <dir> [--chunk N]" << NEWLINE;
+    ss << "                                   Write frames from..to as a lossless clip into dir (alias: clip)" << NEWLINE;
     ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
@@ -975,6 +981,42 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
     ss << "TTD: Session loaded from '" << path << "' (" << b.find("checkpoint_count")->i << " checkpoints, frames "
        << b.find("session_start_frame")->i << ".." << b.find("current_end_frame")->i << ")" << NEWLINE
        << "     Session is idle - use 'ttd seek' to position the emulator." << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleTTDExportClip(const ClientSession& session, EmulatorContext* context,
+                                       const std::vector<std::string>& args)
+{
+    // ttd export-clip <from> <to> <dir> [--chunk N]
+    std::vector<std::string> positional;
+    std::map<std::string, std::string> options;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if (args[i] == "--chunk" && i + 1 < args.size())
+            options["chunk"] = args[++i];
+        else
+            positional.push_back(args[i]);
+    }
+    if (positional.size() != 3)
+    {
+        session.SendResponse(std::string("Error: Missing arguments") + NEWLINE +
+                             "Usage: ttd export-clip <from-frame> <to-frame> <dir> [--chunk N]" + NEWLINE);
+        return;
+    }
+    options["from"] = positional[0];
+    options["to"] = positional[1];
+    options["path"] = positional[2];
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"export-clip", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    const StateNode& b = reply.body;
+    std::stringstream ss;
+    ss << "TTD: Clip written to '" << b.find("path")->s << "': " << b.find("frames")->i << " frame(s), "
+       << b.find("width")->i << "x" << b.find("height")->i << ", " << b.find("bytes")->i << " bytes"
+       << (b.find("planeb")->b ? ", plane B included" : "") << " in " << b.find("seconds")->d << " s" << NEWLINE;
     session.SendResponse(ss.str());
 }
 

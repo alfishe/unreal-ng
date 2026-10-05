@@ -3360,7 +3360,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit", "journal_on", "journal_off", "journal_build"})
+                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -3383,7 +3383,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model, ROM "
         "set and General Sound / TurboSound card), 'file_info' describes a .ttd file without loading it and without an "
         "emulator: frame range, sections and the recorded machine (model, ROM signature, devices, general_sound card to "
-        "fit before 'load'). "
+        "fit before 'load'); 'export_clip' writes frames from_frame..to_frame as a lossless clip into the directory path "
+        "(final picture, plane B when zxdlss is on, frame meta; chunk = frames per zstd chunk, default 500) in one "
+        "call instead of a seek and a capture per frame (not while recording). "
         "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
         "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
         "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
@@ -3433,7 +3435,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "reverse_continue: reverse breakpoints - PC addresses as integers or '0x8000' strings (non-empty)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "dump / load / file_info: .ttd file path, resolved by the emulator process (its machine and working directory)";
+        "dump / load / file_info: .ttd file path; export_clip: the clip's directory (created if missing). Resolved by "
+        "the emulator process (its machine and working directory)";
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";
     schema["properties"]["access"]["type"] = "string";
@@ -3486,10 +3489,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build";
+        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
-        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build";
+        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
+    schema["properties"]["chunk"]["type"] = "integer";
+    schema["properties"]["chunk"]["description"] = "export_clip: frames per zstd chunk (default 500)";
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
     schema["properties"]["addr_from"]["type"] = "string";
@@ -3576,6 +3581,20 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     (*body)["from_frame"] = args["from_frame"];
                 if (args.isMember("to_frame"))
                     (*body)["to_frame"] = args["to_frame"];
+            }
+            else if (action == "export_clip")
+            {
+                if (!args.isMember("from_frame") || !args.isMember("to_frame") || args["path"].asString().empty())
+                {
+                    done(ToolResult::Error("Action 'export_clip' requires 'from_frame', 'to_frame' and 'path' (a directory on "
+                                           "the emulator's machine)"));
+                    return;
+                }
+                (*body)["from"] = args["from_frame"];
+                (*body)["to"] = args["to_frame"];
+                (*body)["path"] = args["path"].asString();
+                if (args.isMember("chunk"))
+                    (*body)["chunk"] = args["chunk"];
             }
             else if (action == "history_limit")
             {
@@ -3744,6 +3763,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (b["cancelled"].asBool())
                             text << "; cancelled";
                         text << ". It " << DescribeJournalSegments(b) << ".";
+                        return text.str();
+                    }, done);
+                }
+                else if (action == "export_clip")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/export-clip"), body.get(), caller, [](const Json::Value& b) {
+                        std::ostringstream text;
+                        text << "Clip written to " << b["path"].asString() << ": " << b["frames"].asUInt64() << " frame(s), "
+                             << b["width"].asUInt() << "x" << b["height"].asUInt() << ", " << b["bytes"].asUInt64()
+                             << " bytes" << (b["planeb"].asBool() ? ", plane B included" : "") << " in "
+                             << b["seconds"].asDouble() << " s";
                         return text.str();
                     }, done);
                 }

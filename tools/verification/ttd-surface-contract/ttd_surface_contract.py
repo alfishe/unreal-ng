@@ -365,6 +365,24 @@ def run_contract(c: Contract) -> None:
     c.check(status == 404 and ("Error: " + web.get("message", "")) in cli, f"loading a missing file: 404, the same message on the CLI ({cli.strip()!r})")
     dump.unlink(missing_ok=True)
 
+    print("[export clip]")
+    _, pos = c.web("GET", "/ttd/position")
+    first, last = pos["session_end"]["frame"] - 3, pos["session_end"]["frame"] - 1
+    clip_web = scratch / f"ttd-surface-contract-{os.getpid()}-clip-web"
+    clip_lua = scratch / f"ttd-surface-contract-{os.getpid()}-clip-lua"
+    status, web = c.web("POST", "/ttd/export-clip", {"from": first, "to": last, "path": str(clip_web)})
+    lua = c.lua(f"local r = ttd_export_clip({first}, {last}, '{clip_lua}'); print(tostring(r.ok) .. '|' .. tostring(r.frames) .. '|' .. tostring(r.width))")
+    c.check(status == 200 and lua == f"true|{web.get('frames')}|{web.get('width')}", f"Lua and WebAPI export the same clip ({status}, {lua!r}, {web.get('frames')})")
+    cli = c.cli.run(f"ttd export-clip {first} {last} {clip_lua}")
+    c.check(f": {web.get('frames')} frame(s)" in cli, f"CLI export-clip writes the same frames ({cli.strip()[:90]!r})")
+    status, web = c.web("POST", "/ttd/export-clip", {"from": first, "to": "x", "path": str(clip_web)})
+    c.check(status == 400, f"WebAPI non-numeric 'to' is 400 ({status})")
+    for d in (clip_web, clip_lua):
+        for f in sorted(d.glob("*")) if d.exists() else []:
+            f.unlink()
+        if d.exists():
+            d.rmdir()
+
     print("[write journal: Lua start() keeps the choice, WebAPI start defaults it off]")
     c.lua("ttd_set_journal_enabled(true)")
     c.lua("ttd_start()")

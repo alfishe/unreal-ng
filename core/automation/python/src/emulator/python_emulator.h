@@ -3686,6 +3686,27 @@ namespace PythonBindings
                 return StateNodeToPy(value);
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
+            .def("ttd_export_clip", [](Emulator& self, uint64_t fromFrame, uint64_t toFrame, const std::string& path,
+                                       py::object chunkObj) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from", std::to_string(fromFrame)}, {"to", std::to_string(toFrame)}, {"path", path}};
+                if (!chunkObj.is_none())
+                    options["chunk"] = TtdOptionTextPy(chunkObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "export-clip", options);
+                if (reply.error == ttd::TTDControlError::BadRequest && !reply.body.find("frames"))
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["ok"] = false;
+                    if (!value.find("error"))
+                        value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Write frames from_frame..to_frame as a lossless clip into the directory path (final picture, plane B "
+               "when zxdlss is on, frame meta): one call instead of a seek and a capture per frame; not while recording",
+               py::arg("from_frame"), py::arg("to_frame"), py::arg("path"), py::arg("chunk") = py::none())
+
             .def("ttd_port_events", [](Emulator& self, const std::string& event, py::object argObj,
                                         py::kwargs kwargs) -> py::object {
                 std::map<std::string, std::string> options{{"event", event}};

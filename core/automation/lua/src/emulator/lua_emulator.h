@@ -3797,6 +3797,19 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("load", {{"path", path}})));
         });
 
+        // ttd_export_clip(from_frame, to_frame, dir, [chunk]) - frames from..to as a lossless
+        // clip in dir (final picture, plane B when zxdlss is on, frame meta), one call instead
+        // of a seek and a capture per frame; not while recording. {ok, frames, bytes, planeb,
+        // width, height, seconds, path} or {ok = false, error}
+        lua.set_function("ttd_export_clip", [this](sol::this_state ts, uint64_t fromFrame, uint64_t toFrame,
+                                                    const std::string& dir, sol::optional<uint32_t> chunkOpt) -> sol::object {
+            std::map<std::string, std::string> options{
+                {"from", std::to_string(fromFrame)}, {"to", std::to_string(toFrame)}, {"path", dir}};
+            if (chunkOpt)
+                options["chunk"] = std::to_string(*chunkOpt);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("export-clip", options)));
+        });
+
         // "When did the program ...": ttd_port_events(event, [arg], [options])
         // over the session's port journals (ttdportsearch.h). event: "key",
         // "ear", "ay-read", "ay-write", "ay-select", "border", "beeper", "in",

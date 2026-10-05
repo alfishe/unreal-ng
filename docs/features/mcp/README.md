@@ -172,6 +172,7 @@ the internals).
 | `resume` | `frame`/`tinframe` (optional, default: current point) | Continue recording live from that point; **everything recorded after it is discarded**. Needs the machine positioned in history (`seek` or a step first); right after `stop` it fails |
 | `dump` / `load` | `path` | Save / load a `.ttd` session file |
 | `file_info` | `path` | Describe a `.ttd` file without loading it and without a target: frame range, checkpoints, sections and the recorded machine (model, ROM signature, devices, General Sound card, TurboSound slot device). Load needs that model and card |
+| `export_clip` | `from_frame`, `to_frame`, `path`, optional `chunk` | Write frames from..to as a lossless clip into the directory `path` (final picture, plane B when `zxdlss` is on, frame meta) in one call; not while recording |
 | `bookmark_add` / `bookmark_list` / `bookmark_delete` / `seek_bookmark` | `label`, optional `frame`/`tinframe` | Named points in time |
 | `coverage_probe` / `coverage_scan` / `coverage_summary` | `frame` or `from_frame`/`to_frame`, `kind`, `addr_from`/`addr_to`, … | Which frames touched which addresses, without replaying |
 
