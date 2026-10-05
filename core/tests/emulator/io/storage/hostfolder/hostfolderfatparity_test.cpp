@@ -124,11 +124,35 @@ namespace
 
     /// Recorded from master (C0, 2026-10-05) before the refactor
     const std::map<std::string, uint64_t> kExpected = {
+        {"mixed/fat16-mbr-866", 0x3fa81d09d0794ad8ULL},
+        {"mixed/fat16-mbr-1251", 0xd5f8cc1a7e63dce4ULL},
+        {"mixed/fat16-super-866", 0xb142a7f9ec5dba9bULL},
+        {"mixed/fat32-mbr-866", 0x7f269ad5997033dbULL},
+        {"mixed/fat32-mbr-1251", 0x78da5b855ab7b36fULL},
+        {"mixed/fat32-super-866", 0xa1d082b7222d2e1dULL},
+        {"bigroot/fat16-mbr-866", 0x380dbf4702136912ULL},
+        {"bigroot/fat16-mbr-1251", 0x61db8606fc40b812ULL},
+        {"bigroot/fat16-super-866", 0x31ac1790f089f58dULL},
+        {"bigroot/fat32-mbr-866", 0x4fb2ab210683aa92ULL},
+        {"bigroot/fat32-mbr-1251", 0xd4614581a30195c2ULL},
+        {"bigroot/fat32-super-866", 0xb43c4c486f2aa84cULL},
+        {"deep/fat16-mbr-866", 0x3b92996a2057d037ULL},
+        {"deep/fat16-mbr-1251", 0x9837924511306d57ULL},
+        {"deep/fat16-super-866", 0xb3f2d4fc23f2a310ULL},
+        {"deep/fat32-mbr-866", 0x8f574366e52cafa8ULL},
+        {"deep/fat32-mbr-1251", 0x608f0529b0201228ULL},
+        {"deep/fat32-super-866", 0x63a173be0eadf236ULL},
+        {"sizes/fat16-mbr-866", 0x7b303f6aec4383a6ULL},
+        {"sizes/fat16-mbr-1251", 0xc668c5d8d8915506ULL},
+        {"sizes/fat16-super-866", 0xdca1338268bf2299ULL},
+        {"sizes/fat32-mbr-866", 0xe4c82257e778df2aULL},
+        {"sizes/fat32-mbr-1251", 0xf93361006d779e3aULL},
+        {"sizes/fat32-super-866", 0x091388ad9f50170cULL},
     };
 }  // namespace
 
-/// Building and hashing 24 volumes takes ~0.5 s: the parity gate of the refactor
-/// is worth it (it replaces 24 separate golden files)
+/// Building and hashing 24 volumes takes ~0.1 s (over the 50 ms rule): the parity
+/// gate of the refactor is worth it (it replaces 24 golden image files)
 TEST(HostFolderFatParity_Test, CorpusHashesMatchMaster)
 {
     struct Corpus
