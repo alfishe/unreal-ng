@@ -362,7 +362,19 @@ and its limit. MCP `InspectState_PcHistoryAspect`; Qt `PcHistoryDialog_Test`.
 
 ### 7.4 A/B benchmark
 
-See the TODO row A7 for the measured rounds.
+A = `b98aa2243` (before), B = `7df0910b4` (the PC history, off), Release with `-DBENCHMARKS=ON` in detached
+worktrees; load average 7-11; rounds A B A B A B B A B A; `cpu_time` per host frame (µs):
+
+| Benchmark | min A | min B | paired mean B vs A | B slower in |
+|---|---|---|---|---|
+| `BM_HostFrame_48K_Fast` (plain step path, unchanged) | 1200.1 | 1141.9 | -4.5 % | 0 / 5 |
+| `BM_HostFrame_TSConf_Fast` (work path) | 1928.3 | 1863.0 | -3.3 % | 0 / 5 |
+| `BM_HostFrame_Sprinter_Fast` (work path) | 3100.0 | 3040.9 | -2.0 % | 0 / 5 |
+| `BM_HostFrame_ATM710_Fast` | 2249.6 | 2189.8 | -2.9 % | 0 / 5 |
+
+No regression. B is faster in every pair, also on the 48K whose step path did not change at all: a code-layout
+effect of the rebuilt binary, not a speed-up from this change; the bit test on the work path is below what the
+procedure can see.
 
 ## 8. D9: which windows a CPU write reaches
 
