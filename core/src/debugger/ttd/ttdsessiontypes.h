@@ -266,6 +266,11 @@ struct TTDSessionInfo
     /// frame; the history before it stays). Empty otherwise; a new recording clears it.
     std::string lastStopReason;
 
+    /// D8 (the engine's controller): a navigation while recording paused the
+    /// recording; state is detached, and resuming at the paused end, or running
+    /// into it, continues the same recording. Always false on v1
+    bool recordingPaused = false;
+
     /// Why time travel is not available for this instance at all (for example
     /// a member of a ZX-Poly machine); empty when it is available.
     std::string unavailableReason;

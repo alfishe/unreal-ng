@@ -135,9 +135,13 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 ```
 
-The invariant to respect: **scrub only while stopped/detached**. Seek,
-step, find-last and reverse-* during `recording` return `409 Conflict` with
-an explanation — the API guards the timeline for you.
+Seek, step, find-last and reverse-* during `recording` pause the recording
+(`backend: engine`): everything up to that instant is kept, the state is
+`detached` and `/ttd/status` says `recording_paused: true`. Resume at the
+paused point (`POST /ttd/resume` while there, or seek back to it first)
+continues the same recording; running the machine forward through it
+continues it too; `POST /ttd/stop` ends it. On `backend: v1` these return
+`409 Conflict` - stop first.
 
 ### Traveling
 
@@ -273,7 +277,8 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   there until you delete it. Startup cleanup only removes crashed leftovers
   after 7 days; a script that forgets to clean fills the disk (about 2 GB
   per hour of heavy content).
-- **409 on scrub** → you're still recording; `POST /ttd/stop` first.
+- **409 on scrub** → `backend: v1` and still recording; `POST /ttd/stop` first
+  (the engine pauses the recording instead, `recording_paused: true`).
 - **`seek` beyond `current_end_frame`** → `halt_reason: "out_of_range"`,
   machine stays where it was.
 - **Memory budget**: development mode costs ~64 MB journal + page store;

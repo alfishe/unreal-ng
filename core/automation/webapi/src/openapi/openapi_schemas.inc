@@ -705,6 +705,10 @@
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
+    schemas["TTDStatusResponse"]["properties"]["recording_paused"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
+        "The engine (D8): a seek, step or reverse query while recording paused the recording; state is detached. "
+        "Resuming at its end (resume, or running into it) continues the same recording; stop ends it. Always false on v1";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
         "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "

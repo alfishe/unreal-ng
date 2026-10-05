@@ -251,21 +251,39 @@ TEST_P(TTDControl_Test, ABodyThatNamesItsOwnErrorKeepsIt)
 // Group 2: positions, seeks, steps, resume
 // ---------------------------------------------------------------------------
 
-TEST_P(TTDControl_Test, MovingInTheTimelineIsRefusedWhileRecording)
+/// v1 refuses to move in the timeline while it records. The engine's controller
+/// pauses the recording instead (D8): the move happens, the state is detached
+/// with recording_paused, and the recording is kept
+TEST_P(TTDControl_Test, MovingInTheTimelineWhileRecording)
 {
-    Record(4);
     for (const auto& [verb, options] : std::vector<std::pair<std::string, std::map<std::string, std::string>>>{
              {"seek", {{"frame", "1"}}},
              {"step-back", {}},
-             {"step-forward", {}},
-             {"step-instruction", {}},
+             {"step-instruction", {{"dir", "back"}}},
              {"reverse-step", {{"count", "1"}}}})
     {
+        SCOPED_TRACE(verb);
+        Record(4);
         const TTDReply r = Run(verb, options);
-        EXPECT_EQ(r.error, TTDControlError::Conflict) << verb;
-        EXPECT_EQ(Str(r, "state"), "recording") << verb;
+        if (!_controller)
+        {
+            EXPECT_EQ(r.error, TTDControlError::Conflict);
+            EXPECT_EQ(Str(r, "state"), "recording");
+            EXPECT_TRUE(_ttd->IsRecording());
+        }
+        else
+        {
+            EXPECT_TRUE(r.Ok()) << r.message;
+            EXPECT_FALSE(_ttd->IsRecording());
+            const TTDReply status = Run("status");
+            EXPECT_EQ(Str(status, "state"), "detached");
+            EXPECT_TRUE(Bool(status, "recording_paused"));
+            EXPECT_GT(Int(status, "checkpoint_count"), 0);
+        }
+        ASSERT_TRUE(Run("stop").Ok());
+        EXPECT_FALSE(Bool(Run("status"), "recording_paused")) << "a stop ends the paused recording";
+        ASSERT_TRUE(Run("invalidate").Ok());
     }
-    EXPECT_TRUE(_ttd->IsRecording());
 }
 
 TEST_P(TTDControl_Test, SeekTargetsAreCheckedBeforeAnythingMoves)
@@ -417,11 +435,20 @@ TEST_P(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
     ASSERT_NE(rc.body.find("matched"), nullptr);
 }
 
-TEST_P(TTDControl_Test, ReverseQueriesAreRefusedWhileRecording)
+/// Reverse queries while recording: refused by v1, a pause on the controller (D8)
+TEST_P(TTDControl_Test, ReverseQueriesWhileRecording)
 {
     Record(2);
-    EXPECT_EQ(Run("find-last", {{"addr", "0x5C00"}}).error, TTDControlError::Conflict);
-    EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38"}}).error, TTDControlError::Conflict);
+    const TTDReply findLast = Run("find-last", {{"addr", "0x5C00"}});
+    if (!_controller)
+    {
+        EXPECT_EQ(findLast.error, TTDControlError::Conflict);
+        EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38"}}).error, TTDControlError::Conflict);
+        return;
+    }
+    EXPECT_NE(findLast.error, TTDControlError::Conflict) << findLast.message;
+    EXPECT_TRUE(Bool(Run("status"), "recording_paused"));
+    EXPECT_NE(Run("reverse-continue", {{"pcs", "0x38"}}).error, TTDControlError::Conflict);
 }
 
 TEST_P(TTDControl_Test, PortEventsNeedAnEventAndKnownOptions)

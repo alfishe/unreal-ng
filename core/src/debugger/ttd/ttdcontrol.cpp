@@ -254,7 +254,9 @@ private:
     TTDReply Load(const TTDRequest& request);
     TTDReply ExportClip(const TTDRequest& request);
 
-    bool RefuseWhileRecording(TTDReply& reply) const;
+    /// A verb that cannot run while a recording captures: refused (409). @p browses:
+    /// the engine's controller pauses the recording for it instead (D8)
+    bool RefuseWhileRecording(TTDReply& reply, bool browses = false) const;
     bool OnMachineThread() const;
     void PauseAndConfirm();
     void NotifyFrameRefresh();
@@ -479,6 +481,7 @@ StateNode StatusBodyOf(const S* manager)
             ret[key] = 0;
         ret["ttd_available"] = false;
         ret["backend"] = StateNode();
+        ret["recording_paused"] = false;
         return ret;
     }
 
@@ -530,6 +533,7 @@ StateNode StatusBodyOf(const S* manager)
     // Why the last recording stopped when no stop request ended it (FR-17: a feature
     // switched off); null otherwise
     ret["last_stop_reason"] = StringOrNull(info.lastStopReason);
+    ret["recording_paused"] = info.recordingPaused;
     // Why time travel is not available for this machine at all (null when it is)
     ret["unavailable_reason"] = StringOrNull(info.unavailableReason);
     AddWriteJournalOf(ret, *manager);
@@ -731,10 +735,12 @@ TTDReply TTDControlBackend<S>::JournalBuildCancel()
 }
 
 template <class S>
-bool TTDControlBackend<S>::RefuseWhileRecording(TTDReply& reply) const
+bool TTDControlBackend<S>::RefuseWhileRecording(TTDReply& reply, bool browses) const
 {
     if (!_manager->IsRecording())
         return false;
+    if (std::is_same<S, TimeTravelController>::value && browses)
+        return false;   // the controller pauses the recording (D8)
     StateNode body = StateNode::Object();
     body["state"] = TTDSessionStateToString(_manager->GetState());
     reply = Fail(TTDControlError::Conflict,
@@ -758,7 +764,7 @@ TTDReply TTDControlBackend<S>::Position()
 template <class S>
 TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
 {
-    if (TTDReply refusal; RefuseWhileRecording(refusal))
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
 
     // The target: coordinates (frame [+ tinframe]) or a bookmark label (TD-4). A bookmark
@@ -819,7 +825,7 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
 template <class S>
 TTDReply TTDControlBackend<S>::StepFrame(bool forward)
 {
-    if (TTDReply refusal; RefuseWhileRecording(refusal))
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
     const bool ok = forward ? _manager->StepForwardFrame() : _manager->StepBackFrame();
@@ -871,7 +877,7 @@ TTDReply TTDControlBackend<S>::StepInstruction(const TTDRequest& request)
         else if (*dir != "back")
             return Fail(TTDControlError::BadRequest, "dir must be back or forward");
     }
-    if (TTDReply refusal; RefuseWhileRecording(refusal))
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
     const bool ok = forward ? _manager->StepForwardInstruction() : _manager->StepBackInstruction();
@@ -895,7 +901,7 @@ TTDReply TTDControlBackend<S>::ReverseStep(const TTDRequest& request)
     uint64_t n = 0;
     if (!ParseU64(countText ? *countText : *tstatesText, n) || (countText && n > UINT32_MAX))
         return Fail(TTDControlError::BadRequest, "count and tstates must be non-negative integers");
-    if (TTDReply refusal; RefuseWhileRecording(refusal))
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
 
     PauseAndConfirm();
@@ -1151,7 +1157,7 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
             return Fail(TTDControlError::BadRequest, "before must be a non-negative integer (machine T-states)");
     }
 
-    if (TTDReply refusal; RefuseWhileRecording(refusal))
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
     TTDExternalEvent marker;
@@ -1212,7 +1218,7 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         start = end + 1;
     }
 
-    if (TTDReply refusal; RefuseWhileRecording(refusal))
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
     const auto r = _manager->ReverseContinue(pcs);

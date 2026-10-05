@@ -57,8 +57,9 @@ Error envelope (same everywhere):
 ```
 
 HTTP codes carry meaning: `400` bad body/state, `404` unknown instance,
-`409` lifecycle conflict (TTD scrub while recording, buffer reconfig while
-capturing), `501` build lacks the subsystem.
+`409` lifecycle conflict (TTD scrub while recording on `backend: v1` - the
+engine pauses the recording instead; buffer reconfig while capturing), `501`
+build lacks the subsystem.
 
 Interactive endpoint browser: `http://localhost:8090/api/v1/openapi.json`
 (generated from the live build — the source of truth when a

@@ -181,7 +181,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 ## Checklist
 
 - [ ] recording started in **development mode** (journal on)
-- [ ] `ttd/stop` before any scrub (else 409)
+- [ ] scrubbing while recording pauses it (`recording_paused`; on `backend: v1` a 409 - `ttd/stop` first)
 - [ ] no snapshot/tape/disk load between `ttd/start` and the analysis — a
       load wipes the history (a reset does not)
 - [ ] bookmark + dump **before** heavy experimentation

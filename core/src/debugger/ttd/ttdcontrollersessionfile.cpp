@@ -314,6 +314,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
         _dirtyTracker->ResetSession();
     _evictedCheckpoints = 0;
     _lastStopReason.clear();
+    _recordingPaused = false;
 
     _loadedFromFile = true;
     _capturedAtUnixMs = facts.capturedAtUnixMs;

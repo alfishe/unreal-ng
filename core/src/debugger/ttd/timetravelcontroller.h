@@ -218,6 +218,8 @@ public:
     /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
     /// a frame old while it runs. Never blocks, never pauses the machine.
     TTDSessionInfo ReadSessionInfo() const override;
+    /// D8: the recording is paused for browsing (state detached); see PauseRecordingForBrowsing
+    bool IsRecordingPaused() const { return _recordingPaused; }
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact
@@ -1537,6 +1539,17 @@ private:
     /// @brief _timeline drops what the engine dropped from the front, and the
     /// input, marker, bookmark and port journals are cut to the new start
     void SyncTimelineFront();
+    /// @brief D8: a navigation while recording pauses the recording - stopped
+    /// with everything up to now kept, marked paused at the present
+    /// (_pausedEnd), browsable; execution reaching that point again, or a
+    /// resume there, continues it. A stop ends it
+    void PauseRecordingForBrowsing();
+    /// @brief Continue recording from the machine's present (at or after
+    /// @p from), dropping what was recorded after it: the second half of
+    /// ResumeRecordingFrom, after its seek; called without one at a paused end
+    bool ContinueRecordingAt(const TTDTimePoint& from);
+    bool _recordingPaused = false;   ///< D8: the recording is paused for browsing
+    TTDTimePoint _pausedEnd{};       ///< where it paused
     /// @brief The engine checkpoint held at or before @p t, as an index into
     /// _timeline (_timeline[i] is the engine's FirstCheckpoint() + i), or -1
     /// when the history starts after it (Phase 5, C2)

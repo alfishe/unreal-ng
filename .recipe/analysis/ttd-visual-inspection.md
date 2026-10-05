@@ -94,7 +94,8 @@ one call instead of a seek and a capture per frame (see
   frame if anything upstream is nondeterministic (audio timing, input
   polling, turbo/speed-multiplier drift).
 - **Free back-and-forth.** `step-back`/`step-forward`/`seek` all work
-  once recording has stopped (`ttd/stop` — scrubbing while still
+  once recording has stopped, and while it records they pause it
+  (`recording_paused: true`; on `backend: v1` scrubbing while still
   `recording` is a `409`). You can walk one frame at a time across a
   glitch boundary to see exactly which frame introduced it, then
   `step-instruction` within that frame to find which write did it.
@@ -105,8 +106,9 @@ one call instead of a seek and a capture per frame (see
 
 ## Pitfalls (shared with ttd-recording.md, repeated because they bite here specifically)
 
-- `ttd/seek`/`step-*` while `state: "recording"` → `409`. Call `ttd/stop`
-  first (history is retained, not discarded).
+- `ttd/seek`/`step-*` while `state: "recording"` pause the recording
+  (`recording_paused: true`; resume at the paused point continues it). On
+  `backend: v1` they answer `409`: call `ttd/stop` first (history is retained).
 - Load the software **before** `ttd/start`: a snapshot, tape or disk load
   (and disk create, ROM reload) wipes the recorded history. A reset does
   not — it stops the recording and keeps it.

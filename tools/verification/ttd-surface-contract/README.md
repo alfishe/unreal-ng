@@ -11,6 +11,7 @@ Every surface turns its input into a `TTDControl` request and the reply into its
 | Status | Every scalar of `GET /ttd/status` has the same value in Lua's `ttd_status()` and Python's `emu.ttd_status()` |
 | Settings across surfaces | A history limit set from Lua is what the WebAPI and Python report |
 | Refusals | While recording, `invalidate` and `journal build` are refused with the same sentence on all four surfaces (409, `false, message`, `RuntimeError`, `Error: ...`) |
+| Browsing while recording | On the engine (`backend: engine`, the default), a seek or find-last while recording pauses the recording on every surface (`recording_paused`); on v1 it is refused with the same sentence everywhere |
 | Lifecycle | Start and stop on one surface are seen by the others |
 
 ## Run it

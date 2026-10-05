@@ -449,6 +449,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
         ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
     if (!info.lastStopReason.empty())
         ss << "  Recording stopped by:   " << info.lastStopReason << NEWLINE;
+    if (info.recordingPaused)
+        ss << "  Recording paused:       yes (browsing; resume at its end goes on, stop ends it)" << NEWLINE;
     if (!info.unavailableReason.empty())
         ss << "  Not available:          " << info.unavailableReason << NEWLINE;
 

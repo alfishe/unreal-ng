@@ -154,6 +154,7 @@ bool TimeTravelController::StartRecording()
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
     _lastStopReason.clear();
+    _recordingPaused = false;
     // The machine's ROM set: the engine's configuration and restore checks compare with it
     _replayRomSignature = ComputeRomSignature();
 
@@ -371,6 +372,12 @@ void TimeTravelController::StopRecording()
         // and any later serialization see the whole session rather than
         // all-but-the-last block. Not recording: the machine adds nothing
         _coverageIndex.FlushOpenBlocks();
+        if (_recordingPaused)
+        {
+            // A paused recording ends here: what it recorded stays as history
+            _recordingPaused = false;
+            UpdateInputWorkFlag();
+        }
         return;  // Idempotent
     }
 
@@ -494,6 +501,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     DiscardShadowFiles();
     ResetShadow();
     _lastDropReason = reason ? reason : "";
+    _recordingPaused = false;
 
     _timeline.clear();
     _blobBytes = 0;
@@ -809,6 +817,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.portReplayDivergences = _portReads.Divergences() + _portWrites.Divergences();
     info.lastDropReason = _lastDropReason;
     info.lastStopReason = _lastStopReason;
+    info.recordingPaused = _recordingPaused;
     info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
@@ -1888,6 +1897,15 @@ void TimeTravelController::ServiceInput()
     if (!_context)
         return;
 
+    // 0. Running forward through a paused recording: at the paused end, the
+    // recording goes on (D8). Not inside a seek's own replay
+    if (_recordingPaused && _state == TTDSessionState::Detached && !_inReplayMode &&
+        !(CurrentPosition() < _pausedEnd))
+    {
+        ContinueRecordingAt(_pausedEnd);
+        return;
+    }
+
     // 1. Journal playback: every event due at or before the current machine time
     if (_inputPlaybackArmed && _replayEngine)
     {
@@ -1981,7 +1999,9 @@ void TimeTravelController::UpdateInputWorkFlag()
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
         pending = !_pendingInput.empty() || !_pendingTasks.empty();
     }
-    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, _inputPlaybackArmed || pending);
+    // A paused recording is watched for the moment execution reaches where it paused
+    const bool watchPausedEnd = _recordingPaused && _state == TTDSessionState::Detached;
+    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, _inputPlaybackArmed || pending || watchPausedEnd);
 }
 
 void TimeTravelController::ArmInputPlayback()
@@ -2426,7 +2446,24 @@ TTDTimePoint TimeTravelController::SessionEndPosition() const
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (_timeline.empty())
         return TTDTimePoint{};
-    return _timeline.back().time;
+    // A paused recording reaches to where it paused, inside its last frame
+    return _recordingPaused ? _pausedEnd : _timeline.back().time;
+}
+
+void TimeTravelController::PauseRecordingForBrowsing()
+{
+    if (_state != TTDSessionState::Recording)
+        return;
+    const TTDTimePoint here = CurrentPosition();
+    StopRecording();   // everything up to here is in the engine; the machine stays parked
+    _recordingPaused = true;
+    _pausedEnd = here;
+    // The machine is in the history now, at its end: browsing moves it from
+    // here, and running from here goes on recording (ServiceInput)
+    SetState(TTDSessionState::Detached);
+    UpdateInputWorkFlag();
+    MLOGINFO("TimeTravelController - recording paused at (frame=%llu, tInFrame=%u) for browsing",
+             static_cast<unsigned long long>(here.frame), static_cast<unsigned>(here.tInFrame));
 }
 
 bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
@@ -2450,19 +2487,9 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     // it uses SeekToInternal directly because it owns the timeline
     // truncation that keeps the invariant intact.
     // ------------------------------------------------------------------
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        if (outResult)
-        {
-            outResult->reached        = false;
-            outResult->arrivedAt      = TTDTimePoint{};
-            outResult->haltReason     = TTDSeekHaltReason::OutOfRange;
-            outResult->blockingMarker = TTDExternalEvent{};
-        }
-        MLOGWARNING("TimeTravelController::SeekTo — rejected: session is Recording "
-                    "(call StopRecording first to preserve history)");
-        return false;
-    }
+        PauseRecordingForBrowsing();
 
     TTDSeekResult localResult;
     TTDSeekResult& result = outResult ? *outResult : localResult;
@@ -2986,12 +3013,9 @@ void TimeTravelController::PresentPosition(bool frameTarget)
 bool TimeTravelController::StepBackFrame()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::StepBackFrame — rejected: session is Recording "
-                    "(call StopRecording first)");
-        return false;
-    }
+        PauseRecordingForBrowsing();
 
     // Idle-with-history is allowed; only the timeline-empty case fails.
     if (_timeline.empty())
@@ -3017,12 +3041,9 @@ bool TimeTravelController::StepBackFrame()
 bool TimeTravelController::StepForwardFrame()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::StepForwardFrame — rejected: session is Recording "
-                    "(call StopRecording first)");
-        return false;
-    }
+        PauseRecordingForBrowsing();
 
     // Idle-with-history is allowed; only the timeline-empty case fails.
     if (_timeline.empty())
@@ -3079,7 +3100,8 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
         return false;
     }
 
-    const TTDTimePoint sessionEnd = _timeline.back().time;
+    // A paused recording reaches to where it paused, inside the last frame
+    const TTDTimePoint sessionEnd = _recordingPaused ? _pausedEnd : _timeline.back().time;
     if (sessionEnd < from)
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingFrom — target "
@@ -3091,10 +3113,6 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
                     static_cast<unsigned>(sessionEnd.tInFrame));
         return false;
     }
-
-    const size_t preTimelineSize  = _timeline.size();
-    const size_t preJournalSize   = _inputJournal.Size();
-    const size_t preMarkerCount   = _externalEvents.Size();
 
     // ------------------------------------------------------------------
     // Step 1: ensure the emulator is positioned at `from`. SeekToInternal
@@ -3111,6 +3129,16 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
         // SeekToInternal already logged the specific failure.
         return false;
     }
+    return ContinueRecordingAt(from);
+
+}
+
+bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    const size_t preTimelineSize  = _timeline.size();
+    const size_t preJournalSize   = _inputJournal.Size();
+    const size_t preMarkerCount   = _externalEvents.Size();
 
     // ------------------------------------------------------------------
     // Step 2: truncate timeline + page refs after `from`. Page refs held
@@ -3143,12 +3171,14 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
                               _timeline.back().time.frame == cut.frame;
     _coverageIndex.DropFramesFrom(cut.frame, !atCheckpoint);
 
-    // Port reads past the resume point are dead future: the seek left the
-    // journal positioned at the first read after it
+    // Port records past the resume point are dead future. By time: the
+    // replay read the engine's bus journals, so these recorders' cursors did
+    // not move (records at the cut stay, as in the engine)
     if (_portJournalRecorded)
     {
-        _portReads.TruncateTo(_portReads.Cursor());
-        _portWrites.TruncateTo(_portWrites.Cursor());
+        const TTDTimePoint after{cut.frame, cut.tInFrame + 1};
+        _portReads.TruncateTo(_portReads.LowerBound(after));
+        _portWrites.TruncateTo(_portWrites.LowerBound(after));
     }
 
     // Phase 4 — write journal: convert the resume point to a globalT and
@@ -3171,6 +3201,7 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     EngageCaptureFeatures();
     SetState(TTDSessionState::Recording);   // the journal, if on, opens a segment at the resume point
+    _recordingPaused = false;               // a paused recording goes on from here
     DisarmInputPlayback();  // live input again (journaled while recording)
     // A loaded session had collection switched off; the new history is live
     _context->ttdCoverageActive = _enableCoverageIndex;
@@ -3208,6 +3239,8 @@ bool TimeTravelController::ResumeRecordingLive()
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
 
+    if (_state == TTDSessionState::Detached && _recordingPaused)
+        return ResumeRecordingFrom(_pausedEnd);   // the paused recording goes on where it paused
     if (_state == TTDSessionState::Detached)
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingLive — refused: session is Detached "
@@ -4315,11 +4348,9 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     if (outBlockingMarker)
         *outBlockingMarker = TTDExternalEvent{};
 
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::FindLastAccess — rejected: session is Recording");
-        return std::nullopt;
-    }
+        PauseRecordingForBrowsing();
     if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelController::FindLastAccess — no recorded history");
@@ -4589,11 +4620,9 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
 bool TimeTravelController::StepBackInstruction()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::StepBackInstruction — rejected: session is Recording");
-        return false;
-    }
+        PauseRecordingForBrowsing();
     if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelController::StepBackInstruction — no recorded history");
@@ -4632,11 +4661,9 @@ bool TimeTravelController::StepBackInstruction()
 bool TimeTravelController::StepForwardInstruction()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::StepForwardInstruction — rejected: session is Recording");
-        return false;
-    }
+        PauseRecordingForBrowsing();
     if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelController::StepForwardInstruction — no recorded history");
@@ -4862,11 +4889,9 @@ bool TimeTravelController::ReverseStepInstructions(uint32_t n)
     }
 
     // State guards — same shape as StepBackInstruction.
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::ReverseStepInstructions — rejected: session is Recording");
-        return false;
-    }
+        PauseRecordingForBrowsing();
     if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ReverseStepInstructions — no recorded history");
@@ -4965,11 +4990,9 @@ bool TimeTravelController::ReverseStepTStates(uint64_t n)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     // State guards.
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::ReverseStepTStates — rejected: session is Recording");
-        return false;
-    }
+        PauseRecordingForBrowsing();
     if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ReverseStepTStates — no recorded history");
@@ -5042,11 +5065,9 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDReverseContinueResult result;
 
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
-    {
-        MLOGWARNING("TimeTravelController::ReverseContinue — rejected: session is Recording");
-        return result;
-    }
+        PauseRecordingForBrowsing();
     if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ReverseContinue — no recorded history");

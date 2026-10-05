@@ -677,3 +677,111 @@ TEST_F(TimeTravelController_Test, ClipFramesEqualV1s)
         EXPECT_TRUE(a[i] == b[i]) << "frame " << first + i;
     EXPECT_NE(_controller->VisitComposedFrames(last, last + 50, collect(b, latchesB)), "") << "past the session";
 }
+
+/// D8: a seek while recording pauses the recording; resumed where it paused it
+/// goes on as one recording - the same history as v1 recording straight through
+TEST_F(TimeTravelController_Test, APausedRecordingContinuesWhereItPaused)
+{
+    ASSERT_TRUE(_v1->StartRecording());
+    ASSERT_TRUE(_controller->StartRecording());
+    ttd::TTDInputEvent key;
+    key.kind = ttd::TTDInputKind::Key;
+    key.key = ZXKEY_SPACE;
+    auto frames = [&](int count, bool pressAt3) {
+        for (int f = 0; f < count; ++f)
+        {
+            if (pressAt3 && f == 3)
+            {
+                _a->RunTStates(20000, /*skipBreakpoints=*/true);
+                _b->RunTStates(20000, /*skipBreakpoints=*/true);
+                key.pressed = !key.pressed;
+                ASSERT_TRUE(_v1->SubmitLiveInput(key));
+                ASSERT_TRUE(_controller->SubmitLiveInput(key));
+            }
+            _a->RunNFrames(1, /*skipBreakpoints=*/true);
+            _b->RunNFrames(1, /*skipBreakpoints=*/true);
+        }
+    };
+    ASSERT_NO_FATAL_FAILURE(frames(10, true));
+    // Mid-frame, then a look back on the controller only
+    _a->RunTStates(31000, /*skipBreakpoints=*/true);
+    _b->RunTStates(31000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint pausedAt = _controller->CurrentPosition();
+    ttd::TTDSeekResult r;
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(4)->time.frame, 9000}, &r));
+    EXPECT_EQ(_controller->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    EXPECT_EQ(_controller->SessionEndPosition(), pausedAt) << "the paused recording reaches to where it paused";
+    ASSERT_TRUE(_controller->ResumeRecordingLive()) << "resume goes on where it paused";
+    EXPECT_TRUE(_controller->IsRecording());
+    EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused);
+    EXPECT_EQ(_controller->CurrentPosition(), pausedAt);
+    ASSERT_NO_FATAL_FAILURE(frames(10, true));
+    _v1->StopRecording();
+    _controller->StopRecording();
+
+    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
+    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
+    for (size_t i : {size_t(5), size_t(10), size_t(11), size_t(14), _v1->GetCheckpointCount() - 2})
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
+    ASSERT_NO_FATAL_FAILURE(ExpectSameSeek(pausedAt));
+}
+
+/// D8: running forward through a paused recording, execution reaches where it
+/// paused and the recording goes on by itself - one history, as v1's straight run
+TEST_F(TimeTravelController_Test, RunningIntoThePausedEndContinuesTheRecording)
+{
+    ASSERT_TRUE(_v1->StartRecording());
+    ASSERT_TRUE(_controller->StartRecording());
+    for (int f = 0; f < 12; ++f)
+    {
+        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    }
+    _a->RunTStates(25000, /*skipBreakpoints=*/true);
+    _b->RunTStates(25000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint pausedAt = _controller->CurrentPosition();
+    const uint64_t backFrame = _controller->GetCheckpoint(6)->time.frame;
+    ttd::TTDSeekResult r;
+    ASSERT_TRUE(_controller->SeekTo({backFrame, 0}, &r));
+    ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    // From frame 6 the controller's machine runs 14 frames: 6 replayed, then live and recorded
+    _b->RunNFrames(14, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_controller->IsRecording()) << "the recording went on at the paused end";
+    EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused);
+    // v1 ran straight to the same frame
+    const uint64_t target = _b->GetContext()->emulatorState.frame_counter;
+    while (_a->GetContext()->emulatorState.frame_counter < target)
+        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _controller->StopRecording();
+    EXPECT_GT(_controller->SessionEndPosition().frame, pausedAt.frame);
+
+    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
+    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
+    for (size_t i : {size_t(3), size_t(12), size_t(13), size_t(16), _v1->GetCheckpointCount() - 2})
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 3}));
+}
+
+/// D8: a reverse query while recording pauses the recording even when it moves
+/// nothing (answered from the write journal): the machine is in the history at
+/// its end, and running on goes on recording
+TEST_F(TimeTravelController_Test, AQueryWhileRecordingPausesAndRunningGoesOn)
+{
+    _controller->SetEnableWriteJournal(true);
+    ASSERT_TRUE(_controller->StartRecording());
+    for (int f = 0; f < 6; ++f)
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint here = _controller->CurrentPosition();
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = 0xC010;
+    q.access = ttd::TTDAccessType::Write;
+    ASSERT_TRUE(_controller->FindLastAccess(q).has_value());
+    EXPECT_EQ(_controller->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    EXPECT_EQ(_controller->CurrentPosition(), here) << "answered from the journal: the machine stays";
+    const size_t before = _controller->GetCheckpointCount();
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_controller->IsRecording()) << "running on from the paused end records";
+    EXPECT_EQ(_controller->GetCheckpointCount(), before + 3);
+}

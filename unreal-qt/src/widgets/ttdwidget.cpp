@@ -464,9 +464,12 @@ void TtdWidget::updateTelemetry()
     }
     const bool isDetached = (info.state == ttd::TTDSessionState::Detached);
     const bool hasHistory = (info.checkpointCount > 0);
+    // The engine's controller browses while it records: the slider pauses the recording (D8)
+    EmulatorContext* activeContext = _activeEmulator ? _activeEmulator->GetContext() : nullptr;
+    const bool browsesWhileRecording = isRecording && activeContext && activeContext->pTimeTravelController;
 
     _recordBtn->setEnabled(true);
-    _recordBtn->setText(isRecording ? tr("Stop Rec") : tr("Start Rec"));
+    _recordBtn->setText(isRecording || info.recordingPaused ? tr("Stop Rec") : tr("Start Rec"));
     {
         const QSignalBlocker block(_journalBtn);
         _journalBtn->setChecked(info.writeJournalEnabled);
@@ -507,7 +510,7 @@ void TtdWidget::updateTelemetry()
 
     const bool scrubberWasVisible = _scrubberContainer->isVisible();
 
-    if (isRecording)
+    if (isRecording && !browsesWhileRecording)
     {
         // Actively recording: hide timeline scrubber and display live startFrame - currentFrame recording status
         _scrubberContainer->setVisible(false);
@@ -533,7 +536,26 @@ void TtdWidget::updateTelemetry()
             const uint64_t startFrame = info.sessionStartFrame;
             const uint64_t endFrame = info.currentEndFrame;
 
-            if (isDetached)
+            if (isRecording)
+            {
+                // Recording, the slider ready: moving it pauses the recording
+                _statusLabel->setText(tr("Rec | Frames: %1 - %2 | Memory: %3 MB%4")
+                                          .arg(startFrame)
+                                          .arg(endFrame)
+                                          .arg(memMb, 0, 'f', 1)
+                                          .arg(provenanceStr));
+            }
+            else if (isDetached && info.recordingPaused)
+            {
+                // The recording paused for browsing: resumed at its end it goes on
+                _statusLabel->setText(tr("Rec paused | Range: %1 - %2 | Frame: %3 | Memory: %4 MB%5")
+                                          .arg(startFrame)
+                                          .arg(endFrame)
+                                          .arg(currentPos.frame)
+                                          .arg(memMb, 0, 'f', 1)
+                                          .arg(provenanceStr));
+            }
+            else if (isDetached)
             {
                 // User is actively scrubbing inside the recorded session history
                 const uint64_t currentFrame = currentPos.frame;
@@ -611,7 +633,10 @@ void TtdWidget::onRecordToggled()
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !ttd::HasTimeTravelSession(context)) return;
     // The panel's journal toggle sets the journal choice; start keeps it
-    (void)ttd::TTDControl(context).Execute({ttd::TTDSessionRef(context)->IsRecording() ? "stop" : "start", {}});
+    // A paused recording (D8) is still the recording: the button ends it
+    const ttd::TTDSessionRef session(context);
+    const bool recording = session->IsRecording() || session->GetSessionInfo().recordingPaused;
+    (void)ttd::TTDControl(context).Execute({recording ? "stop" : "start", {}});
     updateTelemetry();
 }
 
