@@ -262,7 +262,8 @@ struct TTDSessionInfo
 
     /// Why the last recording stopped when something other than a stop request ended
     /// it: "feature-off:timetravel" / "feature-off:debugmode" (FR-17, the clean stop
-    /// before the feature switches off). Empty otherwise; a new recording clears it.
+    /// before the feature switches off), "capture-failed" (the engine did not take a
+    /// frame; the history before it stays). Empty otherwise; a new recording clears it.
     std::string lastStopReason;
 
     /// Why time travel is not available for this instance at all (for example

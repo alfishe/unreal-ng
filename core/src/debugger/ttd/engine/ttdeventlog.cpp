@@ -44,6 +44,15 @@ void TTDEventLog::DropBefore(TTDMachineTime t)
     _events.erase(_events.begin(), _events.begin() + static_cast<std::ptrdiff_t>(n));
 }
 
+void TTDEventLog::DropAfter(TTDMachineTime t)
+{
+    const auto it = std::upper_bound(_events.begin(), _events.end(), t,
+                                     [](TTDMachineTime v, const TTDEvent& e) { return v < e.machineTime; });
+    for (auto e = it; e != _events.end(); ++e)
+        _payloads.Release(e->payload);
+    _events.erase(it, _events.end());
+}
+
 size_t TTDEventLog::CursorAt(TTDMachineTime t) const
 {
     auto it = std::lower_bound(_events.begin(), _events.end(), t,

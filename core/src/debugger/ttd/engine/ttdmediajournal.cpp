@@ -1,6 +1,8 @@
 #include "debugger/ttd/engine/ttdmediajournal.h"
 
+#include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace ttd
 {
@@ -36,6 +38,24 @@ void TTDMediaJournal::Append(uint64_t frame, uint32_t tInFrame, const std::strin
     r.size = static_cast<uint32_t>(size);
     _data.insert(_data.end(), bytes, bytes + size);
     _records.push_back(r);
+}
+
+void TTDMediaJournal::TruncateTo(uint64_t count)
+{
+    if (count >= _records.size())
+        return;
+    _data.resize(static_cast<size_t>(_records[static_cast<size_t>(count)].offset));
+    _records.resize(static_cast<size_t>(count));
+    _cursor = std::min<uint64_t>(_cursor, count);
+}
+
+uint64_t TTDMediaJournal::CountUpTo(uint64_t frame, uint32_t tInFrame) const
+{
+    const auto it = std::upper_bound(_records.begin(), _records.end(), std::make_pair(frame, tInFrame),
+                                     [](const std::pair<uint64_t, uint32_t>& at, const Record& r) {
+                                         return at.first < r.frame || (at.first == r.frame && at.second < r.tInFrame);
+                                     });
+    return static_cast<uint64_t>(it - _records.begin());
 }
 
 bool TTDMediaJournal::PlayNext(const std::string& slot, uint64_t lba, uint8_t* out, size_t size)

@@ -124,3 +124,64 @@ TEST(TimeTravelEngineSegments_Test, FilesAndTheRing)
         ASSERT_TRUE(a.SameAccess(b) && a.value == b.value) << "bus position at checkpoint " << j;
     }
 }
+
+/// A recording resumed from the past (Phase 5, C2): 60 frames, cut inside
+/// frame 33 (its bus read kept, its marker after the cut dropped), then 30
+/// new frames. Every checkpoint, the events, the bus journal and the store
+/// equal a session that recorded only the kept past and the new frames
+TEST(TimeTravelEngineSegments_Test, TruncateAfterContinuesFromThePast)
+{
+    Session cut(Growable(10));
+    Session ref(Growable(10));
+    for (int i = 0; i < 60; ++i)
+        cut.Frame();
+    for (int i = 0; i < 34; ++i)
+        ref.Frame();
+    std::string error;
+    ASSERT_TRUE(cut.engine.TruncateAfter(33, {0, 33, 1500}, error)) << error;
+    EXPECT_EQ(cut.engine.CheckpointCount(), 34u);
+    EXPECT_EQ(cut.engine.Segments().size(), 4u);
+    EXPECT_EQ(cut.engine.BusReads().Size(), 34u) << "the read at (33, 1000) is before the cut";
+    EXPECT_FALSE(cut.engine.TruncateAfter(20, {0, 21, 0}, error)) << "the cut must lie in the checkpoint's frame";
+
+    // The machine stands at the cut again: the memory of frame 33
+    cut.memory = ref.memory;
+    cut.frame = ref.frame;
+    for (int i = 0; i < 30; ++i)
+    {
+        cut.Frame();
+        ref.Frame();
+    }
+    ASSERT_EQ(cut.engine.CheckpointCount(), ref.engine.CheckpointCount());
+    for (size_t i = 0; i < ref.engine.CheckpointCount(); ++i)
+    {
+        ExpectSameCheckpoint(cut.engine, i, ref.engine, i);
+        EXPECT_EQ(cut.engine.Checkpoint(i)->baseline, ref.engine.Checkpoint(i)->baseline) << i;
+        EXPECT_EQ(cut.engine.Checkpoint(i)->busReadCursor, ref.engine.Checkpoint(i)->busReadCursor) << i;
+    }
+    ASSERT_EQ(cut.engine.Events().Count(), ref.engine.Events().Count());
+    for (size_t i = 0; i < ref.engine.Events().Count(); ++i)
+        EXPECT_EQ(cut.engine.Events().At(i).machineTime, ref.engine.Events().At(i).machineTime) << i;
+    EXPECT_EQ(cut.engine.BusReads().Size(), ref.engine.BusReads().Size());
+    EXPECT_EQ(cut.engine.Payloads().LiveCount(), ref.engine.Payloads().LiveCount()) << "dropped markers release their payloads";
+    EXPECT_EQ(cut.engine.PieceStore().LiveVersions(), ref.engine.PieceStore().LiveVersions())
+        << "dropped checkpoints release their versions";
+    EXPECT_EQ(cut.engine.CheckpointAtOrBefore(45), 45);
+    EXPECT_EQ(cut.engine.CheckpointAtOrBefore(1000), 63);
+}
+
+/// A holder's own limit drops whole segments, oldest first, never the last one
+TEST(TimeTravelEngineSegments_Test, DropOldestHeldSegment)
+{
+    Session all(Growable(10));
+    for (int i = 0; i < 25; ++i)
+        all.Frame();
+    ASSERT_EQ(all.engine.Segments().size(), 3u);
+    EXPECT_EQ(all.engine.CheckpointAtOrBefore(5), 5);
+    EXPECT_TRUE(all.engine.DropOldestHeldSegment());
+    EXPECT_EQ(all.engine.FirstCheckpoint(), 10u);
+    EXPECT_EQ(all.engine.CheckpointAtOrBefore(5), -1) << "dropped history is not found";
+    EXPECT_TRUE(all.engine.DropOldestHeldSegment());
+    EXPECT_FALSE(all.engine.DropOldestHeldSegment()) << "the present's segment stays";
+    EXPECT_EQ(all.engine.FirstCheckpoint(), 20u);
+}

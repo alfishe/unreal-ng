@@ -229,15 +229,15 @@ public:
     /// recording's summary so status reads while paused are exact
     void OnMachineParking() override;
 
-    /// @brief History limit: while recording, the oldest checkpoints are
-    /// released once the timeline holds more than `maxFrames` checkpoints or
-    /// more than `maxBytes` of checkpoint data (page store + device blobs).
-    /// 0 = no limit for that measure (the default for both). What stays is a
-    /// complete, shorter session: every checkpoint decodes on its own (a delta
-    /// page holds a reference on its base page), the journals are cut to the
-    /// new start, and a session saved after an eviction starts there.
+    /// @brief History limit: while recording, the oldest history is released
+    /// in whole segments (D41) - the engine keeps at least the last
+    /// `maxFrames` frames (a ring; its segments are an eighth of the window,
+    /// so it holds up to 1/8 more), and drops segments while the store holds
+    /// more than `maxBytes`. 0 = no limit for that measure (the default for
+    /// both). What stays is a complete, shorter session starting at a
+    /// segment's baseline; the journals are cut to the new start.
     void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
-    /// Bytes of checkpoint data held now: the page store's slots and every
+    /// Bytes of history held now: the engine's piece store and the first
     /// checkpoint's device blobs (what the byte limit measures)
     uint64_t HistoryBytes() const;
 
@@ -1393,8 +1393,9 @@ private:
     // -----------------------------------------------------------------------
 
     /// @brief Snapshot CPU + chipset + RAM pages into a fresh checkpoint at
-    /// the current frame boundary. Caller pushes it onto _timeline.
-    void CaptureNow(TTDCheckpoint& out);
+    /// the current frame boundary. Caller pushes it onto _timeline. False when
+    /// the engine (the history's store) did not take it
+    bool CaptureNow(TTDCheckpoint& out);
 
 
 
@@ -1530,21 +1531,25 @@ private:
     // Internal resume helpers (Phase 2 Item 5; parent TDD §8.3)
     // -----------------------------------------------------------------------
 
-    /// @brief Drop every checkpoint with `cp.time > from` and release the
-    /// page refs they hold. Used by ResumeRecordingFrom.
-    ///
-    /// No-op if every checkpoint has time <= `from` (the common case when
-    /// `from` is exactly at the last captured frame boundary).
-    ///
-    /// Uses the same upper_bound comparator shape as SeekTo so the two
-    /// methods agree on the meaning of "strictly after".
-    void TruncateTimelineAfter(const TTDTimePoint& from);
+    /// @brief Drop every checkpoint after `from` and everything the engine
+    /// recorded after `cut` (in `from`'s frame; records at it stay), so the
+    /// recording continues from there (TimeTravelEngine::TruncateAfter). Used
+    /// by ResumeRecordingFrom. No-op when `from` is at the last checkpoint and
+    /// nothing was recorded after `cut`.
+    void TruncateTimelineAfter(const TTDTimePoint& from, const TTDTimePoint& cut);
 
-    /// @brief Release the `count` oldest checkpoints (at least two stay) and
-    /// cut the input, marker, bookmark and port journals to the new start.
-    void EvictOldest(size_t count);
-    /// @brief Apply the history limit after a checkpoint was captured.
+    /// @brief Apply the history limit: the frame window and the byte budget
+    /// drop the engine's oldest segments; _timeline and the journals follow.
     void EnforceHistoryLimit();
+    /// @brief The engine's history policy from the limits (SetHistoryLimit)
+    void ApplyHistoryPolicy();
+    /// @brief _timeline drops what the engine dropped from the front, and the
+    /// input, marker, bookmark and port journals are cut to the new start
+    void SyncTimelineFront();
+    /// @brief The engine checkpoint held at or before @p t, as an index into
+    /// _timeline (_timeline[i] is the engine's FirstCheckpoint() + i), or -1
+    /// when the history starts after it (Phase 5, C2)
+    int64_t TimelineIndexAtOrBefore(const TTDTimePoint& t) const;
 
     // -----------------------------------------------------------------------
     // Dependencies (non-owning)
@@ -1762,7 +1767,7 @@ private:
     uint64_t _shadowBusWrites = 0;
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
-    void FeedShadow(const TTDCheckpoint& out, bool baseline);
+    bool FeedShadow(const TTDCheckpoint& out, bool baseline);
     /// The shadow engine's history no longer matches v1's: it starts over at the next capture
     void ResetShadow();
     TTDPeripheralRegistry _peripherals;

@@ -254,3 +254,81 @@ TEST_F(TimeTravelController_Test, QueriesAnswerAsV1)
     EXPECT_EQ(std::memcmp(&a.cpu, &b.cpu, sizeof(a.cpu)), 0) << "CPU after reverse steps";
     EXPECT_TRUE(a.ram == b.ram) << "RAM after reverse steps";
 }
+
+/// A recording resumed from the past (C2): both go back into the middle of
+/// frame 10, record on with a key pressed, and every seek - before the resume
+/// point, at it and after it - lands on the same machine
+TEST_F(TimeTravelController_Test, ResumeFromThePastContinuesAsV1)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordBoth());
+    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
+    const ttd::TTDTimePoint from{_v1->GetCheckpoint(10)->time.frame, span / 3};
+    ttd::TTDSeekResult r;
+    ASSERT_TRUE(_v1->SeekTo(from, &r));
+    ASSERT_TRUE(_controller->SeekTo(from, &r));
+    ASSERT_TRUE(_v1->ResumeRecordingFrom(from));
+    ASSERT_TRUE(_controller->ResumeRecordingFrom(from));
+    ttd::TTDInputEvent key;
+    key.kind = ttd::TTDInputKind::Key;
+    key.key = ZXKEY_SPACE;
+    for (int f = 0; f < 10; ++f)
+    {
+        if (f == 4)
+        {
+            _a->RunTStates(15000, /*skipBreakpoints=*/true);
+            _b->RunTStates(15000, /*skipBreakpoints=*/true);
+            key.pressed = true;
+            ASSERT_TRUE(_v1->SubmitLiveInput(key));
+            ASSERT_TRUE(_controller->SubmitLiveInput(key));
+        }
+        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    }
+    _v1->StopRecording();
+    _controller->StopRecording();
+
+    const size_t count = _v1->GetCheckpointCount();
+    ASSERT_EQ(_controller->GetCheckpointCount(), count);
+    const ttd::TimeTravelEngine& engine = _controller->GetEngine();
+    ASSERT_EQ(engine.CheckpointCount() - engine.FirstCheckpoint(), count) << "the engine holds the same history";
+    for (size_t i : {size_t(5), size_t(10), size_t(11), size_t(14), count - 2})
+    {
+        const uint64_t frame = _v1->GetCheckpoint(i)->time.frame;
+        for (uint32_t k = 1; k <= 3; ++k)
+            ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span * k / 4}));
+    }
+}
+
+/// A frame limit (C2): v1 holds exactly the last 16 frames, the controller's
+/// engine whole segments covering at least them; inside the window both land
+/// on the same machine, and the journals start where each history starts
+TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
+{
+    _v1->SetHistoryLimit(16, 0);
+    _controller->SetHistoryLimit(16, 0);
+    ASSERT_TRUE(_v1->StartRecording());
+    ASSERT_TRUE(_controller->StartRecording());
+    for (int f = 0; f < 48; ++f)
+    {
+        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    }
+    _v1->StopRecording();
+    _controller->StopRecording();
+
+    const ttd::TimeTravelEngine& engine = _controller->GetEngine();
+    const size_t held = _controller->GetCheckpointCount();
+    EXPECT_EQ(engine.CheckpointCount() - engine.FirstCheckpoint(), held);
+    EXPECT_GE(held, 16u);
+    EXPECT_LE(held, 16u + 2u) << "segments of an eighth of the window";
+    EXPECT_GT(engine.FirstCheckpoint(), 0u) << "the oldest segments were dropped";
+    EXPECT_EQ(_controller->GetCheckpoint(0)->time.frame, engine.Checkpoint(engine.FirstCheckpoint())->position.frame);
+    EXPECT_EQ(_controller->SessionEndPosition(), _v1->SessionEndPosition());
+
+    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
+    const uint64_t last = _v1->SessionEndPosition().frame;
+    for (uint64_t frame : {last - 14, last - 6, last - 1})
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span / 2}));
+    ttd::TTDSeekResult r;
+    EXPECT_FALSE(_controller->SeekTo({last - 30, 0}, &r)) << "dropped history is not reachable";
+}

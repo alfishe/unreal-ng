@@ -418,6 +418,22 @@ public:
     const TTDEngineCheckpoint* Checkpoint(size_t index) const;
     /// Checkpoint index of @p position's frame boundary, or -1
     int64_t CheckpointIndexOf(const TTDPosition& position) const;
+    /// The last checkpoint held whose frame is at or before @p frame, or -1
+    /// when the held history starts after it
+    int64_t CheckpointAtOrBefore(uint64_t frame) const;
+    /// Drop the oldest segment - its checkpoints, versions and journal records -
+    /// when a later one is held; false when one segment is left. A ring does
+    /// this by itself; a holder with a limit of its own (bytes) calls it
+    bool DropOldestHeldSegment();
+    /// A recording resumed from the past (Phase 5, C2): forget everything after
+    /// checkpoint @p index - later checkpoints, their versions, the events,
+    /// bus, vector and media records after @p cut (records at it stay) - and
+    /// continue capturing from @p index as if it were the last capture. @p cut
+    /// lies in @p index's frame. Live memory is unknown afterwards (the next
+    /// RestoreToMemory writes every piece). The write journal is the holder's
+    /// to rebuild (Writes()). Branches that keep the old future come with
+    /// Phase 5, Step 2
+    bool TruncateAfter(size_t index, const TTDPosition& cut, std::string& error);
 
     /// Write region @p region as it was at checkpoint @p index into @p out
     /// (the region's pieces × 4 KB). Pieces the session had not seen at that

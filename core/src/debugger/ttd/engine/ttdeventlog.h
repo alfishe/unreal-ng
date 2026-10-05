@@ -137,6 +137,8 @@ public:
     void Clear();
     /// Drop the events before @p t (a ring releasing history), releasing their payloads
     void DropBefore(TTDMachineTime t);
+    /// Drop the events after @p t (a recording resumed from the past), releasing their payloads
+    void DropAfter(TTDMachineTime t);
 
     /// Pack / unpack v1's records (kind numbers equal, fields in args)
     static TTDEvent FromInput(TTDMachineTime t, const TTDInputEvent& in);

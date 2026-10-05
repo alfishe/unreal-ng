@@ -2789,7 +2789,8 @@ Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0.
 **Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
 recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is
 browsable - and then the feature switches off. The status field `last_stop_reason` says why it stopped
-(`feature-off:timetravel` or `feature-off:debugmode`; empty / `null` otherwise, cleared by the next `ttd start`).
+(`feature-off:timetravel` or `feature-off:debugmode`; `capture-failed` when the history's store did not take a
+frame, everything before it kept; empty / `null` otherwise, cleared by the next `ttd start`).
 A later seek switches what capture needs back on, as `ttd start` does. With `timetravel` off the write
 journal's memory (about 64 MB) is released: the history stays, and "who wrote this last" queries on it replay
 a frame instead of reading the journal.
