@@ -14,7 +14,8 @@ The second is when the TSU takes the line-latched tile registers: see
 
 A second simulator, `tsconf-cpu-sim`, adds the CPU side (Z80 clock generator, memory
 manager, CPU cache) and measures how long the CPU waits for DRAM: see
-[CPU DRAM waits at 14 MHz](#cpu-dram-waits-at-14-mhz).
+[CPU DRAM waits at 14 MHz](#cpu-dram-waits-at-14-mhz). The same simulator answers when the
+CPU cache fills and what clears it: see [CPU cache fill and retention](#cpu-cache-fill-and-retention).
 
 ## What is simulated
 
@@ -50,6 +51,7 @@ port module latches them at the next line start as on the board.
 | `tbcpu.v` | CPU simulation top: clock + Z80 clock (`zclock.v`) + bus decoding (`zsignals.v`) + memory manager (`zmem.v`) + arbiter + `video_top` + DRAM model |
 | `cpuharness.cpp` | CPU testbench: Z80 bus-cycle model, test programs, self-checks, result writer |
 | `results/cpu-waits.txt` | Measured CPU waits (format in [Result format](#result-format-cpu-waitstxt)) |
+| `results/cache-retention.txt` | CPU cache scenarios (format in [CPU cache fill and retention](#cpu-cache-fill-and-retention)) |
 
 ## Build and run
 
@@ -74,6 +76,8 @@ scratch/rtl-sim-build/tsconf-cpu-sim sanity                      # CPU self-chec
 scratch/rtl-sim-build/tsconf-cpu-sim all tools/machines/tsconf/rtl-sim/results
 scratch/rtl-sim-build/tsconf-cpu-sim trace 14 42 150 140 1 M1.8000,RD.C000,M1.0100
                                        # fclk-by-fclk trace: MHz, V_CONFIG, line, dot, phase, program
+scratch/rtl-sim-build/tsconf-cpu-sim cache tools/machines/tsconf/rtl-sim/results
+                                       # cache fill / retention scenarios: printed, results/cache-retention.txt
 ```
 
 `build.sh` builds both simulators. `tsconf-cpu-sim all` takes about 8 s (19 simulations,
@@ -588,3 +592,74 @@ fixed point 40 dots into the window, n = 0..63 covers two blocks of 8 DRAM cycle
   acknowledge, HALT, DOS / VDOS switching stalls, IDE stalls, clock switches between
   speeds, DMA / TSU / tilemap traffic (they never refuse the CPU), and the cache
   invalidation by writes beyond the self-checks.
+
+## CPU cache fill and retention
+
+The RTL audit (`docs/inprogress/2026-10-05-tsconf-rtl-audit/memory-ports.md` gap G1, `interrupts.md`
+row 31) read from `zmem.v` that the CPU cache fills on every CPU DRAM read even with `CACHE_CONFIG` = 0
+and that nothing ever clears it. `tsconf-cpu-sim cache` checks this on the running RTL (`tbcpu.v`, the
+same setup as the wait measurements: `zmem.v` with its two `altdpram` cache blocks, the arbiter, the
+bus-cycle Z80, border lines of a TXT frame, no video load).
+
+### What the Verilog says
+
+| Question | Verilog |
+|:--|:--|
+| What fills an entry | `cache_data` / `cache_addr` are written on `cpu_strobe` (`z80/zmem.v:229,265`): data `cpu_rddata`, tag `{!cache_inv, cpu_hi_addr}` = valid + `{page, A[13:9]}`, index `cpu_addr[7:0]` = `A[8:1]` (`zmem.v:211,217`). `cpu_strobe` is set at c1 of **every CPU read cycle** the arbiter grants, `curr_cpu && cpu_rnw_r` (`dram/arbiter.v:211-218`); `cache_en` does not appear in it |
+| What `CACHE_CONFIG` does | only `cache_hit_en = cache_hit && cache_en[win]` (`zmem.v:214`): with a valid matching entry in an enabled window the read makes no DRAM request (`ramreq`, `zmem.v:121`), and the byte comes from the cache RAM. Without the enable the read goes to DRAM and refills the entry |
+| CPU writes | `cache_inv = cache_hit && !rom_n_ram && memwr_s && ramwr_en` (`zmem.v:215`): a write to RAM that the window takes, whose word has a valid matching entry, writes the tag back with valid = 0 (`zmem.v:262,265`). `cache_hit` has no `cache_en`, so this happens with the cache off too. A write never fills (`cpu_strobe` is for reads only). A write to another tag at the same index leaves the entry |
+| DMA, video, TSU writes | not connected to `zmem.v`: they never touch the cache |
+| Reset | the cache blocks have no clear (`.aclr (1'b0)`, `zmem.v:231,267`); `rst` reaches only the DOS / vdos / stall registers in `zmem.v` (`:92,108,186,194,202`). `rst` = `!rst_n` (`z80/zsignals.v:54`), the AVR's `genrst` through `common/resetter.v` (`top.v:536-541`). A reset sets `cacheconf` to 0 (`z80/zports.v:566`) but keeps the contents. After the FPGA configuration (power-on) the cache RAM is 0, every entry invalid (embedded RAM without an init file starts at 0; the simulation stand-in starts zeroed) |
+
+### Scenarios
+
+Each scenario is one simulation from configuration (the `altdpram` stand-in starts zeroed = all
+invalid), run at 14 and at 3.5 MHz; the two runs must give the same bytes, hits and misses (they do:
+the cache does not depend on the clock). Besides the machine-cycle tokens of `cpu-waits.txt` the
+programs use zero-time steps between machine cycles:
+
+| Token | Meaning |
+|:--|:--|
+| `CE.x` | `CACHE_CONFIG` = x (the `cache_en` input of `zmem.v`) |
+| `PK.aaaa.dd` | the DRAM byte at CPU address `aaaa` (through the harness's page map) becomes `dd`, with no CPU cycle: what a DMA write does |
+| `RST1` / `RST0` | the Z80 / `zmem.v` reset line (`rst_n`) on / off; `RST1` also sets `cache_en` to 0 as `zports.v` does |
+
+Memory: `MEM_CONFIG` = 04h (window 0 = ROM), pages 20h, 21h, 22h in windows 1..3; page 21h
+(8000-BFFF) holds 00, page 22h (C000-FFFF) `byte(a) = (a * 7 + 3) & 7Fh`.
+
+| Scenario | Program | Result (byte the Z80 got / DRAM byte; M = DRAM read, H = hit; ! = stale) |
+|:--|:--|:--|
+| fill-while-off | `CE.0`, read C010, C011, C021; DMA changes them and C030; `CE.F`, read all four | C010=73/A1 H!, C011=7A/A2 H!, C021=6A/A3 H!, C030=A4/A4 M: **the reads with the cache off filled the entries**, the cache answers the words from before the DMA write |
+| off-keeps | `CE.F`, read C040; `CE.0`; DMA; `CE.F`, read C040 | 43/B1 H!: **switching the cache off does not clear it** |
+| uncached-refills | `CE.F`, read C050; DMA B2; `CE.0`, read C050 (B2, M); DMA B3; `CE.F`, read C050 | B2/B3 H!: the read without the cache refilled the entry with B2 |
+| other-window-fills | `CE.8` (window 3 only), read 8060 in window 2; DMA; `CE.4`, read 8060 | 00/B4 H!: a window without the enable bit fills too |
+| hit-no-refill | `CE.F`, read C0C0; DMA; read C0C0 twice; `CE.0`, read C0C0 | 43/BB H! twice, then BB/BB M: a hit leaves the entry as it is |
+| write-off-invalidates | `CE.0`, read C070; DMA C071 = B5; write C070 = 55; `CE.F`, read C071, C070 | C071=B5/B5 M, C070=55/55 H: **a CPU write with the cache off invalidates** the entry (whole word) |
+| write-on-invalidates | `CE.F`, read C080; DMA C081 = B6; write C080 = 66; read C081, C080 | C081=B6/B6 M, C080=66/66 H |
+| write-other-tag | `CE.F`, read C090; DMA B7; write 8090 (same index, page 21h); read C090, 8090 | C090=73/B7 H!: a write under another tag leaves the entry; 8090 is a miss that replaces it |
+| reset-keeps-off | `CE.0`, read C0A0; DMA; reset; `CE.F`, read C0A0 | 63/B9 H!: **a reset does not clear the cache** |
+| reset-keeps-on | `CE.F`, read C0B0; DMA; reset (`CACHE_CONFIG` becomes 0); `CE.F`, read C0B0 | 53/BA H! |
+
+Every claim of the table above holds on the running RTL. unreal-ng followed it except in three points,
+fixed 2026-10-05: it filled only while some window had the cache on, cleared the cache when the last
+window turned it off (and so at every reset), and invalidated on CPU writes only while the cache was on
+(`TsConfMemory::CacheRead` / `AfterWrite` now do all of it; test
+`TsConfMemory_Test.CCH3_CacheFillAndRetentionMatchTheRtl` replays `results/cache-retention.txt`, copied to
+`testdata/machines/tsconf/rtl-sim/`).
+
+### Result format: cache-retention.txt
+
+Lines starting with `#` are comments (pin delay, memory setup, initial DRAM). Each scenario is three
+lines:
+
+```
+case <name>
+  prog <token>,<token>,...
+  reads <aaaa>=<got>/<dram><M|H>[!] ...
+```
+
+`reads` has one entry per `RD` token of the program (the 14 MHz run; the 3.5 MHz run is identical):
+the address, the byte the Z80 took at its sampling edge, the DRAM byte at that moment, `M` if the read
+made a DRAM request (miss or a window without the cache) or `H` if it did not (hit), and `!` when the
+byte is not the DRAM byte (stale).
+
