@@ -833,3 +833,84 @@ TEST(TimeTravelEngine_Config_Test, MediaVersionsAreKeptWhenTheyChange)
     EXPECT_TRUE(at == v1);
     EXPECT_FALSE(engine.MediaVersionAt(0, 1, at)) << "no such slot";
 }
+
+namespace
+{
+/// A device that may hold up to 1 MB of state and usually holds a few KB (a
+/// network card's queues)
+class LargeStateDevice : public TTDSerializable
+{
+public:
+    size_t TTDStateSize() const override { return size_t(1) << 20; }
+    void TTDSaveState(uint8_t*) const override {}
+    void TTDLoadState(const uint8_t*) override {}
+    std::string TTDDeviceName() const override { return "LargeState"; }
+    PeripheralId TTDPeripheralId() const override { return PeripheralId::Covox; }
+};
+}  // namespace
+
+/// A device's declared maximum is not the work per frame: only the pieces its
+/// state reaches now or reached last time are compared (a 16 MB network card
+/// once cost a millisecond a frame). Every checkpoint gives back exactly the
+/// state of its frame - grown, shrunk, absent, and after a resume from the past
+TEST(TimeTravelEngine_DeviceState_Test, WorkFollowsTheStateNotItsMaximum)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    LargeStateDevice dev;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const uint8_t id = static_cast<uint8_t>(PeripheralId::Covox);
+
+    const std::vector<size_t> sizes = {100, 100, 9000, 300, 0 /* absent */, 300, 5000, 5000, 64, 64};
+    std::vector<std::vector<uint8_t>> expected;
+    std::vector<uint64_t> offered;
+    for (uint64_t f = 0; f < sizes.size(); ++f)
+    {
+        std::vector<uint8_t> state(sizes[f]);
+        for (size_t i = 0; i < state.size(); ++i)
+            state[i] = static_cast<uint8_t>(i * 7 + f);
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        if (sizes[f])
+            in.deviceStates.push_back({id, state.data(), state.size()});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        expected.push_back(state);
+        offered.push_back(engine.LastCaptureWork().devicePiecesOffered);
+    }
+    const uint32_t regionPieces = ((1u << 20) + 4 + kTTDPieceSize - 1) / kTTDPieceSize;
+    EXPECT_EQ(offered[0], regionPieces) << "the first capture lays the region out whole";
+    for (size_t f = 1; f < offered.size(); ++f)
+        EXPECT_LE(offered[f], 4u) << "frame " << f << ": the state's pieces, not the 1 MB maximum";
+    for (size_t i = 0; i < expected.size(); ++i)
+    {
+        std::vector<uint8_t> got;
+        if (expected[i].empty())
+        {
+            EXPECT_FALSE(engine.DeviceState(i, id, got)) << "checkpoint " << i << " has no state";
+            continue;
+        }
+        ASSERT_TRUE(engine.DeviceState(i, id, got)) << "checkpoint " << i;
+        EXPECT_TRUE(got == expected[i]) << "checkpoint " << i << " (" << expected[i].size() << " bytes)";
+    }
+
+    // Resumed at the 9000-byte frame, then a short state: the long one's tail is gone
+    ASSERT_TRUE(engine.TruncateAfter(2, {0, 2, 0}, err)) << err;
+    std::vector<uint8_t> shortState(200, 0xAB);
+    TTDFrameInput in;
+    in.position = {0, 3, 0};
+    in.start = 3 * 70000;
+    in.deviceStates.push_back({id, shortState.data(), shortState.size()});
+    ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(engine.DeviceState(3, id, got));
+    EXPECT_TRUE(got == shortState);
+    ASSERT_TRUE(engine.DeviceState(2, id, got));
+    EXPECT_TRUE(got == expected[2]) << "the kept checkpoint still holds its long state";
+}

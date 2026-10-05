@@ -476,12 +476,11 @@ private:
 /// The engine as the application runs it since the Phase 5 switch: the
 /// TimeTravelController records, seeks and saves on its own, with no v1 in the
 /// frame (PR-1 on the engine alone). Wired onto the machine the way
-/// Emulator::Init wires it (hooks, write sink, pTimeTravelController)
+/// Emulator::Init wires it (hooks, write sink, pTimeTravelController); the
+/// machine owns it
 class EngineController final : public Engine
 {
 public:
-    ~EngineController() override { Unwire(); }
-
     std::string Name() const override { return "controller"; }
 
     bool Start(Emulator& emulator, Mode mode, std::string& error) override
@@ -616,9 +615,10 @@ public:
     }
 
 private:
+    /// The machine owns the controller (Emulator::Release deletes it), as it owns v1's
+    /// manager: this engine only points at the one of the machine it works on
     bool Wire(Emulator& emulator, std::string& error)
     {
-        Unwire();
         _context = emulator.GetContext();
         if (!_context || !_context->pTimeTravelManager)
         {
@@ -626,33 +626,17 @@ private:
             return false;
         }
         _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
-        _owned = std::make_unique<TimeTravelController>(_context);
-        _ctl = _owned.get();
-        _context->pTimeTravelHooks = _ctl;
-        _context->ttdWriteSink = _ctl;
-        _context->pTimeTravelController = _ctl;
+        if (!_context->pTimeTravelController)
+        {
+            _context->pTimeTravelController = new TimeTravelController(_context);
+            _context->pTimeTravelHooks = _context->pTimeTravelController;
+            _context->ttdWriteSink = _context->pTimeTravelController;
+        }
+        _ctl = _context->pTimeTravelController;
         return true;
     }
 
-    void Unwire()
-    {
-        if (!_owned)
-            return;
-        _owned->StopRecording();
-        // The machine may be gone already (the runner releases it first): only
-        // a context still pointing at this controller is put back
-        if (_context && _context->pTimeTravelController == _owned.get())
-        {
-            _context->pTimeTravelHooks = _context->pTimeTravelManager;
-            _context->ttdWriteSink = _context->pTimeTravelManager;
-            _context->pTimeTravelController = nullptr;
-        }
-        _owned.reset();
-        _ctl = nullptr;
-    }
-
     EmulatorContext* _context = nullptr;
-    std::unique_ptr<TimeTravelController> _owned;
     TimeTravelController* _ctl = nullptr;
 };
 

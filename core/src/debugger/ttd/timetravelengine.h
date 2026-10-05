@@ -202,6 +202,10 @@ struct TTDEngineCaptureWork
     uint64_t compressInputBytes = 0;
     uint64_t deviceBlobBytes = 0;     ///< device state copied into the checkpoint
     uint64_t deviceStateBytes = 0;    ///< device state serialized for it (raw; TTDFrameInput)
+    /// Pieces of the device state regions compared this capture: the ones the
+    /// states reach now or reached last time, and the time-field anchors - not
+    /// the region's declared maximum (a network card declares 16 MB)
+    uint64_t devicePiecesOffered = 0;
 };
 
 class TimeTravelEngine
@@ -583,6 +587,9 @@ private:
     std::vector<TTDRefTables::Table*> _lastSnapshot;
     std::array<int32_t, 256> _deviceRegionOf{};          ///< v1 id -> region index, -1 = none
     std::vector<std::vector<uint8_t>> _deviceScratch;   ///< per region: the state laid out for capture
+    /// Per region: where the last laid-out state ended (4 + its length); kExtentUnknown: the whole region
+    std::vector<uint32_t> _deviceExtent;
+    static constexpr uint32_t kExtentUnknown = 0xFFFFFFFFu;
     /// A time field's line, kept per device region and field while recording
     struct TimeLine
     {
