@@ -3,7 +3,8 @@
 #include <cstring>
 
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
+#include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/serial/comport.h"
 
@@ -37,7 +38,7 @@ void TTDMachineSerialPeer::TTDLoadState(const uint8_t* src)
     if (!state.present)
         return;
     const ttd::TTDInputJournal* journal =
-        _context->pTimeTravelManager ? &_context->pTimeTravelManager->GetInputJournal() : nullptr;
+        _context->pTimeTravelHooks ? &_context->pTimeTravelHooks->InputJournal() : nullptr;
     ComPort::ByteSource bytes = [journal](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
         if (!journal)
             return false;

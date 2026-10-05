@@ -148,6 +148,7 @@ public:
     void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
     void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
+    const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 
     /// @brief Whether `action` may run now. While a user recording runs, every
     /// TTDGuardedAction is refused - stop the recording first. A debugger's
@@ -697,10 +698,11 @@ public:
     /// (bus records, input, markers, facts): at a stop, and before a replay
     /// while recording
     void FlushToEngine();
-    /// @brief The engine's write index takes the live write journal's new
-    /// records and its spans; @p whole: it is rebuilt from the journal (after
-    /// a resume from the past cut it, after a journal build merged into it)
-    void SyncEngineWrites(bool whole);
+    /// @brief The engine's write index takes the live ring's records and its
+    /// spans, and the ring is emptied: it holds one frame's writes at most
+    /// (at each boundary, at a stop)
+    void DrainWritesToEngine();
+    uint64_t _journalLostUpTo = 0;   ///< a frame overflowed the ring: the journal covers only after this
 
     /// @brief Upper bound of the recorded timeline.
     ///
@@ -1761,7 +1763,6 @@ private:
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
     uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
     uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
-    uint64_t _shadowJournalSeq = 0;        ///< the write journal's next record for the shadow engine
     uint64_t _shadowRomSignature = 0;      ///< the ROM set's, hashed once per shadow session
     uint64_t _shadowMediaStamp = 0;        ///< IMediaHistory::VersionStamp at the last capture
     bool _shadowMediaKnown = false;        ///< _shadowMediaStamp is valid for this session

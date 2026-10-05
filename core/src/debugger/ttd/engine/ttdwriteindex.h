@@ -51,10 +51,16 @@ public:
     void ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const;
 
     void Clear();
+    /// Replace the records by @p records (in time order); what DropBefore
+    /// released stays released (the segments stay clipped after it)
+    void Rebuild(const std::vector<TTDWriteRecord>& records);
     /// Drop the sealed blocks whose records all lie before @p globalT (a
     /// history limit releasing the oldest frames); the segments then start
     /// after the newest record dropped
     void DropBefore(uint64_t globalT);
+    /// Drop every record after @p globalT (a recording resumed from the past;
+    /// records at it stay) and the segments' parts after it
+    void DropAfter(uint64_t globalT);
     /// Sealed blocks, their directory and the open block
     size_t HeapBytes() const;
 

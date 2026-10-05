@@ -112,3 +112,42 @@ TEST(TTDWriteIndex_Test, DropBeforeReleasesWholeOldBlocks)
     index.SetSegments({{0, 10}});
     EXPECT_EQ(index.Segments()[0].from, 0u) << "a new session starts unclipped";
 }
+
+/// A resume from the past cuts the index: whole blocks after the cut go, the
+/// block the cut falls into keeps its records up to it, and the index then
+/// answers like one that never had the rest; appending continues in order
+TEST(TTDWriteIndex_Test, DropAfterKeepsWhatLiesUpToTheCut)
+{
+    const std::vector<TTDWriteRecord> records = MakeRecords(3 * kWriteBlockRecords + 500);
+    const uint64_t cut = records[kWriteBlockRecords + 77].globalT;   // inside the second block
+    TTDWriteIndex cutIndex, reference;
+    for (const TTDWriteRecord& r : records)
+    {
+        cutIndex.Append(r);
+        if (r.globalT <= cut)
+            reference.Append(r);
+    }
+    cutIndex.SetSegments({{0, records.back().globalT}});
+    cutIndex.DropAfter(cut);
+    EXPECT_EQ(cutIndex.Size(), reference.Size());
+    ASSERT_EQ(cutIndex.Segments().size(), 1u);
+    EXPECT_EQ(cutIndex.Segments()[0].to, cut);
+    // New records after the cut, the same on both
+    for (size_t i = 0; i < 3000; ++i)
+    {
+        TTDWriteRecord r = records[i];
+        r.globalT = cut + 1 + i;
+        cutIndex.Append(r);
+        reference.Append(r);
+    }
+    std::vector<uint64_t> a, b;
+    cutIndex.ForEach([&](const TTDWriteRecord& r) { a.push_back(r.globalT); });
+    reference.ForEach([&](const TTDWriteRecord& r) { b.push_back(r.globalT); });
+    EXPECT_EQ(a, b);
+    const auto pred = [](const TTDWriteRecord& r) { return r.addr == 0x4005; };
+    const auto x = cutIndex.FindLastInRange(0, cut, pred);
+    const auto y = reference.FindLastInRange(0, cut, pred);
+    ASSERT_EQ(x.has_value(), y.has_value());
+    if (x)
+        EXPECT_EQ(uint64_t(x->globalT), uint64_t(y->globalT));
+}

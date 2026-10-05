@@ -286,28 +286,12 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _portJournalOffReason = facts.portJournalOffReason;
     SyncPortJournalHook();
 
-    // The live write ring holds the session's writes again: a resume cuts it
-    // and rebuilds the engine's index from it
+    // The writes are the engine's index; the live ring starts empty
     const TTDWriteIndex& writes = _engine->Writes();
-    if (writes.Size() > 0)
-    {
-        if (_writeJournal)
-            _writeJournal->WaitReady();
-        if (!_writeJournal || _writeJournal->Capacity() < writes.Size())
-            _writeJournal = std::make_unique<TTDWriteJournal>(
-                std::max<size_t>(_writeJournalBytes, static_cast<size_t>(writes.Size()) * sizeof(TTDWriteRecord)),
-                false);
-        else
-            _writeJournal->Clear();
-        writes.ForEach([this](const TTDWriteRecord& rec) { _writeJournal->Append(rec); });
-    }
-    else if (_writeJournal)
-    {
-        _writeJournal->WaitReady();
+    if (_writeJournal)
         _writeJournal->Clear();
-    }
+    _journalLostUpTo = 0;
     _journalSegments = writes.Segments();
-    _shadowJournalSeq = _writeJournal ? _writeJournal->SeqHead() : 0;
 
     // The controller's indexes over the session
     _coverageIndex.Clear();

@@ -143,6 +143,7 @@ public:
     void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
     void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
+    const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 
     /// @brief Whether `action` may run now. While a user recording runs, every
     /// TTDGuardedAction is refused - stop the recording first. A debugger's

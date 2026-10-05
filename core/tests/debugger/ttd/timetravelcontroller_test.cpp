@@ -212,8 +212,9 @@ TEST_F(TimeTravelController_Test, QueriesAnswerAsV1)
     ASSERT_NO_FATAL_FAILURE(RecordBoth(/*journal=*/true));
     ASSERT_NE(_v1->GetWriteJournal(), nullptr);
     ASSERT_NE(_controller->GetWriteJournal(), nullptr);
-    EXPECT_EQ(_controller->GetWriteJournal()->Size(), _v1->GetWriteJournal()->Size()) << "the controller got the writes";
-    EXPECT_GT(_controller->GetWriteJournal()->Size(), 0u);
+    EXPECT_EQ(_controller->GetEngine().Writes().Size(), _v1->GetWriteJournal()->Size()) << "the controller got the writes";
+    EXPECT_GT(_controller->GetEngine().Writes().Size(), 0u);
+    EXPECT_EQ(_controller->GetWriteJournal()->Size(), 0u) << "the live ring was drained into the engine";
     EXPECT_EQ(_controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed),
               _v1->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed)) << "the controller got the coverage";
 
@@ -573,6 +574,17 @@ TEST_F(TimeTravelController_Test, ASavedSessionLoadsAndContinuesAsV1)
     ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
     for (size_t i : {size_t(5), size_t(13), _v1->GetCheckpointCount() - 2})
         ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
+    // The write journal lost the old future and holds the new one
+    EXPECT_EQ(_controller->GetEngine().Writes().Size(), _v1->GetWriteJournal()->Size());
+    for (uint16_t addr : {uint16_t(0xC010), uint16_t(0xC0F0)})
+    {
+        q.addrFrom = q.addrTo = addr;
+        const auto x = _v1->FindLastAccess(q);
+        const auto y = _controller->FindLastAccess(q);
+        ASSERT_TRUE(x && y);
+        EXPECT_EQ(x->time, y->time) << addr;
+        EXPECT_EQ(x->value, y->value) << addr;
+    }
 }
 
 /// A session file on disk (C4b): file-info describes the recorded machine as

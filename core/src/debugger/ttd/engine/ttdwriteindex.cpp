@@ -123,6 +123,58 @@ void TTDWriteIndex::DropBefore(uint64_t globalT)
     SetSegments(std::move(_segments));
 }
 
+void TTDWriteIndex::Rebuild(const std::vector<TTDWriteRecord>& records)
+{
+    const uint64_t droppedUpTo = _droppedUpTo;
+    std::vector<TTDJournalSegment> segments = std::move(_segments);
+    Clear();
+    _droppedUpTo = droppedUpTo;
+    for (const TTDWriteRecord& r : records)
+        Append(r);
+    SetSegments(std::move(segments));
+}
+
+void TTDWriteIndex::DropAfter(uint64_t globalT)
+{
+    // The open block's newest records, then whole sealed blocks after the cut;
+    // a block the cut falls into becomes the open block again, cut to size
+    while (!_open.empty() && _open.back().globalT > globalT)
+    {
+        _open.pop_back();
+        --_size;
+    }
+    if (_open.empty())
+    {
+        while (!_blocks.empty() && _blocks.back().firstT > globalT)
+        {
+            _size -= _blocks.back().count;
+            _blocks.pop_back();
+        }
+        if (!_blocks.empty() && _blocks.back().lastT > globalT)
+        {
+            std::vector<TTDWriteRecord> records = Decode(_blocks.size() - 1);
+            _size -= _blocks.back().count;
+            _blocks.pop_back();
+            for (const TTDWriteRecord& r : records)
+                if (r.globalT <= globalT)
+                {
+                    _open.push_back(r);
+                    ++_size;
+                }
+        }
+    }
+    _cachedBlock = -1;
+    std::vector<TTDJournalSegment> kept;
+    for (TTDJournalSegment s : _segments)
+    {
+        if (s.from >= globalT)
+            continue;
+        s.to = std::min(s.to, globalT);
+        kept.push_back(s);
+    }
+    _segments = std::move(kept);
+}
+
 void TTDWriteIndex::SetSegments(std::vector<TTDJournalSegment> segments)
 {
     // Records at the newest dropped time may be gone with it: covered only after it

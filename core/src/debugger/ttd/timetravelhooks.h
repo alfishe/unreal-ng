@@ -22,6 +22,7 @@
 namespace ttd
 {
 struct TTDInputEvent;
+class TTDInputJournal;
 struct TTDNetInput;
 struct TTDPortQuery;
 struct TTDPortSearchResult;
@@ -170,6 +171,9 @@ public:
     virtual TTDPortSearchResult SearchPortEvents(const TTDPortQuery& q) const = 0;
     /// True when the session holds any recorded history
     virtual bool HasHistory() const = 0;
+    /// The session's input journal: network devices restoring their state
+    /// read received bytes from it by journal index (NetAt / PayloadOf)
+    virtual const TTDInputJournal& InputJournal() const = 0;
     /// Empty when @p action may run now; otherwise one sentence saying why not
     virtual std::string RecordingGuard(TTDGuardedAction action) const = 0;
     /// Time travel is not available for this instance (a ZX-Poly member); empty: available

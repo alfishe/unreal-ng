@@ -284,6 +284,7 @@ bool TimeTravelController::StartRecording()
             _writeJournal->Clear();  // it must hold this session's writes only
     }
     _journalSegments.clear();   // a fresh session: SetState(Recording) opens the first segment
+    _journalLostUpTo = 0;
 
     _modelRamPages = ResolveModelRamPages();
     if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES)
@@ -519,6 +520,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
     _journalSegments.clear();
+    _journalLostUpTo = 0;
     _modelRamPages = 0;
     _dirtyPageOverflowReported = false;
     _loadedFromFile = false;
@@ -639,11 +641,10 @@ void TimeTravelController::ClipJournalSegments(uint64_t cutT)
 std::vector<TTDJournalSegment> TimeTravelController::JournalSegments() const
 {
     std::vector<TTDJournalSegment> out;
-    if (!_writeJournal)
-        return out;
     // Records the ring overwrote are no longer covered: only times after the
     // oldest record it still holds (records at that same time may be gone)
-    const uint64_t evictedUpTo = _writeJournal->HasEvictedRecords() ? _writeJournal->OldestGlobalT() : 0;
+    const uint64_t evictedUpTo = std::max(
+        _journalLostUpTo, _writeJournal && _writeJournal->HasEvictedRecords() ? _writeJournal->OldestGlobalT() : 0);
     const uint64_t now = _context ? GlobalT(CurrentPosition()) : 0;
     for (TTDJournalSegment s : _journalSegments)
     {
@@ -798,11 +799,9 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     // Sections. The write journal is normally the largest part of a session,
     // and the coverage index decides whether reverse queries run in
     // milliseconds or replay frames.
-    if (_writeJournal)
-    {
-        info.writeJournalRecords = _writeJournal->Size();
-        info.writeJournalBytes   = _writeJournal->Size() * sizeof(TTDWriteRecord);
-    }
+    // The engine's index, and the current frame's writes still in the ring
+    info.writeJournalRecords = static_cast<size_t>(_engine->Writes().Size()) + (_writeJournal ? _writeJournal->Size() : 0);
+    info.writeJournalBytes   = info.writeJournalRecords * sizeof(TTDWriteRecord);
 
     info.coverageIndexFrames = _coverageIndex.SealedFrameCount(TTDCoverageKind::Executed);
     info.coverageIndexBytes  = _coverageIndex.EncodedBytes(TTDCoverageKind::Executed) +
@@ -1550,22 +1549,21 @@ void TimeTravelController::FlushToEngine()
                  &_shadowFacts);
     _shadowFacts.clear();
     _shadowEvents.facts = 0;
-    SyncEngineWrites(false);
+    DrainWritesToEngine();
 }
 
-void TimeTravelController::SyncEngineWrites(bool whole)
+void TimeTravelController::DrainWritesToEngine()
 {
-    TTDWriteIndex& writes = _engine->Writes();
-    if (whole)
-    {
-        writes.Clear();
-        _shadowJournalSeq = 0;
-    }
     if (!_writeJournal || !_engine->IsSessionOpen())
         return;
-    _shadowJournalSeq = std::max(_shadowJournalSeq, _writeJournal->SeqTail());
-    for (; _shadowJournalSeq < _writeJournal->SeqHead(); ++_shadowJournalSeq)
-        writes.Append(_writeJournal->RecordAt(_shadowJournalSeq));
+    TTDWriteIndex& writes = _engine->Writes();
+    for (uint64_t seq = _writeJournal->SeqTail(); seq < _writeJournal->SeqHead(); ++seq)
+        writes.Append(_writeJournal->RecordAt(seq));
+    // A frame that wrote more than the ring holds lost its oldest records:
+    // the journal covers only what came after them
+    if (_writeJournal->HasEvictedRecords())
+        _journalLostUpTo = std::max(_journalLostUpTo, _writeJournal->OldestGlobalT());
+    _writeJournal->Clear();   // the ring holds one frame's writes at most
     writes.SetSegments(JournalSegments());
 }
 
@@ -3675,7 +3673,6 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         }
         _shadowBusReads = _portReads.Size();
         _shadowBusWrites = _portWrites.Size();
-        _shadowJournalSeq = _writeJournal ? _writeJournal->SeqTail() : 0;   // the whole journal goes in
         _shadowLastLength = 0;
         _shadowRomSignature = ComputeRomSignature();   // the ROM set does not change within a session (D39)
         _shadowMediaKnown = false;
@@ -3804,7 +3801,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         return false;
     }
     // The write journal's new records and its spans (D40)
-    SyncEngineWrites(false);
+    DrainWritesToEngine();
     // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
     FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads,
                  &_shadowFacts);
@@ -3906,8 +3903,9 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
             _shadowBusReads = std::min<uint64_t>(_shadowBusReads, _portReads.Size());
             _shadowBusWrites = std::min<uint64_t>(_shadowBusWrites, _portWrites.Size());
         }
-        // The live ring was cut at the resume point: the engine takes it again whole
-        SyncEngineWrites(true);
+        // The writes after the resume point go with the future they belonged to
+        _engine->Writes().DropAfter(GlobalT(cut));
+        _engine->Writes().SetSegments(JournalSegments());
         // The next capture continues from the kept checkpoint's time
         const TTDEngineCheckpoint* cp = _engine->Checkpoint(keepEngine);
         const TTDEngineCheckpoint* before = keepEngine > _engine->FirstCheckpoint() ? _engine->Checkpoint(keepEngine - 1) : nullptr;
@@ -4271,29 +4269,26 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
 
     if (!built.empty())
     {
-        // The journal again, in time order: its records outside the built
+        // The index again, in time order: its records outside the built
         // frames, and the built frames' records (they replace any partial
         // ones a frame already had)
-        size_t total = _writeJournal ? _writeJournal->Size() : 0;
-        for (const BuiltFrame& f : built)
-            total += f.records.size();
-        auto merged = std::make_unique<TTDWriteJournal>(
-            std::max<size_t>(_writeJournalBytes, total * sizeof(TTDWriteRecord)), false);
-        uint64_t seq = _writeJournal ? _writeJournal->SeqTail() : 0;
-        const uint64_t head = _writeJournal ? _writeJournal->SeqHead() : 0;
+        TTDWriteIndex& index = _engine->Writes();
+        std::vector<TTDWriteRecord> existing;
+        existing.reserve(static_cast<size_t>(index.Size()));
+        index.ForEach([&existing](const TTDWriteRecord& rec) { existing.push_back(rec); });
+        std::vector<TTDWriteRecord> merged;
+        merged.reserve(existing.size() + r.records);
+        size_t k = 0;
         for (const BuiltFrame& f : built)
         {
-            for (; seq < head && _writeJournal->RecordAt(seq).globalT <= f.span.from; ++seq)
-                merged->Append(_writeJournal->RecordAt(seq));
-            for (; seq < head && _writeJournal->RecordAt(seq).globalT <= f.span.to; ++seq)
-            {
-            }
-            for (const TTDWriteRecord& rec : f.records)
-                merged->Append(rec);
+            for (; k < existing.size() && existing[k].globalT <= f.span.from; ++k)
+                merged.push_back(existing[k]);
+            while (k < existing.size() && existing[k].globalT <= f.span.to)
+                ++k;
+            merged.insert(merged.end(), f.records.begin(), f.records.end());
         }
-        for (; seq < head; ++seq)
-            merged->Append(_writeJournal->RecordAt(seq));
-        _writeJournal = std::move(merged);
+        merged.insert(merged.end(), existing.begin() + static_cast<std::ptrdiff_t>(k), existing.end());
+        index.Rebuild(merged);
 
         // The built frames join the segments; touching or overlapping spans merge
         for (const BuiltFrame& f : built)
@@ -4309,7 +4304,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
                 joined.push_back(s);
         }
         _journalSegments = std::move(joined);
-        SyncEngineWrites(true);   // the engine's write index, rebuilt from the merged journal
+        index.SetSegments(JournalSegments());
     }
 
     // Back where the machine stood
