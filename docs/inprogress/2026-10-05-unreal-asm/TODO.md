@@ -27,7 +27,7 @@ phase; master only after the owner's review.
 
 - [x] Prior-art survey, local and public ([prior-art.md](prior-art.md))
 - [ ] A0 review round 1 of every document
-- [ ] A1 skeleton, document model, encoding detectors and code page tables (D-13), `text` codec, sjasmplus text codec (D-10), registry, detection
+- [x] A1 skeleton, document model, encoding detectors and code page tables (D-13), `text` codec, sjasmplus text codec (D-10), registry, detection (2026-10-05, branch `unreal-asm`): `core/src/3rdparty/unreal-asm` with the `zxasm` CLI, two examples and the text / sjasmplus corpus (D-14); 22 tests in `unreal-asm-tests` (run by `test-parallel`); byte-exact round trip of every corpus file (CP866 / KOI8-R / CP1251 / UTF-8 × LF / CRLF / CR, BOM, no final break, mixed ends, invalid bytes); detector: KOI8-R 75 vs 13, CP1251 72 vs 16, CP866 98
 - [ ] A2 `tasm3`, `tasm4` (research first), sub-version conversion
 - [ ] A3 `alasm4`, `alasm5`
 - [ ] A4 `storm`, `zxasm`
@@ -36,3 +36,4 @@ phase; master only after the owner's review.
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
 - [ ] A8 symbols on the library (symbols S1-S5)
 - [ ] A9 benchmarks, user docs
+- [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now
