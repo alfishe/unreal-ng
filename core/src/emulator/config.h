@@ -96,6 +96,10 @@ protected:
     std::vector<MediaSetEntry> _mediaSet;
     std::vector<std::string> _mediaReport;
 
+    // [MIDI] Bank= (here, not in CONFIG: a field in CONFIG moves every EmulatorContext member after it, so the CPU
+    // and port paths' code changes for a card no machine fits by default - ZX-bus slots tdd.md §12)
+    std::string _midiBank;
+
 public:
 	static const char* GetDefaultConfig();
 
@@ -121,6 +125,10 @@ public:
 	/// against the config file's folder; problems in it are in the report
 	const std::vector<MediaSetEntry>& GetMediaSet() const { return _mediaSet; }
 	const std::vector<std::string>& GetMediaReport() const { return _mediaReport; }
+
+	/// [MIDI] Bank= : the SoundFont 2 bank of a slot card's General MIDI synthesizer (the ZX-MultiSound's SAM2695),
+	/// resolved like a ROM path. Empty = the card's default (midi/generaluser-gs.sf2)
+	const std::string& GetMidiBank() const { return _midiBank; }
 
 	/// Process-wide hook called for every config that loaded and validated
 	/// successfully (model resolved, model timing defaults applied) - the last

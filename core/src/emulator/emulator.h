@@ -295,6 +295,12 @@ public:
 
     [[nodiscard]] bool Init();
     void Release();
+    /// The configuration loader of this instance (what the INI said beyond CONFIG: the media set, [MIDI] Bank=);
+    /// nullptr before Init
+    const Config* GetConfigLoader() const
+    {
+        return _config;
+    }
     /// Why Init() refused the machine's configuration (the slot set's conflicts, ZX-bus slots Q8); "" when it did
     /// not, or failed for another reason
     const std::string& GetInitError() const

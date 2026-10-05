@@ -508,7 +508,7 @@ needed the framework pieces SL-4 left for later. Committed on `zx-bus-slots` (`c
 
 | Step | What changed in the framework |
 |---|---|
-| 1 | `ICard` / `CardType` / `CardContext` (`slots/card.{h,cpp}`, architecture.md §3.2 "As built"); `SlotManager::BuildCards` / `ReleaseCards` / `FindCard` / `Cards` (Core::Init after the network manager, Core::Release first); `CardClaims(def, options)` public in `slotplanner.h`; `PortDevice::portDeviceReadCycle(port, drives)` (a card may assert IORQGE and leave the data bus alone; the table's read counts only drivers); `[MIDI] Bank=` (`CONFIG::midiBank`). **Plan at creation:** an INI that leaves `ay-socket` unconfigured lets a card take a socketed chip out (Q7, the ZX-Evo YM2149); `ay-socket = ay` keeps it and the card is not fitted. The removed chip is a `BuiltIn::removed` flag and `Apply` leaves the socket empty (`TurboSoundKind::None`) |
+| 1 | `ICard` / `CardType` / `CardContext` (`slots/card.{h,cpp}`, architecture.md §3.2 "As built"); `SlotManager::BuildCards` / `ReleaseCards` / `FindCard` / `Cards` (Core::Init after the network manager, Core::Release first); `CardClaims(def, options)` public in `slotplanner.h`; `PortDevice::portDeviceReadCycle(port, drives)` (a card may assert IORQGE and leave the data bus alone; the table's read counts only drivers); `[MIDI] Bank=` (`CONFIG::midiBank`, moved to `Config::GetMidiBank` in §12). **Plan at creation:** an INI that leaves `ay-socket` unconfigured lets a card take a socketed chip out (Q7, the ZX-Evo YM2149); `ay-socket = ay` keeps it and the card is not fitted. The removed chip is a `BuiltIn::removed` flag and `Apply` leaves the socket empty (`TurboSoundKind::None`) |
 | 2 | The claim table's `Read` / `Write` in production for slot-built cards (architecture.md §4.3 "As built (MS-4)"): `PortDecoder::ConfigureSlotBus` / `AttachSlotCard` / `DetachSlotCard` / `IsBuiltInShadowed` / `SetBuiltInRemoved` / `BindSlotSignals`, `ReadSlotCardCycle` / `WriteSlotCardCycle`; legacy low-byte lookups ignore card slots; `PortClaimTable::ClearBuiltIns`, `SetBuiltInRemoved`, `IsRemovedBuiltInRead`; `BM_PortSlotCard` |
 | 3 | `SoundManager::attachSlotCard` / `detachSlotCard` (rows into the registry, wide mix), card frames, `BusReset` on reset, `SetOutputRate` on a core-rate change, `setDeviceState` / `deviceState` (a shadowed socket chip's rows say `shadowed by zxbus.N`; the mixer report carries `state`); the step-2 signals object and removed-chip list moved out of `PortDecoder`'s layout (into `SlotManager` and the table's built-in list) |
 | 4 | Integration tests; the slot report's built-in carries `removed: true` |
@@ -653,4 +653,72 @@ The claim is `InOut` now; the card's read returns "not driving", the claim table
 `#C00F/#800D` cell lost its "write" note. Tests: `MultiSoundSlotCard_Test.ClaimsAssertIorqgeWhereTheRtlDoes` (every
 port, both directions, claims against the RTL's IORQGE term), `PentagonCardShadowsTheBoardAy` (`IN #BFFD` floats, the
 board decodes nothing).
+
+## 12. Quiet-machine rerun of the MS-4 A/B (2026-10-05)
+
+A = `bin/core-benchmarks-ms4base` (`140979aee`, the branch before MS-4), B = the tree after MS-4, SL-5 and MS-5 steps
+1-3 (Q8 refusal, `#BFFD` claim, MultiSound TTD). `BM_PortIn` / `BM_PortOut` / `BM_PortCard` / `BM_PortSlotCard`,
+`UNREAL_NICE=0`, `--benchmark_min_time=0.3s`, two runs of eight rounds interleaved (A B, B A, ...), each round started
+only with the 1-minute load below 12; loads per run 3.2-16.8 (one round each in two runs ended at 15-35 when another
+build started; those rounds are kept, the medians are robust to them). Then the same against B with the configuration
+fix below (another 2 x 8 rounds, loads 3.2-14.3). CPU time medians of 16 rounds:
+
+| Benchmark (us per 1000 accesses, median of 16) | A | B | B/A | A (2nd pair) | B config fix | fix/A |
+|---|--:|--:|--:|--:|--:|--:|
+| PortIn 48K IN #00FF | 37.8 | 37.5 | -0.8 % | 37.5 | 37.0 | -1.3 % |
+| PortIn 128k IN #00FF | 42.1 | 42.0 | -0.2 % | 41.7 | 41.4 | -0.8 % |
+| PortIn PENTAGON IN #00FF | 39.7 | 38.6 | -2.7 % | 39.5 | 38.2 | -3.2 % |
+| PortIn 48K IN #40FF | 50.0 | 49.7 | -0.6 % | 49.7 | 49.0 | -1.4 % |
+| PortIn 128k IN #40FF | 52.4 | 51.5 | -1.7 % | 51.7 | 50.9 | -1.5 % |
+| PortIn PENTAGON IN #40FF | 39.8 | 38.7 | -2.6 % | 39.4 | 38.2 | -3.1 % |
+| PortIn 48K IN #00FE | 49.4 | 48.8 | -1.2 % | 49.0 | 47.8 | -2.5 % |
+| PortIn 128k IN #00FE | 52.3 | 51.3 | -2.0 % | 51.4 | 50.5 | -1.8 % |
+| PortIn PENTAGON IN #00FE | 45.3 | 42.0 | -7.4 % | 44.7 | 41.4 | -7.3 % |
+| PortIn 48K IN #FFFD | 34.9 | 34.2 | -1.9 % | 34.5 | 34.0 | -1.6 % |
+| PortIn 128k IN #FFFD | 38.7 | 38.1 | -1.4 % | 38.0 | 37.7 | -0.8 % |
+| PortIn PENTAGON IN #FFFD | 36.4 | 33.9 | -6.9 % | 36.0 | 34.1 | -5.1 % |
+| PortOut 48K OUT #00FF | 29.3 | 29.9 | +2.1 % | 29.0 | 29.5 | +1.5 % |
+| PortOut 128k OUT #00FF | 28.5 | 29.0 | +1.7 % | 28.0 | 28.5 | +1.9 % |
+| PortOut PENTAGON OUT #00FF | 28.3 | 27.5 | -2.9 % | 27.8 | 27.3 | -1.9 % |
+| PortOut 48K OUT #40FF | 39.4 | 39.3 | -0.2 % | 38.5 | 38.9 | +1.1 % |
+| PortOut 128k OUT #40FF | 38.3 | 38.1 | -0.4 % | 37.5 | 37.9 | +1.3 % |
+| PortOut PENTAGON OUT #40FF | 28.3 | 27.6 | -2.6 % | 27.8 | 27.3 | -1.8 % |
+| PortOut 48K OUT #00FE | 70.2 | 70.2 | +0.0 % | 68.7 | 69.4 | +1.0 % |
+| PortOut 128k OUT #00FE | 71.2 | 70.6 | -0.8 % | 69.6 | 70.0 | +0.6 % |
+| PortOut PENTAGON OUT #00FE | 40.9 | 40.6 | -0.9 % | 40.6 | 40.2 | -1.0 % |
+| PortCard PENTAGON no card IN #00FD | 29.9 | 27.4 | -8.4 % | 29.6 | 27.7 | -6.4 % |
+| PortCard ATM3 no card IN #00FD | 30.2 | 28.6 | -5.1 % | 29.8 | 28.3 | -5.1 % |
+| PortCard PENTAGON MoonSound IN #00FD | 29.8 | 27.4 | -7.8 % | 29.5 | 27.6 | -6.5 % |
+| PortCard ATM3 MoonSound IN #00FD | 30.2 | 28.7 | -4.9 % | 29.8 | 28.4 | -4.9 % |
+| PortCard PENTAGON no card OUT #00FD | 39.4 | 39.0 | -0.8 % | 39.1 | 39.9 | +2.0 % |
+| PortCard ATM3 no card OUT #00FD | 44.2 | 43.9 | -0.5 % | 43.7 | 44.2 | +1.3 % |
+| PortCard PENTAGON MoonSound OUT #00FD | 39.5 | 39.0 | -1.5 % | 39.1 | 39.9 | +2.0 % |
+| PortCard ATM3 MoonSound OUT #00FD | 44.0 | 43.9 | -0.2 % | 43.8 | 43.9 | +0.2 % |
+| PortCard PENTAGON no card IN #00C4 | 30.0 | 27.8 | -7.3 % | 29.9 | 28.0 | -6.4 % |
+| PortCard ATM3 no card IN #00C4 | 30.9 | 29.8 | -3.7 % | 30.8 | 29.1 | -5.6 % |
+| PortCard PENTAGON MoonSound IN #00C4 | 37.0 | 35.7 | -3.6 % | 36.9 | 35.6 | -3.7 % |
+| PortCard ATM3 MoonSound IN #00C4 | 36.7 | 36.1 | -1.7 % | 36.6 | 35.6 | -2.9 % |
+| PortCard PENTAGON no card OUT #00C4 | 39.2 | 39.2 | -0.0 % | 39.2 | 39.7 | +1.3 % |
+| PortCard ATM3 no card OUT #00C4 | 30.9 | 30.2 | -2.5 % | 30.9 | 29.9 | -3.0 % |
+| PortCard PENTAGON MoonSound OUT #00C4 | 30.9 | 30.5 | -1.5 % | 30.9 | 30.3 | -1.9 % |
+| PortCard ATM3 MoonSound OUT #00C4 | 34.4 | 32.7 | -5.0 % | 34.2 | 32.3 | -5.6 % |
+
+- **Machines without a slot-built card:** every row is at parity or faster except the 48K / 128K writes to an
+  undecoded port (`OUT #00FF`), +1.5 to +2.1 % (about 0.5 ns per access), slower in 6-8 of 8 paired rounds in every
+  run; `#40FF` / `#00FE` writes are within +-1.3 %, reads -0.2 to -7.4 %.
+- **Cause looked for:** the machine code of everything that path runs (`Z80::Z80Step`, `Z80::out`,
+  `PortDecoder_Spectrum48::DecodePortOut` / `Spectrum128`, `PortDecoder::GetPCAddressLocator` / `OnPortOutComplete`,
+  the logger, memory) was compared function by function between A and B (`objdump`, addresses normalized). B differed
+  from A only in field offsets: MS-4's `CONFIG::midiBank` (a `std::string`) grew `CONFIG` by 24 bytes and moved every
+  `EmulatorContext` member after it, so `Z80::out` and `Z80::Z80Step` addressed `emulatorState` 24 bytes further.
+  **Fix:** the `[MIDI] Bank=` value lives in the configuration loader (`Config::GetMidiBank`, read through
+  `Emulator::GetConfigLoader`, like the media set), not in `CONFIG`; with it, the instructions of those functions are
+  identical to A's.
+- **After the fix** the `OUT #00FF` rows still measure +1.5 / +1.9 % (and the other 48K / 128K writes moved by +0.6 to
+  +1.3 %, the Pentagon's by -1.0 to -1.9 %) with byte-identical code: the difference is where the linker places the
+  functions (every function on the path starts at another offset within its cache line: `DecodePortOut` 32 -> 4,
+  `Z80::out` 40 -> 52, `Z80Step` 56 -> 4 bytes into a 64-byte line), which moves with any code added to the binary.
+  It is not the cost of a code path a machine without the card runs; making it disappear needs a layout decision for
+  the whole build (function alignment, a hot / cold order file), an owner question in [TODO.md](TODO.md).
+  Raw results: the session's `scratch/ms5/ab-*` (not in the repo).
 

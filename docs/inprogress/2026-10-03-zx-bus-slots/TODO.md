@@ -96,9 +96,12 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     both cover resolves by whichever claims it first (none today); the single table waits for the legacy cards' moves
   - [ ] a TTD session recorded with a slot-built card does not capture it until MS-5 (no refusal yet; SL-5 put the
     slot set in the fingerprint but the card has no blob)
-  - [ ] quiet-machine rerun of the MS-4 A/B: machines without the card at parity or faster except the 48K / 128K
-    writes (+1.3 to +6.5 %, code placement: the step-2 binary with every port-path change was at parity there;
-    [tdd.md](tdd.md) §9)
+  - [x] quiet-machine rerun of the MS-4 A/B (2026-10-05, [tdd.md](tdd.md) §12): everything at parity or faster but
+    the 48K / 128K `OUT #00FF` (+1.5 to +2.1 %); one real layout change found and removed (`CONFIG::midiBank` moved
+    the `EmulatorContext` fields: the bank path is in `Config` now), after which the path's machine code is
+    byte-identical to A's and the rows still measure +1.5 / +1.9 %: function placement
+  - [ ] owner question: accept function-placement noise of +-2 % on rows whose code is unchanged, or pin the hot path's
+    layout for the whole build (function alignment / an order file) so A/B rows stop moving with unrelated code
 - [x] SL-5 TTD fingerprint and session guard (2026-10-04, branch `slots-ttd` `29250c546`, merged; [tdd.md](tdd.md) §10):
   `slots.<slot>` / `slots.builtin.<id>` in the configuration fingerprint (affectsRestore); slot cards named by slot in
   the engine's device table and checked against the plan at registration; one slot-set guard on load replacing the

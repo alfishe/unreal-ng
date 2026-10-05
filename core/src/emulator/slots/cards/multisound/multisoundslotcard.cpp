@@ -4,7 +4,9 @@
 #include <cstdio>
 
 #include "emulator/cpu/core.h"
+#include "emulator/config.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
@@ -67,9 +69,11 @@ MultiSoundCardConfig MultiSoundSlotCard::ConfigFrom(const CardContext& context)
     {
         config.outputRate = static_cast<uint32_t>(emulator->pSoundManager->getCoreRate());
     }
-    if (emulator != nullptr && !emulator->config.midiBank.empty())
+    const Config* loader = emulator != nullptr && emulator->pEmulator != nullptr ? emulator->pEmulator->GetConfigLoader()
+                                                                                : nullptr;
+    if (loader != nullptr && !loader->GetMidiBank().empty())
     {
-        config.midiBankPath = emulator->config.midiBank;
+        config.midiBankPath = loader->GetMidiBank();
     }
     return config;
 }

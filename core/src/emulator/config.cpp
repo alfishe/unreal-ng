@@ -1235,7 +1235,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// MIDI section: the General MIDI bank of a slot card's synthesizer (ZX-MultiSound)
 	{
 		const char* bank = inimanager.GetValue(midi, "Bank", nullptr);
-		config.midiBank = bank != nullptr ? bank : "";
+		_midiBank = bank != nullptr ? bank : "";
 	}
 
 	// Make sure we're emulating valid model & configuration
