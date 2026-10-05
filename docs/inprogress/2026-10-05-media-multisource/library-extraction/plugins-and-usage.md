@@ -42,7 +42,7 @@ in [reference-integrations.md](reference-integrations.md).
 | L4 composition, L5 manager, VFS, registry, plugin loader | **core** | |
 | **ZX pack** `umedia-pack-zx`: TRD, SCL, FDI, UDI, Hobeta, MGT, MDR containers; tape codecs TAP, TZX, PZX, CSW and the ZX ROM / turbo encodings; TR-DOS, +3DOS header layer, G+DOS / UniDOS, Opus, MB-02, MDOS, iS-DOS, Microdrive, tape volume; ZX file header pivot; `DiskTypeMap` | **first-party pack, in-tree**, linked statically by unreal-ng | ZX-specific |
 | **CP/M pack** `umedia-pack-cpm`: the disk-definition-driven CP/M driver and its dialects (+3, AMSDOS, PCW, Profi HDD, generic) | first-party pack, in-tree | shared by several platforms (ZX +3, Profi, CPC, PCW, MSX CP/M) |
-| Amiga pack (OFS / FFS, RDB, ADF / ADZ / HDF), CBM pack (D64 / D71 / D81, CBM DOS; tape codecs C64 TAP and T64, CBM pulse encoding), MSX pack (MSX-DOS dialect rules, DMK; tape codec CAS, FSK 1200 / 2400 baud encoding), CPC pack (CDT codec, CPC ROM encoding), BBC pack (UEF codec, 1200 baud FSK), Atari pack (ST dialect, AHDI, MSA / STX containers), SAM Coupé pack (SAMDOS / MasterDOS) | packs, **in-tree or out-of-tree** as their maintainers choose | foreign platforms |
+| Amiga pack (OFS / FFS, RDB, ADF / ADZ / HDF), CBM pack (D64 / D71 / D81 / G64 / P64, CBM DOS, GCR, IDEDOS, SD2IEC; tape codecs C64 TAP and T64), MSX pack (MSX-DOS dialects, DMK / XSA, Nextor rules; CAS + FSK), CPC pack (AMSDOS, disk definitions, CDT + CPC ROM encoding), BBC pack (DFS, ADFS, SSD / DSD / ADF / ADL, MMB; UEF + Acorn FSK), Apple II pack (DOS 3.3, ProDOS, DSK / PO / NIB / WOZ / 2MG / HDV, 6-and-2 GCR), Atari pack (TOS FAT dialect, AHDI / ICD, ST / MSA / DIM / STX), SAM Coupé pack (SAMDOS / MasterDOS) — designs in [reference-integrations.md](reference-integrations.md) R5-R10 | packs, **in-tree or out-of-tree** as their maintainers choose | foreign platforms |
 
 What moves out of the earlier catalog: the ZX formats listed in
 [filesystem-unification.md](filesystem-unification.md) §8 tiers 1-2 live in the ZX pack, CP/M in
@@ -61,6 +61,7 @@ and out-of-process packs).
 | Container format | `IContainerFormat`: `Probe(bytes, size) → score`, `Open(source, access) → Medium`, `Create(spec)`, `Save(medium, target)` | `Registry::AddContainer` | TRD, ADF, D64, STX |
 | Tape container codec | `ITapeCodec` (§2.1) | `Registry::AddTapeCodec` | TZX, CAS, C64 TAP, UEF |
 | Tape signal encoding | `ITapeEncoding` (§2.1) | `Registry::AddTapeEncoding` | `zx.rom`, `msx.fsk`, `cbm.pulse` |
+| Floppy track encoding | `ITrackEncoding` (§2.2) | `Registry::AddTrackEncoding` | `ibm.mfm` (core), `cbm.gcr`, `apple.gcr62`, `amiga.mfm` |
 | File-system driver | `IFsDriver` (filesystem-unification §2) | `Registry::AddDriver` | TR-DOS, OFS / FFS |
 | Partition scheme | `IPartitionScheme`: `Probe`, `Partitions(view)`, `Write(table)` | `Registry::AddPartitionScheme` | Amiga RDB, Atari AHDI |
 | Archive format | `IArchiveFormat` | `Registry::AddArchive` | SCL, Hobeta, LHA (Amiga), T64 (CBM) |
@@ -104,6 +105,21 @@ Today's `TapeImage` is ZX-shaped: ROM-standard blocks, turbo timing profiles, pu
 core it keeps its three block forms, but "ROM-standard" becomes "a data block with the encoding
 `zx.rom`", and the timing profile becomes that encoding's parameters. The ZX pack registers TAP /
 TZX / PZX / CSW and the ZX encodings. That generalization is part of phase X3.
+
+### 2.2 Floppy track encodings and nested media
+
+The same codec idea applies to floppy tracks. `DiskImage` gains a bit-cell track form (`BitTrack`)
+next to today's MFM / FM byte tracks. An **`ITrackEncoding`** plugin converts between sectors and
+track bits:
+
+- IBM MFM / FM stay in the core;
+- CBM GCR, Apple 6-and-2 GCR and Amiga MFM come from the packs.
+
+The emulated drive reads bits or bytes; file-system drivers read sectors through the encoding.
+**Nested media** (`OpenNested(volume, path)`) opens an image stored as a file inside a mounted
+volume, such as a D64 on an SD2IEC card or DFS disks in an MMB, as a medium of its own, reading
+through the file's extents. Both are designed with the platform integrations in
+[reference-integrations.md](reference-integrations.md) R5-R10.
 
 **Extensible metadata.** A closed `std::variant` cannot grow from outside the library, so the
 family metadata of filesystem-unification §3 becomes a **namespaced property bag**:
@@ -248,13 +264,13 @@ use the facade, and so do bindings in other languages (Rust `umedia-sys`, C#, Go
 | # | Scheme | Modules used | Ports implemented by the host | Typical host |
 |---|---|---|---|---|
 | **U1** | **Full media manager** inside an emulator: slots, queue at frame boundaries, dispositions, composition, TTD hooks, media verbs | all | `IMachineHost`, `IRecordingGuard`, `IMediaEventSink`, `ILogSink`, `IConfigSource`, `IMediaReadJournal` | unreal-ng (R1) |
-| **U2** | **Containers only**: the emulator keeps its own media handling and peripherals and uses the library to read and write image formats | L0, L1 floppy / tape / block, packs | none (`ILogSink` optional) | an emulator with its own FDC that wants more formats (R2, R3) |
-| **U3** | **Block provider**: the emulator's IDE / SD / SCSI / hardfile model reads an `IBlockDevice` the library builds (CHD, VHD, a host folder as FAT, a composite) | L0, L1 block, L4 compose, `fat` | none | any emulator with a hard disk or card (R2-R4, R6) |
+| **U2** | **Containers only**: the emulator keeps its own media handling and peripherals and uses the library to read and write image formats | L0, L1 floppy / tape / block, packs | none (`ILogSink` optional) | an emulator with its own FDC that wants more formats (R2, R3, R5-R10) |
+| **U3** | **Block provider**: the emulator's IDE / SD / SCSI / hardfile model reads an `IBlockDevice` the library builds (CHD, VHD, a host folder as FAT, a composite) | L0, L1 block, L4 compose, `fat` | none | any emulator with a hard disk or card (R2-R10, R12) |
 | **U4** | **File access only**: list / extract / add files in images; no emulation | L0-L3, packs | none | file managers, disk explorers, the `umedia` CLI, GUI tools |
-| **U5** | **Image building in a toolchain**: build media from a descriptor or folder as a build step | L0-L4, packs, CLI or CMake functions | none | homebrew toolchains (R7) |
-| **U6** | **Batch analysis**: probe, list, hash and classify large image collections | L0-L3, Python module | none | preservation databases (R8) |
-| **U7** | **Web / WASM**: any of U2-U5 inside a browser | as needed, built with Emscripten | `IHostFileSystem` over browser files / memory | web emulators and tools (R5) |
-| **U8** | **Mobile / sandboxed**: static library in an app sandbox | as needed | `IHostFileSystem` over the app sandbox, document pickers | iOS / Android emulators (R9) |
+| **U5** | **Image building in a toolchain**: build media from a descriptor or folder as a build step | L0-L4, packs, CLI or CMake functions | none | homebrew toolchains (R13) |
+| **U6** | **Batch analysis**: probe, list, hash and classify large image collections | L0-L3, Python module | none | preservation databases (R14) |
+| **U7** | **Web / WASM**: any of U2-U5 inside a browser | as needed, built with Emscripten | `IHostFileSystem` over browser files / memory | web emulators and tools (R11) |
+| **U8** | **Mobile / sandboxed**: static library in an app sandbox | as needed | `IHostFileSystem` over the app sandbox, document pickers | iOS / Android emulators (R15) |
 | **U9** | **Remote / agent**: the media verbs over HTTP or MCP from a host that embeds U1 | U1 + surfaces | — | automation, AI agents |
 
 **A new port for U7 / U8:** `IHostFileSystem` (open / read / write / stat / list / rename /

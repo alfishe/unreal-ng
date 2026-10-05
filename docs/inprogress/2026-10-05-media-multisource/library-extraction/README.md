@@ -8,7 +8,8 @@ MIT-licensed C++20 library (`unrealng::media`) with a platform-neutral core. It 
   Amiga, CBM, MSX, …);
 - one VFS for every guest file system;
 - a CLI, a Python module, a C facade and a WASM build;
-- reference integrations into the common kinds of emulators and platforms.
+- reference integrations into the common kinds of emulators and platforms, and six more platforms
+  with floppies and hard disks (MSX, CPC, Atari ST, C64, BBC Micro, Apple II) to prove that it scales.
 
 **Runs after** the multi-source media work (C0-C9) is integrated and fully tested.
 
@@ -21,8 +22,8 @@ MIT-licensed C++20 library (`unrealng::media`) with a platform-neutral core. It 
 | [filesystem-unification.md](filesystem-unification.md) | One interface for every guest file system: the four media views, `IVolume` / `IFsDriver`, metadata with the ZX header pivot, host round trip, name rules, builders, detection, the driver catalog with effort per driver, cross-FS operations, write safety |
 | [plugins-and-usage.md](plugins-and-usage.md) | Core vs platform packs, extension points, **tape codecs** (`ITapeCodec`, `ITapeEncoding`), plugin delivery (static C++, dynamic C ABI, out-of-process, Python), discovery, the nine usage schemes U1-U9, packaging |
 | [api-and-integration.md](api-and-integration.md) | The ports (`IMachineHost`, `IRecordingGuard`, `IMediaEventSink`, `ILogSink`, `IConfigSource`), runtime sequences, `Doc` replies, new `media fs` verbs, CMake integration, the `umedia` CLI, the Python module |
-| [reference-integrations.md](reference-integrations.md) | Reference integrations R1-R9 with diagrams and code: unreal-ng, a C emulator with its own FDC, a multi-system emulator with a format framework, an Amiga emulator (RDB / FFS hardfiles), a web / WASM page, FPGA SD-card preparation, a homebrew toolchain, a preservation catalogue, a mobile app |
-| [extraction-plan.md](extraction-plan.md) | **The plan**: effort model, phases X0-X12 with tasks, days and exit criteria, Gantt chart, critical path, gates, risks, definition of done |
+| [reference-integrations.md](reference-integrations.md) | Reference integrations R1-R15 with diagrams and code: unreal-ng, a C emulator with its own FDC, a multi-system emulator with a format framework, an Amiga emulator (RDB / FFS hardfiles); **platform scaling R5-R10**: MSX (openMSX type), Amstrad CPC, Atari ST (Hatari type), C64 (VICE type), BBC Micro, Apple II (AppleWin type), each with floppies and hard disks / cards; then a web / WASM page, FPGA SD-card preparation, a homebrew toolchain, a preservation catalogue, a mobile app |
+| [extraction-plan.md](extraction-plan.md) | **The plan**: effort model, phases X0-X13 with tasks, days and exit criteria, Gantt chart, critical path, gates, risks, definition of done |
 | [test-and-quality-plan.md](test-and-quality-plan.md) | Test layers, moving the existing tests, new tests per phase, oracles, fixtures, fuzzing, performance A/B, CI jobs, quality bars |
 
 ## Totals
@@ -33,6 +34,7 @@ MIT-licensed C++20 library (`unrealng::media`) with a platform-neutral core. It 
 | B. Unification: VFS + tier-1 drivers + FS-neutral composition (X7-X8) | 80.5 |
 | C. Tools and surfaces (X10) | 29 |
 | D. Hardening (X11) | 15.5 |
-| G. Packs, plugins, reference integrations (X12) | 66 |
-| **Planned total** | **270** (±25%): ~13 months for one developer, **~6.5 months with three parallel streams** |
-| E / F. More file systems and foreign packs (X9a / X9b) | 49 + 35.5, demand-driven |
+| G. Packs, plugins, core extensions, reference integrations (X12) | 75 |
+| **Planned total** | **279** (±25%): ~13 months for one developer, **~7 months with three parallel streams** |
+| H. Platform scaling: MSX, CPC, Atari ST, C64, BBC Micro, Apple II (X13) | 141 (with H: 420 days, ~9 months on three streams) |
+| E / F. More ZX file systems, Amiga pack (X9a / X9b) | 49 + 20, demand-driven |

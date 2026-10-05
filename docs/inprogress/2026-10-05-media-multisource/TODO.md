@@ -31,4 +31,4 @@ PLAN.md row **#95**.
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
 - [ ] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5)
 - [ ] User docs (`docs/features/media.md`) and recipe `.recipe/media/compose-media.md`
-- [ ] Follow-up after C0-C9: library extraction and unification, phases X0-X12 ([library-extraction/](library-extraction/README.md)), PLAN.md row **#96**
+- [ ] Follow-up after C0-C9: library extraction and unification, phases X0-X13 ([library-extraction/](library-extraction/README.md)), PLAN.md row **#96**

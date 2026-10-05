@@ -15,10 +15,12 @@
 | **B. Unification** | X7-X8 | **80.5** (60-100) | the VFS, tier-1 drivers (TR-DOS consolidated with write support, FAT in-place writer, CP/M with +3DOS, tape, SCL, Hobeta, ISO, host folder), file-system-neutral composition |
 | **C. Tools** | X10 | **29** (22-36) | `umedia` CLI, Python wheel, `media fs` verbs on every surface, the Qt file view; the Python tools retired |
 | **D. Hardening** | X11 | **15.5** (12-19) | fuzzing of every parser, tests on Linux / macOS / Windows, install / `find_package`, docs |
-| **G. Packs, plugins, reference integrations** | X12 | **66** (50-83) | ZX / CP/M as packs, tape codecs, plugin system (static, dynamic C ABI, out-of-process, Python), C facade, WASM build, CMake functions, samples R2-R9 ([reference-integrations.md](reference-integrations.md)) |
-| **Planned total (A-D + G)** | | **270 days** (203-338) | ~13 months for one developer, **~6.5 months with three parallel streams** (§3) |
+| **G. Packs, plugins, reference integrations** | X12 | **75** (56-94) | ZX / CP/M as packs, tape codecs, plugin system (static, dynamic C ABI, out-of-process, Python), C facade, bit-level tracks + track encodings, nested media, WASM build, CMake functions, samples R2-R4 and R11-R15 ([reference-integrations.md](reference-integrations.md)) |
+| **Planned total (A-D + G)** | | **279 days** (209-349) | ~13 months for one developer, **~7 months with three parallel streams** (§3) |
+| **H. Platform scaling** | X13 | **141** (106-176) | packs and samples for MSX, Amstrad CPC, Atari ST, Commodore 64, BBC Micro, Apple II (R5-R10): floppies **and** hard disks / cards on six more platforms |
+| **With H** | | **420 days** (315-525) | ~20 months for one developer, **~9 months with three parallel streams** |
 | E. More ZX file systems (ZX pack) | X9a | 49, per driver 6-11 | G+DOS / UniDOS, Opus, MB-02, MDOS, iS-DOS, Microdrive; demand-driven, each independent |
-| F. Foreign platform packs | X9b | 35.5 + tape codecs, per driver 1.5-17 | Amiga (OFS / FFS + RDB), CBM (CBM DOS + C64 TAP / T64 codecs), Atari ST, MSX (dialect + CAS / FSK), CPC (CDT), BBC (UEF); in-tree or out-of-tree plugins, demand-driven |
+| F. Amiga pack | X9b | 20 | OFS / FFS + RDB (used by sample R4); the other foreign packs are in X13 |
 
 The ranges are ±25%. The estimates come from the measured line counts and the rates in §1, not
 from guesses per task.
@@ -184,7 +186,7 @@ MDOS, Opus, iS-DOS, then AmigaDOS (largest, proves the block / RDB path), CBM, t
 | Qt media panel: a file view per slot (browse, extract, drop files in, check), using `OpenVolume` | 6 |
 | Retire `tools/diskinfo` and `tools/diskconverter` (wrappers with a deprecation line, removed one release later), update recipes | 1 |
 
-### X12 — Packs, plugins and reference integrations (66 days)
+### X12 — Packs, plugins and reference integrations (75 days)
 
 Splits the platform-specific code into packs and opens the library to plugins
 ([plugins-and-usage.md](plugins-and-usage.md)), then proves every usage scheme with a working
@@ -199,8 +201,28 @@ already in X3 / X7, where their code is written: drivers and codecs live in `pac
 | `IHostFileSystem` memory / OPFS variants (the OS one comes with X1) | 2 |
 | Emscripten build, embind, npm package layout | 5 |
 | CMake `umedia_add_image` + CI action | 2 |
-| Samples R2-R9 | 38 |
+| Core: `BitTrack` + `ITrackEncoding` (IBM MFM / FM behind it, no behaviour change) | 6 |
+| Core: nested media (`OpenNested`) | 3 |
+| Samples R2-R4, R11-R15 | 38 |
 | Integration guide (one page per usage scheme) | 3 |
+
+### X13 — Platform scaling (141 days)
+
+Six platforms with both floppy and hard-disk / card subsystems, designed in
+[reference-integrations.md](reference-integrations.md) R5-R10. Each is one stream: its pack (in-tree
+or as a dynamic plugin) and its sample.
+
+| Platform | Pack | Sample | Days |
+|---|---|---|---|
+| MSX (R5) | MSX-DOS 1 / 2 dialects, DSK / DMK / XSA, Nextor rules, CAS + FSK | DSK / DMK / XSA into a sector model, MSX-DOS 2 disk from a folder with write-back, Nextor SD card | 15 |
+| Amstrad CPC (R6) | AMSDOS + disk definitions, CDT + CPC encoding | AMSDOS disk from a folder, CDT → DSK, M4 SD card | 9.5 |
+| Atari ST (R7) | TOS FAT dialect (big logical sectors), AHDI / ICD, ST / MSA / DIM / STX | AHDI hard disk from folders, MSA → ST, STX listing | 19 |
+| Commodore 64 (R8) | CBM DOS, G64 / P64 + CBM GCR, C64 TAP / T64, IDEDOS, SD2IEC | D64 ↔ G64, CBM DOS writes checked by `c1541`, SD2IEC card with nested D64s | 37 |
+| BBC Micro (R9) | DFS, ADFS, SSD / DSD / ADF / ADL, MMB, UEF | DFS / ADFS images from folders, MMB on FAT through two nesting levels | 26.5 |
+| Apple II (R10) | DOS 3.3, ProDOS, DO / PO / NIB / WOZ / 2MG / HDV, 6-and-2 GCR | DSK ↔ PO ↔ WOZ, DOS 3.3 writes, ProDOS hard disk from a folder tree | 34 |
+
+**Exit:** every sample passes in CI, and each pack meets the driver quality bar of the test plan
+(unit, oracle where one exists, round trip, check after write, probe corpus).
 
 ### X11 — Hardening and release (15.5 days)
 
@@ -245,15 +267,19 @@ gantt
     section D. Hardening
     X11 Fuzz, CI matrix, docs      :x11, after x8 x10, 16d
     section G. Packs and integrations (stream 3)
-    X12 Plugin system, C facade, WASM :x12a, after x7p, 25d
-    X12 Samples R2-R9 (2 streams)  :x12b, after x12a, 19d
+    X12 Plugin system, C facade, core ext., WASM :x12a, after x7p, 34d
+    X12 Samples R2-R4, R11-R15 (2 streams) :x12b, after x12a, 19d
     X12 Integration guide          :x12c, after x12b, 3d
+    section H. Platform scaling (3 streams)
+    X13 C64 then CPC               :x13a, after x12a, 47d
+    X13 Apple II then MSX          :x13b, after x12a, 49d
+    X13 BBC then Atari ST          :x13c, after x12a, 46d
 ```
 
 | Staffing | Calendar (mandatory blocks A-D) |
 |---|---|
-| 1 developer, sequential | A-D 204 days ≈ 9.7 months; with G 270 days ≈ **13 months** (21 working days a month) |
-| 3 parallel streams as in the chart | **~136 working days ≈ 6.5 months**. Critical path: X0-X3 (42 d) → X7 VFS core (18) → `trdos` (13) → `cpm` + `plus3dos` (16) → X12 plugin system and facades (25) → samples on two streams (19) → guide (3). X10 / X11 (ending at day ~134) run beside it |
+| 1 developer, sequential | A-D 204 days ≈ 9.7 months; with G 279 days ≈ **13 months**; with H 420 days ≈ 20 months (21 working days a month) |
+| 3 parallel streams as in the chart | A-D + G: **~145 working days ≈ 7 months**. Critical path: X0-X3 (42 d) → X7 VFS core (18) → `trdos` (13) → `cpm` + `plus3dos` (16) → X12 plugin system, facades and core extensions (34) → samples on two streams (19) → guide (3); X10 / X11 run beside it. With H (X13 on three streams after X12's core part): **~185 working days ≈ 9 months** |
 | More streams | little gain on blocks A-D: X3 and X5 are sequential by nature. Drivers (X7, X9) parallelize well, one per stream |
 
 Parallel streams follow the repository's build rules: at most two builds and one test run at once

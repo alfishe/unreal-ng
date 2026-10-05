@@ -114,7 +114,7 @@ libs/unreal-media/                       # own CMake project (like opl4 / eve-em
   benchmarks/                            # google benchmark, umedia-benchmarks
   packs/zx/ packs/cpm/                   # first-party platform packs (static and dynamic builds)
   plugin-abi/                            # umedia/plugin_abi.h, umedia_c.h (C facade)
-  samples/                               # reference integrations R2-R9
+  samples/                               # reference integrations R2-R15
   tools/umedia/                          # the CLI
   python/                                # pybind11 module
   docs/                                  # library docs (moved from docs/file-formats + new FS specs)
