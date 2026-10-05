@@ -1,22 +1,27 @@
 # Multi-source media — TODO
 
-**Status:** design draft written 2026-10-05 (branch `media-multisource`). Not reviewed. No code.
+**Status:** design written 2026-10-05 (branch `media-multisource`); every owner question answered. No code.
 PLAN.md row **#95**.
 
-## Owner decisions so far (2026-10-05)
+## Owner decisions (2026-10-05)
 
 - Composition is file-level (overlayfs-like union into one synthesized volume). A block overlay is
   used only for guest writes.
 - Disks are joined both as a merged tree and as partitions (partitions expected to be rarer).
 - Write-back strategies are researched. Flatten to one flat `.img` / `.vhd` is mandatory.
+- Guest deletes follow a per-layer policy: keep (default, whiteout) / trash / move / delete / ignore.
+- The descriptor is its own `*.ucompose.yaml` file.
+- Boot structures (El Torito, MBR / volume boot code, reserved sectors) are carried from the bottom source or laid on top by a boot layer.
+- `save`: the save policy in automation, a strategy dialog in the GUI; sources (S3 / S4) change only on an explicit request.
+- Phase order: read side, then attribution with S1 / S2, partitions, S3 / S4 last.
 
 ## Remaining
 
 - [ ] Review round 1: requirements, architecture, FS compatibility, flatten strategies, TDD
-- [ ] Answer the open questions Q-1…Q-4 ([goals-and-requirements.md](goals-and-requirements.md) §8); confirm the guest FS table ([fs-compatibility.md](fs-compatibility.md) §6)
+- [x] Owner questions answered 2026-10-05 (D-4…D-9 in [goals-and-requirements.md](goals-and-requirements.md) §3; guest FS support researched in [fs-compatibility.md](fs-compatibility.md) §6)
 - [ ] C0 baseline: `HostFolderFat` corpus hashes and read benchmark numbers on master
 - [ ] C1 core + `HostFolderFat` parity refactor
-- [ ] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`)
+- [ ] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`); Sprinter IDE slots `fsCompatibility = {Fat16}`
 - [ ] C3 FAT image sources
 - [ ] C4 graft
 - [ ] C5 ISO reader, ISO target

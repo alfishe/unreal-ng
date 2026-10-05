@@ -87,9 +87,14 @@ are the tests per source file (one `*_test.cpp` per source file, class `ClassNam
 | `TargetValidator_Test.Fat16TooLarge` / `.Fat16RootFull` / `.FileTooLarge` / `.DirectoryTooManyEntries` / `.IsoDepth` | `DoesNotFit` naming the entry and the limit (FR-20) |
 | `TargetValidator_Test.Fat32RaisedToMinimum` | fs-compatibility S-11 |
 | `TargetValidator_Test.AutoPicksFat16ThenFat32` | the default rule of fs-compatibility §6 |
+| `CompositeMediumFactory_Test.SlotFsCompatibilityRestrictsAuto` / `.ExplicitDisallowedFsRefused` | a `{Fat32}` slot (TS-Conf) builds FAT32; `fs: fat16` there → `BadRequest` |
+| `ComposeSprinter_Test.Fat32Refused` / `.DssPartitionEntryZero` / `.BootableBaseGraftsNotRebuilds` / `.RebuildFromFoldersWithDssBootLayer` | DSS rules of fs-compatibility §6; a folders-only composite with the DSS loader as a boot layer boots DSS |
 | `CompositeMediumFactory_Test.ContentIdStable` / `.ContentIdChangesWithSource` | FR-51 |
 | `CompositeMediumFactory_Test.SameImageReadOnlyInTwoSlots` / `.ExclusiveWhenCommitting` | FR-52 |
 | `MediaManager_Test.InsertComposite` / `.EjectDisposeComposite` / `.ModelSwitchKeepsComposite` | FR-50 |
+| `MediaManager_Test.CompositeSaveStrategyOrder` | request `strategy` beats `writes.save` beats S2; the result names the strategy (D-7) |
+| `MediaManager_Test.EjectNeverCommitsFromDescriptorAlone` | `writes.save: commit` + eject with `save` → S2 delta, sources unchanged, report says why; with `strategy: commit` → S3 runs (D-8) |
+| `MediaPanel` Qt test: `SaveCompositeAsksStrategy` | the dialog lists S1-S4, preselects `writes.save`, shows the plan; cancel writes nothing |
 | `MediaControl_Test.ComposeVerbReportsWithoutInsert` | FR-53 |
 | WebAPI / CLI / MCP / Lua / Python parity tests | the same as the existing `media` verbs' tests, one per new verb |
 
@@ -131,6 +136,11 @@ are the tests per source file (one `*_test.cpp` per source file, class `ClassNam
 | `IsoSynthVolume_Test.ThroughCdImageReadToc` | `CdImage` over it: one data track, the right leadout |
 | `IsoSynthVolume_Test.ExternalToolAgrees` | `isoinfo -l` / `7z l` when available, `GTEST_SKIP` otherwise |
 | `ComposeIso_Test.FatSourcesIntoIso` / `.IsoPlusFolderIntoIso` | S-7, S-8 |
+| `Iso9660Reader_Test.ParsesElToritoCatalog` | no-emulation, floppy-emulation and multi-section catalogs from `IsoImageBuilder`; bad checksum reported |
+| `IsoSynthVolume_Test.ElToritoCarriedFromBottomLayer` | the new catalog has the source's entries with relocated LBAs; the boot image bytes equal the source's; the oracle and `isoinfo -d` (when present) agree |
+| `IsoSynthVolume_Test.BootableIsoNotBottomReported` | a bootable ISO in an upper layer: no boot record, a report line |
+| `IsoSynthVolume_Test.BootLayerAddsElTorito` / `.BootLayerReplacesSourceEntry` | a non-bootable source plus `boot.eltorito` (union file and host file images): catalog entries and image bytes as described |
+| `FatSynthVolume_Test.CarriesBaseBootCode` / `.BootLayerMbrAndVolumeCode` / `.BootLayerReservedSectors` / `.BootCodeTooLargeFails` | D-6 on FAT targets; the BPB fields stay the builder's |
 
 ### 3.6 C6 — provenance, attribution, S1, S2
 
@@ -165,7 +175,10 @@ are the tests per source file (one `*_test.cpp` per source file, class `ClassNam
 | `GraftCommit_Test.CrashAtEveryStepRecovers` | a fault injector stops the writer after each sector; reopening restores either the old or the new state, never a mix |
 | `GraftCommit_Test.RefusesChdBase` / `.RefusesWhileInOtherSlot` | |
 | `WriteBack_Test.PlanOnlyWritesNothing` | the host tree hash is unchanged after `--plan` |
-| `WriteBack_Test.ModifyOwnedFolderFile` / `.CopyUpFromImageLayer` / `.CreateGoesToParentOwnerOrUpper` / `.DeleteWhiteoutByDefault` / `.DeleteWithAllowDelete` / `.RenameAcrossLayers` | the routing table of flatten-strategies §3 S4 |
+| `WriteBack_Test.ModifyOwnedFolderFile` / `.CopyUpFromImageLayer` / `.CreateGoesToParentOwnerOrUpper` / `.RenameAcrossLayers` | the routing table of flatten-strategies §3 S4 |
+| `WriteBack_Test.DeleteKeepAddsWhiteout` / `.DeleteTrash` / `.DeleteMoveKeepsRelativePath` / `.DeletePermanent` / `.DeleteIgnoreReappearsOnRebuild` | one test per `onDelete` policy (D-4): host state, descriptor state and the tree after a rebuild |
+| `WriteBack_Test.TrashUnavailableFailsInPlan` | no fallback to `delete` |
+| `WriteBack_Test.DeleteFromImageLayerIsWhiteout` | read-only owner: whiteout for keep / trash / move / delete, nothing for ignore |
 | `WriteBack_Test.HostChangedIsConflict` / `.KeepBoth` | |
 | `WriteBack_Test.IllegalHostNameEscapedAndRoundTrips` | `AUX`, a trailing dot |
 | `WriteBack_Test.RebuildAfterWriteBackShowsSameTree` | the guest-visible tree is unchanged by the flatten |

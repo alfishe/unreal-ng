@@ -69,6 +69,12 @@ flatten, we must know **exactly which layer, which file and which blocks** each 
 | D-1 | **Composition is file-level (overlayfs-like).** All layers resolve into one union tree at build time. The medium is a synthesized FAT or ISO volume whose file data points into the sources by extents. A block-level overlay is used only for guest writes. |
 | D-2 | **Both ways of joining disks:** tree merge and partitions. Partitions are expected to be used much less often. |
 | D-3 | **Write-back strategies are researched** ([flatten-strategies.md](flatten-strategies.md)). One strategy is mandatory: flatten to a single flat `.img` / `.vhd` file with no layers. |
+| D-4 | **Guest deletes follow a per-layer delete policy** (`onDelete`), applied by S4: `keep` (default: the host file stays, a whiteout in the descriptor keeps it hidden), `trash` (the host's trash), `move` (a deleted-files folder), `delete` (removed for good), `ignore` (the host file stays and no whiteout is written, so the delete is not carried over and the file reappears on the next build). A guest delete never removes a host file unless the layer says `trash`, `move` or `delete`. |
+| D-5 | **The descriptor is its own file**: `*.ucompose.yaml` / `*.ucompose.json`. The folder manifest `.unreal-media.yaml` stays a description of one folder and gets no `compose:` key. |
+| D-6 | **Boot structures come from the bottom source or from a boot layer.** The bottom layer's boot structures are carried over: El Torito on an ISO (boot catalog rebuilt with the new LBAs, boot images served from the source by extent), MBR boot code, the volume boot code and reserved boot sectors on a FAT image. When the source has none, or another is wanted, a **boot layer** (`boot:` in the descriptor) lays one on top: its boot images and boot code come from files in any layer or on the host. The boot layer wins over the bottom source. |
+| D-7 | **Which strategy `save` uses depends on who asks.** Automation (WebAPI, CLI, MCP, Lua, Python, config-driven eject) follows the save policy: the request's `strategy`, else the descriptor's `writes.save`, else S2 delta (non-destructive), and the result names the strategy used. Interactive saves (the Qt media panel, an eject or insert over a dirty composite in the GUI) **ask the user**: a dialog with S1-S4, the descriptor's `writes.save` preselected, and the flatten plan shown before anything is written. `export` is always S1. |
+| D-8 | **Sources are changed only on an explicit request.** S3 (commit) and S4 (write-back) run only from an explicit `flatten`, or a `save` / eject disposition whose request names `strategy: commit` / `write-back`, or the user's choice in the GUI dialog. A `writes.save: commit` / `write-back` in the descriptor alone never fires on eject: that eject saves as S2 delta and the report says why. |
+| D-9 | **Phase order**: the read side first (C1-C5); then attribution (`media changes`, read-only) with S1 and S2 (C6); partitions (C7); S3 and S4 last (C8). |
 
 ## 4. Actors and use cases
 
@@ -88,7 +94,7 @@ flatten, we must know **exactly which layer, which file and which blocks** each 
 | ID | Requirement |
 |---|---|
 | FR-1 | A **composition descriptor** (`*.ucompose.yaml` or `*.ucompose.json`) is a media source in its own right (`MediaSourceType::Composite`). It is accepted by `media insert` on every surface and by the `[MEDIA]` config. |
-| FR-2 | The descriptor sets the **target**: kind (`block` / `optical`), file system (`fat16` / `fat32` / `iso9660`), size or free room, label, code page, partition scheme (`mbr` / `none`) and build strategy (`rebuild` / `graft` / `auto`). |
+| FR-2 | The descriptor sets the **target**: kind (`block` / `optical`), file system (`auto` / `fat16` / `fat32` / `iso9660`), size or free room, label, code page, partition scheme (`mbr` / `none`) and build strategy (`rebuild` / `graft` / `auto`). The file system obeys the slot's `fsCompatibility` and `defaultFs` exactly as folder volumes do; `auto` is resolved by the rule in [fs-compatibility.md](fs-compatibility.md) §6. |
 | FR-3 | **Layers** are listed bottom first. Each has a source (`folder`, `image` with an optional `partition`, `iso`), an optional `from` subpath inside the source, a `mount` path in the target, `include` / `exclude` wildcards, a `conflict` policy, `whiteout` paths and an `opaque` directory list. |
 | FR-4 | Paths in a descriptor are relative to the descriptor file. `~` expands to the home folder. Absolute paths are allowed. Nothing in the descriptor is machine specific unless the user writes it. |
 | FR-5 | **Partitions** mode lists partitions instead of layers. Each partition is a passthrough of an image's partition or a nested composition. |
@@ -112,6 +118,7 @@ flatten, we must know **exactly which layer, which file and which blocks** each 
 | FR-20 | The build validates the whole union against the target: volume size, cluster-count range per FAT type, FAT16 root-directory entries, entries per directory, maximum file size, path depth, ISO name and depth rules. A violation fails with `DoesNotFit` and names the entry and the limit. |
 | FR-21 | Names are converted to the target. FAT: long name plus unique 8.3 name in the chosen code page (CP866 / CP1251), with `FatNameMapper`'s rules. ISO: Level 1 (or 2) ISO name plus a Joliet name. Unconvertible names are reported, and the entry is skipped or renamed according to the descriptor. |
 | FR-22 | Timestamps are clamped to the target's range: FAT 1980-2107 with 2-second resolution, ISO 1900-2155. Attributes are mapped (FAT read-only / hidden / system ↔ ISO hidden). |
+| FR-24 | **Boot carry-over and boot layers** (D-6). ISO target: a bootable bottom ISO layer keeps its El Torito entries (platform ids, emulation types, load segments, sector counts; images read from the source by extent); a `boot.eltorito` list adds or replaces entries, each naming an image by target path (a file of the union) or host path, with emulation (`none` / `floppy` / `hdd`), load segment, sector count and platform. FAT target: the bottom FAT image's MBR boot code (bytes 0-445), volume boot code (outside the BPB fields the builder writes) and reserved boot sectors are carried; `boot.mbrCode`, `boot.volumeCode` and `boot.reserved` (`{lba, file}` ranges, for example the DSS loader at LBA 1-3) replace them from files. Boot data that cannot be carried (a bootable ISO in an upper layer, an El Torito catalog into a FAT target, boot code larger than its area) is reported. |
 | FR-23 | Only supported combinations build. The matrix of source and target file systems is in [fs-compatibility.md](fs-compatibility.md). Any other combination fails with `NotSupported` and the reason. |
 
 ### 5.4 Build strategies
@@ -135,7 +142,7 @@ flatten, we must know **exactly which layer, which file and which blocks** each 
 | FR-44 | **Persisted session** (S2): the change layer is saved next to the descriptor and restored on the next insert when the composite's content id matches. Otherwise the user is told why it cannot be applied. |
 | FR-45 | **Commit into the graft base** (S3): when the base is opened writable, the patched metadata, the changed sectors and the grafted file data are written into the base image. Every overwritten sector is journaled first. |
 | FR-46 | **File-level write-back** (S4, opt-in, folder layers only): file operations are routed to layers by the policy in [flatten-strategies.md](flatten-strategies.md). There is always a dry-run plan first. A host file that changed since the snapshot is a conflict, never overwritten. |
-| FR-47 | Eject and insert dispositions (`save` / `export` / `discard`) work on composites as on any block medium. For a composite, `save` means the strategy the descriptor names (`writes.save:`), S2 by default. |
+| FR-47 | Eject and insert dispositions (`save` / `export` / `discard`) work on composites as on any block medium. `save` picks its strategy per D-7: the policy (request `strategy` → `writes.save` → S2) for automation, a strategy dialog for interactive use. |
 
 ### 5.6 Integration
 
@@ -192,18 +199,9 @@ nanosecond counts during DMA-like bulk reads (ATA READ MULTIPLE, SD multi-block,
 |---|---|---|
 | ACC-C1 | ZX-Evo `sd.zc` from a descriptor: NedoOS SD folder + a second folder with `term.com` replaced (upper shadows lower) | NedoOS boots to `M:/bin>`; the replaced `term.com` runs (its version string) |
 | ACC-C2 | Wild Commander (ZX-Evo) on a FAT32 composite of 3 folders with filters | WC lists exactly the filtered files under each mount, with the expected 8.3 names |
-| ACC-C3 | Sprinter: DSS 1.71 HDD image (graft base) + host folder at `/UTIL` | DSS boots; `DIR C:\UTIL` lists the folder; a file written by the guest appears in `media changes` attributed to the right layer |
-| ACC-C4 | Profi: PQ-DOS image as partition 1 + a composed FAT16 as partition 2 | PQ-DOS sees both drives |
+| ACC-C3 | Sprinter: DSS 1.71 HDD image (graft base) + host folder at `/UTIL` | DSS boots; `DIR C:\UTIL` lists the folder; a file written by the guest appears in `media changes` attributed to the right layer; a FAT32 target on a Sprinter slot is refused |
+| ACC-C4 | Profi: PQ-DOS image as partition 1 + a composed FAT16 as partition 2; then the same with a FAT32 partition 2 | PQ-DOS sees both drives; the FAT32 run records whether PQ-DOS reads FAT32, and the Profi slot descriptor is set from that result |
 | ACC-C5 | ATAPI CD on ZX-Evo: ISO composite of two folders | NedoOS lists the CD contents; `AUTORUN.ZX` boot works from the ERS menu |
 | ACC-C6 | Flatten S1: the ACC-C3 session exported to `.img` and `.vhd` | the exported image boots alone (no layers) and `FatVolumeReader` shows the same tree as the live medium |
 | ACC-C7 | Persisted session S2 | after a restart the guest sees its earlier writes; changing a source makes the delta refuse with a clear reason |
 | ACC-C8 | Benchmarks and charts | every NFR-P row has a measured value in [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5 "results" and the charts C1-C8 are generated by the plot script |
-
-## 8. Open questions
-
-| ID | Question | Default until answered |
-|---|---|---|
-| Q-1 | Which guests read FAT32 and which only FAT16? (DSS versions, PQ-DOS, ERS, WC, NedoOS, Next) | Default target `fat16` when the size fits, as `HostFolderFat` does. Recorded per guest in [fs-compatibility.md](fs-compatibility.md) §6, marked "verify". |
-| Q-2 | Should S4 write-back be allowed to delete host files, or only add whiteouts? | Whiteouts only. Deletion needs `allowDelete: true` on the layer. |
-| Q-3 | Descriptor extension: `.ucompose.yaml` or reuse `.unreal-media.yaml` with a `compose:` key? | Separate extension. A folder manifest describes one folder; a descriptor describes a medium. |
-| Q-4 | El Torito boot images for ISO targets? | Not in v1 (no ZX guest boots El Torito); the ISO writer reserves the boot record slot. |

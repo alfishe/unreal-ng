@@ -151,10 +151,24 @@ default it is the topmost writable folder layer.
 |---|---|---|
 | modify | rewrite the host file (temp + rename) | **copy-up**: write the new content into the upper layer at the same path |
 | create | into the layer that owns the parent directory, if writable; else into the upper layer | into the upper layer |
-| delete | delete the host file if `allowDelete: true`, else add a whiteout | add a **whiteout** to the descriptor's upper layer entry |
+| delete | per the layer's `onDelete` (below) | `keep` / `trash` / `move` / `delete`: a **whiteout** in the descriptor's upper layer entry (the image is never changed); `ignore`: nothing |
 | rename / move | host rename inside the same layer | copy-up under the new name + whiteout of the old path |
-| mkdir / rmdir | create / remove the host directory (rmdir only if empty and `allowDelete`) | upper-layer mkdir / whiteout |
+| mkdir / rmdir | create the host directory / rmdir per `onDelete` (only once its contents are handled) | upper-layer mkdir / whiteout (or nothing for `ignore`) |
 | attribute / time change | set host mtime; FAT attributes recorded in the folder manifest (`files: {name: {attrs: RH}}`) | copy-up of metadata only (manifest entry in the upper layer) |
+
+**Delete policies** (`onDelete`, per layer, owner decision D-4):
+
+| Policy | Host file | Descriptor | Next build shows the file | Recoverable |
+|---|---|---|---|---|
+| `keep` (default) | stays | whiteout added | no | yes: drop the whiteout |
+| `trash` | moved to the host's trash | — | no | yes: the OS trash |
+| `move` | moved to `<deletedFolder>/<UTC date-time>/<layer>/<path>` | — | no | yes: move it back |
+| `delete` | removed for good | — | no | no |
+| `ignore` | stays | nothing | **yes**: the guest's delete is not carried over | n/a |
+
+The plan (`--plan`) lists each delete with its policy. A trash that is not reachable on the host
+(no trash on a network volume, no `$XDG_DATA_HOME`) fails that operation in the plan; it never falls
+back to `delete`.
 
 **Execution:**
 
@@ -198,11 +212,8 @@ reuses `FatVolumeReader`; this design only lists it for completeness.
 | Needs a consistent guest FS | no | yes | no | yes | yes |
 | Implementation effort | S (VHD footer) | M | S | M | L |
 
-## 5. Decisions proposed
+## 5. Phasing (owner decision D-9)
 
-| ID | Proposal |
-|---|---|
-| P-1 | S1 and S2 in phase C6. S3 and S4 in phase C8, after the read side has proven itself on real guests. |
-| P-2 | `save` on a composite defaults to S2. `export` defaults to S1. The descriptor can set `writes.save: commit` (S3) or `write-back` (S4). |
-| P-3 | Attribution (`media changes`) ships with S1 / S2, read-only. Automation (UC-6) gets it early, and it hardens the S3 / S4 logic before anything writes to sources. |
-| P-4 | No automatic write-back on eject. S3 and S4 only run on an explicit flatten. |
+Attribution (`media changes`, read-only) ships with S1 and S2 in phase C6, so automation (UC-6)
+gets it early and the S3 / S4 logic is hardened before anything writes to sources. S3 and S4 follow
+in phase C8, after the read side has proven itself on real guests.

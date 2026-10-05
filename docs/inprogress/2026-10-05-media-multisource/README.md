@@ -16,7 +16,7 @@ Extends the unified media manager ([2026-09-28-storage-manager](../2026-09-28-st
 
 | File | Topic |
 |---|---|
-| [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem, goals, non-goals, owner decisions, use cases, FR / NFR (performance, memory), acceptance, open questions |
+| [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem, goals, non-goals, owner decisions, use cases, FR / NFR (performance, memory), acceptance |
 | [architecture.md](architecture.md) | Component view, data model, build workflow, read / write / flatten sequences, threading, relation to media history H1-H5 (mermaid component, workflow and sequence diagrams) |
 | [fs-compatibility.md](fs-compatibility.md) | Can FAT16, FAT32 and ISO 9660 be mixed? Limits, source × target matrix, conversion rules, scenarios, guest support, verdict |
 | [flatten-strategies.md](flatten-strategies.md) | Sector provenance, change attribution, and the strategies S1 flat image (mandatory), S2 session delta, S3 graft-base commit, S4 file write-back |
@@ -40,4 +40,4 @@ flowchart LR
 
 ## Status
 
-Design draft (2026-10-05), not reviewed, no code. See [TODO.md](TODO.md).
+Design (2026-10-05): owner questions answered, no code. See [TODO.md](TODO.md).

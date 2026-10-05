@@ -61,14 +61,23 @@ layers:                         # bottom first
     opaque: [/BIN/OLD]          # upper directory hides the lower one's contents
     whiteout: [/BIN/broken.com] # hide lower entries
     writable: true              # S4 may write here
-    allowDelete: false          # S4 may delete host files (else whiteouts)
+    onDelete: keep              # S4: keep | trash | move | delete | ignore (D-4)
+    deletedFolder: .deleted     # onDelete: move - relative to the descriptor; <date>/<layer>/<path> inside
   - name: demos
     source: {iso: ~/zx/demos.iso}
     from: /DEMOS
     mount: /DEMOS
+boot:                           # boot layer (D-6): wins over the bottom source's boot structures
+  eltorito:                     # optical targets
+    - {image: /BOOT/boot.img, emulation: floppy, platform: x86}   # target path (a union file) or {host: path}
+    - {image: {host: ./efi.img}, emulation: none, loadSegment: 0x07C0, sectors: 4}
+  mbrCode: {host: ./mbr.bin}    # FAT targets: bytes 0-445 of LBA 0
+  volumeCode: {host: ./vbr.bin} # boot code area of the volume boot sector; BPB fields stay the builder's
+  reserved:                     # whole reserved sectors after the boot sector
+    - {lba: 1, file: {host: ./dssboot.bin}}   # e.g. the DSS loader at LBA 1-3 (relative to the volume)
 writes:
   access: session               # readonly | session
-  save: delta                   # delta (S2) | commit (S3) | write-back (S4)
+  save: delta                   # save policy for automation (D-7): flat (S1) | delta (S2) | commit (S3) | write-back (S4); the GUI asks, with this preselected
   upper: builds                 # S4 copy-up target (default: topmost writable layer)
   delta: games.ucompose.delta   # S2 file (default: <descriptor>.delta)
 ```
@@ -117,7 +126,8 @@ struct ComposeLayer
     std::map<std::string, std::vector<std::string>> order;
     ConflictPolicy conflict = ConflictPolicy::Shadow;
     bool writable = false;
-    bool allowDelete = false;
+    DeletePolicy onDelete = DeletePolicy::Keep;   ///< Keep, Trash, Move, Delete, Ignore
+    std::filesystem::path deletedFolder;          ///< Move: default <descriptor dir>/.deleted
 };
 
 struct ComposeDescriptor
@@ -350,6 +360,8 @@ of every sector of 12 generated folders: FAT16/32, MBR and superfloppy, CP866/CP
 4 GiB − 1 sparse file, 65 535 entries). The hashes are recorded from master **before** the
 refactor.
 
+Boot structures (D-6): `BootPlan` collects, in priority order, the descriptor's `boot` section and the bottom FAT image's boot code (MBR bytes 0-445, the volume boot sector's code area, and reserved sectors 1…reserved−1 that are not FSInfo or backup boot). `FatSynthVolume` reserves enough sectors for them and serves them from their `FileData` (a small slab when read from a file, an extent when from the base). Boot code larger than its area fails with `DoesNotFit`. `GraftVolume` keeps the base's own boot sectors, and a `boot` section patches them through the patch map.
+
 Layout additions over today:
 - `size` (fixed total) as well as `free`.
 - Root directory sized for the merged root (FAT16: rounded up to whole sectors; ≥ 512 entries for
@@ -408,10 +420,13 @@ ReadSector(lba, dst):
 |---|---|
 | 0–15 | system area, zero |
 | 16 | Primary Volume Descriptor (ISO L1/L2 names) |
-| 17 | Supplementary Volume Descriptor (Joliet, escape `%/E`) when `joliet: true` |
-| 18 | Volume Descriptor Set Terminator |
+| 17 | Boot Record (`EL TORITO SPECIFICATION`, pointer to the boot catalog) when the bottom ISO layer is bootable (D-6); the following descriptors move up by one |
+| 17 / 18 | Supplementary Volume Descriptor (Joliet, escape `%/E`) when `joliet: true` |
+| 18 / 19 | Volume Descriptor Set Terminator |
 | 19… | path tables: L and M for the PVD, L and M for Joliet |
 | … | directory extents (PVD tree), directory extents (Joliet tree) |
+| … | boot catalog (one block, synthesized: validation entry with checksum, initial / default entry, section headers and entries copied from the source with the new image LBAs) |
+| … | boot images (extents into the source ISO; a boot image that is also a visible file shares its extent) |
 | … | file extents, contiguous, in directory order; shared by both trees (same extent LBA) |
 
 - Implements `cd::IFrameSource` (`StoredFormat::Cooked2048`). `CdImage` is constructed over it
@@ -423,6 +438,7 @@ ReadSector(lba, dst):
 - `level: 1` names: 8.3 d-chars. `level: 2`: 31 chars. Depth > 8 fails with `DoesNotFit` (option
   `relaxDepth: true` for Joliet-only readers).
 - Files ≥ 4 GiB: Level 3 multi-extent, written as several directory records (rare; tested).
+- El Torito (D-6): `Iso9660Reader` parses the source's boot record and catalog into `BootEntry {platform, emulation, loadSegment, systemType, sectorCount, FileData image}`. A `boot.eltorito` list from the descriptor adds or replaces entries; its images are `FileData` too (a union file's data, or a host file in the `SourcePool`), so they are never copied. The writer emits the merged list with the new image LBAs. Hard-disk emulation images and multi-section catalogs are carried the same way. A catalog that fails its checksum is reported and not carried. The Boot Record is emitted whenever the merged list is non-empty.
 - Dates: the PVD's creation date is `fixedTime` or the newest mtime in the tree, so a rebuild with
   the same sources gives the same bytes.
 
@@ -506,7 +522,7 @@ their ancestors are re-read through `FatVolumeReader`.
 | S1 compact | `FatImageSource` over the merged stack → one-layer `UnionTree` → `FatSynthVolume` (options from the flags) → `BlockFormats::Write` |
 | S2 delta | `ComposeDelta::Save(changes, contentId, path)` / `Load(path, expectedId)`: header + zstd chunks; temp + rename |
 | S3 commit | `GraftCommit::Plan` → `Journal::Write` → apply → `Journal::Remove`; recovery on open |
-| S4 write-back | `FlattenPlanner::Plan(ChangeSet, descriptor, snapshots)` → `WriteBackExecutor` (stage, check, rename, journal) → descriptor update via `ComposeDescriptor::Save` |
+| S4 write-back | `FlattenPlanner::Plan(ChangeSet, descriptor, snapshots)` → `WriteBackExecutor` (stage, check, rename, journal) → descriptor update via `ComposeDescriptor::Save`. Deletes go through `HostDeleter` per `onDelete`: `Trash` uses the platform trash (Windows `IFileOperation` with `FOFX_RECYCLEONDELETE`, macOS `NSFileManager trashItemAtURL` in an Objective-C++ unit, Linux / BSD the freedesktop.org Trash spec: `$XDG_DATA_HOME/Trash/files` + `.trashinfo`, `$topdir/.Trash-$uid` on other volumes); a trash that cannot be reached makes that operation fail in the **plan**, never a silent fallback to `delete`. `Move` renames into `<deletedFolder>/<UTC date-time>/<layer>/<path>` (copy + remove across volumes). |
 
 Every whole-file write goes through temp + rename, as `BlockFormats` already does.
 
@@ -518,7 +534,8 @@ Every whole-file write goes through temp + rename, as `BlockFormats` already doe
 | `MediaFormatRegistry` | `.ucompose.yaml` / `.ucompose.json` → Composite (probe by extension + `version:` key) |
 | `CompositeMediumFactory::Build` | the §4 workflow of architecture.md; returns `Medium(source, access, "compose", stack, session, kind)` + report; `ContentId` per architecture §9 |
 | Same-source rule | per layer source path, via `SourcePool` keys, checked by `MediaManager` against every other slot |
-| Save / export / dispositions | `MediaManager::SaveBlockMedium` dispatches on `Composite` to S2 (default), S3 or S4 per `writes.save`; `Export` → S1 |
+| File-system rules | the slot's `fsCompatibility` / `defaultFs` resolve `fs: auto` and refuse a disallowed type, the same code path as folder volumes ([fs-compatibility.md](fs-compatibility.md) §6); Sprinter IDE slots get `fsCompatibility = {Fat16}`; partitions mode on a Sprinter slot puts the DSS partition in entry 0 |
+| Save / export / dispositions | `MediaManager::SaveBlockMedium` dispatches on `Composite` by `SaveOptions::strategy` → `writes.save` → S2 (D-7), except that an eject disposition never takes S3 / S4 from `writes.save` alone, only from an explicit `strategy` (D-8); every surface passes `strategy` through; the Qt media panel and the Qt eject / insert dirty prompt open the strategy dialog (plan preview, `writes.save` preselected) and pass the chosen strategy; `Export` → S1 |
 | Rescan | rebuild from fresh sources; dirty → existing dirty rules |
 | Model switch (M5) | the descriptor travels with the slot, like a folder source |
 | Config | `[MEDIA] ide0.master=compose:games.ucompose.yaml` (same syntax as `folder:`) |
@@ -572,7 +589,7 @@ failing tests listed for it in [test-and-benchmark-plan.md](test-and-benchmark-p
 |---|---|---|
 | **C0** | Baseline: corpus hashes of `HostFolderFat` on master; benchmark `BM_HostFolderFatRead` baseline numbers recorded | hashes + numbers committed in the plan's results section |
 | **C1** | `SourcePool`, `HostFolderSource`, `UnionTree`, `UnionBuilder` (folders only), `ExtentReader`, `FatSynthVolume`; `HostFolderFat` refactored on top | parity: byte-identical corpus; NFR-P1 A/B within budget |
-| **C2** | `ComposeDescriptor`, `TargetValidator`, multi-folder composites, `CompositeMediumFactory`, `MediaSourceType::Composite`, `media compose` / `layers` on every surface | ACC-C1, ACC-C2 |
+| **C2** | `ComposeDescriptor`, `TargetValidator`, multi-folder composites, `CompositeMediumFactory`, `MediaSourceType::Composite`, `media compose` / `layers` on every surface; slot FS rules (`fsCompatibility`, Sprinter `{Fat16}`) | ACC-C1, ACC-C2 |
 | **C3** | `FatVolumeReader::ChainExtents` / partitions, `FatImageSource`, `SubRangeDevice`; image layers in rebuild | FAT16 + FAT32 images merged (fs-compatibility S-1, S-2) |
 | **C4** | `GraftVolume` (+ `ScanFree`), `build: auto` | ACC-C3 (read side), S-3, S-4, S-10 fallback |
 | **C5** | `Iso9660Reader`, `IsoImageSource`, `IsoSynthVolume`, optical composites | ACC-C5, S-7, S-8 |

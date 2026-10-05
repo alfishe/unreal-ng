@@ -108,27 +108,48 @@ Notes:
 | S-6 | FAT partition + ISO partition on one IDE disk | ✗ | note 3; use an IDE CD unit for the ISO |
 | S-7 | Two ISOs + a host folder into one **ISO** CD | ✓ | rebuild ISO; read-only medium |
 | S-8 | FAT image + host folder into an **ISO** CD | ✓ | rebuild ISO |
-| S-9 | ISO as the **base** with folder layers, target ISO | ✓ (as rebuild) | the ISO is the bottom layer of an ISO rebuild; its layout is not kept (no guest depends on ISO block positions except El Torito, which is a non-goal) |
+| S-9 | ISO as the **base** with folder layers, target ISO | ✓ (as rebuild) | the ISO is the bottom layer of an ISO rebuild; its layout is not kept (no guest depends on ISO block positions). A bootable base keeps El Torito: the boot catalog is rebuilt with new LBAs, the boot images are read from the base by extent; a base without one can get it from a boot layer (D-6) |
 | S-10 | Graft on a FAT16 base whose root is full (512 slots) with new files at `/` | ✗ graft, ✓ rebuild | `auto` falls back to rebuild and says why; `graft` fails with `DoesNotFit` |
 | S-11 | FAT32 composite smaller than 32 MiB | ⚠ | FAT32 needs ≥ 65 525 clusters: the builder raises the volume to the minimum (free space), as `HostFolderFat` does, or fails if `size` is fixed below it |
 
-## 6. Guest support (what the target should be)
+## 6. Guest support and the default target
 
-The target's file system must be one the guest can read. This is not decided by the emulator; it
-is recorded here so that defaults and recipes point the right way. Rows marked **verify** are to be
-confirmed by the acceptance tests ACC-C1…C5 before the recipes state them.
+The target's file system must be one the guest can read. The facts below come from the guests'
+sources and from what already runs on master (researched 2026-10-05). The emulator enforces them
+through the slot's existing `MediaSlotDescriptor::fsCompatibility` / `defaultFs` (the rule of
+BUGS.md #2), so a composite follows exactly the same per-slot rules as a folder volume.
 
-| Guest | FAT12 | FAT16 | FAT32 | ISO 9660 | Source of the claim |
+| Guest (slot) | FAT12 | FAT16 | FAT32 | ISO 9660 | Evidence |
 |---|---|---|---|---|---|
-| NedoOS (ZX-Evo, ATM) | ? | ✓ | ✓ | ✓ (`cdplay`, CD mount) | M1 ACC-3 boots from a FAT folder volume (FAT16 default); FAT32 **verify** |
-| Wild Commander (ZX-Evo) | ? | ✓ | ✓ | — | **verify** |
-| ERS (ZX-Evo boot menu) | — | ✓ | ✓ | `AUTORUN.ZX` | M1 ACC-1/2 (FAT16); FAT32 **verify** |
-| Estex DSS (Sprinter) | ✓ (floppy) | ✓ | ? | ? | DSS 1.62 / 1.71 boot from HDD images on master; FAT32 **verify** |
-| PQ-DOS (Profi) | ? | ? | ? | — | `testdata/machines/profi/pqdos/pqdos-hdd-small.img` layout to be checked **verify** |
-| NextZXOS / esxDOS (Next, later) | — | ✓ | ✓ | — | storage design integration-next.md |
+| NedoOS (ZX-Evo / ATM `sd.zc`, IDE, NeoGS SD) | ✓ | ✓ | ✓ | ✓ (CD mount, `cdplay`) | its disk driver is ChaN FatFs (`NOS/kernel/fatfsdrv.asm`, [baseconf-hardware-reference.md](../2026-09-15-atm-baseconf-highres-ports/baseconf-hardware-reference.md)), which reads all three; FAT16 boot proven by M1 ACC-3 |
+| ERS boot menu (ZX-Evo) | — | ✓ | ✓ | `AUTORUN.ZX` | `ROM/bootsecfat.a80` carries both BPB layouts (FAT12/16 at `:4-28`, FAT32 at `:30-44`); FAT16 proven by M1 ACC-1/2 |
+| Wild Commander (ZX-Evo) | — | ✓ | ✓ | — | listed as a FAT16 / FAT32 target in the IDE design ([2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) §7.4.4) |
+| TS-BIOS + Wild Commander (TS-Conf `sd.zc`) | — | ✗ | ✓ | — | the slot declares `fsCompatibility = {Fat32}` (`portdecoder_tsconf.cpp`, `TsConfMedia_Test.SdSlotIsFat32Only`); a volume from sector 0, no MBR |
+| Estex DSS (Sprinter IDE) | ✓ | ✓ | ✗ | — | DSS reads FAT12 / FAT16 only ([Sprinter hardware reference](../2026-09-28-sprinter/hardware-reference.md) §9.3: `fat_x.asm`, `DOSBOOT4.ASM:351-375`); partition types `#01 #04 #06 #0E`, extended `#05 #0F`; `#0B #0C` skipped; the boot loader reads **MBR entry 0 only**; boot code at LBA 1-3 ([sprinter-hdd recipe](../../../.recipe/media/sprinter-hdd.md)) |
+| PQ-DOS (Profi IDE) | ✓ (boot floppy) | ✓ | not evidenced | — | `testdata/machines/profi/pqdos/pqdos-hdd-small.img`: MBR entry 0 type `#06`, FAT16; `pqdos1.fdi` FAT12; no FAT32 source or image found |
+| NextZXOS / esxDOS (Next, later) | ✓ | ✓ | ✓ | — | [integration-next.md](../2026-09-28-storage-manager/integration-next.md) |
+| NeoGS SD (loader, players) | — | ✓ | ✓ | — | [integration-neogs-sd.md](../2026-09-28-storage-manager/integration-neogs-sd.md) |
 
-**Default target choice** (FR-2, when `fs` is omitted): FAT16 if the union plus free space fits
-FAT16, else FAT32. In graft mode the base decides. For an optical slot, ISO.
+**Default target choice** (FR-2, `fs: auto`):
+
+1. If the slot declares `fsCompatibility`, only those types are allowed. An explicit `fs` outside
+   the set is refused (`BadRequest`, as for folders today).
+2. Otherwise, or within the set: the slot's `defaultFs` if the union plus free space fits it, else
+   the next allowed type (FAT16 → FAT32, the BUGS.md #2 rule); else `DoesNotFit`.
+3. Graft: the base decides; a base whose type the slot does not allow is refused.
+4. Partitions: each composed partition follows rules 1-2. Passthrough partitions are checked
+   against `fsCompatibility` too, as inserted images are today.
+5. Optical slot: ISO.
+
+**Consequences for the slot descriptors** (work items for phase C2):
+
+| Slot | Today | Needed |
+|---|---|---|
+| Sprinter `ide0.*`, `ide1.*` | no `fsCompatibility`: a FAT32 folder or composite is accepted, although DSS cannot read it and the Sprinter storage design says it must be refused | `fsCompatibility = {Fat16}` (FAT12 targets are a non-goal); `ComposeSprinter_Test.Fat32Refused` |
+| Sprinter, partitions mode | — | the DSS partition must be **entry 0**; types `#0B`/`#0C` are pointless (DSS skips them), so the validator warns; a rebuilt DSS boot volume would lose the boot code at LBA 1-3: `build: auto` picks graft for a bootable DSS base; a rebuild carries the base's reserved boot sectors (D-6), and a composite with no DSS base gets the loader from a boot layer (`boot.reserved`) |
+| Profi `ide0.*` | no `fsCompatibility` | keep FAT16 as `defaultFs`; no restriction (no evidence either way for FAT32); ACC-C4 checks FAT32 once and the result sets the descriptor |
+| ZX-Evo `sd.zc`, IDE; NeoGS; Next | FAT16 default, both allowed | unchanged |
+| TS-Conf `sd.zc` | `{Fat32}` | unchanged |
 
 ## 7. Verdict
 
