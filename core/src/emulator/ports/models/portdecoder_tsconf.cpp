@@ -817,6 +817,12 @@ uint8_t PortDecoder_TSConf::FdcAccess(uint8_t port, bool isWrite, uint8_t value)
         else
             result = PeripheralPortIn(port);
     }
+    if (systemPort && !isWrite)
+    {
+        // VGSYS: {INTRQ, DRQ, 111111}, driven while DOS || VG_OPEN whatever the chip select ([V] zports.v:330,
+        // 344-347,447-448) - also for a virtual drive and inside vdos
+        result = static_cast<uint8_t>((chipSelected ? result : PeripheralPortIn(port)) | 0x3F);
+    }
     if (isWrite && systemPort)
         _ts.vgDrive = value & 0x03;
 

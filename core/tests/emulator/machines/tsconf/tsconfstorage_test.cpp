@@ -182,6 +182,25 @@ TEST_F(TsConfStorage_Test, VDOS2_CmosInsideVdos)
     EXPECT_EQ(In(0xBFF7), 0x33);
 }
 
+/// VDOS-3: IN #FF (VGSYS) gives the controller's {INTRQ, DRQ, 111111} whatever the drive select (bits 5..0 were
+/// the Beta interface's 0s) ([V]
+/// zports.v:330,344-347,447-448: driven while dos || open_vg, not gated by the VG93 chip select); a virtual
+/// drive's read gave #FF (TS-Conf audit, memory-ports B4). The read still traps into vdos
+TEST_F(TsConfStorage_Test, VDOS3_SystemPortReadsTheControllerLines)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::FddVirt, 0x02);  // drive B is virtual
+    ts.dos = 1;
+    _decoder->ApplyState();
+    Out(0x00FF, 0x00);              // A: the real controller
+    const uint8_t lines = In(0x00FF);
+    EXPECT_EQ(lines & 0x3F, 0x3F) << "bits 5..0 are driven as 1";
+    ASSERT_NE(lines, 0xFF) << "a controller with INTRQ or DRQ low";
+    Out(0x00FF, 0x01);              // B: virtual
+    EXPECT_EQ(In(0x00FF), lines);
+    EXPECT_EQ(ts.preVdos, 1);
+}
+
 /// IDE-4 (hs §8.3): with [HDD] IdeStall=1 a bus cycle to the drive costs
 /// +1 / +2 / +3 T at 3.5 / 7 / 14 MHz; latch accesses and IdeStall=0 cost nothing
 TEST_F(TsConfStorage_Test, IDE4_Stall)
