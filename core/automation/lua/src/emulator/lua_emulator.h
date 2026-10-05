@@ -10,6 +10,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/media/sectorwrite.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -3650,6 +3651,43 @@ public:
                 data[i + 1] = sec->data[i];  // Lua tables start at 1
             }
             return data;
+        });
+
+        // A debugger's write into the sector's data field (SectorWrite); sector 0-based as disk_read_sector (ID - 1);
+        // data a string of bytes or a table -> true | nil, error
+        lua.set_function("disk_write_sector", [this](sol::this_state s, int drive, int cyl, int side, int sector,
+                                                     sol::object data, sol::optional<uint32_t> offset)
+                                                  -> std::tuple<sol::object, sol::object> {
+            auto fail = [&](const std::string& error) -> std::tuple<sol::object, sol::object> {
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
+            };
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return fail("no emulator");
+            if (drive < 0 || drive > 3)
+                return fail("bad drive (0-3)");
+            std::vector<uint8_t> bytes;
+            if (data.is<std::string>())
+            {
+                const std::string text = data.as<std::string>();
+                bytes.assign(text.begin(), text.end());
+            }
+            else if (data.is<sol::table>())
+            {
+                for (const auto& kv : data.as<sol::table>())
+                {
+                    if (!kv.second.is<int>() || kv.second.as<int>() < 0 || kv.second.as<int>() > 255)
+                        return fail("data table must hold bytes 0..255");
+                    bytes.push_back(static_cast<uint8_t>(kv.second.as<int>()));
+                }
+            }
+            else
+                return fail("data must be a string of bytes or a table");
+            const SectorWrite::Result result = SectorWrite::Write(emulator, static_cast<uint8_t>(drive), cyl, side,
+                                                                  sector + 1, offset.value_or(0), bytes, "lua");
+            if (!result.ok)
+                return fail(result.error);
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("disk_read_sector_hex", [this](int drive, int trackNo, int sector) -> std::string {

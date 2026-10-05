@@ -102,6 +102,9 @@ public:
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getDiskSectorRaw, "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw",
                   drogon::Get);
+    // A debugger's sector write into the data field (SectorWrite)
+    ADD_METHOD_TO(EmulatorAPI::putDiskSector, "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}",
+                  drogon::Put);
 
     // Disk inspection - track data
     ADD_METHOD_TO(EmulatorAPI::getDiskTrack, "/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}", drogon::Get);
@@ -717,6 +720,10 @@ public:
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                           const std::string& drive, const std::string& cyl, const std::string& side,
                           const std::string& sec) const;
+    void putDiskSector(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                       const std::string& drive, const std::string& cyl, const std::string& side,
+                       const std::string& sec) const;
 
     // Disk inspection - track data
     void getDiskTrack(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

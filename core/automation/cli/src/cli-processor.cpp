@@ -740,6 +740,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;
     oss << "  disk sector <drv> <cyl> <side> <sec> - Read sector data" << NEWLINE;
+    oss << "  disk write <drv> <cyl> <side> <sec> <hex> [--offset N] - Write bytes into the sector's data field (debugger)" << NEWLINE;
     oss << "  disk track <drv> <cyl> <side>        - Read track summary" << NEWLINE;
     oss << "  disk sysinfo <drv>     - Show TR-DOS system info (sector 9)" << NEWLINE;
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;

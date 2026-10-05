@@ -1863,6 +1863,7 @@ Inspect disk drive status, disk geometry, data contents, and current operations.
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `disk sector [drv] <cyl> <side> <sec>` | | `[A-D]` `0-79` `0-1` `>=1` | Read parsed sector data:<br/>• Address Mark: cyl, head, sector, size<br/>• ID CRC and validity<br/>• Data (256 bytes, hex dump)<br/>• Data CRC and validity | ✅ WebAPI |
+| `disk write <drv> <cyl> <side> <sec> <hex> [--offset N]` | | `[A-D]` `cyl` `0-1` `ID>=1` `hex bytes` | A debugger's write into the sector's data field (the WebAPI `PUT /disk/{drive}/sector/...`): the bytes go in at `--offset` (default 0) as the WD1793 WRITE SECTOR puts them, the data CRC is recalculated, the image counts as modified, a TTD tool edit. Refused with the reason: empty drive, write-protected disk, missing track / sector, ID-only sector, past the data field. Example: `disk write A 0 0 9 4D594449534B --offset 245` renames a TR-DOS disk | ✅ |
 | `disk track [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Track summary (16 sectors):<br/>• Per-sector: logical number, CRC status<br/>• Interleave table<br/>• Bad sector indicators | ✅ WebAPI |
 | `disk sysinfo [drv]` | | `[A-D]` | Parse TR-DOS system sector (T0/S9):<br/>• Disk type (80T DS/SS, 40T DS/SS)<br/>• Label, file count, free sectors<br/>• First free track/sector<br/>• Signature validity (0x10) | ✅ WebAPI |
 | `disk catalog [drv]` | `disk dir` | `[A-D]` | Show disk catalog (file list):<br/>• **TR-DOS**: name, type, length, start<br/>• **+3DOS**: CP/M directory<br/>• **ESXDOS**: FAT listing | ✅ WebAPI |
@@ -1892,6 +1893,7 @@ All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
 | GET | `/disk/{drive}` | Drive info (geometry, filename, FDC state) |
 | GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Logical sector (256b + metadata) |
 | GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Raw sector bytes (388b) |
+| PUT | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Write into the data field: `{offset, hex \| data \| base64}` (CRC recalculated, image modified, TTD tool edit) |
 | GET | `/disk/{drive}/track/{cyl}/{side}` | Track summary (16 sectors) |
 | GET | `/disk/{drive}/track/{cyl}/{side}/raw` | Raw track (6250b, base64) |
 | GET | `/disk/{drive}/image` | Whole image binary (base64) |

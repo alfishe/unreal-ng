@@ -19,6 +19,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/devicememorydialog.h"
+#include "debugger/disksectordialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
@@ -132,6 +133,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     deviceMemoryAction = new QAction("Device memory", this);
     deviceMemoryAction->setToolTip("Memory a device owns outside RAM / ROM (Sprinter vram, TS-Conf cram / sfile): view and edit");
     toolBar->addAction(deviceMemoryAction);
+    diskSectorAction = new QAction("Disk sector", this);
+    diskSectorAction->setToolTip("View and edit a floppy sector's data field (CRC recalculated, the image counts as modified)");
+    toolBar->addAction(diskSectorAction);
     breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
     visualizationAction = new QAction("Visualization", this);
@@ -157,6 +161,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
     connect(portOutAction, &QAction::triggered, this, &DebuggerWindow::portOut);
     connect(deviceMemoryAction, &QAction::triggered, this, &DebuggerWindow::showDeviceMemory);
+    connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
     connect(visualizationAction, &QAction::triggered, this, &DebuggerWindow::showVisualizationWindow);
@@ -1243,6 +1248,15 @@ void DebuggerWindow::showDeviceMemory()
     if (!_emulator) return;
 
     DeviceMemoryDialog dialog(_emulator, this);
+    dialog.exec();
+    updateState();
+}
+
+void DebuggerWindow::showDiskSector()
+{
+    if (!_emulator) return;
+
+    DiskSectorDialog dialog(_emulator, this);
     dialog.exec();
     updateState();
 }

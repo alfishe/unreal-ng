@@ -505,6 +505,9 @@ emu.disk_info(0)         # None without a disk, else geometry/catalog details
 # Raw sector access (read-only)
 emu.disk_read_sector(0, 0, 0, 1)      # drive 0, cyl 0, side 0, sector 1
 emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
+# Write into a sector's data field (SectorWrite: CRC recalculated, image modified, TTD tool edit); the sector
+# number is 0-based like disk_read_sector's (ID - 1). ValueError when refused, RuntimeError on a 503-like busy
+emu.disk_write_sector(0, 0, 0, 8, b"MYDISK", offset=245)  # TR-DOS sector ID 9: the disk title
 ```
 
 ### Mouse Input

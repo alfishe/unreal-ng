@@ -89,6 +89,7 @@ private slots:
     void resetEmulator();
     void portOut();
     void showDeviceMemory();
+    void showDiskSector();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
@@ -158,6 +159,7 @@ private:
     QAction* resetAction;
     QAction* portOutAction;
     QAction* deviceMemoryAction;
+    QAction* diskSectorAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;

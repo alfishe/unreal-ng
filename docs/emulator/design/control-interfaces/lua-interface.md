@@ -225,6 +225,10 @@ local info     = disk_info(0)  -- nil without a disk, else geometry/catalog deta
 -- Raw sector access (read-only)
 local sector = disk_read_sector(0, 0, 0, 1)      -- drive 0, cyl 0, side 0, sector 1
 local hex    = disk_read_sector_hex(0, 0, 1)      -- drive 0, track 0, sector 1
+-- Write into a sector's data field (SectorWrite: CRC recalculated, image modified, TTD tool edit). The sector
+-- number is 0-based like disk_read_sector's (ID - 1); data is a string of bytes or a table; optional offset
+ok, err = disk_write_sector(0, 0, 0, 8, "MYDISK", 245)   -- TR-DOS sector ID 9: the disk title -> true
+ok, err = disk_write_sector(1, 0, 0, 0, {0x42})          -- nil, "no disk in drive B"
 ```
 
 ### Mouse Input

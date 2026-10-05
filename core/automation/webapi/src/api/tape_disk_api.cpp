@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 #include "../common/upload_helper.h"
 
+#include <debugger/media/sectorwrite.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
@@ -1871,6 +1872,97 @@ void EmulatorAPI::getDiskSector(const HttpRequestPtr& req,
     std::string data64 = drogon::utils::base64Encode(rawSector->data, 256);
     ret["data_base64"] = data64;
     
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief PUT /api/v1/emulator/:id/disk/:drive/sector/:cyl/:side/:sec - write bytes into the sector's data field
+/// (SectorWrite): {"offset": 245, "hex": "4D59..."} | {"data": [77, 89]} | {"base64": "TVk="}; the data CRC follows,
+/// the image counts as modified, a TTD tool edit
+void EmulatorAPI::putDiskSector(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id, const std::string& drive, const std::string& cylStr,
+                                const std::string& sideStr, const std::string& secStr) const
+{
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k404NotFound            ? "Not Found"
+                         : code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable"
+                                                                          : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+        return reply(HttpStatusCode::k404NotFound, "Emulator not found");
+
+    std::string error;
+    uint8_t driveNum = 0;
+    if (!SectorWrite::ParseDrive(drive, driveNum, error))
+        return reply(HttpStatusCode::k400BadRequest, error);
+    int cylinder = 0, side = 0, sector = 0;
+    try
+    {
+        cylinder = std::stoi(cylStr);
+        side = std::stoi(sideStr);
+        sector = std::stoi(secStr);
+    }
+    catch (const std::exception&)
+    {
+        return reply(HttpStatusCode::k400BadRequest, "cylinder, side and sector are numbers");
+    }
+
+    const auto json = req->getJsonObject();
+    if (!json)
+        return reply(HttpStatusCode::k400BadRequest, "body must be JSON with 'hex', 'data' or 'base64'");
+    uint32_t offset = 0;
+    if (json->isMember("offset"))
+    {
+        const Json::Value& value = (*json)["offset"];
+        if (!value.isIntegral() || value.isBool() || value.asInt64() < 0 || value.asInt64() > 0xFFFF)
+            return reply(HttpStatusCode::k400BadRequest, "offset must be a number 0..65535");
+        offset = static_cast<uint32_t>(value.asUInt());
+    }
+    std::vector<uint8_t> bytes;
+    if (json->isMember("hex"))
+    {
+        if (!SectorWrite::ParseHex((*json)["hex"].asString(), bytes, error))
+            return reply(HttpStatusCode::k400BadRequest, "hex: " + error);
+    }
+    else if (json->isMember("data") && (*json)["data"].isArray())
+    {
+        for (const Json::Value& b : (*json)["data"])
+        {
+            if (!b.isIntegral() || b.isBool() || b.asInt64() < 0 || b.asInt64() > 255)
+                return reply(HttpStatusCode::k400BadRequest, "data must be bytes 0..255");
+            bytes.push_back(static_cast<uint8_t>(b.asUInt()));
+        }
+    }
+    else if (json->isMember("base64"))
+    {
+        const std::string decoded = drogon::utils::base64Decode((*json)["base64"].asString());
+        bytes.assign(decoded.begin(), decoded.end());
+    }
+    else
+        return reply(HttpStatusCode::k400BadRequest, "body must carry 'hex', 'data' or 'base64'");
+
+    const SectorWrite::Result result =
+        SectorWrite::Write(emulator.get(), driveNum, cylinder, side, sector, offset, bytes, "webapi");
+    if (!result.ok)
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest,
+                     result.error);
+    Json::Value ret;
+    ret["drive"] = std::string(1, static_cast<char>('A' + driveNum));
+    ret["cylinder"] = cylinder;
+    ret["side"] = side;
+    ret["sector"] = sector;
+    ret["offset"] = offset;
+    ret["bytes_written"] = static_cast<Json::UInt>(bytes.size());
+    ret["sector_size"] = result.sectorSize;
+    ret["moment"] = result.moment;
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

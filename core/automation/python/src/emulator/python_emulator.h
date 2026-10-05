@@ -3,6 +3,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/media/sectorwrite.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -2840,6 +2841,22 @@ namespace PythonBindings
                 if (!sec || !sec->hasData) return py::bytes();
                 return py::bytes(reinterpret_cast<char*>(sec->data), sec->dataSize);
             }, "Read sector data (128..1024 bytes depending on the sector's ID field)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
+            .def("disk_write_sector", [](Emulator& self, int drive, int cyl, int side, int sector, const py::bytes& data,
+                                         uint32_t offset) {
+                if (drive < 0 || drive > 3)
+                    throw py::value_error("bad drive (0-3)");
+                const std::string text = data;
+                const std::vector<uint8_t> bytes(text.begin(), text.end());
+                const SectorWrite::Result result = SectorWrite::Write(&self, static_cast<uint8_t>(drive), cyl, side,
+                                                                      sector + 1, offset, bytes, "python");
+                if (result.busy)
+                    throw std::runtime_error(result.error);
+                if (!result.ok)
+                    throw py::value_error(result.error);
+            }, "Write bytes into a sector's data field (SectorWrite: data CRC follows, the image counts as modified, a TTD "
+               "tool edit). sector is 0-based as in disk_read_sector (ID - 1). ValueError when refused (empty drive, "
+               "write-protected, no such sector, past the data field), RuntimeError when no coherent moment came",
+               py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"), py::arg("data"), py::arg("offset") = 0)
             .def("disk_read_sector_hex", [](Emulator& self, int drive, int track, int sector) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || drive < 0 || drive > 3) return "";

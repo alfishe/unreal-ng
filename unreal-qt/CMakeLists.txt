@@ -607,6 +607,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/devicememorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/devicememorydialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/devicememorydialog.h"
+        # The debugger's Disk sector dialog (debugger additions tdd §3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disksectordialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

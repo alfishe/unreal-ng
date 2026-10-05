@@ -149,11 +149,64 @@ state that TTD keeps carries CRAM and SFILE.
 version and the rendered color; an `sfile` write changes the sprite word; reading is side-effect free; an FM-window
 write and a region write give the same word; a TTD restore after the edit keeps it.
 
-## 3. The rest (outline; designed when reached)
+## 3. E4: write a disk sector
+
+### 3.1 The problem in one example
+
+A TR-DOS disk's catalog is track 0, side 0, sectors 1-8; sector 9 holds the disk title and the free-space counters.
+A debugger can read any sector (`GET /disk/A/sector/0/0/9`), but cannot fix a byte in it: patching a game on the
+disk, repairing a catalog entry, or putting a test pattern where a loader will read it all need a sector write.
+
+After this step:
+
+```text
+PUT /api/v1/emulator/{id}/disk/A/sector/0/0/9   {"offset": 245, "hex": "4D594449534B"}
+-> {"drive":"A","cylinder":0,"side":0,"sector":9,"offset":245,"bytes_written":6,"sector_size":256,"moment":"paused"}
+```
+
+and the disk title starts with "MYDISK"; the next `READ SECTOR` of the guest sees it.
+
+### 3.2 Design
+
+- **Addressing** as the read: drive A-D, cylinder, side, sector **ID** (the R byte of the sector's address mark,
+  1-based for TR-DOS), whatever the physical interleave. `offset` (default 0) + the bytes must fit in the sector's
+  data field (`sector_size`, 128 << N).
+- **The write** is `Track::writeSectorData` on the data field (the WD1793 `WRITE SECTOR` path): the data CRC is
+  recalculated, the sector and track are marked dirty, so the image counts as modified and the usual save on eject
+  applies. The address mark is not touched.
+- **Refused**: no disk, no such track / sector, a sector with no data field (ID-only), bytes past the data field,
+  and a **write-protected** disk (as the drive would refuse a guest write; clear the protect switch first).
+- **When**: a coherent moment, as the port write (`RunAtCoherentMoment`): never under a running WD1793 command
+  half-way through a sector.
+- **TTD**: a tool edit (`EditMemoryFromTool`): a debugger-edit marker on the timeline. Disk content is media, not
+  machine state (TTD v2 decision 25), so the marker is what tells a seek that the disk changed there.
+
+Core: `core/src/debugger/media/sectorwrite.h`, `SectorWrite::Write(emulator, drive, cylinder, side, sector,
+offset, bytes, source)`. Every surface calls it:
+
+| Surface | Form |
+|---|---|
+| WebAPI | `PUT /disk/{drive}/sector/{cyl}/{side}/{sec}` with `offset` and `hex` (spaces allowed), `data` (byte array) or `base64` |
+| MCP | `invoke_api` (no dedicated disk tool exists; the disk recipes use it) |
+| CLI | `disk write <drive> <cyl> <side> <sec> <hex> [--offset N]` |
+| Lua | `disk_write_sector(drive, cyl, side, sec, data [, offset])`, drive 0-3, data a string of bytes or a table -> `true` or `nil, error` |
+| Python | `emu.disk_write_sector(drive, cyl, side, sec, data, offset=0)`, data bytes -> `None`, `ValueError` / `RuntimeError` |
+
+Lua and Python number the sector from 0 (ID - 1), because their existing `disk_read_sector` does: on every surface
+a read and a write with the same arguments name the same sector.
+| Qt | debugger toolbar "Disk sector": drive / cylinder / side / sector, hex view, a typed byte is written |
+
+### 3.3 Tests
+
+`SectorWrite_Test` on a formatted TR-DOS image: a write lands in the data field (read back, data CRC valid), marks
+the image dirty, keeps the address mark; offset + length past the field, a missing sector, an empty drive and a
+write-protected disk are refused with their reasons; a WD1793 `READ SECTOR` after the write returns the new bytes;
+TTD gets a debugger-edit marker. Qt: `DiskSectorDialog_Test`.
+
+## 4. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| E4 | Disk sector write `PUT /disk/{drive}/sector/{cyl}/{side}/{sec}` | marks the image modified; a tool edit for TTD |
 | E5 | NVRAM (CMOS) read and write | check what `/rtc/cells` already covers first |
 | F4 | `/stepout`, `/skip_until` (and the long `/steps`) start the run and report through events, not by holding an HTTP worker | the same pattern as Continue |
 | F5 | `/stepout`, `/skip_until` and the run_* calls check the run-control claim (409 when another surface holds it) like `/step` does | |
