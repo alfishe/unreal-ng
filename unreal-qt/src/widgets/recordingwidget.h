@@ -51,16 +51,17 @@ signals:
 private slots:
     void onRecordToggled();
     void onPauseToggled();
-    void onContainerChanged(int index);
-    void onBackendChanged(int index);
+    void onFormatChanged(int index);
     void onQualityChanged(int index);
     void onRegionChanged(int index);
+    void onProfileChanged(int index);
     void onUpdateStats();
 
 private:
-    void populateBackends();
-    void updateBackendTooltip();
-    void populateContainers();
+    void populateFormats();
+    /// Container ("MP4") and video codec ("h265") of the chosen format; the codec is empty for audio formats
+    QString currentContainer() const;
+    QString currentCodec() const;
     void updateQualityOptions();
     void updateRegionAvailability();
     void applySettingsToUI();
@@ -74,10 +75,10 @@ private:
     QWidget* _controlContainer = nullptr;
     QPushButton* _recordBtn = nullptr;
     QPushButton* _pauseBtn = nullptr;
-    QComboBox* _containerCombo = nullptr;
-    QComboBox* _backendCombo = nullptr;
+    QComboBox* _formatCombo = nullptr;  ///< Codec + container: H.265 MP4, H.264 MKV, GIF, WAV...
     QComboBox* _qualityCombo = nullptr;
     QComboBox* _regionCombo = nullptr;
+    QComboBox* _profileCombo = nullptr;  ///< Native / 1080p / 1440p / 4K (fixed frame, sharp scale)
     QLabel* _statusLabel = nullptr;
     QToolButton* _advancedBtn = nullptr;
     QToolButton* _closeBtn = nullptr;

@@ -377,6 +377,33 @@ void RecordingManager::FitPicture(const uint8_t* src, uint32_t srcW, uint32_t sr
     }
 }
 
+bool RecordingManager::SetOutputProfile(const std::string& id)
+{
+    if (_isRecording)
+        return false;
+
+    std::string key = id;
+    std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+    if (key.empty() || key == "native")
+    {
+        _outputProfile = "native";
+        _outputWidth = _outputHeight = 0;
+        _outputScaler.Reset();
+        return true;
+    }
+    if (key == "uhd" || key == "2160p")
+        key = "4k";
+
+    if (key != "1080p" && key != "1440p" && key != "4k")
+        return false;
+
+    const RecordingProfile profile = RecordingProfileCollection::getProfileById(key);
+    _outputProfile = profile.id;
+    _outputWidth = profile.width;
+    _outputHeight = profile.height;
+    return true;
+}
+
 /// The picture a recording writes: the capture region's rectangle and the output size. Every start goes through
 /// here. A size set by SetVideoResolution is kept; otherwise it follows the region (and, for the screen region, the
 /// working window at this moment: the file keeps that size, and later windows are fitted into it, see CaptureFrame)
@@ -503,6 +530,27 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     }
 
     PrepareVideoGeometry();
+
+    if (_videoEnabled && HasFixedOutput())
+    {
+        std::string codecKey = videoCodec;
+        std::transform(codecKey.begin(), codecKey.end(), codecKey.begin(), ::tolower);
+        if (codecKey != "h264" && codecKey != "h.264" && codecKey != "avc" && codecKey != "h265" &&
+            codecKey != "h.265" && codecKey != "hevc")
+        {
+            _lastRecordingError = "The " + _outputProfile + " output profile takes H.264 or H.265 only (got '" +
+                                  videoCodec + "')";
+            MLOGERROR("RecordingManager::StartRecording - %s", _lastRecordingError.c_str());
+            return false;
+        }
+
+        // The file is the fixed frame, whatever the picture is; the picture is scaled into it per frame
+        _videoWidth = _outputWidth;
+        _videoHeight = _outputHeight;
+        if (_videoBitrate == 0)
+            _videoBitrate = RecordingProfileCollection::getProfileById(_outputProfile).defaultBitrate;
+        _outputScaler.Reset();
+    }
 
     if (_videoEnabled)
     {
@@ -995,7 +1043,47 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
 
     // The screen region keeps the size it started with: a window of another size (the TS-Conf V_CONFIG windows, the
     // Pentagon overscan toggle) is scaled into it with its aspect kept, never cut and never dropped
-    if (_captureRegion == VideoCaptureRegion::MainScreen && toEncode->memoryBuffer && _videoWidth > 0 &&
+    bool deliveredToEncoder = false;  // the frame went into the encoder's own buffer (zero-copy)
+    if (HasFixedOutput())
+    {
+        // Fixed output frame (4K, 1080p...): the picture fitted into it - as large as it can be with its aspect kept,
+        // nearest sampling. An encoder that lends its own buffer (the hardware encoder's pixel buffer, the ffmpeg
+        // queue slot) gets the picture written straight into it: the 33 MB 4K frame is built once and never copied.
+        // Any other encoder takes one pass into a reused buffer and the usual hand-over
+        EncoderBase* lender = _activeEncoders.size() == 1 ? _activeEncoders.front().get() : nullptr;
+        FrameTarget target;
+        FrameTargetResult lent = FrameTargetResult::Unsupported;
+        if (lender && lender->IsRecording() && toEncode->memoryBuffer)
+            lent = lender->AcquireFrameTarget(_outputWidth, _outputHeight, target);
+
+        if (lent == FrameTargetResult::Ready)
+        {
+            if (FrameScaler::ScaleInto(toEncode->memoryBuffer, toEncode->width, toEncode->height, target.data,
+                                       target.stride, _outputWidth, _outputHeight, target.swapRedBlue))
+                lender->SubmitFrameTarget(target, timestamp);
+            else
+                lender->ReleaseFrameTarget(target);
+            deliveredToEncoder = true;
+        }
+        else if (lent == FrameTargetResult::Dropped)
+        {
+            deliveredToEncoder = true;  // the encoder takes no frame now: nothing to hand over, the clock goes on
+        }
+        else if (toEncode->memoryBuffer && (toEncode->width != _outputWidth || toEncode->height != _outputHeight))
+        {
+            const uint8_t* scaled = _outputScaler.Scale(toEncode->memoryBuffer, toEncode->width, toEncode->height,
+                                                        _outputWidth, _outputHeight);
+            if (!scaled)
+                return;
+            fitted = *toEncode;
+            fitted.width = static_cast<uint16_t>(_outputWidth);
+            fitted.height = static_cast<uint16_t>(_outputHeight);
+            fitted.memoryBuffer = const_cast<uint8_t*>(scaled);
+            fitted.memoryBufferSize = _outputScaler.OutputSize();
+            toEncode = &fitted;
+        }
+    }
+    else if (_captureRegion == VideoCaptureRegion::MainScreen && toEncode->memoryBuffer && _videoWidth > 0 &&
         _videoHeight > 0 && (toEncode->width != _videoWidth || toEncode->height != _videoHeight))
     {
         FitPicture(toEncode->memoryBuffer, toEncode->width, toEncode->height, _videoWidth, _videoHeight, _fitBuffer);
@@ -1007,8 +1095,12 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
         toEncode = &fitted;
     }
 
-    // One picture size per file
-    if (_stats.framesRecorded == 0)
+    // One picture size per file (a lent buffer is always the file's size)
+    if (deliveredToEncoder)
+    {
+        // nothing to check or hand over
+    }
+    else if (_stats.framesRecorded == 0)
     {
         _encodedWidth = toEncode->width;
         _encodedHeight = toEncode->height;
@@ -1026,7 +1118,8 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     }
 
     // Encode video frame
-    EncodeVideoFrame(*toEncode, timestamp);
+    if (!deliveredToEncoder)
+        EncodeVideoFrame(*toEncode, timestamp);
 
     // Update statistics
     _stats.framesRecorded++;
@@ -1293,7 +1386,8 @@ bool RecordingManager::InitializeEncoder()
     config.ffmpegPath = _ffmpegPath;
     config.captureRegion = _captureRegion;
     // The Profi's window is already at the recording's scale (RecordsProfiDisplay)
-    config.scaleFactor = RecordsProfiDisplay(_context, _captureRegion) ? 1 : _scaleFactor;
+    config.scaleFactor = (HasFixedOutput() || RecordsProfiDisplay(_context, _captureRegion)) ? 1 : _scaleFactor;
+    config.useHardwareAccel = _acceleration != EncoderAcceleration::Software;
 
     // Determine container from filename extension
     size_t dotPos = _outputFilename.rfind('.');
@@ -1339,7 +1433,12 @@ bool RecordingManager::InitializeEncoder()
     // Auto: pick one based on availability — native first if available and compatible
     if (backend == EncoderBackend::Auto)
     {
-        if (PlatformEncoderFactory::isNativeAvailable())
+        if (_acceleration == EncoderAcceleration::Software)
+        {
+            // The native encoders are the GPU ones: software means ffmpeg's libx264 / libx265
+            backend = EncoderBackend::FFmpeg;
+        }
+        else if (PlatformEncoderFactory::isNativeAvailable())
         {
             // Check if native supports this codec/container/audio combination
             std::string audioLower = config.audioCodec;
@@ -1419,6 +1518,18 @@ bool RecordingManager::InitializeEncoder()
     }
 
     MLOGINFO("  FFmpeg found at: %s", ffmpegPath.c_str());
+
+    if (_acceleration == EncoderAcceleration::Hardware)
+    {
+        const FFmpegProbe::HWAccelInfo hw = FFmpegProbe::detectHWAccel(ffmpegPath);
+        if (!hw.videoToolbox && !hw.nvenc && !hw.qsv && !hw.vaapi && !hw.amf)
+        {
+            _lastRecordingError = "Hardware acceleration was requested, but this machine has no GPU encoder "
+                                  "(VideoToolbox / NVENC / QuickSync / VA-API / AMF). Use acceleration auto or software.";
+            MLOGERROR("  %s", _lastRecordingError.c_str());
+            return false;
+        }
+    }
 
     auto ffmpegEncoder = std::make_unique<FFmpegPipeEncoder>();
     ffmpegEncoder->setFFmpegPath(ffmpegPath);

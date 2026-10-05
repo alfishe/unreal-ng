@@ -193,11 +193,38 @@ void VideowallRecordingWidget::createVideoTab()
     outputLayout->addLayout(formatLayout);
 
     // Capture resolution: auto-match active window or fullscreen buffer
+    // Resolution profile: the wall's own size (auto), or a fixed 1080p / 1440p / 4K frame. The wall is fitted into
+    // the fixed frame (aspect kept, nearest neighbor, black bars - no blur), whatever size the window or
+    // the fullscreen buffer is. A fixed frame takes H.264 / H.265 only
     auto* regionLayout = new QHBoxLayout();
-    auto* resLabel = new QLabel("🎥 Resolution: Auto-matching active window / fullscreen buffer");
-    resLabel->setStyleSheet("font-weight: bold; color: #0066cc; padding: 4px;");
-    regionLayout->addWidget(resLabel);
+    regionLayout->addWidget(new QLabel("🎥 Resolution:"));
+    _profileCombo = new QComboBox();
+    _profileCombo->addItem("Auto (match window / fullscreen)", "native");
+    _profileCombo->addItem("1080p (1920×1080)", "1080p");
+    _profileCombo->addItem("1440p (2560×1440)", "1440p");
+    _profileCombo->addItem("4K (3840×2160)", "4k");
+    _profileCombo->setToolTip("Auto: the picture size of the window or the fullscreen buffer.\n"
+                              "1080p / 1440p / 4K: a fixed frame; the wall is scaled into it sharply\n"
+                              "(fit with the aspect kept, nearest neighbor, black bars). H.264 / H.265 only.");
+    regionLayout->addWidget(_profileCombo, 1);
+
+    regionLayout->addWidget(new QLabel("Encoder:"));
+    _accelCombo = new QComboBox();
+    _accelCombo->addItem("Auto", 0);
+    _accelCombo->addItem("GPU (hardware)", 1);
+    _accelCombo->addItem("Software (CPU)", 2);
+    _accelCombo->setToolTip("Auto: a GPU encoder when the machine has one. GPU: hardware only, the start fails\n"
+                            "without one. Software: libx264 / libx265 through ffmpeg.");
+    regionLayout->addWidget(_accelCombo);
     outputLayout->addLayout(regionLayout);
+
+    {
+        QSettings saved("unreal-ng", "videowall_recording");
+        const int profileIdx = _profileCombo->findData(saved.value("profile", "native").toString());
+        _profileCombo->setCurrentIndex(profileIdx >= 0 ? profileIdx : 0);
+        const int accelIdx = _accelCombo->findData(saved.value("acceleration", 0).toInt());
+        _accelCombo->setCurrentIndex(accelIdx >= 0 ? accelIdx : 0);
+    }
 
     // Audio inclusion
     auto* audioLayout = new QHBoxLayout();
@@ -490,8 +517,31 @@ void VideowallRecordingWidget::onStartRecording()
         audioCodec = _audioFormatCombo->currentText().split(" ")[0].toLower().toStdString();
     }
 
+    VideowallRecordingOptions options;
+    if (!isAudioOnlyMode())
+    {
+        options.profile = _profileCombo->currentData().toString().toStdString();
+        if (options.profile != "native" && videoCodec != "h264" && videoCodec != "h265" && videoCodec != "hevc")
+        {
+            QMessageBox::warning(this, "Recording Error",
+                                 QString("The %1 profile takes H.264 or H.265 only. Pick one of them in the Video "
+                                         "Codec list (any container that holds it) or switch the resolution to Auto.")
+                                     .arg(_profileCombo->currentText()));
+            return;
+        }
+        const int accel = _accelCombo->currentData().toInt();
+        options.acceleration = accel == 1 ? EncoderAcceleration::Hardware :
+                               accel == 2 ? EncoderAcceleration::Software : EncoderAcceleration::Auto;
+        const int quality = _qualityCombo->currentIndex();
+        options.qualityPreset = quality == 0 ? 1 : quality == 1 ? 3 : quality == 2 ? 5 : quality == 3 ? 7 : 9;
+        settings.setValue("profile", QString::fromStdString(options.profile));
+        settings.setValue("acceleration", accel);
+    }
+    options.backend = _nativeBackendRadio->isChecked() ? EncoderBackend::Native :
+                      _ffmpegBackendRadio->isChecked() ? EncoderBackend::FFmpeg : EncoderBackend::Auto;
+
     bool ok = VideowallRecorder::instance().startRecording(
-        filename.toStdString(), videoCodec, audioCodec, 0, 0, targetWidth, targetHeight);
+        filename.toStdString(), videoCodec, audioCodec, 0, 0, targetWidth, targetHeight, options);
 
     if (ok)
     {

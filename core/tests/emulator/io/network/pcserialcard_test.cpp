@@ -146,7 +146,12 @@ TEST_F(PcSerialCard_Test, Reports_ResourcesThePathAndTheEsp)
     EXPECT_EQ(row.find("card")->s, "sprinteresp");
     EXPECT_EQ(row.find("port_key")->s, "isa1.uart0");
     EXPECT_EQ(row.find("uart_clock_hz")->i, 14745600);
-    EXPECT_EQ(row.find("esp")->find("mac")->s, "5C:CF:7F:5A:00:01") << "Espressif form, instance 0, slot 1";
+    // Espressif form 5C:CF:7F:5A:<instance>:<slot>. The instance byte is the emulator's place among the live Sprinters
+    // (an emulator an earlier test of the shard left alive shifts it), so only the fixed bytes and the slot are checked
+    const std::string& mac = row.find("esp")->find("mac")->s;
+    ASSERT_EQ(mac.size(), 17u) << mac;
+    EXPECT_EQ(mac.substr(0, 12), "5C:CF:7F:5A:") << "Espressif form";
+    EXPECT_EQ(mac.substr(14), ":01") << "slot 1";
     EXPECT_EQ(row.find("esp")->find("state")->s, "running");
 }
 

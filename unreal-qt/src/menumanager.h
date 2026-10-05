@@ -51,6 +51,7 @@ public:
     /// Machine > Host Keyboard > Pass Command as Win Key (macOS only; a no-op elsewhere)
     void setCommandKeyToGuestChecked(bool checked);
     void setNetworkWindowChecked(bool checked);
+    void setTrafficWindowChecked(bool checked);
     void setFt812DebugChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
@@ -80,6 +81,7 @@ public:
     QMenu* viewMenu() const { return _viewMenu; }
 #ifdef ENABLE_RECORDING
     QAction* videoRecordingAction() const { return _videoRecordingAction; }
+    QAction* videoRecordingDialogAction() const { return _videoRecordingDialogAction; }
 #endif
 
     // Observer callback for emulator state changes
@@ -154,6 +156,7 @@ signals:
     void tapeManagerToggled(bool visible);
     void mediaPanelToggled(bool visible);
     void networkWindowToggled(bool visible);
+    void trafficWindowToggled(bool visible);
     void ft812DebugToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
@@ -176,6 +179,7 @@ signals:
     void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
+    void videoRecordingDialogRequested();  ///< Tools > Video Recording...: the full recording dialog
     void quickRecordRequested(const QString& presetName);
     void recordingStateChanged(bool isRecording);
 #endif
@@ -245,6 +249,7 @@ private:
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;
     QAction* _networkWindowAction = nullptr;
+    QAction* _trafficWindowAction = nullptr;
     QAction* _ft812DebugAction = nullptr;  // Debug -> FT812 Debug: only while the machine has the VDAC2 card
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;
@@ -313,6 +318,7 @@ private:
     QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;
+    QAction* _videoRecordingDialogAction = nullptr;
 
     // Quick Record submenu
     QMenu* _quickRecordMenu = nullptr;

@@ -80,13 +80,6 @@ void TrafficStream::Loop()
             items.push_back(p);
         }
         netsock::Poll(items, 20);
-        if (items[0].readable)
-        {
-            NetEndpoint peer;
-            const netsock::Handle s = netsock::Accept(_listener, peer);
-            if (s != netsock::kInvalid)
-                clients.push_back(Client{s, _tap.AttachLive(), {}, 0});
-        }
         size_t at = 1;
         for (Client& c : clients)
         {
@@ -123,6 +116,14 @@ void TrafficStream::Loop()
                     c.sent = 0;
                 }
             }
+        }
+        // A new reader joins after the polled ones: it has no poll item in this round
+        if (items[0].readable)
+        {
+            NetEndpoint peer;
+            const netsock::Handle s = netsock::Accept(_listener, peer);
+            if (s != netsock::kInvalid)
+                clients.push_back(Client{s, _tap.AttachLive(), {}, 0});
         }
         // Forget closed clients
         for (auto it = clients.begin(); it != clients.end();)

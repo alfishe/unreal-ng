@@ -546,6 +546,12 @@ void MenuManager::setNetworkWindowChecked(bool checked)
         _networkWindowAction->setChecked(checked);
 }
 
+void MenuManager::setTrafficWindowChecked(bool checked)
+{
+    if (_trafficWindowAction)
+        _trafficWindowAction->setChecked(checked);
+}
+
 void MenuManager::setFt812DebugChecked(bool checked)
 {
     if (_ft812DebugAction)
@@ -1187,6 +1193,13 @@ void MenuManager::createToolsMenu()
     _networkWindowAction->setChecked(false);
     connect(_networkWindowAction, &QAction::triggered, this, &MenuManager::networkWindowToggled);
 
+    _trafficWindowAction = _toolsMenu->addAction(tr("Network &traffic"));
+    _trafficWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_6));
+    _trafficWindowAction->setStatusTip(tr("Show/hide the network traffic window: frames and socket operations, decode, seek, pcapng"));
+    _trafficWindowAction->setCheckable(true);
+    _trafficWindowAction->setChecked(false);
+    connect(_trafficWindowAction, &QAction::triggered, this, &MenuManager::trafficWindowToggled);
+
     _toolsMenu->addSeparator();
 
     // Screenshot of the emulator framebuffer to clipboard. No shortcut: plain
@@ -1208,6 +1221,13 @@ void MenuManager::createToolsMenu()
     _videoRecordingAction->setCheckable(true);
     _videoRecordingAction->setStatusTip(tr("Toggle recording panel"));
     connect(_videoRecordingAction, &QAction::toggled, this, &MenuManager::videoRecordingRequested);
+
+    // The full recording dialog: container, codec (H.264 / H.265), 1080p / 1440p / 4K profile, GPU or software
+    // encoder, quality, capture region, audio
+    _videoRecordingDialogAction = _toolsMenu->addAction(tr("&Video Recording..."));
+    _videoRecordingDialogAction->setStatusTip(
+        tr("Open the video recording dialog (profiles up to 4K, GPU or software encoder)"));
+    connect(_videoRecordingDialogAction, &QAction::triggered, this, &MenuManager::videoRecordingDialogRequested);
 
     _toolsMenu->addSeparator();
 

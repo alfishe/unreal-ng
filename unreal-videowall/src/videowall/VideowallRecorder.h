@@ -12,6 +12,18 @@
 #include "recordingmanager.h"
 #include "emulator/video/screen.h"
 
+/// Encoder choices of a start (the dialog fills them; the defaults are the old behavior)
+struct VideowallRecordingOptions
+{
+    /// "native" (the grab at its own size) or a fixed frame "1080p" / "1440p" / "4k": the wall is fitted
+    /// into it (aspect kept, nearest neighbor, black bars - RecordingManager / FrameScaler), whatever size
+    /// the window or the fullscreen buffer is, also when it is resized mid-recording. H.264 / H.265 only
+    std::string profile = "native";
+    EncoderAcceleration acceleration = EncoderAcceleration::Auto;
+    EncoderBackend backend = EncoderBackend::Auto;
+    int qualityPreset = 5;  ///< 0..10 (RecordingManager::SetQualityPreset)
+};
+
 /// @brief Videowall Recorder - Captures combined Qt buffer video and active tile miniaudio output
 class VideowallRecorder : public QObject
 {
@@ -30,7 +42,8 @@ public:
                         uint32_t videoBitrate = 0,
                         uint32_t audioBitrate = 0,
                         uint32_t targetWidth = 0,
-                        uint32_t targetHeight = 0);
+                        uint32_t targetHeight = 0,
+                        const VideowallRecordingOptions& options = VideowallRecordingOptions());
 
     /// Stop current recording
     void stopRecording();

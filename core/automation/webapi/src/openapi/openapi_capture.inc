@@ -302,7 +302,8 @@
         "\"audio\":\"aac\" adds the emulated sound track (default: none = video only). The codec must "
         "fit the container: mp4 aac/mp3/opus/flac, mov aac/mp3/pcm_s16le, mkv any, webm opus/vorbis, "
         "avi aac/mp3/pcm_s16le; gif has no audio (400). h264/hevc + aac in mp4/mov uses the native "
-        "macOS encoder, other combinations need ffmpeg.";
+        "macOS encoder, other combinations need ffmpeg. \"profile\":\"4k\" (or 1080p / 1440p) records a fixed "
+        "frame with the picture scaled sharply into it (h264 / h265 only).";
     paths["/api/v1/emulator/{id}/video/record"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/video/record"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/video/record"]["post"]["parameters"][0]["required"] = true;
@@ -345,9 +346,28 @@
         props["video_bitrate"]["description"] = "start: video bitrate in kbps (0 = encoder default, 100..200000)";
         props["audio_bitrate"]["type"] = "integer";
         props["audio_bitrate"]["description"] = "start: audio bitrate in kbps (0 = encoder default, 32..512)";
+        for (const char* name : {"native", "1080p", "1440p", "4k"})
+            props["profile"]["enum"].append(name);
+        props["profile"]["type"] = "string";
+        props["profile"]["default"] = "native";
+        props["profile"]["description"] =
+            "start: output profile. native (default) = the picture at its own size times scale. 1080p / 1440p / 4k "
+            "(3840x2160; aliases uhd, 2160p) = a fixed frame: the picture is scaled sharply into it - nearest "
+            "neighbor, as large as the frame allows with the aspect kept, black bars, no blur (the algorithm of the "
+            "UI window). Takes format h264 or h265 only (400 otherwise), in any container; scale is ignored. "
+            "The default video bitrate of 4k is 35000 kbps";
+        for (const char* name : {"auto", "hardware", "software"})
+            props["acceleration"]["enum"].append(name);
+        props["acceleration"]["type"] = "string";
+        props["acceleration"]["default"] = "auto";
+        props["acceleration"]["description"] =
+            "start: encoder acceleration. auto = a GPU encoder (VideoToolbox, NVENC, QuickSync, VA-API, AMF) when "
+            "the machine has one, software otherwise; hardware = GPU only (500 when there is none); software = "
+            "libx264 / libx265 through ffmpeg even when a GPU encoder exists";
     }
     paths["/api/v1/emulator/{id}/video/record"]["post"]["responses"]["200"]["description"] =
-        "Recording session updated (start: output, audio/audio_codec/audio_sample_rate/audio_channels; "
+        "Recording session updated (start: output, profile/acceleration/output_width/output_height, "
+        "audio/audio_codec/audio_sample_rate/audio_channels; "
         "stop: stats/output file); 400 for an audio codec the container cannot hold (gif + audio); "
         "409 when already recording or nothing to stop";
 
@@ -356,7 +376,8 @@
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["description"] =
         "Recording/paused flags, live RecordingStats (frames/durations/output size, "
         "audio_samples_recorded), the session's video_codec/audio/audio_codec/audio_sample_rate/"
-        "audio_channels/audio_duration (emulated seconds of sound), feature state and last error.";
+        "audio_channels/audio_duration (emulated seconds of sound), the output profile and encoder acceleration, "
+        "feature state and last error.";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["parameters"][0]["required"] = true;

@@ -435,3 +435,168 @@ TEST(RecordingManager_Test, FitPicture_WideSourceGetsBarsAboveAndBelow)
     EXPECT_EQ(PixelOf(out, 4, 0, 1) & 0xFF, 10u);
     EXPECT_EQ(PixelOf(out, 4, 3, 2) & 0xFF, 17u);
 }
+
+namespace
+{
+/// Keeps the size of every frame the recording manager hands to its encoder
+class FrameSizeSinkEncoder : public EncoderBase
+{
+public:
+    FrameSizeSinkEncoder(std::vector<std::pair<uint32_t, uint32_t>>& sizes) : _sizes(sizes) {}
+    bool Start(const std::string&, const EncoderConfig&) override
+    {
+        _recording = true;
+        return true;
+    }
+    void Stop() override { _recording = false; }
+    bool IsRecording() const override { return _recording; }
+    std::string GetType() const override { return "sizes"; }
+    std::string GetDisplayName() const override { return "frame size sink"; }
+    bool SupportsVideo() const override { return true; }
+    bool SupportsAudio() const override { return false; }
+    void OnVideoFrame(const FramebufferDescriptor& fb, double) override { _sizes.emplace_back(fb.width, fb.height); }
+
+private:
+    std::vector<std::pair<uint32_t, uint32_t>>& _sizes;
+    bool _recording = false;
+};
+}  // namespace
+
+/// The 4K output profile: every frame the encoder gets is 3840x2160, whatever the picture is
+TEST(RecordingManager_Test, OutputProfile4k_EncoderGetsAFixedFrame)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    RecordingManager* rm = emulator->GetContext()->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    emulator->RunNFrames(2);
+
+    EXPECT_FALSE(rm->SetOutputProfile("8k"));
+    ASSERT_TRUE(rm->SetOutputProfile("4k"));
+    EXPECT_TRUE(rm->HasFixedOutput());
+    EXPECT_EQ(rm->GetOutputWidth(), 3840u);
+    EXPECT_EQ(rm->GetOutputHeight(), 2160u);
+
+    std::vector<std::pair<uint32_t, uint32_t>> sizes;
+    ASSERT_TRUE(rm->StartRecordingWithEncoder(TestPathHelper::GetUniqueTestScratchPath("rm-4k") + ".mp4",
+                                              std::make_unique<FrameSizeSinkEncoder>(sizes)));
+    EXPECT_FALSE(rm->SetOutputProfile("native")) << "the profile is fixed while recording";
+    rm->CaptureFrame(emulator->GetContext()->pScreen->GetFramebufferDescriptor());
+    rm->StopRecording();
+
+    ASSERT_EQ(sizes.size(), 1u);
+    EXPECT_EQ(sizes[0].first, 3840u);
+    EXPECT_EQ(sizes[0].second, 2160u);
+
+    ASSERT_TRUE(rm->SetOutputProfile("native"));
+    EXPECT_FALSE(rm->HasFixedOutput());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A fixed frame is H.264 / H.265 only: GIF is refused with a reason
+TEST(RecordingManager_Test, OutputProfile4k_RefusesOtherCodecs)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    context->pFeatureManager->setFeature(Features::kRecording, true);
+
+    ASSERT_TRUE(rm->SetOutputProfile("4k"));
+    EXPECT_FALSE(rm->StartRecording(TestPathHelper::GetUniqueTestScratchPath("rm-4k-gif") + ".gif", "gif"));
+    EXPECT_NE(rm->GetLastRecordingError().find("H.264 or H.265"), std::string::npos) << rm->GetLastRecordingError();
+    EXPECT_FALSE(rm->IsRecording());
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+/// What a LendingSinkEncoder saw; outlives the encoder, which the manager destroys on stop
+struct LendingStats
+{
+    int plainFrames = 0;
+    int lentFrames = 0;
+    uint32_t lastWidth = 0;
+    uint32_t lastHeight = 0;
+    size_t lastStride = 0;
+    std::vector<uint8_t> corner;
+};
+
+/// An encoder that lends its own buffer: counts what arrives through the zero-copy path and the plain one
+class LendingSinkEncoder : public EncoderBase
+{
+public:
+    LendingSinkEncoder(LendingStats& stats, bool swapRedBlue) : _stats(stats), _swap(swapRedBlue) {}
+    bool Start(const std::string&, const EncoderConfig&) override
+    {
+        _recording = true;
+        return true;
+    }
+    void Stop() override { _recording = false; }
+    bool IsRecording() const override { return _recording; }
+    std::string GetType() const override { return "lending"; }
+    std::string GetDisplayName() const override { return "lending sink"; }
+    bool SupportsVideo() const override { return true; }
+    bool SupportsAudio() const override { return false; }
+    void OnVideoFrame(const FramebufferDescriptor&, double) override { _stats.plainFrames++; }
+
+    FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target) override
+    {
+        _buffer.assign(static_cast<size_t>(width + 8) * height * 4, 0x5A);  // padded rows, garbage
+        target.data = _buffer.data();
+        target.stride = static_cast<size_t>(width + 8) * 4;
+        target.width = width;
+        target.height = height;
+        target.swapRedBlue = _swap;
+        target.handle = this;
+        return FrameTargetResult::Ready;
+    }
+    void SubmitFrameTarget(FrameTarget& target, double) override
+    {
+        _stats.lentFrames++;
+        _stats.lastWidth = target.width;
+        _stats.lastHeight = target.height;
+        _stats.lastStride = target.stride;
+        _stats.corner.assign(_buffer.begin(), _buffer.begin() + 4);
+    }
+
+private:
+    LendingStats& _stats;
+    bool _swap;
+    bool _recording = false;
+    std::vector<uint8_t> _buffer;
+};
+}  // namespace
+
+/// An encoder that lends a buffer gets the 4K frame written into it: the plain hand-over is never used
+TEST(RecordingManager_Test, OutputProfile4k_WritesIntoTheEncodersOwnBuffer)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    RecordingManager* rm = emulator->GetContext()->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    emulator->RunNFrames(2);
+    ASSERT_TRUE(rm->SetOutputProfile("4k"));
+
+    LendingStats sink;
+    ASSERT_TRUE(rm->StartRecordingWithEncoder(TestPathHelper::GetUniqueTestScratchPath("rm-4k-lend") + ".mp4",
+                                              std::make_unique<LendingSinkEncoder>(sink, true)));
+    for (int i = 0; i < 3; i++)
+        rm->CaptureFrame(emulator->GetContext()->pScreen->GetFramebufferDescriptor());
+    rm->StopRecording();
+
+    EXPECT_EQ(sink.lentFrames, 3);
+    EXPECT_EQ(sink.plainFrames, 0) << "no second copy through OnVideoFrame";
+    EXPECT_EQ(sink.lastWidth, 3840u);
+    EXPECT_EQ(sink.lastHeight, 2160u);
+    EXPECT_EQ(sink.lastStride, static_cast<size_t>(3840 + 8) * 4);
+    // The top-left pixel is a black bar written over the garbage: 00 00 00 FF
+    ASSERT_EQ(sink.corner.size(), 4u);
+    EXPECT_EQ(sink.corner[0], 0x00);
+    EXPECT_EQ(sink.corner[3], 0xFF);
+
+    ASSERT_TRUE(rm->SetOutputProfile("native"));
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

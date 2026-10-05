@@ -1388,6 +1388,10 @@ emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict
 emu.video_record("start", {"format": "h264", "filename": "run.mp4", "audio": "aac"})  # with sound
                                      # (True = aac; video_bitrate / audio_bitrate in kbps). No
                                      # "audio" = video only; gif + audio is refused
+emu.video_record("start", {"format": "h264", "filename": "run.mkv", "profile": "4k", "acceleration": "software"})
+                                     # profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
+                                     # picture fitted into it (aspect kept, nearest, black bars; h264 /
+                                     # h265 only). acceleration: "auto" | "hardware" | "software"
 emu.video_record("stop")             # also "pause" / "resume"
 emu.video_record_status()             # recording state + live stats (frames, duration, fps,
                                      # audio, audio_codec, audio_sample_rate, audio_duration)

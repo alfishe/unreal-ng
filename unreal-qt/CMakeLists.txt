@@ -615,6 +615,11 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.h"
+        # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/core/trafficpanelmodel.cpp"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

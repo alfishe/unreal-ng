@@ -148,8 +148,8 @@ public:
     void Close();
 
 private:
+    std::string _error;  // declared before _file: _file's initializer writes into it
     std::unique_ptr<platform::AppendFile> _file;
-    std::string _error;
 };
 
 class TTDFileSource : public ITTDByteSource
@@ -163,8 +163,8 @@ public:
     bool ReadAt(uint64_t offset, uint8_t* out, size_t size) const override;
 
 private:
+    std::string _error;  // declared before _file: _file's initializer writes into it
     std::unique_ptr<platform::RandomAccessFile> _file;
-    std::string _error;
 };
 
 class TTDContainerWriter

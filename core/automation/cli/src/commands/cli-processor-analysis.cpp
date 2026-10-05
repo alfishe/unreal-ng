@@ -1002,6 +1002,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
 
         // videorecord start [format] [filename] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
         //                   [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
+        //                   [--profile native|1080p|1440p|4k] [--acceleration auto|hardware|software]
         CliVideoRecord::StartOptions options;
         std::string optionError;
         if (!CliVideoRecord::ParseStart(args, options, optionError))
@@ -1031,6 +1032,8 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         rm->SetVideoFrameRate(fps);
         rm->SetScaleFactor(scale);
         rm->SetCaptureRegion(options.screenRegion ? VideoCaptureRegion::MainScreen : VideoCaptureRegion::FullFrame);
+        rm->SetOutputProfile(options.profile);
+        rm->SetEncoderAcceleration(EncoderAccelerationFromName(options.acceleration));
 
         // Optional core-rate pin before the first sample is stamped: the
         // recording must start (and stay) at the requested audio rate. The
@@ -1067,6 +1070,9 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         std::stringstream ss;
         ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale << ", "
            << (options.screenRegion ? "screen" : "full") << " region";
+        if (rm->HasFixedOutput())
+            ss << ", profile " << rm->GetOutputProfile() << " " << rm->GetOutputWidth() << "x" << rm->GetOutputHeight();
+        ss << ", acceleration " << options.acceleration;
         if (rm->HasAudio())
             ss << ", audio " << rm->GetAudioCodec() << " " << rm->GetAudioSampleRate() << " Hz "
                << rm->GetAudioChannels() << " ch";
@@ -1138,6 +1144,11 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
     const RecordingManager::RecordingStats stats = rm->GetStats();
     ss << "  Frames: " << stats.framesRecorded << NEWLINE;
     ss << "  Region: " << (rm->GetCaptureRegion() == VideoCaptureRegion::MainScreen ? "screen" : "full") << NEWLINE;
+    ss << "  Profile: " << rm->GetOutputProfile();
+    if (rm->HasFixedOutput())
+        ss << " (" << rm->GetOutputWidth() << "x" << rm->GetOutputHeight() << ")";
+    ss << NEWLINE;
+    ss << "  Acceleration: " << EncoderAccelerationName(rm->GetEncoderAcceleration()) << NEWLINE;
     if (!rm->GetVideoCodec().empty())
         ss << "  Video codec: " << rm->GetVideoCodec() << NEWLINE;
     if (rm->HasAudio())

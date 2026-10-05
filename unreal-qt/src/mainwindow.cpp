@@ -322,6 +322,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     networkWindow = new NetworkWindow();
     networkWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
+    trafficWindow = new TrafficWindow();
+    trafficWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(trafficWindow, Qt::RightEdge);
 
     // FT812 Debug (line-budget-metrics.md §3.3): hidden by default, Debug -> FT812 Debug,
     // offered only while the machine has the VDAC2 card
@@ -414,6 +417,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
     connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
+    connect(_menuManager, &MenuManager::trafficWindowToggled, this, &MainWindow::handleTrafficWindowToggled);
+    connect(trafficWindow, &TrafficWindow::visibilityChanged, _menuManager, &MenuManager::setTrafficWindowChecked);
+    connect(trafficWindow, &TrafficWindow::seeked, this, &MainWindow::refreshViewport);
     connect(_menuManager, &MenuManager::ft812DebugToggled, this, &MainWindow::handleFt812DebugToggled);
     connect(_ft812DebugWindow, &Ft812DebugWindow::visibilityChanged, _menuManager, &MenuManager::setFt812DebugChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
@@ -431,6 +437,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
+    connect(_menuManager, &MenuManager::videoRecordingDialogRequested, this, &MainWindow::openAdvancedRecordingDialog);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 #endif
 
@@ -522,6 +529,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     bool gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
     _menuManager->setGpuAccelerationAvailable(gpuAvailable);
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+#ifdef ENABLE_RECORDING
+    UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
+#endif
     _menuManager->setCrtEffectsEnabled(true);
 
     _statusBarManager->restoreSettings();
@@ -671,6 +681,13 @@ MainWindow::~MainWindow()
         _dockingManager->removeDockableWindow(networkWindow);
         networkWindow->hide();
         delete networkWindow;
+    }
+
+    if (trafficWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(trafficWindow);
+        trafficWindow->hide();
+        delete trafficWindow;
     }
 
     if (_ft812DebugWindow != nullptr)
@@ -874,6 +891,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         networkWindow->hide();
         delete networkWindow;
         networkWindow = nullptr;
+    }
+    if (trafficWindow)
+    {
+        _dockingManager->removeDockableWindow(trafficWindow);
+        trafficWindow->hide();
+        delete trafficWindow;
+        trafficWindow = nullptr;
     }
     if (_ft812DebugWindow)
     {
@@ -3307,6 +3331,12 @@ void MainWindow::handleNetworkWindowToggled(bool visible)
         networkWindow->setVisible(visible);
 }
 
+void MainWindow::handleTrafficWindowToggled(bool visible)
+{
+    if (trafficWindow)
+        trafficWindow->setVisible(visible);
+}
+
 void MainWindow::placeFt812DebugWindow(bool opening)
 {
     // Right of the main window, its chart level with the picture: each bar beside
@@ -4008,6 +4038,9 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Update menu state
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+#ifdef ENABLE_RECORDING
+    UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
+#endif
     _menuManager->setCrtEffectsEnabled(true);
     _menuManager->setCrtEffectsChecked(_screenWrapper->crtEffectsEnabled());
 
