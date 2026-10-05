@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
@@ -163,11 +164,23 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         const uint32_t lineStart = line * kLineTacts;
         const uint32_t end = std::min(lineStart + kLineTacts, raster);
         const TsConfLine& set = _lines[line];
-        const uint32_t cost = set.videoCost + set.tsuCost;
         const uint32_t a = pos - lineStart;
         const uint32_t b = end - lineStart;
-        const uint32_t dots = 2 * (b - a);
-        const uint32_t share = cost * b / kLineTacts - cost * a / kLineTacts;  // telescopes over calls
+        const uint32_t dots = 2 * (b - a);  // DRAM cycles of the span
+        // The video takes its cycles inside its fetch window [h0, h1) only ([V] arbiter.v:171-189): the border
+        // gives the DMA every cycle. The TSU's are spread over the line. Both telescope over calls
+        uint32_t share = set.tsuCost * b / kLineTacts - set.tsuCost * a / kLineTacts;
+        if (set.videoCost)
+        {
+            const TsConfArbiter::Fetch fetch = TsConfArbiter::FetchOf(set, line);
+            const uint32_t h0 = fetch.h0;
+            const uint32_t width = fetch.h1 > fetch.h0 ? fetch.h1 - fetch.h0 : 0u;
+            auto taken = [&](uint32_t cycle) {
+                const uint32_t in = cycle > h0 ? std::min(cycle - h0, width) : 0u;
+                return width ? set.videoCost * in / width : 0u;
+            };
+            share += taken(2 * b) - taken(2 * a);
+        }
         free += dots > share ? dots - share : 0;
         pos = end;
     }

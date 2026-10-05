@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconftsu.h"
 
 class TsConfDma_Test : public TsConfFixture
@@ -301,6 +302,30 @@ TEST_F(TsConfDma_Test, DMA12_PacingFollowsTheVideoBandwidth)
     const uint32_t noGfx = linesFor(0x20 | 0x02);
     const uint32_t full256 = linesFor(0x02 | 0xC0);  // 256C in the 360-wide window
     EXPECT_GT(full256, noGfx);
+}
+
+/// DMA-12b: the video takes its DRAM cycles inside its fetch window only ([V] arbiter.v:171-189): the left border
+/// gives the DMA every cycle. The line's video cost was spread over all 224 tacts, so a transfer started in the
+/// border ran slower there and faster in the window (TS-Conf audit, dma row 43)
+TEST_F(TsConfDma_Test, DMA12b_BorderGivesFullRate)
+{
+    Reg(TsConfReg::VConfig, 0x42);  // 256C 320x200: lines 76..275, fetch from DRAM cycle ~103
+    Engine().OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    _position = 100 * TsConfEngine::kLineTacts;
+    Engine().CatchUp(_position);
+    const TsConfArbiter::Fetch fetch = TsConfArbiter::FetchOf(Engine().Line(100), 100);
+    ASSERT_TRUE(fetch.active);
+    ASSERT_GT(fetch.h0, 100u) << "tacts 0..49 = DRAM cycles 0..99 are all left of the fetch";
+
+    Source(0x40000);
+    Destination(0x50000);
+    Reg(TsConfReg::DmaLen, 0xFF);
+    Reg(TsConfReg::DmaNum, 0xFF);
+    Reg(TsConfReg::DmaCtrl, 0x01);  // RAM copy, 2 cycles per word
+    const uint32_t before = Ts().dmaDst;
+    Engine().CatchUp(_position + 50);
+    EXPECT_EQ(Ts().dmaDst - before, 50u) << "100 free DRAM cycles / 2";
+    Dma().Reset();
 }
 
 /// DMA-13: DMA writes do not invalidate the CPU cache
