@@ -120,6 +120,15 @@ public:
     void AcceleratorWrite(uint16_t addr, uint8_t value);
     /// endregion </Accelerator accesses>
 
+    /// region <Spectrum screen shadow>
+public:
+    /// The window's RAM page was filled behind the CPU's back (a snapshot): bring the Spectrum screen shadow in video
+    /// RAM in step by running the write intercept over every byte, as if the CPU had stored them. Only a plain RAM
+    /// window (no graphics, ISA or special page) is replayed; the intercept itself decides what reaches the shadow
+    /// (ALL_MODE, PORT_Y, window 1 / Spectrum page 5 or 7 in window 3)
+    void RefreshZxShadow(uint8_t window);
+    /// endregion </Spectrum screen shadow>
+
 protected:
     bool UpdateModelBanks() override;
     /// Tool reads (debugger, WebAPI, Lua/Python) see the read redirect as the CPU does: graphics

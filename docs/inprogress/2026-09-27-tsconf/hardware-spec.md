@@ -204,8 +204,12 @@ each with its own 13-bit tag `{page[7:0], A[13:9]}` + valid bit ([V] `zmem.v:210
   comment table at `zmem.v:153-172` says read +2..+5; the RTL releases a data
   read at c2 of the cycle after the grant and an M1 at c1 (`zmem.v:204`), so a
   read waits one fclk longer than an M1 (corrected 2026-09-30). When video
-  holds the next DRAM cycle (`cpu_next = 0`) a read waits for the grant and a
-  write or any non-read cycle freezes the clock - the arbiter model in
+  holds the next DRAM cycle (`cpu_next = 0`) a read waits for the grant, and
+  the clock stops in every fclk of such a cycle in which the FPGA does not see
+  a memory read on the pins (`stall14_cyc = memrd ? stall14_cycrd :
+  !cpu_next`): the machine cycle it falls in stretches, by less than the 4
+  fclk when the next read's MREQ / RD arrive inside it (checked against the
+  RTL simulation, `tools/machines/tsconf/rtl-sim`) - the arbiter model in
   `platforms/tsconf/tsconfarbiter.h`.
 
 Emulator: functional behavior (hit returns cached word even if RAM changed
@@ -315,8 +319,24 @@ Evidence: `video_mode.v:204-220`, `video_render.v:43-54`.
 - **TXT flattens everything to 4 bits**: border and TSU pixels are cut to their
   low nibble in the `PAL_SEL[3:0]` bank and doubled to 14 MHz
   ([V] `video_render.v:82`, `video_out.v:61`). No flash/bright in TXT.
-- Gfx X/Y offsets are 9-bit, wrap 512 px / 512 rows; they apply in ZX (row wrap
-  256) and TXT (pixel-line vertical scroll) too ([V] `video_sync.v:176-181`).
+- Gfx X/Y offsets are 9-bit, wrap 512 px / 512 rows; the Y offset applies in
+  ZX (row wrap 256) and TXT (pixel-line vertical scroll) too ([V]
+  `video_sync.v:176-181`).
+- **`G_X_OFFS` is a pixel scroll only in 16C / 256C.** It loads the DRAM column
+  counter (`cstart = G_X_OFFS >> 2`, fine shift `G_X_OFFS[1:0]` dots; [V]
+  `video_mode.v` `x_offs_mode`, `video_sync.v` `cnt_col` / `cptr`), and in ZX and
+  TXT the counter also picks what each fetch reads. Measured on the Verilog
+  with `tools/machines/tsconf/rtl-sim` (test GX1, 174 lines):
+  - ZX: only `G_X_OFFS[6:0]` counts; scroll `8 × G_X_OFFS[6:2] + G_X_OFFS[1:0]`
+    pixels; an odd `G_X_OFFS[6:2]` swaps pixel and attribute bytes on the whole
+    line; the last `G_X_OFFS[1:0]` pixels come from a 33rd fetch.
+  - TXT: whole character pairs from `((G_X_OFFS >> 2) + 3) >> 2`, fine shift
+    `2 × G_X_OFFS[1:0]` hires pixels; a nonzero `G_X_OFFS[3:2]` shows raw
+    character codes instead of glyphs (one or both per pair, phase 1 in the
+    previous pair's colors).
+  - The rules: `ScreenTSConf::ZxSourceOf` / `TxtSourceOf`. (Until the
+    2026-10-05 audit the emulator, like [U] apart from ignoring it, treated it
+    as a pixel scroll.)
 - `G_Y_OFFS` write: at the next line start the row counter reloads with the new
   value (not value + elapsed lines); the first reload per frame is on line 31
   ([V] `video_sync.v:176-199`).
@@ -616,9 +636,10 @@ from the latch). In Z80 T-states of the current clock:
 | 14 MHz | clock toggles every fclk except while stalled | 3 T |
 
 The 7 MHz value depends on where the access falls against the clock phase;
-the emulator takes the upper value. The stall is emulated, **off by default**
-(`[HDD] IdeStall=0`): software does not depend on it, and default timing then
-matches the ancestor emulator. `IdeStall=1` adds it, for timing studies.
+the emulator takes the upper value. The stall is emulated and **on by default**
+(`[HDD] IdeStall=1`), as in the RTL's IDE build (`top.v:557`, `zclock.v:96`);
+`IdeStall=0` bypasses it (the ancestor emulator's timing). Owner decision
+2026-10-05 after the TS-Conf audit; it was off by default before (D2).
 
 **IDE DMA** (codes 0x3 IDE → RAM, 0xB RAM → IDE; [V] `dma.v:98, 136, 250-251,
 441-445`, `ide.v`). The DMA moves **16-bit words** to and from the data

@@ -742,6 +742,18 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["autostart"]["description"] =
         "Disk images only, drive A only: quick-reset into TR-DOS and run the disk, same as the Qt UI's "
         "drag-and-drop autostart. Ignored for snapshots/tapes and for drives other than A.";
+    schema["properties"]["commit"]["type"] = "string";
+    schema["properties"]["commit"]["description"] =
+        "Snapshots only: who writes the machine. Omitted = the plan decides (the machine's own policy, else the legacy "
+        "commit that has always loaded snapshots); 'legacy' = the legacy commit even where the machine has a policy; "
+        "or a registered policy name (an unknown name is refused and the answer lists the known ones). The answer's "
+        "report shows the commit that ran, or why the load was refused";
+    schema["properties"]["inspect"]["type"] = "boolean";
+    schema["properties"]["inspect"]["default"] = false;
+    schema["properties"]["inspect"]["description"] =
+        "Snapshots only: do not load, report what loading would do on this machine (the file's contents - format, "
+        "banks, CPU, paging, extensions - and the plan: who would commit it, or the refusal and its reason). Nothing "
+        "is written";
     schema["required"].append("path");
 
     registry.Register(
@@ -786,6 +798,14 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
             bool play = args.isMember("play") && args["play"].asBool();
             bool autostart = args.isMember("autostart") && args["autostart"].asBool();
+            const bool inspect = args.isMember("inspect") && args["inspect"].asBool();
+            std::string commit = args.isMember("commit") && args["commit"].isString() ? args["commit"].asString() : "";
+            // A policy name is an identifier: it goes into a query string as is
+            if (commit.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos)
+            {
+                done(ToolResult::Error("'commit' is a name: letters, digits, '_', '.' and '-' only"));
+                return;
+            }
             std::string drive = args.isMember("drive") && args["drive"].isString() && !args["drive"].asString().empty()
                                     ? args["drive"].asString()
                                     : "A";
@@ -795,7 +815,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, autostart, drive, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -833,17 +853,23 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
                 if (isSnapshot)
                 {
+                    // inspect = what a load would do (nothing written); the commit choice rides on a query for an upload
+                    const std::string action = inspect ? "/snapshot/inspect" : "/snapshot/load";
+                    const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
                     if (isLocalFile)
                     {
-                        ForwardCallRaw("POST", Endpoint(id, "/snapshot/load"), *fileContent, headers, caller,
-                                       "Loaded snapshot " + filename + " (uploaded) into " + id, done);
+                        const std::string endpoint =
+                            Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
+                        ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
+                                       verb + filename + " (uploaded) on " + id, done);
                     }
                     else
                     {
                         Json::Value body;
                         body["path"] = path;
-                        ForwardCall("POST", Endpoint(id, "/snapshot/load"), &body, caller,
-                                    "Loaded snapshot " + path + " into " + id, done);
+                        if (!commit.empty())
+                            body["commit"] = commit;
+                        ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
                     }
                     return;
                 }

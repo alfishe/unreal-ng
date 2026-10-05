@@ -85,8 +85,29 @@ SnapshotLoadResult SnapshotLauncher::Load(const SnapshotLoadRequest& request)
             out.emulator->StartAsync();
     }
 
-    out.ok = out.emulator->LoadSnapshot(request.path);
+    snapshot::Options options;
+    options.commit = request.commit;
+    out.ok = out.emulator->LoadSnapshot(request.path, {}, options);
+    out.report = out.emulator->LastSnapshotReport();
     if (!out.ok)
-        out.message = "failed to load '" + request.path + "' (the log has the loader's reason)";
+    {
+        // The pipeline's reason when it refused; otherwise the loader's, which is in the log
+        out.message = out.report.refused ? "refused '" + request.path + "': " + out.report.reason
+                                         : "failed to load '" + request.path + "' (the log has the loader's reason)";
+    }
     return out;
+}
+
+bool SnapshotLauncher::Inspect(const std::string& emulatorId, const std::string& path, const std::string& commit,
+                               StateNode& result, std::string& error)
+{
+    std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(emulatorId);
+    if (!emulator || !emulator->GetContext())
+    {
+        error = "no emulator '" + emulatorId + "'";
+        return false;
+    }
+    snapshot::Options options;
+    options.commit = commit;
+    return emulator->InspectSnapshot(path, options, result, error);
 }

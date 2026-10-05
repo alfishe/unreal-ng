@@ -4,6 +4,9 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include "loaders/snapshot/snapshotimage.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "loaders/snapshot/snapshotreport.h"
 
 class EmulatorContext;
 class ModuleLogger;
@@ -129,6 +132,12 @@ protected:
     bool _memoryPagesUsed[8];
     uint8_t _borderColor = 0;
 
+    // Snapshot pipeline (PLAN #84): the image built from the staging and the report of the plan step
+    snapshot::Options _options;
+    snapshot::Image _image;
+    snapshot::Report _report;
+    snapshot::Decision _decision;
+
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -144,6 +153,16 @@ public:
 public:
     bool load();
     bool save();
+
+    /// What the caller asked for (call before load(); the default lets the plan decide)
+    void SetOptions(const snapshot::Options& options) { _options = options; }
+    /// The pipeline's view of the last load: the image of the file and the report of the plan step
+    const snapshot::Image& GetSnapshotImage() const { return _image; }
+    const snapshot::Report& GetSnapshotReport() const { return _report; }
+    /// The staging as a SnapshotImage; nothing touches the machine
+    snapshot::Image BuildImage() const;
+    /// Read and stage the file and build its image, without committing (inspect); false = not a loadable file
+    bool Stage();
     /// endregion </Methods
 
     /// region <Helper methods>
@@ -159,6 +178,8 @@ protected:
     bool load48kToStaging();
     bool load128kToStaging();
     bool applySnapshotFromStaging();
+    /// Image + plan step between staging and commit; false = refused (the report says why)
+    bool planSnapshot();
     
     // Save helpers
     SNA_MODE determineOutputFormat();
@@ -210,6 +231,7 @@ public:
     using LoaderSNA::load48kToStaging;
     using LoaderSNA::load128kToStaging;
     using LoaderSNA::applySnapshotFromStaging;
+    using LoaderSNA::planSnapshot;
     
     // Save helpers
     using LoaderSNA::determineOutputFormat;

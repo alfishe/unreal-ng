@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 
+#include "loaders/snapshot/snapshotimage.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "loaders/snapshot/snapshotreport.h"
+
 class EmulatorContext;
 
 /// SPG ("Spectrum Prog") snapshot loader - the TS-Conf SDK's program format
@@ -53,6 +57,16 @@ public:
     const std::string& GetError() const { return _error; }
     const Image& GetImage() const { return _image; }
 
+    /// What the caller asked for (call before load(); the default lets the plan decide)
+    void SetOptions(const snapshot::Options& options) { _options = options; }
+    /// The pipeline's view of the last load (GetImage() is this loader's own parsed record)
+    const snapshot::Image& GetSnapshotImage() const { return _snapshotImage; }
+    const snapshot::Report& GetSnapshotReport() const { return _snapshotReport; }
+    /// A parsed SPG as a SnapshotImage (memory model Physical); nothing touches the machine
+    static snapshot::Image BuildSnapshotImage(const Image& image, const std::string& path);
+    /// Read a file and build its image, without a machine or a commit (inspect)
+    static bool ReadSnapshotImage(const std::string& path, snapshot::Image& image, std::string& error);
+
     /// Is this file an SPG we can load (the header only)? Opening one on another
     /// machine switches to the TS-Conf model first (the Qt window does, as for SZX)
     static bool Probe(const std::string& path, std::string& error);
@@ -72,4 +86,8 @@ private:
     bool _fromFile;
     Image _image;
     std::string _error;
+    snapshot::Options _options;
+    snapshot::Image _snapshotImage;
+    snapshot::Report _snapshotReport;
+    snapshot::Decision _decision;
 };

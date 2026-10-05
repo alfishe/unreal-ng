@@ -385,7 +385,9 @@ private:
                             const std::vector<std::string>& args);
     void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
                             const std::vector<std::string>& args);
-    void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
+    void HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleSnapshotInspect(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                               const std::vector<std::string>& args);
 
     // Capture command handlers (OCR, screen capture, ROM text)
     void HandleCapture(const ClientSession& session, const std::vector<std::string>& args);

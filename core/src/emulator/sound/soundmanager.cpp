@@ -108,6 +108,11 @@ SoundManager::SoundManager(EmulatorContext* context)
                                              ? FilterDecimator::Quality::HighFidelity
                                              : FilterDecimator::Quality::Reference);
         _turboSound->setCoreRate(_coreRate);
+        for (int i = 0; i < _turboSound->getChipCount(); i++)
+        {
+            if (SoundChip_AY8910* chip = _turboSound->getChip(i))
+                chip->setStereoMode(_context->config.sound.ayStereo);
+        }
     }
 
     // Build the device registry based on what this machine has
@@ -246,7 +251,7 @@ SoundManager::SoundManager(EmulatorContext* context)
     _beeperChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
 
     // AY / SSG tone voicing: the configured profile ([SOUND] AYVoicing,
-    // default headphones) from the first frame, no crossfade
+    // default classic) from the first frame, no crossfade
     _ayVoicing0.setup(static_cast<double>(_coreRate));
     _ayVoicing1.setup(static_cast<double>(_coreRate));
     _ayVoicing0.setPresetImmediate(_context->config.sound.ayVoicing);

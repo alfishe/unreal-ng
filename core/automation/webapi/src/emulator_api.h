@@ -127,6 +127,7 @@ public:
     // Snapshot control
     ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::saveSnapshot, "/api/v1/emulator/{id}/snapshot/save", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::inspectSnapshot, "/api/v1/emulator/{id}/snapshot/inspect", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::transferState, "/api/v1/emulator/{id}/snapshot/transfer", drogon::Post);
 
@@ -768,6 +769,9 @@ public:
                       const std::string& id) const;
     void saveSnapshot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
+    /// POST /snapshot/inspect - what loading a file would do (its image and the plan), nothing is written
+    void inspectSnapshot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void transferState(const drogon::HttpRequestPtr& req,

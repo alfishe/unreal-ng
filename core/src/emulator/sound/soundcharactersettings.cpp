@@ -53,8 +53,8 @@ const std::vector<SoundCharacterSettings::Descriptor>& SoundCharacterSettings::D
 {
     static const std::vector<Descriptor> kDescriptors = {
         {"ay_voicing",
-         "AY / SSG tone voicing (fixed EQ after the chip): headphones (default: classic bass, soft highs), "
-         "classic (trims the very low bass and the thump of volume changes), flat (hardware line out), "
+         "AY / SSG tone voicing (fixed EQ after the chip): classic (default: trims the very low bass and the thump of volume changes), "
+         "headphones (classic bass, soft highs), flat (hardware line out), "
          "warm, tv or small_speaker",
          false},
         {"ay_punch", "AY transient enhancement (Sound HQ only)", true},

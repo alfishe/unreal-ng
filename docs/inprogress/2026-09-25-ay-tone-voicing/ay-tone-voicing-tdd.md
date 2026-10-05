@@ -180,7 +180,7 @@ Curve table (`Tv` stays `Flat`-equivalent and hidden until phase 3):
 | `tv` | Visible since 2026-09-27 with the listening starting point: HPF2 130 Hz Q 0.7071 + LPF2 6 kHz Q 0.7071. The low-pass is magnitude-matched (Vicanek 2016), not bilinear: an RBJ 6 kHz low-pass would cut 15 kHz ~8 dB more at 44.1 kHz than at 192 kHz; the matched one stays within 0.3 dB of the analog curve at every core rate | | | |
 | `headphones` | Added 2026-09-27: HPF1 64.2 Hz + peak 106.9 Hz / +3.06 dB / Q 1.0 (Classic bass) + LPF2 10 kHz Q 0.5 (critically damped, magnitude-matched) | | | |
 | `small_speaker` | Added 2026-09-27: HPF2 250 Hz Q 0.7071 + peak 1.5 kHz / +3 dB / Q 1.0 + LPF2 4.5 kHz Q 0.7071 (magnitude-matched) | | | |
-| `warm` | Added 2026-09-27, between Headphones and TV speaker: HPF2 90 Hz Q 0.6 + LPF2 8 kHz Q 0.5 (critically damped, magnitude-matched). Since 2026-09-27 the built-in default is `headphones` (`FilterVoicing::DEFAULT_PRESET`), no longer `classic` | | | |
+| `warm` | Added 2026-09-27, between Headphones and TV speaker: HPF2 90 Hz Q 0.6 + LPF2 8 kHz Q 0.5 (critically damped, magnitude-matched). The built-in default was `headphones` 2026-09-27 to 2026-10-05; since 2026-10-05 it is `classic` again (`FilterVoicing::DEFAULT_PRESET`, owner decision) | | | |
 
 Coefficients (bilinear transform; with f ≪ fs no pre-warping is needed, and the RBJ peak formula
 is exact anyway):

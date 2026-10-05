@@ -233,6 +233,59 @@ bool LoaderZXP::ApplyModule(EmulatorContext* context, const ZXPModuleState& modu
     return true;
 }
 
+snapshot::Image LoaderZXP::BuildImage(size_t module) const
+{
+    snapshot::Image image;
+    image.format = "zxp";
+    image.sourcePath = _path;
+    image.formatVersion = "1";
+    image.machineHint = "zxpoly";
+    image.rawMachineId = "zxp module " + std::to_string(module);
+    image.memoryModel = snapshot::MemoryModel::Mem128k;
+    image.timingHint = "128k";
+    if (module >= ZXPSnapshot::MODULE_COUNT)
+    {
+        image.warnings.push_back("no such module");
+        return image;
+    }
+
+    const ZXPModuleState& m = _snapshot.modules[module];
+    for (size_t bank = 0; bank < m.pageUsed.size(); ++bank)
+    {
+        if (m.pageUsed[bank])
+        {
+            const auto begin = m.pages.begin() + static_cast<std::ptrdiff_t>(bank * PAGE_SIZE);
+            image.banks[static_cast<uint16_t>(bank)] = std::vector<uint8_t>(begin, begin + PAGE_SIZE);
+        }
+    }
+    snapshot::Cpu& cpu = image.cpu;
+    cpu.af = m.af;
+    cpu.af2 = m.afAlt;
+    cpu.bc = m.bc;
+    cpu.bc2 = m.bcAlt;
+    cpu.de = m.de;
+    cpu.de2 = m.deAlt;
+    cpu.hl = m.hl;
+    cpu.hl2 = m.hlAlt;
+    cpu.ix = m.ix;
+    cpu.iy = m.iy;
+    cpu.sp = m.sp;
+    cpu.pc = m.pc;
+    cpu.i = static_cast<uint8_t>(m.ir >> 8);
+    cpu.r = static_cast<uint8_t>(m.ir & 0xFF);
+    cpu.iff1 = m.iff1;
+    cpu.iff2 = m.iff2;
+    cpu.im = m.im;
+    image.paging.p7FFD = m.port7FFD;
+    image.border = _snapshot.portFE & 7u;
+    image.extensions.push_back({"zxp:group", "zxpoly-registers", 0,
+                                "#3D00 = " + std::to_string(_snapshot.port3D00) + ", module R0..R3 = " +
+                                    std::to_string(m.reg[0]) + "," + std::to_string(m.reg[1]) + "," +
+                                    std::to_string(m.reg[2]) + "," + std::to_string(m.reg[3]),
+                                {}});
+    return image;
+}
+
 bool LoaderZXP::Fail(const std::string& message)
 {
     _error = message;

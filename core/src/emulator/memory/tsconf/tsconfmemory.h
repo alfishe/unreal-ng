@@ -62,8 +62,15 @@ public:
     /// The decoder's write overlay calls it on every write
     void AfterWrite(uint16_t addr);
     /// The next read is an opcode fetch (M1): the decoder's M1 hook says so
-    /// right before it, so an M1 miss waits one fclk longer than a data read
-    void NoteM1Fetch() { _nextIsM1 = true; }
+    /// right before it (at 14 MHz), so an M1 miss waits one fclk longer than a
+    /// data read. Refused DRAM cycles that stopped the clock before this fetch
+    /// are charged here, to the machine cycles before it
+    void NoteM1Fetch()
+    {
+        _nextIsM1 = true;
+        if (_waitCpu && _arbiter && _arbiter->Refusing()) [[unlikely]]
+            RefusedBeforeM1();
+    }
     /// endregion </Model overrides>
 
     /// region <Latch-to-bank translation>
@@ -79,6 +86,9 @@ private:
     /// Cache, DRAM accounting and 14 MHz waits after the normal read
     uint8_t AfterRead(uint16_t addr, uint8_t normal);
     void DramWait(TsConfArbiter::Access kind);
+    /// 14 MHz, a machine cycle without a DRAM cycle while video refuses the CPU cycles (TsConfArbiter::Settle)
+    void RefusedWait(TsConfArbiter::Access kind);
+    void RefusedBeforeM1();
 
     TsConfState* _ts = nullptr;
     bool _cacheActive = false;

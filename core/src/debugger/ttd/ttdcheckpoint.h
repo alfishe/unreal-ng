@@ -297,6 +297,16 @@ struct TTDPageRef
 /// entry. Items P1.2 (dirty tracker) and P1.3 (codec page store) populate
 /// #ramPages; items P1.5 (peripheral serializers) populate the
 /// peripheral blob vectors.
+/// @brief RAM windows 1/2 (0x4000 / 0x8000) forced by a debugger (DeZog SET_SLOT).
+/// No port latch describes such a mapping, so the restore's paging re-derive
+/// cannot bring it back; it travels beside the chipset instead of inside it
+/// (that struct is hashed byte-wise and has no spare room). 0xFFFF = the window
+/// follows the latches. Session dump files do not carry it yet.
+struct TTDBankOverrides
+{
+    uint16_t page[2] = {0xFFFF, 0xFFFF};  ///< [0] = window 1, [1] = window 2
+};
+
 struct TTDCheckpoint
 {
     TTDTimePoint time;
@@ -312,6 +322,7 @@ struct TTDCheckpoint
 
     TTDCpuState     cpu;
     TTDChipsetState chipset;
+    TTDBankOverrides bankOverrides;  ///< debugger-forced windows 1/2 (see TTDBankOverrides)
 
     // --- Peripheral state (TTDPeripheralRegistry) ---
     /// Map of PeripheralId → serialized state. Only devices actually connected

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <cmath>
+#include "common/sound/aystereomode.h"
 #include "common/sound/filters/filterdcblocker.h"
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
@@ -57,14 +58,6 @@ enum AYChannelsEnum : uint8_t
     AY_CHANNEL_A = 0,
     AY_CHANNEL_B = 1,
     AY_CHANNEL_C = 2
-};
-
-/// Stereo panning layout
-enum class AYStereoMode : uint8_t
-{
-    ABC = 0,    // A=Left, B=Center, C=Right (default)
-    ACB = 1,    // A=Left, C=Center, B=Right
-    Mono = 2    // All channels center
 };
 
 /// Chip model (affects DAC curve)

@@ -130,7 +130,7 @@ struct TsConfState
     uint32_t intVdosClock;      ///< CPU clock of the frame where vdos (pre_vdos) froze the frame pulse; valid while frozen
     uint8_t intPending;         ///< latched sources, TsConfInt bits
     uint8_t intSel;             ///< int_sel: the source the last acknowledge served (0 frame .. 3 wait-port), kept when none is left
-    uint8_t intReserved[2];     ///< keeps the struct free of padding
+    int16_t intFrameAdjust;     ///< CPU clocks added to intFrameRaster x multiplier: a pulse carried across a clock switch
     /// endregion
 
     /// region <Line engine (§4.1, §4.2), TsConfEngine>

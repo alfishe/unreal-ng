@@ -29,6 +29,8 @@
 #include "emulatorcontext.h"
 #include "emulator/notifications.h"
 #include "emulator/rzx/rzxsession.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "loaders/snapshot/snapshotreport.h"
 
 
 class BreakpointManager;
@@ -128,6 +130,8 @@ protected:
     /// The common body of the snapshot loads: RZX stop, TTD guard, pause,
     /// `load`, frame restart, resume, NC_FILE_LOADED
     bool LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath);
+    /// What the snapshot pipeline did with the last load (empty before the first one)
+    snapshot::Report _lastSnapshotReport;
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -433,17 +437,28 @@ public:
     // File format operations
     /// `reportedPath`: the file named in the load notification and the core
     /// state instead of `path` (an RZX start snapshot written to a temporary file)
-    bool LoadSnapshot(const std::string& path, const std::string& reportedPath = {});
+    /// `options.commit`: "" = the plan decides, "legacy" = today's commit, or a registered policy name
+    bool LoadSnapshot(const std::string& path, const std::string& reportedPath = {},
+                      const snapshot::Options& options = {});
+    /// What loading this file would do on this machine, touching nothing: the image of the file (banks as hashes,
+    /// registers, paging, extensions) and the plan's report (who would commit, or the refusal and why). False + `error`
+    /// when the file is not a snapshot this emulator can read
+    bool InspectSnapshot(const std::string& path, const snapshot::Options& options, StateNode& result,
+                         std::string& error);
+    /// The snapshot pipeline's report of the last load: the commit that ran (or the refusal and why), the verdicts that
+    /// led to it, the format's per-block outcomes, warnings. Read it after the load returned
+    const snapshot::Report& LastSnapshotReport() const { return _lastSnapshotReport; }
     /// A snapshot image already in memory (`extension`: sna, z80, szx), loaded
     /// like a file: paused, TTD rules, the frame restarted, NC_FILE_LOADED with
     /// `reportedPath`
     bool LoadSnapshotData(const std::vector<uint8_t>& data, const std::string& extension,
-                          const std::string& reportedPath);
+                          const std::string& reportedPath, const snapshot::Options& options = {});
     /// The raw load of an in-memory image into the machine, nothing around it
     /// (no pause, no TTD handling, no frame restart, no notification): for a
     /// caller that already owns the machine - an RZX snapshot block applied on
     /// the emulation thread. False with `error`
-    bool ApplySnapshotData(const std::vector<uint8_t>& data, const std::string& extension, std::string& error);
+    bool ApplySnapshotData(const std::vector<uint8_t>& data, const std::string& extension, std::string& error,
+                           const snapshot::Options& options = {});
 
     /// RZX playback (emulator/rzx/rzxsession.h): the recording's start snapshot
     /// is loaded, then every IN returns the recorded value and the interrupts

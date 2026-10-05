@@ -109,11 +109,11 @@ protected:
 
 TEST_F(SoundManagerVoicing_Test, ConfiguredProfileIsLiveFromFirstFrame)
 {
-    EXPECT_EQ(_context->config.sound.ayVoicing, Preset::Headphones) << "soft highs is the built-in default";
+    EXPECT_EQ(_context->config.sound.ayVoicing, Preset::Classic) << "classic is the built-in default";
     {
         SoundManager sound(_context);
-        EXPECT_EQ(sound.getAYVoicing(), Preset::Headphones);
-        EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Headphones) << "no crossfade from flat at construction";
+        EXPECT_EQ(sound.getAYVoicing(), Preset::Classic);
+        EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Classic) << "no crossfade from flat at construction";
     }
 
     _context->config.sound.ayVoicing = Preset::Flat;
@@ -168,6 +168,15 @@ TEST_F(SoundManagerVoicing_Test, VoicingNotResetOnHQReturn)
     EXPECT_GT(sound.getAYVoicingStage(0).filter().stateMagnitude(), 0.0);
 }
 
+TEST_F(SoundManagerVoicing_Test, ConfiguredStereoSchemeReachesEveryChip)
+{
+    _context->config.sound.ayStereo = AYStereoMode::ACB;
+    SoundManager sound(_context);
+    ASSERT_GT(sound.getTurboSound()->getChipCount(), 0);
+    for (int i = 0; i < sound.getTurboSound()->getChipCount(); i++)
+        EXPECT_EQ(sound.getTurboSound()->getChip(i)->getStereoMode(), AYStereoMode::ACB) << "chip " << i;
+}
+
 TEST_F(SoundManagerVoicing_Test, GetReturnsRequestedPreset)
 {
     SoundManager sound(_context);
@@ -176,7 +185,7 @@ TEST_F(SoundManagerVoicing_Test, GetReturnsRequestedPreset)
 
     sound.setAYVoicing(Preset::Flat);
     EXPECT_EQ(sound.getAYVoicing(), Preset::Flat) << "a read right after a write shows the request";
-    EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Headphones) << "audio switches at the next frame boundary";
+    EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Classic) << "audio switches at the next frame boundary";
 
     RunFrames(sound, 1);
     EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Flat);
@@ -218,7 +227,7 @@ TEST_F(SoundManagerVoicing_Test, CoreRateChangeKeepsProfileDropsHistory)
     sound.requestCoreRate(newRate);
     sound.handleFrameStart();  // applies the pending rate at the frame boundary
     ASSERT_EQ(sound.getCoreRate(), newRate);
-    EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Headphones);
+    EXPECT_EQ(sound.getActiveAYVoicing(), Preset::Classic);
     EXPECT_EQ(sound.getAYVoicingStage(0).historyFrames(), 0u) << "old-rate history must be dropped";
     EXPECT_GT(sound.getAYVoicingStage(0).filter().stateMagnitude(), 0.0) << "filter state is kept (no step)";
 }

@@ -2434,11 +2434,14 @@ public:
         });
 
         // Snapshot operations
-        // ok, reason, emulator_id: the reason is set when TTD refuses the load
-        // (recording) or the load fails. A file that needs another model (an
-        // SPG: TS-Conf) switches it first when this Lua is not bound to one
-        // machine (as rzx_play); emulator_id is then the new instance
-        lua.set_function("snapshot_load", [this](const std::string& path) -> std::tuple<bool, std::string, std::string> {
+        // snapshot_load(path [, commit]) -> ok, reason, emulator_id: the reason is set when TTD refuses the load
+        // (recording), the snapshot pipeline refuses it (the machine's policy, an unknown commit name) or the load
+        // fails. `commit` chooses who writes the machine: omitted = the plan decides (the machine's own policy, else
+        // the legacy commit), "legacy" = the legacy commit always, or a registered policy name. A file that needs
+        // another model (an SPG: TS-Conf) switches it first when this Lua is not bound to one machine (as
+        // rzx_play); emulator_id is then the new instance
+        lua.set_function("snapshot_load", [this](const std::string& path, sol::optional<std::string> commit)
+                                              -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator", ""};
             if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
@@ -2447,8 +2450,34 @@ public:
             request.emulatorId = emulator->GetId();
             request.path = path;
             request.switchModel = _emulator == nullptr;
+            request.commit = commit.value_or("");
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};
+        });
+
+        // snapshot_inspect(path [, commit]) -> table | nil, error: what loading the file would do here, nothing
+        // written. {path, image = {format, format_version, machine_hint, memory_model, banks = {{bank, size, hash}},
+        // cpu, paging, border, ay, extensions, warnings}, plan = {commit, refused, reason, needs, verdicts,
+        // warnings}, would_load, would_commit}
+        lua.set_function("snapshot_inspect", [this](sol::this_state state, const std::string& path,
+                                                    sol::optional<std::string> commit)
+                                                     -> std::tuple<sol::object, std::string> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return {sol::lua_nil, "no emulator"};
+            StateNode result;
+            std::string error;
+            if (!SnapshotLauncher::Inspect(emulator->GetId(), path, commit.value_or(""), result, error))
+                return {sol::lua_nil, error};
+            return {StateNodeToLua(state, result), std::string()};
+        });
+
+        // snapshot_report() -> table | nil: what the snapshot pipeline did with the last load {format, machine_hint,
+        // commit, refused, reason, needs, verdicts, items = {{item, outcome, note}}, warnings}
+        lua.set_function("snapshot_report", [this](sol::this_state state) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || emulator->LastSnapshotReport().format.empty())
+                return sol::lua_nil;
+            return StateNodeToLua(state, emulator->LastSnapshotReport().ToStateNode());
         });
 
         // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,

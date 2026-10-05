@@ -44,7 +44,7 @@ capture_media {"action":"audio_capture","seconds":2}
 #     wrong slot device or a mute config
 
 # Spectrum / level analysis of the AY itself: switch the tone voicing to
-# flat first (the default headphones trims the very low bass and softens the highs)
+# flat first (the default classic trims the very low bass and softens the highs)
 invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/settings/ay_voicing","body":{"value":"flat"}}
 ```
 
@@ -54,7 +54,7 @@ surface - WebAPI `settings/<name>`, CLI `setting <name>`, Lua / Python
 
 | Setting | Values (default first) | Notes |
 |---|---|---|
-| `ay_voicing` | `headphones` \| `classic` (alias `legacy`) \| `flat` \| `warm` \| `tv` \| `small_speaker` | Tonal balance of the AY / SSG output, HQ and LQ. `flat` for analysis; also `[SOUND] AYVoicing=` in `unreal.ini` |
+| `ay_voicing` | `classic` (default, alias `legacy`) \| `headphones` \| `flat` \| `warm` \| `tv` \| `small_speaker` | Tonal balance of the AY / SSG output, HQ and LQ. `flat` for analysis; also `[SOUND] AYVoicing=` in `unreal.ini` |
 | `ay_punch` | `on` \| `off` | AY transient enhancement, Sound HQ only |
 | `ay_room` | `9db` \| `off` \| `15db` ... `1db` | Headphone crossfeed level, Sound HQ only |
 | `beeper_punch` | `off` \| `on` | Beeper attack enhancement, Sound HQ only |

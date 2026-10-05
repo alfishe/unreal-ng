@@ -22,7 +22,7 @@ first; tests that assert the current wrong value are named and change with the f
 | 11 | IDE over-decode: `(low & 0x1E) == 0x10` takes `#31..#F1` as IDE registers; RTL only `#11` among the odd ports (the fork has the same bug) | [memory-ports.md](memory-ports.md) B3 | ports of other devices answered by the IDE | - | **fixed** in the shared `IdeAdapter::EvoIn / EvoOut` (TS-Conf and ATM3: the Base Configuration RTL decodes the same); test `IdeAdapter_Test.EvoOddPortsOtherThan11AreNotIde` |
 | 12 | A cut-off sprite / tile at the end of the TSU line is dropped whole; RTL and the fork draw it up to the cut, 4 px per DRAM word | [tsu.md](tsu.md) row 39 | missing partial objects on overloaded lines | `TSU8_StarvedObjectsAreDropped` | **fixed**: `DrawSprites` / `DrawTiles` draw the fetched words of a cut object (bitmap order, X flip included); test TSU8b; TSU8 still right (no word left for the third sprite) |
 | 13 | Tiles processed after `line_start` of L use the L-1 G_PAGE / X offsets / PAL_SEL; RTL uses L's latched set (the fork behaves like unreal-ng) | [tsu.md](tsu.md) row 49 | only on busy lines where these registers change | - | **deferred**: the TSU renders a line whole at `ts_start` of L-1, before L's latch exists (a write up to `line_start` can still change it); doing it right splits the pass at `line_start` - an engine change for objects past ~309-361 slots of work |
-| 14 | G_X_OFFS in ZX and TXT is a pixel scroll; RTL loads the fetch column with G_X_OFFS[8:2] (ZX: 16 px steps, bit 2 swaps pixel / attribute fetch; TXT: counted in 14 MHz pixels) | [video.md](video.md) rows 28-29 | wrong scroll in ZX / TXT with a nonzero X offset (rare) | `TSO2_RendererMatchesTheReference` uses the same rule in its reference | open |
+| 14 | G_X_OFFS in ZX and TXT is a pixel scroll; RTL loads the fetch column with G_X_OFFS[8:2] (ZX: 16 px steps, bit 2 swaps pixel / attribute fetch; TXT: counted in 14 MHz pixels) | [video.md](video.md) rows 28-29 | wrong scroll in ZX / TXT with a nonzero X offset (rare) | `TSO2_RendererMatchesTheReference` used the same rule in its reference | **fixed** from the Verilog itself: `tools/machines/tsconf/rtl-sim` (Verilator) captured 174 lines; `ScreenTSConf::ZxSourceOf / TxtSourceOf` drive the renderer and the video mapper; test GX1 compares every captured line index for index; TSO2 reference and hash updated |
 | 15 | INT vector chosen when INT is sampled, not at the acknowledge (~3 clocks later) | [interrupts.md](interrupts.md) row 20 | edge case | - | **fixed**: `AcknowledgeInterrupt` latches up to the IORQ (+3 clocks), drops a frame pulse that ended there, keeps `int_sel` (`TsConfState::intSel`) when nothing is left; tests INT12, INT12b |
 | 16 | VGSYS IN `#FF` returns `#FF` for a virtual drive / inside vdos; RTL drives `{intrq, drq, 111111}` | [memory-ports.md](memory-ports.md) B4 | small | - | **fixed**: VGSYS reads `{INTRQ, DRQ, 111111}` for every drive select and inside vdos (the low 6 bits were the Beta interface's 0s too); test VDOS3 |
 | 17 | `#xxF7` ownership reversed (A8 = 0 to the ZX-Bus outside DOS, A8 = 1 mainboard in DOS) | [memory-ports.md](memory-ports.md) B5 | only with a ZX-Bus card decoding `#xxF7` | - | **fixed**: `ClassifyPort` gives every `#xxF7` to the mainboard outside DOS, the ZX-Bus in DOS (the CMOS ports inside vdos excepted); the CMOS handler needs A8 = 1; test `GlukPortOwnershipFollowsDos` |
@@ -30,10 +30,16 @@ first; tests that assert the current wrong value are named and change with the f
 
 ## Gaps (unreal-ng follows the fork, not the RTL)
 
-- No 4-5 fclk stall on DOS entry / vdos exit (the ATM3 decoder models it) - [interrupts.md](interrupts.md) row 37.
-- No /WAIT on `#BFF7` - row 39; IDE stall off by default (`IdeStall=0`) - row 38.
-- The NMI button works on TS-Conf, whose board never drives /NMI - row 41.
-- A frame pulse running across a CPU clock switch is cut short - row 25.
+- ~~No 4-5 fclk stall on DOS entry / vdos exit - row 37.~~ **Fixed:** `PortDecoder_TSConf::DosStall` (4 fclk at every speed; a VG93 access that ends vdos at 14 MHz takes only this one, as `zclock.v` loads the DOS count); test TIM7.
+- No /WAIT on `#BFF7` - row 39. **Deferred, with a plan:** the Gluk wait is the same AVR round trip as the COM
+  port's (`zwait.v` `wait_status_glu` beside `wait_status_com`, one AVR main loop), whose timing model lives in
+  `Uart16550::AccessCycles`. Doing it right moves that model (the main-loop phase, the service cycles, its TTD state)
+  into the shared `EvoAvr` for both ports and both machines (TS-Conf, ATM3), then counts the Gluk service in the
+  AVR listing - not a local patch.
+- ~~IDE stall off by default (`IdeStall=0`) - row 38.~~ **Fixed:** on by default as the RTL (`top.v:557`), owner
+  decision 2026-10-05 (was D2, off); `IdeStall=0` stays as the bypass. Test IDE4.
+- ~~The NMI button works on TS-Conf, whose board never drives /NMI - row 41.~~ **Fixed:** `RequestBoardNmi` takes the press and does nothing (test `NmiButtonDoesNothing`); the debugger's direct NMI request stays.
+- ~~A frame pulse running across a CPU clock switch is cut short - row 25.~~ **Fixed:** `TsConfInterrupts::BeforeClockSwitch / AfterClockSwitch` carry the counted clocks across (`intFrameAdjust` keeps the CPU-clock part, the blob size is unchanged); tests CLK3, CLK3b.
 - The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at
   `portdecoder_tsconf.cpp:220-222` says so, contradicting the code) - [memory-ports.md](memory-ports.md).
 - W0_WE with ROM in window 0 should write the flash (`zmem.v:297`); both emulators drop the write.
@@ -48,8 +54,23 @@ first; tests that assert the current wrong value are named and change with the f
 
 ## Unclear (needs an RTL simulation or a hardware test)
 
-- 14 MHz data-read wait: unreal-ng +4..+7 fclk vs the `zmem.v` comment's +2..+5 ([interrupts.md](interrupts.md) row 33).
-- `stall357` (3.5 / 7 MHz DRAM stall) never applied; analysis says it cannot trigger in the four modes (row 35).
+- ~~14 MHz data-read wait (row 33).~~ **Settled by simulation** (`tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim`:
+  the real zclock / zsignals / zmem / arbiter with a bus-cycle Z80): unreal-ng's +4..+7 fclk is right - the Z80 takes
+  read data one half-clock after M1 data, from the cache data register; the `zmem.v` comment table is right for M1
+  and 2 fclk short for reads. All 118 instruction loops in every video mode match fclk for fclk.
+- ~~`stall357` (row 35).~~ **Settled:** it never fires at 3.5 / 7 MHz (384 simulated cases); no DRAM waits there,
+  as unreal-ng has it.
+- ~~**New (from the simulation):** a refused video cycle in 256C / TXT was charged by unreal-ng to the next DRAM
+  access.~~ **Fixed 2026-10-05:** `TsConfArbiter` now simulates the refused cycles fclk by fclk as the RTL stops the
+  Z80 clock (`stall14_cyc = memrd ? stall14_cycrd : !cpu_next`: stopped in every fclk without a memory read seen on
+  the pins, the edge already on its way still comes) and charges the stopped fclk to the machine cycle whose clock
+  edge they delay, settling on the following machine cycles (ROM / cache-hit reads and opcode fetches included).
+  Test `TsConfArbiter_Test.ARB6_CpuWaitsMatchTheRtl` replays all 1170 14 MHz tests of `results/cpu-waits.txt`
+  (copy in `testdata/machines/tsconf/rtl-sim/`) through the emulated CPU's bus cycles and matches every machine
+  cycle's length; before the fix 48 differed (16 isolated 256C writes, 16 + 13 "three writes and a read" in
+  256C / TXT, 3 `PUSH` loops in 256C, 21 of them in total time). Reference: pin delay 1; with a Z80 slower than
+  41 ns (pin delay 2) the RTL moves the overlap with the next read by one fclk (20 tests), a race the hardware has
+  too.
 - 3 / 4-bit VDAC curves: no such board or firmware to compare ([video.md](video.md) row 46).
 - Whether the fetch window 4 dots wider than the picture costs DRAM slots ([video.md](video.md) row 47).
 - IDE DMA hangs on real VDAC firmware, works in unreal-ng with an IDE scheme ([dma.md](dma.md) row 32).

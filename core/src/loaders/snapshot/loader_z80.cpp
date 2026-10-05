@@ -1,5 +1,8 @@
 #include "loader_z80.h"
 
+#include <algorithm>
+#include <iterator>
+
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -43,13 +46,157 @@ bool LoaderZ80::load()
     {
         if (stageLoad())
         {
-            commitFromStage();
+            if (planSnapshot())
+            {
+                if (_decision.action == snapshot::Decision::Action::Take)
+                {
+                    result = _decision.Commit(_image, *_context, _report);
+                    freeStagingMemory();
+                }
+                else
+                {
+                    commitFromStage();
 
-            result = true;
+                    result = true;
+                }
+            }
+            else
+            {
+                freeStagingMemory();
+            }
         }
     }
 
     return result;
+}
+
+namespace
+{
+/// The machine a file says it was made on, from its model byte (the v2 and v3 numberings differ below 7)
+const char* Z80MachineHint(Z80SnapshotVersion version, uint8_t model)
+{
+    if (version == Z80v1)
+        return "48k";
+    const bool v3 = version == Z80v3;
+    switch (model)
+    {
+        case 0:
+        case 1: return "48k";
+        case 2: return "samram";
+        case 3: return v3 ? "48k" : "128k";
+        case 4:
+        case 5:
+        case 6: return v3 ? "128k" : "unknown";
+        case 7:
+        case 8: return "plus3";
+        case 9: return "pentagon128";
+        case 10: return "scorpion256";
+        case 11: return "didaktik";
+        case 12: return "plus2";
+        case 13: return "plus2a";
+        case 14:
+        case 15:
+        case 128: return "timex";
+        default: return "unknown";
+    }
+}
+}  // namespace
+
+/// The staging as a format-neutral image (logical banks: the staging pages are indexed by the 128K bank number)
+snapshot::Image LoaderZ80::BuildImage() const
+{
+    snapshot::Image image;
+    image.format = "z80";
+    image.sourcePath = _path;
+    image.formatVersion = _snapshotVersion == Z80v1 ? "v1" : _snapshotVersion == Z80v2 ? "v2" : "v3";
+    // The model byte is read from the header here: the v2 staging does not keep it (_modelCode is v3's)
+    uint8_t model = 0;
+    if (_snapshotVersion != Z80v1 && _data.size() >= sizeof(Z80Header_v2))
+        model = static_cast<uint8_t>(reinterpret_cast<const Z80Header_v2*>(_data.data())->model);
+    image.machineHint = Z80MachineHint(_snapshotVersion, model);
+    if (_snapshotVersion != Z80v1)
+        image.rawMachineId = "z80 " + image.formatVersion + " hardware " + std::to_string(model);
+
+    switch (_memoryMode)
+    {
+        case Z80_48K: image.memoryModel = snapshot::MemoryModel::Mem48k; break;
+        case Z80_128K: image.memoryModel = snapshot::MemoryModel::Mem128k; break;
+        case Z80_256K: image.memoryModel = snapshot::MemoryModel::Extended; break;
+        default:
+            image.memoryModel = snapshot::MemoryModel::Extended;
+            image.warnings.push_back("a SAM Coupe snapshot: this emulator has no such machine");
+            break;
+    }
+    image.timingHint = image.machineHint == "pentagon128" ? "pentagon" : _memoryMode == Z80_48K ? "48k" : "128k";
+
+    for (size_t idx = 0; idx < MAX_RAM_PAGES; ++idx)
+    {
+        if (_stagingRAMPages[idx])
+            image.banks[static_cast<uint16_t>(idx)] =
+                std::vector<uint8_t>(_stagingRAMPages[idx], _stagingRAMPages[idx] + PAGE_SIZE);
+    }
+    for (size_t idx = 0; idx < MAX_ROM_PAGES; ++idx)
+    {
+        if (_stagingROMPages[idx])
+        {
+            image.extensions.push_back({"z80:rom-block", "rom", PAGE_SIZE, "ROM page " + std::to_string(idx), {}});
+            image.warnings.push_back("the file carries a ROM block: Z80 snapshots with ROM blocks are not supported");
+        }
+    }
+
+    snapshot::Cpu& cpu = image.cpu;
+    const Z80Registers& r = _z80Registers;
+    cpu.af = r.af;
+    cpu.bc = r.bc;
+    cpu.de = r.de;
+    cpu.hl = r.hl;
+    cpu.ix = r.ix;
+    cpu.iy = r.iy;
+    cpu.sp = r.sp;
+    cpu.pc = r.pc;
+    cpu.af2 = r.alt.af;
+    cpu.bc2 = r.alt.bc;
+    cpu.de2 = r.alt.de;
+    cpu.hl2 = r.alt.hl;
+    cpu.i = r.i;
+    cpu.r = static_cast<uint8_t>((r.r_hi & 0x80u) | (r.r_low & 0x7Fu));
+    cpu.iff1 = r.iff1 != 0;
+    cpu.iff2 = r.iff2 != 0;
+    cpu.im = r.im;
+
+    if (_memoryMode == Z80_128K || _memoryMode == Z80_256K)
+    {
+        image.paging.p7FFD = _port7FFD;
+        if (_hasPort1FFD)
+            image.paging.p1FFD = _port1FFD;
+    }
+    if (_hasTStates)
+        image.framePosition = _tstatesFromInt;
+    image.border = static_cast<uint8_t>(_borderColor & 7u);
+    if (_hasAyRegisters)
+    {
+        snapshot::Ay ay;
+        std::copy(std::begin(_ayRegisters), std::end(_ayRegisters), ay.registers.begin());
+        ay.selected = _portFFFD;
+        image.ay.push_back(ay);
+    }
+    return image;
+}
+
+bool LoaderZ80::Stage()
+{
+    if (!validate() || !stageLoad())
+        return false;
+    _image = BuildImage();
+    return true;
+}
+
+bool LoaderZ80::planSnapshot()
+{
+    _image = BuildImage();
+    _report = snapshot::Report();
+    _decision = snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    return _decision.Proceeds();
 }
 
 bool LoaderZ80::save()

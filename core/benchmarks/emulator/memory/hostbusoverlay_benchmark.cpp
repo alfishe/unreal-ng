@@ -13,6 +13,7 @@
 #include "emulator/mainloop.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -35,7 +36,8 @@ struct PassThroughOverlay : HostBusOverlay
 };
 } // namespace
 
-static void RunHostFrame(benchmark::State& state, const char* model, bool debug, bool overlay = false)
+static void RunHostFrame(benchmark::State& state, const char* model, bool debug, bool overlay = false,
+                         void (*setup)(EmulatorContext*) = nullptr)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("bench-host-frame", model, LoggerLevel::LogNone);
@@ -54,6 +56,9 @@ static void RunHostFrame(benchmark::State& state, const char* model, bool debug,
     // Boot to the BASIC idle loop
     for (int i = 0; i < 150; i++)
         mainLoop->RunFramePublic();
+
+    if (setup)
+        setup(context);
 
     PassThroughOverlay passThrough;
     if (overlay)
@@ -81,6 +86,29 @@ static void BM_HostFrame_Scorpion_Debug(benchmark::State& s) { RunHostFrame(s, "
 static void BM_HostFrame_TSConf_Fast(benchmark::State& s) { RunHostFrame(s, "TSL", false); }
 static void BM_HostFrame_TSConf_Debug(benchmark::State& s) { RunHostFrame(s, "TSL", true); }
 
+// TS-Conf at 14 MHz running from DRAM in the 256C 320x200 mode: every M1, read and write waits for the DRAM arbiter
+// (TsConfArbiter), and the writes make video refuse the CPU cycles (the refused-cycle clock stops). The 14 MHz
+// memory path of that machine, at its busiest
+static void SetupTsConf14From256CRam(EmulatorContext* context)
+{
+    PortDecoder* ports = context->pPortDecoder;
+    auto reg = [ports](uint8_t r, uint8_t value) { ports->DecodePortOut(static_cast<uint16_t>((r << 8) | 0xAF), value, 0); };
+    reg(0x00, 0x42);  // V_CONFIG: 256C, 320x200
+    reg(0x20, 0x02);  // SYS_CONFIG: 14 MHz, cache off
+    // DI; LD SP,#C000; LD HL,#9000; loop: LD (HL),A; LD A,(HL); INC L; PUSH HL; POP HL; LDI; JR loop
+    static const uint8_t kCode[] = {0xF3, 0x31, 0x00, 0xC0, 0x21, 0x00, 0x90, 0x77, 0x7E,
+                                    0x2C, 0xE5, 0xE1, 0xED, 0xA0, 0x18, 0xF7};
+    for (uint16_t i = 0; i < sizeof(kCode); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), kCode[i]);
+    Z80* cpu = context->pCore->GetZ80();
+    cpu->de = 0xA000;
+    cpu->bc = 0x0000;
+    cpu->iff1 = cpu->iff2 = 0;
+    cpu->halted = 0;
+    cpu->pc = 0x8000;
+}
+static void BM_HostFrame_TSConf14_256C_Fast(benchmark::State& s) { RunHostFrame(s, "TSL", false, false, SetupTsConf14From256CRam); }
+
 // ATM Turbo 2+: the BIOS menu polls the keyboard every frame (with the v7.xx
 // keyboard controller each IN #FE runs its firmware: the worst case for it)
 static void BM_HostFrame_ATM710_Fast(benchmark::State& s) { RunHostFrame(s, "ATM710", false); }
@@ -104,6 +132,7 @@ BENCHMARK(BM_HostFrame_Scorpion_Fast)->Iterations(1000)->Unit(benchmark::kMicros
 BENCHMARK(BM_HostFrame_Scorpion_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_TSConf_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_TSConf_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_TSConf14_256C_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);

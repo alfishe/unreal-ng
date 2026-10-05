@@ -33,6 +33,10 @@ enum ROMModeEnum : uint8_t;
 
 class ModuleLogger;
 class EmulatorContext;
+namespace snapshot
+{
+class ISnapshotCommitPolicy;
+}
 class Memory;
 class Screen;
 class Beeper;
@@ -421,6 +425,7 @@ protected:
     EmulatorContext* _context = nullptr;
 
     EmulatorState* _state = nullptr;
+    snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
     Keyboard* _keyboard = nullptr;
     Mouse* _mouse = nullptr;
     Tape* _tape = nullptr;
@@ -1288,6 +1293,13 @@ public:
     /// snapshot, a reset) restores the lock too. Models whose extension frees
     /// bit 5 override this.
     virtual bool IsPagingLocked() const { return _state && (_state->p7FFD & PORT_7FFD_LOCK) != 0; }
+
+    /// The snapshot commit policy this machine owns (snapshot pipeline, PLAN #84): the plan step asks it before the
+    /// legacy commit. nullptr (every machine today) = commit the legacy way
+    virtual snapshot::ISnapshotCommitPolicy* GetSnapshotPolicy() { return _snapshotPolicy; }
+    /// Give the machine a policy (a decoder does it in its constructor; tests with a fake). Not owned: the policy
+    /// must outlive its use, a machine's own policy lives as long as the decoder
+    void SetSnapshotPolicy(snapshot::ISnapshotCommitPolicy* policy) { _snapshotPolicy = policy; }
 
     /// endregion </Interaction with peripherals>
 

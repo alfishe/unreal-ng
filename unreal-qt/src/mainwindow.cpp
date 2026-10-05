@@ -2444,9 +2444,22 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             {
                 bool result = _emulator->LoadSnapshot(file);
                 if (!result)
+                {
                     qWarning() << "Failed to load snapshot:" << filePath;
-                else if (_statusBarManager)
-                    _statusBarManager->resetFpsMeasurement();  // Snapshot replaces the frame counter
+                    // The snapshot pipeline refused it (the machine cannot take it in its current state, ...): say why
+                    const snapshot::Report& report = _emulator->LastSnapshotReport();
+                    if (report.refused)
+                        QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(report.reason));
+                }
+                else
+                {
+                    if (_statusBarManager)
+                        _statusBarManager->resetFpsMeasurement();  // Snapshot replaces the frame counter
+                    const snapshot::Report& report = _emulator->LastSnapshotReport();
+                    if (report.commit != "legacy")
+                        statusBar()->showMessage(
+                            tr("Snapshot loaded by the %1 commit").arg(QString::fromStdString(report.commit)), 5000);
+                }
                 _lastFrameCount = 0;
             }
             else
