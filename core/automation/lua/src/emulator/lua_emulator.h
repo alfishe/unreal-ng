@@ -5764,8 +5764,16 @@ public:
                     result["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
                     return result;
                 }
+                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
+                const std::string profile = RecordingRequest::NormalizeProfile(opts.get_or<std::string>("profile", ""));
+                const std::string acceleration =
+                    RecordingRequest::NormalizeAcceleration(opts.get_or<std::string>("acceleration", ""));
                 {
-                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
+                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
+                                             RecordingRequest::ValidateProfile(profile, format);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
                     if (codecError.empty())
                         codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
                                                                         static_cast<uint32_t>(audioBitrate), audio);
@@ -5785,6 +5793,9 @@ public:
                 if (scale < 1) scale = 1;
                 if (scale > 4) scale = 4;
                 rm->SetScaleFactor(static_cast<uint32_t>(scale));
+
+                rm->SetOutputProfile(profile);
+                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
 
                 const std::string region = opts.get_or<std::string>("region", "full");
                 rm->SetCaptureRegion((region == "screen" || region == "main")
@@ -5859,6 +5870,13 @@ public:
                 result["format"] = format;
                 result["fps"] = fps;
                 result["scale"] = scale;
+                result["profile"] = profile;
+                result["acceleration"] = acceleration;
+                if (rm->HasFixedOutput())
+                {
+                    result["output_width"] = rm->GetOutputWidth();
+                    result["output_height"] = rm->GetOutputHeight();
+                }
                 result["region"] = region;
                 if (sound)
                     result["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
@@ -5915,6 +5933,8 @@ public:
             result["recent_fps"] = stats.recentFps;
             result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
             result["video_codec"] = rm->GetVideoCodec();
+            result["profile"] = rm->GetOutputProfile();
+            result["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
             result["audio"] = rm->HasAudio();
             result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
             result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
@@ -5951,6 +5971,8 @@ public:
             result["recent_fps"] = stats.recentFps;
             result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
             result["video_codec"] = rm->GetVideoCodec();
+            result["profile"] = rm->GetOutputProfile();
+            result["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
             result["audio"] = rm->HasAudio();
             result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
             result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);

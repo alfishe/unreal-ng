@@ -717,7 +717,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
-    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac)" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac, --profile 4k)" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;

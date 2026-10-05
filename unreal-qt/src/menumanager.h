@@ -81,6 +81,7 @@ public:
     QMenu* viewMenu() const { return _viewMenu; }
 #ifdef ENABLE_RECORDING
     QAction* videoRecordingAction() const { return _videoRecordingAction; }
+    QAction* videoRecordingDialogAction() const { return _videoRecordingDialogAction; }
 #endif
 
     // Observer callback for emulator state changes
@@ -178,6 +179,7 @@ signals:
     void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
+    void videoRecordingDialogRequested();  ///< Tools > Video Recording...: the full recording dialog
     void quickRecordRequested(const QString& presetName);
     void recordingStateChanged(bool isRecording);
 #endif
@@ -316,6 +318,7 @@ private:
     QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;
+    QAction* _videoRecordingDialogAction = nullptr;
 
     // Quick Record submenu
     QMenu* _quickRecordMenu = nullptr;

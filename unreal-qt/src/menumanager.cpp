@@ -1222,6 +1222,13 @@ void MenuManager::createToolsMenu()
     _videoRecordingAction->setStatusTip(tr("Toggle recording panel"));
     connect(_videoRecordingAction, &QAction::toggled, this, &MenuManager::videoRecordingRequested);
 
+    // The full recording dialog: container, codec (H.264 / H.265), 1080p / 1440p / 4K profile, GPU or software
+    // encoder, quality, capture region, audio
+    _videoRecordingDialogAction = _toolsMenu->addAction(tr("&Video Recording..."));
+    _videoRecordingDialogAction->setStatusTip(
+        tr("Open the video recording dialog (profiles up to 4K, GPU or software encoder)"));
+    connect(_videoRecordingDialogAction, &QAction::triggered, this, &MenuManager::videoRecordingDialogRequested);
+
     _toolsMenu->addSeparator();
 
     // Quick Record submenu with preset shortcuts

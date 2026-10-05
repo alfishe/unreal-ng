@@ -396,35 +396,11 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
             return;
         }
 
-        AVAssetWriterInput* videoInput = (__bridge AVAssetWriterInput*)_videoInput;
         AVAssetWriterInputPixelBufferAdaptor* adaptor =
             (__bridge AVAssetWriterInputPixelBufferAdaptor*)_pixelBufferAdaptor;
-
-        // Wait briefly for the input to become ready. VideoToolbox HW keeps up
-        // with ZX-sized frames easily, so a bounded wait protects turbo-mode
-        // capture from drops without risking a long stall.
-        int waitedUs = 0;
-        while (![videoInput isReadyForMoreMediaData] && waitedUs < 100000)  // max 100ms
-        {
-            usleep(1000);
-            waitedUs += 1000;
-        }
-        if (![videoInput isReadyForMoreMediaData])
-            return;  // Drop frame — writer is stuck
-
-        // A failed writer still reports the input ready, but it has no pixel
-        // buffer pool any more: nothing it is given is written. Drop the frame
         AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
-        if (writer.status != AVAssetWriterStatusWriting)
-        {
-            if (writer.status == AVAssetWriterStatusFailed && _lastError.empty())
-            {
-                NSError* writerError = writer.error;
-                _lastError = std::string("AVAssetWriter failed: ") +
-                             (writerError ? [[writerError description] UTF8String] : "unknown error");
-            }
+        if (!WaitWriterReady())
             return;
-        }
 
         // Get a pixel buffer from the adaptor's pool and copy the frame in.
         // The copy below writes the OUTPUT geometry (_width x _height: the
@@ -543,6 +519,131 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
 
         CVPixelBufferRelease(pixelBuffer);
     }
+}
+
+// ============================================================================
+// Writer readiness, zero-copy input
+// ============================================================================
+
+bool VideoToolboxEncoder::WaitWriterReady()
+{
+    AVAssetWriterInput* videoInput = (__bridge AVAssetWriterInput*)_videoInput;
+    AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
+
+    // Wait briefly for the input to become ready. VideoToolbox HW keeps up
+    // with ZX-sized frames easily, so a bounded wait protects turbo-mode
+    // capture from drops without risking a long stall.
+    int waitedUs = 0;
+    while (![videoInput isReadyForMoreMediaData] && waitedUs < 100000)  // max 100ms
+    {
+        usleep(1000);
+        waitedUs += 1000;
+    }
+    if (![videoInput isReadyForMoreMediaData])
+        return false;  // Drop frame — writer is stuck
+
+    // A failed writer still reports the input ready, but it has no pixel
+    // buffer pool any more: nothing it is given is written. Drop the frame
+    if (writer.status != AVAssetWriterStatusWriting)
+    {
+        if (writer.status == AVAssetWriterStatusFailed && _lastError.empty())
+        {
+            NSError* writerError = writer.error;
+            _lastError = std::string("AVAssetWriter failed: ") +
+                         (writerError ? [[writerError description] UTF8String] : "unknown error");
+        }
+        return false;
+    }
+    return true;
+}
+
+FrameTargetResult VideoToolboxEncoder::AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target)
+{
+    if (!_isRecording || !_videoInput || !_pixelBufferAdaptor || !_pixelBufferPool)
+        return FrameTargetResult::Dropped;
+
+    // The pool makes buffers of the output size only
+    if (width != _width || height != _height)
+        return FrameTargetResult::Unsupported;
+
+    @autoreleasepool
+    {
+        if (!WaitWriterReady())
+            return FrameTargetResult::Dropped;
+
+        CVPixelBufferRef pixelBuffer = nullptr;
+        const OSStatus status = CVPixelBufferPoolCreatePixelBuffer(
+            kCFAllocatorDefault, static_cast<CVPixelBufferPoolRef>(_pixelBufferPool), &pixelBuffer);
+        if (status != kCVReturnSuccess || pixelBuffer == nullptr)
+        {
+            _lastError = "Failed to obtain CVPixelBuffer: " + std::to_string(status);
+            return FrameTargetResult::Dropped;
+        }
+        if (CVPixelBufferGetWidth(pixelBuffer) < width || CVPixelBufferGetHeight(pixelBuffer) < height ||
+            CVPixelBufferGetBytesPerRow(pixelBuffer) < static_cast<size_t>(width) * 4)
+        {
+            _lastError = "CVPixelBuffer is smaller than the frame: dropped";
+            CVPixelBufferRelease(pixelBuffer);
+            return FrameTargetResult::Dropped;
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, 0);
+        target.data = static_cast<uint8_t*>(CVPixelBufferGetBaseAddress(pixelBuffer));
+        target.stride = CVPixelBufferGetBytesPerRow(pixelBuffer);
+        target.width = width;
+        target.height = height;
+        target.swapRedBlue = true;  // the pixel buffer is 32BGRA, the emulator frame RGBA
+        target.handle = pixelBuffer;
+    }
+    return FrameTargetResult::Ready;
+}
+
+void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestampSec)
+{
+    CVPixelBufferRef pixelBuffer = static_cast<CVPixelBufferRef>(target.handle);
+    if (!pixelBuffer)
+        return;
+
+    @autoreleasepool
+    {
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+
+        // A frame at or before the previous one would fail the writer (and the file): drop it
+        if (timestampSec <= _lastVideoTimestamp)
+        {
+            _lastError = "Video frame timestamp did not advance: dropped";
+        }
+        else
+        {
+            AVAssetWriterInputPixelBufferAdaptor* adaptor =
+                (__bridge AVAssetWriterInputPixelBufferAdaptor*)_pixelBufferAdaptor;
+            AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
+            CMTime pts = CMTimeMakeWithSeconds(timestampSec, 1000000);
+            if (![adaptor appendPixelBuffer:pixelBuffer withPresentationTime:pts])
+            {
+                NSString* errDesc = writer.error ? [writer.error localizedDescription] : @"unknown";
+                _lastError = std::string("appendPixelBuffer failed: ") + [errDesc UTF8String];
+            }
+            else
+            {
+                _framesEncoded++;
+                _lastVideoTimestamp = timestampSec;
+            }
+        }
+        CVPixelBufferRelease(pixelBuffer);
+    }
+    target = FrameTarget();
+}
+
+void VideoToolboxEncoder::ReleaseFrameTarget(FrameTarget& target)
+{
+    CVPixelBufferRef pixelBuffer = static_cast<CVPixelBufferRef>(target.handle);
+    if (pixelBuffer)
+    {
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+        CVPixelBufferRelease(pixelBuffer);
+    }
+    target = FrameTarget();
 }
 
 // ============================================================================

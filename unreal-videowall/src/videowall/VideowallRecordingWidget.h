@@ -73,6 +73,8 @@ private:
     QComboBox* _containerCombo = nullptr;
     QComboBox* _videoCodecCombo = nullptr;
     QComboBox* _qualityCombo = nullptr;
+    QComboBox* _profileCombo = nullptr;  ///< Auto (match the wall) / 1080p / 1440p / 4K
+    QComboBox* _accelCombo = nullptr;    ///< Encoder: auto / GPU / software
 
     QCheckBox* _includeAudioCheck = nullptr;
     QComboBox* _audioCodecCombo = nullptr;

@@ -136,6 +136,26 @@ RecordingWidget::RecordingWidget(MainWindow* mainWindow, QWidget* parent)
     connect(_regionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &RecordingWidget::onRegionChanged);
 
+    _profileCombo = new QComboBox(this);
+    _profileCombo->addItem(tr("Native"), QStringLiteral("native"));
+    _profileCombo->addItem(tr("1080p"), QStringLiteral("1080p"));
+    _profileCombo->addItem(tr("1440p"), QStringLiteral("1440p"));
+    _profileCombo->addItem(tr("4K"), QStringLiteral("4k"));
+    _profileCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    _profileCombo->setFixedWidth(74);
+    connect(_profileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &RecordingWidget::onProfileChanged);
+
+    _accelCombo = new QComboBox(this);
+    _accelCombo->addItem(tr("Auto"), 0);
+    _accelCombo->addItem(tr("GPU"), 1);
+    _accelCombo->addItem(tr("CPU"), 2);
+    _accelCombo->setToolTip(tr("Encoder: Auto (GPU when available) / GPU only / CPU (software x264 / x265)"));
+    _accelCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    _accelCombo->setFixedWidth(68);
+    connect(_accelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &RecordingWidget::onAccelerationChanged);
+
     const int iconMetric = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QSize toolbarIconSize(iconMetric, iconMetric);
     const int closeBtnDim = toolbarIconSize.height() + 4;
@@ -209,6 +229,8 @@ RecordingWidget::RecordingWidget(MainWindow* mainWindow, QWidget* parent)
     controlLayout->addWidget(_containerCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_qualityCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_regionCombo, 0, Qt::AlignVCenter);
+    controlLayout->addWidget(_profileCombo, 0, Qt::AlignVCenter);
+    controlLayout->addWidget(_accelCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_statusLabel, 1, Qt::AlignVCenter);
     controlLayout->addWidget(_advancedBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_closeBtn, 0, Qt::AlignVCenter);
@@ -521,6 +543,16 @@ void RecordingWidget::updateRegionAvailability()
     const QString cont = _containerCombo->currentText().toUpper();
     const bool isAudio = (cont == QStringLiteral("WAV") || cont == QStringLiteral("MP3") || cont == QStringLiteral("FLAC"));
 
+    // The profiles are H.264 frames: MP4 / MOV / MKV (the dialog also offers H.265). Elsewhere the profile is off
+    const bool profileContainer = (cont == QStringLiteral("MP4") || cont == QStringLiteral("MOV") ||
+                                   cont == QStringLiteral("MKV"));
+    _profileCombo->setEnabled(profileContainer && !_isRecording);
+    _profileCombo->setToolTip(profileContainer
+        ? tr("Output profile: Native (picture x scale) or a fixed 1080p / 1440p / 4K frame. The picture is scaled "
+             "sharply into it (nearest neighbor, integer factor, black bars, no blur)")
+        : tr("Output profiles need an MP4, MOV or MKV container (H.264 / H.265)"));
+    _accelCombo->setEnabled(!isAudio && !_isRecording);
+
     if (isAudio)
     {
         _regionCombo->setEnabled(false);
@@ -540,6 +572,16 @@ void RecordingWidget::applySettingsToUI()
 
     if (_settings.captureRegion >= 0 && _settings.captureRegion < _regionCombo->count())
         _regionCombo->setCurrentIndex(_settings.captureRegion);
+
+    _profileCombo->blockSignals(true);
+    const int profileIdx = _profileCombo->findData(_settings.profile);
+    _profileCombo->setCurrentIndex(profileIdx >= 0 ? profileIdx : 0);
+    _profileCombo->blockSignals(false);
+    _accelCombo->blockSignals(true);
+    const int accelIdx = _accelCombo->findData(_settings.acceleration);
+    _accelCombo->setCurrentIndex(accelIdx >= 0 ? accelIdx : 0);
+    _accelCombo->blockSignals(false);
+    updateRegionAvailability();
 }
 
 void RecordingWidget::updateStatusLabel()
@@ -558,7 +600,11 @@ void RecordingWidget::updateStatusLabel()
     else
     {
         const QString regionStr = (_settings.captureRegion == 1) ? tr("Screen") : tr("Full");
-        _statusLabel->setText(tr("Ready | %1 | %2 | %3").arg(cont, qualityStr, regionStr));
+        const QString profileStr = _profileCombo->isEnabled() && _settings.profile != QStringLiteral("native")
+                                       ? _profileCombo->currentText() : QString();
+        _statusLabel->setText(profileStr.isEmpty() ? tr("Ready | %1 | %2 | %3").arg(cont, qualityStr, regionStr)
+                                                   : tr("Ready | %1 | %2 | %3 | %4")
+                                                         .arg(cont, qualityStr, regionStr, profileStr));
     }
 }
 
@@ -634,6 +680,13 @@ void RecordingWidget::onRecordToggled()
         rm->SetQualityPreset(presetVal);
         rm->SetCaptureRegion(_settings.captureRegion == 1 ? VideoCaptureRegion::MainScreen : VideoCaptureRegion::FullFrame);
         rm->SetScaleFactor(_settings.scaleFactor);
+        const bool videoProfileContainer = _settings.container.compare(QStringLiteral("MP4"), Qt::CaseInsensitive) == 0 ||
+                                           _settings.container.compare(QStringLiteral("MOV"), Qt::CaseInsensitive) == 0 ||
+                                           _settings.container.compare(QStringLiteral("MKV"), Qt::CaseInsensitive) == 0;
+        rm->SetOutputProfile(videoProfileContainer ? _settings.profile.toStdString() : std::string("native"));
+        rm->SetEncoderAcceleration(_settings.acceleration == 1 ? EncoderAcceleration::Hardware :
+                                   _settings.acceleration == 2 ? EncoderAcceleration::Software :
+                                                                 EncoderAcceleration::Auto);
 
         const QString cont = _settings.container.toUpper();
         const bool isAudioOnly = (cont == "WAV" || cont == "MP3" || cont == "FLAC");
@@ -697,6 +750,7 @@ void RecordingWidget::onRecordToggled()
         _backendCombo->setEnabled(false);
         _qualityCombo->setEnabled(false);
         _regionCombo->setEnabled(false);
+        updateRegionAvailability();
         _statsTimer->start();
         onUpdateStats();
         emit recordingStateChanged(true);
@@ -766,6 +820,19 @@ void RecordingWidget::onRegionChanged(int index)
     _settings.captureRegion = _regionCombo->currentData().toInt();
     _settings.save();
     updateStatusLabel();
+}
+
+void RecordingWidget::onProfileChanged(int)
+{
+    _settings.profile = _profileCombo->currentData().toString();
+    _settings.save();
+    updateStatusLabel();
+}
+
+void RecordingWidget::onAccelerationChanged(int)
+{
+    _settings.acceleration = _accelCombo->currentData().toInt();
+    _settings.save();
 }
 
 void RecordingWidget::onUpdateStats()

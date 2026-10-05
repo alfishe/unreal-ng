@@ -69,6 +69,8 @@ void appendRecordingStats(Json::Value& target, const RecordingManager* rm)
     target["average_frame_time_ms"] = stats.averageFrameTime;
     target["recent_fps"] = stats.recentFps;
     target["video_codec"] = rm->GetVideoCodec();
+    target["profile"] = rm->GetOutputProfile();
+    target["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
     target["audio"] = rm->HasAudio();
     target["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : "";
     target["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
@@ -113,6 +115,8 @@ void appendOutputFile(Json::Value& target, const std::string& path)
 /// @brief POST /api/v1/emulator/{id}/video/record
 /// @brief Video recording control over the RecordingManager
 /// @brief Request body: {"action":"start|stop|pause|resume",
+///        "profile":"native"|"1080p"|"1440p"|"4k" (a fixed frame, h264/h265 only, sharp nearest scale),
+///        "acceleration":"auto"|"hardware"|"software",
 ///        "format":"gif" (native; mp4/avi/mkv depend on ffmpeg availability),
 ///        "fps":50, "scale":1..4, "region":"full"|"screen", "filename":"...",
 ///        "audio":"aac" (optional; default none = video only), "video_bitrate":kbps, "audio_bitrate":kbps}
@@ -187,6 +191,32 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
                 return;
             }
 
+            // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
+            const std::string profile = RecordingRequest::NormalizeProfile(
+                json && json->isMember("profile") && (*json)["profile"].isString() ? (*json)["profile"].asString() : "");
+            const std::string acceleration = RecordingRequest::NormalizeAcceleration(
+                json && json->isMember("acceleration") && (*json)["acceleration"].isString() ?
+                    (*json)["acceleration"].asString() : "");
+            std::string profileError;
+            if (profile.empty())
+                profileError = "Unknown profile (native, 1080p, 1440p, 4k).";
+            else if (acceleration.empty())
+                profileError = "Unknown acceleration (auto, hardware, software).";
+            else
+                profileError = RecordingRequest::ValidateProfile(profile, format);
+            if (!profileError.empty())
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = profileError;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+
             // Configuration setters refuse changes mid-recording — apply while paused
             const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
             if (wasRunning)
@@ -207,6 +237,9 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
                 if (scale > 4) scale = 4;
                 rm->SetScaleFactor(scale);
             }
+
+            rm->SetOutputProfile(profile);
+            rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
 
             const std::string region = json && json->isMember("region") ? (*json)["region"].asString() : "full";
             const VideoCaptureRegion captureRegion =
@@ -255,6 +288,13 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
             ret["format"] = format;
             ret["fps"] = fps;
             ret["scale"] = scale;
+            ret["profile"] = profile;
+            ret["acceleration"] = acceleration;
+            if (rm->HasFixedOutput())
+            {
+                ret["output_width"] = rm->GetOutputWidth();
+                ret["output_height"] = rm->GetOutputHeight();
+            }
             ret["region"] = captureRegion == VideoCaptureRegion::MainScreen ? "screen" : "full";
             ret["audio"] = rm->HasAudio();
             ret["audio_codec"] = codecs.audio;

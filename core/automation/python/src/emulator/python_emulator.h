@@ -5295,6 +5295,8 @@ namespace PythonBindings
                 float fps = 50.0f;
                 int scale = 1;
                 std::string region = "full";
+                std::string profileName;
+                std::string accelerationName;
                 std::string audio;
                 long videoBitrate = 0;
                 long audioBitrate = 0;
@@ -5328,6 +5330,10 @@ namespace PythonBindings
                         scale = opts["scale"].cast<int>();
                     if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
                         region = opts["region"].cast<std::string>();
+                    if (opts.contains("profile") && py::isinstance<py::str>(opts["profile"]))
+                        profileName = opts["profile"].cast<std::string>();
+                    if (opts.contains("acceleration") && py::isinstance<py::str>(opts["acceleration"]))
+                        accelerationName = opts["acceleration"].cast<std::string>();
                 }
 
                 std::string extension = format;
@@ -5353,8 +5359,15 @@ namespace PythonBindings
                     d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
                     return d;
                 }
+                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
+                const std::string profile = RecordingRequest::NormalizeProfile(profileName);
+                const std::string acceleration = RecordingRequest::NormalizeAcceleration(accelerationName);
                 {
-                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
+                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
+                                             RecordingRequest::ValidateProfile(profile, format);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
                     if (codecError.empty())
                         codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
                                                                         static_cast<uint32_t>(audioBitrate), audio);
@@ -5372,6 +5385,9 @@ namespace PythonBindings
                 if (scale < 1) scale = 1;
                 if (scale > 4) scale = 4;
                 rm->SetScaleFactor(static_cast<uint32_t>(scale));
+
+                rm->SetOutputProfile(profile);
+                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
 
                 rm->SetCaptureRegion((region == "screen" || region == "main")
                                          ? VideoCaptureRegion::MainScreen
@@ -5401,6 +5417,13 @@ namespace PythonBindings
                 d["format"] = format;
                 d["fps"] = fps;
                 d["scale"] = scale;
+                d["profile"] = profile;
+                d["acceleration"] = acceleration;
+                if (rm->HasFixedOutput())
+                {
+                    d["output_width"] = rm->GetOutputWidth();
+                    d["output_height"] = rm->GetOutputHeight();
+                }
                 d["region"] = region;
                 d["audio"] = rm->HasAudio();
                 d["audio_codec"] = audio;
@@ -5455,6 +5478,8 @@ namespace PythonBindings
             d["recent_fps"] = stats.recentFps;
             d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
             d["video_codec"] = rm->GetVideoCodec();
+            d["profile"] = rm->GetOutputProfile();
+            d["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
             d["audio"] = rm->HasAudio();
             d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
             d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
@@ -5496,6 +5521,8 @@ namespace PythonBindings
             d["recent_fps"] = stats.recentFps;
             d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
             d["video_codec"] = rm->GetVideoCodec();
+            d["profile"] = rm->GetOutputProfile();
+            d["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
             d["audio"] = rm->HasAudio();
             d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
             d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;

@@ -437,6 +437,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
+    connect(_menuManager, &MenuManager::videoRecordingDialogRequested, this, &MainWindow::openAdvancedRecordingDialog);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 #endif
 
