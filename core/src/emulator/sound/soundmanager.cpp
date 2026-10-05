@@ -113,21 +113,39 @@ SoundManager::SoundManager(EmulatorContext* context)
     // Build the device registry based on what this machine has
     // Beeper is always present
     _devices.push_back({AudioSourceType::Beeper, "Beeper", false, false, 1.0f, 0.0f, false});
+    // The AY socket's rows are named after what sits in the socket (the slot set's ay-socket card), so a TurboSound
+    // FM or a TurboSound that replaced the board AY does not read as the board AY (MS-7: Ball Quest on a Pentagon
+    // with the shipped TSFM lit "AY 1" / "AY 2" while the slot report said the board AY was replaced). The source
+    // keys (ay1, ay2, fm1, fm2) stay as they are
+    const char* ssgName[2] = {"AY", "AY 2"};
+    const char* fmName[2] = {"FM 1", "FM 2"};
+    if (_turboSound && _turboSound->hasFm())
+    {
+        ssgName[0] = "TSFM SSG 1";   // the two YM2203's AY-compatible SSG parts
+        ssgName[1] = "TSFM SSG 2";
+        fmName[0] = "TSFM FM 1";
+        fmName[1] = "TSFM FM 2";
+    }
+    else if (_turboSound && _turboSound->getChipCount() > 1)
+    {
+        ssgName[0] = "TS AY 1";      // a TurboSound: two AY chips
+        ssgName[1] = "TS AY 2";
+    }
     // AY 1 whenever the slot is occupied (single AY or first chip of TurboSound)
     if (_turboSound)
     {
-        _devices.push_back({AudioSourceType::AY1_All, "AY 1", false, false, 1.0f, 0.0f, false});
+        _devices.push_back({AudioSourceType::AY1_All, ssgName[0], false, false, 1.0f, 0.0f, false});
     }
     // AY 2 only if TurboSound (second chip)
     if (_turboSound && _turboSound->getChipCount() > 1)
     {
-        _devices.push_back({AudioSourceType::AY2_All, "AY 2", false, false, 1.0f, 0.0f, false});
+        _devices.push_back({AudioSourceType::AY2_All, ssgName[1], false, false, 1.0f, 0.0f, false});
     }
     // FM-only entries when the slot device has FM channels (TSFM, §7.2)
     if (_turboSound && _turboSound->hasFm())
     {
-        _devices.push_back({AudioSourceType::FM1, "FM 1", false, false, 1.0f, 0.0f, false});
-        _devices.push_back({AudioSourceType::FM2, "FM 2", false, false, 1.0f, 0.0f, false});
+        _devices.push_back({AudioSourceType::FM1, fmName[0], false, false, 1.0f, 0.0f, false});
+        _devices.push_back({AudioSourceType::FM2, fmName[1], false, false, 1.0f, 0.0f, false});
     }
 
     // Covox / SoundDrive when either config flag is set. The same 4-channel

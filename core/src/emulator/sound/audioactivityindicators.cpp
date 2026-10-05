@@ -24,11 +24,20 @@ void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std
             frames++;
     }
 
+    // A TurboSound FM in the AY socket: its SSG parts light the TSFM indicator, not the board AY's (the FM rows are
+    // registered only for it)
+    bool tsfm = false;
+    for (const AudioDeviceInfo& d : devices)
+        tsfm = tsfm || d.type == AudioSourceType::FM1;
+
     bool on[HUD_SOURCES] = {};
     on[static_cast<int>(AudioSource::Beeper)] = held(AudioSourceType::Beeper);
     on[static_cast<int>(AudioSource::Covox)] = held(AudioSourceType::COVOX);
-    on[static_cast<int>(AudioSource::AY)] = held(AudioSourceType::AY1_All) && !held(AudioSourceType::AY2_All);
-    on[static_cast<int>(AudioSource::TurboSound)] = held(AudioSourceType::AY2_All);
+    const bool ssg1 = held(AudioSourceType::AY1_All);
+    const bool ssg2 = held(AudioSourceType::AY2_All);
+    on[static_cast<int>(AudioSource::AY)] = !tsfm && ssg1 && !ssg2;
+    on[static_cast<int>(AudioSource::TurboSound)] = !tsfm && ssg2;
+    on[static_cast<int>(AudioSource::TSFM)] = tsfm && (ssg1 || ssg2);
     on[static_cast<int>(AudioSource::FM)] = held(AudioSourceType::FM1) || held(AudioSourceType::FM2);
     on[static_cast<int>(neoGSFitted ? AudioSource::NeoGS : AudioSource::GeneralSound)] = held(AudioSourceType::GeneralSound);
     on[static_cast<int>(AudioSource::NeoGSMp3)] = held(AudioSourceType::GeneralSoundMp3);

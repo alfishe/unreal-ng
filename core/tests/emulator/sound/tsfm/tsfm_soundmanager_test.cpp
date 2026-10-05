@@ -122,8 +122,10 @@ TEST_F(TsfmMixer_Test, FmConfigRegistersFmSources)
     const AudioDeviceInfo* fm2 = FindDevice(*soundManager, AudioSourceType::FM2);
     ASSERT_NE(fm1, nullptr) << "FM 1 not registered";
     ASSERT_NE(fm2, nullptr) << "FM 2 not registered";
-    EXPECT_EQ(fm1->name, "FM 1");
-    EXPECT_EQ(fm2->name, "FM 2");
+    EXPECT_EQ(fm1->name, "TSFM FM 1");
+    EXPECT_EQ(fm2->name, "TSFM FM 2");
+    EXPECT_EQ(FindDevice(*soundManager, AudioSourceType::AY1_All)->name, "TSFM SSG 1") << "not the board AY (MS-7)";
+    EXPECT_EQ(FindDevice(*soundManager, AudioSourceType::AY2_All)->name, "TSFM SSG 2");
 
     // Fresh registry entries: audible at unity volume
     EXPECT_FALSE(fm1->mute);

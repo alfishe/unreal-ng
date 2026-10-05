@@ -1,6 +1,6 @@
 == atm3
 model 5
-mixer [Beeper] [AY 1] [AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 ay
 gs NeoGS
 covox quad
@@ -45,7 +45,7 @@ fulldecode 00FF/00EF slot 1
 ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:48 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 56:22 notRecorded 0
 == atm450
 model 7
-mixer [Beeper] [AY 1] [AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 ay
 gs NeoGS
 covox quad
@@ -73,7 +73,7 @@ fulldecode 00FF/007F slot 1
 ttd 0:77 1:72 2:34 3:21 7:20 8:90 10:216 12:137 17:50 35:52 56:22 notRecorded 0
 == atm710
 model 6
-mixer [Beeper] [AY 1] [AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 ay
 gs NeoGS
 covox quad
@@ -101,7 +101,7 @@ fulldecode 00FF/007F slot 1
 ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
 == pentagon128k
 model 0
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
 covox quad
@@ -132,7 +132,7 @@ fulldecode 00FF/007F slot 1
 ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
 == pentagon512k
 model 0
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
 covox quad
@@ -163,7 +163,7 @@ fulldecode 00FF/007F slot 1
 ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
 == profi
 model 8
-mixer [Beeper] [AY 1] [COVOX]
+mixer [Beeper] [AY] [COVOX]
 turbosound 1 ay
 gs none
 covox quad
@@ -185,7 +185,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 0:77 1:72 2:34 3:21 7:20 9:46 17:50 18:48 23:14 35:52 44:54 50:16 51:35 52:33 56:22 notRecorded 0
 == profi3
 model 20
-mixer [Beeper] [AY 1] [COVOX]
+mixer [Beeper] [AY] [COVOX]
 turbosound 1 ay
 gs none
 covox quad
@@ -206,7 +206,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 0:77 1:72 2:34 3:21 7:20 9:46 23:14 35:52 50:16 56:22 notRecorded 0
 == profscorp
 model 10
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
 covox quad
@@ -238,7 +238,7 @@ fulldecode 00FF/007F slot 1
 ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
 == scorpion
 model 9
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
 covox quad
@@ -269,7 +269,7 @@ fulldecode 00FF/007F slot 1
 ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
 == spectrum128
 model 2
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
 turbosound 2 fm
 gs none
 covox none
@@ -289,7 +289,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
 == spectrum2
 model 17
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
 turbosound 2 fm
 gs none
 covox none
@@ -309,7 +309,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
 == spectrum2a
 model 18
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
 turbosound 2 fm
 gs none
 covox none
@@ -330,7 +330,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 4:107 7:20 13:16 35:52 56:22 notRecorded 0
 == spectrum3
 model 3
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
 turbosound 2 fm
 gs none
 covox none
@@ -353,7 +353,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 4:107 7:20 13:16 14:42 35:52 56:22 notRecorded 0
 == spectrum48
 model 1
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
 turbosound 2 fm
 gs none
 covox none
@@ -372,7 +372,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
 == sprinter
 model 19
-mixer [Beeper] [AY 1] [Covox-Blaster]
+mixer [Beeper] [AY] [Covox-Blaster]
 turbosound 1 ay
 gs none
 covox none
@@ -409,7 +409,7 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 0:77 1:64 2:34 7:20 17:70 18:52 20:39 23:14 25:142 28:42 29:93 30:32 31:39 32:42 33:16 35:52 45:var 56:22 notRecorded 0
 == ts-conf
 model 4
-mixer [Beeper] [AY 1] [AY 2] [FM 1] [FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
 covox quad

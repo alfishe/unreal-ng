@@ -75,6 +75,13 @@ struct AudioActivityCounter : public Observer
 class AudioActivityNotification_Test : public ::testing::TestWithParam<TurboSoundKind>
 {
 protected:
+    /// The HUD source of the socket's SSG chip 0: the board AY, or the TSFM indicator when a TurboSound FM sits in the
+    /// socket (its SSG parts are not the board AY - MS-7)
+    AudioSource SsgSource() const
+    {
+        return GetParam() == TurboSoundKind::FM ? AudioSource::TSFM : AudioSource::AY;
+    }
+
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     std::unique_ptr<SoundManager> _sound;
@@ -171,8 +178,8 @@ TEST_P(AudioActivityNotification_Test, ActiveFrame_PostsExactlyOneNotificationPe
 {
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
     // Only chip0 is driven (StartAyTone), never chip1/TurboSound-mode, so the
-    // AY/TS notification always reports AudioSource::AY regardless of slot kind.
-    AudioActivityCounter counter(_context->emulatorId, AudioSource::AY);
+    // notification reports AudioSource::AY - or AudioSource::TSFM with a TurboSound FM in the socket.
+    AudioActivityCounter counter(_context->emulatorId, SsgSource());
     Observer* obsPtr = &counter;
     ObserverCallbackMethod cb = static_cast<ObserverCallbackMethod>(&AudioActivityCounter::onEvent);
     mc.AddObserver(NC_AUDIO_ACTIVITY, obsPtr, cb);
@@ -224,7 +231,7 @@ struct AudioActivityOnOffCounter : public Observer
 TEST_P(AudioActivityNotification_Test, ShortNote_LedFollowsFrame_HudHoldsOneSecond)
 {
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-    AudioActivityOnOffCounter counter(_context->emulatorId, AudioSource::AY);
+    AudioActivityOnOffCounter counter(_context->emulatorId, SsgSource());
     Observer* obsPtr = &counter;
     ObserverCallbackMethod cb = static_cast<ObserverCallbackMethod>(&AudioActivityOnOffCounter::onEvent);
     mc.AddObserver(NC_AUDIO_ACTIVITY, obsPtr, cb);
@@ -383,7 +390,7 @@ TEST_P(AudioActivityNotification_Test, BeeperEdge_LedAndHudFromOneMeasurement)
 TEST_P(AudioActivityNotification_Test, Pause_EndsLedsAndNudgesAtOnce)
 {
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-    AudioActivityOnOffCounter counter(_context->emulatorId, AudioSource::AY);
+    AudioActivityOnOffCounter counter(_context->emulatorId, SsgSource());
     Observer* obsPtr = &counter;
     ObserverCallbackMethod cb = static_cast<ObserverCallbackMethod>(&AudioActivityOnOffCounter::onEvent);
     mc.AddObserver(NC_AUDIO_ACTIVITY, obsPtr, cb);

@@ -14,6 +14,8 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/emulator.h"
+#include "emulator/slots/slotconfig.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/cards/multisound/multisoundslotcard.h"
@@ -346,6 +348,63 @@ TEST(MultiSoundSlotCard_Test, SsgToneReachesItsRow)
     EXPECT_GT(sound->device(AudioSourceType::MultiSoundSsg)->peak, 0.01f);
     EXPECT_LT(sound->device(AudioSourceType::MultiSoundFm)->peak, 0.001f) << "FM muted after the reset";
     EXPECT_LT(sound->device(AudioSourceType::AY1_All)->peak, 0.001f) << "the shadowed board AY got no write";
+}
+
+/// MS-7 owner report "the board AY rows are active with Ball Quest on the Pentagon 1024 and the ATM710": with the card
+/// fitted the board AY is shadowed on both (the Pentagon's retrofitted ZX-bus: card wins; the ATM Turbo 2+ CPU-socket
+/// adapter: the card drives IORQGE) - its row is the board chip, named "AY", silent and never active while the card's
+/// SSG plays; the HUD lights the MultiSound, not the AY. One machine each, three frames (~60 ms with the ROM / config)
+TEST(MultiSoundSlotCard_Test, ShadowedBoardAyStaysSilentOnPentagon1024AndAtm710)
+{
+    struct Case
+    {
+        const char* model;
+        uint32_t ramKb;
+        std::vector<std::pair<std::string, std::string>> slots;
+        const char* shadowedBy;
+    };
+    const Case cases[] = {
+        { "PENTAGON", 1024, { { "zxbus.1", "multisound" } }, "shadowed by zxbus.1" },
+        { "ATM710", 1024, { { "cpu-socket.1", "multisound" }, { "cpu-socket.1.adapter", "atm-cpu-socket-zxbus" } },
+          "shadowed by cpu-socket.1" },
+    };
+    SoundCardScope sound;
+    for (const Case& c : cases)
+    {
+        const auto lines = c.slots;
+        std::string error;
+        std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM(
+            "", c.model, c.ramKb, LoggerLevel::LogError, &error, [lines](CONFIG& config) {
+                SlotConfig slotConfig;
+                ParseSlotsSection(lines, slotConfig);
+                SlotManager::UseSlots(slotConfig, config);
+            });
+        ASSERT_NE(emulator, nullptr) << c.model << ": " << error;
+        EmulatorContext* context = emulator->GetContext();
+        Z80* z80 = context->pCore->GetZ80();
+        z80->DirectWrite(0x8000, 0xF3);   // DI; HALT: the ROM does not touch the sound ports
+        z80->DirectWrite(0x8001, 0x76);
+        z80->pc = 0x8000;
+        z80->m1_pc = 0x8000;
+        // Tone A through #FFFD / #BFFD as Ball Quest's driver writes it (TurboSound chip switch first)
+        for (const auto& [port, value] : { std::pair<uint16_t, uint8_t>{ 0xFFFD, 0xFF }, { 0xFFFD, 0 }, { 0xBFFD, 0x00 },
+                                           { 0xFFFD, 1 }, { 0xBFFD, 0x01 }, { 0xFFFD, 7 }, { 0xBFFD, 0x3E },
+                                           { 0xFFFD, 8 }, { 0xBFFD, 0x0F } })
+            context->pPortDecoder->WriteCycle(port, value, 0x8000);
+        emulator->RunNFrames(3);
+
+        SoundManager* sm = context->pSoundManager;
+        const AudioDeviceInfo* board = sm->device(AudioSourceType::AY1_All);
+        ASSERT_NE(board, nullptr) << c.model;
+        EXPECT_EQ(board->name, "AY") << c.model << ": the board chip, not a TurboSound / TSFM row";
+        EXPECT_EQ(sm->device(AudioSourceType::AY2_All), nullptr) << c.model;
+        EXPECT_EQ(sm->deviceState(AudioSourceType::AY1_All), c.shadowedBy) << c.model;
+        EXPECT_FALSE(board->activeRecently) << c.model << ": the shadowed board AY got the writes";
+        EXPECT_LT(board->peak, 0.001f) << c.model;
+        EXPECT_FALSE(sm->getActivityIndicators().held(AudioSourceType::AY1_All)) << c.model;
+        EXPECT_TRUE(sm->device(AudioSourceType::MultiSoundSsg)->activeRecently) << c.model << ": the card plays";
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+    }
 }
 
 // endregion
