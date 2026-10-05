@@ -19,6 +19,8 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,7 @@ class EmulatorContext;
 namespace ttd
 {
 class TimeTravelManager;
+class TimeTravelController;
 struct TTDFileInfo;
 struct TTDRecordedMachine;
 
@@ -69,67 +72,35 @@ struct TTDReply
 class TTDControl
 {
 public:
+    /// The instance's session: the engine's controller when the emulator runs
+    /// one (EmulatorContext::pTimeTravelController), v1's manager otherwise
     explicit TTDControl(EmulatorContext* context);
+    /// The verbs over @p controller (tests run the surface contract on both backends)
+    TTDControl(EmulatorContext* context, TimeTravelController* controller);
+    ~TTDControl();
+    TTDControl(const TTDControl&) = delete;
+    TTDControl& operator=(const TTDControl&) = delete;
 
+    /// Check the verb and its options, then run it
     TTDReply Execute(const TTDRequest& request);
 
     static const std::vector<std::string>& Verbs();
-    /// The options a verb accepts (help texts, tests). "*": any name, the verb checks them
-    /// itself (port-events: the port query's options)
+    /// The option names @p verb takes; {"*"} = any (port-events forwards them to its parser)
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
 
-    /// Status fields, also the idle answer when time travel is not constructed
+    /// The status body (also without time travel: the capability probe)
     static StateNode StatusBody(const TimeTravelManager* manager);
-    /// A .ttd file's header, sections and recorded machine (ttdfileinfo.h), read without loading it
+    static StateNode StatusBody(const TimeTravelController* controller);
+    static StateNode StatusBody(std::nullptr_t);
     static StateNode FileInfoBody(const TTDFileInfo& info);
-    /// The recorded machine (ttdfileinfo.h): the same keys on every surface
     static StateNode RecordedMachineBody(const TTDRecordedMachine& machine);
-    /// The write journal's state (D40): on/off, the spans it covers, a build in progress
+    /// The write journal's fields of a status body
     static void AddWriteJournal(StateNode& body, const TimeTravelManager& manager);
+    static void AddWriteJournal(StateNode& body, const TimeTravelController& controller);
+
+    class Backend;
 
 private:
-    TTDReply Run(const std::string& verb, const TTDRequest& request);
-    TTDReply Status();
-    TTDReply Start(const TTDRequest& request);
-    TTDReply Stop();
-    TTDReply Invalidate(const TTDRequest& request);
-    TTDReply HistoryLimit(const TTDRequest& request);
-    TTDReply Journal(const TTDRequest& request);
-    TTDReply JournalBuild(const TTDRequest& request);
-    TTDReply JournalBuildCancel();
-    TTDReply Position();
-    TTDReply Seek(const TTDRequest& request);
-    TTDReply StepFrame(bool forward);
-    TTDReply Resume(const TTDRequest& request);
-    TTDReply StepInstruction(const TTDRequest& request);
-    TTDReply ReverseStep(const TTDRequest& request);
-    TTDReply Markers();
-    TTDReply Bookmarks();
-    TTDReply BookmarkAdd(const TTDRequest& request);
-    TTDReply BookmarkDelete(const TTDRequest& request);
-    TTDReply PortEvents(const TTDRequest& request);
-    TTDReply FindLast(const TTDRequest& request);
-    TTDReply ReverseContinue(const TTDRequest& request);
-    TTDReply CoverageProbe(const TTDRequest& request);
-    TTDReply CoverageScan(const TTDRequest& request);
-    TTDReply CoverageSummary(const TTDRequest& request);
-    TTDReply FileInfo(const TTDRequest& request);
-    TTDReply Dump(const TTDRequest& request);
-    TTDReply Load(const TTDRequest& request);
-    TTDReply ExportClip(const TTDRequest& request);
-
-    /// Moving in the timeline is refused while recording: the restored state would
-    /// overwrite the live machine and the next capture would break the timeline
-    bool RefuseWhileRecording(TTDReply& reply) const;
-    /// The machine's thread calls in (a breakpoint callback): it is the owner, never wait for it
-    bool OnMachineThread() const;
-
-    /// Pause the machine and wait until its thread parks (a TTD mutation must not race a frame)
-    void PauseAndConfirm();
-    /// Repaint every observer after the framebuffer was rebuilt while paused
-    void NotifyFrameRefresh();
-
-    EmulatorContext* _context = nullptr;
-    TimeTravelManager* _manager = nullptr;
+    std::unique_ptr<Backend> _backend;
 };
 }  // namespace ttd

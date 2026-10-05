@@ -10,6 +10,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/machinestatehash.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdexternalevents.h"
@@ -196,12 +197,116 @@ void AddPosition(StateNode& body, const TTDTimePoint& t)
 }
 }  // namespace
 
-/// region <Verbs>
+/// region <Backends>
+
+/// The verbs over one session class: v1's TimeTravelManager or the engine's
+/// TimeTravelController (Phase 5, C5). Both offer the same methods, so one
+/// implementation serves both; TTDControl picks the one the instance runs
+class TTDControl::Backend
+{
+public:
+    virtual ~Backend() = default;
+    /// @p verb is known and its options checked
+    virtual TTDReply Execute(const std::string& verb, const TTDRequest& request) = 0;
+};
+
+template <class S>
+StateNode StatusBodyOf(const S* manager);
+template <class S>
+void AddWriteJournalOf(StateNode& body, const S& manager);
+
+template <class S>
+class TTDControlBackend final : public TTDControl::Backend
+{
+public:
+    TTDControlBackend(EmulatorContext* context, S* manager) : _context(context), _manager(manager) {}
+    TTDReply Execute(const std::string& verb, const TTDRequest& request) override;
+
+private:
+    TTDReply Run(const std::string& verb, const TTDRequest& request);
+    TTDReply Status();
+    TTDReply Start(const TTDRequest& request);
+    TTDReply Stop();
+    TTDReply Invalidate(const TTDRequest& request);
+    TTDReply HistoryLimit(const TTDRequest& request);
+    TTDReply Journal(const TTDRequest& request);
+    TTDReply JournalBuild(const TTDRequest& request);
+    TTDReply JournalBuildCancel();
+    TTDReply Position();
+    TTDReply Seek(const TTDRequest& request);
+    TTDReply StepFrame(bool forward);
+    TTDReply Resume(const TTDRequest& request);
+    TTDReply StepInstruction(const TTDRequest& request);
+    TTDReply ReverseStep(const TTDRequest& request);
+    TTDReply Markers();
+    TTDReply Bookmarks();
+    TTDReply BookmarkAdd(const TTDRequest& request);
+    TTDReply BookmarkDelete(const TTDRequest& request);
+    TTDReply PortEvents(const TTDRequest& request);
+    TTDReply FindLast(const TTDRequest& request);
+    TTDReply ReverseContinue(const TTDRequest& request);
+    TTDReply CoverageProbe(const TTDRequest& request);
+    TTDReply CoverageScan(const TTDRequest& request);
+    TTDReply CoverageSummary(const TTDRequest& request);
+    TTDReply FileInfo(const TTDRequest& request);
+    TTDReply Dump(const TTDRequest& request);
+    TTDReply Load(const TTDRequest& request);
+    TTDReply ExportClip(const TTDRequest& request);
+
+    bool RefuseWhileRecording(TTDReply& reply) const;
+    bool OnMachineThread() const;
+    void PauseAndConfirm();
+    void NotifyFrameRefresh();
+
+    EmulatorContext* _context = nullptr;
+    S* _manager = nullptr;
+};
 
 TTDControl::TTDControl(EmulatorContext* context)
-    : _context(context), _manager(context ? context->pTimeTravelManager : nullptr)
+{
+    if (context && context->pTimeTravelController)
+        _backend = std::make_unique<TTDControlBackend<TimeTravelController>>(context, context->pTimeTravelController);
+    else
+        _backend = std::make_unique<TTDControlBackend<TimeTravelManager>>(
+            context, context ? context->pTimeTravelManager : nullptr);
+}
+
+TTDControl::TTDControl(EmulatorContext* context, TimeTravelController* controller)
+    : _backend(std::make_unique<TTDControlBackend<TimeTravelController>>(context, controller))
 {
 }
+
+TTDControl::~TTDControl() = default;
+
+StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
+{
+    return StatusBodyOf(manager);
+}
+
+StateNode TTDControl::StatusBody(const TimeTravelController* controller)
+{
+    return StatusBodyOf(controller);
+}
+
+StateNode TTDControl::StatusBody(std::nullptr_t)
+{
+    return StatusBodyOf(static_cast<const TimeTravelManager*>(nullptr));
+}
+
+void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelManager& manager)
+{
+    AddWriteJournalOf(body, manager);
+}
+
+void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelController& controller)
+{
+    AddWriteJournalOf(body, controller);
+}
+
+/// endregion </Backends>
+
+/// region <Verbs>
+
 
 const std::vector<std::string>& TTDControl::Verbs()
 {
@@ -275,6 +380,12 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
         }
     }
 
+    return _backend->Execute(verb, request);
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::Execute(const std::string& verb, const TTDRequest& request)
+{
     // Status answers without time travel too: it is the capability probe. So do the
     // coverage queries: "no index" (index_available false) is their answer then
     if (verb == "status")
@@ -293,7 +404,8 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
     return Run(verb, request);
 }
 
-TTDReply TTDControl::Run(const std::string& verb, const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& request)
 {
     if (verb == "start")
         return Start(request);
@@ -344,7 +456,8 @@ TTDReply TTDControl::Run(const std::string& verb, const TTDRequest& request)
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
-StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
+template <class S>
+StateNode StatusBodyOf(const S* manager)
 {
     StateNode ret = StateNode::Object();
     if (!manager)
@@ -401,7 +514,7 @@ StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
     ret["model_ram_pages"] = static_cast<unsigned>(info.modelRamPages);
     // The recorded machine (null while there is no session) and, for a loaded
     // file, the instance that recorded it
-    ret["machine"] = info.checkpointCount != 0 ? RecordedMachineBody(info.machine) : StateNode();
+    ret["machine"] = info.checkpointCount != 0 ? TTDControl::RecordedMachineBody(info.machine) : StateNode();
     ret["recorded_by"] = StringOrNull(info.recordedBy);
     ret["write_journal_records"] = static_cast<uint64_t>(info.writeJournalRecords);
     ret["write_journal_bytes"] = static_cast<uint64_t>(info.writeJournalBytes);
@@ -415,11 +528,12 @@ StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
     ret["last_stop_reason"] = StringOrNull(info.lastStopReason);
     // Why time travel is not available for this machine at all (null when it is)
     ret["unavailable_reason"] = StringOrNull(info.unavailableReason);
-    AddWriteJournal(ret, *manager);
+    AddWriteJournalOf(ret, *manager);
     return ret;
 }
 
-void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelManager& manager)
+template <class S>
+void AddWriteJournalOf(StateNode& body, const S& manager)
 {
     const TTDSessionInfo info = manager.ReadSessionInfo();
     body["write_journal_enabled"] = info.writeJournalEnabled;
@@ -435,7 +549,7 @@ void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelManager& manag
         spans.push(span);
     }
     body["write_journal_segments"] = spans;
-    const TimeTravelManager::JournalBuildState build = manager.GetJournalBuildState();
+    const TTDJournalBuildState build = manager.GetJournalBuildState();
     StateNode b = StateNode::Object();
     b["active"] = build.active;
     b["done"] = build.done;
@@ -443,14 +557,16 @@ void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelManager& manag
     body["write_journal_build"] = b;
 }
 
-TTDReply TTDControl::Status()
+template <class S>
+TTDReply TTDControlBackend<S>::Status()
 {
     TTDReply reply;
-    reply.body = StatusBody(_manager);
+    reply.body = StatusBodyOf(_manager);
     return reply;
 }
 
-TTDReply TTDControl::Start(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
 {
     // Time travel not available for this machine at all (a ZX-Poly member)
     if (!_manager->GetUnavailableReason().empty())
@@ -495,7 +611,8 @@ TTDReply TTDControl::Start(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::Stop()
+template <class S>
+TTDReply TTDControlBackend<S>::Stop()
 {
     const bool wasRecording = _manager->IsRecording();
     _manager->StopRecording();
@@ -505,7 +622,8 @@ TTDReply TTDControl::Stop()
     return reply;
 }
 
-TTDReply TTDControl::Invalidate(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Invalidate(const TTDRequest& request)
 {
     const std::string* reasonText = Option(request, "reason");
     const std::string reason = reasonText && !reasonText->empty() ? *reasonText : "invalidate";
@@ -519,7 +637,8 @@ TTDReply TTDControl::Invalidate(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::HistoryLimit(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::HistoryLimit(const TTDRequest& request)
 {
     TTDSessionInfo info = _manager->ReadSessionInfo();
     const std::string* framesText = Option(request, "frames");
@@ -545,7 +664,8 @@ TTDReply TTDControl::HistoryLimit(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::Journal(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Journal(const TTDRequest& request)
 {
     if (const std::string* value = Option(request, "enabled"))
     {
@@ -556,14 +676,15 @@ TTDReply TTDControl::Journal(const TTDRequest& request)
             return Fail(TTDControlError::Conflict, "write journal not available");
     }
     TTDReply reply;
-    AddWriteJournal(reply.body, *_manager);
+    AddWriteJournalOf(reply.body, *_manager);
     // The choice for recordings, also without a session (write_journal_enabled: recorded now)
     reply.body["write_journal_setting"] = _manager->GetEnableWriteJournal();
     reply.body["write_journal_records"] = static_cast<uint64_t>(_manager->GetSessionInfo().writeJournalRecords);
     return reply;
 }
 
-TTDReply TTDControl::JournalBuild(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::JournalBuild(const TTDRequest& request)
 {
     if (TTDReply refusal; RefuseWhileRecording(refusal))
         return refusal;
@@ -587,7 +708,7 @@ TTDReply TTDControl::JournalBuild(const TTDRequest& request)
     body["frames_covered"] = r.framesCovered;
     body["frames_refused"] = r.framesRefused;
     body["records"] = r.records;
-    AddWriteJournal(body, *_manager);
+    AddWriteJournalOf(body, *_manager);
     if (!r.ok)
         return Fail(TTDControlError::Conflict, r.error, body);
     TTDReply reply;
@@ -595,7 +716,8 @@ TTDReply TTDControl::JournalBuild(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::JournalBuildCancel()
+template <class S>
+TTDReply TTDControlBackend<S>::JournalBuildCancel()
 {
     const bool active = _manager->GetJournalBuildState().active;
     _manager->CancelJournalBuild();
@@ -604,7 +726,8 @@ TTDReply TTDControl::JournalBuildCancel()
     return reply;
 }
 
-bool TTDControl::RefuseWhileRecording(TTDReply& reply) const
+template <class S>
+bool TTDControlBackend<S>::RefuseWhileRecording(TTDReply& reply) const
 {
     if (!_manager->IsRecording())
         return false;
@@ -618,7 +741,8 @@ bool TTDControl::RefuseWhileRecording(TTDReply& reply) const
     return true;
 }
 
-TTDReply TTDControl::Position()
+template <class S>
+TTDReply TTDControlBackend<S>::Position()
 {
     TTDReply reply;
     reply.body["current"] = TimePointNode(_manager->CurrentPosition());
@@ -627,7 +751,8 @@ TTDReply TTDControl::Position()
     return reply;
 }
 
-TTDReply TTDControl::Seek(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
 {
     if (TTDReply refusal; RefuseWhileRecording(refusal))
         return refusal;
@@ -661,7 +786,7 @@ TTDReply TTDControl::Seek(const TTDRequest& request)
     // Park the machine so its thread cannot advance past the restored checkpoint; it
     // stays paused at the target (Detached) until resume
     PauseAndConfirm();
-    TimeTravelManager::TTDSeekResult result;
+    TTDSeekResult result;
     const bool reached = _manager->SeekTo(target, &result);
     NotifyFrameRefresh();
 
@@ -669,12 +794,12 @@ TTDReply TTDControl::Seek(const TTDRequest& request)
     reply.body["reached"] = reached;
     reply.body["arrived_at"] = TimePointNode(result.arrivedAt);
     const char* reason = "target";
-    if (result.haltReason == TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+    if (result.haltReason == TTDSeekHaltReason::ExternalEvent)
         reason = "external_event";
-    else if (result.haltReason == TimeTravelManager::TTDSeekHaltReason::OutOfRange)
+    else if (result.haltReason == TTDSeekHaltReason::OutOfRange)
         reason = "out_of_range";
     reply.body["halt_reason"] = reason;
-    if (result.haltReason == TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+    if (result.haltReason == TTDSeekHaltReason::ExternalEvent)
     {
         StateNode marker = TimePointNode(result.blockingMarker.time);
         marker["kind"] = TTDExternalEventKindToString(result.blockingMarker.kind);
@@ -687,7 +812,8 @@ TTDReply TTDControl::Seek(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::StepFrame(bool forward)
+template <class S>
+TTDReply TTDControlBackend<S>::StepFrame(bool forward)
 {
     if (TTDReply refusal; RefuseWhileRecording(refusal))
         return refusal;
@@ -700,7 +826,8 @@ TTDReply TTDControl::StepFrame(bool forward)
     return reply;
 }
 
-TTDReply TTDControl::Resume(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
 {
     // No frame: resume exactly where the machine stands
     TTDTimePoint from = _manager->CurrentPosition();
@@ -729,7 +856,8 @@ TTDReply TTDControl::Resume(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::StepInstruction(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::StepInstruction(const TTDRequest& request)
 {
     bool forward = false;
     if (const std::string* dir = Option(request, "dir"))
@@ -751,7 +879,8 @@ TTDReply TTDControl::StepInstruction(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::ReverseStep(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::ReverseStep(const TTDRequest& request)
 {
     const std::string* countText = Option(request, "count");
     const std::string* tstatesText = Option(request, "tstates");
@@ -776,7 +905,8 @@ TTDReply TTDControl::ReverseStep(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::Markers()
+template <class S>
+TTDReply TTDControlBackend<S>::Markers()
 {
     const auto events = _manager->GetExternalEvents().SnapshotEvents();
     TTDReply reply;
@@ -795,7 +925,8 @@ TTDReply TTDControl::Markers()
 
 // TD-4: agent bookmarks are advisory annotations, never replay barriers. Labels are
 // keys: non-empty, at most 63 characters, unique per session
-TTDReply TTDControl::Bookmarks()
+template <class S>
+TTDReply TTDControlBackend<S>::Bookmarks()
 {
     const auto bookmarks = _manager->GetBookmarks();  // time-sorted snapshot copy
     TTDReply reply;
@@ -811,7 +942,8 @@ TTDReply TTDControl::Bookmarks()
     return reply;
 }
 
-TTDReply TTDControl::BookmarkAdd(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::BookmarkAdd(const TTDRequest& request)
 {
     const std::string* label = Option(request, "label");
     if (!label || label->empty())
@@ -849,7 +981,8 @@ TTDReply TTDControl::BookmarkAdd(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::BookmarkDelete(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::BookmarkDelete(const TTDRequest& request)
 {
     const std::string* label = Option(request, "label");
     if (!label || label->empty())
@@ -866,7 +999,8 @@ TTDReply TTDControl::BookmarkDelete(const TTDRequest& request)
 // replay, works on a loaded file. event + arg build the query; every other option
 // is a port query option (ApplyPortQueryOption checks the name); file: a .ttd on
 // disk, searched without loading it (the session is untouched)
-TTDReply TTDControl::PortEvents(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
 {
     const std::string* event = Option(request, "event");
     if (!event || event->empty())
@@ -918,7 +1052,8 @@ TTDReply TTDControl::PortEvents(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::FindLast(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
 {
     TTDSearchQuery q;
     const std::string* addr = Option(request, "addr");
@@ -1049,7 +1184,8 @@ TTDReply TTDControl::FindLast(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::ReverseContinue(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
 {
     const std::string* pcsText = Option(request, "pcs");
     if (!pcsText || pcsText->empty())
@@ -1153,7 +1289,8 @@ std::string CoverageWindow(const TTDRequest& request, uint64_t& fromFrame, uint6
 }
 }  // namespace
 
-TTDReply TTDControl::CoverageProbe(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::CoverageProbe(const TTDRequest& request)
 {
     const std::string* frameText = Option(request, "frame");
     uint64_t frame = 0;
@@ -1182,7 +1319,8 @@ TTDReply TTDControl::CoverageProbe(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::CoverageScan(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
 {
     TTDCoverageKind kind = TTDCoverageKind::Executed;
     uint16_t addrFrom = 0;
@@ -1225,7 +1363,8 @@ TTDReply TTDControl::CoverageScan(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::CoverageSummary(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::CoverageSummary(const TTDRequest& request)
 {
     uint64_t fromFrame = 0;
     uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
@@ -1311,7 +1450,8 @@ StateNode TTDControl::FileInfoBody(const TTDFileInfo& info)
     return v;
 }
 
-TTDReply TTDControl::FileInfo(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::FileInfo(const TTDRequest& request)
 {
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
@@ -1332,11 +1472,12 @@ TTDReply TTDControl::FileInfo(const TTDRequest& request)
                     body);
     }
     TTDReply reply;
-    reply.body = FileInfoBody(info);
+    reply.body = TTDControl::FileInfoBody(info);
     return reply;
 }
 
-TTDReply TTDControl::Dump(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Dump(const TTDRequest& request)
 {
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
@@ -1366,7 +1507,8 @@ TTDReply TTDControl::Dump(const TTDRequest& request)
     return reply;
 }
 
-TTDReply TTDControl::Load(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::Load(const TTDRequest& request)
 {
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
@@ -1401,14 +1543,15 @@ TTDReply TTDControl::Load(const TTDRequest& request)
 
 // A frame range as a lossless clip (final picture, plane B when zxdlss is on, frame
 // meta), written inside the core: one call instead of a seek and a capture per frame
-TTDReply TTDControl::ExportClip(const TTDRequest& request)
+template <class S>
+TTDReply TTDControlBackend<S>::ExportClip(const TTDRequest& request)
 {
     const std::string* fromText = Option(request, "from");
     const std::string* toText = Option(request, "to");
     const std::string* path = Option(request, "path");
     if (!fromText || !toText || !path || path->empty())
         return Fail(TTDControlError::BadRequest, "Required fields: from, to, path (absolute directory)");
-    TimeTravelManager::TTDClipExportOptions options;
+    TTDClipExportOptions options;
     uint64_t chunk = options.chunkFrames;
     const std::string* chunkText = Option(request, "chunk");
     if (!ParseU64(*fromText, options.fromFrame) || !ParseU64(*toText, options.toFrame) ||
@@ -1446,12 +1589,14 @@ TTDReply TTDControl::ExportClip(const TTDRequest& request)
 
 /// region <Machine thread discipline>
 
-bool TTDControl::OnMachineThread() const
+template <class S>
+bool TTDControlBackend<S>::OnMachineThread() const
 {
     return _context && _context->pMainLoop && _context->pMainLoop->IsRunThread();
 }
 
-void TTDControl::PauseAndConfirm()
+template <class S>
+void TTDControlBackend<S>::PauseAndConfirm()
 {
     // Only a machine whose own loop runs: a stopped one, or a ZX-Poly member stepped by
     // its master, has nothing to park
@@ -1462,7 +1607,8 @@ void TTDControl::PauseAndConfirm()
     emulator->WaitForPauseConfirmation(1000);
 }
 
-void TTDControl::NotifyFrameRefresh()
+template <class S>
+void TTDControlBackend<S>::NotifyFrameRefresh()
 {
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
     if (!emulator)

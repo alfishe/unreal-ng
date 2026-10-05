@@ -8,11 +8,13 @@
 
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdexternalevents.h"
@@ -23,30 +25,54 @@ using ttd::TTDControl;
 using ttd::TTDControlError;
 using ttd::TTDReply;
 
-class TTDControl_Test : public ::testing::Test
+/// Every test runs on both backends (Phase 5, C5): v1's TimeTravelManager and the
+/// engine's TimeTravelController, wired the way the switch wires it (hooks, write
+/// sink, EmulatorContext::pTimeTravelController)
+class TTDControl_Test : public ::testing::TestWithParam<bool>
 {
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::ITimeTravelHooks* _ttd = nullptr;
+    std::unique_ptr<ttd::TimeTravelController> _controller;
 
     void SetUp() override
     {
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
-        ASSERT_NE(_ttd, nullptr);
+        ASSERT_NE(_context->pTimeTravelManager, nullptr);
+        if (GetParam())
+        {
+            _controller = std::make_unique<ttd::TimeTravelController>(_context);
+            _context->pTimeTravelHooks = _controller.get();
+            _context->ttdWriteSink = _controller.get();
+            _context->pTimeTravelController = _controller.get();
+        }
+        _ttd = _context->pTimeTravelHooks;
     }
 
     void TearDown() override
     {
+        if (_controller)
+        {
+            _controller->StopRecording();
+            _context->pTimeTravelHooks = _context->pTimeTravelManager;
+            _context->ttdWriteSink = _context->pTimeTravelManager;
+            _context->pTimeTravelController = nullptr;
+            _controller.reset();
+        }
         if (_emulator)
         {
             _emulator->Stop();
             _emulator->Release();
             delete _emulator;
         }
+    }
+
+    ttd::TTDSessionInfo Info() const
+    {
+        return _controller ? _controller->GetSessionInfo() : _context->pTimeTravelManager->GetSessionInfo();
     }
 
     TTDReply Run(const std::string& verb, std::map<std::string, std::string> options = {})
@@ -77,7 +103,7 @@ protected:
     }
 };
 
-TEST_F(TTDControl_Test, UnknownVerbsAndOptionsFailTheSameWayEverywhere)
+TEST_P(TTDControl_Test, UnknownVerbsAndOptionsFailTheSameWayEverywhere)
 {
     TTDReply r = Run("rewind");
     EXPECT_EQ(r.error, TTDControlError::BadRequest);
@@ -95,7 +121,7 @@ TEST_F(TTDControl_Test, UnknownVerbsAndOptionsFailTheSameWayEverywhere)
     EXPECT_TRUE(Run("STATUS").Ok());
 }
 
-TEST_F(TTDControl_Test, WithoutTimeTravelStatusAnswersIdleAndEveryOtherVerbIsNotAvailable)
+TEST_P(TTDControl_Test, WithoutTimeTravelStatusAnswersIdleAndEveryOtherVerbIsNotAvailable)
 {
     TTDControl control(nullptr);
     TTDReply status = control.Execute({"status", {}});
@@ -109,7 +135,7 @@ TEST_F(TTDControl_Test, WithoutTimeTravelStatusAnswersIdleAndEveryOtherVerbIsNot
     EXPECT_EQ(start.message, "TTD engine not available in this build");
 }
 
-TEST_F(TTDControl_Test, StartStopAndStatusReportTheSession)
+TEST_P(TTDControl_Test, StartStopAndStatusReportTheSession)
 {
     TTDReply r = Run("start", {{"journal", "true"}, {"history_limit_frames", "500"}});
     ASSERT_TRUE(r.Ok()) << r.message;
@@ -118,6 +144,10 @@ TEST_F(TTDControl_Test, StartStopAndStatusReportTheSession)
     EXPECT_EQ(Str(r, "state"), "recording");
     EXPECT_TRUE(Bool(r, "write_journal_enabled"));
     EXPECT_EQ(Int(r, "history_limit_frames"), 500);
+    // The verbs drove this instance's session: the controller's in the Controller run
+    EXPECT_TRUE(_ttd->IsRecording());
+    if (_controller)
+        EXPECT_FALSE(_context->pTimeTravelManager->IsRecording()) << "v1 stays idle";
 
     r = Run("start");
     ASSERT_TRUE(r.Ok());
@@ -140,7 +170,7 @@ TEST_F(TTDControl_Test, StartStopAndStatusReportTheSession)
     EXPECT_FALSE(Bool(Run("stop"), "stopped"));
 }
 
-TEST_F(TTDControl_Test, StartWithoutTheJournalOptionKeepsTheChoice)
+TEST_P(TTDControl_Test, StartWithoutTheJournalOptionKeepsTheChoice)
 {
     ASSERT_TRUE(Run("journal", {{"enabled", "true"}}).Ok());
     TTDReply r = Run("start");
@@ -152,7 +182,7 @@ TEST_F(TTDControl_Test, StartWithoutTheJournalOptionKeepsTheChoice)
     EXPECT_FALSE(Bool(r, "write_journal_enabled"));
 }
 
-TEST_F(TTDControl_Test, ValuesThatDoNotParseAreBadRequests)
+TEST_P(TTDControl_Test, ValuesThatDoNotParseAreBadRequests)
 {
     EXPECT_EQ(Run("start", {{"journal", "maybe"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("start", {{"history_limit_bytes", "-1"}}).error, TTDControlError::BadRequest);
@@ -174,7 +204,7 @@ TEST_F(TTDControl_Test, ValuesThatDoNotParseAreBadRequests)
     EXPECT_FALSE(Bool(r, "write_journal_enabled"));  // nothing records it without a session
 }
 
-TEST_F(TTDControl_Test, InvalidateIsRefusedWhileRecordingAndKeepsItsReasonOtherwise)
+TEST_P(TTDControl_Test, InvalidateIsRefusedWhileRecordingAndKeepsItsReasonOtherwise)
 {
     Record(2);
     TTDReply r = Run("invalidate", {{"reason", "test"}});
@@ -187,10 +217,10 @@ TEST_F(TTDControl_Test, InvalidateIsRefusedWhileRecordingAndKeepsItsReasonOtherw
     r = Run("invalidate", {{"reason", "test"}});
     ASSERT_TRUE(r.Ok()) << r.message;
     EXPECT_EQ(Str(r, "reason"), "test");
-    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "test");
+    EXPECT_EQ(Info().lastDropReason, "test");
 }
 
-TEST_F(TTDControl_Test, JournalBuildIsRefusedWhileRecordingWithTheStateInTheEnvelope)
+TEST_P(TTDControl_Test, JournalBuildIsRefusedWhileRecordingWithTheStateInTheEnvelope)
 {
     Record(2);
     const TTDReply r = Run("journal-build");
@@ -204,7 +234,7 @@ TEST_F(TTDControl_Test, JournalBuildIsRefusedWhileRecordingWithTheStateInTheEnve
     EXPECT_EQ(value.find("state")->s, "recording");
 }
 
-TEST_F(TTDControl_Test, ABodyThatNamesItsOwnErrorKeepsIt)
+TEST_P(TTDControl_Test, ABodyThatNamesItsOwnErrorKeepsIt)
 {
     TTDReply r;
     r.error = TTDControlError::Conflict;
@@ -221,7 +251,7 @@ TEST_F(TTDControl_Test, ABodyThatNamesItsOwnErrorKeepsIt)
 // Group 2: positions, seeks, steps, resume
 // ---------------------------------------------------------------------------
 
-TEST_F(TTDControl_Test, MovingInTheTimelineIsRefusedWhileRecording)
+TEST_P(TTDControl_Test, MovingInTheTimelineIsRefusedWhileRecording)
 {
     Record(4);
     for (const auto& [verb, options] : std::vector<std::pair<std::string, std::map<std::string, std::string>>>{
@@ -238,7 +268,7 @@ TEST_F(TTDControl_Test, MovingInTheTimelineIsRefusedWhileRecording)
     EXPECT_TRUE(_ttd->IsRecording());
 }
 
-TEST_F(TTDControl_Test, SeekTargetsAreCheckedBeforeAnythingMoves)
+TEST_P(TTDControl_Test, SeekTargetsAreCheckedBeforeAnythingMoves)
 {
     Record(6);
     ASSERT_TRUE(Run("stop").Ok());
@@ -253,14 +283,14 @@ TEST_F(TTDControl_Test, SeekTargetsAreCheckedBeforeAnythingMoves)
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);  // nothing moved
 }
 
-TEST_F(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
+TEST_P(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
 {
     Record(6);
     ASSERT_TRUE(Run("stop").Ok());
     const TTDReply end = Run("position");
     ASSERT_TRUE(end.Ok());
     const int64_t last = end.body.find("session_end")->find("frame")->i;
-    const int64_t first = static_cast<int64_t>(_ttd->GetSessionInfo().sessionStartFrame);
+    const int64_t first = static_cast<int64_t>(Info().sessionStartFrame);
     ASSERT_GT(last, first + 2);
 
     TTDReply r = Run("seek", {{"frame", std::to_string(first + 2)}});
@@ -287,11 +317,11 @@ TEST_F(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
     EXPECT_EQ(Str(r, "state"), "recording");
 }
 
-TEST_F(TTDControl_Test, InstructionStepsCheckTheirArguments)
+TEST_P(TTDControl_Test, InstructionStepsCheckTheirArguments)
 {
     Record(4);
     ASSERT_TRUE(Run("stop").Ok());
-    ASSERT_TRUE(Run("seek", {{"frame", std::to_string(_ttd->GetSessionInfo().sessionStartFrame + 2)}}).Ok());
+    ASSERT_TRUE(Run("seek", {{"frame", std::to_string(Info().sessionStartFrame + 2)}}).Ok());
 
     EXPECT_EQ(Run("step-instruction", {{"dir", "sideways"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("reverse-step").error, TTDControlError::BadRequest);
@@ -312,7 +342,7 @@ TEST_F(TTDControl_Test, InstructionStepsCheckTheirArguments)
 // Group 3: markers and bookmarks
 // ---------------------------------------------------------------------------
 
-TEST_F(TTDControl_Test, MarkersListTheReplayBarriers)
+TEST_P(TTDControl_Test, MarkersListTheReplayBarriers)
 {
     Record(2);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::TapeControl, "play");
@@ -325,11 +355,11 @@ TEST_F(TTDControl_Test, MarkersListTheReplayBarriers)
     EXPECT_EQ(marker.find("reason")->s, "play");
 }
 
-TEST_F(TTDControl_Test, BookmarksAreAddedListedAndDeletedByLabel)
+TEST_P(TTDControl_Test, BookmarksAreAddedListedAndDeletedByLabel)
 {
     Record(4);
     ASSERT_TRUE(Run("stop").Ok());
-    const uint64_t frame = _ttd->GetSessionInfo().sessionStartFrame + 1;
+    const uint64_t frame = Info().sessionStartFrame + 1;
 
     TTDReply r = Run("bookmark-add", {{"label", "entry"}, {"frame", std::to_string(frame)}});
     ASSERT_TRUE(r.Ok()) << r.message;
@@ -362,7 +392,7 @@ TEST_F(TTDControl_Test, BookmarksAreAddedListedAndDeletedByLabel)
 // Group 4a: reverse queries (find-last, reverse-continue) and port events
 // ---------------------------------------------------------------------------
 
-TEST_F(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
+TEST_P(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
 {
     Record(4);
     ASSERT_TRUE(Run("stop").Ok());
@@ -387,14 +417,14 @@ TEST_F(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
     ASSERT_NE(rc.body.find("matched"), nullptr);
 }
 
-TEST_F(TTDControl_Test, ReverseQueriesAreRefusedWhileRecording)
+TEST_P(TTDControl_Test, ReverseQueriesAreRefusedWhileRecording)
 {
     Record(2);
     EXPECT_EQ(Run("find-last", {{"addr", "0x5C00"}}).error, TTDControlError::Conflict);
     EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38"}}).error, TTDControlError::Conflict);
 }
 
-TEST_F(TTDControl_Test, PortEventsNeedAnEventAndKnownOptions)
+TEST_P(TTDControl_Test, PortEventsNeedAnEventAndKnownOptions)
 {
     Record(2);
     ASSERT_TRUE(Run("stop").Ok());
@@ -409,7 +439,7 @@ TEST_F(TTDControl_Test, PortEventsNeedAnEventAndKnownOptions)
 // Group 4b: coverage queries
 // ---------------------------------------------------------------------------
 
-TEST_F(TTDControl_Test, CoverageQueriesCheckEveryValue)
+TEST_P(TTDControl_Test, CoverageQueriesCheckEveryValue)
 {
     EXPECT_EQ(Run("coverage-probe").error, TTDControlError::BadRequest);  // frame is required
     EXPECT_EQ(Run("coverage-probe", {{"frame", "1"}, {"kind", "jumped"}}).error, TTDControlError::BadRequest);
@@ -421,7 +451,7 @@ TEST_F(TTDControl_Test, CoverageQueriesCheckEveryValue)
     EXPECT_EQ(Run("coverage-summary", {{"bucket_size", "x"}}).error, TTDControlError::BadRequest);
 }
 
-TEST_F(TTDControl_Test, CoverageQueriesAnswerWithoutTimeTravel)
+TEST_P(TTDControl_Test, CoverageQueriesAnswerWithoutTimeTravel)
 {
     TTDControl control(nullptr);
     const TTDReply probe = control.Execute({"coverage-probe", {{"frame", "5"}}});
@@ -437,7 +467,7 @@ TEST_F(TTDControl_Test, CoverageQueriesAnswerWithoutTimeTravel)
     EXPECT_EQ(Int(summary, "bucket_size"), 0);
 }
 
-TEST_F(TTDControl_Test, CoverageScanFindsTheFramesThatRanTheRom)
+TEST_P(TTDControl_Test, CoverageScanFindsTheFramesThatRanTheRom)
 {
     Record(6);
     ASSERT_TRUE(Run("stop").Ok());
@@ -453,7 +483,7 @@ TEST_F(TTDControl_Test, CoverageScanFindsTheFramesThatRanTheRom)
 // Group 5: files
 // ---------------------------------------------------------------------------
 
-TEST_F(TTDControl_Test, ASessionDumpedIsDescribedAndLoadedThroughTheVerbs)
+TEST_P(TTDControl_Test, ASessionDumpedIsDescribedAndLoadedThroughTheVerbs)
 {
     Record(3);
     ASSERT_TRUE(Run("stop").Ok());
@@ -478,7 +508,7 @@ TEST_F(TTDControl_Test, ASessionDumpedIsDescribedAndLoadedThroughTheVerbs)
     std::remove(path.c_str());
 }
 
-TEST_F(TTDControl_Test, FileVerbsReportMissingAndUnreadableFiles)
+TEST_P(TTDControl_Test, FileVerbsReportMissingAndUnreadableFiles)
 {
     const std::string missing = TestPathHelper::GetUniqueTestScratchPath("no-such-session.ttd");
     TTDReply r = TTDControl(nullptr).Execute({"file-info", {{"path", missing}}});
@@ -493,3 +523,6 @@ TEST_F(TTDControl_Test, FileVerbsReportMissingAndUnreadableFiles)
     Record(2);
     EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "1"}, {"path", missing}}).error, TTDControlError::Conflict);
 }
+
+INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),
+                         [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Controller" : "V1"; });
