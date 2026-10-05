@@ -1,10 +1,10 @@
-# Symbol exchange: prior art and comparison
+# unreal-asm: prior art and comparison
 
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
 | **Status** | Local and public surveys done (2026-10-05); every link checked (HTTP 200 unless marked) |
-| **Rule** | Nothing is vendored (decision D-2, [goals-and-requirements.md](goals-and-requirements.md) §3.1). Prior art is a reference for the formats: token tables, file layouts, test data. Every codec is a fresh implementation with its own tests. |
+| **Rule** | Nothing is vendored (decision D-2, [goals-and-requirements.md](goals-and-requirements.md) §3). Prior art is a reference for the formats: token tables, file layouts, test data. Every codec is a fresh implementation with its own tests. |
 
 ## 1. Local survey
 
@@ -81,12 +81,12 @@ start in the files seen); whether TASM keeps a label table in RAM after assembli
 
 ### 1.4 What this means for the design
 
-- TASM becomes the **first tokenized codec** (S6, proposal P-5): L1 gives a table to verify instead of a blank page,
+- TASM becomes the **first tokenized codec** (phase A2, open question Q-1): L1 gives a table to verify instead of a blank page,
   and L5 gives real files.
 - The codec must do what none of L1-L4 does: **encode** (text → tokens, decision D-1), separate **labels** into
   symbol records, tell **TASM 3.x from 4.x**, and keep the record trailer byte exactly.
 - Golden files: the L5 files, plus files saved by TASM 3.2 and 4.x running in the emulator from one known source
-  (R2-R4 of [formats.md](formats.md) §4.2). The emitted text is compared with what TASM itself shows on screen, not
+  (R2-R4 of [source-formats.md](source-formats.md) §3). The emitted text is compared with what TASM itself shows on screen, not
   with L1-L4 outputs.
 
 ## 2. Public survey
@@ -159,9 +159,9 @@ text to the line end.
 | `xas` (source) | — (P4 binary, P6) | — | full research |
 | `storm` | P1 | — | encode; version differences |
 | `zxasm` | P3 (written spec) | P1 (catalog hints) | verify the spec on real files |
-| `masm`, `gens`, `zeus`, `sts` | — | — | full research (R1-R5 of [formats.md](formats.md) §4.2) |
-| `sjasmplus-*`, `cspect-map`, `unreal-l` | sjasmplus documentation | DeZog, P8 | golden files from sjasmplus itself |
-| `z88dk-map` | DeZog's pattern | — | golden files from z88dk |
+| `masm`, `gens`, `zeus`, `sts` | — | — | full research (R1-R5 of [source-formats.md](source-formats.md) §3) |
+| symbol codecs `sjasmplus-*`, `cspect-map`, `unreal-l` | sjasmplus documentation | DeZog, P8 | golden files from sjasmplus itself |
+| symbol codec `z88dk-map` | DeZog's pattern | — | golden files from z88dk |
 
 ### 3.2 The implementations side by side
 

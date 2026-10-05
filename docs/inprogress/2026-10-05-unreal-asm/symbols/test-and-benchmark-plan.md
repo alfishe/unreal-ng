@@ -80,7 +80,7 @@ exists, else compile checks (as today).
 | `BM_Symbols_Export/{format}/{n}` | export | 100k < 200 ms |
 | `BM_Symbols_LiveScanAlasm` (S6) | scan of 128K / 1M / 4M RAM | 4M < 100 ms |
 
-Runs follow the A/B procedure of [performance-guidelines.md](../../guidelines/performance-guidelines.md) §4
+Runs follow the A/B procedure of [performance-guidelines.md](../../../guidelines/performance-guidelines.md) §4
 (quiet machine, interleaved rounds, both orders).
 
 ## 6. Results table (filled during S9)

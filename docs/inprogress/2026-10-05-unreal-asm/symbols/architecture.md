@@ -369,63 +369,33 @@ flowchart TD
 
 ## 9. Code placement
 
-```text
-core/src/debugger/symbols/                  # the module (namespace symbols)
-├── model/                                  # no emulator types (std only)
-│   ├── symbol.h                            # Symbol, Location, AddressSpace, SymbolKind, Scope, SourceRef, Provenance
-│   ├── symbolset.h / .cpp                  # SymbolSet, Origin
-│   ├── symbolstore.h / .cpp                # SymbolStore: sets, merge, import / export entry points
-│   ├── symbolindex.h / .cpp                # immutable Index (sorted by location, hashed by name)
-│   ├── nameinterner.h / .cpp               # interned name strings
-│   └── mergepolicy.h / .cpp                # DT-2
-├── io/
-│   ├── bytesource.h                        # ByteSource / ByteSink interfaces (file, buffer)
-│   └── tokenizer.h / .cpp                  # the shared text tokenizer
-├── codecs/                                 # one codec per format: decoder + encoder (D-1)
-│   ├── codec.h                             # ICodec, CodecId, Family, Capabilities
-│   ├── codecregistry.h / .cpp              # registration, detection (§4)
-│   ├── namerules.h / .cpp                  # DT-3 per target
-│   ├── text/
-│   │   ├── native/       nativecodec.h / .cpp            # *.usym.json (lossless)
-│   │   ├── unrealmap/    unrealmapcodec.h / .cpp         # our MAP (today's ParseMapFile + a new encoder)
-│   │   ├── simplesym/    simplesymcodec.h / .cpp         # "ADDR NAME" (today's SYM, sos.l)
-│   │   ├── unreall/      unreallcodec.h / .cpp           # Unreal user.l
-│   │   ├── vice/         vicecodec.h / .cpp
-│   │   ├── sjasm/        sjasmequcodec.h / .cpp          # old SJASM "NAME EQU $ADDR"
-│   │   ├── sjasmplus/    sjasmplussymcodec / sjasmplussldcodec / sjasmpluslstcodec
-│   │   ├── z88dk/        z88dkmapcodec.h / .cpp
-│   │   ├── pasmo/        pasmocodec.h / .cpp
-│   │   └── cspect/       cspectmapcodec.h / .cpp
-│   ├── script/
-│   │   ├── ida/          idaidccodec / idapythoncodec
-│   │   ├── ghidra/       ghidracodec.h / .cpp
-│   │   └── mame/         mamecodec.h / .cpp
-│   └── tokenized/                          # after each research document (formats.md §4)
-│       ├── tasm/         tasmcodec.h / .cpp, tasmtokens.h   # first (prior art)
-│       ├── alasm/        alasmcodec, alasmtable (shared with the live scanner)
-│       ├── xas/  storm/  gens/  masm/  zxasm/
-├── live/
-│   ├── memoryview.h                        # read-only pages copy (interface)
-│   └── alasmscanner.cpp ...                # label tables in RAM
-└── bundles/
-    └── bundlemanifest.h / .cpp             # data/symbols/manifest.json by SHA-256
+The symbol module is one module of the [unreal-asm](../README.md) library (owner decision 2026-10-05: the library
+lives in `core/src/3rdparty/unreal-asm`, next to `unreal-z80`). The library's layout is in
+[../tdd.md](../tdd.md) §2; the symbol part:
 
-core/src/debugger/symbols/adapters/         # the only part that knows the emulator
+```text
+core/src/3rdparty/unreal-asm/
+├── include/unrealasm/symbols/              # public headers of the module
+└── src/symbols/                            # namespace unrealasm::symbols, std only
+    ├── model/        symbol.h, symbolset, symbolstore, symbolindex, nameinterner, mergepolicy
+    ├── codecs/       one folder per symbol file format, decode + encode (D-1):
+    │   ├── native/  unrealmap/  simplesym/  unreall/  vice/  sjasm/  sjasmplus/  z88dk/  pasmo/  cspect/
+    │   └── script/   ida/  ghidra/  mame/
+    ├── fromsource/   labels from a decoded source (any source codec of the library) + optional assembling
+    ├── live/         label-table scanners over a MemoryView (ALASM, XAS, STS), sharing table decoders with the
+    │                 source codecs of the same assembler
+    └── bundles/      data/symbols/manifest.json by SHA-256
+
+core/src/debugger/symbols/                  # the emulator side (adapters, the only part that knows the emulator)
 ├── emulatormemoryview.cpp                  # MemoryView over Memory pages (coherent moment)
 ├── diskfilesource.cpp                      # ByteSource over a file in a TR-DOS / FAT image
-└── pagingresolver.cpp                      # which page a window shows (CPU-view lookup)
+├── pagingresolver.cpp                      # which page a window shows (CPU-view lookup)
+└── bundlemanager.cpp                       # ROM change -> bundle sets
 
 core/src/debugger/labels/labelmanager.*     # facade (kept)
 data/symbols/manifest.json                  # bundles
-tools/symbols/symconv/                      # command-line converter: any format → any format (same module)
-core/tests/debugger/symbols/                # unit tests, one file per source file
-testdata/symbols/<format>/                  # golden corpus
-core/benchmarks/debugger/symbols/           # benchmarks
 ```
 
-Why here and not a library now: the module is small enough to grow inside the debugger, and the rule "model,
-io, formats, live use std only; adapters hold every emulator dependency" keeps it extractable to a standalone MIT
-library (`unreal-symbols`) the same way the media layer is planned ([library-extraction](../2026-10-05-media-multisource/library-extraction/README.md)).
-The `symconv` tool proves it: it links only `model/`, `io/`, `codecs/` and `bundles/`. One folder per codec keeps
-each format's decoder, encoder, token tables and tests together; a new format is one new folder and one line in the
-registry.
+Tokenized ZX formats are **not** in this module any more: they are the library's **source codecs**
+([../source-formats.md](../source-formats.md)). The symbol module takes labels from any decoded source
+(`fromsource/`), so every assembler the library can read gives symbols without a symbol-specific decoder.

@@ -11,7 +11,7 @@
 
 | Layer | Directory | May use | Must not use |
 |---|---|---|---|
-| model | `core/src/debugger/symbols/model/` | std | anything of the emulator |
+| model | `core/src/3rdparty/unreal-asm/src/symbols/model/` | std | anything of the emulator |
 | io | `.../symbols/io/` | std, model | the emulator |
 | codecs | `.../symbols/codecs/` | std, model, io | the emulator (one folder per codec) |
 | live | `.../symbols/live/` | std, model, io, codecs (table decoders) | the emulator (it sees a `MemoryView`) |
@@ -254,6 +254,10 @@ Text import: one pass over the bytes, tokens as views, one record per line; 100 
 < 100 ms on the development machine (measured in [test-and-benchmark-plan.md](test-and-benchmark-plan.md)).
 
 ## 10. Phases
+
+> **Re-based on the library (2026-10-05).** The symbol work is phase A8 of [../tdd.md](../tdd.md) §8; S1-S5 below
+> keep their content; S6-S9 (tokenized assemblers) are now the library's codec phases A2-A6, and the symbol module only
+> adds `fromsource/` and the live scanners.
 
 | Phase | Work | Ends with |
 |---|---|---|

@@ -4,8 +4,8 @@
 |---|---|
 | **Date** | 2026-10-05 |
 | **Status** | Draft for review |
-| **Replaces (internally)** | the file parsing inside `LabelManager` ([label-manager.md](../../emulator/design/debugger/label-manager.md)); `LabelManager` stays as the facade the rest of the emulator calls |
-| **Coordinates with** | the debugger model ([protocol.md](../2026-09-28-debugger-model/protocol.md) §3.13 `Label`, §4.3 `labels_import`), the GS debugger firmware profiles ([2026-09-27-gs-debugger](../2026-09-27-gs-debugger/)), the TUI debugger's label import ([TDD-DBG-01](../2026-09-24-tui-debugger/TDD-DBG-01_unreal-speccy-debugger-tui.md) §11), the debugger additions E7 ([2026-10-04-debugger-additions](../2026-10-04-debugger-additions/TODO.md)) |
+| **Replaces (internally)** | the file parsing inside `LabelManager` ([label-manager.md](../../../emulator/design/debugger/label-manager.md)); `LabelManager` stays as the facade the rest of the emulator calls |
+| **Coordinates with** | the debugger model ([protocol.md](../../2026-09-28-debugger-model/protocol.md) §3.13 `Label`, §4.3 `labels_import`), the GS debugger firmware profiles ([2026-09-27-gs-debugger](../../2026-09-27-gs-debugger/)), the TUI debugger's label import ([TDD-DBG-01](../../2026-09-24-tui-debugger/TDD-DBG-01_unreal-speccy-debugger-tui.md) §11), the debugger additions E7 ([2026-10-04-debugger-additions](../../2026-10-04-debugger-additions/TODO.md)) |
 | **Next** | [architecture.md](architecture.md), [formats.md](formats.md), [tdd.md](tdd.md) |
 
 ## 0. Problem
@@ -38,7 +38,7 @@ Today the emulator handles a small part of this:
   tool. Nothing renames them.
 - Two files that name the same address differently are merged silently: the last one wins.
 - The original Unreal debugger's "import labels from XAS / ALASM in memory" (Ctrl+A) existed in Unreal 0.37.1 and
-  was dropped later (only the declarations remain); it bound every value to fixed RAM pages ([prior-art.md](prior-art.md)
+  was dropped later (only the declarations remain); it bound every value to fixed RAM pages ([prior-art.md](../prior-art.md)
   P7).
 
 ### 0.1 Worked example: one game, three tools
@@ -67,9 +67,9 @@ the way.
 | G-5 | **Lossless native file.** The emulator's own symbol file keeps every field, so export then import gives the same set (a round trip is an identity). |
 | G-6 | **Merging is explicit.** Importing into a set that already has symbols follows a merge policy (keep, replace, keep both, report). Conflicts are reported with both sides, never resolved silently. |
 | G-7 | **Detection by content.** The format is recognized from the bytes (with the extension as a hint), and the import says which format it took and how sure it was. The user can force a format. |
-| G-8 | **Every surface.** Import, export, list formats, list and drop symbol sets: WebAPI + OpenAPI, CLI, MCP, Lua, Python and the Qt debugger, with docs and a recipe ([automation parity](../../emulator/design/control-interfaces/command-interface.md)). |
+| G-8 | **Every surface.** Import, export, list formats, list and drop symbol sets: WebAPI + OpenAPI, CLI, MCP, Lua, Python and the Qt debugger, with docs and a recipe ([automation parity](../../../emulator/design/control-interfaces/command-interface.md)). |
 | G-9 | **Fast where it is hot.** Address-to-name lookup is used by the disassembler on every line and by the call trace; it must stay a sorted-array search, never a scan. Loading 100 000 symbols takes well under a second. |
-| G-10 | **Testable and extractable.** The model, the tokenizer and every format build and test without the emulator (no `EmulatorContext`), so the module can later become a standalone library like the planned unreal-media ([library-extraction](../2026-10-05-media-multisource/library-extraction/README.md)). |
+| G-10 | **Testable and extractable.** The model, the tokenizer and every format build and test without the emulator (no `EmulatorContext`), so the module can later become a standalone library like the planned unreal-media ([library-extraction](../../2026-10-05-media-multisource/library-extraction/README.md)). |
 
 ## 2. Non-goals (this design)
 
@@ -89,7 +89,8 @@ the way.
 | ID | Decision |
 |---|---|
 | D-1 | **Every format is its own codec, and every codec reads and writes.** No import-only or export-only formats: a codec has a decoder (bytes → records) and an encoder (records → bytes), tested both ways. |
-| D-2 | **Nothing is vendored.** Existing converters and tools (local and public, [prior-art.md](prior-art.md)) are references for the formats only; every codec is a fresh implementation against these requirements, with its own tests. |
+| D-3 | **The symbol module is part of the cross-assembler library `unreal-asm`** in `core/src/3rdparty/unreal-asm` ([../README.md](../README.md)); symbols are one consumer of its source codecs. (Replaces proposal P-1.) |
+| D-2 | **Nothing is vendored.** Existing converters and tools (local and public, [prior-art.md](../prior-art.md)) are references for the formats only; every codec is a fresh implementation against these requirements, with its own tests. |
 
 ### 3.2 Proposals (for the owner's decision)
 
@@ -97,11 +98,11 @@ These are the design's proposals. The owner's answers go to §3.1, one question 
 
 | ID | Proposal | Recommended |
 |---|---|---|
-| P-1 | **Where the module lives**: `core/src/debugger/symbols/`, with the model and formats free of emulator types (G-10) and thin adapters to the emulator next to them ([architecture.md](architecture.md) §9). | yes |
+| P-1 | *(decided: D-3)* | — |
 | P-2 | **The native file**: `*.usym.json` (one JSON document: header, sets, symbols). JSON over YAML: exact, fast, already parsed everywhere in the emulator. | yes |
 | P-3 | **`LabelManager` stays as the facade**: its API keeps working for every caller; its parsing is replaced by the module's importers; its `Label` struct becomes a view of `Symbol`. | yes |
 | P-4 | **Default merge policy** on import into a non-empty set: `keep both` (a second name for the same place becomes an alias), and **report** names that move (same name, other place). | yes |
-| P-5 | **Tokenized formats in two steps**: first a research document per assembler (TASM 3/4, ALASM 4.42-5.0x, XAS 7.x, STORM, GENS 3/4, MASM), made by running each assembler in the emulator on a known source; then the codec. No format is coded from guesses. **TASM first**: it has the most prior art (the owner's 2012 converter's token table, TRD test data) ([prior-art.md](prior-art.md)). | yes |
+| P-5 | **Tokenized formats in two steps**: first a research document per assembler (TASM 3/4, ALASM 4.42-5.0x, XAS 7.x, STORM, GENS 3/4, MASM), made by running each assembler in the emulator on a known source; then the codec. No format is coded from guesses. **TASM first**: it has the most prior art (the owner's 2012 converter's token table, TRD test data) ([prior-art.md](../prior-art.md)). | yes |
 | P-6 | **Live scans are explicit**: scanning RAM for an assembler's label table runs only on request (`symbols import --live alasm`), never in the background. | yes |
 | P-7 | **ROM bundles by hash**: `data/symbols/` gets a manifest that maps ROM page SHA-256 to symbol files; a machine loads the matching set at start and after a ROM change. | yes |
 

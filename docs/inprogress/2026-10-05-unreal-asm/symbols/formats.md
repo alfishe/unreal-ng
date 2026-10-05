@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-05 |
 | **Status** | Draft for review; every row marked **verify** is checked against the real tool's output before its codec is written (golden files come from the tool, not from this table) |
-| **Rule** | Every format is one codec that **decodes and encodes** (decision D-1); nothing is vendored, prior art is reference only (D-2, [prior-art.md](prior-art.md)) |
+| **Rule** | Every format is one codec that **decodes and encodes** (decision D-1); nothing is vendored, prior art is reference only (D-2, [prior-art.md](../prior-art.md)) |
 | **Architecture** | [architecture.md](architecture.md) |
 
 ## 1. Families
@@ -99,6 +99,11 @@ tools decide.
 
 ## 4. Tokenized ZX assemblers: research plan
 
+> **Moved to the library (2026-10-05, D-3).** Tokenized sources are now the [unreal-asm](../README.md) library's
+> **source codecs** ([../source-formats.md](../source-formats.md)); the symbol module takes labels from any decoded
+> source (`fromsource/`) and keeps only the **live label-table** scanners. This section stays as the background of
+> that decision.
+
 **What tokenized means here.** ZX assemblers keep their source in RAM in a compact binary form: mnemonics,
 registers and often whole operands are single-byte codes (tokens), labels are numbers into a separate **label
 table**, and line numbers or lengths are binary. The same form is saved to disk (a TR-DOS file, often type `C` or
@@ -117,7 +122,7 @@ or saved by the assembler) has the addresses directly.
 
 ### 4.2 Research
 
-**Nothing here is coded from guesses** (proposal P-5). The references found ([prior-art.md](prior-art.md): the
+**Nothing here is coded from guesses** (proposal P-5). The references found ([prior-art.md](../prior-art.md): the
 Unreal 0.37.1 table scans, ZX-M8XXX's detokenizer, H2ASM, the ZAsm View spec, our ALASM script) settle part of the
 layouts and disagree in places, so each format is still researched and confirmed on files the real assembler made:
 
@@ -131,7 +136,7 @@ layouts and disagree in places, so each format is still researched and confirmed
 | R6 | Importer (file + live scanner) against the corpus | code |
 
 What is already known: **TASM** has a token table and a line layout in the owner's 2012 converter, plus TRD test
-data ([prior-art.md](prior-art.md) §1). From the Unreal 0.37 manual: XAS 7 keeps its labels in bank 6 (bank `#46` on a Pentagon with
+data ([prior-art.md](../prior-art.md) §1). From the Unreal 0.37 manual: XAS 7 keeps its labels in bank 6 (bank `#46` on a Pentagon with
 more than 128K); ALASM 4.42-5.0x can be anywhere in 128K RAM (pages 1-7, so a scan); with the STS monitor, STS's
 labels are in bank 7 (`#47`). These rules decide where the live scanners look first; the layouts come from R3.
 
