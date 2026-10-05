@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "_helpers/scratchfolder.h"
+#include "common/filemtime.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/media/compositemediumfactory.h"
@@ -212,4 +213,22 @@ TEST(CompositeMediumFactory_Test, RegistryOpensADescriptorAsABlockMedium)
     const MediaResult ri = MediaFormatRegistry::Open(inlineRequest, inlined);
     ASSERT_TRUE(ri.Ok()) << ri.message;
     EXPECT_EQ(inlined->Composite()->descriptor, "(inline)");
+}
+
+/// A mount point made for a folder layer takes the folder's time (not 1980-01-01)
+TEST(CompositeMediumFactory_Test, MountPointCarriesTheLayerFolderTime)
+{
+    Fixture f;
+    f.root.File("util/tool.com", "tool");
+    ASSERT_TRUE(SetMTimeUnixSeconds(f.root.Path() / "util", 1767268800));  // 2026-01-01 12:00:00 UTC
+    std::unique_ptr<IBlockDevice> volume;
+    CompositeInfo info;
+    const MediaResult result = CompositeMediumFactory::Build(
+        f.Descriptor("version: 1\ntarget: {free: 1MiB}\nlayers: [{source: {folder: util}, mount: /UTIL}]\n"), {}, volume, info);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*volume));
+    FatDirEntryInfo util;
+    ASSERT_TRUE(reader.Stat("/UTIL", util));
+    EXPECT_EQ(FatVolumeReader::DosToUnix(util.date, util.time), 1767268800);
 }

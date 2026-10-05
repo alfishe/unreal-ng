@@ -170,6 +170,9 @@ same); `GraftSeqRead` over a grafted file (NFR-P1).
   (`BuildCostIndependentOfBaseFiles`: one of twenty). But the union still needs the whole base enumerated
   (`FatImageSource` walks all 2 000 files), and that walk dominates both builds. A later optimization: enumerate
   the base lazily, only the directories upper layers touch. Candidate for C9 / C10.
-- **Open item:** a mount point created for a folder layer (`/UTIL`) carries the folder layer's root time, and a
-  `FolderSnapshot` root has none, so it shows 1980-01-01. Giving the snapshot root its folder's time would also
-  change `HostFolderFat`'s volume label time (FR-34 parity), so it is left for the owner to decide.
+- **Mount point times** (owner decision 2026-10-05: fix it): a mount point created for a folder layer took the layer
+  root's time, and a `FolderSnapshot` root had none, so `/UTIL` showed 1980-01-01. `FolderSnapshot::Scan` now gives
+  the root its folder's time. As a deliberate exception to FR-34's byte parity, `HostFolderFat`'s volume label entry
+  now carries the folder's time instead of 1980-01-01; every other byte is unchanged, and the parity corpus is
+  unaffected because it builds with a fixed time. Tests: `FolderSnapshot_Test.RootCarriesTheFolderTime`,
+  `CompositeMediumFactory_Test.MountPointCarriesTheLayerFolderTime`.
