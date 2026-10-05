@@ -61,7 +61,7 @@ upper case where the assembler shows upper case).
 | R3 | Compare the file with the references' layouts; resolve conflicts (ALASM `#96`, `#9F`); find what the references do not say | `research-<codec>.md` in this folder |
 | R4 | Screen captures of the assembler showing the probe source (OCR of the emulator screen) | the expected decoded text |
 | R5 | Assemble the probe in the assembler; keep the binary | the binary oracle for dialect conversion |
-| R6 | Golden corpus `testdata/asm/<codec>/`: probe files, real-world sources (L5 data, P5 sample, disks of the collection), expected text, binaries | tests |
+| R6 | Golden corpus `core/src/3rdparty/unreal-asm/testdata/<codec>/` (D-14): probe files, real-world sources (L5 data, P5 sample, disks of the collection), expected text, binaries | tests |
 
 ## 4. Format conversions planned first
 

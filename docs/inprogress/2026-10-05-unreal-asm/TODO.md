@@ -15,6 +15,12 @@ D-4 codecs and format conversion first, dialect conversion plugins after. No cod
 - [x] Q-5 decoded text is UTF-8, original code page recorded (D-11, 2026-10-05)
 - [x] Q-6 CLI name: `zxasm` (D-12, 2026-10-05)
 - [x] Encoding detectors are separate reusable classes of the library (D-13, 2026-10-05)
+- [x] Examples and test data are mandatory parts of the library; a phase is done only with them (D-14, 2026-10-05)
+
+## Workflow (owner, 2026-10-05)
+
+Design on master; development in a fresh worktree from master (branch `unreal-asm`); a commit after each green
+phase; master only after the owner's review.
 - [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2)
 
 ## Phases ([tdd.md](tdd.md) §8)

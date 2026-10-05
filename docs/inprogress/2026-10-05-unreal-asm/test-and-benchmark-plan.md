@@ -20,8 +20,10 @@ files; the unit tests then compare against those files without an emulator.
 
 ## 2. Corpus
 
+The corpus is part of the library (decision D-14): `core/src/3rdparty/unreal-asm/testdata/`.
+
 ```text
-testdata/asm/
+core/src/3rdparty/unreal-asm/testdata/
 ├── README.md                 # provenance of every file: assembler + version, how it was made, source disk
 ├── probe/                    # the probe sources (every construct of each dialect), as text
 ├── tasm3/ tasm4/             # files saved by TASM in the emulator + real-world files (the TRD test data found locally)

@@ -80,6 +80,7 @@ A user has `GAME.$H` (ALASM 4.4) on a TR-DOS disk.
 | D-11 | **Decoded text on the host is always UTF-8**; the original code page (CP866 / KOI8-R / CP1251 / ASCII) is recorded in the document so encoding back is exact (answer to Q-5). |
 | D-12 | **The CLI is `zxasm`** (`decode`, `encode`, `convert`, `detect`, `batch`, `formats`, `dialects`, `symbols`) (answer to Q-6). |
 | D-13 | **Universal encoding detectors are separate classes of the library** with their own public API (code page, line ends, text vs binary), usable outside the codecs (the emulator's media and text tools, other libraries) (owner, 2026-10-05). |
+| D-14 | **Examples and test data are part of the library**: `core/src/3rdparty/unreal-asm/examples/` (small programs using the public API: decode, encode, convert, detect encodings, symbols) and `core/src/3rdparty/unreal-asm/testdata/` (the corpus each codec and plugin is tested on, with provenance) ship inside the library and build / run with it; a phase is not done without them (owner, 2026-10-05). |
 | D-4 | Order: first **text conversion between formats and their sub-versions** (codecs), then **assembler syntax conversion** as separate plugin modules in the framework. |
 
 ## 4. Open questions (asked one at a time)
