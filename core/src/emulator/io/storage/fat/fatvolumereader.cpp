@@ -123,6 +123,27 @@ int64_t FatVolumeReader::DosToUnix(uint16_t date, uint16_t time)
     return days * 86400 + (time >> 11) * 3600 + ((time >> 5) & 0x3F) * 60 + (time & 0x1F) * 2;
 }
 
+void FatVolumeReader::UnixToDos(int64_t unixSeconds, uint16_t& date, uint16_t& time)
+{
+    constexpr int64_t kDosEpoch = 315532800;  // 1980-01-01 00:00:00 UTC
+    constexpr int64_t kDosLast = 4354819198;  // 2107-12-31 23:59:58 UTC
+    unixSeconds = std::clamp(unixSeconds, kDosEpoch, kDosLast);
+    const int64_t days = unixSeconds / 86400;
+    const int64_t secondsOfDay = unixSeconds % 86400;
+    // Howard Hinnant's civil_from_days
+    const int64_t z = days + 719468;
+    const int64_t era = z / 146097;
+    const int64_t doe = z - era * 146097;
+    const int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const int64_t mp = (5 * doy + 2) / 153;
+    const int64_t day = doy - (153 * mp + 2) / 5 + 1;
+    const int64_t month = mp < 10 ? mp + 3 : mp - 9;
+    const int64_t year = yoe + era * 400 + (month <= 2 ? 1 : 0);
+    date = static_cast<uint16_t>(((year - 1980) << 9) | (month << 5) | day);
+    time = static_cast<uint16_t>(((secondsOfDay / 3600) << 11) | (((secondsOfDay / 60) % 60) << 5) | ((secondsOfDay % 60) / 2));
+}
+
 bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* error)
 {
     auto fail = [error](const char* text) {
@@ -134,6 +155,7 @@ bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* err
     _device = &device;
     _page = page;
     _fatWindowSector = UINT64_MAX;
+    _fsInfoSector = 0;
     uint8_t s[kSector];
     if (!device.ReadSector(0, s))
         return fail("cannot read sector 0");
@@ -187,6 +209,7 @@ bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* err
         if (_rootEntries != 0)
             return fail("FAT32-sized volume with a fixed root directory");
         _rootCluster = Get32(s + 44);
+        _fsInfoSector = Get16(s + 48);
     }
     else if (_rootEntries == 0)
         return fail("a FAT12 / FAT16 volume needs a fixed root directory (the cluster count says FAT12 / FAT16)");
@@ -341,7 +364,7 @@ bool FatVolumeReader::ReadClusterChain(uint32_t firstCluster, uint64_t maxBytes,
 }
 
 bool FatVolumeReader::ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::vector<FatDirEntryInfo>& entries,
-                                    std::string* error)
+                                    std::string* error, std::vector<FatRawEntry>* raw)
 {
     std::vector<uint8_t> bytes;
     if (fixedRoot)
@@ -367,6 +390,7 @@ bool FatVolumeReader::ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::
     uint8_t longChecksum = 0;
     int expectedSequence = 0;
     bool longValid = false;
+    size_t longStart = 0;  ///< where the long-name slots of the next short entry begin
 
     for (size_t at = 0; at + 32 <= bytes.size(); at += 32)
     {
@@ -386,6 +410,7 @@ bool FatVolumeReader::ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::
             const int sequence = e[0] & 0x1F;
             if (e[0] & 0x40)
             {
+                longStart = at;
                 longName.assign(static_cast<size_t>(sequence) * 13, u'\0');
                 longChecksum = e[13];
                 expectedSequence = sequence;
@@ -418,6 +443,8 @@ bool FatVolumeReader::ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::
                     label.pop_back();
                 _label = label;
             }
+            if (raw && !(attr & 0x10))
+                raw->push_back({std::vector<uint8_t>(e, e + 32), true});
             longValid = false;
             continue;
         }
@@ -451,13 +478,18 @@ bool FatVolumeReader::ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::
         uint8_t sum = 0;
         for (uint8_t b : std::vector<uint8_t>(e, e + 11))
             sum = static_cast<uint8_t>(((sum & 1) ? 0x80 : 0) + (sum >> 1) + b);
-        if (longValid && expectedSequence == 0 && sum == longChecksum)
+        const bool withLongName = longValid && expectedSequence == 0 && sum == longChecksum;
+        if (withLongName)
         {
             const size_t end = longName.find(u'\0');
             info.name = UnicodeHelper::EncodeUtf8(UnicodeHelper::FromUtf16(longName.substr(0, end)));
         }
         else
             info.name = info.shortName;
+        if (raw)
+            raw->push_back({std::vector<uint8_t>(bytes.begin() + static_cast<std::ptrdiff_t>(withLongName ? longStart : at),
+                                                 bytes.begin() + static_cast<std::ptrdiff_t>(at + 32)),
+                            false});
         longValid = false;
 
         info.attributes = attr;
@@ -503,6 +535,51 @@ bool FatVolumeReader::Find(const std::string& path, FatDirEntryInfo& found, std:
         found = *it;
     }
     return true;
+}
+
+bool FatVolumeReader::ChainClusters(uint32_t firstCluster, std::vector<uint32_t>& clusters, std::string* error)
+{
+    clusters.clear();
+    uint32_t cluster = firstCluster;
+    while (true)
+    {
+        if (cluster < 2 || cluster >= _clusterCount + 2)
+        {
+            if (error)
+                *error = "the cluster chain leaves the volume at cluster " + std::to_string(cluster);
+            return false;
+        }
+        if (clusters.size() >= _clusterCount)
+        {
+            if (error)
+                *error = "the cluster chain loops";
+            return false;
+        }
+        clusters.push_back(cluster);
+        const uint32_t next = NextCluster(cluster);
+        if (IsEndOfChain(next))
+            return true;
+        cluster = next;
+    }
+}
+
+bool FatVolumeReader::ScanFree(std::vector<bool>& free, std::string* error)
+{
+    free.assign(_clusterCount, false);
+    for (uint32_t cluster = 2; cluster < _clusterCount + 2; cluster++)
+        free[cluster - 2] = NextCluster(cluster) == 0;
+    // NextCluster reports a read failure as an end of chain: a failed read leaves clusters used
+    (void)error;
+    return true;
+}
+
+bool FatVolumeReader::ReadRawDirectory(uint32_t firstCluster, std::vector<FatRawEntry>& raw, std::vector<FatDirEntryInfo>& entries,
+                                       std::string* error)
+{
+    raw.clear();
+    entries.clear();
+    const bool root = firstCluster == 0;
+    return ReadDirectory(root ? _rootCluster : firstCluster, root && _type != FatReaderType::Fat32, entries, error, &raw);
 }
 
 bool FatVolumeReader::Stat(const std::string& path, FatDirEntryInfo& entry, std::string* error)

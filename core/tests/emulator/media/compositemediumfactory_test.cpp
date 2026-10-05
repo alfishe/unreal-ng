@@ -64,7 +64,7 @@ TEST(CompositeMediumFactory_Test, LayersMergedAndReadByOracle)
     f.root.File("out/tool.o", "not included");
     f.root.File("patch/README.TXT", "patched readme");
 
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     const MediaResult result = CompositeMediumFactory::Build(f.Descriptor(kTwoFolders), {}, volume, info);
     ASSERT_TRUE(result.Ok()) << result.message;
@@ -98,7 +98,7 @@ TEST(CompositeMediumFactory_Test, ContentIdStableAndFollowsSources)
     f.root.File("base/a.bin", "a");
     f.root.File("out/x.com", "x");
     f.root.File("patch/p.txt", "p");
-    std::unique_ptr<FatSynthVolume> v1, v2, v3;
+    std::unique_ptr<IBlockDevice> v1, v2, v3;
     CompositeInfo i1, i2, i3;
     ASSERT_TRUE(CompositeMediumFactory::Build(f.Descriptor(kTwoFolders), {}, v1, i1).Ok());
     ASSERT_TRUE(CompositeMediumFactory::Build(f.Descriptor(kTwoFolders), {}, v2, i2).Ok());
@@ -130,12 +130,12 @@ TEST(CompositeMediumFactory_Test, SlotThatReadsOnlyFat32BuildsFat32)
     f.root.File("patch/p.txt", "p");
     CompositeBuildOptions slot;
     slot.allowedFs = {FatType::Fat32};
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     ASSERT_TRUE(CompositeMediumFactory::Build(f.Descriptor(kTwoFolders), slot, volume, info).Ok());
     EXPECT_EQ(info.fs, FatType::Fat32);
 
-    std::unique_ptr<FatSynthVolume> refused;
+    std::unique_ptr<IBlockDevice> refused;
     const MediaResult wrong = CompositeMediumFactory::Build(
         f.Descriptor("version: 1\ntarget: {fs: fat16}\nlayers: [{source: {folder: base}}]\n"), slot, refused, info);
     EXPECT_EQ(wrong.error, MediaError::BadRequest);
@@ -145,7 +145,7 @@ TEST(CompositeMediumFactory_Test, FixedSize)
 {
     Fixture f;
     f.root.File("base/a.bin", std::string(10000, 'a'));
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     ASSERT_TRUE(CompositeMediumFactory::Build(f.Descriptor("version: 1\ntarget: {size: 64MiB}\nlayers: [{source: {folder: base}}]\n"),
                                               {}, volume, info).Ok());
@@ -162,11 +162,10 @@ TEST(CompositeMediumFactory_Test, LaterPhasesSayNotSupported)
 {
     Fixture f;
     f.root.File("base/a.bin", "a");
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     for (const char* yaml : {"version: 1\nlayers: [{source: {iso: base.iso}}]\n",
                              "version: 1\ntarget: {fs: iso9660}\nlayers: [{source: {folder: base}}]\n",
-                             "version: 1\ntarget: {build: graft}\nlayers: [{source: {folder: base}}]\n",
                              "version: 1\npartitions: []\n"})
     {
         const MediaResult r = CompositeMediumFactory::Build(f.Descriptor(yaml), {}, volume, info);
@@ -178,7 +177,7 @@ TEST(CompositeMediumFactory_Test, LaterPhasesSayNotSupported)
 TEST(CompositeMediumFactory_Test, MissingFolderAndBadDescriptor)
 {
     Fixture f;
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     EXPECT_EQ(CompositeMediumFactory::Build(f.Descriptor("version: 1\nlayers: [{source: {folder: nope}}]\n"), {}, volume, info).error,
               MediaError::UnreadableSource);

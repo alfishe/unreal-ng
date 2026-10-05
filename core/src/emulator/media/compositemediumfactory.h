@@ -23,7 +23,7 @@
 #include "emulator/media/composedescriptor.h"
 #include "emulator/media/mediatypes.h"
 
-class FatSynthVolume;
+class IBlockDevice;
 class Medium;
 struct OpenRequest;
 
@@ -45,7 +45,9 @@ struct CompositeInfo
 {
     std::string descriptor;  ///< the file, or "(inline)"
     std::string normalized;  ///< ComposeDescriptor::Normalized()
-    FatType fs = FatType::Fat16;
+    FatType fs = FatType::Fat16;   ///< the family: a FAT12 graft base counts as FAT16
+    std::string fsName = "fat16";  ///< "fat12", "fat16" or "fat32": the volume's own type
+    std::string build = "rebuild"; ///< "rebuild" (FatSynthVolume) or "graft" (GraftVolume onto the bottom image)
     uint64_t sectors = 0;
     uint32_t clusterCount = 0;
     uint32_t sectorsPerCluster = 0;
@@ -75,7 +77,7 @@ public:
     /// Build the volume a descriptor describes. On success `volume` and `info`
     /// are set; `result.report` lists everything left out, shadowed or chosen
     static MediaResult Build(const ComposeDescriptor& descriptor, const CompositeBuildOptions& options,
-                             std::unique_ptr<FatSynthVolume>& volume, CompositeInfo& info);
+                             std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info);
 
     /// The registry's entry: a descriptor file (or inline body) into a medium
     static MediaResult Open(const OpenRequest& request, std::unique_ptr<Medium>& medium);

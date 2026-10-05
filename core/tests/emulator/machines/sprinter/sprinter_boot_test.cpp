@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "3rdparty/lodepng/lodepng.h"
+#include "_helpers/scratchfolder.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -728,6 +729,40 @@ TEST_F(SprinterBoot_Test, Dss162_BootsFromAHardDiskImage)
     // The guest's MKDIR reached the image file (WriteThrough)
     DestroyEmulator();
     EXPECT_TRUE(RootHasDirectory(ReadAll(image), "S3B        ")) << "C:\\S3B in the root of " << image;
+    std::remove(image.c_str());
+}
+
+// ACC-C3 (media-multisource, read side): DSS 1.62.92 boots from a composite whose bottom layer is a DSS hard disk image
+// (BuildDssHdd) and whose upper layers are host folders grafted into its free clusters: UTIL/ at /UTIL, and a
+// SYSTEM.BAT that replaces the image's own in place (the image's says only "ver"). The MBR, the loader at LBA 1-3 and
+// SYSTEM.DOS stay where DSS expects them; DSS runs the upper SYSTEM.BAT, which changes to C:\UTIL, and DIR lists
+// the host file. Session writes:
+// the image file is not touched.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk): ~500 frames of real ROM, the turbo mode on
+TEST_F(SprinterBoot_Test, ComposeDssGraftedUtilFolder)
+{
+    const std::string image = DssHddFile("dss-graft-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-graft");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "ver\r\ncd \\util\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    Medium* medium = _context->pMediaManager->GetMedium("ide0.master");
+    ASSERT_NE(medium, nullptr);
+    EXPECT_EQ(medium->Format(), "graft-fat16");
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("C:\\>cd \\util")) << "the upper SYSTEM.BAT ran\n" << ScreenText();
+    EXPECT_TRUE(ScreenHas("HELLO")) << "DIR lists the grafted host file\n" << ScreenText();
     std::remove(image.c_str());
 }
 

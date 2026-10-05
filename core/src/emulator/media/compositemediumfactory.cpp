@@ -6,10 +6,13 @@
 
 #include "common/filehelper.h"
 #include "emulator/io/storage/compose/fatimagesource.h"
+#include "emulator/io/storage/compose/graftvolume.h"
 #include "emulator/io/storage/compose/hostfoldersource.h"
 #include "emulator/io/storage/compose/sourcepool.h"
 #include "emulator/io/storage/compose/unionbuilder.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/subrangedevice.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
@@ -127,7 +130,7 @@ std::vector<FatType> CompositeMediumFactory::FsCandidates(std::optional<FatType>
 }
 
 MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const CompositeBuildOptions& options,
-                                          std::unique_ptr<FatSynthVolume>& volume, CompositeInfo& info)
+                                          std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info)
 {
     volume.reset();
     if (!d.Ok())
@@ -141,8 +144,6 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         return MediaResult::Fail(MediaError::NotSupported, "partitions: a later phase (C7) of the multi-source work");
     if (d.target.kind == MediaKind::Optical || d.target.fs == ComposeTarget::Fs::Iso9660)
         return MediaResult::Fail(MediaError::NotSupported, "ISO 9660 targets: a later phase (C5) of the multi-source work");
-    if (d.target.build == ComposeTarget::Build::Graft)
-        return MediaResult::Fail(MediaError::NotSupported, "build: graft: a later phase (C4) of the multi-source work");
     if (d.hasBoot)
         result.report.push_back("boot: not applied yet (a later phase of the multi-source work)");
     if (d.target.onBadName == "replace")
@@ -158,6 +159,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     auto pool = std::make_shared<SourcePool>();
     std::vector<FileTree> trees(d.layers.size());
     std::vector<UnionLayer> layers;
+    int baseDevice = -1;  ///< the bottom layer's image (the whole file), a graft candidate
     info = CompositeInfo{};
     info.descriptor = d.file.empty() ? "(inline)" : PathText(d.file);
     info.normalized = d.Normalized();
@@ -197,6 +199,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                     return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + path + ": " + error);
                 device = pool->AddDevice(std::shared_ptr<IBlockDevice>(std::move(opened)), key);
             }
+            if (i == 0)
+                baseDevice = device;
 
             FatImageSourceOptions source;
             source.from = layer.from;
@@ -284,6 +288,102 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         want = FatType::Fat16;
     if (!want && d.target.fs == ComposeTarget::Fs::Fat32)
         want = FatType::Fat32;
+
+    // --- DT-4: graft onto the bottom image, or rebuild ---
+    if (d.target.build != ComposeTarget::Build::Rebuild)
+    {
+        const bool graftOnly = d.target.build == ComposeTarget::Build::Graft;
+        std::string why;
+        MediaError failWith = MediaError::BadRequest;
+        const ComposeLayer& bottom = d.layers.front();
+        const bool atRoot = (bottom.mount.empty() || bottom.mount == "/") && (bottom.from.empty() || bottom.from == "/");
+        if (baseDevice < 0 || !atRoot)
+        {
+            if (graftOnly)
+                return MediaResult::Fail(MediaError::BadRequest,
+                                         "build: graft needs a FAT image as the bottom layer, mounted at '/' and taken from '/'");
+        }
+        else
+        {
+            // The base's FAT type against the slot and the target (FAT12 counts as the FAT16 family)
+            const CodePage basePage = bottom.source.codePage.value_or(CodePage::Cp866);
+            FatVolumeReader probe;
+            std::shared_ptr<IBlockDevice> window;
+            FatPartition partition;
+            bool opened = true;
+            if (bottom.source.partition)
+            {
+                opened = FatVolumeReader::FindPartition(pool->Device(static_cast<uint16_t>(baseDevice)), *bottom.source.partition,
+                                                        partition, &why);
+                if (opened)
+                    window = std::make_shared<SubRangeDevice>(pool->DevicePtr(static_cast<uint16_t>(baseDevice)), partition.first,
+                                                              partition.count);
+            }
+            opened = opened && probe.Open(window ? *window : pool->Device(static_cast<uint16_t>(baseDevice)), basePage, &why);
+            const FatType family = probe.Type() == FatReaderType::Fat32 ? FatType::Fat32 : FatType::Fat16;
+            const char* typeName = probe.Type() == FatReaderType::Fat32 ? "FAT32" : probe.Type() == FatReaderType::Fat16 ? "FAT16" : "FAT12";
+            const uint64_t baseBytes = pool->Device(static_cast<uint16_t>(baseDevice)).SectorCount() * 512;
+            const bool slotTakes = options.allowedFs.empty() ||
+                                   std::find(options.allowedFs.begin(), options.allowedFs.end(), family) != options.allowedFs.end();
+            if (!opened)
+                why = "the base has no FAT volume: " + why;
+            else if (!slotTakes)
+                why = std::string("the base is ") + typeName + " and the slot does not read it";
+            else if (want && *want != family)
+                why = std::string("the base is ") + typeName + ", the target asks for " + FsName(*want);
+            else if (d.target.size && *d.target.size != baseBytes)
+                why = "target.size differs from the base's size (" + std::to_string(baseBytes) + " bytes): a graft keeps it";
+            else
+            {
+                GraftOptions graft;
+                graft.codePage = basePage;
+                graft.partition = bottom.source.partition;
+                graft.fixedTimeUtc = d.target.fixedTimeUtc;
+                std::vector<std::string> graftReport;
+                GraftFailure failure = GraftFailure::None;
+                auto grafted = GraftVolume::Build(tree, pool, static_cast<uint16_t>(baseDevice), graft, identity, info.descriptor,
+                                                  &why, &graftReport, &failure);
+                if (grafted)
+                {
+                    for (const std::string& line : graftReport)
+                        result.report.push_back(line);
+                    std::vector<std::string> ignored;
+                    if (d.target.free)
+                        ignored.push_back("free");
+                    if (d.target.label)
+                        ignored.push_back("label");
+                    if (d.target.mbr)
+                        ignored.push_back("mbr");
+                    if (!ignored.empty())
+                    {
+                        std::string list;
+                        for (const std::string& name : ignored)
+                            list += (list.empty() ? "" : ", ") + name;
+                        result.report.push_back("target." + list + ": ignored, a graft keeps the base's layout");
+                    }
+                    if (d.target.codePage && *d.target.codePage != basePage)
+                        result.report.push_back("target.codepage: ignored, new names use the base's code page");
+                    result.report.push_back(std::string("graft onto ") + PathText(bottom.source.path) + " (" + typeName + "): " +
+                                            std::to_string(grafted->FilesGrafted()) + " files grafted, " +
+                                            std::to_string(grafted->DirectoriesEncoded()) + " directories patched, " +
+                                            std::to_string(grafted->FreeClusters()) + " clusters left free");
+                    info.build = "graft";
+                    info.fs = family;
+                    info.fsName = probe.Type() == FatReaderType::Fat32 ? "fat32" : probe.Type() == FatReaderType::Fat16 ? "fat16" : "fat12";
+                    info.sectors = grafted->SectorCount();
+                    info.clusterCount = probe.ClusterCount();
+                    info.sectorsPerCluster = probe.SectorsPerCluster();
+                    info.contentId = grafted->ContentId();
+                    volume = std::move(grafted);
+                    return result;
+                }
+                failWith = failure == GraftFailure::DoesNotFit ? MediaError::DoesNotFit : MediaError::UnreadableSource;
+            }
+            if (graftOnly)
+                return MediaResult::Fail(failWith, "build: graft: " + why);
+            result.report.push_back("rebuild instead of a graft: " + why);
+        }
+    }
     const std::vector<FatType> candidates = FsCandidates(want, options.allowedFs, options.defaultFs, &error);
     if (candidates.empty())
         return MediaResult::Fail(MediaError::BadRequest, error);
@@ -296,7 +396,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         fat.label = *d.target.label;
     fat.freeBytes = d.target.free.value_or(options.freeBytes.value_or(kDefaultFree));
 
-    for (size_t c = 0; c < candidates.size() && !volume; c++)
+    std::unique_ptr<FatSynthVolume> rebuilt;
+    for (size_t c = 0; c < candidates.size() && !rebuilt; c++)
     {
         fat.fs = candidates[c];
         std::vector<std::string> buildReport;
@@ -332,21 +433,21 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                     continue;
                 }
                 const bool closeEnough = *d.target.size - bytes < cluster;
-                if (!volume || bytes > volume->SectorCount() * 512)
+                if (!rebuilt || bytes > rebuilt->SectorCount() * 512)
                 {
-                    volume = std::move(candidate);
+                    rebuilt = std::move(candidate);
                     buildReport = std::move(passReport);
                 }
                 if (closeEnough)
                     break;
                 fat.freeBytes += *d.target.size - bytes;
             }
-            if (!volume)
-                volume = std::move(probe);  // nothing fits under the size: the smallest layout
+            if (!rebuilt)
+                rebuilt = std::move(probe);  // nothing fits under the size: the smallest layout
         }
         else
-            volume = FatSynthVolume::Build(tree, pool, fat, identity, info.descriptor, &error, &buildReport);
-        if (volume)
+            rebuilt = FatSynthVolume::Build(tree, pool, fat, identity, info.descriptor, &error, &buildReport);
+        if (rebuilt)
         {
             for (const std::string& line : buildReport)
                 result.report.push_back(line + ": skipped");
@@ -354,14 +455,17 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                 result.report.push_back(std::string("the content does not fit ") + FsName(candidates[0]) + ": built as " + FsName(fat.fs));
         }
     }
-    if (!volume)
+    if (!rebuilt)
         return MediaResult::Fail(MediaError::DoesNotFit, error);
 
-    info.fs = volume->Type();
-    info.sectors = volume->SectorCount();
-    info.clusterCount = volume->ClusterCount();
-    info.sectorsPerCluster = volume->SectorsPerCluster();
-    info.contentId = volume->ContentId();
+    info.build = "rebuild";
+    info.fs = rebuilt->Type();
+    info.fsName = info.fs == FatType::Fat32 ? "fat32" : "fat16";
+    info.sectors = rebuilt->SectorCount();
+    info.clusterCount = rebuilt->ClusterCount();
+    info.sectorsPerCluster = rebuilt->SectorsPerCluster();
+    info.contentId = rebuilt->ContentId();
+    volume = std::move(rebuilt);
     return result;
 }
 
@@ -392,7 +496,7 @@ MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique
     options.cancelRequested = request.cancelRequested;
     options.onProgress = request.onProgress;
 
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     auto info = std::make_shared<CompositeInfo>();
     MediaResult result = Build(descriptor, options, volume, *info);
     if (!result.Ok())
@@ -401,8 +505,8 @@ MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique
     MediaSource resolved = source;
     resolved.type = MediaSourceType::Composite;
     const AccessMode access = descriptor.writes.access == AccessMode::ReadOnly ? AccessMode::ReadOnly : request.access;
-    const FatType fs = volume->Type();
-    medium = MediaFormatRegistry::WrapBlock(resolved, access, fs == FatType::Fat32 ? "compose-fat32" : "compose-fat16",
+    const FatType fs = info->fs;
+    medium = MediaFormatRegistry::WrapBlock(resolved, access, (info->build == "graft" ? "graft-" : "compose-") + info->fsName,
                                             std::move(volume));
     medium->Report() = result.report;
     medium->SetOptions({fs, request.codePage, request.freeBytes});

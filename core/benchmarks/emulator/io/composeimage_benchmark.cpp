@@ -58,7 +58,7 @@ namespace
                 }
             }
             std::ofstream(dir / "bench.ucompose.yaml")
-                << "version: 1\ntarget: {fs: fat16, free: 16MiB}\nlayers: [{source: {image: files.img}}]\n";
+                << "version: 1\ntarget: {build: rebuild, fs: fat16, free: 16MiB}\nlayers: [{source: {image: files.img}}]\n";
             return dir / "bench.ucompose.yaml";
         }();
         return file;
@@ -66,11 +66,12 @@ namespace
 
     std::unique_ptr<FatSynthVolume> Volume()
     {
-        std::unique_ptr<FatSynthVolume> volume;
+        std::unique_ptr<IBlockDevice> volume;
         CompositeInfo info;
         if (!CompositeMediumFactory::Build(ComposeDescriptor::Load(Descriptor()), {}, volume, info).Ok())
             return nullptr;
-        return volume;
+        // The descriptor asks for a rebuild: the layout under test is a FatSynthVolume
+        return std::unique_ptr<FatSynthVolume>(dynamic_cast<FatSynthVolume*>(volume.release()));
     }
 
     /// The last MiB of the used area: big.bin, read sector after sector
@@ -153,7 +154,7 @@ namespace
         const ComposeDescriptor descriptor = ComposeDescriptor::Load(Descriptor());
         for (auto _ : state)
         {
-            std::unique_ptr<FatSynthVolume> volume;
+            std::unique_ptr<IBlockDevice> volume;
             CompositeInfo info;
             benchmark::DoNotOptimize(CompositeMediumFactory::Build(descriptor, {}, volume, info).Ok());
         }

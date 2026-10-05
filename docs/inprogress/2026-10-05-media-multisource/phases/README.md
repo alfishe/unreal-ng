@@ -9,7 +9,7 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C0 / C1 | [c1-core-and-parity.md](c1-core-and-parity.md) | done |
 | C2 | [c2-composite-descriptor.md](c2-composite-descriptor.md) | done |
 | C3 | [c3-image-sources.md](c3-image-sources.md) | done |
-| C4 | graft | — |
+| C4 | [c4-graft.md](c4-graft.md) | done |
 | C5 | ISO 9660 | — |
 | C6 | provenance, attribution, S1 / S2 | — |
 | C7 | partitions | — |

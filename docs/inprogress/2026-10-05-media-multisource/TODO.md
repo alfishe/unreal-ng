@@ -1,6 +1,6 @@
 # Multi-source media — TODO
 
-**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C3 done ([phases/](phases/README.md)).
+**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C4 done ([phases/](phases/README.md)).
 PLAN.md row **#95**.
 
 ## Owner decisions (2026-10-05)
@@ -23,12 +23,18 @@ PLAN.md row **#95**.
 - [x] C1 core + `HostFolderFat` parity refactor
 - [x] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`); Sprinter IDE slots `fsCompatibility = {Fat16}`
 - [x] C3 FAT image sources
-- [ ] C4 graft
+- [x] C4 graft
+- [ ] D-6 boot carry-over for rebuilt FAT volumes (`BootPlan`, the descriptor's `boot:` section): in no phase of the
+  table so far; a graft keeps the base's boot structures by construction ([phases/c4-graft.md](phases/c4-graft.md) §2)
 - [ ] C5 ISO reader, ISO target
 - [ ] C6 provenance, attribution (`changes`), S1 flat (+ VHD writer, compact), S2 delta
 - [ ] C7 partitions
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
+- [ ] Lazy base enumeration for grafts: walk only the base directories upper layers touch (the full walk dominates
+  the graft build today, [phases/c4-graft.md](phases/c4-graft.md) §8)
+- [ ] Owner decision: a folder layer's mount point dates 1980 (the snapshot root has no time); fixing it changes
+  `HostFolderFat`'s label time ([phases/c4-graft.md](phases/c4-graft.md) §8)
 - [ ] C10 sparse and in-memory images (owner request 2026-10-05): sparse image files and sparse in-memory disks
   (store only written / non-zero sectors: a FAT32 volume is >= 32 MiB, 256 MiB with 4 KiB clusters, nearly all
   zeros), images held in memory instead of on disk where it pays, and packing back efficiently on save / flatten

@@ -54,7 +54,8 @@ namespace
     {
         StateNode value = StateNode::Object();
         value["descriptor"] = info.descriptor;
-        value["fs"] = info.fs == FatType::Fat32 ? "fat32" : "fat16";
+        value["fs"] = info.fsName;
+        value["build"] = info.build;
         value["sectors"] = info.sectors;
         value["bytes"] = info.sectors * 512;
         value["clusters"] = static_cast<uint64_t>(info.clusterCount);
@@ -380,7 +381,7 @@ MediaReply MediaControl::Compose(const MediaRequest& request)
     const ComposeDescriptor descriptor = IsInlineDescriptor(request.path)
                                              ? ComposeDescriptor::Parse(request.path, std::filesystem::current_path(), "(inline)")
                                              : ComposeDescriptor::Load(FileHelper::ToFsPath(request.path));
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     reply.result = CompositeMediumFactory::Build(descriptor, options, volume, info);
     if (reply.result.Ok())

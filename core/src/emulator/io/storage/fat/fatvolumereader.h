@@ -41,6 +41,13 @@ struct FatPartition
     uint8_t type = 0;     ///< the partition type byte
 };
 
+/// One directory entry as stored: its long-name slots and the short entry
+struct FatRawEntry
+{
+    std::vector<uint8_t> slots;  ///< 32 bytes per slot, the short entry last
+    bool isLabel = false;        ///< the volume label entry (no file)
+};
+
 struct FatDirEntryInfo
 {
     std::string name;        ///< the long name when there is one, else the short name (UTF-8)
@@ -67,11 +74,23 @@ public:
     /// The UTC second count of a DOS date and time (read as UTC, the convention
     /// FatSynthVolume writes with)
     static int64_t DosToUnix(uint16_t date, uint16_t time);
+    /// The reverse: DOS date and time of a UTC second count, clamped to 1980-2107
+    static void UnixToDos(int64_t unixSeconds, uint16_t& date, uint16_t& time);
 
     FatReaderType Type() const { return _type; }
     uint32_t ClusterCount() const { return _clusterCount; }
     uint32_t SectorsPerCluster() const { return _sectorsPerCluster; }
     uint64_t VolumeStart() const { return _volumeStart; }
+    uint32_t ReservedSectors() const { return _reservedSectors; }
+    uint32_t FatCount() const { return _fats; }
+    uint32_t FatSectors() const { return _fatSectors; }
+    uint32_t RootEntries() const { return _rootEntries; }
+    uint32_t RootDirSectors() const { return _rootDirSectors; }
+    uint32_t RootCluster() const { return _rootCluster; }
+    /// The first data sector, relative to the volume
+    uint64_t DataStart() const;
+    /// FAT32: the FSInfo sector relative to the volume (0: none)
+    uint32_t FsInfoSector() const { return _fsInfoSector; }
     const std::string& Label() const { return _label; }  ///< from the root directory's label entry
 
     /// "/" or "/GAMES/SUB": the entries of a directory, "." and ".." left out.
@@ -88,17 +107,30 @@ public:
     /// volume, loops or ends before `bytes`
     bool ChainExtents(uint32_t firstCluster, uint64_t bytes, std::vector<FatChainExtent>& extents, std::string* error = nullptr);
 
+    /// The clusters of the chain from `firstCluster`, in order (checked as ChainExtents)
+    bool ChainClusters(uint32_t firstCluster, std::vector<uint32_t>& clusters, std::string* error = nullptr);
+    /// The FAT entry of `cluster` (0: free)
+    uint32_t FatEntry(uint32_t cluster) { return NextCluster(cluster); }
+    /// free[c - 2] for every cluster c of the volume: true when its FAT entry is 0
+    bool ScanFree(std::vector<bool>& free, std::string* error = nullptr);
+    /// The entries of a directory as stored, in order: long-name slots grouped with
+    /// their short entry, the volume label included; deleted entries, orphan
+    /// long-name slots, "." and ".." left out. `entries` lines up with what
+    /// ListDirectory returns for the same directory, label aside
+    bool ReadRawDirectory(uint32_t firstCluster, std::vector<FatRawEntry>& raw, std::vector<FatDirEntryInfo>& entries,
+                          std::string* error = nullptr);
+
     /// FAT sectors read so far (tests: the FAT window cache)
     uint64_t FatSectorReads() const { return _fatSectorReads; }
 
 private:
-    bool ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::vector<FatDirEntryInfo>& entries, std::string* error);
+    bool ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::vector<FatDirEntryInfo>& entries, std::string* error,
+                       std::vector<FatRawEntry>* raw = nullptr);
     bool Find(const std::string& path, FatDirEntryInfo& found, std::string* error);
     bool ReadClusterChain(uint32_t firstCluster, uint64_t maxBytes, std::vector<uint8_t>& data, std::string* error);
     uint32_t NextCluster(uint32_t cluster);
     bool IsEndOfChain(uint32_t value) const;
     bool Sector(uint64_t volumeLba, uint8_t* dst);
-    uint64_t DataStart() const;
 
     IBlockDevice* _device = nullptr;
     CodePage _page = CodePage::Cp866;
@@ -112,6 +144,7 @@ private:
     uint32_t _sectorsPerCluster = 0;
     uint32_t _clusterCount = 0;
     uint32_t _rootCluster = 0;
+    uint32_t _fsInfoSector = 0;
     std::string _label;
 
     /// Two consecutive FAT sectors (a FAT12 entry may straddle them)

@@ -67,7 +67,7 @@ namespace
 
     const char* kThreeLayers = R"(
 version: 1
-target: {fs: %FS%, free: 1MiB, fixedTime: 1767268800}
+target: {build: rebuild, fs: %FS%, free: 1MiB, fixedTime: 1767268800}
 layers:
   - {name: sixteen, source: {image: fat16.img}}
   - {name: thirtytwo, source: {image: fat32.img}}
@@ -87,7 +87,7 @@ TEST(ComposeFat_Test, MergeFat16AndFat32IntoFat32)
 {
     Sources s;
     s.Make();
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     const MediaResult result = CompositeMediumFactory::Build(s.Descriptor(WithFs("fat32")), {}, volume, info);
     ASSERT_TRUE(result.Ok()) << result.message;
@@ -113,7 +113,7 @@ TEST(ComposeFat_Test, IntoFat16WhenFits)
     s.Make();
     for (const char* fs : {"auto", "fat16"})
     {
-        std::unique_ptr<FatSynthVolume> volume;
+        std::unique_ptr<IBlockDevice> volume;
         CompositeInfo info;
         const MediaResult result = CompositeMediumFactory::Build(s.Descriptor(WithFs(fs)), {}, volume, info);
         ASSERT_TRUE(result.Ok()) << fs << ": " << result.message;
@@ -133,7 +133,7 @@ TEST(ComposeFat_Test, IntoFat16TooBigFails)
     std::error_code ec;
     std::filesystem::resize_file(big, 2200ull * 1024 * 1024, ec);  // sparse: nothing is written
     ASSERT_FALSE(ec) << ec.message();
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     const MediaResult result = CompositeMediumFactory::Build(s.Descriptor(WithFs("fat16")), {}, volume, info);
     EXPECT_EQ(result.error, MediaError::DoesNotFit) << result.message;
@@ -153,7 +153,7 @@ TEST(ComposeFat_Test, ChdSourceReadsThroughSharedCache)
     std::string error;
     ASSERT_TRUE(chd::WriteChd(Text(s.root.Path() / "card.chd"), *image.disk, options, &error)) << error;
 
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     const MediaResult result = CompositeMediumFactory::Build(
         s.Descriptor("version: 1\ntarget: {free: 1MiB}\nlayers:\n"
@@ -174,7 +174,7 @@ TEST(ComposeFat_Test, ImageLayerErrors)
     Sources s;
     s.Make();
     s.root.File("notfat.img", std::string(64 * 1024, '\0'));
-    std::unique_ptr<FatSynthVolume> volume;
+    std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     for (const char* yaml : {"version: 1\nlayers: [{name: x, source: {image: missing.img}}]\n",
                              "version: 1\nlayers: [{name: x, source: {image: work}}]\n",
