@@ -1406,10 +1406,11 @@ the native encoder; every other combination needs ffmpeg. The WebAPI (`"audio"`)
 Example: `videorecord start h264 scratch/run.mp4 --scale 2 --audio aac`.
 
 **Output profiles (1080p / 1440p / 4K)**: `--profile 4k` (WebAPI/MCP/Lua/Python `profile`) records a fixed
-3840x2160 frame (`1080p` 1920x1080, `1440p` 2560x1440; aliases `uhd` / `2160p`). The picture is scaled into it
-sharply - nearest neighbor, the largest INTEGER factor that fits (352x288 -> 7x = 2464x2016), aspect kept,
-centered, black bars: every source pixel becomes the same k x k block, nothing is blurred (the algorithm of the
-emulator window, which samples with Nearest). `native` (the default) keeps the old behavior (picture x `--scale`).
+3840x2160 frame (`1080p` 1920x1080, `1440p` 2560x1440; aliases `uhd` / `2160p`). The picture is fitted into it
+with its aspect kept - as large as the frame allows (a 4:3 picture takes the full height of the 16:9 frame:
+352x288 -> 2640x2160, bars left and right), centered, black bars - and sampled nearest neighbor, nothing is blurred
+(the algorithm of the emulator window, which samples with Nearest; at a factor that is not whole, source pixels are
+k and k+1 output pixels wide, an exact multiple such as 1080p in 4K is exact blocks). `native` (the default) keeps the old behavior (picture x `--scale`).
 A fixed frame takes **h264 or h265 only**, in any container (mp4/mov: native macOS encoder; mkv and the rest:
 ffmpeg); `--scale` is ignored; the default video bitrate of 4k is 35000 kbps; the other formats are refused
 (`400` on the WebAPI) with the reason. `--acceleration auto|hardware|software` (alias `gpu` / `cpu`) picks the

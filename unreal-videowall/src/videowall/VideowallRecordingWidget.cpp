@@ -193,8 +193,8 @@ void VideowallRecordingWidget::createVideoTab()
     outputLayout->addLayout(formatLayout);
 
     // Capture resolution: auto-match active window or fullscreen buffer
-    // Resolution profile: the wall's own size (auto), or a fixed 1080p / 1440p / 4K frame. The wall is scaled into
-    // the fixed frame sharply (nearest neighbor, integer factor, black bars - no blur), whatever size the window or
+    // Resolution profile: the wall's own size (auto), or a fixed 1080p / 1440p / 4K frame. The wall is fitted into
+    // the fixed frame (aspect kept, nearest neighbor, black bars - no blur), whatever size the window or
     // the fullscreen buffer is. A fixed frame takes H.264 / H.265 only
     auto* regionLayout = new QHBoxLayout();
     regionLayout->addWidget(new QLabel("🎥 Resolution:"));
@@ -205,7 +205,7 @@ void VideowallRecordingWidget::createVideoTab()
     _profileCombo->addItem("4K (3840×2160)", "4k");
     _profileCombo->setToolTip("Auto: the picture size of the window or the fullscreen buffer.\n"
                               "1080p / 1440p / 4K: a fixed frame; the wall is scaled into it sharply\n"
-                              "(nearest neighbor, integer factor, black bars). H.264 / H.265 only.");
+                              "(fit with the aspect kept, nearest neighbor, black bars). H.264 / H.265 only.");
     regionLayout->addWidget(_profileCombo, 1);
 
     regionLayout->addWidget(new QLabel("Encoder:"));

@@ -130,7 +130,6 @@ private:
     QComboBox* _captureCombo = nullptr;
     QComboBox* _sizeCombo = nullptr;
     QComboBox* _profileCombo = nullptr;  ///< native / 1080p / 1440p / 4K (fixed frame, sharp scale)
-    QComboBox* _accelCombo = nullptr;    ///< encoder acceleration: auto / GPU / software
 
     // Estimation
     QLabel* _estimateLabel = nullptr;
