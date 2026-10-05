@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
-| **Codecs** | `tasm3`, `tasm4` (`core/src/3rdparty/unreal-asm/src/codecs/tasm/`) |
+| **Codec** | `tasm`, versions `3` and `4` (`core/src/3rdparty/unreal-asm/src/codecs/tasm/`; one codec for every version, D-15) |
 | **Sources** | prior-art L1 (the owner's `ZConverter_TASM4.cpp`, 2012), L2/L3, L5 (real TASM 3.2 files), P1 (ZX-M8XXX `asm-detok.js`); `TASM30.DOC` from the TASM 3.01 archive |
 | **Status** | TASM 3: confirmed byte for byte on real files. TASM 4: **provisional**, from L1 and P1 only (no TASM 4 file found yet) |
 
@@ -82,7 +82,7 @@ what TASM 3.2 writes, at least for these files.
 
 ## 6. Sub-version conversion
 
-`tasm3` ↔ `tasm4` goes through the text. The kept bodies belong to the other codec, so every line is tokenized
+TASM 3 ↔ TASM 4 (`EncodeOptions::subversion`) goes through the text. The kept bodies belong to the other version, so every line is tokenized
 canonically with the target's run byte and table. The three TASM 4-only directive names (`defmac`, `display`,
 `endmac`) have no TASM 3 token and are written as plain text. Converting TASM 3 → TASM 4 → TASM 3 gives TASM 3's
 original bytes (test `SubVersionConversionThroughTheText`).

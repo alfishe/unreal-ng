@@ -1,7 +1,10 @@
-// The TASM 3 / 4 codecs: real TASM 3 sources decode to the expected text, round-trip byte-exact, and the canonical
-// tokenizer alone (no kept attributes) reproduces TASM's own bytes; detection by catalog fields and by the stream.
+// The TASM codec (versions 3.x and 4.x): real TASM 3 sources decode to the expected text, round-trip byte-exact, and
+// the canonical tokenizer alone (no kept attributes) reproduces TASM's own bytes; version detection by catalog fields
+// and by the stream; conversion between the versions.
 
 #include <gtest/gtest.h>
+
+#include <algorithm>
 
 #include "codecs/tasm/tasmcodec.h"
 #include "testdata.h"
@@ -44,12 +47,13 @@ SourceDocument WithoutAttributes(SourceDocument document)
 
 TEST(TasmCodec_Test, RealTasm3SourcesDecodeToTheExpectedText)
 {
-    const codecs::TasmCodec codec(3);
+    const codecs::TasmCodec codec;
     for (const char* file : kSources)
     {
         const DecodeResult decoded = codec.Decode(Unwrap(file).data, {});
         ASSERT_TRUE(decoded.ok) << file;
-        EXPECT_EQ(decoded.document.format, "tasm3");
+        EXPECT_EQ(decoded.document.format, "tasm");
+        EXPECT_EQ(decoded.document.subversion, "3");
         EXPECT_EQ(decoded.document.dialect, "tasm");
         const std::string expected = ReadTestText(std::string(file).replace(std::string(file).size() - 2, 2, "txt"));
         EXPECT_EQ(decoded.document.Text() + "\n", expected) << file;
@@ -58,7 +62,7 @@ TEST(TasmCodec_Test, RealTasm3SourcesDecodeToTheExpectedText)
 
 TEST(TasmCodec_Test, ByteExactRoundTrip)
 {
-    const codecs::TasmCodec codec(3);
+    const codecs::TasmCodec codec;
     for (const char* file : kSources)
     {
         const auto data = Unwrap(file).data;
@@ -71,7 +75,7 @@ TEST(TasmCodec_Test, ByteExactRoundTrip)
 TEST(TasmCodec_Test, CanonicalTokenizerReproducesTasmsOwnBytes)
 {
     // The decoded text with every kept attribute dropped: the tokenizer alone must write what TASM 3 wrote
-    const codecs::TasmCodec codec(3);
+    const codecs::TasmCodec codec;
     for (const char* file : kSources)
     {
         const auto data = Unwrap(file).data;
@@ -87,7 +91,7 @@ TEST(TasmCodec_Test, CanonicalTokenizerReproducesTasmsOwnBytes)
 
 TEST(TasmCodec_Test, EditedLineIsTokenizedAndTheRestKept)
 {
-    const codecs::TasmCodec codec(3);
+    const codecs::TasmCodec codec;
     const auto data = Unwrap(kSources[0]).data;
     DecodeResult decoded = codec.Decode(data, {});
     decoded.document.lines[1].text = "LOOP        djnz      LOOP ; again";
@@ -106,21 +110,23 @@ TEST(TasmCodec_Test, EditedLineIsTokenizedAndTheRestKept)
 
 TEST(TasmCodec_Test, Tasm4UsesItsOwnRunByte)
 {
-    const codecs::TasmCodec tasm4(4);
+    const codecs::TasmCodec codec;
     const SourceDocument document = SourceDocument::FromText("        org       #6000\nSTART   ld        a,1\n        ret", "tasm");
-    const EncodeResult encoded = tasm4.Encode(document, {});
+    EncodeOptions to4;
+    to4.subversion = "4";
+    const EncodeResult encoded = codec.Encode(document, to4);
     ASSERT_TRUE(encoded.ok);
     EXPECT_EQ(encoded.bytes[1], 0x01) << "TASM 4 space run";
     EXPECT_EQ(encoded.bytes[2], 8);
-    const DecodeResult decoded = tasm4.Decode(encoded.bytes, {});
+    const DecodeResult decoded = codec.Decode(encoded.bytes, {});
     ASSERT_TRUE(decoded.ok);
     EXPECT_EQ(decoded.document.Text(), document.Text());
-    EXPECT_EQ(decoded.document.subversion, "4.x");
+    EXPECT_EQ(decoded.document.subversion, "4") << "detected from the run byte";
 }
 
 TEST(TasmCodec_Test, TextTasmCannotHoldIsAnError)
 {
-    const codecs::TasmCodec codec(3);
+    const codecs::TasmCodec codec;
     const EncodeResult encoded = codec.Encode(SourceDocument::FromText("        ld a,1 ; ёлка"), {});
     EXPECT_FALSE(encoded.ok);
     ASSERT_EQ(encoded.diagnostics.size(), 1u);
@@ -129,7 +135,7 @@ TEST(TasmCodec_Test, TextTasmCannotHoldIsAnError)
 
 TEST(TasmCodec_Test, BrokenFramingIsReportedAndTheRestKept)
 {
-    const codecs::TasmCodec codec(3);
+    const codecs::TasmCodec codec;
     const std::vector<uint8_t> bytes = {3, 'n', 'o', 'p', 3, 5, 'a', 'b', 0xFF};
     const DecodeResult decoded = codec.Decode(bytes, {});
     EXPECT_FALSE(decoded.ok);
@@ -139,37 +145,63 @@ TEST(TasmCodec_Test, BrokenFramingIsReportedAndTheRestKept)
 
 TEST(TasmCodec_Test, DetectionByCatalogAndByStream)
 {
-    const codecs::TasmCodec tasm3(3), tasm4(4);
+    const codecs::TasmCodec codec;
     const containers::TrdosFile file = Unwrap(kSources[0]);
-    EXPECT_EQ(tasm3.Detect(file.data, file.Hints()), 95);
-    EXPECT_LE(tasm4.Detect(file.data, file.Hints()), 20);
-    EXPECT_GE(tasm3.Detect(file.data, {}), 60) << "no catalog: the #0A runs tell TASM 3";
-    EXPECT_LE(tasm4.Detect(file.data, {}), 40);
-    EXPECT_EQ(tasm3.Detect(ReadTestData("sjasmplus/hello.asm"), {}), 0);
+    EXPECT_EQ(codec.Detect(file.data, file.Hints()), 95);
+    EXPECT_GE(codec.Detect(file.data, {}), 60) << "no catalog: the framing holds";
+    EXPECT_EQ(codec.Detect(ReadTestData("sjasmplus/hello.asm"), {}), 0);
+    EXPECT_EQ(codecs::TasmCodec::DetectVersion(file.data, file.Hints()), "3");
+    EXPECT_EQ(codecs::TasmCodec::DetectVersion(file.data, {}), "3") << "no catalog: the #0A runs tell TASM 3";
+    CatalogHints tasm4Start = file.Hints();
+    tasm4Start.start = 4096;
+    EXPECT_EQ(codecs::TasmCodec::DetectVersion(file.data, tasm4Start), "4") << "the catalog's start comes first";
 
     const DetectResult detected = CodecRegistry::Builtin().Detect(file.data, file.Hints());
     ASSERT_NE(detected.chosen, nullptr) << detected.reason;
-    EXPECT_EQ(detected.chosen->Info().id, "tasm3");
+    EXPECT_EQ(detected.chosen->Info().id, "tasm");
 }
 
 TEST(TasmCodec_Test, SubVersionConversionThroughTheText)
 {
     // TASM 3 -> TASM 4 -> TASM 3: the text survives, TASM 4 bytes use its run byte, and back in TASM 3 the bytes are
-    // TASM 3's own (the kept attributes belong to the other codec, so every line is tokenized canonically)
-    const codecs::TasmCodec tasm3(3), tasm4(4);
+    // TASM 3's own (kept bytes belong to the other version, so every line is tokenized canonically)
+    const codecs::TasmCodec codec;
+    EncodeOptions to3, to4;
+    to3.subversion = "3";
+    to4.subversion = "4";
     for (const char* file : kSources)
     {
         const auto data = Unwrap(file).data;
-        const DecodeResult original = tasm3.Decode(data, {});
-        const EncodeResult as4 = tasm4.Encode(original.document, {});
+        const DecodeResult original = codec.Decode(data, {});
+        const EncodeResult as4 = codec.Encode(original.document, to4);
         ASSERT_TRUE(as4.ok) << file;
         EXPECT_EQ(as4.bytes[1], 0x01) << file;
-        const DecodeResult decoded4 = tasm4.Decode(as4.bytes, {});
+        const DecodeResult decoded4 = codec.Decode(as4.bytes, {});
         ASSERT_TRUE(decoded4.ok);
+        EXPECT_EQ(decoded4.document.subversion, "4");
         EXPECT_EQ(decoded4.document.Text(), original.document.Text());
-        const EncodeResult back = tasm3.Encode(decoded4.document, {});
+        const EncodeResult back = codec.Encode(decoded4.document, to3);
         ASSERT_TRUE(back.ok);
         const auto expected = Stream(data);
         EXPECT_EQ(std::vector<uint8_t>(back.bytes.begin(), back.bytes.begin() + static_cast<std::ptrdiff_t>(expected.size())), expected) << file;
     }
+}
+
+TEST(TasmCodec_Test, KeywordMissingInTheTargetVersionIsReported)
+{
+    // "defm" is a TASM 3 keyword (#97); TASM 4 uses #97 for "defmac" and has no "defm": written as text, with a warning
+    const codecs::TasmCodec codec;
+    EncodeOptions to3, to4;
+    to3.subversion = "3";
+    to4.subversion = "4";
+    const EncodeResult as3 = codec.Encode(SourceDocument::FromText("MSG     defm      \"HI\"", "tasm"), to3);
+    ASSERT_TRUE(as3.ok);
+    EXPECT_NE(std::find(as3.bytes.begin(), as3.bytes.end(), 0x97), as3.bytes.end()) << "defm is token #97 in TASM 3";
+    const DecodeResult decoded = codec.Decode(as3.bytes, {});
+    const EncodeResult as4 = codec.Encode(decoded.document, to4);
+    ASSERT_TRUE(as4.ok);
+    ASSERT_EQ(as4.diagnostics.size(), 1u);
+    EXPECT_EQ(as4.diagnostics[0].severity, Severity::Warning);
+    EXPECT_NE(as4.diagnostics[0].message.find("defm"), std::string::npos);
+    EXPECT_EQ(codec.Decode(as4.bytes, {}).document.Text(), decoded.document.Text()) << "the text is unchanged";
 }

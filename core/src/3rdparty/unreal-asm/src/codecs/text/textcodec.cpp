@@ -35,7 +35,7 @@ std::string_view BreakBytes(uint8_t lineBreak)
 }
 }  // namespace
 
-TextCodec::TextCodec() : _info{"text", "Text source (any code page and line end)", "", CodecFamily::Text} {}
+TextCodec::TextCodec() : _info{"text", "Text source (any code page and line end)", "", CodecFamily::Text, {}} {}
 
 int TextCodec::TextGate(std::span<const uint8_t> bytes)
 {

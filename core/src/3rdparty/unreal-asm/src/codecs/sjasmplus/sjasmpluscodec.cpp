@@ -25,7 +25,7 @@ std::string Upper(std::string_view word)
 }
 }  // namespace
 
-SjasmplusCodec::SjasmplusCodec() : TextCodec(CodecInfo{"sjasmplus", "sjasmplus source (text)", "sjasmplus", CodecFamily::Text}) {}
+SjasmplusCodec::SjasmplusCodec() : TextCodec(CodecInfo{"sjasmplus", "sjasmplus source (text)", "sjasmplus", CodecFamily::Text, {}}) {}
 
 int SjasmplusCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints) const
 {

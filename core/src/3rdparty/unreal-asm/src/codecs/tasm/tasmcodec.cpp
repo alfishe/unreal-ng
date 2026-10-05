@@ -12,16 +12,25 @@ namespace
 constexpr uint8_t kEndMarker = 0xFF;
 constexpr char32_t kRawBase = 0xF700;   // a byte the format gives no character: U+F700 + byte (as the encodings do)
 
+struct Version
+{
+    uint8_t runByte;
+    const tasm::TokenTable& tokens;
+};
+
+Version VersionOf(const std::string& version)
+{
+    return version == "4" ? Version{0x01, tasm::Tasm4Tokens()} : Version{0x0A, tasm::Tasm3Tokens()};
+}
+
 bool IsWordChar(char c)
 {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '@' || c == '$' || c == '#';
 }
 }  // namespace
 
-TasmCodec::TasmCodec(int version)
-    : _version(version), _runByte(version == 4 ? 0x01 : 0x0A), _tokens(version == 4 ? tasm::Tasm4Tokens() : tasm::Tasm3Tokens()),
-      _info{version == 4 ? "tasm4" : "tasm3", version == 4 ? "TASM 4.x source (tokenized)" : "TASM 3.x source (tokenized)", "tasm",
-            CodecFamily::Tokenized}
+TasmCodec::TasmCodec()
+    : _info{"tasm", "TASM source (tokenized)", "tasm", CodecFamily::Tokenized, {{"3", "TASM 3.x"}, {"4", "TASM 4.x (provisional: no sample file yet)"}}}
 {
 }
 
@@ -48,35 +57,38 @@ size_t TasmCodec::WalkFraming(std::span<const uint8_t> bytes, size_t* runs01, si
     return 0;   // no end marker
 }
 
-int TasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints) const
+std::string TasmCodec::DetectVersion(std::span<const uint8_t> bytes, const CatalogHints& hints)
 {
     size_t runs01 = 0, runs0A = 0;
-    const size_t lines = WalkFraming(bytes, &runs01, &runs0A);
-    if (lines == 0)
-        return 0;
-    // TR-DOS catalog: type 'A'; TASM 3 saves with start 39221 / 40872, TASM 4 with start <= 4096 (ZX-M8XXX hints)
-    if (hints.type == 'A')
-    {
-        const bool tasm3Start = hints.start == 39221 || hints.start == 40872;
-        const bool tasm4Start = hints.start != 0 && hints.start <= 4096;
-        if ((_version == 3 && tasm3Start) || (_version == 4 && tasm4Start))
-            return 95;
-        if ((_version == 3 && tasm4Start) || (_version == 4 && tasm3Start))
-            return 20;
-    }
-    // No catalog: the framing holds; the space-run byte tells the version
-    const bool mine = _version == 3 ? runs0A >= runs01 : runs01 > runs0A;
-    const int base = lines >= 3 ? 80 : 60;
-    return mine ? base : base - 40;
+    if (WalkFraming(bytes, &runs01, &runs0A) == 0)
+        return {};
+    // TR-DOS catalog: TASM 3 saves with start 39221 / 40872, TASM 4 with start <= 4096 (ZX-M8XXX)
+    if (hints.type == 'A' && (hints.start == 39221 || hints.start == 40872))
+        return "3";
+    if (hints.type == 'A' && hints.start != 0 && hints.start <= 4096)
+        return "4";
+    return runs01 > runs0A ? "4" : "3";
 }
 
-std::string TasmCodec::DecodeBody(std::span<const uint8_t> body) const
+int TasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints) const
 {
+    const size_t lines = WalkFraming(bytes, nullptr, nullptr);
+    if (lines == 0)
+        return 0;
+    const bool tasmStart = hints.start == 39221 || hints.start == 40872 || (hints.start != 0 && hints.start <= 4096);
+    if (hints.type == 'A' && tasmStart)
+        return 95;
+    return lines >= 3 ? 80 : 60;
+}
+
+std::string TasmCodec::DecodeBody(std::span<const uint8_t> body, const std::string& version)
+{
+    const auto [runByte, tokens] = VersionOf(version);
     std::string text;
     for (size_t i = 0; i < body.size(); ++i)
     {
         const uint8_t b = body[i];
-        if (b == _runByte && i + 1 < body.size())
+        if (b == runByte && i + 1 < body.size())
         {
             text.append(body[i + 1], ' ');
             ++i;
@@ -84,22 +96,23 @@ std::string TasmCodec::DecodeBody(std::span<const uint8_t> body) const
         else if (b >= 0x20 && b < 0x7F)
             text.push_back(static_cast<char>(b));
         else if (b >= tasm::kFirstToken && b <= tasm::kLastToken)
-            text.append(_tokens[b - tasm::kFirstToken]);
+            text.append(tokens[b - tasm::kFirstToken]);
         else
             utf8::Append(text, kRawBase + b);
     }
     return text;
 }
 
-bool TasmCodec::EncodeBody(const std::string& text, std::vector<uint8_t>& body, std::string& error) const
+bool TasmCodec::EncodeBody(const std::string& text, const std::string& version, std::vector<uint8_t>& body, std::string& error)
 {
+    const auto [runByte, tokens] = VersionOf(version);
     body.clear();
     const size_t n = text.size();
     auto spaces = [&](size_t count) {
         while (count >= 2)
         {
             const size_t chunk = std::min<size_t>(count, 255);
-            body.push_back(_runByte);
+            body.push_back(runByte);
             body.push_back(static_cast<uint8_t>(chunk));
             count -= chunk;
         }
@@ -157,9 +170,9 @@ bool TasmCodec::EncodeBody(const std::string& text, std::vector<uint8_t>& body, 
             const bool wordEnds = j >= n || !IsWordChar(text[j]);
             int token = -1;
             size_t consumed = 0;
-            for (size_t t = 0; t < _tokens.size() && token < 0; ++t)
+            for (size_t t = 0; t < tokens.size() && token < 0; ++t)
             {
-                const std::string_view name = _tokens[t];
+                const std::string_view name = tokens[t];
                 if (name == "af'" && word == "af" && j < n && text[j] == '\'')
                     token = static_cast<int>(t), consumed = 3;
                 else if (wordEnds && name.size() == word.size() + 1 && name.back() == ' ' && name.substr(0, word.size()) == word &&
@@ -191,13 +204,38 @@ bool TasmCodec::EncodeBody(const std::string& text, std::vector<uint8_t>& body, 
     return true;
 }
 
-DecodeResult TasmCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptions&) const
+namespace
+{
+/// The keywords (token names without the trailing blank) a body holds
+std::vector<std::string> Keywords(const std::vector<uint8_t>& body, const tasm::TokenTable& tokens, uint8_t runByte)
+{
+    std::vector<std::string> words;
+    for (size_t i = 0; i < body.size(); ++i)
+    {
+        if (body[i] == runByte)
+            ++i;
+        else if (body[i] >= tasm::kFirstToken && body[i] <= tasm::kLastToken)
+        {
+            std::string word(tokens[body[i] - tasm::kFirstToken]);
+            if (!word.empty() && word.back() == ' ')
+                word.pop_back();
+            words.push_back(word);
+        }
+    }
+    return words;
+}
+}  // namespace
+
+DecodeResult TasmCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptions& options) const
 {
     DecodeResult result;
     SourceDocument& document = result.document;
     document.format = _info.id;
     document.dialect = _info.dialect;
-    document.subversion = _version == 4 ? "4.x" : "3.x";
+    document.subversion = !options.subversion.empty() ? options.subversion : DetectVersion(bytes, options.catalog);
+    if (document.subversion.empty())
+        document.subversion = "3";   // framing broken: read as TASM 3, the diagnostics below say where it broke
+    result.subversions = {document.subversion};   // the run byte (or the catalog) leaves no doubt
     document.codePage = encoding::CodePage::Ascii;
     document.lineEnd = encoding::LineEnd::Lf;
     size_t p = 0;
@@ -219,7 +257,7 @@ DecodeResult TasmCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptio
         }
         const std::span<const uint8_t> body = bytes.subspan(p + 1, length);
         SourceLine sourceLine;
-        sourceLine.text = DecodeBody(body);
+        sourceLine.text = DecodeBody(body, document.subversion);
         sourceLine.attrs = {_info.id, std::vector<uint8_t>(body.begin(), body.end())};
         document.lines.push_back(std::move(sourceLine));
         p += static_cast<size_t>(length) + 2;
@@ -232,30 +270,55 @@ DecodeResult TasmCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptio
     return result;
 }
 
-EncodeResult TasmCodec::Encode(const SourceDocument& document, const EncodeOptions&) const
+EncodeResult TasmCodec::Encode(const SourceDocument& document, const EncodeOptions& options) const
 {
     EncodeResult result;
+    const bool sameFormat = document.format == _info.id;
+    const std::string version = !options.subversion.empty() ? options.subversion
+                                : sameFormat && !document.subversion.empty() ? document.subversion : _info.subversions.back().id;
+    // Kept bytes are reused only when they are this version's bytes of the same text
+    const bool keep = sameFormat && document.subversion == version;
     std::vector<uint8_t> body;
     for (size_t i = 0; i < document.lines.size(); ++i)
     {
         const SourceLine& line = document.lines[i];
-        const bool own = line.attrs.codec == _info.id && DecodeBody(line.attrs.bytes) == line.text;
+        const bool own = keep && line.attrs.codec == _info.id && DecodeBody(line.attrs.bytes, version) == line.text;
         if (own)
             body = line.attrs.bytes;
         else
         {
             std::string error;
-            if (!EncodeBody(line.text, body, error))
+            if (!EncodeBody(line.text, version, body, error))
             {
                 result.diagnostics.push_back({Severity::Error, static_cast<uint32_t>(i + 1), result.bytes.size(), error});
                 continue;
+            }
+            // Another version of the same format: a keyword of the source version that the target lacks stays text
+            if (sameFormat && !document.subversion.empty() && document.subversion != version)
+            {
+                std::vector<uint8_t> sourceBody;
+                std::string ignored;
+                if (EncodeBody(line.text, document.subversion, sourceBody, ignored))
+                {
+                    const Version source = VersionOf(document.subversion), target = VersionOf(version);
+                    std::vector<std::string> kept = Keywords(body, target.tokens, target.runByte);
+                    for (const std::string& word : Keywords(sourceBody, source.tokens, source.runByte))
+                    {
+                        const auto it = std::find(kept.begin(), kept.end(), word);
+                        if (it != kept.end())
+                            kept.erase(it);
+                        else
+                            result.diagnostics.push_back({Severity::Warning, static_cast<uint32_t>(i + 1), result.bytes.size(),
+                                                          "'" + word + "' is not a keyword of TASM " + version + ": written as text"});
+                    }
+                }
             }
         }
         result.bytes.push_back(static_cast<uint8_t>(body.size()));
         result.bytes.insert(result.bytes.end(), body.begin(), body.end());
         result.bytes.push_back(static_cast<uint8_t>(body.size()));
     }
-    if (document.attrs.codec == _info.id)
+    if (keep && document.attrs.codec == _info.id)
         result.bytes.insert(result.bytes.end(), document.attrs.bytes.begin(), document.attrs.bytes.end());
     else
         result.bytes.insert(result.bytes.end(), {kEndMarker, kEndMarker});

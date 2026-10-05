@@ -16,6 +16,7 @@ D-4 codecs and format conversion first, dialect conversion plugins after. No cod
 - [x] Q-6 CLI name: `zxasm` (D-12, 2026-10-05)
 - [x] Encoding detectors are separate reusable classes of the library (D-13, 2026-10-05)
 - [x] Examples and test data are mandatory parts of the library; a phase is done only with them (D-14, 2026-10-05)
+- [x] Every codec detects and supports every version of its format (D-15, 2026-10-05)
 
 ## Workflow (owner, 2026-10-05)
 
@@ -31,8 +32,10 @@ phase; master only after the owner's review.
 - [x] A2 `tasm3`, `tasm4` (research first: [research-tasm.md](research-tasm.md)), sub-version conversion (2026-10-05, branch `unreal-asm`): hobeta / TR-DOS containers, `zxasm` reads `.$X` / `.trd --file`, writes `.$X`; example `read-hobeta`; testdata `tasm3/` (two real TASM 3.2 files + expected text); 34 tests; byte-exact round trip, the canonical tokenizer alone reproduces TASM 3.2's bytes, TASM 3 → 4 → 3 exact
   - [ ] TASM 4 provisional until a real file is found (table and run byte from L1 / P1)
   - [ ] emulator oracle: a converted file loaded in TASM 3.2 on screen; blanks inside strings / comments
-  - [ ] `tasm2` codec (TASM 2.0 format, queued)
-- [ ] A3 `alasm4`, `alasm5`
+  - [ ] TASM 2.0 as a version of the `tasm` codec (its own stored format; D-15)
+- [x] A3 `alasm`, every version 3.8 / 4.2 / 4.42 / 4.5 / 4.44 / 5.07-5.09 ([research-alasm.md](research-alasm.md)), and D-15 for all codecs (2026-10-05, branch `unreal-asm`): `tasm3` + `tasm4` merged into `tasm` (versions 3, 4); `DecodeOptions::subversion` / `catalog`, `EncodeOptions::subversion`, `DecodeResult::subversions`; version detection by re-tokenizing; conversion warnings for keywords the target lacks; `zxasm check` / `--version`; example `convert-version`; testdata `alasm/` (10 files); 429 real files byte-exact, canonical 99.6 %
+  - [ ] emulator oracle for ALASM (a converted file on ALASM's screen)
+  - [ ] ALASM 2.x and 5.00-5.06 binaries (not found)
 - [ ] A4 `storm`, `zxasm`
 - [ ] A5 IR, transforms, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads

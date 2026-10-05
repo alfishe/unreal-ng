@@ -12,7 +12,7 @@ A user types a program in **ALASM** running inside the emulated Spectrum. Withou
 
 1. The bridge recognizes "ALASM 4.4 is running, its source is in RAM page 1 from `#C000` to `#E7A3`, its label table
    in page 6".
-2. It reads the source from memory, decodes it with the `alasm4` codec, and shows it in the emulator as text, or
+2. It reads the source from memory, decodes it with the `alasm` codec, and shows it in the emulator as text, or
    writes `game.alasm.asm` / converts it to sjasmplus on the host.
 3. In the background it builds the project on the host (the core assembler or sjasmplus after conversion) after
    every pause in typing, and shows hints: `line 120: label PLAYMUS not defined`, `line 88: JR out of range`.
@@ -53,7 +53,7 @@ flowchart LR
         ID["AssemblerProbe<br/>which assembler / version is in RAM"]
         LOC["SourceLocator<br/>descriptor → source bytes (pages, gap buffer)"]
         PRJ["ProjectModel<br/>main source + includes + binaries + label table"]
-        DEC["source codec<br/>(alasm4, tasm4, ...)"]
+        DEC["source codec<br/>(alasm, tasm, ...)"]
         BLD["BackgroundBuilder<br/>IR → assemble (core assembler or sjasmplus via conversion)"]
         HINT["HintPublisher<br/>diagnostics → overlays / events"]
         SYM["LiveSymbolSet<br/>labels with addresses → LabelManager"]

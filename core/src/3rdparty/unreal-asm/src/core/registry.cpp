@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "codecs/alasm/alasmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
 #include "codecs/tasm/tasmcodec.h"
 #include "codecs/text/textcodec.h"
@@ -15,8 +16,8 @@ const CodecRegistry& CodecRegistry::Builtin()
         // One line per codec (decision D-6)
         r.Add(std::make_unique<codecs::TextCodec>());
         r.Add(std::make_unique<codecs::SjasmplusCodec>());
-        r.Add(std::make_unique<codecs::TasmCodec>(3));
-        r.Add(std::make_unique<codecs::TasmCodec>(4));
+        r.Add(std::make_unique<codecs::TasmCodec>());
+        r.Add(std::make_unique<codecs::AlasmCodec>());
         return r;
     }();
     return registry;

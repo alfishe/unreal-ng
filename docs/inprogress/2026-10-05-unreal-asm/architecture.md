@@ -26,7 +26,7 @@ flowchart TB
         EN["encoding detectors (D-13)<br/>code page · line ends · text / binary<br/>reusable outside the library"]
     end
     subgraph L2["2 · codecs (one per format + sub-version)"]
-        C1["tasm3"] --- C2["tasm4"] --- C3["alasm-4.x / 5.x"] --- C4["storm"] --- C5["zxasm"] --- C6["text (code page, line ends)"]
+        C1["tasm (3.x, 4.x)"] --- C3["alasm (3.8 … 5.09)"] --- C4["storm"] --- C5["zxasm"] --- C6["text (code page, line ends)"]
     end
     subgraph L3["3 · document"]
         SD["SourceDocument<br/>lines · dialect · format · code page · attributes"]
@@ -145,12 +145,12 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    A["bytes · tasm3"] -->|"decode"| D["SourceDocument<br/>dialect tasm"]
-    D --> V{"every line valid<br/>in tasm4?"}
-    V -->|"yes"| E["encode with tasm4<br/>(canonical attributes)"]
+    A["bytes · tasm 3"] -->|"decode"| D["SourceDocument<br/>dialect tasm"]
+    D --> V{"every line valid<br/>in tasm 4?"}
+    V -->|"yes"| E["encode as tasm 4<br/>(canonical attributes)"]
     V -->|"no"| R["report lines<br/>(stop, or --force: keep as text / comment)"]
     R --> E
-    E --> B["bytes · tasm4"]
+    E --> B["bytes · tasm 4"]
 ```
 
 The text decides. A sub-version conversion is "decode with one codec, check the lines against the other, encode

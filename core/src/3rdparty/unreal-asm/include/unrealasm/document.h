@@ -31,7 +31,7 @@ struct SourceDocument
     std::string name;                ///< for diagnostics (a file name)
     std::string dialect;             ///< "sjasmplus", "tasm", "alasm", ... ("" = not known)
     std::string format;              ///< the codec id it was decoded with ("" = made in memory)
-    std::string subversion;          ///< "3.x", "4.x", ... when the format has versions
+    std::string subversion;          ///< the version decoded (a CodecInfo::subversions id) when the format has versions
     encoding::CodePage codePage = encoding::CodePage::Utf8;   ///< the original code page (decision D-11)
     encoding::LineEnd lineEnd = encoding::LineEnd::Lf;        ///< the dominant line end of the original
     std::vector<SourceLine> lines;

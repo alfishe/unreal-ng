@@ -1,7 +1,9 @@
 #pragma once
 
-// A source codec (decision D-1): one per source format and sub-version, decoding bytes into a SourceDocument and
-// encoding a document back into bytes. Decoding then encoding with the same codec gives the input bytes.
+// A source codec (decision D-1, D-15): one per source format, decoding bytes into a SourceDocument and encoding a
+// document back into bytes. It detects and supports every version of its format (CodecInfo::subversions): decoding
+// records the version found, encoding writes the version asked for. Decoding then encoding with the same codec gives
+// the input bytes.
 
 #include <cstdint>
 #include <optional>
@@ -31,23 +33,36 @@ enum class CodecFamily : uint8_t
     Tokenized,
 };
 
+/// One version of a format a codec reads and writes
+struct Subversion
+{
+    std::string id;              ///< "3", "4.44", "5.07", ...
+    std::string title;           ///< "TASM 3.x", "ALASM 5.07-5.09", ...
+};
+
 struct CodecInfo
 {
     std::string id;              ///< "text", "sjasmplus", "tasm3", ...
     std::string title;           ///< for lists and reports
     std::string dialect;         ///< the dialect it holds ("" for the generic text codec)
     CodecFamily family = CodecFamily::Text;
+    std::vector<Subversion> subversions;   ///< oldest first; empty when the format has one version
 };
 
 struct DecodeOptions
 {
     std::optional<encoding::CodePage> codePage;   ///< force the code page (text codecs); otherwise detected
     std::string dialect;                          ///< the dialect to record (generic text codec)
+    std::string subversion;                       ///< read as this version (CodecInfo::subversions id); "" = detect
+    CatalogHints catalog;                         ///< what the container says (helps the version detection)
 };
 
 struct DecodeResult
 {
     SourceDocument document;
+    /// Every version of the format the bytes are consistent with, oldest first; document.subversion is one of them
+    /// (the newest unless DecodeOptions::subversion chose). Empty when the format has one version
+    std::vector<std::string> subversions;
     Diagnostics diagnostics;
     bool ok = false;
 };
@@ -56,6 +71,7 @@ struct EncodeOptions
 {
     std::optional<encoding::CodePage> codePage;   ///< override the document's code page (text codecs)
     std::optional<encoding::LineEnd> lineEnd;     ///< override the document's line end (text codecs)
+    std::string subversion;                       ///< write this version; "" = the document's own (same format), else the newest
 };
 
 struct EncodeResult

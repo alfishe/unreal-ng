@@ -1,15 +1,20 @@
 // zxasm - the command-line tool of unreal-asm (decision D-12).
 //
-//   zxasm formats                                   list the codecs
+//   zxasm formats                                   list the codecs and the versions each one reads and writes
 //   zxasm detect   <file>                           which codec reads it (scores, the choice or why none)
 //   zxasm encoding <file>                           code page ranking, line ends, text score
-//   zxasm decode   <file> [-o out] [--codec id] [--codepage cp]
-//   zxasm encode   <file> --codec id [-o out] [--codepage cp] [--line-end lf|crlf|cr]
+//   zxasm decode   <file> [-o out] [--codec id] [--version v] [--codepage cp]
+//   zxasm encode   <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr]
 //   zxasm files    <image.trd>                      list the files of a TR-DOS image
+//   zxasm check    <file> [--codec id] [--version v]  decode, encode back: byte-exact? how many lines the canonical
+//                                                   tokenizer alone reproduces
 //
 // Containers: a hobeta file (NAME.$A, ...) is unwrapped and its catalog fields used for detection; a file inside a
 // TR-DOS image is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
 // as a hobeta file of type X.
+//
+// --version: decode reads the file as that version of its format (default: detected, printed on stderr); encode writes
+// that version (default: the newest).
 //
 // Decoded text is written as UTF-8 (decision D-11). Exit code 0 on success, 1 on errors, 2 on bad usage.
 
@@ -31,9 +36,10 @@ namespace
 int Usage()
 {
     std::cerr << "usage: zxasm formats | detect <file> | encoding <file> |\n"
-                 "       decode <file> [-o out] [--codec id] [--codepage cp] |\n"
-                 "       encode <file> --codec id [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
-                 "       files <image.trd>      (decode/detect/encoding take --file NAME[.T] for a file in an image)\n";
+                 "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
+                 "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
+                 "       check <file> [--codec id] [--version v] |\n"
+                 "       files <image.trd>      (decode/detect/encoding/check take --file NAME[.T] for a file in an image)\n";
     return 2;
 }
 
@@ -69,7 +75,7 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 
 struct Args
 {
-    std::string command, file, output, codec, codePage, lineEnd, inner;
+    std::string command, file, output, codec, codePage, lineEnd, inner, version;
 };
 
 bool Parse(int argc, char** argv, Args& args)
@@ -89,9 +95,10 @@ bool Parse(int argc, char** argv, Args& args)
         if (a == "-o" ? !value(args.output) : a == "--codec" ? !value(args.codec)
                                           : a == "--codepage" ? !value(args.codePage)
                                           : a == "--line-end" ? !value(args.lineEnd)
-                                          : a == "--file" ? !value(args.inner) : false)
+                                          : a == "--file" ? !value(args.inner)
+                                          : a == "--version" ? !value(args.version) : false)
             return false;
-        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end" && a != "--file")
+        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end" && a != "--file" && a != "--version")
         {
             if (!args.file.empty())
                 return false;
@@ -162,7 +169,11 @@ int main(int argc, char** argv)
     if (args.command == "formats")
     {
         for (const auto& codec : registry.All())
+        {
             std::cout << codec->Info().id << "\t" << codec->Info().title << "\n";
+            for (const Subversion& v : codec->Info().subversions)
+                std::cout << "\t--version " << v.id << "\t" << v.title << "\n";
+        }
         return 0;
     }
     if (args.file.empty())
@@ -227,7 +238,7 @@ int main(int argc, char** argv)
         codePage = parsed;
     }
 
-    if (args.command == "decode")
+    if (args.command == "decode" || args.command == "check")
     {
         const ISourceCodec* codec = nullptr;
         if (!args.codec.empty())
@@ -249,8 +260,32 @@ int main(int argc, char** argv)
         }
         DecodeOptions options;
         options.codePage = codePage;
+        options.subversion = args.version;
+        options.catalog = hints;
         const DecodeResult decoded = codec->Decode(bytes, options);
         PrintDiagnostics(decoded.diagnostics);
+        if (args.command == "check")
+        {
+            const EncodeResult exact = codec->Encode(decoded.document, {});
+            // Per line: the line alone, once with its kept bytes and once without (file-level data kept in both)
+            size_t same = 0;
+            SourceDocument one = decoded.document;
+            for (const SourceLine& line : decoded.document.lines)
+            {
+                one.lines = {line};
+                const EncodeResult kept = codec->Encode(one, {});
+                one.lines[0].attrs = {};
+                same += codec->Encode(one, {}).bytes == kept.bytes;
+            }
+            const SourceDocument& plain = decoded.document;
+            std::string range;
+            for (const std::string& v : decoded.subversions)
+                range += (range.empty() ? "" : ",") + v;
+            std::cout << args.file << (args.inner.empty() ? "" : ":" + args.inner) << "\t" << codec->Info().id << "\t"
+                      << decoded.document.subversion << "\t[" << range << "]\t" << decoded.document.lines.size() << " lines\t"
+                      << (exact.bytes == bytes ? "byte-exact" : "DIFFERS") << "\tcanonical " << same << "/" << plain.lines.size() << "\n";
+            return decoded.ok && exact.bytes == bytes ? 0 : 1;
+        }
         std::string text = decoded.document.Text();
         if (!decoded.document.lines.empty())
             text.push_back('\n');
@@ -262,8 +297,8 @@ int main(int argc, char** argv)
             std::cerr << "zxasm: cannot write " << args.output << "\n";
             return 1;
         }
-        std::cerr << codec->Info().id << ": " << decoded.document.lines.size() << " line(s), "
-                  << encoding::CodePageName(decoded.document.codePage) << "\n";
+        std::cerr << codec->Info().id << (decoded.document.subversion.empty() ? "" : " " + decoded.document.subversion) << ": "
+                  << decoded.document.lines.size() << " line(s), " << encoding::CodePageName(decoded.document.codePage) << "\n";
         return decoded.ok ? 0 : 1;
     }
     if (args.command == "encode")
@@ -279,8 +314,11 @@ int main(int argc, char** argv)
         for (SourceLine& line : document.lines)
             if (!line.text.empty() && line.text.back() == '\r')
                 line.text.pop_back();
+        const std::string outName = args.output.substr(args.output.find_last_of("/\\") == std::string::npos ? 0 : args.output.find_last_of("/\\") + 1);
+        document.name = outName.substr(0, outName.find('.'));
         EncodeOptions options;
         options.codePage = codePage;
+        options.subversion = args.version;
         if (!args.lineEnd.empty())
             options.lineEnd = args.lineEnd == "crlf" ? encoding::LineEnd::CrLf : args.lineEnd == "cr" ? encoding::LineEnd::Cr : encoding::LineEnd::Lf;
         EncodeResult encoded = codec->Encode(document, options);
@@ -294,7 +332,9 @@ int main(int argc, char** argv)
             file.name = args.output.substr(slash == std::string::npos ? 0 : slash + 1);
             file.name = file.name.substr(0, std::min<size_t>(file.name.size() - 3, 8));
             file.type = outExtension[1];
-            file.start = codec->Info().id == "tasm3" ? 40872 : 0;
+            const std::string version = !args.version.empty() ? args.version
+                                        : codec->Info().subversions.empty() ? std::string() : codec->Info().subversions.back().id;
+            file.start = codec->Info().id == "tasm" && version == "3" ? 40872 : 0;   // TASM 3 saves sources with this start
             file.length = static_cast<uint16_t>(encoded.bytes.size());
             file.data = encoded.bytes;
             encoded.bytes = containers::WriteHobeta(file);
