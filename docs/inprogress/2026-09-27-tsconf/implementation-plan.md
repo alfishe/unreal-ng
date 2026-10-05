@@ -348,7 +348,7 @@ but off, as in the emulated standard `quartus` firmware (no XTR_FEAT), so code
 line, minus the graphics fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window
 dots, none with NOGFX), the TSU (8 map words per layer, 2 per tile, width / 4
 per sprite line) and the CPU's DRAM reads (counted by `TsConfMemory`; cache
-hits and ROM take none; **CPU writes are not counted - v1 approximation**);
+hits and ROM take none; CPU writes to writable RAM count too since the 2026-10-05 audit, [V] `zmem.v:121`, test TIM6 - an always-on write overlay, A/B within noise);
 the DMA gets the rest. The TSU gets 448 minus video minus the CPU of its
 previous line and drops what does not fit (**TSU-8**).
 Tests `tsconfdma_test.cpp`: DMA-1…14 (DMA-3 also the in-block wrap), TSU-8,

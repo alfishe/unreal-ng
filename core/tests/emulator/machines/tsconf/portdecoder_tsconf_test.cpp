@@ -223,10 +223,10 @@ TEST_F(PortDecoder_TSConf_Test, FM4_EnableBit)
     EXPECT_EQ(_decoder->GetState().cram[0], 0x0000);
 
     Reg(TsConfReg::FMaps, 0x14);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 1u);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "the FM window + the DRAM write counter";
     _decoder->reset();
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::FMaps], 0x04);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 0u);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write counter stays";
 }
 
 /// DOS trap (hs §2.2): #3Dxx in mapped mode with ROM128 = 1 pages TR-DOS for

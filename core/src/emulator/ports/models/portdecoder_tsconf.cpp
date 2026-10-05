@@ -1121,12 +1121,7 @@ void PortDecoder_TSConf::ApplyClock()
         _tsMemory->SetDramWaits(waits14 ? z80 : nullptr, &_arbiter);
     _arbiter.Reset();
     if (Core* core = _context->pCore)
-    {
-        if (waits14)
-            core->AddBusOverlay(&_dramWriteWait);
-        else
-            core->RemoveBusOverlay(&_dramWriteWait);
-    }
+        core->AddBusOverlay(&_dramWriteWait);  // every CPU write: the DRAM budget, at 14 MHz also its wait
     RefreshM1Hook();
     if (_state->hw_turbo_ratio == ratio)
         return;

@@ -212,8 +212,8 @@ private:
         PortDecoder_TSConf& _owner;
     };
 
-    /// 14 MHz write waits (TsConfArbiter): a write-only overlay installed
-    /// while the CPU runs at 14 MHz
+    /// CPU writes to DRAM: counted in the DRAM budget, and the 14 MHz write
+    /// waits (TsConfArbiter); a write-only overlay, always installed
     class DramWriteWait : public HostBusOverlay
     {
     public:

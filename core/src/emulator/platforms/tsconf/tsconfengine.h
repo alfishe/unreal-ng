@@ -47,8 +47,8 @@ struct TsConfLine
 /// It also drives the interrupt controller and the DMA, which gets what is left
 /// of each line's 448 DRAM accesses (one per 7 MHz dot) after the graphics
 /// fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window dots), the TSU and
-/// the CPU (its DRAM reads, counted by TsConfMemory; its writes are not counted -
-/// a v1 approximation). All persistent state lives in TsConfState (TTD).
+/// the CPU (its DRAM reads and writes, counted by TsConfMemory). All persistent
+/// state lives in TsConfState (TTD).
 class TsConfEngine : public IMachineStepHook
 {
 public:
