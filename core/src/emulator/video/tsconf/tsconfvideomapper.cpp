@@ -274,8 +274,12 @@ void TsConfVideoMapper::BorderSources(const VideoState& s, LayerContribution& ou
     if (!v)
         return;
     out.layer = "border";
-    out.colourIndex = v->ts->regs[TsConfReg::Border];
-    // BORDER is TS register #0F (a CRAM index; #FE writes set it with PAL_SEL, hs §4.3)
+    // BORDER is TS register #0F (a CRAM index; #FE writes set it with PAL_SEL, hs §4.3); TXT shows it as
+    // {PAL_SEL[3:0], BORDER[3:0]} ([V] video_render.v, video_out.v; ScreenTSConf draws it so)
+    const uint8_t border = v->ts->regs[TsConfReg::Border];
+    out.colourIndex = IsText(CurrentVConfig(*v))
+                          ? static_cast<uint8_t>(((v->ts->regs[TsConfReg::PalSel] & 0x0F) << 4) | (border & 0x0F))
+                          : border;
     out.sources = {{Space::Register, 0, 0x0FAF, 0, 1, 0xFF, SourceRole::Border}, CramCell(out.colourIndex)};
     out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex], v->vdac);
 }
