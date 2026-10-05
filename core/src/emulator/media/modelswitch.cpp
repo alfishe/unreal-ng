@@ -9,6 +9,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace
 {
@@ -86,13 +87,23 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     const RamPowerOn ramPowerOn =
         request.ramPowerOn ? *request.ramPowerOn
                            : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
+    // The new machine's config: the old instance's own override (a restart of the same model), the power-on RAM,
+    // then the slot set
+    std::function<void(CONFIG&)> configOverride =
+        [instance = request.keepConfigOverride ? old->GetConfigOverride() : std::function<void(CONFIG&)>{},
+         ram = Config::RamPowerOnOverride(ramPowerOn), slotSet = request.slotSet](CONFIG& config) {
+            if (instance)
+                instance(config);
+            ram(config);
+            if (slotSet)
+                SlotManager::UseSlots(*slotSet, config);
+        };
     std::shared_ptr<Emulator> created =
         request.ramKb > 0
             ? emulators.CreateEmulatorWithModelAndRAM(old->GetSymbolicId(), request.model, request.ramKb,
-                                                      LoggerLevel::LogWarning, &error,
-                                                      Config::RamPowerOnOverride(ramPowerOn))
+                                                      LoggerLevel::LogWarning, &error, configOverride)
             : emulators.CreateEmulatorWithModel(old->GetSymbolicId(), request.model, LoggerLevel::LogWarning, &error,
-                                                Config::RamPowerOnOverride(ramPowerOn));
+                                                configOverride);
     if (!created || !created->GetContext() || !created->GetContext()->pMediaManager)
     {
         if (created)

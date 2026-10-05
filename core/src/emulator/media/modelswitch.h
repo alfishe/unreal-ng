@@ -24,6 +24,7 @@
 
 #include "emulator/media/mediamanager.h"
 #include "emulator/platform.h"
+#include "emulator/slots/slotconfig.h"
 
 class Emulator;
 
@@ -48,6 +49,13 @@ struct ModelSwitchRequest
     /// Power-on RAM of the new machine; unset = the old machine's mode, so a
     /// machine created with zeroed RAM stays that way across a model switch
     std::optional<RamPowerOn> ramPowerOn;
+    /// The new machine's slot set, exactly ([SLOTS]): a restart with a planned
+    /// slot change (SlotChange, ZX-bus slots SL-6)
+    std::optional<SlotConfig> slotSet;
+    /// The old instance's create-time config override applies to the new
+    /// machine too (a restart of the same model: a machine variant's board, a
+    /// create-time option); off for a switch to another model
+    bool keepConfigOverride = false;
 };
 
 struct ModelSwitchResult

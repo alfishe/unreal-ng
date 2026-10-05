@@ -1,7 +1,9 @@
 #include "slotmanager.h"
 
 #include <algorithm>
+#include <exception>
 #include <map>
+#include <stdexcept>
 #include <utility>
 
 #include "common/modulelogger.h"
@@ -9,6 +11,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkspec.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
@@ -446,6 +449,55 @@ const char* RuleId(Rule rule)
     return "D1";
 }
 
+/// The options a card was given, by name: "ram=4m" (the unset ones keep the card's defaults, as in the INI)
+std::string GivenOptions(const CardDef& card, const CardOptions& options)
+{
+    std::string text;
+    for (const OptionDef& option : card.options)
+    {
+        if (!options.Has(option.key))
+        {
+            continue;
+        }
+        const uint32_t bits = options.bits[static_cast<size_t>(option.key)];
+        std::string values;
+        for (size_t i = 0; i < option.values.size(); i++)
+        {
+            if (bits & Bit(static_cast<int>(i)))
+            {
+                values += (values.empty() ? "" : ",") + std::string(option.values[i].id);
+            }
+        }
+        text += (text.empty() ? "" : " ") + std::string(Describe(option.key).id) + "=" + (values.empty() ? "none" : values);
+    }
+    return text;
+}
+
+/// Why the plan engine refused a change: the hard reasons, or everything that needs the replace flag
+std::string PlanRefusal(const SlotPlan& plan)
+{
+    std::string reasons;
+    for (const PlanReason& reason : plan.reasons)
+    {
+        if (!plan.hardRefusal || reason.hard)
+        {
+            reasons += (reasons.empty() ? "" : "; ") + reason.text;
+        }
+    }
+    if (plan.hardRefusal)
+    {
+        return "refused: " + (reasons.empty() ? std::string("the plan engine refused it") : reasons);
+    }
+    return "needs replaceIfIncompatible: " + reasons;
+}
+
+/// SetBuildFaultForTests
+std::string& BuildFault()
+{
+    static std::string card;
+    return card;
+}
+
 // endregion
 
 } // namespace
@@ -692,6 +744,170 @@ SlotConfig SlotManager::TranslateLegacy(const CONFIG& config, uint32_t groups)
 void SlotManager::Project(const SlotConfig& slotConfig, CONFIG& config, uint32_t decidedGroups)
 {
     ProjectFields(slotConfig, config).Write(config, decidedGroups);
+}
+
+// endregion
+
+// region <Changes (SL-6)>
+
+SlotConfig SlotManager::ConfigOf(const Result& result)
+{
+    SlotConfig out;
+    out.section = true;
+    for (const Slot& slot : result.entries)
+    {
+        if (slot.entry.disabled)
+        {
+            continue;
+        }
+        SlotConfigEntry entry;
+        entry.slot = slot.entry.slot;
+        entry.card = slot.entry.card;
+        const CardDef* card = Planner().FindCard(slot.entry.card);
+        entry.options = card != nullptr ? GivenOptions(*card, slot.entry.options) : std::string();
+        entry.adapter = slot.entry.adapter;
+        entry.fitOverride = slot.fitOverride || slot.entry.unrealistic;
+        entry.source = slot.source;
+        out.entries.push_back(std::move(entry));
+    }
+    for (const BuiltIn& builtIn : result.builtIns)
+    {
+        if (builtIn.kind == BuiltInKind::Switchable)
+        {
+            out.builtIns.push_back(
+                { builtIn.id, builtIn.on, builtIn.source.empty() ? "[SLOTS] builtin." + builtIn.id : builtIn.source });
+        }
+    }
+    return out;
+}
+
+void SlotManager::UseSlots(const SlotConfig& slotConfig, CONFIG& config)
+{
+    config.slotConfig = slotConfig;
+    config.slotConfig.section = true;
+    Project(config.slotConfig, config);
+}
+
+SlotManager::ChangePlan SlotManager::PlanChange(const Result& current, const CONFIG& config, const SlotRequest& request,
+                                                const PlanContext& context)
+{
+    ChangePlan out;
+    if (current.machine == nullptr)
+    {
+        out.refusal = "refused: the model has no slot declaration";
+        return out;
+    }
+    out.plan = Planner().Plan(current.model, current.Fitted(), request, context);
+    if (!out.plan.allowed)
+    {
+        out.refusal = PlanRefusal(out.plan);
+        return out;
+    }
+    // A card the plan plugs in but disables (an accidental port clash, R-COMP-6) would give a configuration whose
+    // entries conflict, which is not created (Q8)
+    for (const DisabledCard& disabled : out.plan.disabled)
+    {
+        out.refusal = "refused: " + disabled.slot + " = " + disabled.card + " would be disabled (" + disabled.reason +
+                      "), and a slot set in conflict is not created (Q8)";
+        return out;
+    }
+
+    // The new [SLOTS]: the resulting set, each kept card with what it was configured with
+    out.config.section = true;
+    for (const SlotEntry& entry : out.plan.resultingSlots)
+    {
+        if (entry.disabled)
+        {
+            continue;
+        }
+        SlotConfigEntry line;
+        line.slot = entry.slot;
+        line.card = entry.card;
+        line.adapter = entry.adapter;
+        const CardDef* card = Planner().FindCard(entry.card);
+        line.options = card != nullptr ? GivenOptions(*card, entry.options) : std::string();
+        const Slot* was = nullptr;
+        for (const Slot& slot : current.entries)
+        {
+            if (!slot.entry.disabled && slot.entry.slot == entry.slot && slot.entry.card == entry.card)
+            {
+                was = &slot;
+            }
+        }
+        line.fitOverride = entry.unrealistic || (was != nullptr && was->fitOverride);
+        line.source = was != nullptr ? was->source : "slot change " + entry.slot;
+        out.config.entries.push_back(std::move(line));
+    }
+    for (const BuiltIn& builtIn : current.builtIns)
+    {
+        if (builtIn.kind != BuiltInKind::Switchable)
+        {
+            continue;
+        }
+        SlotBuiltInSwitch sw{ builtIn.id, builtIn.on,
+                              builtIn.source.empty() ? "[SLOTS] builtin." + builtIn.id : builtIn.source };
+        for (const SwitchedOffBuiltIn& off : out.plan.builtInSwitchedOff)
+        {
+            if (off.builtIn == builtIn.id)
+            {
+                sw.on = false;
+                sw.source = "switched off for " + out.plan.slot;
+            }
+        }
+        out.config.builtIns.push_back(std::move(sw));
+    }
+
+    // The machine is created from it: the same checks as at creation (Q8 conflicts, a card the emulator cannot build)
+    auto trial = std::make_unique<CONFIG>(config);
+    UseSlots(out.config, *trial);
+    const Result created = Plan(*trial);
+    if (!created.conflicts.empty())
+    {
+        out.refusal = "refused: " + created.Refusal();
+        out.config = {};
+        return out;
+    }
+    for (const Slot& slot : created.entries)
+    {
+        if (slot.entry.disabled)
+        {
+            out.refusal = "refused: " + slot.entry.slot + " = " + slot.entry.card + " cannot be fitted: " +
+                          slot.entry.disabledReason;
+            out.config = {};
+            return out;
+        }
+    }
+    return out;
+}
+
+SlotManager::ChangePlan SlotManager::PlanChange(const SlotRequest& request) const
+{
+    PlanContext context;
+    if (_context != nullptr && _context->pMediaManager != nullptr)
+    {
+        for (const SlotInfo& info : _context->pMediaManager->List())
+        {
+            if (info.present && info.dirty)
+            {
+                context.dirtyMedia.push_back(info.descriptor.id);
+            }
+        }
+    }
+    static const CONFIG kNoConfig{};
+    ChangePlan out = PlanChange(Snapshot(), _context != nullptr ? _context->config : kNoConfig, request, context);
+    const std::string recording = ChangeRefusal();
+    if (!recording.empty())
+    {
+        out.refusal = recording;
+        out.recording = true;
+        out.config = {};
+    }
+    return out;
+}
+
+void SlotManager::SetBuildFaultForTests(const std::string& card)
+{
+    BuildFault() = card;
 }
 
 // endregion
@@ -1191,12 +1407,13 @@ bool SlotManager::PlanAtCreate()
     return true;
 }
 
-void SlotManager::BuildCards()
+bool SlotManager::BuildCards()
 {
     ReleaseCards();
+    _buildError.clear();
     if (_context == nullptr || _result.machine == nullptr)
     {
-        return;
+        return true;
     }
     for (const Slot& slot : _result.entries)
     {
@@ -1211,10 +1428,33 @@ void SlotManager::BuildCards()
         cardContext.def = def;
         cardContext.slot = slot.entry.slot;
         cardContext.options = slot.entry.options;
-        std::unique_ptr<ICard> card = type->create(cardContext);
+        std::unique_ptr<ICard> card;
+        std::string why;
+        try
+        {
+            if (!BuildFault().empty() && BuildFault() == slot.entry.card)
+            {
+                throw std::runtime_error("the test's build fault");
+            }
+            card = type->create(cardContext);
+        }
+        catch (const std::exception& e)
+        {
+            why = e.what();
+        }
         if (card == nullptr)
         {
-            continue;
+            // A fitted card that cannot be built: the machine is not created without it (a restart with a new slot
+            // set then leaves the previous machine running, SlotChange)
+            _buildError = slot.entry.slot + " = " + slot.entry.card + ": the card could not be built" +
+                          (why.empty() ? std::string() : " (" + why + ")");
+            if (ModuleLogger* logger = _context->pModuleLogger)
+            {
+                logger->Error(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG,
+                              "Slots: %s", _buildError.c_str());
+            }
+            ReleaseCards();
+            return false;
         }
 
         // On the bus: the card's claims (with its options) in its slot order, resolved with the arbitration of the
@@ -1281,6 +1521,7 @@ void SlotManager::BuildCards()
             }
         }
     }
+    return true;
 }
 
 void SlotManager::ReleaseCards()

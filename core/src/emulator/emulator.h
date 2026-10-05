@@ -285,6 +285,12 @@ public:
     {
         _configOverride = std::move(configOverride);
     }
+    /// The override this instance was created with (empty when none): a restart of the same machine with another
+    /// slot set (SlotChange) applies it again, so a machine variant's board or a create-time option survives
+    const std::function<void(CONFIG&)>& GetConfigOverride() const
+    {
+        return _configOverride;
+    }
 
     /// Set a custom config file path. Must be called before Init().
     /// If set, this path is used instead of the default config search.

@@ -506,7 +506,10 @@ bool Core::Init()
     // into the sound manager, both created above
     if (result && _slotManager)
     {
-        _slotManager->BuildCards();
+        // A fitted card that cannot be built refuses the machine with the reason (SlotManager::BuildError)
+        result = _slotManager->BuildCards();
+        if (!result)
+            _initError = _slotManager->BuildError();
     }
 
     /// endregion </Activate IO devices>

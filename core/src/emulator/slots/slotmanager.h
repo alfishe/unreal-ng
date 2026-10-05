@@ -23,7 +23,9 @@
 /// decoder exist, puts its port claims into the decoder's claim table with the machine's bus arbitration and its
 /// mixer rows into SoundManager; ReleaseCards takes them out again before the machine goes.
 ///
-/// No slot change in a running machine (Q6): SL-6 applies a change by restarting the instance.
+/// No slot change in a running machine (Q6): a change is planned here (PlanChange: the plan engine over the current
+/// slot set, the TTD guard, the dirty media) and applied by a restart of the instance with the planned [SLOTS]
+/// (SlotChange::Run in slotchange.h, through the model-switch path).
 
 // Qt defines `slots` / `signals` as macros; this header names the slots namespace
 #pragma push_macro("slots")
@@ -33,6 +35,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -153,6 +156,44 @@ public:
     /// The group a card id belongs to (Count for an unknown card)
     static SlotCardGroup GroupOf(const std::string& card);
 
+    // region <Changes (SL-6): plan here, apply by a restart (SlotChange::Run)>
+
+    /// The fitted slot set of a plan as a [SLOTS] section: every fitted entry with the options it was given, its
+    /// adapter and fit override (also when the plan accepted an unrealistic fit), every switchable built-in's
+    /// switch. Creating the same model from it fits the same cards (what a restart carries)
+    static SlotConfig ConfigOf(const Result& result);
+
+    /// Makes `slotConfig` the configuration's slot set: [SLOTS] (section set) and the card fields it stands for, as
+    /// the parser leaves an INI with that section (the restart's config override)
+    static void UseSlots(const SlotConfig& slotConfig, CONFIG& config);
+
+    /// A slot change planned against a slot set
+    struct ChangePlan
+    {
+        slots::SlotPlan plan;       ///< the plan engine's plan: reasons, removed, shadowed, lost, media, fit
+        /// Why it is not applied ("" when it may be): the TTD session (R-OP-7), the plan's reasons (refused, or it
+        /// needs replaceIfIncompatible), a resulting set the machine would refuse to create (Q8)
+        std::string refusal;
+        bool recording = false;     ///< refused because a TTD session records (R-OP-7)
+        SlotConfig config;          ///< the [SLOTS] the restarted machine gets (an allowed plan)
+
+        bool Allowed() const
+        {
+            return refusal.empty();
+        }
+    };
+
+    /// Plans a change of `current` (pure). `config` is the machine's configuration (the new set is checked for the
+    /// conflicts that would refuse its creation, Q8)
+    static ChangePlan PlanChange(const Result& current, const CONFIG& config, const slots::SlotRequest& request,
+                                 const slots::PlanContext& context = {});
+    /// Plans a change of this instance: its slot set, the media with unsaved changes (R-OP-6) and the TTD guard
+    /// (R-OP-7: refused while a user recording runs, naming the session)
+    ChangePlan PlanChange(const slots::SlotRequest& request) const;
+
+
+    // endregion
+
     explicit SlotManager(EmulatorContext* context);
     ~SlotManager();
     SlotManager(const SlotManager&) = delete;
@@ -168,8 +209,16 @@ public:
     }
 
     /// Create time, once the sound manager and the port decoder exist: builds the cards the slots own (card.h) for
-    /// the fitted slots, in slot order
-    void BuildCards();
+    /// the fitted slots, in slot order. False when a card cannot be built (its factory fails or throws): none is
+    /// left built, BuildError() names the slot, and the machine is not created
+    [[nodiscard]] bool BuildCards();
+    /// Why BuildCards failed; "" when it did not
+    const std::string& BuildError() const
+    {
+        return _buildError;
+    }
+    /// Tests: BuildCards fails for every fitted card with this id, as a factory that throws would ("" = off)
+    static void SetBuildFaultForTests(const std::string& card);
     /// Detaches and destroys the built cards (Core::Release, while the sound manager and the decoder still exist)
     void ReleaseCards();
 
@@ -183,6 +232,12 @@ public:
 
     const Result& Current() const
     {
+        return _result;
+    }
+    /// A copy of the slot set for another thread (a restart or a model switch plans from it while the machine runs)
+    Result Snapshot() const
+    {
+        std::lock_guard<std::mutex> lock(_resultMutex);
         return _result;
     }
 
@@ -246,6 +301,8 @@ private:
 
     EmulatorContext* _context = nullptr;
     Result _result;
+    mutable std::mutex _resultMutex;   ///< Snapshot() against a change of _result while the machine runs
+    std::string _buildError;
     std::vector<std::unique_ptr<ICard>> _cards;
     std::unique_ptr<slots::IClaimSignals> _signals;   ///< the claim table's view of M1 and DOS, while cards exist
     std::vector<std::pair<std::string, uint64_t>> _ttdFingerprint;   ///< TtdFingerprintFields(_result)
