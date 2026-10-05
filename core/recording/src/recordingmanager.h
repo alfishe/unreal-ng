@@ -348,8 +348,8 @@ public:
     }
 
     /// Fixed output profile: "native" (the default: the picture at its own size times the scale factor) or a fixed
-    /// frame - "1080p", "1440p", "4k" (3840x2160). A fixed frame holds the picture scaled sharply (nearest, the
-    /// largest integer factor that fits, aspect kept, black bars - see FrameScaler) and takes H.264 / H.265 only.
+    /// frame - "1080p", "1440p", "4k" (3840x2160). A fixed frame holds the picture fitted into it (as large as the
+    /// frame allows with the aspect kept, nearest sampling, black bars - see FrameScaler) and takes H.264 / H.265 only.
     /// False (nothing changed) for an unknown id or while recording
     bool SetOutputProfile(const std::string& id);
     const std::string& GetOutputProfile() const

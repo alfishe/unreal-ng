@@ -9,8 +9,10 @@ automation plane (WebAPI, MCP, CLI, Lua, Python) with docs and the OpenAPI manif
 ## Decisions
 
 - **Algorithm**: the UI window samples with Nearest (GPU `GL_NEAREST`, CPU `LosslessImageRendering`), so the profile is
-  nearest neighbor too - with the largest **integer** factor that fits, bars for the rest, so every source pixel is the
-  same k x k block (a non-integer nearest fill makes uneven pixel widths). Same code for every machine and region.
+  nearest neighbor too, **fitted** into the frame with the aspect kept (owner, 2026-10-05, after a 320x255 recording sat
+  in 71% of the height with an integer 6x: "fit with maintaining ratio"). A non-whole factor makes source pixels k and
+  k+1 output pixels wide, as in the window; an exact multiple (1080p in 4K) is exact blocks. Same code for every
+  machine and region.
 - **Where**: `FrameScaler` in `core/recording/src/common`, called from `RecordingManager::CaptureFrame`; the encoders
   take the finished frame (`scaleFactor = 1`), so the native macOS encoder, ffmpeg and NVENC all work unchanged.
 - **GPU or not** is the encoder, not the scaler: `EncoderAcceleration` Auto / Hardware / Software (ffmpeg

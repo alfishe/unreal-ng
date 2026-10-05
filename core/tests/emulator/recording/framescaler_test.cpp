@@ -23,18 +23,28 @@ uint32_t PixelAt(const uint8_t* out, uint32_t stride, uint32_t x, uint32_t y)
 constexpr uint32_t kBlack = 0xFF000000u;  // little-endian bytes 00 00 00 FF
 }  // namespace
 
-TEST(FrameScaler_Test, Layout_ZxFrameInUhdTakesTheLargestIntegerFactor)
+TEST(FrameScaler_Test, Layout_ZxFrameInUhdFitsTheHeightWithItsAspect)
 {
-    // 352x288 (PAL frame with border) in 3840x2160: 7x = 2464x2016, bars 688 left/right, 72 top/bottom
+    // 352x288 (PAL frame with border) in 3840x2160: the full height, 2640 wide (7.5x), bars 600 left and right
     const FrameScaler::Layout layout = FrameScaler::ComputeLayout(352, 288, 3840, 2160);
-    EXPECT_EQ(layout.scale, 7u);
-    EXPECT_EQ(layout.width, 2464u);
-    EXPECT_EQ(layout.height, 2016u);
-    EXPECT_EQ(layout.offsetX, 688u);
-    EXPECT_EQ(layout.offsetY, 72u);
+    EXPECT_EQ(layout.scale, 0u) << "7.5x is not a whole multiple";
+    EXPECT_EQ(layout.height, 2160u);
+    EXPECT_EQ(layout.width, 2640u);
+    EXPECT_EQ(layout.offsetX, 600u);
+    EXPECT_EQ(layout.offsetY, 0u);
 }
 
-TEST(FrameScaler_Test, Layout_SixteenByNineFillsTheFrameExactly)
+TEST(FrameScaler_Test, Layout_OddShapedPictureStillFillsTheHeight)
+{
+    // 320x255 (the recording that looked small at 6x = 1530 high): the full height now
+    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(320, 255, 3840, 2160);
+    EXPECT_EQ(layout.height, 2160u);
+    EXPECT_EQ(layout.width, 2710u);
+    EXPECT_EQ(layout.offsetX, 565u);
+    EXPECT_EQ(layout.offsetY, 0u);
+}
+
+TEST(FrameScaler_Test, Layout_SixteenByNineFillsTheFrameExactlyAsAWholeMultiple)
 {
     const FrameScaler::Layout layout = FrameScaler::ComputeLayout(1920, 1080, 3840, 2160);
     EXPECT_EQ(layout.scale, 2u);
@@ -43,9 +53,18 @@ TEST(FrameScaler_Test, Layout_SixteenByNineFillsTheFrameExactly)
     EXPECT_EQ(layout.offsetY, 0u);
 }
 
+TEST(FrameScaler_Test, Layout_WiderPictureFitsTheWidth)
+{
+    // 800x300 in 1920x1080: the full width (2.4x), bars above and below
+    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(800, 300, 1920, 1080);
+    EXPECT_EQ(layout.width, 1920u);
+    EXPECT_EQ(layout.height, 720u);
+    EXPECT_EQ(layout.offsetY, 180u);
+}
+
 TEST(FrameScaler_Test, Layout_LargerPictureIsFittedWithItsAspect)
 {
-    // A 5120x2880 window into 1920x1080: no integer factor, fitted whole
+    // A 5120x2880 window into 1920x1080: fitted whole
     const FrameScaler::Layout layout = FrameScaler::ComputeLayout(5120, 2880, 1920, 1080);
     EXPECT_EQ(layout.scale, 0u);
     EXPECT_EQ(layout.width, 1920u);
@@ -60,7 +79,7 @@ TEST(FrameScaler_Test, Layout_ZeroSizeGivesNothing)
 
 TEST(FrameScaler_Test, Scale_EverySourcePixelBecomesAnExactBlockAndBarsAreOpaqueBlack)
 {
-    // 4x2 source, distinct pixels, into 20x10: k = 5, picture 20x10 - fills; use 22x12 to get bars of 1
+    // 4x2 source, distinct pixels, into 20x14: a whole multiple (5x), bars of 2 above and below
     const uint32_t srcW = 4;
     const uint32_t srcH = 2;
     std::vector<uint32_t> src(srcW * srcH);
@@ -68,21 +87,21 @@ TEST(FrameScaler_Test, Scale_EverySourcePixelBecomesAnExactBlockAndBarsAreOpaque
         src[i] = 0x00112233u + i * 0x01010101u;
 
     FrameScaler::Scaler scaler;
-    const uint8_t* out = scaler.Scale(reinterpret_cast<const uint8_t*>(src.data()), srcW, srcH, 22, 12);
+    const uint8_t* out = scaler.Scale(reinterpret_cast<const uint8_t*>(src.data()), srcW, srcH, 20, 14);
     ASSERT_NE(out, nullptr);
 
-    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(srcW, srcH, 22, 12);
+    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(srcW, srcH, 20, 14);
     ASSERT_EQ(layout.scale, 5u);
-    ASSERT_EQ(layout.offsetX, 1u);
-    ASSERT_EQ(layout.offsetY, 1u);
+    ASSERT_EQ(layout.offsetX, 0u);
+    ASSERT_EQ(layout.offsetY, 2u);
 
-    for (uint32_t y = 0; y < 12; y++)
+    for (uint32_t y = 0; y < 14; y++)
     {
-        for (uint32_t x = 0; x < 22; x++)
+        for (uint32_t x = 0; x < 20; x++)
         {
-            const bool inside = x >= 1 && x < 21 && y >= 1 && y < 11;
-            const uint32_t expected = inside ? src[((y - 1) / 5) * srcW + (x - 1) / 5] : kBlack;
-            ASSERT_EQ(PixelAt(out, 22, x, y), expected) << "x=" << x << " y=" << y;
+            const bool inside = y >= 2 && y < 12;
+            const uint32_t expected = inside ? src[((y - 2) / 5) * srcW + x / 5] : kBlack;
+            ASSERT_EQ(PixelAt(out, 20, x, y), expected) << "x=" << x << " y=" << y;
         }
     }
 }
@@ -116,15 +135,15 @@ TEST(FrameScaler_Test, Scale_NullSourceOrEmptySizeIsRefused)
 
 TEST(FrameScaler_Test, ScaleInto_WritesPictureAndBarsOverGarbageWithTheCallersStride)
 {
-    // 4x2 source into 22x12 with a padded stride (a pixel buffer's rows are usually longer than the picture)
+    // 4x2 source into 20x14 (5x, bars of 2 above and below) with a padded stride (a pixel buffer's rows are usually longer than the picture)
     const uint32_t srcW = 4;
     const uint32_t srcH = 2;
     std::vector<uint32_t> src(srcW * srcH);
     for (uint32_t i = 0; i < src.size(); i++)
         src[i] = 0x00112233u + i * 0x01010101u;
 
-    const uint32_t dstW = 22;
-    const uint32_t dstH = 12;
+    const uint32_t dstW = 20;
+    const uint32_t dstH = 14;
     const size_t stride = (dstW + 6) * 4;
     std::vector<uint8_t> dst(stride * dstH, 0x5A);  // garbage everywhere, padding included
 
@@ -134,8 +153,8 @@ TEST(FrameScaler_Test, ScaleInto_WritesPictureAndBarsOverGarbageWithTheCallersSt
     {
         for (uint32_t x = 0; x < dstW; x++)
         {
-            const bool inside = x >= 1 && x < 21 && y >= 1 && y < 11;
-            const uint32_t expected = inside ? src[((y - 1) / 5) * srcW + (x - 1) / 5] : kBlack;
+            const bool inside = y >= 2 && y < 12;
+            const uint32_t expected = inside ? src[((y - 2) / 5) * srcW + x / 5] : kBlack;
             ASSERT_EQ(PixelAt(dst.data(), static_cast<uint32_t>(stride / 4), x, y), expected) << "x=" << x << " y=" << y;
         }
         // The padding after the output row is not touched
@@ -235,8 +254,11 @@ TEST(FrameScaler_Test, ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte)
     };
     // Even factor, odd factor (chroma blocks on source edges), odd picture size (bars at odd offsets), 1x, a bigger
     // picture (no integer factor: the fallback path), the real ZX frame in a 4K-shaped output
-    const Case cases[] = {{4, 3, 24, 18},  {5, 3, 22, 20},  {7, 5, 32, 24},  {6, 6, 6, 6},
-                          {40, 30, 24, 16}, {11, 9, 48, 40}, {352, 288, 384, 216 * 2}};
+    // Since the picture is FITTED, most of these are not whole factors (the generic nearest path); 6x6 -> 6x6 is
+    // 1x and 4x3 -> 24x18 an exact 6x (the fast paths)
+    const Case cases[] = {{4, 3, 24, 18},  {5, 3, 22, 20},   {7, 5, 32, 24},    {6, 6, 6, 6},
+                          {40, 30, 24, 16}, {11, 9, 48, 40},  {352, 288, 384, 216 * 2}, {320, 255, 192, 108},
+                          {352, 288, 200, 120}, {320, 255, 3840 / 4, 2160 / 4}, {8, 8, 18, 12}, {1, 1, 4, 2}};
     for (const Case& c : cases)
     {
         const std::vector<uint32_t> src = TestPicture(c.srcW, c.srcH);
@@ -273,4 +295,34 @@ TEST(FrameScaler_Test, ScaleIntoNv12_BarsAreBlackAndOddOutputIsRefused)
     EXPECT_EQ(uv[1], 128);
     EXPECT_FALSE(FrameScaler::ScaleIntoNv12(reinterpret_cast<const uint8_t*>(src.data()), 2, 2, y.data(), 17, uv.data(),
                                             17, 17, 8));
+}
+
+TEST(FrameScaler_Test, Scale_NonWholeFactorSamplesNearestAndFillsTheFrame)
+{
+    // 2x2 picture into a 5x5 frame: 2.5x, no bars; columns 0,0,0,1,1 (x * 2 / 5), the same rows
+    const uint32_t src[4] = {0xFF0000A0u, 0xFF0000B0u, 0xFF0000C0u, 0xFF0000D0u};
+    FrameScaler::Scaler scaler;
+    const uint8_t* out = scaler.Scale(reinterpret_cast<const uint8_t*>(src), 2, 2, 5, 5);
+    ASSERT_NE(out, nullptr);
+    const uint32_t column[5] = {0, 0, 0, 1, 1};
+    for (uint32_t y = 0; y < 5; y++)
+        for (uint32_t x = 0; x < 5; x++)
+            ASSERT_EQ(PixelAt(out, 5, x, y), src[column[y] * 2 + column[x]]) << "x=" << x << " y=" << y;
+}
+
+TEST(FrameScaler_Test, ScaleInto_NonWholeFactorFitsWithBarsAndSwaps)
+{
+    // 3x2 picture in 10x10: width-bound (3.33x): 10 wide, 6 high (2 * 10 / 3), bars of 2 above and below
+    const uint32_t src[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    std::vector<uint8_t> dst(10 * 10 * 4, 0x5A);
+    ASSERT_TRUE(FrameScaler::ScaleInto(reinterpret_cast<const uint8_t*>(src), 3, 2, dst.data(), 40, 10, 10, false));
+    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(3, 2, 10, 10);
+    ASSERT_EQ(layout.width, 10u);
+    ASSERT_EQ(layout.height, 6u);
+    ASSERT_EQ(layout.offsetY, 2u);
+    EXPECT_EQ(PixelAt(dst.data(), 10, 0, 0), kBlack);
+    EXPECT_EQ(PixelAt(dst.data(), 10, 9, 9), kBlack);
+    for (uint32_t y = 0; y < 6; y++)
+        for (uint32_t x = 0; x < 10; x++)
+            ASSERT_EQ(PixelAt(dst.data(), 10, x, 2 + y), src[(y * 2 / 6) * 3 + x * 3 / 10]) << "x=" << x << " y=" << y;
 }

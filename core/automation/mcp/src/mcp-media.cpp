@@ -163,8 +163,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         schema["properties"]["profile"]["enum"].append(name);
     schema["properties"]["profile"]["description"] =
         "record_start: output profile. native (default) = the picture at its own size times scale. 1080p / 1440p / 4k "
-        "= a fixed frame (4k = 3840x2160): the picture is scaled sharply into it (nearest, the largest integer "
-        "factor that fits, aspect kept, black bars - no blur). h264 / h265 only, any container";
+        "= a fixed frame (4k = 3840x2160): the picture is fitted into it with its aspect kept (as large as the "
+        "frame allows, black bars, nearest-neighbor sampling - no blur). h264 / h265 only, any container";
     schema["properties"]["acceleration"]["type"] = "string";
     schema["properties"]["acceleration"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* name : {"auto", "hardware", "software"})

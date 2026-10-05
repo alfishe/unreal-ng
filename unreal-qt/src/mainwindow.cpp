@@ -529,6 +529,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     bool gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
     _menuManager->setGpuAccelerationAvailable(gpuAvailable);
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+#ifdef ENABLE_RECORDING
+    UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
+#endif
     _menuManager->setCrtEffectsEnabled(true);
 
     _statusBarManager->restoreSettings();
@@ -4035,6 +4038,9 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Update menu state
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+#ifdef ENABLE_RECORDING
+    UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
+#endif
     _menuManager->setCrtEffectsEnabled(true);
     _menuManager->setCrtEffectsChecked(_screenWrapper->crtEffectsEnabled());
 

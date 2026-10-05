@@ -15,8 +15,8 @@
 /// Encoder choices of a start (the dialog fills them; the defaults are the old behavior)
 struct VideowallRecordingOptions
 {
-    /// "native" (the grab at its own size) or a fixed frame "1080p" / "1440p" / "4k": the wall is scaled sharply
-    /// into it (nearest neighbor, integer factor, black bars - RecordingManager / FrameScaler), whatever size
+    /// "native" (the grab at its own size) or a fixed frame "1080p" / "1440p" / "4k": the wall is fitted
+    /// into it (aspect kept, nearest neighbor, black bars - RecordingManager / FrameScaler), whatever size
     /// the window or the fullscreen buffer is, also when it is resized mid-recording. H.264 / H.265 only
     std::string profile = "native";
     EncoderAcceleration acceleration = EncoderAcceleration::Auto;
