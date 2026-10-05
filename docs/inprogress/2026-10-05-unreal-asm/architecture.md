@@ -23,6 +23,7 @@ flowchart TB
     subgraph L1["1 · bytes"]
         BS["ByteSource / ByteSink<br/>file · buffer · (emulator) disk file · memory"]
         CH["CatalogHints<br/>TR-DOS type · start · name"]
+        EN["encoding detectors (D-13)<br/>code page · line ends · text / binary<br/>reusable outside the library"]
     end
     subgraph L2["2 · codecs (one per format + sub-version)"]
         C1["tasm3"] --- C2["tasm4"] --- C3["alasm-4.x / 5.x"] --- C4["storm"] --- C5["zxasm"] --- C6["text (code page, line ends)"]
@@ -42,6 +43,7 @@ flowchart TB
     end
     BS --> L2
     CH --> L2
+    EN --> L2
     L2 <--> SD
     SD --> FE --> IR --> BE --> SD
     IR --> SY & ASM & SM

@@ -14,13 +14,14 @@ D-4 codecs and format conversion first, dialect conversion plugins after. No cod
 - [x] sjasmplus is the first output target implemented (D-10, 2026-10-05)
 - [x] Q-5 decoded text is UTF-8, original code page recorded (D-11, 2026-10-05)
 - [x] Q-6 CLI name: `zxasm` (D-12, 2026-10-05)
+- [x] Encoding detectors are separate reusable classes of the library (D-13, 2026-10-05)
 - [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2)
 
 ## Phases ([tdd.md](tdd.md) §8)
 
 - [x] Prior-art survey, local and public ([prior-art.md](prior-art.md))
 - [ ] A0 review round 1 of every document
-- [ ] A1 skeleton, document model, code pages, `text` codec, registry, detection
+- [ ] A1 skeleton, document model, encoding detectors and code page tables (D-13), `text` codec, sjasmplus text codec (D-10), registry, detection
 - [ ] A2 `tasm3`, `tasm4` (research first), sub-version conversion
 - [ ] A3 `alasm4`, `alasm5`
 - [ ] A4 `storm`, `zxasm`

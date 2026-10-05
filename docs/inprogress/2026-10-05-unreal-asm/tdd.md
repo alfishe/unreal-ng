@@ -31,9 +31,12 @@ core/src/3rdparty/unreal-asm/
 │   ├── dialect.h                       # IDialectFrontend, IDialectBackend, Capabilities, ConversionOptions
 │   ├── convert.h                       # FormatConvert(), DialectConvert(), reports
 │   ├── diagnostics.h
+│   ├── encoding.h                      # D-13: CodePageDetector, LineEndDetector, TextBinaryDetector, CodePage tables
 │   └── symbols/                        # the symbol module's public API (symbols/tdd.md)
 ├── src/
-│   ├── core/                           # document, code pages (CP866, KOI8-R, CP1251 tables), diagnostics
+│   ├── core/                           # document, diagnostics
+│   ├── encoding/                       # D-13, reusable outside the codecs: code page tables (CP866, KOI8-R,
+│   │                                   #   CP1251, ZX character set) and converters to / from UTF-8; detectors
 │   ├── text/                           # the shared lexer helpers (numbers in every ZX notation, strings, comments)
 │   ├── codecs/
 │   │   ├── text/       textcodec.h / .cpp
@@ -95,6 +98,30 @@ public:
 
 `DecodeResult` = document + diagnostics (`{severity, line, byteOffset, message}`); unknown token bytes are decoded
 to an escape (`\x9F` style inside the line text, configurable) and encoded back to the same byte.
+
+## 3.1 Encoding detectors (D-13)
+
+Separate classes with their own header, so the emulator (media file viewers, the disk browser, text import) and
+other code can use them without codecs:
+
+```cpp
+namespace unrealasm::encoding
+{
+struct Guess { CodePage codePage; int confidence; };          // 0..100, with the runner-up in the report
+class CodePageDetector                                          // statistics of the high half: Cyrillic letter frequency
+{                                                               // per candidate table, invalid / control bytes, UTF-8 validity
+public:
+    std::vector<Guess> Rank(std::span<const uint8_t> bytes) const;
+};
+class LineEndDetector  { public: LineEnd Detect(std::span<const uint8_t>) const; };      // CR / LF / CRLF / mixed
+class TextBinaryDetector { public: int TextScore(std::span<const uint8_t>) const; };      // 0..100
+std::string ToUtf8(std::span<const uint8_t>, CodePage);                                  // exact tables
+bool FromUtf8(std::string_view, CodePage, std::vector<uint8_t>& out, std::string& error); // unmappable reported
+}
+```
+
+Tested on their own (`encoding/*_test.cpp`): every byte of every table round-trips; ranking on Russian, English and
+mixed samples of each code page; short inputs report low confidence instead of guessing.
 
 ## 4. Dialect plugins
 
