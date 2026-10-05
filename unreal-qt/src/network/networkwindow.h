@@ -137,7 +137,12 @@ private:
     QComboBox* _dnsMode = nullptr;
     QLineEdit* _hosts = nullptr;
     QLineEdit* _forwards = nullptr;
+    QCheckBox* _remoteAccess = nullptr;   ///< [NETWORK] RemoteAccess: guest servers on 0.0.0.0 or 127.0.0.1
     QSpinBox* _timeout = nullptr;
+    QComboBox* _ethernetMode = nullptr;   ///< NAT | BRIDGE (the frame cards, network SN6)
+    QComboBox* _bridgeAdapter = nullptr;  ///< the host adapters (EthernetAccess::Adapters), editable
+    QLabel* _bridgeNote = nullptr;        ///< the packet library / permission state
+    void fillBridgeAdapters();
     QPushButton* _apply = nullptr;
     QPushButton* _revert = nullptr;
     QLabel* _message = nullptr;

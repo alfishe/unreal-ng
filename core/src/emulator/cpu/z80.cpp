@@ -4,6 +4,7 @@
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
+#include "debugger/pchistory/pchistory.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -808,14 +809,20 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
             else
                 result.intAccepted = true;
         }
-        else if ((work & EmulatorContext::kStepWorkEngine) && _engine)
-        {
-            // CPU-LIBRARY-MIGRATION(step-routing): the machine runs on its own engine (Z80::SetEngine)
-            EngineStep(skipBreakpoints);
-        }
         else
         {
-            Z80Step(skipBreakpoints);
+            // A debugger's PC history (PcHistory::Arm): the instruction about to run and its window's page
+            if ((work & EmulatorContext::kStepWorkPcHistory) && _context->pDebugManager) [[unlikely]]
+                _context->pDebugManager->GetPcHistory()->Record(pc);
+            if ((work & EmulatorContext::kStepWorkEngine) && _engine)
+            {
+                // CPU-LIBRARY-MIGRATION(step-routing): the machine runs on its own engine (Z80::SetEngine)
+                EngineStep(skipBreakpoints);
+            }
+            else
+            {
+                Z80Step(skipBreakpoints);
+            }
         }
     }
 
@@ -898,6 +905,7 @@ Z80::RzxBoundary Z80::RzxFrameEnd(rzx::RzxPlayer& player)
 void Z80::SetInterruptSource(IInterruptSource* source)
 {
     _interruptSource = source;
+    _waitObserver = source && source->ObservesWaits() ? source : nullptr;
     _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
 }
 

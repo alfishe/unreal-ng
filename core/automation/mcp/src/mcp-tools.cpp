@@ -742,7 +742,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits"})
+                               "bp_list", "bp_reset_hits", "port_out", "wait"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -784,6 +784,15 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
+    schema["properties"]["port"]["type"] = "string";
+    schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
+    schema["properties"]["value"]["type"] = "string";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms";
+    schema["properties"]["since"]["type"] = "integer";
+    schema["properties"]["since"]["description"] =
+        "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
+    schema["properties"]["timeout_ms"]["type"] = "integer";
+    schema["properties"]["timeout_ms"]["description"] = "For wait: 0..60000, default 10000";
     schema["required"].append("action");
 
     registry.Register(
@@ -791,6 +800,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
         "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
         "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
+        "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
+        "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
+        "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit) or timeout_ms passes. "
         "Stepping actions automatically include the new register snapshot.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -884,6 +896,60 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (args.isMember(key))
                             body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
+                    return;
+                }
+                if (action == "wait")
+                {
+                    std::string path = Endpoint(id, "/debug/wait") + "?timeout_ms=" +
+                                       std::to_string(args.isMember("timeout_ms") ? args["timeout_ms"].asUInt() : 10000u);
+                    if (args.isMember("since"))
+                        path += "&since=" + std::to_string(args["since"].asUInt64());
+                    caller.Call("GET", path, nullptr, [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error("wait failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response)));
+                            return;
+                        }
+                        const Json::Value& pause = response["pause"];
+                        std::string text = response.get("changed", false).asBool() ? "Changed: seq " : "No change: seq ";
+                        text += std::to_string(response.get("seq", 0).asUInt64()) + ", " +
+                                response.get("state", "").asString();
+                        if (pause.get("reason", "none").asString() == "breakpoint")
+                        {
+                            char where[48];
+                            std::snprintf(where, sizeof(where), " at breakpoint #%u (%04X)", pause.get("breakpoint_id", 0).asUInt(),
+                                          pause.get("address", 0).asUInt());
+                            text += where;
+                        }
+                        else if (pause.get("reason", "none").asString() != "none")
+                            text += " (last stop: " + pause.get("reason", "").asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                    return;
+                }
+                if (action == "port_out")
+                {
+                    if (!args.isMember("port") || !args.isMember("value"))
+                    {
+                        done(ToolResult::Error("port_out requires 'port' and 'value'"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["port"] = args["port"];
+                    body["value"] = args["value"];
+                    caller.Call("POST", Endpoint(id, "/ports/out"), &body, [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error("port_out failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response)));
+                            return;
+                        }
+                        const std::string text = "Port " + response.get("port", "").asString() + " <- " +
+                                                 response.get("value", "").asString() + " (" +
+                                                 response.get("moment", "").asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
                     return;
                 }
                 if (action == "bp_remove" || action == "bp_enable" || action == "bp_disable")
@@ -1173,7 +1239,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
-                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist"})
     {
         allowed.append(aspect);
     }
@@ -1185,6 +1251,10 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["description"] =
         "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address (hexdump default). "
         "'memory_map' = sparse non-zero block overview of the 64K address space or physical RAM banks (view=address|ram, TD-3). "
+        "'snapshot' = one coherent debugger picture read at one moment (GET /debug/snapshot): seq, state, last stop, regs, "
+        "prev_regs, pages, stack, time, 'count' code lines from PC, the 'windows' memory windows (base64) and 'pchist' PC "
+        "history entries. 'pchist' = the PC history alone (GET /debug/pchist): the newest 'count' instructions the CPU "
+        "started with their window's page; the first request starts recording. "
         "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
@@ -1200,9 +1270,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
         "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers, the 3C509B with its ID port, window, FIFOs, EEPROM and link) and the "
-        "Ethernet gateway (ethernet_gateway: leases, ARP, TCP / UDP, counters); its frame capture and frame injection go "
+        "Ethernet gateway (ethernet_gateway: mode nat | bridge, leases, ARP, TCP / UDP, counters; in bridge its bridge part: "
+        "adapter, open, error, library, frame counters); its frame capture and frame injection go "
         "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
-        "/api/v1/emulator/{id}/network/frame {link, hex}, "
+        "/api/v1/emulator/{id}/network/frame {link, hex}; the host adapters for the bridge: GET "
+        "/api/v1/emulator/{id}/network/adapters, and the mode through the network settings (ethernet_mode, bridge_adapter); "
+        "its traffic section is the tap of everything every adapter sent and received (records through invoke_api GET "
+        "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
+        "{action: clear | start (path: a pcapng file, unbounded) | stop | ring | stream (port: a live pcapng stream for "
+        "Wireshark, 0 = any free port) | stream-stop}), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'profi' = the ZX Profi's board chips (the port map in force, the 8255, the 8253 counters, the 8251 and the #B3 latch; "
@@ -1276,7 +1352,15 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["size"]["description"] = "Byte count for 'memory' (max 4096)";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["default"] = 8;
-    schema["properties"]["count"]["description"] = "Instruction count for 'disasm'";
+    schema["properties"]["count"]["description"] =
+        "Instruction count for 'disasm' (and the code lines of 'snapshot'; the entries of 'pchist', at most 1024)";
+    schema["properties"]["pchist"]["type"] = "integer";
+    schema["properties"]["pchist"]["description"] = "For 'snapshot': PC history entries to include (0 = none, at most 1024)";
+    schema["properties"]["windows"]["type"] = "array";
+    schema["properties"]["windows"]["items"]["type"] = "string";
+    schema["properties"]["windows"]["description"] =
+        "'snapshot' memory windows '<space>:<address>:<length>' (space cpu | ram | ram5 | rom2 | cache0; at most 8, each "
+        "at most 65536 bytes, returned as base64)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["default"] = "hexdump";
     schema["properties"]["format"]["description"] = "Read format for 'memory': 'hexdump' (default), 'full' (JSON byte array) or 'sparse' (fill-run segments)";
@@ -1337,11 +1421,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
-                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer")
+                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist"));
                     return;
                 }
             }
@@ -1372,10 +1456,18 @@ void RegisterInspectState(ToolRegistry& registry)
                 pldQuery += "&source=" + args["pld_journal_source"].asString();
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
+            // The snapshot's memory windows (GET /debug/snapshot?memory=...)
+            std::string snapshotWindows;
+            if (args.isMember("windows") && args["windows"].isArray())
+                for (const Json::Value& window : args["windows"])
+                    if (window.isString())
+                        snapshotWindows += "&memory=" + window.asString();
+            if (args.isMember("pchist") && args["pchist"].isIntegral())
+                snapshotWindows += "&pchist=" + std::to_string(args["pchist"].asUInt());
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, snapshotWindows, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -1439,6 +1531,34 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "pchist")
+                        {
+                            const std::string path =
+                                Endpoint(id, "/debug/pchist") + "?depth=" + std::to_string(std::min(count, 1024u));
+                            steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    acc[aspect] = std::move(body);
+                                    if (status != 200)
+                                        acc[aspect]["http_status"] = status;
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "snapshot")
+                        {
+                            // One coherent picture (GET /debug/snapshot): registers, previous registers, pages, stack,
+                            // time, code from PC and the asked memory windows, read at one moment
+                            const std::string path =
+                                Endpoint(id, "/debug/snapshot") + "?disasm=" + std::to_string(std::min(count, 100u)) + snapshotWindows;
+                            steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    acc[aspect] = std::move(body);
+                                    if (status != 200)
+                                        acc[aspect]["http_status"] = status;
                                     next(true);
                                 });
                             });
@@ -1939,6 +2059,31 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << value["hex"].asString().substr(0, 96);
                                 }
                             }
+                            else if (aspect == "snapshot" && value.isMember("regs"))
+                            {
+                                const Json::Value& special = value["regs"]["special"];
+                                char pc[8];
+                                std::snprintf(pc, sizeof(pc), "%04X", special["pc"].asUInt());
+                                out << "\n[snapshot] seq " << value["seq"].asUInt64() << ", " << value["state"].asString()
+                                    << " (read " << value["consistency"].asString() << "), last stop "
+                                    << value["pause"]["reason"].asString() << ", PC=" << pc << ", frame "
+                                    << value["time"]["frame"].asUInt64() << " t " << value["time"]["t"].asUInt64() << ", "
+                                    << value["disasm"].size() << " code line(s), " << value["memory"].size() << " memory window(s)";
+                            }
+                            else if (aspect == "pchist" && value.isMember("entries"))
+                            {
+                                out << "\n[pchist] " << value["entries"].size() << " of " << value["total"].asUInt64()
+                                    << (value["started_now"].asBool() ? " (recording started now)" : "") << ":";
+                                for (const Json::Value& entry : value["entries"])
+                                {
+                                    char item[24];
+                                    std::snprintf(item, sizeof(item), " %04X %s%u", entry["address"].asUInt(),
+                                                  entry["kind"].asString().c_str(), entry["page"].asUInt());
+                                    out << item;
+                                }
+                            }
+                            else if (aspect == "snapshot" && value.isMember("message"))
+                                out << "\n[snapshot] refused: " << value["message"].asString();
                             else if (aspect == "memory_map" && value.isMember("blocks"))
                             {
                                 out << "\n[memory_map] " << value["model"].asString() << " " << value["view"].asString()
@@ -2012,7 +2157,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                     if (card["kind"].asString() != "none")
                                         out << "\n[network] " << card["kind"].asString() << (card["w5300_running"].asBool() ? " running" : " in reset")
                                             << (card["int_to_z80"].asBool() ? ", /INT low" : "") << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
-                                            << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
+                                            << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off")
+                                            << ", guest servers listen on " << net["listen_address"].asString()
+                                            << (net["remote_access"].asBool() ? " (remote access on)" : " (this computer only)");
                                     if (com["fitted"].asBool())
                                         out << "\n[com] " << com["flavor"].asString()
                                             << (com.isMember("avr_firmware") ? " (" + com["avr_firmware"].asString() + ")" : std::string())

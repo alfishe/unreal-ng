@@ -2,7 +2,7 @@
 
 **Status (2026-10-04):** SN0-SN5 built and on master (NE2000 + the Ethernet gateway, SprinterESP, the Hayes modem
 and SprinterSerial, 3Com 3C509B; each card runs its Sprinter kit end to end with a TTD replay without the host).
-Open: SN6 (the host-LAN bridge, wanted by the owner - Q2) and the follow-ups below. Design drafted 2026-10-02. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/TODO.md), PLAN row #59,
+SN6 (the host-LAN bridge, wired and Wi-Fi) built 2026-10-04. Open: the follow-ups below. Design drafted 2026-10-02. Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/TODO.md), PLAN row #59,
 roadmap row **S6c**); builds on the ISA design ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/TODO.md)); its
 shared pieces (`IIoBusDevice`, slot list in `DescribeNetwork()`, guest registry) are early parts of PLAN row #82.
 
@@ -70,8 +70,14 @@ interrupts. SN5 (branch
   TTD replay without the host); recipe [.recipe/machines/sprinter-network.md](../../../.recipe/machines/sprinter-network.md)
 - [ ] SN5 follow-ups: `UNET509B.DLL` through `UNETTEST` (assemble from the kit's tag with sjasmplus); run `FTP`, `NTP`,
   `TFTP`, `TELNET`; ISA Plug and Play isolation (not used by the kit; the boards ship "contention only")
-- [ ] SN6 bridge to the host LAN (M): **wanted** (owner, Q2, 2026-10-02: "the bridge right away", NAT stays the
+- [x] SN6a (2026-10-04, branch `sprinter-sn6-bridge`, [sn6-bridge-design.md](sn6-bridge-design.md) §10): the frame cards
+  bridged to a wired host adapter through libpcap / Npcap loaded at run time (`EthernetMode=BRIDGE`,
+  `BridgeAdapter=`), LAN frames as journaled `NetFrame` TTD inputs, adapters on every surface + Qt; live: the RTL kit's
+  `IFUP` / `PING` / `NSLOOKUP` on the office LAN
+- [x] SN6b (2026-10-04, [sn6-bridge-design.md](sn6-bridge-design.md) §11): Wi-Fi host adapters through MAC translation,
+  automatic for a wireless adapter; live: the RTL kit's `IFUP` / `PING` / `NSLOOKUP` over the Mac's Wi-Fi
+- [ ] ~~SN6 bridge to the host LAN (M): **wanted** (owner, Q2, 2026-10-02: "the bridge right away", NAT stays the
   no-admin default and the bridge is the second host path for the same card); priority P2 (owner, 2026-10-04: after the
-  ATAPI CD)
+  ATAPI CD)~~ split into SN6a / SN6b
 - [ ] When the hardware facts are final: move them to `docs/hardware/` with the Sprinter S7 docs move
   (the "Sprinter RTL8019" line of the NedoOS network catalog is already corrected in this branch)

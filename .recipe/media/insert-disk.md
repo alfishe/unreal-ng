@@ -133,6 +133,24 @@ curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d
     "method":"GET","path":"/api/v1/emulator/{id}/disk/A/catalog"}}}' | jq '.result.structuredContent.files'
 ```
 
+### Patch a sector (debugger)
+
+```bash
+# Read: the sector by its ID (TR-DOS: 1-16); data_base64 is the data field
+curl -s "$BASE/emulator/$EMU_ID/disk/A/sector/0/0/9" | jq '{data_size, data_crc_valid, data_preview}'
+# Write bytes into the data field at an offset: here the TR-DOS disk title (sector 9, offset 245)
+curl -s -X PUT "$BASE/emulator/$EMU_ID/disk/A/sector/0/0/9" -H 'Content-Type: application/json' \
+  -d '{"offset":245,"hex":"4D594449534B"}'
+# → {"drive":"A","cylinder":0,"side":0,"sector":9,"offset":245,"bytes_written":6,"sector_size":256,"moment":"paused"}
+```
+
+The data CRC is recalculated (the address mark is untouched) and the image counts as modified: save it or eject
+with save as usual. Refused with the reason: empty drive, write-protected disk, no such track / sector, an ID-only
+sector, bytes past the data field. A TTD recording gets a debugger-edit marker. CLI `disk write A 0 0 9
+4D594449534B --offset 245`; Lua `disk_write_sector(0, 0, 0, 8, "MYDISK", 245)` and Python
+`emu.disk_write_sector(0, 0, 0, 8, b"MYDISK", offset=245)` number the sector from 0 like their `disk_read_sector`;
+MCP `invoke_api` with the PUT above; Qt debugger toolbar "Disk sector".
+
 ### Create a blank disk (for SAVE experiments)
 
 ```bash

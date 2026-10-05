@@ -36,6 +36,18 @@ std::string StepStopLine(const Emulator& emulator)
 }
 }  // namespace
 
+// "Error: Run-control held by <surface>" while another surface (GDB) holds run control: the one rule for every
+// command that advances the CPU (debugger additions tdd §5, F5). True when it answered
+bool CLIProcessor::RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator)
+{
+    EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+    if (!ctx || !ctx->IsRunControlClaimed())
+        return false;
+    session.SendResponse("Error: Run-control held by " + ctx->GetRunControlState().surfaceLabel +
+                         ". Use that surface to step.");
+    return true;
+}
+
 void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -651,6 +663,9 @@ void CLIProcessor::HandleRunTStates(const ClientSession& session, const std::vec
         return;
     }
 
+    if (RunControlHeld(session, emulator))
+        return;
+
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
@@ -701,6 +716,9 @@ void CLIProcessor::HandleRunToScanline(const ClientSession& session, const std::
         return;
     }
 
+    if (RunControlHeld(session, emulator))
+        return;
+
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
@@ -745,6 +763,9 @@ void CLIProcessor::HandleRunNScanlines(const ClientSession& session, const std::
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+
+    if (RunControlHeld(session, emulator))
+        return;
 
     if (!emulator->IsPaused())
     {
@@ -796,6 +817,9 @@ void CLIProcessor::HandleRunToPixel(const ClientSession& session, const std::vec
         return;
     }
 
+    if (RunControlHeld(session, emulator))
+        return;
+
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
@@ -823,6 +847,9 @@ void CLIProcessor::HandleRunToInterrupt(const ClientSession& session, const std:
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+
+    if (RunControlHeld(session, emulator))
+        return;
 
     if (!emulator->IsPaused())
     {
@@ -853,6 +880,9 @@ void CLIProcessor::HandleRunFrame(const ClientSession& session, const std::vecto
         return;
     }
 
+    if (RunControlHeld(session, emulator))
+        return;
+
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
@@ -881,6 +911,9 @@ void CLIProcessor::HandleRunFrames(const ClientSession& session, const std::vect
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+
+    if (RunControlHeld(session, emulator))
+        return;
 
     if (!emulator->IsPaused())
     {
@@ -932,6 +965,9 @@ void CLIProcessor::HandleRunNCycles(const ClientSession& session, const std::vec
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+
+    if (RunControlHeld(session, emulator))
+        return;
 
     if (!emulator->IsPaused())
     {
@@ -1517,6 +1553,9 @@ void CLIProcessor::HandleStepOut(const ClientSession& session, const std::vector
         return;
     }
 
+    if (RunControlHeld(session, emulator))
+        return;
+
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
@@ -1553,6 +1592,9 @@ void CLIProcessor::HandleSkipUntil(const ClientSession& session, const std::vect
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+
+    if (RunControlHeld(session, emulator))
+        return;
 
     if (args.empty())
     {

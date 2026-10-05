@@ -109,6 +109,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"network", &CLIProcessor::HandleNetwork},  // Network adapters: card, sockets, virtual network
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
+                        {"debug-snapshot", &CLIProcessor::HandleDebugSnapshot},  // One coherent debugger snapshot (DebugSnapshot)
+                        {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
+                        {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
+                        {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -605,7 +609,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
-    oss << "  find <hex-pattern> [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
+    oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
+    oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] - Registers, pages, time, code, stack, memory, PC history at one moment" << NEWLINE;
+    oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
+    oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
+    oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;
     oss << "Breakpoint commands:" << NEWLINE;
@@ -645,6 +653,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  network | net | state network - Cards, serial port, W5300 sockets, virtual network, devices not fitted" << NEWLINE;
     oss << "  network set key=value ..     - card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass" << NEWLINE;
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
+    oss << "                                 remote_access=on|off (guest servers listen on 0.0.0.0; off: 127.0.0.1 only)" << NEWLINE;
     oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,port]" << NEWLINE;
     oss << "                                 (the machine's own port; modem = a Hayes modem that dials host:port)" << NEWLINE;
     oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off" << NEWLINE;
@@ -735,6 +744,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;
     oss << "  disk sector <drv> <cyl> <side> <sec> - Read sector data" << NEWLINE;
+    oss << "  disk write <drv> <cyl> <side> <sec> <hex> [--offset N] - Write bytes into the sector's data field (debugger)" << NEWLINE;
     oss << "  disk track <drv> <cyl> <side>        - Read track summary" << NEWLINE;
     oss << "  disk sysinfo <drv>     - Show TR-DOS system info (sector 9)" << NEWLINE;
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;

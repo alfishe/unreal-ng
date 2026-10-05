@@ -696,6 +696,7 @@ static bool RecordingAllows(const Emulator& emulator, ttd::TTDGuardedAction acti
 
 void Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
 {
+    NoteDebugChange();
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     const bool recording = ttd && ttd->IsRecording();
     const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
@@ -1294,6 +1295,11 @@ void Emulator::Pause(bool broadcast)
         std::lock_guard<std::mutex> lock(_pauseWaitMutex);
         _isPaused = true;
     }
+    {
+        std::lock_guard<std::mutex> lock(_prevStopMutex);
+        _lastStop.reason = _pendingPauseCause.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Pause;
+        _lastStop.breakpoint = _pendingPauseCause;
+    }
     _stepOverHostHold.Release();  // a stepped run that pauses is over (breakpoint, user pause, shutdown)
     // NOTE: Do NOT set _isRunning = false here!
     // The emulator thread is still active, just paused.
@@ -1380,6 +1386,7 @@ void Emulator::Resume(bool broadcast)
     }
 
     _stopRequested = false;
+    NoteRunStart();
 
     // Eagerly invalidate the pause confirmation from the park we are exiting.
     // The run loop clears it only after its parked wait wakes (up to its 20 ms
@@ -1447,6 +1454,7 @@ void Emulator::WaitWhilePaused()
     // park). The caller executes the machine, so it may read the session
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
+    NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
 
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
     // Re-confirm on EVERY park iteration, not just the first. A rapid
@@ -2537,6 +2545,7 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
                                                  SoundManager::HostHoldReason::DirectRun);
     if (firstIn)
     {
+        _emulator.NoteRunStart();
         // A new direct run: no breakpoint stop yet; its first instruction may leave the execution
         // breakpoint the emulator is stopped at (nothing executed since it stopped there)
         _emulator._directStop = BreakpointStop{};
@@ -2560,6 +2569,12 @@ Emulator::DirectStepScope::~DirectStepScope()
     _hostHold.Release();
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
     {
+        {
+            std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
+            _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
+            _emulator._lastStop.breakpoint = _emulator._directStop;
+        }
+        _emulator.NoteDebugChange();   // the direct run stopped
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
         auto* payload = new CpuStepPayload(_emulator.GetId());
         payload->stopped = _emulator._directStop.hit;
@@ -3478,6 +3493,95 @@ bool Emulator::IsPaused()
 bool Emulator::IsEmulationParked()
 {
     return !_isRunning || !_mainloop || (_isPaused && _mainloop->IsPauseConfirmed());
+}
+
+void Emulator::NoteRunStart()
+{
+    // Only from a parked machine (a step called on a running one pauses it first): the copy must not race the
+    // emulation thread
+    if (_z80 && IsEmulationParked())
+    {
+        std::lock_guard<std::mutex> lock(_prevStopMutex);
+        _prevStopState = *static_cast<Z80State*>(_z80);
+        _hasPrevStop = true;
+    }
+    NoteDebugChange();
+}
+
+bool Emulator::RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs)
+{
+    return _mainloop && _isRunning && _mainloop->RunAtFrameBoundary(work, timeoutMs);
+}
+
+void Emulator::NoteDebugChange()
+{
+    _debugSeq.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> lock(_debugSeqMutex);  // a waiter between its check and its wait sees it
+    }
+    _debugSeqChanged.notify_all();
+}
+
+uint64_t Emulator::WaitDebugChange(uint64_t since, uint32_t timeoutMs)
+{
+    std::unique_lock<std::mutex> lock(_debugSeqMutex);
+    _debugSeqChanged.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&]() { return DebugSeq() != since; });
+    return DebugSeq();
+}
+
+Emulator::CoherentMoment Emulator::RunAtCoherentMoment(const std::function<void()>& work, uint32_t timeoutMs)
+{
+    if (RunWhileParked(work))
+        return CoherentMoment::Paused;
+    // Not started and nobody steps it: nothing can change it
+    if (!IsRunning() && !IsDirectStepping())
+    {
+        work();
+        return CoherentMoment::Stopped;
+    }
+    // Running: the emulation thread takes it between two frames, without a pause
+    if (IsRunning() && !IsPaused() && RunAtFrameBoundary(work, timeoutMs))
+        return CoherentMoment::Frame;
+    // It paused meanwhile, or a direct step runs on another thread: wait for the park, briefly
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (RunWhileParked(work))
+            return CoherentMoment::Paused;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return CoherentMoment::Busy;
+}
+
+const char* Emulator::CoherentMomentName(CoherentMoment moment)
+{
+    switch (moment)
+    {
+        case CoherentMoment::Paused:
+            return "paused";
+        case CoherentMoment::Stopped:
+            return "stopped";
+        case CoherentMoment::Frame:
+            return "frame";
+        case CoherentMoment::Busy:
+            break;
+    }
+    return "busy";
+}
+
+Emulator::DebugStop Emulator::LastStop() const
+{
+    std::lock_guard<std::mutex> lock(_prevStopMutex);
+    return _lastStop;
+}
+
+bool Emulator::PreviousStopRegisters(Z80State& out) const
+{
+    std::lock_guard<std::mutex> lock(_prevStopMutex);
+    if (!_hasPrevStop)
+        return false;
+    out = _prevStopState;
+    return true;
 }
 
 bool Emulator::RunWhileParked(const std::function<void()>& work)

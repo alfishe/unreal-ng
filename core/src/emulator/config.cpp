@@ -23,6 +23,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <initializer_list>
 
@@ -1091,6 +1092,24 @@ bool Config::ParseConfig(IniFile& inimanager)
 	CopyStringValue(inimanager.GetValue(network, "Hosts", nullptr), config.network.hosts, sizeof config.network.hosts);
 	config.network.forwards[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "Forward", nullptr), config.network.forwards, sizeof config.network.forwards);
+	// RemoteAccess=on|off (also 1|0, true|false, yes|no): on = host listeners bind 0.0.0.0, off = 127.0.0.1
+	{
+		const char* remote = inimanager.GetValue(network, "RemoteAccess", nullptr);
+		bool on = true;
+		if (remote && remote[0] != '\0')
+		{
+			std::string v(remote);
+			v.erase(v.find_last_not_of(" \t") + 1);
+			v.erase(0, v.find_first_not_of(" \t"));
+			for (char& c : v)
+				c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+			if (v == "off" || v == "0" || v == "false" || v == "no")
+				on = false;
+			else if (v != "on" && v != "1" && v != "true" && v != "yes")
+				MLOGWARNING("Config: [NETWORK] RemoteAccess=%s: on | off - on used", remote);
+		}
+		config.network.remoteAccess = on ? 1 : 0;
+	}
 	{
 		long timeout = inimanager.GetLongValue(network, "ConnectTimeoutMs", 10000);
 		config.network.connectTimeoutMs = static_cast<unsigned>(std::clamp(timeout, 500L, 120000L));
@@ -1170,6 +1189,34 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.modemPhonebook[0] = '\0';
 		}
 	}
+	// The frame cards' path to the host (network SN6): NAT (default) | BRIDGE, and the adapter for BRIDGE
+	netValue[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "EthernetMode", nullptr), netValue, sizeof netValue);
+	config.network.ethernetMode = 0;
+	if (StringHelper::CompareCaseInsensitive(netValue, "BRIDGE", strlen("BRIDGE")) == 0 && netValue[6] == '\0')
+		config.network.ethernetMode = 1;
+	else if (netValue[0] != '\0' && !(StringHelper::CompareCaseInsensitive(netValue, "NAT", 3) == 0 && netValue[3] == '\0'))
+		MLOGWARNING("Config: [NETWORK] EthernetMode=%s: NAT | BRIDGE - NAT used", netValue);
+	// The traffic tap's live stream for Wireshark: off (default) | auto (a free port) | <port>
+	config.network.trafficStreamPort = -1;
+	netValue[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "TrafficStream", nullptr), netValue, sizeof netValue);
+	if (StringHelper::CompareCaseInsensitive(netValue, "AUTO", 4) == 0 && netValue[4] == '\0')
+		config.network.trafficStreamPort = 0;
+	else if (netValue[0] >= '1' && netValue[0] <= '9')
+	{
+		const long port = std::strtol(netValue, nullptr, 10);
+		if (port > 0 && port < 65536)
+			config.network.trafficStreamPort = static_cast<int32_t>(port);
+		else
+			MLOGWARNING("Config: [NETWORK] TrafficStream=%s: off | auto | a TCP port - off used", netValue);
+	}
+	else if (netValue[0] != '\0' && !(StringHelper::CompareCaseInsensitive(netValue, "OFF", 3) == 0 && netValue[3] == '\0'))
+		MLOGWARNING("Config: [NETWORK] TrafficStream=%s: off | auto | a TCP port - off used", netValue);
+	config.network.bridgeAdapter[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "BridgeAdapter", nullptr), config.network.bridgeAdapter,
+	                sizeof config.network.bridgeAdapter);
+
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");

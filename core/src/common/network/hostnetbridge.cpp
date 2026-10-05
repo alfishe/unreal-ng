@@ -73,10 +73,10 @@ void HostNetBridge::TcpShutdownWrite(uint16_t socket)
     _commands.push_back({CommandType::ShutdownWrite, socket, {}, {}});
 }
 
-void HostNetBridge::TcpListen(uint16_t socket, uint16_t hostPort)
+void HostNetBridge::TcpListen(uint16_t socket, const NetEndpoint& local)
 {
     std::lock_guard<std::mutex> lock(_commandMutex);
-    _commands.push_back({CommandType::Listen, socket, NetEndpoint{NetIp(127, 0, 0, 1), hostPort}, {}});
+    _commands.push_back({CommandType::Listen, socket, local, {}});
 }
 
 void HostNetBridge::UdpSend(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length)

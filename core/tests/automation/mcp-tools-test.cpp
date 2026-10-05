@@ -568,6 +568,52 @@ TEST_F(McpTools_Test, ControlExecution_BreakpointAdd_PostsBreakpointsWithAddress
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/breakpoints"));
 }
 
+TEST_F(McpTools_Test, ControlExecution_PortOut_PostsPortAndValue)
+{
+    Json::Value reply;
+    reply["port"] = "0x13AF";
+    reply["value"] = "0x20";
+    reply["moment"] = "paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/ports/out"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "port_out";
+    args["port"] = "#13AF";
+    args["value"] = "0x20";
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/ports/out"));
+    EXPECT_EQ(_caller->calls.back().body["port"].asString(), "#13AF") << "the text goes to the server as given";
+    EXPECT_EQ(_caller->calls.back().body["value"].asString(), "0x20");
+    EXPECT_EQ(result.text, "Port 0x13AF <- 0x20 (paused)");
+
+    Json::Value missing;
+    missing["action"] = "port_out";
+    missing["port"] = "0x7FFD";
+    EXPECT_TRUE(RunTool(*_registry, "control_execution", missing, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, ControlExecution_Wait_LongPolls)
+{
+    Json::Value reply;
+    reply["seq"] = 43;
+    reply["changed"] = true;
+    reply["state"] = "paused";
+    reply["pause"]["reason"] = "breakpoint";
+    reply["pause"]["breakpoint_id"] = 3;
+    reply["pause"]["address"] = 0x8000;
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/wait?timeout_ms=5000&since=42"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "wait";
+    args["since"] = 42;
+    args["timeout_ms"] = 5000;
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Changed: seq 43, paused at breakpoint #3 (8000)");
+}
+
 // ===========================================================================
 // inspect_state
 // ===========================================================================
@@ -624,6 +670,56 @@ TEST_F(McpTools_Test, InspectState_IdeAspect_SummarizesBothSprinterChannels)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/ide"));
     EXPECT_NE(result.text.find("[ide] SPRINTER, selected secondary master, data latch #5a"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("ide1.master (disk): no medium"), std::string::npos) << result.text;
+}
+
+// The snapshot aspect asks GET /debug/snapshot for the code lines and the windows, and summarizes the moment
+TEST_F(McpTools_Test, InspectState_SnapshotAspect_OneRequest)
+{
+    Json::Value snapshot;
+    snapshot["seq"] = 42;
+    snapshot["state"] = "paused";
+    snapshot["consistency"] = "paused";
+    snapshot["pause"]["reason"] = "breakpoint";
+    snapshot["regs"]["special"]["pc"] = 0x8000;
+    snapshot["time"]["frame"] = 100;
+    snapshot["time"]["t"] = 1234;
+    snapshot["disasm"].append(Json::Value(Json::objectValue));
+    snapshot["memory"].append(Json::Value(Json::objectValue));
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/snapshot?disasm=5&memory=cpu:0x8000:16&memory=ram5:0:8"] = {200, snapshot};
+
+    Json::Value args;
+    args["aspects"].append("snapshot");
+    args["count"] = 5;
+    args["windows"].append("cpu:0x8000:16");
+    args["windows"].append("ram5:0:8");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/debug/snapshot?disasm=5&memory=cpu:0x8000:16&memory=ram5:0:8"));
+    EXPECT_NE(result.text.find("[snapshot] seq 42, paused (read paused), last stop breakpoint, PC=8000"), std::string::npos)
+        << result.text;
+    EXPECT_TRUE(result.structured.isMember("snapshot"));
+}
+
+TEST_F(McpTools_Test, InspectState_PcHistoryAspect)
+{
+    Json::Value history;
+    history["armed"] = true;
+    history["started_now"] = false;
+    history["total"] = 7;
+    Json::Value entry;
+    entry["address"] = 0xC000;
+    entry["kind"] = "ram";
+    entry["page"] = 32;
+    history["entries"].append(entry);
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/pchist?depth=4"] = {200, history};
+
+    Json::Value args;
+    args["aspects"].append("pchist");
+    args["count"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[pchist] 1 of 7: C000 ram32"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)

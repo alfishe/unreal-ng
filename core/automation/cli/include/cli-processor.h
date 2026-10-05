@@ -122,6 +122,12 @@ private:
     void HandleMemoryInfo(const ClientSession& session, Memory* memory);
     void HandleMemoryMap(const ClientSession& session, Memory* memory, const CONFIG& config, const std::vector<std::string>& args);
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args);
+    void HandlePortOut(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
+    void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
+    /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
+    bool RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
     void DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length);
     void WriteToPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, const std::vector<uint8_t>& bytes);
@@ -356,6 +362,7 @@ private:
     // Disk inspection command handlers
     void HandleDiskList(const ClientSession& session, EmulatorContext* context);
     void HandleDiskSector(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleDiskWrite(const ClientSession& session, std::shared_ptr<Emulator> emulator, const std::vector<std::string>& args);
     void HandleDiskTrack(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleDiskSysinfo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleDiskCatalog(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

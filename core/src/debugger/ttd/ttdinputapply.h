@@ -36,7 +36,7 @@ struct TTDInputDevices
     MouseManager* mouseManager = nullptr; ///< every mouse device of the machine (wins over `mouse`)
     Joystick* joystick = nullptr;
     GeneralSoundCard* generalSound = nullptr;
-    VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset)
+    VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset, NetFrame)
     PortDecoder* portDecoder = nullptr;  ///< the machine's own switches (FrontPanelSwitch)
 };
 

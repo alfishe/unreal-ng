@@ -319,7 +319,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
   `UNETESP.DLL`, owner: must be supported) (M; **built 2026-10-03**, see the network TODO), SN4 modem / SprinterSerial (S-M; **built 2026-10-03**, branch `sprinter-sn4-modem`, network tdd §18: BC-Term dials a BBS over the ISA interrupt), SN5 3C509B (M; **built 2026-10-03**, branch `sprinter-sn5-3c509b`, the 3C509B kit end to end), SN6
-  host-LAN bridge (M; wanted, P2, next after the CF check).
+  host-LAN bridge: wired (SN6a) and Wi-Fi (SN6b) **built 2026-10-04**.
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal

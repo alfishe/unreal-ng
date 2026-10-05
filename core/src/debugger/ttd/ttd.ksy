@@ -149,7 +149,9 @@ types:
           controller, key = PcKey, 12 NetEvent - a host network answer for a
           virtual-network socket, 13 NetLinkReset - every host connection
           gone; their network fields live in the bit-10 section, 14 Joystick - a
-          Kempston joystick state write, u1 buttonMask = the state byte), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          Kempston joystick state write, u1 buttonMask = the state byte, 15 FrontPanelSwitch, 16 NetFrame - an
+          Ethernet frame from the host LAN for the bridged gateway, its network record and bytes in the bit-10
+          section like a NetEvent's), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values

@@ -9,7 +9,13 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memoryread.h"
+#include "debugger/media/sectorwrite.h"
+#include "debugger/pchistory/pchistory.h"
+#include "debugger/ports/portwrite.h"
+#include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include <algorithm>
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -60,6 +66,7 @@
 #include <emulator/config.h>
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
@@ -818,7 +825,10 @@ public:
             Z80State* z80 = emulator->GetZ80State();
             if (!z80)
                 return false;
-            return Z80::SetRegisterValue(z80, name, value);
+            const bool set = Z80::SetRegisterValue(z80, name, value);
+            if (set)
+                emulator->NoteDebugChange();   // the debugger snapshot's seq
+            return set;
         });
 
         // Memory access: direct (non-mutating) reads so inspecting memory
@@ -851,6 +861,92 @@ public:
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
+        });
+
+        // debug_snapshot{disasm = 21, stack = 8, memory = {"cpu:0x8000:256", "ram5:0:6912"}} - one coherent debugger
+        // snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot): memory windows carry their bytes as Lua strings
+        // (field bytes); nil, error when refused
+        // Long-poll (debugger additions tdd §6): blocks until the snapshot's seq moves past `since` (default: the
+        // current one) or timeout_ms (default 10000, at most 60000) -> {seq, changed, state, pause} | nil, error
+        lua.set_function("debug_wait", [this](sol::this_state s, sol::optional<double> since, sol::optional<uint32_t> timeoutMs)
+                                           -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const uint64_t from = since ? static_cast<uint64_t>(*since) : emulator->DebugSeq();
+            const uint32_t timeout = std::min<uint32_t>(timeoutMs.value_or(10000), 60000);
+            return {StateNodeToLua(s, DebugSnapshot::Wait(emulator, from, timeout)), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // PC history (debugger additions tdd §7): pc_history([depth]) -> {armed, started_now, total, capacity, entries
+        // [{address, kind, page}]} | nil, error (the first call starts recording); pc_history_arm(on) -> true | nil, error
+        lua.set_function("pc_history", [this](sol::this_state s, sol::optional<unsigned> depth) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const PcHistory::Result result = PcHistory::Report(emulator, depth.value_or(32));
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {StateNodeToLua(s, result.report), sol::make_object(s, sol::lua_nil)};
+        });
+        lua.set_function("pc_history_arm", [this](sol::this_state s, bool on) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            const std::string error = emulator ? PcHistory::SetArmed(emulator, on) : std::string("no emulator");
+            if (!error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
+        });
+
+        lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            DebugSnapshot::Options options;
+            options.rawBytes = true;
+            if (opts)
+            {
+                options.disasm = std::min<unsigned>(opts->get_or("disasm", 0u), 100u);
+                options.stack = opts->get_or("stack", 8u);
+                options.pchist = opts->get_or("pchist", 0u);
+                if (sol::optional<sol::table> windows = opts->get<sol::optional<sol::table>>("memory"))
+                    for (auto& pair : *windows)
+                        if (pair.second.is<std::string>())
+                            options.memory.push_back(pair.second.as<std::string>());
+            }
+            const DebugSnapshot::Result result = DebugSnapshot::Build(emulator, options);
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {StateNodeToLua(s, result.snapshot), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // mem_read_bytes(addr, len [, space]) -> the bytes as a Lua string (MemoryRead): the CPU view (wraps at #FFFF,
+        // up to 65536), a page "ram5" / "rom2" / "cache0" or "ram" (every RAM page back to back); nil, error on refusal
+        lua.set_function("mem_read_bytes", [this](sol::this_state s, uint32_t addr, uint32_t len,
+                                                  sol::optional<std::string> space) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), space.value_or(""), addr, len);
+            if (!read.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, read.error)};
+            return {sol::make_object(s, std::string(read.bytes.begin(), read.bytes.end())), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // A debugger's port write through the decoder (PortWrite): port_out(0x13AF, 0x20) -> true | nil, error
+        lua.set_function("port_out", [this](sol::this_state s, int64_t port, int64_t value) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            uint16_t p = 0;
+            uint8_t v = 0;
+            std::string error;
+            if (port < 0 || value < 0 || !PortWrite::Parse(std::to_string(port), std::to_string(value), p, v, error))
+                return {sol::make_object(s, sol::lua_nil),
+                        sol::make_object(s, error.empty() ? std::string("port and value must not be negative") : error)};
+            const PortWrite::Result result = PortWrite::Write(emulator, p, v, "lua");
+            if (!result.ok)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {
@@ -3121,7 +3217,8 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
         });
-        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4"} -> true | nil, err
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} -> true | nil, err
+        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only)
         lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
             sol::variadic_results out;
             Emulator* emulator = effectiveEmulator();
@@ -3217,6 +3314,36 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        // Everything the network adapters sent and received (TrafficAccess, network #91)
+        lua.set_function("network_traffic", [this](sol::this_state s, sol::optional<sol::table> q) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            TrafficAccess::Query query;
+            if (q)
+            {
+                query.since = (*q).get_or("since", uint64_t{0});
+                query.adapter = (*q).get_or("adapter", std::string());
+                query.kind = (*q).get_or("kind", std::string());
+                query.last = (*q).get_or("last", 64u);
+            }
+            return StateNodeToLua(s, TrafficAccess::Records(emulator->GetContext(), query));
+        });
+        lua.set_function("network_traffic_control", [this](sol::this_state s, const std::string& action, sol::optional<std::string> path,
+                                                           sol::optional<uint64_t> value) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            // value: ring -> its bytes, stream -> the TCP port (0 = any free one)
+            if (!TrafficAccess::Control(emulator->GetContext(), action, path.value_or(""), value.value_or(0), error))
+                return mouseError(s, error);
+            sol::variadic_results r;
+            r.push_back(sol::make_object(s, true));
+            return r;
+        });
+        // The host adapters the bridge can use (ethernet_mode=bridge, network SN6)
+        lua.set_function("network_adapters", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, EthernetAccess::Adapters());
         });
         lua.set_function("network_inject_frame", [this](sol::this_state s, const std::string& link, const std::string& hex) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
@@ -3608,6 +3735,43 @@ public:
                 data[i + 1] = sec->data[i];  // Lua tables start at 1
             }
             return data;
+        });
+
+        // A debugger's write into the sector's data field (SectorWrite); sector 0-based as disk_read_sector (ID - 1);
+        // data a string of bytes or a table -> true | nil, error
+        lua.set_function("disk_write_sector", [this](sol::this_state s, int drive, int cyl, int side, int sector,
+                                                     sol::object data, sol::optional<uint32_t> offset)
+                                                  -> std::tuple<sol::object, sol::object> {
+            auto fail = [&](const std::string& error) -> std::tuple<sol::object, sol::object> {
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
+            };
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return fail("no emulator");
+            if (drive < 0 || drive > 3)
+                return fail("bad drive (0-3)");
+            std::vector<uint8_t> bytes;
+            if (data.is<std::string>())
+            {
+                const std::string text = data.as<std::string>();
+                bytes.assign(text.begin(), text.end());
+            }
+            else if (data.is<sol::table>())
+            {
+                for (const auto& kv : data.as<sol::table>())
+                {
+                    if (!kv.second.is<int>() || kv.second.as<int>() < 0 || kv.second.as<int>() > 255)
+                        return fail("data table must hold bytes 0..255");
+                    bytes.push_back(static_cast<uint8_t>(kv.second.as<int>()));
+                }
+            }
+            else
+                return fail("data must be a string of bytes or a table");
+            const SectorWrite::Result result = SectorWrite::Write(emulator, static_cast<uint8_t>(drive), cyl, side,
+                                                                  sector + 1, offset.value_or(0), bytes, "lua");
+            if (!result.ok)
+                return fail(result.error);
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("disk_read_sector_hex", [this](int drive, int trackNo, int sector) -> std::string {
@@ -4371,6 +4535,8 @@ public:
                 }
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
+                // A write reaches the page (the mapper's view: ROM, TS-Conf W0_WE, ...)
+                bank["writable"] = memory.IsWindowWritable(static_cast<uint8_t>(i));
                 banks.add(bank);
             }
 

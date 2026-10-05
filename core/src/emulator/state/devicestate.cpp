@@ -2061,12 +2061,15 @@ StateNode Network(EmulatorContext* context)
     set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
     set["zifi"] = st.settings.zifi;
     set["modem_phonebook"] = st.settings.modemPhonebook;   // the numbers a Hayes modem peer dials (ModemPhonebook=)
+    set["ethernet_mode"] = st.settings.ethernetMode;       // the frame cards: NAT | BRIDGE (network SN6)
+    set["bridge_adapter"] = st.settings.bridgeAdapter;
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
     set["dns_mode"] = st.settings.dnsMode;
     set["hosts"] = st.settings.hosts;
     set["forwards"] = st.settings.forwards;
+    set["remote_access"] = st.settings.remoteAccess;   // RemoteAccess=: host listeners on 0.0.0.0 (on) or 127.0.0.1
     set["connect_timeout_ms"] = st.settings.connectTimeoutMs;
 
     // Devices a SERIAL: peer can open (read now: a USB adapter comes and goes)
@@ -2104,6 +2107,16 @@ StateNode Network(EmulatorContext* context)
     }
     if (st.ethernetGateway.isObject())
         ret["ethernet_gateway"] = st.ethernetGateway;
+    // Everything the adapters sent and received (network #91): the ring, its counters, a file recording
+    if (manager)
+    {
+        ret["traffic"] = manager->Traffic().Describe();
+        StateNode s = StateNode::Object();
+        s["running"] = manager->Stream().Running();
+        s["port"] = static_cast<uint64_t>(manager->Stream().Port());
+        s["clients"] = static_cast<uint64_t>(manager->Stream().Clients());
+        ret["traffic"]["stream"] = s;
+    }
     if (!st.notes.empty())
     {
         StateNode& notes = ret["not_fitted"];
@@ -2277,6 +2290,9 @@ StateNode Network(EmulatorContext* context)
     net["gateway"] = NetIpToString(st.config.gateway);
     net["dns"] = NetIpToString(st.config.dnsServer);
     net["dns_mode"] = st.config.dnsMode == VirtualNetworkConfig::DnsMode::Host ? "host" : "pass";
+    // The host address guest servers listen on: 0.0.0.0 (remote access on: the LAN can connect) or 127.0.0.1
+    net["remote_access"] = st.config.remoteAccess;
+    net["listen_address"] = NetIpToString(st.config.ListenAddress());
     StateNode& hosts = net["hosts"];
     hosts = StateNode::Object();
     for (const auto& [name, addr] : st.config.hosts)
@@ -2312,6 +2328,8 @@ StateNode Network(EmulatorContext* context)
         StateNode s = StateNode::Object();
         s["guest_port"] = int(l.guestPort);
         s["host_port"] = int(l.hostPort);
+        if (l.hostPort)
+            s["host_address"] = NetIpToString(st.config.ListenAddress());
         s["waiting_sockets"] = uint64_t(l.waitingSockets);
         s["pending_clients"] = uint64_t(l.pendingClients);
         servers.push(std::move(s));

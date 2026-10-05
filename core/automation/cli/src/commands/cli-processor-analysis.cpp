@@ -357,8 +357,12 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
         ss << "RAM p" << (int)memory.GetRAMPageForBank0();
     }
     // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
-    auto contended = [context](uint8_t slot) {
-        return (context->pCore && context->pCore->IsSlotContended(slot)) ? "  (contended)" : "";
+    // and read-only: a CPU write does not reach the page (the mapper's view - Memory::IsWindowWritable)
+    auto contended = [context, &memory](uint8_t slot) {
+        std::string marks = (context->pCore && context->pCore->IsSlotContended(slot)) ? "  (contended)" : "";
+        if (!memory.IsWindowWritable(slot) && !(slot == 0 && memory.IsBank0ROM()))
+            marks += "  (read-only)";
+        return marks;
     };
     ss << contended(0) << NEWLINE;
 

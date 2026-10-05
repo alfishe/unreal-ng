@@ -58,15 +58,21 @@
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] =
-        "Number of bytes to read (default: 128, max: 4096)";
+        "Number of bytes to read (default: 128, max: 4096; with format=binary up to 65536, the whole address space)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["name"] = "format";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["description"] =
-        "'hexdump' (default, 16B/line + ASCII sidebar), 'full' (data array + hex) or 'sparse' (fill-run segments)";
+        "'hexdump' (default, 16B/line + ASCII sidebar), 'full' (data array + hex), 'sparse' (fill-run segments) or "
+        "'binary' (the raw bytes as application/octet-stream; headers X-Unreal-Space, X-Unreal-Address, X-Unreal-Length)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["description"] = "Memory content";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Space"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Address"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Length"]["schema"]["type"] = "integer";
 
     // GET /api/v1/emulator/{id}/memory/map - Sparse non-zero memory overview (TD-3)
     paths["/api/v1/emulator/{id}/memory/map"]["get"]["summary"] = "Sparse non-zero memory map";
@@ -159,8 +165,19 @@
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["description"] =
         "Number of bytes to read (default: 128, max: 16384)";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["name"] = "format";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["description"] =
+        "Omit for the JSON answer; 'binary' = the raw bytes as application/octet-stream";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][5]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["description"] =
         "Page content";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Space"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Address"]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["headers"]["X-Unreal-Length"]["schema"]["type"] = "integer";
 
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["summary"] = "Write to physical page";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["description"] =
@@ -228,6 +245,115 @@
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
 
     // Disassembly endpoint
+    // GET / POST /api/v1/emulator/{id}/debug/pchist - PC history with pages (debugger additions tdd §7)
+    {
+        const char* kPath = "/api/v1/emulator/{id}/debug/pchist";
+        Json::Value& get = paths[kPath]["get"];
+        get["summary"] = "PC history: the instructions the CPU started, with their window's page";
+        get["tags"].append("Debug Commands");
+        get["description"] =
+            "Newest first, at most 1024 kept: {armed, started_now, total, capacity, entries [{address, kind rom | ram | "
+            "cache, page}]}. One entry per instruction the CPU starts (an accepted interrupt is none; a prefix is part "
+            "of its instruction), the page the 16K window of its address showed at that moment. Recording costs the "
+            "emulation nothing until a debugger asks: the first read arms it (started_now: entries come from then on). "
+            "Example on TS-Conf: a CALL #C000 with RAM page #20 in window 3 adds {address 49152, kind ram, page 32}.";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        get["parameters"][1]["name"] = "depth";
+        get["parameters"][1]["in"] = "query";
+        get["parameters"][1]["description"] = "Entries (default 32, at most 1024)";
+        get["parameters"][1]["schema"]["type"] = "integer";
+        get["responses"]["200"]["description"] = "The history";
+        get["responses"]["400"]["description"] = "Bad depth";
+        get["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";
+
+        Json::Value& post = paths[kPath]["post"];
+        post["summary"] = "Start (empty) or stop the PC history";
+        post["tags"].append("Debug Commands");
+        post["parameters"] = Json::Value(Json::arrayValue);
+        post["parameters"].append(get["parameters"][0]);
+        post["requestBody"]["required"] = true;
+        post["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        post["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["type"] = "boolean";
+        post["responses"]["200"]["description"] = "{armed}";
+        post["responses"]["400"]["description"] = "Body without a boolean 'enabled'";
+    }
+
+    // GET /api/v1/emulator/{id}/debug/wait - long-poll on the snapshot's seq (debugger additions tdd §6)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/debug/wait"]["get"];
+        op["summary"] = "Wait until something a debugger shows changes (long-poll)";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "Answers when the debugger snapshot's seq moves past `since` - a stop (pause, breakpoint, the end of a "
+            "step), a run start or a tool edit - or after timeout_ms: {seq, changed, state, pause {reason, "
+            "breakpoint_id, address}}. `since` omitted = the current seq (wait for the next change); already behind = "
+            "an immediate answer. No server thread waits, so many clients can wait at once. For clients without "
+            "WebSocket; /api/v1/websocket pushes the same stops.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "since";
+        op["parameters"][1]["in"] = "query";
+        op["parameters"][1]["schema"]["type"] = "integer";
+        op["parameters"][1]["description"] = "The seq the client last saw (default: the current one)";
+        op["parameters"][2]["name"] = "timeout_ms";
+        op["parameters"][2]["in"] = "query";
+        op["parameters"][2]["schema"]["type"] = "integer";
+        op["parameters"][2]["description"] = "0..60000, default 10000 (0 = answer now)";
+        op["responses"]["200"]["description"] = "{seq, changed, state: paused | running | stopped, pause}";
+        op["responses"]["400"]["description"] = "Bad since / timeout_ms";
+        op["responses"]["404"]["description"] = "No such emulator (or it was removed while waiting)";
+    }
+
+    // GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end (D7 + E3)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/debug/snapshot"]["get"];
+        op["summary"] = "Debugger snapshot: registers, previous registers, pages, stack, time, code and memory at one moment";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "Everything a debugger window redraws, in one request and from one moment: read while the emulator stays "
+            "paused (consistency 'paused'), at the next frame boundary of a running machine without pausing it "
+            "('frame'), or directly when it does not run ('stopped'). Fields: seq (grows at every stop, run start and "
+            "tool edit: an equal seq means nothing changed), cpu ('z80'), state (paused | running | stopped), pause "
+            "{reason none | pause | breakpoint | step, breakpoint_id, address}, consistency, regs (the GET /registers "
+            "object), prev_regs (the same at the previous stop; null before the first), pages[] {window, start, kind "
+            "rom | ram | cache, page}, stack {sp, words[]}, time {frame, t, frame_t, line, dot}, disasm[] (GET /disasm "
+            "instructions), memory[] {space, address, length, base64} or {space, address, error}. 503 when no "
+            "coherent moment came within 500 ms (the emulator is stepping on another thread).";
+        Json::Value& p = op["parameters"];
+        p[0]["name"] = "id";
+        p[0]["in"] = "path";
+        p[0]["required"] = true;
+        p[0]["schema"]["type"] = "string";
+        p[1]["name"] = "disasm";
+        p[1]["in"] = "query";
+        p[1]["description"] = "Lines from PC (default 0 = none, at most 100)";
+        p[1]["schema"]["type"] = "integer";
+        p[2]["name"] = "stack";
+        p[2]["in"] = "query";
+        p[2]["description"] = "Words from SP (default 8, 0 = none, at most 128)";
+        p[2]["schema"]["type"] = "integer";
+        p[3]["name"] = "memory";
+        p[3]["in"] = "query";
+        p[3]["description"] =
+            "Memory windows <space>:<address>:<length> (space cpu | ram | ram5 | rom2 | cache0, length at most 65536); "
+            "repeat the parameter or separate with commas; at most 8";
+        p[3]["schema"]["type"] = "string";
+        p[4]["name"] = "pchist";
+        p[4]["in"] = "query";
+        p[4]["description"] =
+            "PC history entries, newest first (default 0 = none, at most 1024): the snapshot's pchist {armed, "
+            "started_now, total, capacity, entries [{address, kind, page}]}; the first request arms the history";
+        p[4]["schema"]["type"] = "integer";
+        op["responses"]["200"]["description"] = "The snapshot";
+        op["responses"]["400"]["description"] = "Bad parameters (the message says which)";
+        op["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";
+    }
+
     paths["/api/v1/emulator/{id}/disasm"]["get"]["summary"] = "Disassemble Z80 code";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["name"] = "id";

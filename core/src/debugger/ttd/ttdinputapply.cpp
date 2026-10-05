@@ -159,6 +159,12 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
                 return false;
             devices.network->ApplyLinkReset();
             break;
+
+        case TTDInputKind::NetFrame:
+            if (!devices.network || !net || !payload)
+                return false;
+            devices.network->ApplyHostFrame(payload, net->payloadLength);
+            break;
     }
     return true;
 }

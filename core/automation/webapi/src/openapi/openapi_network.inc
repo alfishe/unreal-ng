@@ -14,10 +14,12 @@
             "guest programmed them, and per W5300 socket n: mode (TCP / UDP / IPRAW / CLOSED), state (Sn_SSR by "
             "name) and ssr, ir, source_port, destination, tx_free, rx_received (Sn_RX_RSR), tcp_backlog (bytes "
             "waiting for receive memory), network_socket. virtual_network: host_access (false = only the virtual "
-            "network's own services answer), network, gateway, dns, dns_mode (host = queries answered by the host "
+            "network's own services answer), remote_access and listen_address (the host address guest servers listen on: "
+            "0.0.0.0 = every interface, other computers can connect; 127.0.0.1 = this computer only), network, gateway, "
+            "dns, dns_mode (host = queries answered by the host "
             "resolver, pass = sent as UDP), hosts (the name table), dhcp_leases (mac, ip), sockets (id, proto, "
-            "connected, remote, listen_port, bytes_in, bytes_out), guest_servers (guest_port, host_port on "
-            "127.0.0.1, waiting_sockets, pending_clients), counters (dhcp_replies, dns_local_answers, "
+            "connected, remote, listen_port, bytes_in, bytes_out), guest_servers (guest_port, host_port, host_address "
+            "(listen_address), waiting_sockets, pending_clients), counters (dhcp_replies, dns_local_answers, "
             "dns_host_queries, echo_replies, host_events, link_resets) and recent_activity (the last 64 socket "
             "actions: frame, socket, proto, action, remote, status, bytes). com_port: fitted, flavor (evo = the "
             "ZX-Evo AVR's UART, zxwifi = a 16550 card), peer (loopback | tcp | serial), target, phase (idle | resolving | connecting | connected), error, modem_lines, connected, baud, "
@@ -99,9 +101,11 @@
             "the ZX-Bus), atm2ioesp (what the ATM2IOESP card's 16550 is wired to, the com_port values, default \"at\"), "
             "atm2ioesp_address (its bus address on #FB: \"0xF0\" Rev 1.5 / 2.0, \"0xF8\" Rev 1.0), "
             "host_access (true / false), dns_mode (\"host\" | \"pass\"), hosts (\"name=a.b.c.d,...\"), forwards "
-            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet[,<baud>]\" | \"at[,<firmware>][,<baud>]\" (an ESP module's firmware rate; without it the port's: 38400 on the ATM Turbo 2+ keyboard controller, 115200 elsewhere; <firmware> esp32 | esp8266 | esp8266-at221 | esp8266-at222 for this module alone, else esp_chip) | \"zifi-native[,<s3|esp01s>][,<baud>]\" (the 2026 ZiFi firmware: binary frames 5A CMD LEN DATA XOR; s3 = ESP32-S3-Zero s3-native-0.6.94, esp01s = ESP-01S native-0.2.2) | \"modem[,<guest port>]\" (a Hayes modem: ATDT dials host:port or a phone book number; with a guest port it also answers host clients of that port) | "
+            "(\"tcp:<hostport>:<guestport>,...\"), remote_access (true / false, default true: the host listeners of guest servers "
+            "and forwards bind 0.0.0.0, so other computers on the LAN can connect; false = 127.0.0.1, this computer only; a "
+            "change of remote_access alone moves the listeners and keeps every connection), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet[,<baud>]\" | \"at[,<firmware>][,<baud>]\" (an ESP module's firmware rate; without it the port's: 38400 on the ATM Turbo 2+ keyboard controller, 115200 elsewhere; <firmware> esp32 | esp8266 | esp8266-at221 | esp8266-at222 for this module alone, else esp_chip) | \"zifi-native[,<s3|esp01s>][,<baud>]\" (the 2026 ZiFi firmware: binary frames 5A CMD LEN DATA XOR; s3 = ESP32-S3-Zero s3-native-0.6.94, esp01s = ESP-01S native-0.2.2) | \"modem[,<guest port>]\" (a Hayes modem: ATDT dials host:port or a phone book number; with a guest port it also answers host clients of that port) | "
             "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"; the machine's own serial port: the ZX-Evo "
-            "AVR's, the ATM Turbo 2+ keyboard controller's RS-232), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\" (NonOS AT 1.7.4) | \"esp8266-at221\" | \"esp8266-at222\" (ESP-AT 2.2.1 / 2.2.2; the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222)), isa1_peer / isa2_peer (Sprinter: what the UART card in that ISA slot is wired to, com_port values; default \"at\" = the SprinterESP's ESP-12F, \"modem\" = the ISA modem card's own Hayes modem, \"none\" = SprinterSerial's COM1), isa1_peer_b / isa2_peer_b (SprinterSerial's COM2 at #2F8), modem_phonebook (\"<number>=<host>[:<port>],...\": the numbers a Hayes modem peer dials with ATDT; a dialed number with letters, '.' or ':' is a host itself), avr_firmware (ZX-Evo, the AVR firmware the COM port behaves like: "
+            "AVR's, the ATM Turbo 2+ keyboard controller's RS-232), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\" (NonOS AT 1.7.4) | \"esp8266-at221\" | \"esp8266-at222\" (ESP-AT 2.2.1 / 2.2.2; the Sprinter's SprinterESP takes an ESP8266 build from here, else esp8266-at222)), isa1_peer / isa2_peer (Sprinter: what the UART card in that ISA slot is wired to, com_port values; default \"at\" = the SprinterESP's ESP-12F, \"modem\" = the ISA modem card's own Hayes modem, \"none\" = SprinterSerial's COM1), isa1_peer_b / isa2_peer_b (SprinterSerial's COM2 at #2F8), modem_phonebook (\"<number>=<host>[:<port>],...\": the numbers a Hayes modem peer dials with ATDT; a dialed number with letters, '.' or ':' is a host itself), ethernet_mode (\"nat\" = the gateway's router, default | \"bridge\" = the frame cards' frames on the host adapter bridge_adapter, network SN6; needs libpcap / Npcap and the host's permission, see GET .../network/adapters), bridge_adapter (the host adapter name, e.g. \"en0\"), avr_firmware (ZX-Evo, the AVR firmware the COM port behaves like: "
             "\"baseconf\" | \"base2010\" | \"base2011-04\" | \"base2011-05\" | \"base2011-09\" | \"base2013\" | \"base2023\" | \"ts\" | "
             "\"ts2013\" | \"ts2016-02\" | \"ts2016-04\"; a change restarts the AVR's UART), kbc_firmware (ATM Turbo 2+, the keyboard "
             "controller's firmware: \"none\" | \"v22-7\" | \"v22-11\" | \"v22-12\" | \"v31-7\" | \"v31-11\" | \"v32-7\" | "
@@ -134,7 +138,9 @@
         paths[kFrames]["get"]["tags"].append("Network");
         paths[kFrames]["get"]["description"] =
             "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000 or 3C509B), both ways. "
-            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card), port, "
+            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card; in "
+            "ethernet_mode=bridge also lan_out = a card's frame put on the host LAN and lan_in = a frame from the host LAN, "
+            "port \"lan\"), port, "
             "length, summary (\"ARP who-has 10.0.2.2 tell 10.0.2.15\", \"IPv4 10.0.2.15:1025 > 192.0.2.10:80 TCP S ...\"), "
             "hex; link=isa2.eth picks one card, last=N the newest N (default 64). format=pcap: a pcap file "
             "(LINKTYPE_ETHERNET, timestamps = machine frame x 20 ms) for Wireshark / tcpdump. 404 without a frame-level card.";
@@ -152,6 +158,65 @@
         }
         paths[kFrames]["get"]["responses"]["200"]["description"] = "The capture (JSON, or a pcap file)";
         paths[kFrames]["get"]["responses"]["404"]["description"] = "Emulator not found, or no frame-level card";
+
+        const char* kAdapters = "/api/v1/emulator/{id}/network/adapters";
+        paths[kAdapters]["get"]["summary"] = "List the host network adapters for the bridge";
+        paths[kAdapters]["get"]["tags"].append("Network");
+        paths[kAdapters]["get"]["description"] =
+            "The host adapters the packet library (libpcap / Npcap, loaded at run time) lists, for ethernet_mode=bridge "
+            "(network SN6): adapters[] with name (the bridge_adapter value), description, ipv4[], loopback, wireless, up, "
+            "running, bridgeable (wired adapters; Wi-Fi is not bridgeable yet), plus library and error (the library is "
+            "missing, or the host refuses access - the text says what to install or allow).";
+        paths[kAdapters]["get"]["parameters"][0]["name"] = "id";
+        paths[kAdapters]["get"]["parameters"][0]["in"] = "path";
+        paths[kAdapters]["get"]["parameters"][0]["required"] = true;
+        paths[kAdapters]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kAdapters]["get"]["responses"]["200"]["description"] = "The adapters (empty with error when unavailable)";
+        paths[kAdapters]["get"]["responses"]["404"]["description"] = "Emulator not found";
+
+        const char* kTraffic = "/api/v1/emulator/{id}/network/traffic";
+        paths[kTraffic]["get"]["summary"] = "Get the network traffic of every adapter";
+        paths[kTraffic]["get"]["tags"].append("Network");
+        paths[kTraffic]["get"]["description"] =
+            "Everything the machine's network adapters sent and received, recorded at the virtual network (network #91): "
+            "frame cards' Ethernet frames (NE2000, 3C509B, the bridge's LAN side) and socket adapters' operations (W5300 / "
+            "ZXNETUSB, ESP modules, ZiFi, the Hayes modem: connect, send, data, close, ...). An always-on ring (8 MiB of "
+            "packet bytes by default). format=json (default): tap (ring size, counters, the file recording) and records[] "
+            "with index, frame, t_in_frame (the TTD position), time_us (emulated), kind (frame / socket), direction "
+            "(out = from the adapter), adapter (isa2.eth, lan, zxnetusb, com.esp, isa1.esp, isa1.modem, gateway-nat, ...), "
+            "op / socket / proto / peer for socket records, length, summary, hex. since=N: records from index N (poll with "
+            "the previous tap.next_index); adapter=, kind=frame|socket, last=N (default 64, 0 = all). format=pcapng: the "
+            "ring as a pcapng file for Wireshark (one interface per adapter, emulated time, the TTD position as each "
+            "packet's comment; socket operations follow as synthetic packets in a later phase).";
+        paths[kTraffic]["get"]["parameters"][0]["name"] = "id";
+        paths[kTraffic]["get"]["parameters"][0]["in"] = "path";
+        paths[kTraffic]["get"]["parameters"][0]["required"] = true;
+        paths[kTraffic]["get"]["parameters"][0]["schema"]["type"] = "string";
+        for (const char* q : {"since", "adapter", "kind", "last", "format"})
+        {
+            Json::Value p;
+            p["name"] = q;
+            p["in"] = "query";
+            p["schema"]["type"] = "string";
+            paths[kTraffic]["get"]["parameters"].append(p);
+        }
+        paths[kTraffic]["get"]["responses"]["200"]["description"] = "The records (JSON) or a pcapng file";
+        paths[kTraffic]["get"]["responses"]["404"]["description"] = "Emulator not found";
+        paths[kTraffic]["post"]["summary"] = "Control the network traffic recording";
+        paths[kTraffic]["post"]["tags"].append("Network");
+        paths[kTraffic]["post"]["description"] =
+            "Body {\"action\": \"clear\"} empties the ring; {\"action\": \"start\", \"path\": \"/abs/run.pcapng\"} records every "
+            "packet into that pcapng file from now on, unbounded, until {\"action\": \"stop\"}; {\"action\": \"ring\", "
+            "\"ring_bytes\": 33554432} sets the ring's budget; {\"action\": \"stream\", \"port\": 0} serves the traffic as a live pcapng "
+            "stream on a TCP port (0 = any free port; the port is in GET's stream.port; Wireshark: wireshark -k -i "
+            "TCP@127.0.0.1:<port>, or the extcap script tools/wireshark/unreal-ng-extcap.py), {\"action\": \"stream-stop\"} ends it. "
+            "Replies with the tap's state.";
+        paths[kTraffic]["post"]["parameters"][0]["name"] = "id";
+        paths[kTraffic]["post"]["parameters"][0]["in"] = "path";
+        paths[kTraffic]["post"]["parameters"][0]["required"] = true;
+        paths[kTraffic]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kTraffic]["post"]["responses"]["200"]["description"] = "Done";
+        paths[kTraffic]["post"]["responses"]["400"]["description"] = "Unknown action, no path for start, the file cannot be written";
 
         const char* kFrame = "/api/v1/emulator/{id}/network/frame";
         paths[kFrame]["post"]["summary"] = "Inject an Ethernet frame towards a card";

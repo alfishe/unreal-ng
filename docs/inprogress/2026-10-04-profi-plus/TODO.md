@@ -1,6 +1,6 @@
 # Profi+ (`PROFI-PLUS`): TODO
 
-Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (worktree `scratch/wt-profi`).
+Design: [design.md](design.md). Started and landed on `master` 2026-10-04 (branch `profi-hires-xt`, worktree `scratch/wt-profi`).
 
 - [x] Board test of ROM BIOS Plus 0.32 traced: FDC, drives, RTC, AY pass with `[PROFI] ExtPorts=sys`; parallel
   (8255), serial (8253 + 8251) not emulated; HDD needs an image
@@ -28,15 +28,19 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
   checked by hand: PQ-DOS 2023 HDD image boots into DOS Navigator 2.0.16
 - [x] P4b `ProfiPlusBoot_Test`: the board test reports FDC, parallel, serial, RTC and the sound chip Ok (BIOS result
   byte `(IY + 2)`); the COM port in the network manager; a TTD seek replays the 8253 / 8251 exactly
-- [ ] P4c PQ-DOS boot tests from a floppy and from a hard disk (the HDD image is 2 GB - a cut-down image for tests)
+- [x] P4c PQ-DOS boot tests from a floppy and from a hard disk (2026-10-04): `ProfiPlusPqDos_Test.BootsFromTheFloppyToDosNavigator`
+  (BIOS Plus boots `pqdos1.fdi` to the PQ-DOS startup menu, the 30 s timeout runs DOS Navigator) and
+  `BootsFromTheHardDiskToDosNavigator` (`ide0.master`, straight into DOS Navigator on `C:\`, no menu). The 2 GB image is cut to
+  2.9 MB by `tools/machines/profi/pqdosimage` (root files, `DN`, `DOS` kept; the layout untouched); both disks are in
+  `testdata/machines/profi/pqdos/`
 - [x] Video recording of hi-res (512x240) frames came out stretched horizontally (1216x576 from the 608x288 buffer)
   and the other mode's frames were dropped after a switch; owner report 2026-10-04. Fixed: a full-frame Profi recording
   is the screen's 352:288 window x scale in both modes (`RecordingManager`, `RecordsProfiDisplay`;
   `RecordingManager_Test.ProfiFramesKeepTheScreensWindowInBothModes`), checked with a GIF and an H.264 recording of
   PROFI-PLUS in DOS Navigator: 704x576 at scale 2
-- [ ] P5 TTD, automation, recipe, docs. Done in the branch: the `DeviceState::ProfiPeripherals` report (port map in force,
+- [x] P5 TTD, automation, recipe, docs. Done in the branch: the `DeviceState::ProfiPeripherals` report (port map in force,
   8255, 8253 counters, 8251, `#B3` latch) on CLI `state profi`, WebAPI `GET /state/profi` + OpenAPI, MCP aspect `profi`,
-  Lua / Python `profi_state()`, the interface docs. The recipe is checked live on the WebAPI and the CLI (MCP / Lua / Python built, not driven live). Open: the Qt panel (debugger plan)
+  Lua / Python `profi_state()`, the interface docs. The recipe is checked live on the WebAPI and the CLI (MCP / Lua / Python built, not driven live). The Qt panel waits for the debugger plan
 - [x] `profi.ext_ports` is in the TTD config fingerprint (`PortDecoder_Profi::AddTTDBoardSettings`, agreed with the TTD v2
   session 2026-10-04, `ttd-engine` landed): a recording made under another ExtPorts value is refused at load. TTD v2 takes
   PeripheralIds 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback): do not use them for new Profi chips (ours are
@@ -45,5 +49,18 @@ Design: [design.md](design.md). Started 2026-10-04 on branch `profi-hires-xt` (w
 - [x] Triage of the 116 programs on the PQ-DOS HDD image ([analysis](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md)):
   SP.COM logo = program bug ([sp-demo](../../disasm/machines/profi-plus/sp-demo/README.md)); FLINES / WERT# / PINGVIN# need
   BDOS 98, MAT hits BDOS 9 + NUL (both PQ-DOS behavior)
-- [ ] JAZZY (runs data as code under PQ-DOS) and COLUMNS (open of a missing file returns "found") root causes; `S_MIN'.COM`
-  by hand; confirm PQ-DOS findings with a second source
+- [x] COLUMNS root cause (2026-10-04): PQ-DOS's BDOS open (0Fh) returns A = 0 for a file that does not exist (zero size, current
+  date and time in the FCB, nothing created) while search first (11h) answers FF; the emulated disk path is fine (a probe
+  `.COM` on the PQ-DOS HDD image, table in [pqdos-hdd-programs](../../disasm/machines/profi-plus/pqdos-hdd-programs/README.md))
+- [ ] JAZZY (runs data as code under PQ-DOS) root cause; `S_MIN'.COM` by hand; confirm the PQ-DOS findings with a second source
+
+## Housekeeping (2026-10-04)
+
+- [x] The six Profi branches (`profi-hires-xt`, `profi-plus`, `profi-ay-clock`, `profi-xt-kbd`, `profi-v3-v5`, `profi-v3-v5-design`) are all merged
+  into `master`; 21 merged branches without a worktree were deleted locally (none of them was on a remote)
+- [x] The two stashes of the old `profi` branch are deleted: `wd1793-fix` (its change landed as `02a03797a`, the BUSY hold on a
+  synchronous WD1793 completion) and `wip-rework` (obsolete: the sound manager, TSFM and the test folders moved on). Their SHAs
+  were not recorded, so they cannot be restored; nothing in them is missing from `master`
+- [ ] The disabled probe `ProfiXtKbcMachine_Test.DISABLED_ProbeDigitsOnF7FE` is still an uncommitted edit in the worktree
+  `scratch/wt-profi` (a development aid that only prints `#F7FE` / `#7FFE` for the digit keys): revert it with
+  `git checkout -- core/tests/emulator/io/keyboard/profixtkbc_test.cpp`

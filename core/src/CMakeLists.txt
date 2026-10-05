@@ -326,6 +326,9 @@ if (UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++)
 endif ()
 
+# dlopen for optional host libraries loaded at run time (platform/dynamiclibrary.h: libpcap for the network bridge)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
+
 # Note: Recording-specific Windows libs (d3d11, dxgi, mfplat, mfuuid, mf, ole32)
 # are now linked via the recording library (core/recording/CMakeLists.txt)
 if (WIN32 AND MINGW)

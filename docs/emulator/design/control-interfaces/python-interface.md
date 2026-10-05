@@ -203,7 +203,7 @@ class Emulator:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
 
     def memory_regions(self) -> dict:
-        """Device memory regions (the Sprinter's 'vram')"""
+        """Device memory regions (the Sprinter's 'vram'; TS-Conf 'cram' and 'sfile'; 'cmos' with a CMOS clock; ZX-Evo 'eeprom')"""
 
     def region_read(self, name, offset=0, length=256) -> bytes: ...
     def region_write(self, name, offset, data) -> int:
@@ -245,7 +245,9 @@ class Emulator:
 
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
-        hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
+        hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: True, default,
+        = 0.0.0.0, other computers on the LAN can connect; False = 127.0.0.1 only; alone it keeps every connection; network_state()
+        ['virtual_network']['listen_address'] shows it), connect_timeout_ms=n,
         com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' for this module alone) (the machine's own serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem 'modem', SprinterSerial COM1 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' on any machine), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
         (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state(); ZX Profi v5: the board's 8251, also machine_serial),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
@@ -503,6 +505,9 @@ emu.disk_info(0)         # None without a disk, else geometry/catalog details
 # Raw sector access (read-only)
 emu.disk_read_sector(0, 0, 0, 1)      # drive 0, cyl 0, side 0, sector 1
 emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
+# Write into a sector's data field (SectorWrite: CRC recalculated, image modified, TTD tool edit); the sector
+# number is 0-based like disk_read_sector's (ID - 1). ValueError when refused, RuntimeError on a 503-like busy
+emu.disk_write_sector(0, 0, 0, 8, b"MYDISK", offset=245)  # TR-DOS sector ID 9: the disk title
 ```
 
 ### Mouse Input
@@ -732,7 +737,22 @@ emu.page_write("ram", 5, 0x100, 0xFF)
 
 # Block operations
 data = emu.page_read_block("rom", 2, 0, 256)  # Read 256 bytes from ROM page 2
+data = emu.mem_read_bytes(0, 65536)           # the whole CPU view as bytes (wraps at 0xFFFF)
+data = emu.mem_read_bytes(0x1800, 768, space="ram5")  # a page window; "ram" = all RAM pages back to back
+# ValueError with the reason on a bad space, address or length
 emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
+
+# A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
+# breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
+emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
+
+# PC history: the newest instructions with their window's page; the first call starts recording
+h = emu.pc_history(depth=16)                  # dict {armed, started_now, total, capacity, entries [{address, kind, page}]}
+emu.pc_history_arm(False)                     # stop (True: restart empty); emu.debug_snapshot(pchist=16) carries it too
+
+# Long-poll: block (GIL released) until the debugger snapshot's seq moves past `since` (default: now) or the timeout
+w = emu.debug_wait(since=snap["seq"], timeout_ms=5000)   # dict {seq, changed, state, pause}
+# ValueError for a bad port (0..0xFFFF) or value (0..0xFF); RuntimeError when no coherent moment came (503 case)
 
 # Get memory configuration
 info = emu.memory_info()
@@ -1289,6 +1309,11 @@ emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 # or as a number
 emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
 emu.mem_find("CD ?? 00")             # ?? = any byte, "A?" = any low nibble
+
+# One coherent debugger snapshot (the same as GET /debug/snapshot): read at one moment, paused or between frames
+snap = emu.debug_snapshot(disasm=21, stack=8, memory=["cpu:0x8000:256", "ram5:0:6912"])
+# snap["seq"], snap["consistency"], snap["regs"]["special"]["pc"], snap["prev_regs"], snap["disasm"][0]["mnemonic"],
+# snap["memory"][0]["bytes"] (bytes); ValueError with the reason when refused
 emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
 emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
 emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match
@@ -1317,7 +1342,8 @@ emu.paging_state()                   # tagged paging latches + bank table (P1-2)
                                      #  'latches': [{'port','latch','tags','device','gate','value',
                                      #               'decoded': {'ram_bank':..,'shadow_screen':..,...}}],
                                      #  'banks': [{'bank','address_range','type','page',
-                                     #             'name','role','signature','contended'}]}
+                                     #             'name','role','signature','contended',
+                                     #             'writable'}]}  # writable: a CPU write reaches the page
                                      # ROM bank rows carry the §5.2 identification: name = recognized
                                      # content (SHA-256 catalog), role = the model's layout slot; a
                                      # role/name mismatch is the one-glance wrong-ROM signal.

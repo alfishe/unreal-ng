@@ -135,6 +135,14 @@ protected:
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
     /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
     std::atomic<int> _directStepDepth{0};
+    // The debugger snapshot's change counter and the registers at the previous stop (tdd 2026-10-04-debugger-snapshot
+    // §4.5): updated at stops, run starts and tool edits, never per instruction
+    std::atomic<uint64_t> _debugSeq{0};
+    std::mutex _debugSeqMutex;              ///< WaitDebugChange's condition variable only
+    std::condition_variable _debugSeqChanged;
+    mutable std::mutex _prevStopMutex;
+    Z80State _prevStopState{};
+    bool _hasPrevStop = false;
 
 public:
     /// A breakpoint stop: which breakpoint, where (PC, memory address or port) and on what access
@@ -146,7 +154,21 @@ public:
         BreakpointHitKind kind = BreakpointHitKind::Execute;
     };
 
+    /// Why the emulator stopped last (the debugger snapshot's `pause`)
+    struct DebugStop
+    {
+        enum class Reason : uint8_t
+        {
+            None,         ///< not stopped since it was created
+            Pause,        ///< a pause request (a client, the GUI)
+            Breakpoint,   ///< a breakpoint (`breakpoint`)
+            Step,         ///< a direct step / run ended
+        } reason = Reason::None;
+        BreakpointStop breakpoint;
+    };
+
 private:
+    DebugStop _lastStop;   // guarded by _prevStopMutex
     /// The breakpoint that stopped the current / last direct run (OnBreakpointHit)
     BreakpointStop _directStop;
     /// A breakpoint's pause: Pause() puts it into its NC_EMULATOR_STATE_CHANGE payload, then clears it
@@ -656,6 +678,37 @@ public:
     bool RunWhileParked(const std::function<void()>& work);
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
+
+    /// The debugger snapshot's `seq`: grows at every stop, run start and tool edit of this emulator (equal = nothing
+    /// changed for a debugger view)
+    uint64_t DebugSeq() const { return _debugSeq.load(std::memory_order_acquire); }
+    /// Something a debugger view shows changed (a stop, a tool's register or memory edit)
+    void NoteDebugChange();
+    /// Block until DebugSeq() differs from `since` or `timeoutMs` passes; returns DebugSeq() (debugger additions
+    /// tdd §6: long-poll). NoteDebugChange wakes it
+    uint64_t WaitDebugChange(uint64_t since, uint32_t timeoutMs);
+    /// A run starts (resume, a direct step / run): the registers now become "the previous stop" (prev_regs), seq grows
+    void NoteRunStart();
+    /// The registers at the stop before the current one; false before the first run start
+    bool PreviousStopRegisters(Z80State& out) const;
+    /// Why it stopped last
+    DebugStop LastStop() const;
+    /// Run `work` on the emulation thread at the next frame boundary of a running machine (MainLoop::RunAtFrameBoundary);
+    /// false when no frame boundary came within `timeoutMs` (paused, stopped) - `work` then never runs
+    bool RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs);
+    /// Where RunAtCoherentMoment ran its work
+    enum class CoherentMoment : uint8_t
+    {
+        Paused,   ///< on the caller's thread while the emulation stayed parked (RunWhileParked)
+        Stopped,  ///< on the caller's thread: never started and nobody steps it
+        Frame,    ///< on the emulation thread between two frames of a running machine
+        Busy,     ///< nowhere: no such moment within the timeout (another client is stepping it)
+    };
+    /// Run `work` once where nothing else changes the machine meanwhile (the debugger snapshot, a tool's port
+    /// write): paused, stopped or at a frame boundary, waiting up to `timeoutMs` for one of them
+    CoherentMoment RunAtCoherentMoment(const std::function<void()>& work, uint32_t timeoutMs);
+    /// "paused", "stopped", "frame" or "busy"
+    static const char* CoherentMomentName(CoherentMoment moment);
 
     /// Every debugger breakpoint hit goes through here (the Z80's instruction start, memory reads and writes,
     /// port reads and writes). On the emulator's own run it pauses, notifies and parks the emulation thread

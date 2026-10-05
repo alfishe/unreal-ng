@@ -22,15 +22,24 @@
 #include "emulator/io/serial/esp/zifinativemodule.h"
 #include "emulator/io/serial/esp/espnetmodule.h"
 #include "emulator/io/serial/hayesmodempeer.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 NetworkManager::NetworkManager(EmulatorContext* context) : _context(context)
 {
+    _traffic = std::make_unique<NetworkTrafficTap>([context]() { return VirtualNetwork::TrafficTimeOf(context); });
+    _stream = std::make_unique<TrafficStream>(*_traffic);
+}
+
+uint32_t NetworkManager::StreamListenAddress() const
+{
+    return BuildConfig(_context).ListenAddress();
 }
 
 NetworkManager::~NetworkManager()
 {
+    _stream->Stop();   // its thread reads the tap
     Unplug();
 }
 
@@ -302,6 +311,14 @@ void NetworkManager::ApplyConfiguration()
 {
     if (!_context)
         return;
+    // [NETWORK] TrafficStream: the live stream starts with the machine (automation starts / stops it later); its own
+    // thread, so it needs no machine-thread hand-over
+    const int32_t streamPort = _context->config.network.trafficStreamPort;
+    if (streamPort >= 0 && !_stream->Running())
+    {
+        std::string error;
+        _stream->Start(StreamListenAddress(), static_cast<uint16_t>(streamPort), error);
+    }
     const bool loopRunning = _context->pEmulator && _context->pEmulator->IsRunning();
     const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
     if (loopRunning && !onLoopThread)
@@ -340,6 +357,8 @@ void NetworkManager::Refit()
             copy(net.hosts, sizeof(net.hosts), *change->hosts);
         if (change->forwards)
             copy(net.forwards, sizeof(net.forwards), *change->forwards);
+        if (change->remoteAccess)
+            net.remoteAccess = *change->remoteAccess ? 1 : 0;
         if (change->connectTimeoutMs)
             net.connectTimeoutMs = *change->connectTimeoutMs;
         if (change->comPort)
@@ -360,6 +379,10 @@ void NetworkManager::Refit()
             copy(net.zifi, sizeof(net.zifi), *change->zifi);
         if (change->modemPhonebook)
             copy(net.modemPhonebook, sizeof(net.modemPhonebook), *change->modemPhonebook);
+        if (change->ethernetMode)
+            net.ethernetMode = *change->ethernetMode;
+        if (change->bridgeAdapter)
+            copy(net.bridgeAdapter, sizeof(net.bridgeAdapter), *change->bridgeAdapter);
         if (!change->slotPeers.empty() && _context->pPortDecoder)
         {
             const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
@@ -386,7 +409,14 @@ void NetworkManager::Refit()
             if (caps.reloadFirmware && !caps.reloadFirmware(why))
                 _firmwareNote = "kbc_firmware: " + why;
         }
-        _forceRefit = true;
+        if (change->OnlyRemoteAccess())
+        {
+            // A host-side setting: the listeners move to the new address, the devices and connections stay
+            if (_network)
+                _network->SetRemoteAccess(net.remoteAccess != 0);
+        }
+        else
+            _forceRefit = true;
     }
     Plan plan = MakePlan();
     if (!_firmwareNote.empty())
@@ -450,12 +480,16 @@ void NetworkManager::Refit()
             host = std::make_unique<HostNetBridge>(options);
         }
         _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
+        _network->UseTap(_traffic.get());
         _context->pVirtualNetwork = _network.get();
     }
     if (plan.ethernetLink && _network)
     {
-        EmulatorContext* context = _context;
-        _gateway = std::make_unique<EthernetGateway>(*_network, [context]() { return context->emulatorState.frame_counter; });
+        // The frame cards' wire: the virtual network's gateway, NAT or bridged to a host adapter (network SN6)
+        VirtualNetwork::FrameSettings frames;
+        frames.bridge = _context->config.network.ethernetMode == 1;
+        frames.bridgeAdapter = _context->config.network.bridgeAdapter;
+        frames.hostFrames = _hostFramesOverride.get();
         // A modem that answers calls owns its guest port: the gateway leaves that Forward= rule to it
         std::vector<uint16_t> modemPorts;
         auto modemPort = [&modemPorts](const std::string& text) {
@@ -473,8 +507,9 @@ void NetworkManager::Refit()
             modemPort(card.peer);
             modemPort(card.peerB);
         }
-        _gateway->SetReservedGuestPorts(std::move(modemPorts));
-        _context->pEthernetGateway = _gateway.get();
+        frames.reservedGuestPorts = std::move(modemPorts);
+        _network->EnableFrames(frames);
+        _context->pEthernetGateway = _network->Gateway();
     }
     if (plan.zxNetUsb)
     {
@@ -490,7 +525,41 @@ void NetworkManager::Refit()
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
     FitSlotCards(plan);
+    NameTrafficGuests();
     UpdateStatus();
+}
+
+void NetworkManager::NameTrafficGuests()
+{
+    if (!_network)
+        return;
+    // A port's peer: an ESP module's network stack, a modem's call, a TCP link
+    auto name = [this](const ISerialPeer* peer, const std::string& port) {
+        if (!peer)
+            return;
+        if (const auto* esp = dynamic_cast<const EspModule*>(peer))
+            _network->NameGuest(&esp->Stack(), port + ".esp");
+        else if (const auto* modem = dynamic_cast<const HayesModemPeer*>(peer))
+            _network->NameGuest(modem, port + ".modem");
+        else if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
+            _network->NameGuest(stream, port + ".tcp");
+    };
+    if (_card)
+        _network->NameGuest(&_card->Chip(), "zxnetusb");
+    if (_com)
+        name(_com->Peer(), "com");
+    name(_machinePeer.get(), "machine");
+    if (_atm2IoEsp)
+        name(_atm2IoEsp->Com().Peer(), "atm2ioesp");
+    if (_zifi)
+        name(_zifi->Line().Peer(), "zifi");
+    for (const SlotCard& card : _slotCards)
+    {
+        if (!card.serial)
+            continue;
+        for (int ch = 0; ch < card.serial->Channels(); ++ch)
+            name(card.serial->Com(ch).Peer(), card.slotId + (ch ? ".b" : ""));
+    }
 }
 
 PcSerialCard* NetworkManager::SerialCard(const std::string& slotId) const
@@ -518,10 +587,10 @@ void NetworkManager::FitSlotCards(const Plan& plan)
     // Kept across the refit (the Ethernet boards): only the cable is new
     for (SlotCard& card : _slotCards)
     {
-        if (card.ethernet && _gateway)
+        if (card.ethernet && Gateway())
         {
-            card.ethernet->SetLink(_gateway.get());
-            _gateway->Attach(card.ethernet.get());
+            card.ethernet->SetLink(_network.get());
+            _network->AttachStation(card.ethernet.get());
         }
     }
     std::vector<std::pair<std::string, Uart16550::State>> keep;
@@ -636,10 +705,10 @@ void NetworkManager::FitSlotCards(const Plan& plan)
                 _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
                 continue;
             }
-            if (_gateway)
+            if (Gateway())
             {
-                card.ethernet->SetLink(_gateway.get());
-                _gateway->Attach(card.ethernet.get());
+                card.ethernet->SetLink(_network.get());
+                _network->AttachStation(card.ethernet.get());
             }
             _slotCards.push_back(std::move(card));
         }
@@ -691,9 +760,8 @@ void NetworkManager::Unplug(bool keepSlotCards)
     for (SlotCard& card : _slotCards)
     {
         if (card.ethernet)
-            card.ethernet->SetLink(nullptr);
+            card.ethernet->SetLink(nullptr);   // the wire goes with the virtual network (its gateway and bridge too)
     }
-    _gateway.reset();
     // UART cards: their 16550 registers are kept for the card fitted next; the peer goes with the network
     for (const SlotCard& card : _slotCards)
     {
@@ -741,6 +809,22 @@ void NetworkManager::Unplug(bool keepSlotCards)
     _card.reset();
     _network.reset();
     _plan = Plan();
+}
+
+bool NetworkManager::Change::Empty() const
+{
+    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort &&
+           !zxWifi && !comModemLines && !espChip && !avrFirmware && !kbcFirmware && !atm2IoEsp && !atm2IoEspAddress &&
+           !zifi && !modemPhonebook && !ethernetMode && !bridgeAdapter && slotPeers.empty();
+}
+
+bool NetworkManager::Change::OnlyRemoteAccess() const
+{
+    if (!remoteAccess)
+        return false;
+    Change rest = *this;
+    rest.remoteAccess.reset();
+    return rest.Empty();
 }
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
@@ -806,6 +890,11 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "zx_wifi: too long";
             return false;
         }
+    }
+    if (change.bridgeAdapter && change.bridgeAdapter->size() >= sizeof(_context->config.network.bridgeAdapter))
+    {
+        error = "bridge_adapter: too long";
+        return false;
     }
     if (change.modemPhonebook)
     {
@@ -874,8 +963,7 @@ void NetworkManager::OnFrameDevices()
     // catches up at its next access); the cards in expansion slots always (their UARTs feed the slot's IRQ line)
     if (_network)
     {
-        if (_gateway)
-            _gateway->OnFrame();
+        _network->OnFrameDevices();   // the frame cards' wire: the gateway's timers and queued frames
         if (_com)
             _com->OnFrame();
         if (_machinePeer)
@@ -959,6 +1047,8 @@ void NetworkManager::UpdateStatus()
         s.atm2IoEspAddress = net.atm2IoEspAddress;
         s.zifi = net.zifi[0] ? std::string(net.zifi) : std::string("NONE");
         s.modemPhonebook = net.modemPhonebook;
+        s.ethernetMode = net.ethernetMode == 1 ? "BRIDGE" : "NAT";
+        s.bridgeAdapter = net.bridgeAdapter;
         s.espChip = EspModule::FirmwareName(static_cast<EspModule::Firmware>(net.espChip));
         s.avrFirmware = Uart16550::AvrFirmwareName(static_cast<Uart16550::AvrFirmware>(_context->config.atm.evo_avr));
         s.dnsMode = net.dnsPass ? "PASS" : "HOST";
@@ -966,6 +1056,7 @@ void NetworkManager::UpdateStatus()
         s.forwards = net.forwards;
         s.comModemLines = net.comModemLines != 0;
         s.hostAccess = net.hostAccess != 0;
+        s.remoteAccess = net.remoteAccess != 0;
         s.connectTimeoutMs = net.connectTimeoutMs;
     }
     {
@@ -1148,8 +1239,12 @@ void NetworkManager::UpdateStatus()
             st.expansionSlots.push_back(std::move(s));
         }
     }
-    if (_gateway)
-        st.ethernetGateway = _gateway->Describe();
+    if (EthernetGateway* gateway = Gateway())
+    {
+        st.ethernetGateway = gateway->Describe();
+        if (gateway->GetMode() == EthernetGateway::Mode::Bridge)
+            st.ethernetGateway["bridge"] = _network->DescribeBridge();
+    }
     if (_context)
         st.frame = _context->emulatorState.frame_counter;
     std::lock_guard<std::mutex> lock(_statusMutex);
@@ -1169,6 +1264,7 @@ VirtualNetworkConfig NetworkManager::BuildConfig(const EmulatorContext* context)
         return config;
     const auto& net = context->config.network;
     config.dnsMode = net.dnsPass ? VirtualNetworkConfig::DnsMode::Pass : VirtualNetworkConfig::DnsMode::Host;
+    config.remoteAccess = net.remoteAccess != 0;
 
     // Hosts=name=a.b.c.d,name=a.b.c.d (',' - ';' starts an INI comment)
     std::stringstream hosts(net.hosts);
@@ -1269,6 +1365,11 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         {
             out.forwards = value;
         }
+        else if (key == "remote_access" || key == "remoteaccess")
+        {
+            if (!flag(value, "remote_access", out.remoteAccess))
+                return false;
+        }
         else if (key == "com_port" || key == "comport" || key == "com")
         {
             ComPortSpec spec;
@@ -1361,6 +1462,21 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
             }
             out.zifi = spec.ToString();
         }
+        else if (key == "ethernet_mode" || key == "ethernetmode")
+        {
+            const std::string v = lower(value);
+            if (v == "nat")
+                out.ethernetMode = 0;
+            else if (v == "bridge")
+                out.ethernetMode = 1;
+            else
+            {
+                error = "ethernet_mode: nat | bridge";
+                return false;
+            }
+        }
+        else if (key == "bridge_adapter" || key == "bridgeadapter" || key == "adapter")
+            out.bridgeAdapter = value;
         else if (key == "modem_phonebook" || key == "phonebook")
         {
             std::map<std::string, std::string> book;
@@ -1397,9 +1513,9 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         else
         {
             error = "unknown setting '" + rawKey +
-                    "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
+                    "' (card, host_access, dns_mode, hosts, forwards, remote_access, connect_timeout_ms, com_port, zx_wifi, "
                     "com_modem_lines, esp_chip, avr_firmware, kbc_firmware, atm2ioesp, atm2ioesp_address, zifi, isa1_peer, "
-                    "isa2_peer, isa1_peer_b, isa2_peer_b, modem_phonebook)";
+                    "isa2_peer, isa1_peer_b, isa2_peer_b, modem_phonebook, ethernet_mode, bridge_adapter)";
             return false;
         }
     }

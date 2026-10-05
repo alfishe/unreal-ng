@@ -10,6 +10,8 @@
 #include "common/stringhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/rtc/rtcaccess.h"
 #include "emulator/memory/memorymap.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/state/devicestate.h"
@@ -21,7 +23,12 @@ std::vector<IDeviceMemoryRegion*> Regions(EmulatorContext* context)
 {
     std::vector<IDeviceMemoryRegion*> regions;
     if (context && context->pPortDecoder)
+    {
         context->pPortDecoder->CollectMemoryRegions(regions);
+        // The machine's CMOS clock, whichever board carries it: "cmos" (and the ZX-Evo "eeprom")
+        if (Ds12887* rtc = RtcAccess::Find(context))
+            rtc->CollectMemoryRegions(regions);
+    }
     return regions;
 }
 

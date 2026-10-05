@@ -18,6 +18,8 @@ Index: [README.md](README.md).
 
 ## Remaining
 
+- ~~"SD card lost" with the whole release~~ not a size problem; it follows a live card swap + first reset, which is the ERS working as designed ([overview](nedoos-overview-and-release.md)). ATM3 floppy and hard-disk boot also explained there. Left: ATM710 hard disk (ATM IDE, `osatm2hd.$C`) not attempted.
+
 - Network adapters ([tdd-network.md](tdd-network.md) §15): N0, N1a, N1b (ZXNETUSB / W5300 +
   virtual network) and the card INT on master; N2 COM port on master
   ([reference-evo-com-port.md](reference-evo-com-port.md)); N3 ESP modules (ESPNET 1.27 and AT)

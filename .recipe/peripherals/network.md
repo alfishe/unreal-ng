@@ -25,9 +25,54 @@ virtual network through the **Ethernet gateway** (a switch + router at
 `slots` and `ethernet_gateway`, and `GET /network/frames` captures their
 frames. Recipe: [machines/sprinter-network.md](../machines/sprinter-network.md).
 
+Those frame cards can also be **bridged to a host adapter** instead (`ethernet_mode=bridge bridge_adapter=en0`):
+the card gets its address from the real LAN. It needs the host's permission to read and write raw frames; on macOS
+`sudo chmod o+rw /dev/bpf*` lasts **only until the next reboot** (Wireshark's ChmodBPF makes it permanent), on Linux
+`setcap` is lost when the binary is replaced, on Windows Npcap must be installed. Reference:
+[docs/features/network-bridge.md](../../docs/features/network-bridge.md).
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).
+
+## Traffic: everything the adapters sent and received (verified 2026-10-04)
+
+Every machine with a network adapter records its traffic at one point, the virtual network (design:
+[network-traffic-debug/design.md](../../docs/inprogress/2026-10-04-network-traffic-debug/design.md)): frame cards'
+Ethernet frames (NE2000, 3C509B, the bridge's LAN side) and socket adapters' operations (ZXNETUSB / W5300, ESP
+modules, ZiFi, the Hayes modem: `connect`, `send`, `data`, `close`, ...) with their bytes, each with its TTD
+position (`frame`, `t_in_frame`) and emulated time. An always-on ring keeps the newest 8 MiB; a recording into a
+pcapng file runs from `start` to `stop` with no limit. Checked live on the Sprinter's NE2000 in NAT: the RTL kit's
+`IFUP` and `NSLOOKUP` gave 14 records (8 frames of `isa2.eth`: DHCP, ARP, DNS; 6 socket operations of
+`gateway-nat`: the router's own UDP), and a `start` / `PING` / `stop` wrote a pcapng of 6 packets.
+
+```bash
+curl -s "$B/$ID/network/traffic?last=8" | jq -r '.records[] | "#\(.index) f\(.frame) \(.adapter) \(.direction) \(.summary)"'
+#  #12 f4504 isa2.eth out ARP who-has 10.0.2.2 tell 10.0.2.15
+#  #41 f9122 zxnetusb in TCP data from 93.184.216.34:80, 1460 bytes: HTTP/1.0 200 OK
+curl -s "$B/$ID/network/traffic?since=42"            # poll: pass the previous tap.next_index
+curl -s "$B/$ID/network/traffic?format=pcapng" -o run.pcapng      # the ring for Wireshark: frames + socket operations as packets
+curl -s -X POST $B/$ID/network/traffic -H 'Content-Type: application/json' -d '{"action":"start","path":"/abs/run.pcapng"}'
+curl -s -X POST $B/$ID/network/traffic -d '{"action":"stop"}'
+```
+
+Filters: `adapter=isa2.eth` (or `zxnetusb`, `com.esp`, `isa1.esp`, `isa1.modem`, `gateway-nat`, `lan`),
+`kind=frame|socket`, `last=N` (0 = the whole ring). CLI: `network traffic [adapter] [N] [file.pcapng]`,
+`network traffic start <file.pcapng> | stop | clear`; Lua: `network_traffic{since=, adapter=, kind=, last=}`,
+`network_traffic_control(action, path, value)`; Python: `network_traffic(...)`, `network_traffic_pcapng()`,
+`network_traffic_control(...)`; MCP: `inspect_state` aspect `network` (its `traffic` part) and `invoke_api`.
+
+**Live in Wireshark** (macOS, Linux, Windows): `POST .../network/traffic {"action":"stream","port":0}` (or `[NETWORK]
+TrafficStream=auto`, CLI `network traffic stream`) serves the traffic as a pcapng stream on a TCP port; the reply's
+`stream.wireshark` is the command: `wireshark -k -i TCP@127.0.0.1:<port>`. A reader gets the ring first, then every
+packet as it passes. The extcap script [tools/wireshark/](../../tools/wireshark/README.md) lists running emulators in
+Wireshark's interface list instead. `{"action":"stream-stop"}` ends it.
+
+In the pcapng a socket adapter's operations are **synthetic packets** Wireshark decodes (HTTP, DNS, "Follow TCP
+Stream"): a connect is a SYN / SYN-ACK / ACK, data are segments of up to 1460 bytes with chained sequence numbers, a
+close a FIN, a reset an RST. The bytes are exact; the TCP framing and the adapter's address (10.0.2.15 and up, one per
+adapter) are made up - each packet's comment says what really happened (`#41 frame 9122 t 1203 in - socket 3 data
+(synthetic packet)`).
 
 ## Fitting the card
 
@@ -41,6 +86,7 @@ HostAccess=1                   ; 0 = internal services only (DHCP, hosts table, 
 DnsMode=HOST                   ; HOST | PASS
 Hosts=next.zxart.ee=127.0.0.1  ; name=a.b.c.d,name=a.b.c.d
 Forward=tcp:8080:80            ; guest servers: tcp:<hostport>:<guestport>,...
+RemoteAccess=on                ; guest servers listen on 0.0.0.0 | off = 127.0.0.1 only
 ConnectTimeoutMs=10000
 ```
 
@@ -58,9 +104,43 @@ connection closes; refused while a TTD recording runs):
 CLI `network set card=zxnetusb host_access=on`, Lua
 `network_configure{card="zxnetusb"}`, Python `emu.network_configure(card="zxnetusb")`.
 
-Guest servers (a NedoOS program in `LISTEN`) are reachable on `127.0.0.1`:
+Guest servers (a NedoOS program in `LISTEN`) are reachable on the host:
 guest ports 1024 and up on the same host port, lower ones only through a
 `Forward=` rule.
+
+### Remote access
+
+`RemoteAccess` (runtime key `remote_access`, on by default) decides which host
+address those listeners bind - every `Forward=` rule and every guest server,
+on every card and ESP module (UDP forwards will follow the same setting):
+
+| Setting | Listeners bind | Who can connect |
+|:--|:--|:--|
+| `on` (default) | `0.0.0.0` | this computer, and any other computer that can reach it (your LAN, a Windows PC for the ZiFi FTP / SMB servers) |
+| `off` | `127.0.0.1` | this computer only |
+
+Security note: the emulated servers (ZiFi FTP / WebDAV, a NedoOS program in
+`LISTEN`, a modem that answers) have no real authentication. On an untrusted
+network (cafe Wi-Fi, a hotel) turn remote access off.
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"remote_access": false}}}
+```
+
+CLI `network set remote_access=off`, Lua `network_configure{remote_access=false}`,
+Python `emu.network_configure(remote_access=False)`, Qt: Network window,
+"Allow remote access (listen on all interfaces)". A change of `remote_access`
+alone moves the listeners at once and keeps every connection and the cards
+(other keys fit the devices again); like every network change it is refused
+while a TTD recording runs. It does not affect a TTD replay: the journal
+records the guest side, a replay opens no host listener.
+
+Check: `GET /state/network` -> `settings.remote_access`,
+`virtual_network.remote_access`, `virtual_network.listen_address`
+(`0.0.0.0` / `127.0.0.1`) and `guest_servers[].host_address`; on the host
+`lsof -nP -iTCP -sTCP:LISTEN | grep unreal` (Windows: `netstat -an`) shows
+`*:2121` or `127.0.0.1:2121`.
 
 ## COM port (16550 UART)
 

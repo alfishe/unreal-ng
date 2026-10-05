@@ -305,6 +305,17 @@ Across every source examined there are four axes of variation:
 4. **USSR variant** — five lines, dropping A9 and adding A7 and A0 = 1, so it answers
    only on odd addresses (§2.1).
 
-There is **no "Kempston mouse turbo"** in any of these sources; searches surface only
-unrelated CPU-turbo hits. The AMX Mouse is a separate device with its own decode
+**Correction (2026-10-04):** a "Kempston Mouse Turbo" **does exist** - the K-Mouse Turbo by Velesoft
+([velesoft.speccy.cz/kmturbo-cz.htm](https://velesoft.speccy.cz/kmturbo-cz.htm), also described in BC Info Guide #4).
+The earlier statement here ("no Kempston mouse turbo in any of these sources") was wrong; found in the ZX-bus slots
+research ([research-cards.md](../2026-10-03-zx-bus-slots/research-cards.md) §2 item 10 and §8.2). What the sources say:
+
+| Item | K-Mouse Turbo |
+|---|---|
+| Ports | buttons `#DF` family with A10 = 0, A8 = 0; X with A8 = 1; Y with A10 = 1, A8 = 1 (as the classic Kempston mouse) |
+| Second mouse | **A15 selects master / slave**: two mice on one interface |
+| Detection | `#7EDF` / `#FEDF` (the A15 = 0 / 1 button ports) used to detect the interface |
+
+Not yet confirmed: which programs use the slave mouse or the detection ports (open item in [TODO.md](TODO.md)), and
+how the emulator should expose a second mouse. The AMX Mouse is a separate device with its own decode
 (`zxsp/Source/Uni/Items/AmxMouse.h`) and does not share this port space.

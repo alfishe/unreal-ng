@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdio>
 
+#include "common/network/hostframebridge.h"
 #include "common/network/nettypes.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -121,7 +122,8 @@ StateNode Frames(EmulatorContext* context, const std::string& link, unsigned las
         StateNode n = StateNode::Object();
         n["index"] = f.index;
         n["frame"] = f.frame;
-        n["direction"] = f.toCard ? "to_card" : "from_card";
+        // BRIDGE: lan_in = arrived from the host LAN (port "lan"), lan_out = a card's frame that went to the LAN
+        n["direction"] = f.lan ? (f.toCard ? "lan_in" : "lan_out") : (f.toCard ? "to_card" : "from_card");
         n["port"] = f.port;
         n["length"] = static_cast<uint64_t>(f.bytes.size());
         n["summary"] = Summary(f.bytes);
@@ -146,6 +148,43 @@ bool Pcap(EmulatorContext* context, const std::string& link, std::vector<uint8_t
         return false;
     out = gateway->CapturePcap(link);
     return true;
+}
+
+StateNode Adapters()
+{
+    StateNode ret = StateNode::Object();
+    HostFrameBridge bridge;
+    std::string error;
+    const std::vector<HostAdapter> adapters = bridge.Adapters(error);
+    ret["library"] = bridge.Library();
+    ret["error"] = error;
+    StateNode list = StateNode::Array();
+    for (const HostAdapter& a : adapters)
+    {
+        StateNode n = StateNode::Object();
+        n["name"] = a.name;
+        n["description"] = a.description;
+        StateNode ips = StateNode::Array();
+        for (const std::string& ip : a.ipv4)
+            ips.push(ip);
+        n["ipv4"] = ips;
+        n["loopback"] = a.loopback;
+        n["wireless"] = a.wireless;
+        n["up"] = a.up;
+        n["running"] = a.running;
+        // Wi-Fi bridges through MAC translation (its own MAC is needed); loopback has no LAN
+        n["bridgeable"] = !a.loopback && (!a.wireless || a.hasMac);
+        n["translation"] = a.wireless;
+        if (a.hasMac)
+        {
+            char mac[18];
+            std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", a.mac[0], a.mac[1], a.mac[2], a.mac[3], a.mac[4], a.mac[5]);
+            n["mac"] = std::string(mac);
+        }
+        list.push(std::move(n));
+    }
+    ret["adapters"] = list;
+    return ret;
 }
 
 bool Inject(EmulatorContext* context, const std::string& link, const std::string& hex, const char* source, std::string& error)

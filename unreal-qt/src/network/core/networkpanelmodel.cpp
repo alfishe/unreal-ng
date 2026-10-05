@@ -104,7 +104,11 @@ NetworkForm NetworkFormFromState(const StateNode& network)
     form.dnsMode = Upper(Text(set->find("dns_mode"), "HOST"));
     form.hosts = Text(set->find("hosts"));
     form.modemPhonebook = Text(set->find("modem_phonebook"));
+    if (const std::string mode = Text(set->find("ethernet_mode")); !mode.empty())
+        form.ethernetMode = mode;
+    form.bridgeAdapter = Text(set->find("bridge_adapter"));
     form.forwards = Text(set->find("forwards"));
+    form.remoteAccess = Flag(set->find("remote_access"), true);
     if (const StateNode* timeout = set->find("connect_timeout_ms"); timeout && timeout->kind == StateNode::Kind::Int)
         form.connectTimeoutMs = static_cast<unsigned>(timeout->i);
     return form;
@@ -134,6 +138,10 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
     }
     if (before.modemPhonebook != after.modemPhonebook)
         out.emplace_back("modem_phonebook", after.modemPhonebook);
+    if (before.ethernetMode != after.ethernetMode)
+        out.emplace_back("ethernet_mode", after.ethernetMode);
+    if (before.bridgeAdapter != after.bridgeAdapter)
+        out.emplace_back("bridge_adapter", after.bridgeAdapter);
     if (before.comPort.ToString() != after.comPort.ToString())
         out.emplace_back("com_port", after.comPort.ToString());
     if (before.zxWifiPeer.ToString() != after.zxWifiPeer.ToString())
@@ -159,6 +167,8 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
         out.emplace_back("hosts", after.hosts);
     if (before.forwards != after.forwards)
         out.emplace_back("forwards", after.forwards);
+    if (before.remoteAccess != after.remoteAccess)
+        out.emplace_back("remote_access", after.remoteAccess ? "on" : "off");
     if (before.connectTimeoutMs != after.connectTimeoutMs)
         out.emplace_back("connect_timeout_ms", std::to_string(after.connectTimeoutMs));
     return out;

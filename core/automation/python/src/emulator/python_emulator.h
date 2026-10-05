@@ -2,9 +2,15 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memoryread.h"
+#include "debugger/media/sectorwrite.h"
+#include "debugger/pchistory/pchistory.h"
+#include "debugger/ports/portwrite.h"
+#include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
+#include <algorithm>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -82,6 +88,7 @@
 #include "../../../temporalstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
@@ -942,7 +949,10 @@ namespace PythonBindings
                 Z80State* z80 = self.GetZ80State();
                 if (!z80)
                     return false;
-                return Z80::SetRegisterValue(z80, name, value);
+                const bool set = Z80::SetRegisterValue(z80, name, value);
+                if (set)
+                    self.NoteDebugChange();   // the debugger snapshot's seq
+                return set;
             }, "Set register value by name", py::arg("name"), py::arg("value"))
 
             // Memory access: direct (non-mutating) reads so inspecting
@@ -969,6 +979,95 @@ namespace PythonBindings
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
             }, "Write 16-bit word to memory")
+            .def("debug_wait", [](Emulator& self, std::optional<uint64_t> since, uint32_t timeoutMs) -> py::object {
+                const uint64_t from = since ? *since : self.DebugSeq();
+                StateNode answer;
+                {
+                    py::gil_scoped_release release;  // other Python threads keep running while this one waits
+                    answer = DebugSnapshot::Wait(&self, from, std::min<uint32_t>(timeoutMs, 60000));
+                }
+                return StateNodeToPy(answer);
+            }, "Long-poll: block until the debugger snapshot's seq moves past `since` (default: the current one) or "
+               "timeout_ms (at most 60000) passes -> dict {seq, changed, state, pause}",
+               py::arg("since") = py::none(), py::arg("timeout_ms") = 10000)
+            .def("pc_history", [](Emulator& self, unsigned depth) -> py::object {
+                const PcHistory::Result result = PcHistory::Report(&self, depth);
+                if (result.busy)
+                    throw std::runtime_error(result.error);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                return StateNodeToPy(result.report);
+            }, "PC history (debugger additions tdd §7): the newest instructions the CPU started with their window's page "
+               "-> dict {armed, started_now, total, capacity, entries [{address, kind, page}]}; the first call starts "
+               "recording (costs nothing until then)", py::arg("depth") = 32)
+            .def("pc_history_arm", [](Emulator& self, bool on) {
+                const std::string error = PcHistory::SetArmed(&self, on);
+                if (!error.empty())
+                    throw std::runtime_error(error);
+            }, "Start (empty) or stop the PC history", py::arg("on"))
+            .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory,
+                                      unsigned pchist) -> py::object {
+                DebugSnapshot::Options options;
+                options.disasm = std::min(disasm, 100u);
+                options.stack = stack;
+                options.pchist = pchist;
+                options.memory = memory;
+                options.rawBytes = true;
+                DebugSnapshot::Result result = DebugSnapshot::Build(&self, options);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                // The raw bytes are no text: take them out before the dict conversion, put them back as bytes
+                std::vector<std::string> raw;
+                if (StateNode* windows = const_cast<StateNode*>(result.snapshot.find("memory")))
+                    for (StateNode& window : windows->items)
+                        for (auto it = window.members.begin(); it != window.members.end(); ++it)
+                            if (it->first == "bytes")
+                            {
+                                raw.push_back(std::move(it->second.s));
+                                window.members.erase(it);
+                                break;
+                            }
+                py::object dict = StateNodeToPy(result.snapshot);
+                if (!raw.empty())
+                {
+                    py::list windows = dict["memory"];
+                    size_t next = 0;
+                    for (auto item : windows)
+                    {
+                        py::dict window = item.cast<py::dict>();
+                        if (!window.contains("error") && next < raw.size())
+                            window["bytes"] = py::bytes(raw[next++]);
+                    }
+                }
+                return dict;
+            }, "One coherent debugger snapshot (core DebugSnapshot, GET /debug/snapshot): seq, state, pause, consistency, "
+               "regs, prev_regs, pages, stack, time, disasm, memory windows ('cpu:0x8000:256', 'ram5:0:6912') with their "
+               "bytes; ValueError when refused",
+               py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>(),
+               py::arg("pchist") = 0)
+            .def("mem_read_bytes", [](Emulator& self, uint32_t addr, uint32_t len, const std::string& space) -> py::bytes {
+                const MemoryRead::Result read = MemoryRead::Bytes(self.GetContext(), space, addr, len);
+                if (!read.error.empty())
+                    throw py::value_error(read.error);
+                return py::bytes(reinterpret_cast<const char*>(read.bytes.data()), read.bytes.size());
+            }, "Read raw bytes (MemoryRead): the CPU view (wraps at 0xFFFF, up to 65536), a page 'ram5' / 'rom2' / "
+               "'cache0' (stops at the page's end) or 'ram' (every RAM page back to back); ValueError with the reason",
+               py::arg("addr"), py::arg("len"), py::arg("space") = "cpu")
+            .def("port_out", [](Emulator& self, int64_t port, int64_t value) {
+                uint16_t p = 0;
+                uint8_t v = 0;
+                std::string error;
+                if (port < 0 || value < 0)
+                    throw py::value_error("port and value must not be negative");
+                if (!PortWrite::Parse(std::to_string(port), std::to_string(value), p, v, error))
+                    throw py::value_error(error);
+                const PortWrite::Result result = PortWrite::Write(&self, p, v, "python");
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Write a port through the machine's decoder like a CPU OUT (PortWrite: paging, TS-Conf registers, AY, "
+               "border), without breakpoints or device waits, as a TTD tool edit; paused, stopped or running. "
+               "ValueError for a bad port (0..0xFFFF) / value (0..0xFF), RuntimeError when no coherent moment came",
+               py::arg("port"), py::arg("value"))
             .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len) -> py::bytes {
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");
@@ -2482,7 +2581,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -2525,6 +2624,39 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return py::bytes(reinterpret_cast<const char*>(pcap.data()), pcap.size());
             }, py::arg("link") = "", "The capture as a pcap file (bytes)")
+            .def("network_traffic", [](Emulator& self, uint64_t since, const std::string& adapter, const std::string& kind,
+                                       unsigned last) -> py::object {
+                TrafficAccess::Query query;
+                query.since = since;
+                query.adapter = adapter;
+                query.kind = kind;
+                query.last = last;
+                return StateNodeToPy(TrafficAccess::Records(self.GetContext(), query));
+            }, py::arg("since") = 0, py::arg("adapter") = "", py::arg("kind") = "", py::arg("last") = 64,
+               "Everything the network adapters sent and received (network #91): tap state + records (index, frame, "
+               "t_in_frame, time_us, kind, direction, adapter, op, peer, summary, hex)")
+            .def("network_traffic_pcapng", [](Emulator& self, const std::string& adapter) -> py::bytes {
+                TrafficAccess::Query query;
+                query.adapter = adapter;
+                query.last = 0;
+                std::vector<uint8_t> file;
+                std::string error;
+                if (!TrafficAccess::Pcapng(self.GetContext(), query, file, error))
+                    throw py::value_error(error);
+                return py::bytes(reinterpret_cast<const char*>(file.data()), file.size());
+            }, py::arg("adapter") = "", "The traffic ring as a pcapng file (bytes) for Wireshark")
+            .def("network_traffic_control", [](Emulator& self, const std::string& action, const std::string& path,
+                                               uint64_t value) {
+                std::string error;
+                if (!TrafficAccess::Control(self.GetContext(), action, path, value, error))
+                    throw py::value_error(error);
+            }, py::arg("action"), py::arg("path") = "", py::arg("value") = 0,
+               "clear | start (record into the pcapng file `path`, unbounded) | stop | ring (value: its bytes) | stream (the "
+               "live pcapng stream for Wireshark on TCP port `value`, 0 = any free one; network_traffic()['stream'] has it) | "
+               "stream-stop")
+            .def("network_adapters", [](Emulator&) -> py::object {
+                return StateNodeToPy(EthernetAccess::Adapters());
+            }, "The host adapters the bridge can use (ethernet_mode='bridge'): name, ipv4, wireless, bridgeable; library, error")
             .def("network_inject_frame", [](Emulator& self, const std::string& link, const std::string& hex) {
                 std::string error;
                 if (!EthernetAccess::Inject(self.GetContext(), link, hex, "Python network_inject_frame", error))
@@ -2793,6 +2925,22 @@ namespace PythonBindings
                 if (!sec || !sec->hasData) return py::bytes();
                 return py::bytes(reinterpret_cast<char*>(sec->data), sec->dataSize);
             }, "Read sector data (128..1024 bytes depending on the sector's ID field)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
+            .def("disk_write_sector", [](Emulator& self, int drive, int cyl, int side, int sector, const py::bytes& data,
+                                         uint32_t offset) {
+                if (drive < 0 || drive > 3)
+                    throw py::value_error("bad drive (0-3)");
+                const std::string text = data;
+                const std::vector<uint8_t> bytes(text.begin(), text.end());
+                const SectorWrite::Result result = SectorWrite::Write(&self, static_cast<uint8_t>(drive), cyl, side,
+                                                                      sector + 1, offset, bytes, "python");
+                if (result.busy)
+                    throw std::runtime_error(result.error);
+                if (!result.ok)
+                    throw py::value_error(result.error);
+            }, "Write bytes into a sector's data field (SectorWrite: data CRC follows, the image counts as modified, a TTD "
+               "tool edit). sector is 0-based as in disk_read_sector (ID - 1). ValueError when refused (empty drive, "
+               "write-protected, no such sector, past the data field), RuntimeError when no coherent moment came",
+               py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"), py::arg("data"), py::arg("offset") = 0)
             .def("disk_read_sector_hex", [](Emulator& self, int drive, int track, int sector) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || drive < 0 || drive > 3) return "";
@@ -4237,6 +4385,8 @@ namespace PythonBindings
                 }
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
+                // A write reaches the page (the mapper's view: ROM, TS-Conf W0_WE, ...)
+                bank["writable"] = memory.IsWindowWritable(static_cast<uint8_t>(i));
                 banks.append(bank);
             }
 

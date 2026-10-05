@@ -2,12 +2,21 @@
 // Debug endpoints for stepping, breakpoints, and inspection
 // Created 2026-01-21
 
+#include "../common/binaryresponse.h"
+#include "../common/longcallpool.h"
 #include "../common/jsonnumber.h"
+#include "../common/statenode_json.h"
 #include "../emulator_api.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
+#include <drogon/HttpAppFramework.h>
 #include <drogon/HttpResponse.h>
+#include <trantor/net/EventLoop.h>
+#include <drogon/utils/Utilities.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/cpu/z80.h>
@@ -15,6 +24,10 @@
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>
 #include <debugger/debugmanager.h>
+#include <debugger/memory/memoryread.h>
+#include <debugger/pchistory/pchistory.h>
+#include <debugger/ports/portwrite.h>
+#include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -62,6 +75,24 @@ static std::shared_ptr<Emulator> getEmulatorOrError(
     }
     
     return emulator;
+}
+
+/// 409 "Run-control held by <surface>" when another surface (GDB) holds run control: the one rule for every call
+/// that advances the CPU (debugger additions tdd §5, F5). True when it answered
+static bool RunControlHeldReply(const std::shared_ptr<Emulator>& emulator,
+                                std::function<void(const HttpResponsePtr&)>& callback)
+{
+    EmulatorContext* ctx = emulator->GetContext();
+    if (!ctx || !ctx->IsRunControlClaimed())
+        return false;
+    Json::Value error;
+    error["error"] = "Run-control held";
+    error["message"] = "Run-control held by " + ctx->GetRunControlState().surfaceLabel + ". Use that surface to step.";
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k409Conflict);
+    addCorsHeaders(resp);
+    callback(resp);
+    return true;
 }
 
 // region Stepping Commands
@@ -198,7 +229,7 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
 /// @brief POST /api/v1/emulator/{id}/steps
 /// @brief Execute N CPU instructions
 /// @brief Request body: {"count": N}
-void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepsNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                         const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -264,7 +295,7 @@ void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const Http
 
 /// @brief POST /api/v1/emulator/{id}/stepover
 /// @brief Step over call instructions
-void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -322,7 +353,7 @@ void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const H
 /// @brief POST /api/v1/emulator/{id}/stepout
 /// @brief Step out of the current subroutine (SP-tracking: runs until a RET-family
 /// @brief instruction at/above the entry stack level, then executes it)
-void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -367,7 +398,7 @@ void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const Ht
 /// @brief same no-trap rule as step out. Frames rendered during the skip are
 /// @brief not captured by the recording subsystem (raw CPU stepping path).
 /// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000}
-void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::skipUntilNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -470,7 +501,7 @@ void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const 
 /// @brief POST /api/v1/emulator/{id}/run_tstates
 /// @brief Run for N t-states
 /// @brief Request body: {"tstates": N}
-void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runTStatesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -518,7 +549,7 @@ void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const
 /// @brief POST /api/v1/emulator/{id}/run_to_scanline
 /// @brief Run until target scanline
 /// @brief Request body: {"scanline": N}
-void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToScanlineNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -576,7 +607,7 @@ void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(co
 /// @brief POST /api/v1/emulator/{id}/run_scanlines
 /// @brief Run N scanlines from current position
 /// @brief Request body: {"count": N}
-void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runNScanlinesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -623,7 +654,7 @@ void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief POST /api/v1/emulator/{id}/run_to_pixel
 /// @brief Run until next screen pixel (skip vblank/borders)
-void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -664,7 +695,7 @@ void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const
 
 /// @brief POST /api/v1/emulator/{id}/run_to_interrupt
 /// @brief Run until Z80 accepts maskable interrupt
-void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -705,7 +736,7 @@ void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(c
 
 /// @brief POST /api/v1/emulator/{id}/run_frame
 /// @brief Run one complete video frame
-void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runFrameNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -747,7 +778,7 @@ void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const H
 /// @brief POST /api/v1/emulator/{id}/run_frames
 /// @brief Run N complete video frames
 /// @brief Request body: {"count": N} (alias "frames" also accepted; other keys are rejected with 400)
-void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runFramesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1414,62 +1445,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
         return;
     }
     
-    Json::Value ret;
-    
-    // Main registers
-    Json::Value main;
-    main["af"] = z80->af;
-    main["bc"] = z80->bc;
-    main["de"] = z80->de;
-    main["hl"] = z80->hl;
-    ret["main"] = main;
-    
-    // Alternate registers
-    Json::Value alt;
-    alt["af_"] = z80->alt.af;
-    alt["bc_"] = z80->alt.bc;
-    alt["de_"] = z80->alt.de;
-    alt["hl_"] = z80->alt.hl;
-    ret["alternate"] = alt;
-    
-    // Index registers
-    Json::Value idx;
-    idx["ix"] = z80->ix;
-    idx["iy"] = z80->iy;
-    ret["index"] = idx;
-    
-    // Special registers
-    Json::Value special;
-    special["pc"] = z80->pc;
-    special["sp"] = z80->sp;
-    special["i"] = z80->i;
-    special["r"] = Z80::RegisterR(z80);
-    special["memptr"] = z80->memptr;
-    special["q"] = z80->q;
-    special["t"] = static_cast<Json::UInt>(z80->t);  // CPU T-states since the frame's start
-    ret["special"] = special;
-    
-    // Interrupt state
-    Json::Value interrupt;
-    interrupt["iff1"] = z80->iff1;
-    interrupt["iff2"] = z80->iff2;
-    interrupt["im"] = z80->im;
-    interrupt["halted"] = z80->halted != 0;
-    interrupt["boundary"] = Z80::BoundaryName(z80->boundary);  // what the next INT / NMI sampling sees
-    ret["interrupt"] = interrupt;
-    
-    // Flags decoded
-    uint8_t f = z80->af & 0xFF;
-    Json::Value flags;
-    flags["s"] = (f & 0x80) ? 1 : 0;
-    flags["z"] = (f & 0x40) ? 1 : 0;
-    flags["y"] = (f & 0x20) ? 1 : 0;
-    flags["h"] = (f & 0x10) ? 1 : 0;
-    flags["x"] = (f & 0x08) ? 1 : 0;
-    flags["pv"] = (f & 0x04) ? 1 : 0;
-    flags["n"] = (f & 0x02) ? 1 : 0;
-    flags["c"] = (f & 0x01) ? 1 : 0;
-    ret["flags"] = flags;
+    // One builder for GET /registers and the snapshot's regs (core DebugSnapshot)
+    const Json::Value ret = StateNodeToJson(DebugSnapshot::Registers(emulator->GetContext()));
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1554,6 +1531,7 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         callback(resp);
         return;
     }
+    emulator->NoteDebugChange();   // the debugger snapshot's seq
 
     // Read back to confirm
     uint16_t readBack;
@@ -1631,6 +1609,25 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     {
         len = std::stoul(lenParam);
     }
+    // format=binary: the raw bytes, the whole 64K at once (the JSON formats keep their 4096 cap)
+    if (req->getParameter("format") == "binary")
+    {
+        const MemoryRead::Result read =
+            MemoryRead::Bytes(emulator->GetContext(), "cpu", addr, std::clamp<unsigned>(len, 1, MemoryRead::kMaxLength));
+        if (!read.error.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = read.error;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        callback(BinaryMemoryResponse(read.space, read.address, read.bytes));
+        return;
+    }
     if (len > 4096) len = 4096;
     if (len < 1) len = 1;
 
@@ -1646,7 +1643,7 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full', 'sparse' or 'binary')";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1966,6 +1963,14 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    // format=binary: the same bytes, raw (the JSON answer stays the default)
+    if (req->getParameter("format") == "binary")
+    {
+        callback(BinaryMemoryResponse(std::string(typeName) + std::to_string(page), static_cast<uint32_t>(offset),
+                                      std::vector<uint8_t>(pagePtr + offset, pagePtr + offset + len)));
+        return;
+    }
+
     // Read memory
     Json::Value ret;
     ret["type"] = typeName;
@@ -2564,6 +2569,254 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
 /// @brief GET /api/v1/emulator/{id}/disasm
 /// @brief Disassemble Z80 code
 /// @brief Query params: address (default: PC), count (default: 10, max: 100)
+/// @brief GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end
+/// @brief Query: disasm (lines from PC, default 0, max 100), stack (words from SP, default 8, max 128),
+/// @brief memory (<space>:<addr>:<len>, repeatable or comma-separated, at most 8 windows)
+void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    DebugSnapshot::Options options;
+    auto number = [&](const char* key, unsigned& out) {
+        const std::string text = req->getParameter(key);
+        if (text.empty())
+            return true;
+        uint64_t value = 0;
+        if (!StringHelper::TryParseUInt64(text, value) || value > 0xFFFF)
+            return false;
+        out = static_cast<unsigned>(value);
+        return true;
+    };
+    if (!number("disasm", options.disasm) || !number("stack", options.stack) || !number("pchist", options.pchist))
+        return reply(HttpStatusCode::k400BadRequest, "disasm, stack and pchist are unsigned numbers");
+    // memory may repeat (memory=a&memory=b) and take a comma list: read the raw query, not the parameter map
+    const std::string& query = req->query();
+    size_t at = 0;
+    while (at <= query.size())
+    {
+        const size_t end = std::min(query.find('&', at), query.size());
+        const std::string pair = query.substr(at, end - at);
+        if (pair.rfind("memory=", 0) == 0)
+        {
+            const std::string value = drogon::utils::urlDecode(pair.substr(7));
+            size_t from = 0;
+            while (from <= value.size())
+            {
+                const size_t comma = std::min(value.find(',', from), value.size());
+                if (comma > from)
+                    options.memory.push_back(value.substr(from, comma - from));
+                from = comma + 1;
+            }
+        }
+        at = end + 1;
+    }
+    options.disasm = std::min(options.disasm, 100u);   // as GET /disasm clamps its count
+
+    const DebugSnapshot::Result result = DebugSnapshot::Build(emulator.get(), options);
+    if (!result.error.empty())
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.snapshot));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ports/out {"port": "0x13AF", "value": "0x20"}
+/// A debugger's port write through the machine's decoder (PortWrite): the side effects of a CPU OUT, no breakpoint,
+/// no device waits, a tool edit for TTD. Port and value: a JSON number or text (0x13AF, #13AF, 13AFh, decimal)
+void EmulatorAPI::postPortOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    const auto json = req->getJsonObject();
+    if (!json || !json->isMember("port") || !json->isMember("value"))
+        return reply(HttpStatusCode::k400BadRequest, "body must be JSON with 'port' and 'value'");
+    // A JSON number goes in as decimal text: one parser for every surface
+    auto text = [](const Json::Value& value) {
+        if (value.isIntegral() && !value.isBool())
+            return value.isInt64() && value.asInt64() < 0 ? std::string("-") : std::to_string(value.asUInt64());
+        return value.isString() ? value.asString() : std::string();
+    };
+    uint16_t port = 0;
+    uint8_t value = 0;
+    std::string error;
+    if (!PortWrite::Parse(text((*json)["port"]), text((*json)["value"]), port, value, error))
+        return reply(HttpStatusCode::k400BadRequest, error);
+
+    const PortWrite::Result result = PortWrite::Write(emulator.get(), port, value, "webapi");
+    if (!result.ok)
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest,
+                     result.error);
+    char portHex[8];
+    char valueHex[8];
+    std::snprintf(portHex, sizeof(portHex), "0x%04X", port);
+    std::snprintf(valueHex, sizeof(valueHex), "0x%02X", value);
+    Json::Value body;
+    body["port"] = portHex;
+    body["value"] = valueHex;
+    body["moment"] = result.moment;
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/debug/wait?since=N&timeout_ms=M - long-poll (debugger additions tdd §6): the
+/// answer comes when the snapshot's seq moves past `since` (default: the current seq) or after timeout_ms (default
+/// 10000, at most 60000): {seq, changed, state, pause}. No thread waits: a 10 ms timer on this worker's event loop
+/// checks seq, so many clients can wait at once
+void EmulatorAPI::getDebugWait(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto number = [&](const char* key, uint64_t fallback, uint64_t max, uint64_t& out) {
+        const std::string text = req->getParameter(key);
+        out = fallback;
+        return text.empty() || (StringHelper::TryParseUInt64(text, out) && out <= max);
+    };
+    uint64_t since = 0;
+    uint64_t timeoutMs = 0;
+    if (!number("since", emulator->DebugSeq(), UINT64_MAX, since) || !number("timeout_ms", 10000, 60000, timeoutMs))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "since is an unsigned number, timeout_ms 0..60000";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    auto answer = [since](const std::shared_ptr<Emulator>& target, std::function<void(const HttpResponsePtr&)>& reply) {
+        auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(DebugSnapshot::WaitAnswer(target.get(), since)));
+        addCorsHeaders(resp);
+        reply(resp);
+    };
+    if (emulator->DebugSeq() != since || timeoutMs == 0)
+        return answer(emulator, callback);
+
+    struct Waiter
+    {
+        std::function<void(const HttpResponsePtr&)> callback;
+        std::weak_ptr<Emulator> emulator;
+        uint64_t since = 0;
+        std::chrono::steady_clock::time_point deadline;
+        trantor::TimerId timer = 0;
+        bool done = false;
+    };
+    auto waiter = std::make_shared<Waiter>();
+    waiter->callback = std::move(callback);
+    waiter->emulator = emulator;
+    waiter->since = since;
+    waiter->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    trantor::EventLoop* loop = trantor::EventLoop::getEventLoopOfCurrentThread();
+    if (!loop)
+        loop = drogon::app().getLoop();
+    waiter->timer = loop->runEvery(0.01, [waiter, loop, answer]() {
+        if (waiter->done)
+            return;
+        std::shared_ptr<Emulator> target = waiter->emulator.lock();
+        if (target && target->DebugSeq() == waiter->since && std::chrono::steady_clock::now() < waiter->deadline)
+            return;
+        waiter->done = true;
+        loop->invalidateTimer(waiter->timer);
+        if (target)
+            return answer(target, waiter->callback);
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "the emulator was removed while waiting";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        waiter->callback(resp);
+    });
+}
+
+/// @brief GET /api/v1/emulator/{id}/debug/pchist?depth=32 - the PC history, newest first (debugger additions tdd §7):
+/// {armed, started_now, total, capacity, entries [{address, kind, page}]}. The first read arms it (entries from then
+/// on); recording costs the emulation nothing until then
+void EmulatorAPI::getPcHistory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    uint64_t depth = 32;
+    const std::string text = req->getParameter("depth");
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!text.empty() && (!StringHelper::TryParseUInt64(text, depth) || depth > PcHistory::kCapacity))
+        return reply(HttpStatusCode::k400BadRequest, "depth is 0.." + std::to_string(PcHistory::kCapacity));
+    const PcHistory::Result result = PcHistory::Report(emulator.get(), static_cast<size_t>(depth));
+    if (!result.error.empty())
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.report));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/debug/pchist {"enabled": true | false} - start (empty) or stop the PC history
+void EmulatorAPI::postPcHistory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    const auto json = req->getJsonObject();
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    if (!json || !json->isMember("enabled") || !(*json)["enabled"].isBool())
+    {
+        code = HttpStatusCode::k400BadRequest;
+        body["error"] = "Bad Request";
+        body["message"] = "body must be {\"enabled\": true | false}";
+    }
+    else
+    {
+        const bool on = (*json)["enabled"].asBool();
+        const std::string error = PcHistory::SetArmed(emulator.get(), on);
+        if (error.empty())
+            body["armed"] = on;
+        else
+        {
+            code = HttpStatusCode::k503ServiceUnavailable;
+            body["error"] = "Service Unavailable";
+            body["message"] = error;
+        }
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -2571,7 +2824,6 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
     if (!emulator) return;
     
     EmulatorContext* ctx = emulator->GetContext();
-    Memory* memory = ctx->pMemory;
     Z80* z80 = ctx->pCore->GetZ80();
     DebugManager* dbg = ctx->pDebugManager;
     
@@ -2586,8 +2838,6 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         return;
     }
     
-    Z80Disassembler* disasm = dbg->GetDisassembler().get();
-    LabelManager* labelMgr = dbg->GetLabelManager();
     
     // Parse query parameters
     std::string addrParam = req->getParameter("address");
@@ -2615,89 +2865,9 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         if (count < 1) count = 1;
     }
     
-    Json::Value ret;
-    ret["address"] = address;
-    ret["count"] = static_cast<unsigned int>(count);
-    ret["instructions"] = Json::arrayValue;
-    
-    uint16_t currentAddr = address;
-    for (size_t i = 0; i < count && currentAddr >= address; ++i)
-    {
-        // Read up to 4 bytes for instruction. Direct (non-mutating) reads:
-        // the disassembly view must not strobe the ProfROM quadrant machine
-        // on #0000-#0003 the way CPU-path MemoryReadFast does
-        std::vector<uint8_t> buffer;
-        for (int j = 0; j < 4; ++j)
-        {
-            buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(currentAddr + j)));
-        }
-        
-        uint8_t cmdLen = 0;
-        DecodedInstruction decoded;
-        std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, currentAddr, &cmdLen, z80, memory, &decoded);
-        
-        if (cmdLen == 0) cmdLen = 1;  // Safety: at least advance by 1
-        
-        Json::Value instr;
-        instr["address"] = currentAddr;
-        
-        // Build hex bytes string
-        std::string hexBytes;
-        for (uint8_t j = 0; j < cmdLen; ++j)
-        {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%02X", buffer[j]);
-            hexBytes += buf;
-        }
-        instr["bytes"] = hexBytes;
-        instr["mnemonic"] = mnemonic;
-        instr["size"] = cmdLen;
-        
-        // Label at the instruction address itself (e.g. jump destination marker)
-        if (labelMgr)
-        {
-            auto label = labelMgr->GetLabelByZ80Address(currentAddr);
-            if (label && !label->name.empty())
-                instr["label"] = label->name;
-        }
-        
-        // Add target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
-        // known at runtime - the field is omitted when the target could not be resolved
-        if (decoded.hasJump || decoded.hasRelativeJump)
-        {
-            uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-            if (!decoded.hasIndirect || decoded.hasRuntime)
-            {
-                instr["target"] = target;
-                
-                if (labelMgr)
-                {
-                    auto targetLabel = labelMgr->GetLabelByZ80Address(target);
-                    if (targetLabel && !targetLabel->name.empty())
-                        instr["targetLabel"] = targetLabel->name;
-                }
-            }
-        }
-        
-        // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
-        if (decoded.hasDisplacement && decoded.hasRuntime)
-        {
-            instr["displacement"] = decoded.displacement;
-            instr["effectiveAddress"] = decoded.displacementAddr;
-            
-            if (labelMgr)
-            {
-                auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
-                if (effectiveLabel && !effectiveLabel->name.empty())
-                    instr["effectiveAddressLabel"] = effectiveLabel->name;
-            }
-        }
-        
-        ret["instructions"].append(instr);
-        
-        currentAddr += cmdLen;
-    }
-    
+    // One builder for GET /disasm and the snapshot's disasm (core DebugSnapshot)
+    const Json::Value ret = StateNodeToJson(DebugSnapshot::Disasm(ctx, address, count));
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
@@ -4157,6 +4327,120 @@ void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(con
 }
 
 // endregion Assembler
+
+// region <Long run-control calls: off the HTTP worker (tdd §5, F4), one claim rule (F5)>
+
+void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepsNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepOverNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepOutNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { skipUntilNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runTStatesNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToScanlineNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runNScanlinesNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToPixelNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToInterruptNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runFrameNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runFramesNow(req, std::move(*answer), id); });
+}
+
+// endregion </Long run-control calls>
 
 } // namespace v1
 } // namespace api

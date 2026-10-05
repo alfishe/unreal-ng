@@ -102,6 +102,9 @@ public:
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getDiskSectorRaw, "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw",
                   drogon::Get);
+    // A debugger's sector write into the data field (SectorWrite)
+    ADD_METHOD_TO(EmulatorAPI::putDiskSector, "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}",
+                  drogon::Put);
 
     // Disk inspection - track data
     ADD_METHOD_TO(EmulatorAPI::getDiskTrack, "/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}", drogon::Get);
@@ -237,6 +240,8 @@ public:
 
     // Static port-map introspection: devices x ports x gates + live routing flags
     ADD_METHOD_TO(EmulatorAPI::getPortsMap, "/api/v1/emulator/{id}/ports", drogon::Get);
+    // A debugger's port write through the decoder (PortWrite)
+    ADD_METHOD_TO(EmulatorAPI::postPortOut, "/api/v1/emulator/{id}/ports/out", drogon::Post);
 
 
     // Beam (raster) position + frame timing from the machine model
@@ -335,6 +340,10 @@ public:
     // Ethernet frames of the frame-level cards (core EthernetAccess)
     ADD_METHOD_TO(EmulatorAPI::getNetworkFrames, "/api/v1/emulator/{id}/network/frames", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNetworkFrame, "/api/v1/emulator/{id}/network/frame", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getNetworkAdapters, "/api/v1/emulator/{id}/network/adapters", drogon::Get);
+    // Everything the adapters sent and received (core TrafficAccess, network #91)
+    ADD_METHOD_TO(EmulatorAPI::getNetworkTraffic, "/api/v1/emulator/{id}/network/traffic", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNetworkTraffic, "/api/v1/emulator/{id}/network/traffic", drogon::Post);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -386,6 +395,12 @@ public:
 
     // Disassembly
     ADD_METHOD_TO(EmulatorAPI::getDisasm, "/api/v1/emulator/{id}/disasm", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDebugSnapshot, "/api/v1/emulator/{id}/debug/snapshot", drogon::Get);
+    // Long-poll: answers when the snapshot's seq moves past `since` (debugger additions tdd §6)
+    ADD_METHOD_TO(EmulatorAPI::getDebugWait, "/api/v1/emulator/{id}/debug/wait", drogon::Get);
+    // PC history with pages (debugger additions tdd §7)
+    ADD_METHOD_TO(EmulatorAPI::getPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
 
@@ -713,6 +728,10 @@ public:
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                           const std::string& drive, const std::string& cyl, const std::string& side,
                           const std::string& sec) const;
+    void putDiskSector(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                       const std::string& drive, const std::string& cyl, const std::string& side,
+                       const std::string& sec) const;
 
     // Disk inspection - track data
     void getDiskTrack(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -997,6 +1016,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getPortsMap(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
+    void postPortOut(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
     // endregion Screen State Methods
 
     // region Audio State Methods (implementation: api/state_audio_api.cpp)
@@ -1141,6 +1163,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIsaJournal(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=&format=json|pcapng
+    void getNetworkTraffic(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// POST /api/v1/emulator/{id}/network/traffic {action: clear|start|stop|ring, path, ring_bytes}
+    void postNetworkTraffic(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/network/adapters - the host adapters the bridge can use (network SN6)
+    void getNetworkAdapters(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getNetworkFrames(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postNetworkFrame(const drogon::HttpRequestPtr& req,
@@ -1203,6 +1234,29 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                   const std::string& id) const;
     void runFrames(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    /// The long run-control calls' bodies, run on LongCallPool (the handlers above dispatch them)
+    void stepsNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void stepOverNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void stepOutNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void skipUntilNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runTStatesNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runToScanlineNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runNScanlinesNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runToPixelNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runToInterruptNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runFrameNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void runFramesNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
 
     // Debug mode
     void getDebugMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -1260,6 +1314,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                       const std::string& id) const;
 
     // Disassembly
+    /// GET /debug/snapshot?disasm=&stack=&memory=<space>:<addr>:<len>[,...] - one coherent debugger snapshot (core DebugSnapshot)
+    void getDebugSnapshot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    void getDebugWait(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getPcHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void postPcHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
     void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,

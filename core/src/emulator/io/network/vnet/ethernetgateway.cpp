@@ -164,7 +164,10 @@ void EthernetGateway::Detach(IEthernetPort* port)
 
 void EthernetGateway::OpenListeners()
 {
-    // Inbound: the guest is the server of every Forward= rule (the host listens on the rule's host port)
+    // Inbound: the guest is the server of every Forward= rule (the host listens on the rule's host port). A bridged
+    // guest is on the LAN itself: no forwards
+    if (_mode == Mode::Bridge)
+        return;
     for (const auto& [guestPort, hostPort] : _network.Config().forwards)
     {
         (void)hostPort;
@@ -205,6 +208,8 @@ void EthernetGateway::Record(bool toCard, const std::string& port, const std::ve
     f.toCard = toCard;
     f.port = port;
     f.bytes = bytes;
+    if (_frameObserver)
+        _frameObserver(port, toCard, false, bytes.data(), bytes.size());
     _capture.push_back(std::move(f));
     while (_capture.size() > kCaptureLength)
         _capture.pop_front();
@@ -375,6 +380,34 @@ void EthernetGateway::Transmit(IEthernetPort& from, const uint8_t* frame, size_t
     if (length < 14)
     {
         ++_counters.runts;
+        return;
+    }
+    if (_mode == Mode::Bridge)
+    {
+        // The switch alone: the other local cards get what is theirs, the host LAN everything else
+        const bool group = (frame[0] & 1) != 0;
+        bool local = false;
+        for (PortQueue& q : _ports)
+        {
+            if (q.port == &from)
+                continue;
+            uint8_t mac[6];
+            q.port->StationMac(mac);
+            const bool mine = std::memcmp(mac, frame, 6) == 0;
+            local = local || mine;
+            if (group || mine)
+            {
+                q.frames.emplace_back(frame, frame + length);
+                ++_counters.switched;
+            }
+        }
+        if (group || !local)
+        {
+            ++_lanCounters.out;
+            _capture.back().lan = true;
+            if (_lanOutput)
+                _lanOutput(frame, length);
+        }
         return;
     }
     if (length < 60)
@@ -995,6 +1028,56 @@ void EthernetGateway::Deliver()
     }
 }
 
+void EthernetGateway::SetMode(Mode mode)
+{
+    if (mode == _mode)
+        return;
+    // The router's NAT connections belong to one mode: switching ends them (the guest sees resets)
+    for (auto& [id, c] : _tcp)
+        _network.Close(c.socket);
+    for (auto& [id, f] : _udp)
+        _network.Close(f.socket);
+    for (auto& [id, f] : _icmp)
+        _network.Close(f.socket);
+    for (const Listener& l : _listeners)
+        _network.Close(l.socket);
+    _mode = mode;
+    ForgetConnections();   // opens the Forward= listeners again in NAT
+}
+
+void EthernetGateway::FromLan(const uint8_t* frame, size_t length)
+{
+    if (_mode != Mode::Bridge || length < 14)
+        return;
+    ++_lanCounters.in;
+    CapturedFrame f;
+    f.frame = _frameCounter ? _frameCounter() : 0;
+    f.index = _captureIndex++;
+    f.toCard = true;
+    f.lan = true;
+    f.port = "lan";
+    f.bytes.assign(frame, frame + length);
+    if (_frameObserver)
+        _frameObserver("lan", true, true, frame, length);
+    _capture.push_back(std::move(f));
+    while (_capture.size() > kCaptureLength)
+        _capture.pop_front();
+    Queue(frame, std::vector<uint8_t>(frame, frame + length));
+    Deliver();
+}
+
+std::vector<std::array<uint8_t, 6>> EthernetGateway::StationMacs() const
+{
+    std::vector<std::array<uint8_t, 6>> out;
+    for (const PortQueue& q : _ports)
+    {
+        std::array<uint8_t, 6> mac{};
+        q.port->StationMac(mac.data());
+        out.push_back(mac);
+    }
+    return out;
+}
+
 bool EthernetGateway::Inject(const std::string& portKey, const std::vector<uint8_t>& frame)
 {
     for (PortQueue& q : _ports)
@@ -1040,7 +1123,7 @@ std::vector<uint8_t> EthernetGateway::CapturePcap(const std::string& portKey) co
 StateNode EthernetGateway::Describe() const
 {
     StateNode ret = StateNode::Object();
-    ret["mode"] = "nat";
+    ret["mode"] = _mode == Mode::Bridge ? "bridge" : "nat";
     ret["router_mac"] = MacText(kRouterMac);
     ret["router_ip"] = NetIpToString(_network.Config().gateway);
     ret["dns_ip"] = NetIpToString(_network.Config().dnsServer);
@@ -1104,6 +1187,8 @@ StateNode EthernetGateway::Describe() const
     StateNode c = StateNode::Object();
     c["frames_from_cards"] = _counters.framesFromCards;
     c["frames_to_cards"] = _counters.framesToCards;
+    c["lan_out"] = _lanCounters.out;
+    c["lan_in"] = _lanCounters.in;
     c["switched"] = _counters.switched;
     c["arp_replies"] = _counters.arpReplies;
     c["dhcp"] = _counters.dhcp;

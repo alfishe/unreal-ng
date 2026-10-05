@@ -101,11 +101,20 @@ enum class TTDInputKind : uint8_t
     Joystick,           ///< Kempston joystick state write (buttonMask = the whole state byte, active high);
                         ///< automation input. A host key bound to a button travels as PcKey instead
 
-    FrontPanelSwitch    ///< a front-panel switch operated (key = FrontPanelSwitch, pressed = on), e.g. the Profi's TURBO
+    FrontPanelSwitch,   ///< a front-panel switch operated (key = FrontPanelSwitch, pressed = on), e.g. the Profi's TURBO
+
+    NetFrame            ///< an Ethernet frame from the host LAN for the bridged gateway (network SN6): a network
+                        ///< record like NetEvent's (netIndex), the frame bytes in the payload store
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::FrontPanelSwitch;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::NetFrame;
+
+/// The kinds that carry a network record (netIndex) and payload bytes
+constexpr bool HasNetRecord(TTDInputKind kind)
+{
+    return kind == TTDInputKind::NetEvent || kind == TTDInputKind::NetFrame;
+}
 
 struct TTDInputEvent
 {

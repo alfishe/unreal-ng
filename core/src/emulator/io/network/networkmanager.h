@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "common/network/hostframes.h"
+#include "emulator/io/network/traffic/trafficstream.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
@@ -66,6 +68,7 @@ public:
         std::optional<bool> dnsPass;
         std::optional<std::string> hosts;     ///< "name=a.b.c.d,..."
         std::optional<std::string> forwards;  ///< "tcp:<hostport>:<guestport>,..."
+        std::optional<bool> remoteAccess;     ///< RemoteAccess=: host listeners on 0.0.0.0 (on) or 127.0.0.1 (off)
         std::optional<unsigned> connectTimeoutMs;
         std::optional<std::string> comPort;    ///< ComPort= value (ComPortSpec): the machine's own serial port
         std::optional<std::string> zxWifi;     ///< ZxWifi= value (ComPortSpec): the ZX-WiFi card's ESP
@@ -77,15 +80,24 @@ public:
         std::optional<uint8_t> atm2IoEspAddress;   ///< Atm2IoEspAddress=: its bus address (#F0 / #F8)
         std::optional<std::string> zifi;       ///< ZiFi= value (ComPortSpec): the TS AVR's ZiFi UART
         std::optional<std::string> modemPhonebook;   ///< ModemPhonebook=: "<number>=<host>[:<port>],..." (every MODEM peer)
+        std::optional<uint8_t> ethernetMode;           ///< EthernetMode=: 0 NAT, 1 BRIDGE (the frame cards, network SN6)
+        std::optional<std::string> bridgeAdapter;      ///< BridgeAdapter=: the host adapter for BRIDGE
         /// isa1_peer / isa2_peer ([ISA] SlotNPeer, ComPortSpec): what a UART card in that expansion slot is wired to;
         /// isa1_peer_b / isa2_peer_b ([ISA] SlotNPeerB): a two-UART card's second line. Keys "isa1", "isa1.b"
         std::vector<std::pair<std::string, std::string>> slotPeers;
+
+        /// No field set (keep in step with the fields above)
+        bool Empty() const;
+        /// remote_access and nothing else: applied without fitting the devices again (the host listeners move to
+        /// the new address, every connection stays)
+        bool OnlyRemoteAccess() const;
     };
     bool RequestChange(const Change& change, std::string& error);
 
     /// The one parser every interface uses: keys card (none | zxnetusb |
     /// zxwifi | zxnetusb,zxwifi), host_access (on | off), dns_mode (host |
-    /// pass), hosts, forwards, connect_timeout_ms, com_port and zx_wifi
+    /// pass), hosts, forwards, remote_access (on | off: the host listeners of
+    /// guest servers bind 0.0.0.0 or 127.0.0.1), connect_timeout_ms, com_port and zx_wifi
     /// (ComPortSpec: none | loopback | tcp:<host>:<port> |
     /// serial:<device>[,<baud>] | espnet | at), com_modem_lines (on | off),
     /// esp_chip (esp32 | esp8266), avr_firmware (ZX-Evo, [EVO] Avr= names:
@@ -97,7 +109,8 @@ public:
     /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0), zifi (ComPortSpec:
     /// what the TS AVR firmware's ZiFi UART is wired to, default none; at =
     /// the original ZiFi board's ESP-01), modem_phonebook (the Hayes modem's numbers:
-    /// "<number>=<host>[:<port>],...").
+    /// "<number>=<host>[:<port>],..."), ethernet_mode (nat | bridge: how the frame cards
+    /// reach the host, network SN6) and bridge_adapter (the host adapter for bridge).
     /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
@@ -130,7 +143,16 @@ public:
     /// Whether a slot card kind is a frame-level Ethernet card ("ne2000", "el3c509b") - the gateway's kinds
     static bool IsFrameCardKind(const std::string& kind) { return kind == "ne2000" || kind == "el3c509b"; }
     /// The switch + router of the frame-level cards (null without one, or with the network off)
-    EthernetGateway* Gateway() const { return _gateway.get(); }
+    EthernetGateway* Gateway() const { return _network ? _network->Gateway() : nullptr; }
+    /// Everything the machine's network adapters send and receive (network #91): the always-on ring and the file
+    /// recording; it outlives a refit (a settings change replaces the virtual network, not the tap)
+    NetworkTrafficTap& Traffic() { return *_traffic; }
+    /// The tap as a live pcapng stream on a TCP port (Wireshark: -i TCP@127.0.0.1:<port>); one per machine
+    TrafficStream& Stream() { return *_stream; }
+    /// The address the stream (and every host listener) binds: [NETWORK] RemoteAccess
+    uint32_t StreamListenAddress() const;
+    /// The host adapter of BRIDGE mode (tests: a fake instead of libpcap; set before the gateway is fitted)
+    void SetHostFrames(std::unique_ptr<IHostFrames> frames) { _hostFramesOverride = std::move(frames); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -160,11 +182,14 @@ public:
             unsigned atm2IoEspAddress = 0xF0;
             std::string zifi;             ///< ComPortSpec text, NONE when empty
             std::string modemPhonebook;   ///< ModemPhonebook=
+            std::string ethernetMode;     ///< NAT | BRIDGE
+            std::string bridgeAdapter;    ///< BridgeAdapter=
             std::string dnsMode;          ///< HOST | PASS
             std::string hosts;
             std::string forwards;
             bool comModemLines = false;
             bool hostAccess = true;
+            bool remoteAccess = true;     ///< RemoteAccess=: host listeners on 0.0.0.0 (on) or 127.0.0.1 (off)
             unsigned connectTimeoutMs = 10000;
         } settings;
         bool hostAccess = false;
@@ -232,7 +257,8 @@ public:
             StateNode details;            ///< the card's own report (chip, base, MAC, registers, counters)
         };
         std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro
-        /// The Ethernet gateway (EthernetGateway::Describe): ports, leases, ARP, TCP / UDP, counters
+        /// The Ethernet gateway (EthernetGateway::Describe): ports, leases, ARP, TCP / UDP, counters; in BRIDGE its
+        /// `bridge` part: adapter, open, error, library, counters
         StateNode ethernetGateway;
     };
     Status GetStatus() const;
@@ -307,6 +333,8 @@ private:
     void FitMachineSerial(const Plan& plan);
     void FitAtm2IoEsp(const Plan& plan);
     void FitSlotCards(const Plan& plan);
+    /// The names the traffic tap shows for the socket adapters ("zxnetusb", "com.esp", "isa1.esp", "isa1.modem")
+    void NameTrafficGuests();
     void UnplugSlotCards();
     void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;
 
@@ -321,7 +349,10 @@ private:
     /// UART cards' 16550 registers across a refit by port key (the chip stays; its line's peer is rebuilt with the
     /// network)
     std::vector<std::pair<std::string, Uart16550::State>> _serialKeep;
-    std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
+    /// A test's host adapter for BRIDGE (a fake instead of libpcap), handed to every virtual network fitted after it
+    std::unique_ptr<IHostFrames> _hostFramesOverride;
+    std::unique_ptr<NetworkTrafficTap> _traffic;
+    std::unique_ptr<TrafficStream> _stream;
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

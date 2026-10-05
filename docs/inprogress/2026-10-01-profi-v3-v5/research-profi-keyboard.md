@@ -4,7 +4,7 @@ Date: 2026-10-03. Confidence: H = read directly from a schematic, netlist or cod
 
 Materials (outside the repo): `materials/keyboard/` holds the 8035 simulator, the experiment outputs and a reconstructed firmware image (README there). The simulator is also in the repository: [tools/machines/profi/xtkbd/](../../../tools/machines/profi/xtkbd/README.md); the image is [data/rom/profixt/](../../../data/rom/profixt/README.md).
 
-**Implemented** 2026-10-03 on branch `profi-xt-kbd`: [design.md](design.md) section 9. Two statements below were corrected by running the firmware on the emulator's MCS-48 core; they are marked *Correction*.
+**Implemented** 2026-10-03 (merged into master): [design.md](design.md) section 9. Two statements below were corrected by running the firmware on the emulator's MCS-48 core; they are marked *Correction*.
 
 ## Summary
 

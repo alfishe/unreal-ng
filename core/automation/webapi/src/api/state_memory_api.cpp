@@ -1,8 +1,10 @@
 // WebAPI State Memory Inspection Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include "debugger/memory/memoryread.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "../common/binaryresponse.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
@@ -278,7 +280,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     {
         bank0["type"] = "RAM";
         bank0["page"] = static_cast<int>(memory.GetRAMPageForBank0());
-        bank0["read_write"] = "read/write";
+        bank0["read_write"] = memory.IsWindowWritable(0) ? "read/write" : "read-only";
     }
     banks["bank0"] = bank0;
 
@@ -286,7 +288,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank1["address_range"] = "0x4000-0x7FFF";
     bank1["type"] = "RAM";
     bank1["page"] = static_cast<int>(memory.GetRAMPageForBank1());
-    bank1["read_write"] = "read/write";
+    bank1["read_write"] = memory.IsWindowWritable(1) ? "read/write" : "read-only";
     bank1["note"] = "Screen 0 location";
     banks["bank1"] = bank1;
 
@@ -294,14 +296,14 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank2["address_range"] = "0x8000-0xBFFF";
     bank2["type"] = "RAM";
     bank2["page"] = static_cast<int>(memory.GetRAMPageForBank2());
-    bank2["read_write"] = "read/write";
+    bank2["read_write"] = memory.IsWindowWritable(2) ? "read/write" : "read-only";
     banks["bank2"] = bank2;
 
     Json::Value bank3;
     bank3["address_range"] = "0xC000-0xFFFF";
     bank3["type"] = "RAM";
     bank3["page"] = static_cast<int>(memory.GetRAMPageForBank3());
-    bank3["read_write"] = "read/write";
+    bank3["read_write"] = memory.IsWindowWritable(3) ? "read/write" : "read-only";
     banks["bank3"] = bank3;
 
     // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
@@ -480,7 +482,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     {
         mapping["bank0_type"] = "RAM";
         mapping["bank0_page"] = static_cast<int>(memory.GetRAMPageForBank0());
-        mapping["bank0_access"] = "read/write";
+        mapping["bank0_access"] = memory.IsWindowWritable(0) ? "read/write" : "read-only";
     }
     ret["mapping"] = mapping;
 
@@ -556,11 +558,12 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     }
 
     // Get length from query parameter (default 128)
-    uint16_t length = 128;
+    // Up to the whole 64K (a 16-bit length read 65536 as 0 before; larger values wrapped)
+    uint32_t length = 128;
     auto lengthParam = req->getOptionalParameter<std::string>("length");
     if (lengthParam)
     {
-        try { length = static_cast<uint16_t>(std::stoul(*lengthParam)); }
+        try { length = static_cast<uint32_t>(std::min<unsigned long>(std::stoul(*lengthParam), MemoryRead::kMaxLength)); }
         catch (...) { length = 128; }
     }
 
@@ -571,11 +574,28 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     auto filterParam = req->getOptionalParameter<std::string>("filter");
     if (formatParam && !formatParam->empty()) format = *formatParam;
     else if (filterParam && *filterParam == "sparse") format = "sparse";
+    if (format == "binary")
+    {
+        const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), "cpu", address, std::max<uint32_t>(length, 1));
+        if (!read.error.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = read.error;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        callback(BinaryMemoryResponse(read.space, read.address, read.bytes));
+        return;
+    }
     if (format != "hexdump" && format != "full" && format != "sparse")
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full', 'sparse' or 'binary')";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -585,7 +605,7 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     }
 
     std::vector<uint8_t> buffer(length);
-    for (uint16_t i = 0; i < length; i++)
+    for (uint32_t i = 0; i < length; i++)
         buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
 
     Json::Value ret;
@@ -907,6 +927,21 @@ bool ReadRegionPage(const HttpRequestPtr& req, EmulatorContext* context, const s
         length = region->PageSize() - offset;
     const bool sparse = req->getOptionalParameter<std::string>("filter").value_or("") == "sparse";
     const uint32_t start = static_cast<uint32_t>(page * region->PageSize() + offset);
+    if (req->getOptionalParameter<std::string>("format").value_or("") == "binary")
+    {
+        std::vector<uint8_t> bytes;
+        std::string error;
+        if (!DeviceMemory::Read(context, region->Name(), start, static_cast<uint32_t>(length), bytes, error))
+        {
+            Json::Value body;
+            body["error"] = "Bad Request";
+            body["message"] = error;
+            reply(body, HttpStatusCode::k400BadRequest);
+            return true;
+        }
+        callback(BinaryMemoryResponse(type + std::to_string(page), static_cast<uint32_t>(offset), bytes));
+        return true;
+    }
     Json::Value ret = StateNodeToJson(
         DeviceState::MemoryRegionRead(context, region->Name(), start, static_cast<uint32_t>(length), sparse ? "sparse" : "data"));
     ret["type"] = type;
@@ -1106,6 +1141,14 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
     if (offset + length > PAGE_SIZE)
         windowSize = PAGE_SIZE - offset;
     const uint8_t* window = pagePtr + offset;
+
+    // format=binary: the window raw (without it the JSON answer stays as it was)
+    if (req->getOptionalParameter<std::string>("format").value_or("") == "binary")
+    {
+        callback(BinaryMemoryResponse(type + std::to_string(page), static_cast<uint32_t>(offset),
+                                      std::vector<uint8_t>(window, window + windowSize)));
+        return;
+    }
 
     Json::Value ret;
     ret["type"] = type;
@@ -1525,9 +1568,15 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
         banks.append(bank);
     }
 
-    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended). Writable: a CPU write reaches the
+    // mapped page (the mapper's view: ROM, TS-Conf W0_WE, ... - Memory::IsWindowWritable)
     for (Json::ArrayIndex slot = 0; slot < banks.size(); slot++)
+    {
         banks[slot]["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(slot));
+        const bool writable = memory.IsWindowWritable(static_cast<uint8_t>(slot));
+        banks[slot]["writable"] = writable;
+        banks[slot]["read_write"] = writable ? "read/write" : "read-only";
+    }
 
     // Sprinter: the PLD maps the windows (fast RAM, vROM, graphics, ISA): kind and physical page
     // from DeviceState::SprinterPaging, the same view every interface shows

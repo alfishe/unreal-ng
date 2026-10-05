@@ -22,6 +22,8 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/io/network/virtualnetwork.h"
+#include "emulator/state/devicestate.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
@@ -253,4 +255,77 @@ TEST_F(NetworkManager_Test, BadSettingsAreRefusedWithTheReason)
     EXPECT_NE(error.find("unknown setting"), std::string::npos);
     EXPECT_FALSE(NetworkManager::ParseChange({{"host_access", "maybe"}}, change, error));
     EXPECT_FALSE(NetworkManager::ParseChange({{"connect_timeout_ms", "10s"}}, change, error));
+    EXPECT_FALSE(NetworkManager::ParseChange({{"remote_access", "lan"}}, change, error));
+    EXPECT_NE(error.find("remote_access: on | off"), std::string::npos) << error;
+}
+
+/// [NETWORK] RemoteAccess (tdd-smb-online-update.md §6 item 1, PLAN #92 N0): the runtime key on every surface
+TEST_F(NetworkManager_Test, RemoteAccessParsesAsAFlag)
+{
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"remote_access", "off"}}, change, error)) << error;
+    ASSERT_TRUE(change.remoteAccess.has_value());
+    EXPECT_FALSE(*change.remoteAccess);
+    EXPECT_TRUE(change.OnlyRemoteAccess());
+    ASSERT_TRUE(NetworkManager::ParseChange({{"RemoteAccess", "on"}}, change = {}, error)) << error;
+    EXPECT_TRUE(*change.remoteAccess);
+    ASSERT_TRUE(NetworkManager::ParseChange({{"remote_access", "on"}, {"hosts", "a.test=10.0.2.7"}}, change = {}, error));
+    EXPECT_FALSE(change.OnlyRemoteAccess()) << "with another key the devices are fitted again";
+    EXPECT_TRUE(NetworkManager::Change().Empty());
+}
+
+TEST_F(NetworkManager_Test, BuildConfigCarriesRemoteAccess)
+{
+    Create();
+    _context->config.network.remoteAccess = 1;
+    EXPECT_TRUE(NetworkManager::BuildConfig(_context).remoteAccess);
+    EXPECT_EQ(NetworkManager::BuildConfig(_context).ListenAddress(), 0u) << "0.0.0.0";
+    _context->config.network.remoteAccess = 0;
+    EXPECT_FALSE(NetworkManager::BuildConfig(_context).remoteAccess);
+    EXPECT_EQ(NetworkManager::BuildConfig(_context).ListenAddress(), NetIp(127, 0, 0, 1));
+}
+
+/// remote_access alone moves the host listeners and leaves the devices fitted (no refit: connections stay); the
+/// status shows it in settings and in the virtual network
+TEST_F(NetworkManager_Test, RemoteAccessAloneKeepsTheDevices)
+{
+    Create();
+    _context->config.network.remoteAccess = 1;
+    FitCard();
+    ZxNetUsb* card = _context->pZxNetUsb;
+    VirtualNetwork* network = _context->pVirtualNetwork;
+    ASSERT_NE(card, nullptr);
+    ASSERT_NE(network, nullptr);
+    EXPECT_TRUE(network->Config().remoteAccess);
+
+    NetworkManager* manager = _context->pCore->GetNetworkManager();
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"remote_access", "off"}}, change, error)) << error;
+    ASSERT_TRUE(manager->RequestChange(change, error)) << error;
+    EXPECT_EQ(_context->config.network.remoteAccess, 0);
+    EXPECT_EQ(_context->pZxNetUsb, card) << "not fitted again";
+    EXPECT_EQ(_context->pVirtualNetwork, network);
+    EXPECT_FALSE(network->Config().remoteAccess);
+
+    const NetworkManager::Status st = manager->GetStatus();
+    EXPECT_FALSE(st.settings.remoteAccess);
+    EXPECT_FALSE(st.config.remoteAccess);
+    const StateNode report = DeviceState::Network(_context);
+    ASSERT_NE(report.find("settings"), nullptr);
+    ASSERT_NE(report.find("settings")->find("remote_access"), nullptr);
+    EXPECT_FALSE(report.find("settings")->find("remote_access")->b);
+    const StateNode* net = report.find("virtual_network");
+    ASSERT_NE(net, nullptr);
+    ASSERT_NE(net->find("listen_address"), nullptr);
+    EXPECT_EQ(net->find("listen_address")->s, "127.0.0.1");
+    EXPECT_FALSE(net->find("remote_access")->b);
+
+    // With another key the change is a full one: the devices are fitted again with the new setting
+    ASSERT_TRUE(NetworkManager::ParseChange({{"remote_access", "on"}, {"hosts", "a.test=10.0.2.7"}}, change = {}, error));
+    ASSERT_TRUE(manager->RequestChange(change, error)) << error;
+    ASSERT_NE(_context->pVirtualNetwork, nullptr);
+    EXPECT_TRUE(_context->pVirtualNetwork->Config().remoteAccess);
+    EXPECT_EQ(DeviceState::Network(_context).find("virtual_network")->find("listen_address")->s, "0.0.0.0");
 }

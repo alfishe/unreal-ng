@@ -489,11 +489,16 @@ The `memory` command provides unified access to emulator memory with two address
 | `memory dump <type> <page>` | type + page | Dump entire 16KB page to stdout |
 | `memory save bank <N> <file>` | bank 0-3 + file | Save Z80 bank (16KB) to file |
 | `memory save <type> <page> <file>` | type + page + file | Save physical page (16KB) to file |
+| `memory save <space>:<addr>:<len> <file>` | window + file | Save any window (`cpu:0x8000:256`, `ram5:0x1800:768`, `ram:0x14000:4096`; at most 65536 bytes) to file |
 | `memory load bank <N> <file>` | bank 0-3 + file | Load file into Z80 bank |
 | `memory load <type> <page> <file> [--force]` | type + page + file | Load file into physical page |
 | `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
 | `memory info` | | Show memory configuration |
 | `find <pattern>` | Z80 pattern search | Search the Z80 address space for a byte pattern (see below) |
+| `out <port> <value>` | port write | A debugger's port write through the machine's decoder, like a CPU OUT (the WebAPI `POST /ports/out`): `out #13AF #20` maps RAM page #20 into window 3 on TS-Conf; no breakpoints, no device waits, a TTD tool edit; prints `Port #13AF <- #20 (paused)` |
+| `pchist [depth]`, `pchist on\|off` | PC history | The newest instructions with their window's page, newest first (the WebAPI `GET /debug/pchist`); the first read starts recording; `debug-snapshot --pchist N` |
+| `debug-wait [since] [--timeout ms]` | long-poll | Block until the debugger snapshot's `seq` moves past `since` (default: the current one) or the timeout passes (the WebAPI `GET /debug/wait`) |
+| `debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]...` | debugger snapshot | Registers, pages, time, code from PC, stack and memory windows read at one moment (the WebAPI `GET /debug/snapshot`) |
 
 **Page Types**: `ram` | `rom` | `cache` | `misc`
 
@@ -567,6 +572,8 @@ Save memory to binary file.
 > memory save bank 0 bank0.bin        # Save Z80 bank 0 (current mapping)
 > memory save ram 5 screen.bin        # Save RAM page 5
 > memory save rom 2 trdos.bin         # Save TR-DOS ROM
+> memory save cpu:0:65536 all.bin     # The whole CPU view as the CPU sees it now
+> memory save ram5:0x1800:768 attr.bin  # A window of a page, mapped or not
 ```
 
 **`memory load bank <N> <file>`** / **`memory load <type> <page> <file> [--force]`**
@@ -764,7 +771,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
 | Sprinter ISA slot population at create (default `[ISA]`: slot 1 none, slot 2 NE2000; fixed for the instance) | `create SPRINTER --isa-slot1 <kind> --isa-slot2 <kind>` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}` | - | - | `emulator_manage` create `sprinter_isa_slot1`, `sprinter_isa_slot2` |
 | Profi keyboard at create (`[PROFI] Keyboard=`: v5 `xt`, v3 `matrix`) and in force | `create PROFI --profi-keyboard xt\|xttable\|matrix` (also `start`); `state` (Profi keyboard), `keyboard route` (controller name) | `POST /emulator/create\|start {"model":"PROFI","profi":{"keyboard":"xttable"}}`; `GET /state/paging` `profi_keyboard`, `GET /keyboard/status` `keyboard_controller` | `paging_state().profi_keyboard`, `keyboard_controller()` | `paging_state()['profi_keyboard']`, `keyboard_controller()` | `emulator_manage` create `profi_keyboard`; `inspect_state` aspect `paging` |
-| Device memory regions (the Sprinter's 256 KB video RAM `vram`) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
+| Device memory regions (the Sprinter's 256 KB video RAM `vram`; TS-Conf palette `cram` and sprite table `sfile`, 512 bytes each, word n at offset 2n, low byte first; `cmos` - the CMOS clock's cells, a write is a guest write - on every machine with a clock; the ZX-Evo AVR `eeprom`, 4 KiB) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
 | Region read / write | `memory region read vram 0x17F0 3`, `memory region write vram 0x17F0 00 00 A8` | `GET /memory/region/vram?offset=&length=&format=hex\|data\|sparse\|binary`, `POST /memory/region/vram {offset, hex\|data}`, `/memory/page/vram/{0-15}` | `region_read(name, off, len)`, `region_write(name, off, {..}\|"hex")` | `region_read(...)` -> bytes, `region_write(...)` | `memory_region` (region, address, size); `invoke_api` POST |
 | Region save / load (files) | `memory region save\|load vram <file> [offset] [len]` | `POST /memory/region/vram {action: save\|load, path, offset, length}` | `region_save(name, path)`, `region_load(name, path)` | `region_save(...)`, `region_load(...)` | `invoke_api` POST |
 | Video change log (latches with frame T, line, PC; palette / mode table write counts) - every machine | `video changes [1\|2]` | `GET /video/changes?frames=` | `video_changes([frames])` | `video_changes(frames=2)` | `video_changes` |
@@ -1858,6 +1865,7 @@ Inspect disk drive status, disk geometry, data contents, and current operations.
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `disk sector [drv] <cyl> <side> <sec>` | | `[A-D]` `0-79` `0-1` `>=1` | Read parsed sector data:<br/>• Address Mark: cyl, head, sector, size<br/>• ID CRC and validity<br/>• Data (256 bytes, hex dump)<br/>• Data CRC and validity | ✅ WebAPI |
+| `disk write <drv> <cyl> <side> <sec> <hex> [--offset N]` | | `[A-D]` `cyl` `0-1` `ID>=1` `hex bytes` | A debugger's write into the sector's data field (the WebAPI `PUT /disk/{drive}/sector/...`): the bytes go in at `--offset` (default 0) as the WD1793 WRITE SECTOR puts them, the data CRC is recalculated, the image counts as modified, a TTD tool edit. Refused with the reason: empty drive, write-protected disk, missing track / sector, ID-only sector, past the data field. Example: `disk write A 0 0 9 4D594449534B --offset 245` renames a TR-DOS disk | ✅ |
 | `disk track [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Track summary (16 sectors):<br/>• Per-sector: logical number, CRC status<br/>• Interleave table<br/>• Bad sector indicators | ✅ WebAPI |
 | `disk sysinfo [drv]` | | `[A-D]` | Parse TR-DOS system sector (T0/S9):<br/>• Disk type (80T DS/SS, 40T DS/SS)<br/>• Label, file count, free sectors<br/>• First free track/sector<br/>• Signature validity (0x10) | ✅ WebAPI |
 | `disk catalog [drv]` | `disk dir` | `[A-D]` | Show disk catalog (file list):<br/>• **TR-DOS**: name, type, length, start<br/>• **+3DOS**: CP/M directory<br/>• **ESXDOS**: FAT listing | ✅ WebAPI |
@@ -1887,6 +1895,7 @@ All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
 | GET | `/disk/{drive}` | Drive info (geometry, filename, FDC state) |
 | GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Logical sector (256b + metadata) |
 | GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Raw sector bytes (388b) |
+| PUT | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Write into the data field: `{offset, hex \| data \| base64}` (CRC recalculated, image modified, TTD tool edit) |
 | GET | `/disk/{drive}/track/{cyl}/{side}` | Track summary (16 sectors) |
 | GET | `/disk/{drive}/track/{cyl}/{side}/raw` | Raw track (6250b, base64) |
 | GET | `/disk/{drive}/image` | Whole image binary (base64) |

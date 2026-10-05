@@ -720,6 +720,9 @@ struct CONFIG
 		char hosts[1024];
 		/// Guest servers: "tcp:<hostport>:<guestport>,..."
 		char forwards[256];
+		/// [NETWORK] RemoteAccess: 1 (default) = the host listeners of guest servers bind 0.0.0.0 (every
+		/// interface: other computers on the LAN can connect); 0 = 127.0.0.1 (this computer only)
+		uint8_t remoteAccess;
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
 		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:
@@ -748,6 +751,13 @@ struct CONFIG
 		/// The Hayes modem's phone book (ComPortSpec MODEM, any serial port): "<number>=<host>[:<port>],..." (','
 		/// separates: ';' starts an INI comment); a number dialed with ATDT is looked up by its digits
 		char modemPhonebook[512];
+		/// [NETWORK] EthernetMode: how the frame-level cards (NE2000, 3C509B) reach the host - 0 NAT (the gateway's
+		/// router, no admin rights), 1 BRIDGE (frames on the host adapter BridgeAdapter=, network SN6)
+		uint8_t ethernetMode;
+		char bridgeAdapter[128];   ///< [NETWORK] BridgeAdapter: the host adapter for BRIDGE ("en0", "eth0", ...)
+		/// [NETWORK] TrafficStream: the live pcapng stream of the traffic tap for Wireshark (network #91 T3) - -1 off
+		/// (default), 0 on a free port, else that TCP port
+		int32_t trafficStreamPort;
 	} network;
 
 	struct

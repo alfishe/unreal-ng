@@ -476,6 +476,9 @@ public:
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
     /// Window 0-3 maps ROM: the hot-path form for bus logic that tells ROM from RAM (EvoTurboOverlay)
     bool IsWindowRom(uint8_t window) const { return _bank_mode[window & 0x03] == BANK_ROM; }
+    /// A CPU write to the window reaches the mapped page (false: ROM, or RAM a mapper keeps write-protected, such as
+    /// TS-Conf window 0 without W0_WE - those writes go to the trash page). The debugger's "read_write" / "writable"
+    bool IsWindowWritable(uint8_t window) const { return _bank_write[window & 0x03] != _memory + TRASH_MEMORY_OFFSET; }
 
     uint8_t DirectReadFromZ80Memory(
         uint16_t address);  // Read from Z80 memory (actual pages config) without triggering any debug logic
