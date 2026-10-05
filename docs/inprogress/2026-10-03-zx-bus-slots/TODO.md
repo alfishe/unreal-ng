@@ -1,6 +1,6 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04. PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04; owner decision Q8 (conflicting configs refuse the machine), slot-built cards under TTD (MultiSound MS-5) and the quiet-machine A/B rerun built 2026-10-05 (not committed). PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -94,8 +94,8 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     needs the chip out is such a conflict; no shipped config fits the MultiSound
   - [ ] the three role tables still stand: legacy observers and slot-built cards share `_fullDecodeClaims`, a port
     both cover resolves by whichever claims it first (none today); the single table waits for the legacy cards' moves
-  - [ ] a TTD session recorded with a slot-built card does not capture it until MS-5 (no refusal yet; SL-5 put the
-    slot set in the fingerprint but the card has no blob)
+  - [x] a TTD session recorded with a slot-built card captures it (MS-5, 2026-10-05, [tdd.md](tdd.md) §13): the
+    card's devices registered by slot, a card without its devices refuses recording, the guard knows the card
   - [x] quiet-machine rerun of the MS-4 A/B (2026-10-05, [tdd.md](tdd.md) §12): everything at parity or faster but
     the 48K / 128K `OUT #00FF` (+1.5 to +2.1 %); one real layout change found and removed (`CONFIG::midiBank` moved
     the `EmulatorContext` fields: the bank path is in `Config` now), after which the path's machine code is
@@ -110,7 +110,9 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   - [ ] owner: the session id in the R-OP-7 refusal is a per-instance recording number (`#n, started at frame f`):
     v1 sessions have none; switch to the v2 session UUID with Phase 5?
   - [ ] the guard is symmetric now (a session without a card no longer loads where one is fitted): owner check
-  - [ ] two instances of one module (MultiSound + GS / SAA cards): needs the v1 per-id checkpoint gone (TTD Phase 5)
+  - [ ] two instances of one module (MultiSound + GS / SAA cards): needs the v1 per-id checkpoint gone (TTD Phase 5);
+    until then the planner refuses them as a conflict (Q8; `TtdMultiSound_Test.TwoInstancesOfOneModuleRefusedByThePlanner`),
+    and the MultiSound's own GS records under id 60, so a GS card next to a card with its GS switched off is fine
   - [ ] the GS runtime switch leaves the plan (and the fingerprint) naming the configured personality until SL-6
 - [ ] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it
 - [ ] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc

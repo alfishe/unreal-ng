@@ -352,10 +352,13 @@ card. No shipped config fits the MultiSound; tests fit it in their own configs.
 
 | Blob | Id | Content |
 |---|---|---|
-| `MultiSoundCard` | new id (next free when it lands; 48-50 free on master today, shared with SAA1099 / SAM2695 below) | logic latches (chip select, read mode, FM mute, SAA clock, ROM lock flag), DAC channels, the YM pair (both chips, ratio phase), the MIDI line state |
-| `Saa1099` | new id | chip state (tdd-saa1099 §5), saved through the card |
-| `Sam2695` | new id | synthesizer state incl. bank SHA-256 (tdd-libsam2695 §4) |
-| General Sound | 5 (existing; the board's GS needs its own id and region id, §4.2) | unchanged layout; RAM 1-2 MB, recorded by the time-travel engine as a memory region of 4 KB pieces (the engine's blob is the 95-byte fixed part) |
+| `MultiSound` (`MultiSoundCardTtd`) | 58, instance `<slot>.multisound` | the adapter's time base, then `MultiSoundCard`: card axis times, pending FM mute changes, CPLD latches (chip select, read mode, FM mute, SAA clock, ROM lock, GS mailbox copies, flags), DAC registers, the YM pair (synced time, both chips, ratio phase, timeline), the MIDI line, the shared DACs |
+| `Saa1099` | 53, `<slot>.multisound.saa1099` | chip state (tdd-saa1099 §5) |
+| `Sam2695` (`Sam2695Ttd`) | 59, `<slot>.multisound.sam2695` | synthesizer state incl. bank SHA-256 (tdd-libsam2695 §4); the bank is a fingerprint field and the session guard compares it |
+| `MultiSoundGs` | 60, `<slot>.multisound.gs` | the GS blob (layout of id 5) with 1-2 MB RAM; engine region `MultiSoundGsRam` (17, `multisound.gs.ram`) |
+
+As built in MS-5 (2026-10-05): [tdd-integration.md](tdd-integration.md) §4.1. The ids came from the next free ones on
+the branch (58-60 peripheral, 17 region); master may have taken some since, which a merge must renumber.
 
 The MIDI line itself is driven by YM register 14 writes, which the port journal records; replay re-executes them.
 

@@ -23,7 +23,7 @@ real software verified as a user runs it.
 | MS-2 | GS profile (clock, RAM up to 2 MB, host port set, DAC sink); classic GS bit-identical. **Done 2026-10-04** (not committed): `GSProfile` ([architecture.md](architecture.md) §4.2 "As built"), `SoundChip_GeneralSound_Profile_Test`, GS 1.05b in `data/rom/` | - |
 | MS-3 | `MultiSoundCard`, `MultiSoundLogic` wired to `Ym2203Pair`, `Saa1099`, GS, `MultiSoundDacs`, `MidiLine`, `sam2695::Synth`, `MultiSoundMixer`. **Done 2026-10-04** (not committed), without the slots framework: a self-contained class with an explicit port / time / audio API ([architecture.md](architecture.md) §1 "As built"); the `ICard` adapter and the `CardType` entry move to MS-4 (§3.1). `MultiSoundCard_Test` (13 tests: the requirements §1 worked example, FM muted after reset until bit 2 clears, `#FF` stops the SAA, `#DFFD`, ROM lock, DIP / `ctrlMask` options, the board weights per row, hard-panned SounDrive, GS / SounDrive on one DAC with the GS `#0B` bit, GS 1.05b boot + sample upload and playback, a bit-banged MIDI note on U4 and none from U10, "no bank", the TFM player trace); `Ym2203Pair_Test.PerChannelOutputsRenderAWholeSyncedFrameAtOnce` (the render cursor fix) | card logic CL-1, SAA-1, SAM-1, ML-2 |
 | MS-4 | Slot adapter (`ICard` + `CardType` entry `multisound`, §3.1) once slots SL-4 lands; the five `SoundManager` rows from `MultiSoundCard::Row`, HUD sources (`MultiSoundMixer` is in the card since MS-3). **Done 2026-10-04** (not committed): §3.2 "As built"; `MultiSoundSlotCard_Test` (10 tests: the card built for its slot with its options, the ZX-Evo YM2149 out of its socket, CardWins shadowing on the Pentagon, RdWr detection of the ZX-Evo's board ports, the rows, a Z80 program playing all five sources on a Pentagon and a ZX-Evo, the matrix refusals at creation) | MS-3, slots SL-4 |
-| MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests | MS-3, slots SL-5 |
+| MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests. **Done 2026-10-05** (not committed): §4 "As built"; ids 58 `MultiSound`, 59 `Sam2695`, 60 `MultiSoundGs`, region 17 `MultiSoundGsRam`; `TtdMultiSound_Test` (7 tests: devices registered by slot, `RoundTripMidTune`, `MidiByteAcrossCheckpoint`, `SessionRefusesOtherBank`, card / no-card mismatch, a missing card device refuses recording, two instances of one module refused by the planner); the card in `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` | MS-3, slots SL-5 |
 | MS-6 | Automation (card options through the slot surfaces; card state report `multisound` on every surface), OpenAPI, Qt card panel, recipe | MS-3, slots SL-6 |
 | MS-7 | Real-software verification (§6) with TTD recording on | MS-4, MS-5 |
 | MS-8 | Docs: `docs/features/` user page, `.recipe/sound/multisound.md`, machine recipes updated where the card is listed | MS-6 |
@@ -103,8 +103,8 @@ claim table's cycle resolution in production for slot-built cards. The adapter i
 | Frames | `SoundManager` calls `FrameStart` at every frame start (all modes) and `FrameEnd(samplesThisFrame)` before mixing; turbo without audio `FrameEnd(0)` (the card still runs to the frame end) |
 | Bus reset | `SoundManager::reset` (machine reset) calls `BusReset`: the card's CPLD, YM pair, SAA, GS, DACs, MIDI line and SAM2695 share the ZX /RESET |
 
-Not in MS-4: the card is not in the TTD device set (MS-5; a session recorded with the card does not capture it), no
-automation state report or Qt panel (MS-6), the frame cost (~1 ms per frame, TODO) is not profiled.
+Not in MS-4: the card is not in the TTD device set (MS-5, done 2026-10-05: §4.1), no automation state report or Qt
+panel (MS-6), the frame cost (~1 ms per frame, TODO) is not profiled.
 
 ## 4. TTD
 
@@ -126,6 +126,33 @@ automation state report or Qt panel (MS-6), the frame cost (~1 ms per frame, TOD
   - `TtdMultiSound_Test.SessionRefusesOtherBank`.
 - The TTD fixture corpus gets one MultiSound fixture per machine family where it fits (Pentagon, ZX-Evo); recorded
   once the card lands (memory: re-record after any device-state change).
+
+### 4.1 As built (MS-5, 2026-10-05)
+
+| Item | As built |
+|---|---|
+| Devices | Four engine devices, each named by the card's slot: `MultiSound` (id 58, `zxbus.N.multisound`: the adapter's time base, then `MultiSoundCard::TtdSave` - the card axis times, the FM mute changes not yet rendered, the CPLD latches and DAC registers, the YM2203 pair's synced time and blob, the MIDI line, the shared DACs; layout in `multisoundcard.h`), `Saa1099` (53, `.saa1099`, the chip's own blob), `Sam2695` (59, `.sam2695`, `sam2695::Synth::SaveState`, which names the bank by SHA-256), `MultiSoundGs` (60, `.gs`, the GS blob; its RAM is the engine region `MultiSoundGsRam` (17), `multisound.gs.ram`). `multisoundttd.{h,cpp}` holds the two wrappers (`MultiSoundCardTtd`, `Sam2695Ttd`); the GS takes its ids from its profile (`GSProfile::ttdPeripheralId` / `ttdRegionId` / names; the classic card keeps 5 / 1) |
+| Registration | `ICard::CollectTtdDevices` (id, device, instance, region source); `RegisterMachinePeripherals` registers every slot-built card's devices before the plan check; `CardType::ttdIds` lists the ids a card registers, and `SlotManager::TtdDevicesMatchPlan` refuses recording, naming the slot, when one is missing or the card declares none (a slot-built card can no longer be recorded without its state) |
+| Engine descriptor | `MultiSound`: `runsBehindCpu`, time fields (the adapter's origin and last time, the card's now / frame base / rendered-to, the pair's synced time and the ymfm counters through `Ym2203Pair::TTDTimeFields`, the DACs' time); `TTDSyncedTime` = the pair synced to the CPU's position on the card axis. `Sam2695`: `firmwareFingerprint` = the bank's SHA-256 folded to 64 bits. `MultiSoundGs`: the GS descriptor (ROM fingerprint, runs behind the CPU) |
+| Render layers | Not state (filters, output buffers, resamplers, the last MIDI level): every module's load drops them and `MultiSoundCard::TtdLoad` resets the mixer, so the audio after a restore does not depend on what played before it |
+| Fingerprint | `slots.<slot>.bank` = the bank's SHA-256 folded (0 = no bank), `affectsRestore`, from `ICard::TtdFingerprint` once the cards are built; the card's options were already in `slots.<slot>` (SL-5) |
+| Session guard | the slot-set guard knows a position per slot-built card type (its first id): `zxbus.1: recorded none, this machine multisound` / `multisound card: recorded multisound, this machine none`; then `ICard::TtdSessionMatches`: the MultiSound reads the bank digest out of the session's `Sam2695` blob (`sam2695::Synth::StateBank`) and refuses another bank (`zxbus.1: MIDI bank differs from the recording (recorded SHA-256 ...)`) |
+| Two instances | the planner refuses them up front (a second MultiSound shares `saa`, a GS card shares `gs`: a conflict, slots Q8); with the card's GS switched off by its DIP a GS card may stay, and the two GS record under their own ids (5 and 60) |
+| Corpus | no device format changed (the classic GS blob and every other id are unchanged), so the corpus is not re-recorded. No MultiSound fixture: the corpus recorder creates machines from the shipped configs through the WebAPI, which cannot fit a card yet (slot surfaces: SL-7 / MS-6), no shipped config fits the card (slots Q8), and `TTD_Corpus_Test` would need the slot set of the fixture. Left in the TODO |
+| Cost | the GS blob carries its 1-2 MB RAM in every v1 checkpoint, as the classic GS does with its 128-512 KB (compressed; the engine keeps the RAM as a region of 4 KB pieces and stores only written pieces) |
+
+Tests (`core/tests/debugger/ttd/ttdmultisound_test.cpp`, `TtdMultiSound_Test`): `DevicesRegisteredBySlot`;
+`RoundTripMidTune` (all five sources, the CPU writing a SounDrive square wave: recorded for eight frames, replayed from
+the session start and from frame 3; every frame's five row digests and the four devices' state equal the original
+run's - the original run restarts its render layers at the same two points, since a restore does so);
+`MidiByteAcrossCheckpoint` (the frame boundary inside the second byte of a Note On: restored there, the byte still
+arrives, no framing error, the synthesizer state equal); `SessionRefusesOtherBank`; `SessionGuardRefusesCardMismatch`
+(both ways); `RecordingRefusedWhenACardDeviceIsMissing`; `TwoInstancesOfOneModuleRefusedByThePlanner`. Also
+`TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` with the card on Pentagon, Profi Scorpion,
+ZX-Evo, TS-Conf, ATM Turbo 2+ (7.10, 4.50, behind the CPU-socket adapter) - the Scorpion's system port lacks +12 V, so
+the card is left out there - and `SoundChip_GeneralSound_Profile_Test.MultiSound_MatchesTheEngineDescriptorWithItsRamAsRegion`
+(the board GS's own ids). A mutant that skips the YM pair's restore fails `RoundTripMidTune` and
+`MidiByteAcrossCheckpoint`.
 
 ## 5. Automation and Qt
 

@@ -3,7 +3,7 @@
 **Status:** design drafted 2026-10-03; owner decisions Q1-Q5 recorded. Card logic CL-0 / CL-1 built 2026-10-04
 (branch `multisound`): `MultiSoundLogic` agrees with the card's CPLD Verilog on every scenario and the
 full decode sweep. MS-3 `MultiSoundCard` assembled 2026-10-04 (not committed; no dependency on the slots framework). MS-4 puts it in
-a slot (2026-10-04, branch `zx-bus-slots`, not committed). Depends on the
+a slot (2026-10-04, branch `zx-bus-slots`, committed). MS-5 (TTD) built 2026-10-05 (not committed). Depends on the
 [ZX-bus slots](../2026-10-03-zx-bus-slots/TODO.md) (SL-1 to SL-5).
 
 ## Documents
@@ -52,13 +52,14 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   `MidiLine` feeding `sam2695::Synth::WriteLine` with its TTD blob; `AyIoPort_Test` and `MidiLine_Test` in core-tests
 - [ ] ML follow-ups with the card: the YM2203 SSG drives the same listener (done in MS-1: `Ym2203Pair::setIoPortListener`),
   `MidiLine` wired to U4 (chip select 0) and "chip 2 does not drive" (done in MS-3:
-  `MultiSoundCard_Test.MidiNoteBitBangedOnU4ReachesTheSynthAndU10DoesNotDrive`); left: the line in the card's blob set
-  (MS-5), the program-level Z80 send-routine test under TTD, `Describe` on the automation surfaces
+  `MultiSoundCard_Test.MidiNoteBitBangedOnU4ReachesTheSynthAndU10DoesNotDrive`); the line in the card's blob set and
+  the Z80 send routine under TTD done in MS-5 (`TtdMultiSound_Test.MidiByteAcrossCheckpoint`); left: `Describe` on the
+  automation surfaces
 - [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
   `tools/verification/saa1099/` (SAASound, MAME, MiSTer RTL under Verilator; consensus table in its README), the
   module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 53; not registered in any machine
-- [ ] SAA follow-ups: the MultiSound integration plugs it in (TTD inside the card's blob set, mixer row, `Describe` on
-  the automation surfaces, its `[SAA1099]` ini section); audio-level check against the real-chip recordings in
+- [ ] SAA follow-ups: the MultiSound integration plugs it in (TTD done in MS-5: id 53 as a device of the card,
+  `<slot>.multisound.saa1099`; mixer row done in MS-4; left: `Describe` on the automation surfaces, its `[SAA1099]` ini section); audio-level check against the real-chip recordings in
   `rejunity/tt06-psg-saa1099`; captured SAM Coupe / VGM SAA streams in the corpus (tdd §6 item 1)
 - [x] CL-0 RTL co-simulation (`tools/verification/multisound/`: pinned `top.v`, Verilator testbench, `.msc` scenarios,
   sweep tables) and CL-1 `MultiSoundLogic` + `core-tests` ([tdd-card-logic.md](tdd-card-logic.md) §2, §4, §5)
@@ -112,9 +113,14 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
     claim is `InOut` since 2026-10-05, the card does not drive that read, so on the Pentagon it floats instead of
     reaching the shadowed board AY; the generated card table changed in that one cell
     (`MultiSoundSlotCard_Test.ClaimsAssertIorqgeWhereTheRtlDoes`, `PentagonCardShadowsTheBoardAy`)
-- [ ] MS-5..MS-8 TTD, surfaces, real software, docs (after slots SL-5); TTD needs the adapter's time base and the
-  pair's ratio phase in the card's blob set. Until MS-5 a TTD session recorded with the card fitted does not capture
-  the card (no session refusal yet)
+- [x] MS-5 TTD (2026-10-05, not committed; [tdd-integration.md](tdd-integration.md) §4.1): four devices named by
+  slot (ids 58 `MultiSound`, 53 `Saa1099`, 59 `Sam2695`, 60 `MultiSoundGs`, region 17 `MultiSoundGsRam`), registered
+  through `SlotManager`'s cards, recording refused when a slot-built card's device is missing, the bank in the
+  fingerprint and the session guard, `TtdMultiSound_Test` (7), the card in the model contract test
+  - [ ] a MultiSound fixture in the TTD corpus (Pentagon, ZX-Evo): needs the recorder to fit the card (slot surfaces,
+    SL-7 / MS-6) and `TTD_Corpus_Test` to create the fixture's slot set
+  - [ ] the ids 58-60 / region 17 were free on this branch: a merge with master renumbers them if master took them
+- [ ] MS-6..MS-8 surfaces, real software, docs
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
   effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
   (machines without the card pay nothing)

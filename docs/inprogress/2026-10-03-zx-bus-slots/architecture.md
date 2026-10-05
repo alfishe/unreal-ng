@@ -198,7 +198,9 @@ thin `ICard` wrapper, as `IsaBusDeviceCard` does for ISA.
 is the card: the bus cycles are `portDeviceOutMethod` / `portDeviceReadCycle(port, drives)` at the machine's now (the
 card keeps its own time base; the access path passes no `t`), plus `Peek(port, drives)`, `BusReset`, `FrameStart`,
 `FrameEnd(samples)`, `SetOutputRate`, `MixerRows`, `MixerBuffer`, `WantsWideMix`. TTD, media and `Describe` join the
-interface with the first card that needs them (MultiSound MS-5 / MS-6).
+interface with the first card that needs them (MultiSound MS-5 / MS-6). **MS-5 (2026-10-05):** `CollectTtdDevices`
+(`CardTtdDevice`: id, device, instance named by slot, region source), `TtdFingerprint` (`slots.<slot>.<what>` fields)
+and `TtdSessionMatches` (the card's part of the load guard); `CardType` gains `ttdIds`, the ids its devices register.
 
 ### 3.3 Functions
 
@@ -454,6 +456,13 @@ module's decode.
   The id-keyed registry now refuses a second device under a held id and names both (recording refused), instead of
   the silent overwrite; two instances of one module still need the v1 checkpoint to go (Phase 5), so the plan rule
   above stays.
+- **As built for slot-built cards (MultiSound MS-5,** [tdd.md](tdd.md) §13**):** `RegisterMachinePeripherals` registers
+  every device a built card hands out (`ICard::CollectTtdDevices`), named `<slot>.<card>[.<module>]`; the plan check
+  requires every id the card's `CardType::ttdIds` declares and refuses recording, naming the slot, for a card that
+  declares none. The load guard has a position per slot-built card type and then asks each card
+  (`ICard::TtdSessionMatches`: the MultiSound's MIDI bank); the cards' own fingerprint fields
+  (`ICard::TtdFingerprint`, `slots.zxbus.1.bank`) join the slot set's. Two instances of one module are refused by the
+  planner as a conflict (Q8) before any registry sees them.
 - **Fixture corpus:** the Sprinter and TS-Conf fixtures were recorded with the classic GS swapped in; card migration must
   keep every blob byte-identical (`TTD_Corpus_Test.EveryFixtureLoadsRestoresAndReplaysExactly`).
 - **Snapshots** (SZX and our own): the slot set is written where the format allows (SZX has blocks for some cards);

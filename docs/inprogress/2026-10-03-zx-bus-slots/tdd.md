@@ -722,3 +722,22 @@ fix below (another 2 x 8 rounds, loads 3.2-14.3). CPU time medians of 16 rounds:
   the whole build (function alignment, a hot / cold order file), an owner question in [TODO.md](TODO.md).
   Raw results: the session's `scratch/ms5/ab-*` (not in the repo).
 
+## 13. Slot-built cards under time travel (MultiSound MS-5, 2026-10-05)
+
+The framework side of [MultiSound tdd-integration.md](../2026-10-03-zx-multisound/tdd-integration.md) §4.1:
+
+| Item | As built |
+|---|---|
+| `ICard` | `CollectTtdDevices(std::vector<CardTtdDevice>&)` (id, device, instance, region source), `TtdFingerprint`, `TtdSessionMatches` (defaults: none / none / match) |
+| `CardType` | `ttdIds`: the ids the card's devices register, its own first (MultiSound: 58, 53, 59, 60) |
+| Registration | `RegisterMachinePeripherals` registers every built card's devices before the plan check |
+| `TtdDevicesMatchPlan` | every fitted slot-built card has every id its type declares; a type without ids (no time-travel state) refuses recording naming the slot; the slot-built card types are positions of their own (first id), as the AY socket, GS card and MoonSound are |
+| `TtdSlotSetMatches` / `TtdSessionMatches` | the same positions on load (`zxbus.1: recorded none, this machine multisound`), then each card's `TtdSessionMatches` |
+| Fingerprint | `_ttdCardFingerprint` from the built cards (`BuildCards`), added after the slot set's fields |
+| Ids | peripheral 58 `MultiSound`, 59 `Sam2695`, 60 `MultiSoundGs`; region 17 `MultiSoundGsRam` (next free on this branch; `ttd.ksy`, `ttdfileinfo.cpp` names, the contract test's id table) |
+
+Before this, a machine with a slot-built card recorded sessions that silently lacked the card's state; SL-5's guard
+did not see the card either. Tests: `TtdMultiSound_Test.*` (`core/tests/debugger/ttd/ttdmultisound_test.cpp`) and
+the card in `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel`. No device format changed:
+corpus, bench gate and `CoreGolden` unchanged.
+
