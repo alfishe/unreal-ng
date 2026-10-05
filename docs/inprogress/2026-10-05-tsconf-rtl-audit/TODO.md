@@ -30,10 +30,16 @@ first; tests that assert the current wrong value are named and change with the f
 
 ## Gaps (unreal-ng follows the fork, not the RTL)
 
-- No 4-5 fclk stall on DOS entry / vdos exit (the ATM3 decoder models it) - [interrupts.md](interrupts.md) row 37.
-- No /WAIT on `#BFF7` - row 39; IDE stall off by default (`IdeStall=0`) - row 38.
-- The NMI button works on TS-Conf, whose board never drives /NMI - row 41.
-- A frame pulse running across a CPU clock switch is cut short - row 25.
+- ~~No 4-5 fclk stall on DOS entry / vdos exit - row 37.~~ **Fixed:** `PortDecoder_TSConf::DosStall` (4 fclk at every speed; a VG93 access that ends vdos at 14 MHz takes only this one, as `zclock.v` loads the DOS count); test TIM7.
+- No /WAIT on `#BFF7` - row 39. **Deferred, with a plan:** the Gluk wait is the same AVR round trip as the COM
+  port's (`zwait.v` `wait_status_glu` beside `wait_status_com`, one AVR main loop), whose timing model lives in
+  `Uart16550::AccessCycles`. Doing it right moves that model (the main-loop phase, the service cycles, its TTD state)
+  into the shared `EvoAvr` for both ports and both machines (TS-Conf, ATM3), then counts the Gluk service in the
+  AVR listing - not a local patch.
+- IDE stall off by default (`IdeStall=0`) - row 38. The RTL has it on in the IDE build (`top.v:557`); the default
+  was decision D2 (technical-design, 2026-09-29) - **the owner decides** whether the default follows the RTL.
+- ~~The NMI button works on TS-Conf, whose board never drives /NMI - row 41.~~ **Fixed:** `RequestBoardNmi` takes the press and does nothing (test `NmiButtonDoesNothing`); the debugger's direct NMI request stays.
+- ~~A frame pulse running across a CPU clock switch is cut short - row 25.~~ **Fixed:** `TsConfInterrupts::BeforeClockSwitch / AfterClockSwitch` carry the counted clocks across (`intFrameAdjust` keeps the CPU-clock part, the blob size is unchanged); tests CLK3, CLK3b.
 - The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at
   `portdecoder_tsconf.cpp:220-222` says so, contradicting the code) - [memory-ports.md](memory-ports.md).
 - W0_WE with ROM in window 0 should write the flash (`zmem.v:297`); both emulators drop the write.

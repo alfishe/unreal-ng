@@ -1147,8 +1147,15 @@ void PortDecoder_TSConf::ApplyClock()
         return;
 
     _state->hw_turbo_ratio = ratio;
-    if (_context->pCore && _context->pCore->GetZ80())
-        _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+    if (z80)
+    {
+        // A running frame pulse keeps the clocks it has counted across the switch (TsConfInterrupts)
+        uint32_t elapsed = 0;
+        const bool pulse = _interrupts.BeforeClockSwitch(z80->t, elapsed);
+        z80->ApplyHardwareTurboNow();
+        if (pulse)
+            _interrupts.AfterClockSwitch(z80->t, elapsed);
+    }
 }
 
 /// V_PAGE on the ZX screen until the TS video engine (phase 3): pages 5 and 7

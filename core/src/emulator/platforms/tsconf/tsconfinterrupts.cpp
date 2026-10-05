@@ -10,6 +10,7 @@ void TsConfInterrupts::Reset()
     _ts.intPending = 0;
     _ts.intLastRaster = 0;
     _ts.intFrameRaster = 0;
+    _ts.intFrameAdjust = 0;
     _ts.intVdosClock = 0;
 }
 
@@ -59,6 +60,7 @@ void TsConfInterrupts::CatchUp(uint32_t raster)
         {
             _ts.intPending |= TsConfInt::Frame;
             _ts.intFrameRaster = static_cast<int32_t>(frameEvent);
+            _ts.intFrameAdjust = 0;
         }
     }
 
@@ -107,8 +109,33 @@ void TsConfInterrupts::CatchUpLineWithSource(uint32_t from, uint32_t raster, boo
 
 bool TsConfInterrupts::FramePulseActive(uint32_t t) const
 {
-    const int64_t start = static_cast<int64_t>(_ts.intFrameRaster) * Multiplier();
+    const int64_t start = FramePulseStart();
     return static_cast<int64_t>(t) - start < static_cast<int64_t>(kFramePulseClocks);
+}
+
+int64_t TsConfInterrupts::FramePulseStart() const
+{
+    return static_cast<int64_t>(_ts.intFrameRaster) * Multiplier() + _ts.intFrameAdjust;
+}
+
+bool TsConfInterrupts::BeforeClockSwitch(uint32_t t, uint32_t& elapsed)
+{
+    // The pulse counter counts CPU clock edges ([V] zint.v:194): what it has counted stays counted
+    CatchUp(RasterAt(t));
+    if (!(_ts.intPending & TsConfInt::Frame) || VdosFrozen() || !FramePulseActive(t))
+        return false;
+    elapsed = static_cast<uint32_t>(static_cast<int64_t>(t) - FramePulseStart());
+    return true;
+}
+
+void TsConfInterrupts::AfterClockSwitch(uint32_t t, uint32_t elapsed)
+{
+    // The same count at the new clock: the rest of the 32 clocks run at the new speed
+    const int64_t start = static_cast<int64_t>(t) - elapsed;
+    const int64_t multiplier = Multiplier();
+    const int64_t raster = start >= 0 ? start / multiplier : -((-start + multiplier - 1) / multiplier);
+    _ts.intFrameRaster = static_cast<int32_t>(raster);
+    _ts.intFrameAdjust = static_cast<int16_t>(start - raster * multiplier);
 }
 
 bool TsConfInterrupts::VdosFrozen() const
@@ -151,7 +178,7 @@ void TsConfInterrupts::ThawFramePulse(uint32_t t)
     if (!(_ts.intPending & TsConfInt::Frame))
         return;
     const uint32_t multiplier = Multiplier();
-    const int64_t start = static_cast<int64_t>(_ts.intFrameRaster) * multiplier;
+    const int64_t start = FramePulseStart();
     if (start < static_cast<int64_t>(_ts.intVdosClock))
     {
         // Running when vdos began: the counter stood still for the whole interval
@@ -162,6 +189,7 @@ void TsConfInterrupts::ThawFramePulse(uint32_t t)
     {
         // The event fell inside vdos: the counter was reset there and counts from the end
         _ts.intFrameRaster = static_cast<int32_t>((t + multiplier - 1) / multiplier);
+        _ts.intFrameAdjust = 0;
     }
 }
 
@@ -230,6 +258,7 @@ void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
     {
         // The event fell inside the stall: its 32 clocks begin when the stall ends
         _ts.intFrameRaster = static_cast<int32_t>((t1 + multiplier - 1) / multiplier);
+        _ts.intFrameAdjust = 0;
     }
 }
 
@@ -267,6 +296,7 @@ void TsConfInterrupts::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLen
             {
                 const uint32_t multiplier = Multiplier();
                 _ts.intFrameRaster = static_cast<int32_t>((residue + multiplier - 1) / multiplier);
+                _ts.intFrameAdjust = 0;
             }
         }
     }

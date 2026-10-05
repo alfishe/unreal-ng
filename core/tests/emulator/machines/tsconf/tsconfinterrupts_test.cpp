@@ -464,3 +464,28 @@ TEST_F(TsConfInterrupts_Test, INT12b_NothingLeftKeepsTheLastSource)
     ASSERT_TRUE(Ints().IsIntAsserted(702));
     EXPECT_EQ(Ints().AcknowledgeInterrupt(702), 0xFD) << "nothing at the IORQ: int_sel is still the line's";
 }
+
+/// CLK-3: a clock switch inside the frame pulse keeps the clocks it has counted ([V] zint.v:194 counts zpos edges):
+/// 10 clocks at 3.5 MHz leave 22 at 14 MHz. The pulse was measured as raster time x the new multiplier, so it ended at
+/// once (TS-Conf audit, interrupts row 25)
+TEST_F(TsConfInterrupts_Test, CLK3_SwitchInsideThePulseKeepsTheClockCount)
+{
+    ASSERT_TRUE(Ints().IsIntAsserted(11)) << "the reset pulse runs on clocks 1..32";
+    _z80->tt = 11u << 8;               // 10 clocks counted
+    Reg(TsConfReg::SysConfig, 0x02);   // 14 MHz: the frame position rescales to clock 44
+    ASSERT_EQ(_z80->t, 44u);
+    EXPECT_TRUE(Ints().IsIntAsserted(44));
+    EXPECT_TRUE(Ints().IsIntAsserted(65)) << "22 clocks were left";
+    EXPECT_FALSE(Ints().IsIntAsserted(66));
+}
+
+TEST_F(TsConfInterrupts_Test, CLK3b_DownToTheSlowClock)
+{
+    Reg(TsConfReg::SysConfig, 0x02);   // 14 MHz from the start: the reset pulse on clocks 4..35
+    ASSERT_TRUE(Ints().IsIntAsserted(20));
+    _z80->tt = 20u << 8;               // 16 clocks counted
+    Reg(TsConfReg::SysConfig, 0x00);   // 3.5 MHz: clock 5
+    ASSERT_EQ(_z80->t, 5u);
+    EXPECT_TRUE(Ints().IsIntAsserted(20)) << "16 clocks left at 3.5 MHz";
+    EXPECT_FALSE(Ints().IsIntAsserted(21));
+}

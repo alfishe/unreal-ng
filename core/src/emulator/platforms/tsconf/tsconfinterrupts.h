@@ -73,6 +73,11 @@ public:
     /// vdos ends at CPU clock t: a frame pulse frozen by it runs on for the clocks it had left, one whose event
     /// fell inside vdos starts its 32 clocks here
     void OnVdosExit(uint32_t t);
+    /// A CPU clock switch at frame T-state t (SYS_CONFIG): a running frame pulse keeps the clocks it has counted
+    /// ([V] zint.v:194 counts zpos edges). Before the switch: true and the clocks counted when one runs
+    bool BeforeClockSwitch(uint32_t t, uint32_t& elapsed);
+    /// After it (t at the new clock): the pulse runs on from `elapsed`
+    void AfterClockSwitch(uint32_t t, uint32_t elapsed);
     /// The line INT's other source (the VDAC2 card), nullptr = line starts only
     void SetLineSource(ITsConfLineSource* source) { _lineSource = source; }
     static constexpr size_t kMaxLineEdges = 8;
@@ -107,6 +112,8 @@ private:
     bool FramePulseActive(uint32_t t) const;
     /// vdos (or the trapped access that starts it) holds the output and the frame pulse
     bool VdosFrozen() const;
+    /// CPU clock (of the frame) the frame pulse counts from
+    int64_t FramePulseStart() const;
     /// The frozen interval [intVdosClock, t) ends at CPU clock t: move the frame pulse past it
     void ThawFramePulse(uint32_t t);
     uint32_t Multiplier() const;
