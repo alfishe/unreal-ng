@@ -613,6 +613,8 @@ void LoaderZ80::commitFromStage()
         // Reset Z80 and all peripherals for a clean state-independent load
         // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean
         core.Reset();
+        // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+        ports.EnterSpectrum128Paging(_z80Registers.pc);
 
         /// region <Apply port configuration>
         switch (_memoryMode)

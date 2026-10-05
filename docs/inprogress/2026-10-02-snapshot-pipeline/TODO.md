@@ -93,5 +93,11 @@ review the diff, list the changed rows in the commit message.
 - **Q2 (48K SNA vs Z80 lock) left as it is**: both run the program; a shared rule is not needed until something breaks.
 - **Idea for later (owner):** analyze the file when it is opened and offer options (switch to the machine it was made on, enter
   a Spectrum mode on the Sprinter); `image.machine_hint` and `inspect` are the inputs for it.
-- Still open in P5: Pentagon 1024 `#EFF7` compatibility bit, the ATM family's pager, TS-Conf's MemConfig (policies, not
-  decisions: they fix banks that land in the wrong place).
+- **Pentagon 1024 done (2026-10-05).** `PortDecoder::EnterSpectrum128Paging(pc)` (default: nothing) is called by the SNA and
+  Z80 commits right after the reset, before their `#7FFD`; the Pentagon 1024 sets `#EFF7` bit 2 (memory above 128K absent), so
+  `#7FFD` bit 5 is the lock again and pages are 0-7. Before: a locked 128K file mapped page 32 + n, a 48K Z80 (`#7FFD` = `#30`)
+  mapped page 32 instead of locking. SZX and the state transfer already did it. Golden: the `ports` hash of the 38 SNA / Z80
+  rows of PENTAGON1024 (`#EFF7` = `#04`); RAM and CPU hashes unchanged. The hook is the generic place for the next ones: the
+  ATM family's pager and TS-Conf's MemConfig also need "the plain 128K form" after a reset.
+- Still open in P5: the ATM family's pager, TS-Conf's MemConfig (policies, not decisions: they fix banks that land in the wrong
+  place).

@@ -1286,6 +1286,12 @@ public:
     /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)
     void LockPaging();
 
+    /// A 48K / 128K Spectrum snapshot is about to be committed (after the reset, before its #7FFD): bring the model's
+    /// paging into the plain Spectrum 128K form its program expects. The reset of an extended model leaves it in its
+    /// own form (the Pentagon 1024's #EFF7 enables 1 MB paging, where #7FFD bit 5 is a page bit, not the lock). Default:
+    /// nothing, the machine already behaves like a 128K
+    virtual void EnterSpectrum128Paging(uint16_t pc) { (void)pc; }
+
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked
     /// it (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2 and the MiSTer RTL agree), so the

@@ -7,7 +7,7 @@
 /// Pentagon 1024, the ATM / TS-Conf pagers after a cold reset: proposal section 3). Every later pipeline step must
 /// reproduce it; a row may change only in a commit that says so (P4: the 38 SPRINTER rows that loaded now say
 /// "refused", a fresh Sprinter is in no Spectrum mode; P5 fit check: 38 more, 128K files on the 48K and the Scorpion's
-/// banks 8-15 on 128 KB machines). The defects the proposal suspects are named in the
+/// banks 8-15 on 128 KB machines; P5 Pentagon 1024: the "ports" hash of its 38 SNA / Z80 rows, #EFF7 = #04). The defects the proposal suspects are named in the
 /// SnapshotDefects_Test cases below: each pins the CURRENT behavior and says what the fix changes.
 ///
 /// Update after an approved change: UNREAL_SNAPSHOT_GOLDEN_UPDATE=1 core-tests --gtest_filter='SnapshotGoldenRewrite*'
@@ -246,19 +246,31 @@ const Machine& Find(const char* tag)
 }
 }  // namespace
 
-// DEFECT (P5, "pentagon1024-compat"): a 128K file whose #7FFD has the lock bit maps page 32 + n on a Pentagon 1024,
-// because the reset leaves #EFF7 = 0 (1 MB paging) and bit 5 then extends the page number. Expected after the fix: 7
-TEST(SnapshotDefects_Test, Pentagon1024LockedFileMapsTheWrongBank)
+// FIXED (P5, 2026-10-05): a 128K file whose #7FFD has the lock bit used to map page 32 + n on a Pentagon 1024, because the reset
+// leaves #EFF7 = 0 (1 MB paging) and bit 5 then extends the page number. The SNA / Z80 commits now put the model into the plain 128K
+// paging form first (PortDecoder::EnterSpectrum128Paging: #EFF7 bit 2 = 1), as SZX and the state transfer already did
+TEST(SnapshotDefects_Test, Pentagon1024LockedFileMapsTheRightBank)
 {
     const std::string locked = WithPaging(kAcrossTheEdge, 0x37, "defect-locked.sna");
     const std::string open = TestPathHelper::GetTestDataPath(kAcrossTheEdge);
 
-    EXPECT_EQ(LoadOn(Find("PENTAGON128"), locked).bank3, 7u) << "the 128K Pentagon is right";
-    EXPECT_EQ(LoadOn(Find("PENTAGON1024"), open).bank3, 7u) << "unlocked: right";
+    EXPECT_EQ(LoadOn(Find("PENTAGON128"), locked).bank3, 7u);
+    EXPECT_EQ(LoadOn(Find("PENTAGON1024"), open).bank3, 7u);
     const Loaded p1024 = LoadOn(Find("PENTAGON1024"), locked);
     EXPECT_TRUE(p1024.ok);
-    EXPECT_EQ(p1024.bank3, 39u) << "locked: 32 + 7 (the defect)";
+    EXPECT_EQ(p1024.bank3, 7u) << "locked: bank 7, as on the 128K Pentagon (it was 32 + 7)";
+    EXPECT_EQ(p1024.p7ffd, 0x37);
     std::remove(locked.c_str());
+}
+
+// And a 48K Z80 (its commit writes #7FFD = #30, locked): bank 0 on top, the paging really locked
+TEST(SnapshotDefects_Test, Pentagon1024A48kFileLocksThePaging)
+{
+    const Loaded r = LoadOn(Find("PENTAGON1024"), TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80"));
+    EXPECT_TRUE(r.ok);
+    EXPECT_EQ(r.p7ffd, 0x30);
+    EXPECT_EQ(r.bank3, 0u) << "bit 5 is the lock here, not the sixth page bit (it was page 32)";
+    EXPECT_EQ(r.p7ffd & 0x20, 0x20);
 }
 
 // DEFECT (P5, "atm"): on the ATM3 and ATM710 the pager is not in its 128K form after the reset, so a 128K file

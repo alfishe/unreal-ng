@@ -532,6 +532,8 @@ bool LoaderSNA::applySnapshotFromStaging()
     {
         // Reset Z80 and all peripherals
         core.Reset();
+        // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+        _context->pPortDecoder->EnterSpectrum128Paging(z80.pc);
 
         // Transfer RAM data to emulator (only pages existed in snapshot will be updated)
         for (int pageNum = 0; pageNum < 8; pageNum++)

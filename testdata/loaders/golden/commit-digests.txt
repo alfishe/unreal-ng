@@ -365,33 +365,33 @@ z80/libspectrum/synth-plus2a.z80@PENTAGON512	ram=dd808355 ports=401f7177 cpu=528
 z80/libspectrum/synth-plus3.z80@PENTAGON512	ram=dd808355 ports=401f7177 cpu=5281386e ay=00000000 misc=53f4acec
 z80/libspectrum/synth-scorpion.z80@PENTAGON512	ram=93920355 ports=401f7177 cpu=ce62fd52 ay=00000000 misc=53f4acec
 z80/newbench.z80@PENTAGON512	ram=b393edfb ports=3b97c627 cpu=4f0500f7 ay=00000000 misc=53fa65a6
-sna/7threality.sna@PENTAGON1024	ram=f57663aa ports=f38382da cpu=d648104a ay=00000000 misc=54030f21
-sna/Dizzy X.sna@PENTAGON1024	ram=6d6bef66 ports=05f95964 cpu=234fd572 ay=00000000 misc=54030f21
-sna/Dizzy Y 2.sna@PENTAGON1024	ram=70dba32b ports=bd56c631 cpu=64aa0a84 ay=00000000 misc=540315ed
-sna/Dizzy Y.sna@PENTAGON1024	ram=723528ee ports=05f95964 cpu=71c833c0 ay=00000000 misc=54030f21
-sna/IntTest+.sna@PENTAGON1024	ram=3d0d60fb ports=05f95964 cpu=3864cebd ay=00000000 misc=54030f21
-sna/Timing_Tests-48k_v1.0.sna@PENTAGON1024	ram=f5d251a9 ports=6b2ee694 cpu=1599d5eb ay=00000000 misc=540315ed
-sna/across-the-edge-second.sna@PENTAGON1024	ram=3ea1e197 ports=b0f361ce cpu=cd8192ff ay=00000000 misc=54030f21
-sna/action.sna@PENTAGON1024	ram=1f816497 ports=18711242 cpu=2fb40b9a ay=00000000 misc=54030f21
-sna/aleste1.sna@PENTAGON1024	ram=2be83465 ports=05f95964 cpu=d7e086b9 ay=00000000 misc=54030f21
-sna/atarin.sna@PENTAGON1024	ram=fdb04f12 ports=05f95964 cpu=ada383dd ay=00000000 misc=54030f21
-sna/atebit.sna@PENTAGON1024	ram=efbf525e ports=b0f361ce cpu=1c7dc811 ay=00000000 misc=54030f21
-sna/aytest_0.2.sna@PENTAGON1024	ram=2594d00c ports=1676e9c7 cpu=9e365f7b ay=00000000 misc=53fa65a6
-sna/earshaver-1.sna@PENTAGON1024	ram=23907e95 ports=05f95964 cpu=3e9e0d43 ay=00000000 misc=54030f21
-sna/eyeache1.sna@PENTAGON1024	ram=a7229bc0 ports=05f95964 cpu=3869014b ay=00000000 misc=54030f21
-sna/insult-1.sna@PENTAGON1024	ram=a1b2fb6c ports=866d2144 cpu=74350020 ay=00000000 misc=54030f21
-sna/insult-2.sna@PENTAGON1024	ram=6a7e885e ports=05f95964 cpu=feaf3724 ay=00000000 misc=54030f21
-sna/insult-3.sna@PENTAGON1024	ram=fccb94ad ports=05f95964 cpu=99a59fe3 ay=00000000 misc=54030f21
-sna/multifix.sna@PENTAGON1024	ram=06c82052 ports=05f95964 cpu=1818f48a ay=00000000 misc=54030f21
-sna/s4b-1.sna@PENTAGON1024	ram=50c31c61 ports=05f95964 cpu=8bb6c3b1 ay=00000000 misc=54030f21
-sna/s4b-2.sna@PENTAGON1024	ram=32a4d4eb ports=866d2144 cpu=a59bf1cd ay=00000000 misc=54030f21
-sna/scroller_by_demarche.sna@PENTAGON1024	ram=885dc7fb ports=05f95964 cpu=f657a6c3 ay=00000000 misc=54030f21
-sna/sil4aaab.sna@PENTAGON1024	ram=172ceea0 ports=b0f361ce cpu=c7b73b9a ay=00000000 misc=54030f21
-sna/test4.30.sna@PENTAGON1024	ram=91b3ed54 ports=3cc4b499 cpu=69fa5877 ay=00000000 misc=54002bf8
-sna/vibrations.sna@PENTAGON1024	ram=253bd9a8 ports=ada9ebde cpu=286c9e1c ay=00000000 misc=54030f21
-sna/z80-xcf-flavor.sna@PENTAGON1024	ram=9d7ac3dc ports=7bac76f7 cpu=b56aefd2 ay=00000000 misc=53fa6c72
-sna/z80flags.sna@PENTAGON1024	ram=e86e893c ports=7bac76f7 cpu=84c6d0bd ay=00000000 misc=53fa6c72
-sna/z80full.sna@PENTAGON1024	ram=92c6f956 ports=7bac76f7 cpu=0fdd704a ay=00000000 misc=53fa6c72
+sna/7threality.sna@PENTAGON1024	ram=f57663aa ports=26ab6996 cpu=d648104a ay=00000000 misc=54030f21
+sna/Dizzy X.sna@PENTAGON1024	ram=6d6bef66 ports=d2e88bf0 cpu=234fd572 ay=00000000 misc=54030f21
+sna/Dizzy Y 2.sna@PENTAGON1024	ram=70dba32b ports=428cab25 cpu=64aa0a84 ay=00000000 misc=540315ed
+sna/Dizzy Y.sna@PENTAGON1024	ram=723528ee ports=d2e88bf0 cpu=71c833c0 ay=00000000 misc=54030f21
+sna/IntTest+.sna@PENTAGON1024	ram=3d0d60fb ports=d2e88bf0 cpu=3864cebd ay=00000000 misc=54030f21
+sna/Timing_Tests-48k_v1.0.sna@PENTAGON1024	ram=f5d251a9 ports=381e1920 cpu=1599d5eb ay=00000000 misc=540315ed
+sna/across-the-edge-second.sna@PENTAGON1024	ram=3ea1e197 ports=e3ed15fa cpu=cd8192ff ay=00000000 misc=54030f21
+sna/action.sna@PENTAGON1024	ram=1f816497 ports=e56044ce cpu=2fb40b9a ay=00000000 misc=54030f21
+sna/aleste1.sna@PENTAGON1024	ram=2be83465 ports=d2e88bf0 cpu=d7e086b9 ay=00000000 misc=54030f21
+sna/atarin.sna@PENTAGON1024	ram=fdb04f12 ports=d2e88bf0 cpu=ada383dd ay=00000000 misc=54030f21
+sna/atebit.sna@PENTAGON1024	ram=efbf525e ports=e3ed15fa cpu=1c7dc811 ay=00000000 misc=54030f21
+sna/aytest_0.2.sna@PENTAGON1024	ram=2594d00c ports=4987b73b cpu=9e365f7b ay=00000000 misc=53fa65a6
+sna/earshaver-1.sna@PENTAGON1024	ram=23907e95 ports=d2e88bf0 cpu=3e9e0d43 ay=00000000 misc=54030f21
+sna/eyeache1.sna@PENTAGON1024	ram=a7229bc0 ports=d2e88bf0 cpu=3869014b ay=00000000 misc=54030f21
+sna/insult-1.sna@PENTAGON1024	ram=a1b2fb6c ports=b966d570 cpu=74350020 ay=00000000 misc=54030f21
+sna/insult-2.sna@PENTAGON1024	ram=6a7e885e ports=d2e88bf0 cpu=feaf3724 ay=00000000 misc=54030f21
+sna/insult-3.sna@PENTAGON1024	ram=fccb94ad ports=d2e88bf0 cpu=99a59fe3 ay=00000000 misc=54030f21
+sna/multifix.sna@PENTAGON1024	ram=06c82052 ports=d2e88bf0 cpu=1818f48a ay=00000000 misc=54030f21
+sna/s4b-1.sna@PENTAGON1024	ram=50c31c61 ports=d2e88bf0 cpu=8bb6c3b1 ay=00000000 misc=54030f21
+sna/s4b-2.sna@PENTAGON1024	ram=32a4d4eb ports=b966d570 cpu=a59bf1cd ay=00000000 misc=54030f21
+sna/scroller_by_demarche.sna@PENTAGON1024	ram=885dc7fb ports=d2e88bf0 cpu=f657a6c3 ay=00000000 misc=54030f21
+sna/sil4aaab.sna@PENTAGON1024	ram=172ceea0 ports=e3ed15fa cpu=c7b73b9a ay=00000000 misc=54030f21
+sna/test4.30.sna@PENTAGON1024	ram=91b3ed54 ports=6fd5820d cpu=69fa5877 ay=00000000 misc=54002bf8
+sna/vibrations.sna@PENTAGON1024	ram=253bd9a8 ports=7a991e6a cpu=286c9e1c ay=00000000 misc=54030f21
+sna/z80-xcf-flavor.sna@PENTAGON1024	ram=9d7ac3dc ports=aebd446b cpu=b56aefd2 ay=00000000 misc=53fa6c72
+sna/z80flags.sna@PENTAGON1024	ram=e86e893c ports=aebd446b cpu=84c6d0bd ay=00000000 misc=53fa6c72
+sna/z80full.sna@PENTAGON1024	ram=92c6f956 ports=aebd446b cpu=0fdd704a ay=00000000 misc=53fa6c72
 szx/libspectrum/bbg128.szx@PENTAGON1024	refused
 szx/libspectrum/synth-128.szx@PENTAGON1024	refused
 szx/libspectrum/synth-48.szx@PENTAGON1024	refused
@@ -406,17 +406,17 @@ szx/libspectrum/z80full-48k.szx@PENTAGON1024	refused
 szx/other/spectaculator-pentagon-crazylove.szx@PENTAGON1024	ram=e70a0734 ports=8a3adccc cpu=b22d4dc8 ay=00000000 misc=54030f21
 szx/other/zx-m8xxx-128k-shock.szx@PENTAGON1024	refused
 szx/other/zxmak2-pentagon-cpd-test.szx@PENTAGON1024	ram=631485a7 ports=61c15725 cpu=f3465e47 ay=00000000 misc=53f4acec
-z80/BBG128.z80@PENTAGON1024	ram=a9110152 ports=2abdd0a4 cpu=80cd1684 ay=00000000 misc=54030f21
-z80/Binary Love I.z80@PENTAGON1024	ram=f19b52aa ports=05f95964 cpu=d301aa00 ay=00000000 misc=54030f21
-z80/Binary Love II.z80@PENTAGON1024	ram=794b5fda ports=05f95964 cpu=faafba0c ay=00000000 misc=54030f21
-z80/Binary Love III.z80@PENTAGON1024	ram=bb505025 ports=05f95964 cpu=449db2f4 ay=00000000 misc=54030f21
-z80/dizzyx.z80@PENTAGON1024	ram=8c88bccb ports=05f95964 cpu=3230b20d ay=00000000 misc=54030f21
-z80/libspectrum/synth-128.z80@PENTAGON1024	ram=4fb96535 ports=401f7177 cpu=5281386e ay=00000000 misc=53f4acec
-z80/libspectrum/synth-pentagon.z80@PENTAGON1024	ram=4fb96535 ports=401f7177 cpu=45dbd7bd ay=00000000 misc=53f4acec
-z80/libspectrum/synth-plus2a.z80@PENTAGON1024	ram=4fb96535 ports=401f7177 cpu=5281386e ay=00000000 misc=53f4acec
-z80/libspectrum/synth-plus3.z80@PENTAGON1024	ram=4fb96535 ports=401f7177 cpu=5281386e ay=00000000 misc=53f4acec
-z80/libspectrum/synth-scorpion.z80@PENTAGON1024	ram=4a8ae535 ports=401f7177 cpu=ce62fd52 ay=00000000 misc=53f4acec
-z80/newbench.z80@PENTAGON1024	ram=2e7f1edb ports=3bf42b47 cpu=4f0500f7 ay=00000000 misc=53fa65a6
+z80/BBG128.z80@PENTAGON1024	ram=a9110152 ports=f8096850 cpu=80cd1684 ay=00000000 misc=54030f21
+z80/Binary Love I.z80@PENTAGON1024	ram=f19b52aa ports=d2e88bf0 cpu=d301aa00 ay=00000000 misc=54030f21
+z80/Binary Love II.z80@PENTAGON1024	ram=794b5fda ports=d2e88bf0 cpu=faafba0c ay=00000000 misc=54030f21
+z80/Binary Love III.z80@PENTAGON1024	ram=bb505025 ports=d2e88bf0 cpu=449db2f4 ay=00000000 misc=54030f21
+z80/dizzyx.z80@PENTAGON1024	ram=8c88bccb ports=d2e88bf0 cpu=3230b20d ay=00000000 misc=54030f21
+z80/libspectrum/synth-128.z80@PENTAGON1024	ram=4fb96535 ports=0d0ea403 cpu=5281386e ay=00000000 misc=53f4acec
+z80/libspectrum/synth-pentagon.z80@PENTAGON1024	ram=4fb96535 ports=0d0ea403 cpu=45dbd7bd ay=00000000 misc=53f4acec
+z80/libspectrum/synth-plus2a.z80@PENTAGON1024	ram=4fb96535 ports=0d0ea403 cpu=5281386e ay=00000000 misc=53f4acec
+z80/libspectrum/synth-plus3.z80@PENTAGON1024	ram=4fb96535 ports=0d0ea403 cpu=5281386e ay=00000000 misc=53f4acec
+z80/libspectrum/synth-scorpion.z80@PENTAGON1024	ram=4a8ae535 ports=0d0ea403 cpu=ce62fd52 ay=00000000 misc=53f4acec
+z80/newbench.z80@PENTAGON1024	ram=2e7f1edb ports=6ea8939b cpu=4f0500f7 ay=00000000 misc=53fa65a6
 sna/7threality.sna@SCORPION	ram=6b26a7fa ports=fde6f958 cpu=d648104a ay=00000000 misc=54030f21
 sna/Dizzy X.sna@SCORPION	ram=dab979b6 ports=af906e82 cpu=234fd572 ay=00000000 misc=54030f21
 sna/Dizzy Y 2.sna@SCORPION	ram=de19f7db ports=85c4988f cpu=64aa0a84 ay=00000000 misc=540315ed
