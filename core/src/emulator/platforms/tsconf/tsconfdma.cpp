@@ -46,6 +46,7 @@ void TsConfDma::Reset()
     _ts.dmaFlags = 0;
     _ts.dmaBlocks = 0x100;
     _ts.dmaCredit = 0;
+    _ts.dmaDeviceFclk = 0;
 }
 
 bool TsConfDma::Busy() const
@@ -72,6 +73,7 @@ void TsConfDma::Launch(uint8_t ctrl)
     _ts.dmaBurst = _ts.regs[TsConfReg::DmaLen];
     _ts.dmaBlocks = _ts.regs[TsConfReg::DmaNum];
     _ts.dmaCredit = 0;
+    _ts.dmaDeviceFclk = 0;
 }
 
 /// The address registers are the live counters; AL also sets the low reload
@@ -132,18 +134,41 @@ uint32_t TsConfDma::WordCost() const
             return (_ts.dmaFlags & TsConfDmaFlag::Loaded) ? 1 : 2;
         case SpiIn:
         case SpiOut:
-            // Two SPI bytes of 17 fclk each ([V] spi.v: the start clock + a
-            // 16-clock shift) and the DRAM cycle, aligned to the 4-fclk DRAM
-            // cycle: ~40 fclk = 10 DRAM cycles (phase 8 TIM-3)
-            return 10;
         case IdeIn:
         case IdeOut:
-            // The IDE bus cycle (~6 fclk, [V] ide.v) rounded up to 2 DRAM
-            // cycles, then the DRAM cycle (TIM-3)
-            return 3;
+            return 1;  // the DRAM cycle; the device phase is time (DeviceFclk)
         default:
             return 2;  // RAM copy (read + write); CRAM / SFILE (a 1-fclk device write + the idle half)
     }
+}
+
+uint32_t TsConfDma::DeviceFclk() const
+{
+    switch (_ts.dmaDevice)
+    {
+        case SpiIn:
+        case SpiOut:
+            // Two SPI exchanges of 17 fclk ([V] spi.v: the start clock + a 16-clock shift); the DMA's spi_stb is
+            // the SPI start (top.v:1060,1187), so a word's DRAM write overlaps its second byte's shift
+            return 34;
+        case IdeIn:
+        case IdeOut:
+            // The IDE bus cycle (~6 fclk, [V] ide.v:62-81, rounded to the 4-fclk DRAM grid) and then the DRAM
+            // cycle: the next bus cycle waits for it (dma.v: the device and memory phases alternate)
+            return 12;
+        default:
+            return 0;
+    }
+}
+
+bool TsConfDma::DeviceReady() const
+{
+    return _ts.dmaDeviceFclk >= DeviceFclk();
+}
+
+void TsConfDma::SpendDevice()
+{
+    _ts.dmaDeviceFclk -= DeviceFclk();
 }
 
 uint16_t TsConfDma::ReadWord(uint32_t wordAddress) const
@@ -280,6 +305,7 @@ void TsConfDma::Finish()
 {
     _ts.dmaFlags &= static_cast<uint8_t>(~TsConfDmaFlag::Active);
     _ts.dmaCredit = 0;
+    _ts.dmaDeviceFclk = 0;
     _interrupts.RaiseDma();
 }
 
@@ -294,8 +320,9 @@ uint32_t TsConfDma::Run(uint32_t credit)
         return 0;
 
     uint32_t used = 0;
-    for (uint32_t cost = WordCost(); cost && used + cost <= credit; cost = WordCost())
+    for (uint32_t cost = WordCost(); cost && used + cost <= credit && DeviceReady(); cost = WordCost())
     {
+        SpendDevice();
         Word();
         used += cost;
     }

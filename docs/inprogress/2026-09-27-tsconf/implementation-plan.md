@@ -571,7 +571,10 @@ has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
   (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
 - **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the
   DRAM cycle), IDE 2 → 3; RAM 2, BLT 3, fill 1 (+1), CRAM / SFILE 2 were
-  already the Verilog's.
+  already the Verilog's. **Revised 2026-10-05 (TS-Conf audit, dma rows
+  30-31):** SPI and IDE cost 1 DRAM cycle; their device phase is time (34 /
+  12 fclk per word, `TsConfDma::DeviceFclk`), not DRAM budget, so the SD rate
+  no longer drops with the video mode (tests TIM3b, TIM3c).
 - **TIM-4**: nothing to add - no stock video mode takes 8 of 8 DRAM cycles
   (ZX 1, 16C 2, 256C 4, TXT 4 per block, video_mode.v), so the CPU never stalls
   at 3.5 / 7 MHz, and the TSU ranks below the CPU.

@@ -148,6 +148,10 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         return;
     }
 
+    // The SPI / IDE device phase is time: 8 fclk per raster tact, whatever the DRAM load
+    if (raster > _ts.budgetRaster)
+        _ts.dmaDeviceFclk += (raster - _ts.budgetRaster) * kFclkPerTact;
+
     uint32_t free = 0;
     for (uint32_t pos = _ts.budgetRaster; pos < raster;)
     {
@@ -184,6 +188,14 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         else
         {
             _ts.dmaCredit -= _dma.Run(_ts.dmaCredit);
+        }
+
+        // A device transfer waits word by word: the time and the DRAM cycles it could not use while the other
+        // was short do not bank up for a burst later (one word's worth stays: the word in progress)
+        if (const uint32_t device = _dma.DeviceFclk())
+        {
+            _ts.dmaDeviceFclk = std::min(_ts.dmaDeviceFclk, device);
+            _ts.dmaCredit = std::min(_ts.dmaCredit, _dma.WordCost());
         }
     }
 }

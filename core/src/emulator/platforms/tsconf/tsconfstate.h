@@ -167,6 +167,7 @@ struct TsConfState
     uint8_t dmaFlags;           ///< TsConfDmaFlag bits
     uint8_t dmaReserved;        ///< keeps the struct free of padding
     uint16_t cpuLineAccesses;   ///< CPU DRAM reads of the previous line (the TSU's budget)
+    uint32_t dmaDeviceFclk;     ///< fclk the SPI / IDE device phase may still use (time, not DRAM)
     /// endregion
 
     /// region <Virtual TR-DOS (§8.2)>
@@ -183,4 +184,4 @@ struct TsConfState
     uint16_t FmBase() const { return static_cast<uint16_t>((regs[TsConfReg::FMaps] & 0x0F) << 12); }
 };
 
-static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 16 + 16 + 32 + 4, "TsConfState must stay padding-free (TTD blob)");
+static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 16 + 16 + 36 + 4, "TsConfState must stay padding-free (TTD blob)");

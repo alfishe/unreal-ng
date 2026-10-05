@@ -57,6 +57,8 @@ public:
     static constexpr uint32_t kFrameTacts = kLineTacts * kLines;
 
     static constexpr uint32_t kLineAccesses = 448;
+    /// fclk (28 MHz) per raster tact (3.5 MHz)
+    static constexpr uint32_t kFclkPerTact = 8;
 
     TsConfEngine(EmulatorContext* context, TsConfState& state, TsConfInterrupts& interrupts, TsConfDma& dma)
         : _context(context), _ts(state), _interrupts(interrupts), _dma(dma)

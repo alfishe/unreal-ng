@@ -465,8 +465,8 @@ Code = `{ctrl[7], ctrl[2:0]}` ([V] `dma.v:223-227`):
 |:--|:--|:--|:--|
 | 0x1 | RAM → RAM copy | 2 | yes |
 | 0x9 | BLT1: copy, keep dst where **source** byte (ASZ=1) / nibble (ASZ=0) is 0 | 3 | yes |
-| 0x2 / 0xA | SPI → RAM / RAM → SPI (little-endian, 2 SPI bytes per word) | ~8 (SPI 16 fclk/byte) | yes |
-| 0x3 / 0xB | IDE → RAM / RAM → IDE (16-bit words, data register; §8.3) | 1 DRAM + 1 IDE bus cycle (6 fclk) | `IDE_HDD` build only (emulator: when an IDE board is fitted) |
+| 0x2 / 0xA | SPI → RAM / RAM → SPI (little-endian, 2 SPI bytes per word) | 1 DRAM; the word takes 34 fclk (two 17-fclk exchanges, `spi.v`; the DRAM cycle overlaps the second byte's shift, the DMA's `spi_stb` being the SPI start) whatever the video load | yes |
+| 0x3 / 0xB | IDE → RAM / RAM → IDE (16-bit words, data register; §8.3) | 1 DRAM + 1 IDE bus cycle (6 fclk; the emulator takes 12 fclk per word: the bus cycle on the 4-fclk grid, then the DRAM cycle) | `IDE_HDD` build only (emulator: when an IDE board is fitted) |
 | 0x4 | FILL: read the first word once per transaction, then write it | 1 after first read | yes |
 | 0x6 | BLT2: dst += src per byte (ASZ=1) / nibble (ASZ=0); wraps, saturates if `OPT` | 3 | `XTR_FEAT` |
 | 0x7 | wait-port (AVR) transfer via `DMAWPD/DMAWPA` | AVR-paced | yes (out of v1 scope) |
