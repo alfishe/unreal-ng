@@ -198,3 +198,5 @@ configured set, so after such a change they disagree with the machine until the 
 - **C:** refuse `card` in the network settings and point to `slots plug / remove`.
 
 **Recommendation: A** - every card change behaves the same (Q6), and the surfaces keep their `card` key.
+
+**As built (2026-10-05):** [tdd.md](tdd.md) §16.

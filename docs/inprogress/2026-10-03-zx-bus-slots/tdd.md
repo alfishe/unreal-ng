@@ -20,7 +20,7 @@
 | **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L; **built 2026-10-04**, see §8 |
 | **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M; **built 2026-10-04**, see §10 |
 | **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M; **built 2026-10-05**, see §14 |
-| **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M; **built 2026-10-05**, see §15 |
+| **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M; **built 2026-10-05**, see §15; the network card change on it (Q11) §16 |
 | **SL-8** | Sprinter: `isa1` / `isa2` in the slot report, the ZX-bus adapter as a `zxbus` host (ISA phase I5 folded in) | Sprinter ISA tests unchanged; a GS card behind the adapter listed as `zxbus` in the report | M |
 
 The ZX-MultiSound ([integration TDD](../2026-10-03-zx-multisound/tdd-integration.md)) starts after SL-4 (it needs the
@@ -835,7 +835,8 @@ on every changed core translation unit. No benchmark: no per-instruction or per-
 `EmulatorContext` field was added.
 
 **Not in SL-6:** the surfaces (SL-7: `SlotControl` over `SlotChange::Run` and `PlanChange`, 1:1 with the request and
-result types above); `NetworkManager::RequestChange` (the runtime network card change) still bypasses the slot set;
+result types above); `NetworkManager::RequestChange` (the runtime network card change) still bypasses the slot set
+(closed by Q11, §16);
 snapshots that carry a slot set (architecture.md §8).
 
 ## 15. SL-7 as built (2026-10-05; MultiSound MS-6 alongside)
@@ -871,7 +872,8 @@ every surface, `SlotControl::CreateOverride` the create-time `"slots": {...}` fo
 3. The MultiSound recipe is `.recipe/peripherals/multisound.md` (the library keeps sound cards in `peripherals/`), not
    `.recipe/sound/`.
 4. File names `slots_api.cpp`, `openapi_slots.inc` follow their directories (`*_api.cpp`, `openapi_*.inc`).
-5. The runtime network card change (`network set card=`) still works in place: open question Q11.
+5. The runtime network card change (`network set card=`) still worked in place: open question Q11, decided and
+   built in §16 (a slot change applied by a restart).
 
 **Tests:** `SlotControl_Test.*` (8: the §2.5 parity script - list, catalog, matrix, refused plug with the plan equal
 to `SlotManager::PlanChange` field by field, the plug with the flag, options, remove, dry run -, GS personality, the
@@ -880,4 +882,76 @@ recording refusal, bad requests, the create-time form, Undo by slot set, the car
 `unreal-qt-tests` (3: preview, plug + warning + Undo, cancel; options + Undo button; the MIDI view). The WebAPI routes
 and the Lua / Python bindings are thin adapters over the tested layer; they were verified against a running unreal-qt
 (own ports, `.recipe/machines/slots.md`): MCP, WebAPI, CLI and Lua live; Python by `-fsyntax-only` (the build does not
-enable it).
+enable it) - verified live since in a separate build with `ENABLE_PYTHON_AUTOMATION=ON` (§16, 25 checks).
+
+## 16. Q11 as built: the network card change is a slot change (2026-10-05)
+
+Owner decision Q11 (A): the network settings' `card` value changes the ZX-bus network cards (`zxnetusb`, `zx-wifi`) as a
+slot change applied by a restart, like every other card change (Q6, Q10). Before, `NetworkManager::RequestChange`
+unplugged and fitted them in the running machine, so the slot report, the plan and the TTD fingerprint disagreed with
+the machine until the next restart.
+
+| File | Content |
+|---|---|
+| `core/src/emulator/slots/slotcontrol.{h,cpp}` | verb `network`: `SlotControlRequest::settings` (the `[NETWORK]` keys as `NetworkManager::ParseChange` takes them); parsed and value-checked first (400 before any plan); a `card` that changes the ZX-bus cards becomes the requests of `SlotManager::NetworkRequests`, planned and applied as one restart (`RunChange` with several requests, the flags `replaceIfIncompatible` / `dryRun` / `media` as for `plug`), then the other keys are applied to the restarted machine before it is started (`afterRestart`); without a card change the settings apply in place (status `accepted`, no restart; `recording` while TTD records). Reply: the slot change envelope with `op = network` and `network` {`settings`, `cardChange`, `cardsBefore`, `cards`, `settingsApplied`, `note`}; `ToText` prints the note |
+| `core/src/emulator/slots/slotmanager.{h,cpp}` | `NetworkCardsOf(Result)` (the fitted ZX-bus network cards as a `networkspec` mask), `NetworkRequests(Result, cards)` (a remove per fitted card not wanted, then a plug into the planner's slot per wanted card not fitted), `PlanChanges` (static and instance: several requests planned one after the other, each against the set the previous one leaves, built as a creation would build it; the merged plan lists every step's removals, shadowed devices, lost functions and media, names the last plug; the first refusal stops); `LiveContext` / `GuardRecording` shared with `PlanChange` |
+| `core/src/emulator/slots/slotchange.{h,cpp}` | `SlotChangeRequest::changes` (several requests, one restart; `change` keeps the flags) |
+| `core/src/emulator/io/network/networkmanager.{h,cpp}` | `RequestChange` refuses a `card` whose ZX-bus cards differ from the fitted ones (the reason names the slots); ATM2IOESP (the INTERNAL connector, not a bus slot) still changes in place; `ValidateChange` (static: the value checks without a machine, so a surface checks before it restarts); `kZxBusCards` |
+| CLI | `network set key=value ... [--replace] [--dry-run] [--media save|discard] [--json]` (`CliSlots::ParseNetworkSet`, the reply rendered as a slot change) |
+| WebAPI | `POST /network/config`: the body's `replaceIfIncompatible` / `dryRun` / `mediaDisposition` beside the settings; the reply is the SlotControl envelope with the HTTP status of a slot change (200 applied / accepted / dry-run, 400, 404, 409 refused / recording, 500); OpenAPI `openapi_network.inc` (body schema, responses) |
+| MCP | `emulator_manage` action `network_configure` (`settings` object, `replace_if_incompatible`, `dry_run`, `media_disposition`) over `POST /network/config`; the reply text names the plan, the restart and the network note |
+| Lua | `network_configure(settings [, opts])`: the reply table (truthy), or `nil, err, reply`; opts as `slots_plug`; an interpreter bound to the machine follows the restarted one |
+| Python | `Emulator.network_configure(**settings)` with `replace=`, `dry_run=`, `media=`: the reply dict, `ValueError` with the reason; the restarted machine is `emu_get_selected()` |
+| Qt | the Network window's ZXNETUSB / ZX-WiFi boxes: `NetworkFormSplitCards` (`network/core/networkpanelmodel.*`: the card change and the other changed settings), `SlotChangeController::ApplyNetworkCards` (the removes and plugs as one change: the restart confirmation naming what goes, the removed cards with Undo; `ApplyChanges` is the several-requests form of `Apply`; `LastEmulatorId`), then the other settings go to the restarted machine; `MainWindow` hands the controller to the window |
+
+**Example.** A Pentagon without network cards, `network set card=zxnetusb,zxwifi host_access=off hosts=a.test=10.0.2.77`:
+the plan plugs `zxnetusb -> zxbus.1` and `zx-wifi -> zxbus.2`, the machine restarts (a new emulator id), and the
+restarted machine gets `host_access=off` and the hosts entry. `card=zxnetusb` afterwards plans a remove of `zxbus.2`
+(`zx-wifi`, lost `serial.ef`) only; `card=zxwifi` on a machine with the ZXNETUSB plans the remove and the plug in one
+restart (the freed slot is reused). A ZX-WiFi on a ZX-Evo or TS-Conf is refused by the plan (the board's `#xxEF`) and
+nothing changes, also not a ZXNETUSB named in the same request; a ZX-bus card on the ATM Turbo 2+ CPU-socket adapter is
+an unrealistic fit that needs the replace flag (Q5).
+
+**Network state across the restart** follows SL-6: the machine state is lost (every connection closes, as an in-place
+refit closed them too), the media follow, the new machine starts from its configuration (INI + the instance's create
+override + the new `[SLOTS]`), then the request's other keys are applied. Network settings changed at run time earlier
+and not repeated in the request are not carried (owner question in [TODO.md](TODO.md)).
+
+**Deviations, with the reason:**
+
+1. A ZX-Poly machine's network cards cannot change at run time any more: `SlotChange` refuses ZX-Poly (its modules
+   share one configuration). Settings without a card change still apply there.
+2. The runtime feature `network` (on / off) still unplugs and plugs the fitted cards in place: it is a power switch of
+   the network devices, not a card change; the slot report keeps naming the cards (owner question in [TODO.md](TODO.md)).
+3. Tests that used the in-place change to fit a card (`ComPort_Test`, `Atm2KbcSerial_Test`, `NetworkManager_Test`) go
+   through the verb now (`core/tests/_helpers/networksettings.h`); the ZX-WiFi clash tests on the ZX-Evo and TS-Conf
+   expect the plan's refusal instead of a "not fitted" note.
+
+**Tests:** `SlotControl_Test.NetworkCardChangeIsASlotChange` (the restart with both cards, the other keys on the new
+machine, the slot report = the plan = the live devices, the TTD configuration fingerprint's `slots.*` fields equal those
+of a machine created with that set; a remove alone; the swap in one restart with the removed card in the plan),
+`NetworkSettingsWithoutCardChangeStayInPlace` (accepted in place, dry run, 400 before any plan, the 48K edge fit needs
+the flag, recording), `PlanChangesChainsTheRequests`; `CliSlots_Test.NetworkSetIsTheNetworkVerb`;
+`McpTools_Test.EmulatorManage_NetworkConfigure_PostsTheSettings`; `NetworkManager_Test.SettingsChangeAtRuntime`
+(rewritten: `RequestChange` refuses the card, the verb restarts with it, in-place settings), `ComPort_Test.*` and
+`Atm2KbcSerial_Test.ZxWifiFitsBeside` through the verb; `NetworkPanelModel_Test.TheZxBusCardsGoThroughTheSlots`
+(`hud-core-tests`), `SlotsWindow_Test.NetworkCardsAreASlotChange` (`unreal-qt-tests`). MinGW `-fsyntax-only -Werror`
+clean on every changed core file. No per-instruction or per-port path changed, no `CONFIG` / `EmulatorContext` field.
+
+**Planner (side note of SL-7, closed):** a plan's lost functions (D10) list only what nothing offers once the plan is
+applied - not the new card's, not a card that stays, not a built-in that is active afterwards. Removing a MultiSound that
+took the AY role over un-shadows the board AY, so `ay-socket` is no longer listed; on the ZX-Evo the card had the YM2149
+taken out of its socket (Q7) and the socket stays empty, so `ay-socket` is still lost there
+(`SlotPlanner_Test.RemovalListsOnlyFunctionsThatDisappear`).
+
+**Python live check (2026-10-05):** a separate build directory with `ENABLE_PYTHON_AUTOMATION=ON` (static Python 3.13.1
+built from source) built `unreal-qt` with 0 compiler warnings; the bindings needed no change. Against a running unreal-qt
+of its own (own ports, deleted afterwards) a script through `POST /api/v1/python/file` passed 25 of 25 checks:
+`slots_state`, `slots_catalog`, `slots_matrix`, `slots_plug` (dry run, applied with the restart and the selection
+following it), `slots_set`, `slots_gs` (refused without a GS card), `slots_remove` (no `ay-socket` among the lost
+functions), `multisound_state`, `midi_state`, `midi_panic`, `network_state`, `network_configure` (dry run, the card
+change with the restart and the other keys on the new machine, the slot report naming both cards, in place without a
+card, `ValueError` for a bad card, both cards removed). The WebAPI `POST /network/config`, the CLI `network set` and Lua
+`network_configure` were checked live on the same instance. The build directory was deleted (4 GB). A script run
+through `/python/file` gets separate globals and locals: functions defined at its top level do not see its imports, so
+the script keeps everything in one `main()`.

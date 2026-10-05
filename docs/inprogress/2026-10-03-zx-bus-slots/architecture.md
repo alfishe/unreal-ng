@@ -382,6 +382,9 @@ a new emulator id, as a model switch does. `SlotChangeResult` carries the status
 1:1. A plan that would leave the new card disabled for an accidental port clash is refused as a change (Q8 would refuse
 the configuration at the restart). The General Sound personality switch is the request
 `SlotManager::GeneralSoundRequest` builds (a plug of the other personality into the GS slot, replacing that card).
+The network settings' card change (Q11, [tdd.md](tdd.md) §16) is the requests `SlotManager::NetworkRequests` builds
+(a remove per card that goes, a plug per card that comes), planned one after the other into one change
+(`SlotManager::PlanChanges`, `SlotChangeRequest::changes`) and applied by one restart.
 
 **UI flow:** the Qt slot window calls `Plan` with `replaceIfIncompatible = true`; a plan with `fit = Unrealistic`
 first shows the "not possible on real hardware" explanation and a confirm button; applying shows a warning toast
@@ -505,7 +508,10 @@ As built (SL-7, [tdd.md](tdd.md) §15): `SlotControl::Execute(SlotControlRequest
 matrix, plug, remove, set, gs; WebAPI `POST /slots/{slot}/{plug|remove|options}` and `PUT .../options` (body as above,
 `{slot}` = `auto` lets the planner choose); MCP `emulator_manage` also `slots_matrix`; Lua `slots_gs`; Python module
 functions `unreal.slots_*(..., emulator_id)`; the GS personality on every surface is the `gs` verb (Q10); Qt
-Machine > Slots with Undo through `SlotChangeRequest::slotSet`.
+Machine > Slots with Undo through `SlotChangeRequest::slotSet`. The network settings of every surface (CLI `network
+set`, WebAPI `POST /network/config`, MCP `network_configure`, Lua / Python `network_configure`, the Qt Network window)
+are the verb `network` (Q11, [tdd.md](tdd.md) §16): a ZX-bus card change is a slot change applied by a restart, the
+other keys go to the restarted machine; `NetworkManager::RequestChange` refuses a ZX-bus card change.
 
 The create-time options (`"sprinter": {"isa_slot1": ...}`, `[ISA] SlotN`) stay for the Sprinter and gain the general
 `"slots": {...}` form on create.

@@ -144,9 +144,19 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   on every reply; the GS personality switch on every surface is a slot replace applied by a restart (Q10); Qt Machine >
   Slots with plan preview, confirmation, removed cards named with Undo; recipe [.recipe/machines/slots.md](../../../.recipe/machines/slots.md),
   user doc [docs/features/slots.md](../../features/slots.md); recipes and docs naming the legacy keys moved to `[SLOTS]`
-  - [ ] Q11 decided 2026-10-05 (A): the network card change (`network set card=`, the Network window's card boxes)
-    becomes a slot change applied by a restart; today it still swaps in place
-  - [ ] Python bindings not verified live (the build has `ENABLE_PYTHON_AUTOMATION=OFF`; `-fsyntax-only` clean)
-  - [ ] side note (not SL-7): the plan of a MultiSound removal lists `ay-socket` among the lost functions although the
-    board AY comes back un-shadowed
+  - [x] Q11 decided 2026-10-05 (A): the network card change (`network set card=`, the Network window's card boxes)
+    becomes a slot change applied by a restart - done 2026-10-05 (working tree of `zx-bus-slots`, not committed;
+    [tdd.md](tdd.md) §16): SlotControl verb `network` on CLI, WebAPI + OpenAPI, MCP `network_configure`, Lua, Python,
+    Qt (`SlotChangeController::ApplyNetworkCards`); `NetworkManager::RequestChange` refuses a ZX-bus card change
+  - [x] Python bindings verified live 2026-10-05 (separate build with `ENABLE_PYTHON_AUTOMATION=ON`, 0 warnings, 25 of
+    25 checks; [tdd.md](tdd.md) §16)
+  - [x] side note (not SL-7): the plan of a MultiSound removal listed `ay-socket` among the lost functions although the
+    board AY comes back un-shadowed - fixed 2026-10-05 in the planner (D10 lists only what nothing offers afterwards)
+  - [ ] owner question: a restart (every slot change, also the network card change) starts the machine from its
+    configuration, so network settings changed at run time and not repeated in the request are lost (hosts, com_port,
+    ...). Carry the running machine's `[NETWORK]` settings across every slot restart? Recommendation: yes, in
+    `SlotChange::Run` for every restart (the settings are configuration, not machine state)
+  - [ ] owner question: the runtime feature `network` (on / off) still unplugs and plugs the fitted cards in place,
+    while the slot report keeps naming them. Keep it as a power switch (the report shows the feature state), or make it a
+    slot change too? Recommendation: keep it a power switch and show "feature network off" in the slot report's state
 - [ ] SL-8 Sprinter ISA slots in the report; ZX-bus adapter as a bus host (ISA I5)
