@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-03 |
 | **For** | the ZX-bus slot design (PLAN row #82); first consumer: [ZX-MultiSound](../2026-10-03-zx-multisound/) |
-| **Order** | most important first (Q8 added 2026-10-05; Q9, Q10 open, from SL-6) |
+| **Order** | most important first (Q8 added 2026-10-05; Q9, Q10 from SL-6, decided 2026-10-05) |
 
 ## Q1. What happens when a card is incompatible with cards already plugged in?
 
@@ -137,7 +137,9 @@ SounDrive) then started without the MultiSound, and nothing on screen said why.
 builds). A user who wants it writes the line into a config that has no conflicting card, for example without
 `ay-socket = tsfm` and without a NeoGS / SounDrive card.
 
-## Q9. What does a model switch do with the new machine's own configured cards? (open, SL-6)
+## Q9. What does a model switch do with the new machine's own configured cards?
+
+**Owner decision (2026-10-05): A, merge** (as built in SL-6).
 
 A model switch carries the old machine's cards (Q6, R-OP-9). The new machine's config also names cards: the shipped
 Pentagon fits a TurboSound FM, a NeoGS, a MoonSound and a SounDrive; the shipped 48K only a TurboSound FM.
@@ -154,7 +156,11 @@ Pentagon fits a TurboSound FM, a NeoGS, a MoonSound and a SounDrive; the shipped
 **Recommendation: A.** It keeps a model switch of an untouched machine as it was (the shipped config of the target),
 and every card the user plugged in follows it. If removals should follow too, C on top of A later.
 
-## Q10. Does the running machine's General Sound personality switch stay in place? (open, SL-6)
+## Q10. Does the running machine's General Sound personality switch stay in place?
+
+**Decision (2026-10-05), following Q6 / R-OP-8:** the explicit personality switch on every surface becomes a slot
+replace applied by a restart (SL-7); the in-place frame-boundary switch stays only for the `gs_lightweight` feature,
+an emulation shortcut that changes no hardware.
 
 R-OP-8 makes the personality switch a slot replace applied by a restart. SL-6 built that (`GeneralSoundRequest` +
 `SlotChange::Run`). The surfaces (WebAPI `switch_personality`, CLI `gs`, MCP, Lua, Python, the Qt audio settings) and

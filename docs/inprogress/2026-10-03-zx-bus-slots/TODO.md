@@ -15,7 +15,7 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [reference-data.md](reference-data.md): the matrix as a reference data collection in the code (`core/src/emulator/slots/refdata/`)
 - [research.md](research.md) (+ machines, cards): SL-0 findings and code inventory
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
-- [open-questions.md](open-questions.md): owner decisions Q1-Q8, open Q9-Q10 (SL-6)
+- [open-questions.md](open-questions.md): owner decisions Q1-Q10
 
 ## Pause (owner decision 2026-10-04) - lifted
 
@@ -130,10 +130,10 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   running machine's frame-boundary switch planned and followed (plan + TTD fingerprint). Tests `SlotChange_Test.*` (8),
   `SlotManager_Test.Carry*` (2), `ModelSwitch_Test.CarriesTheSlotSet`,
   `TtdSlots_Test.RuntimePersonalitySwitchMovesThePlanAndTheFingerprint`; full `core-tests` green
-  - [ ] owner question Q9 ([open-questions.md](open-questions.md)): a model switch merges the carried cards with the new
-    machine's own configured cards (built: A); removals are not carried
-  - [ ] owner question Q10: the surfaces' and the `gs_lightweight` feature's in-place personality switch - restart (R-OP-8
-    as written) or keep it for the personality only
+  - [x] Q9 decided 2026-10-05 ([open-questions.md](open-questions.md)): a model switch merges the carried cards with the
+    new machine's own configured cards (as built); removals are not carried
+  - [ ] Q10 decided 2026-10-05: the explicit personality switch on every surface moves to the restart in SL-7; the
+    in-place switch stays only for the `gs_lightweight` feature
   - [ ] side note (not slots): `EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind` segfaults alone
     within 40 repeats (`BreakpointManager::GetBreakpointById` on the emulation thread while the test stops the machine);
     it cost one `core-tests` shard once during SL-6
