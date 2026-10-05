@@ -69,6 +69,7 @@
 #include "ttdexternalevents.h"
 #include "ttdfileinfo.h"
 #include "ttdbookmarks.h"
+#include "ttdsessionfacts.h"
 #include "ttdinputjournal.h"
 #include "ttdv1events.h"
 #include "engine/ttdrestoreresult.h"
@@ -326,36 +327,20 @@ public:
     // expected to have paused the emulator so the timeline is stable for
     // the duration of the serialize call.
 
-    /// @brief Serialize the current timeline + page store to a .ttd stream.
-    ///
-    /// Universal: callable from core tests, the CLI, or a WebAPI handler.
-    /// Read-only — does not invalidate or thin the live recording.
-    ///
-    /// @param out  Output stream. Written sequentially; no seeks.
-    /// @param err  Filled with a human-readable message on failure.
-    /// @return true on success, false on I/O error.
-    ///
-    /// Pre: caller holds the emulator lock (state is stable for the duration).
-    ///      The timeline may be empty (produces a valid zero-checkpoint dump).
-    bool SerializeSession(std::ostream& out, std::string& err) const;
+    /// @brief Write the session to @p out in the engine's session file format
+    /// (Phase 5, C4b): the engine's data, and as holder streams the facts a
+    /// loader checks (model, ROM set, recorded devices), the coverage index and
+    /// the bookmarks. While recording, the engine first takes the journals of
+    /// the current frame. The caller has paused the emulator.
+    /// @return false with @p err set when there is no session or a write fails
+    bool SerializeSession(std::ostream& out, std::string& err);
 
-    /// @brief Restore a timeline + page store from a .ttd stream.
-    ///
-    /// Replaces the current session entirely. Used by the round-trip test
-    /// and by future replay/restore tools. Clears any existing timeline,
-    /// resets the page store, then materializes the file's contents.
-    ///
-    /// @param in   Input stream. Read sequentially; no seeks.
-    /// @param err  Filled with a human-readable message on failure.
-    /// @return true on success, false on I/O or format error.
-    ///
-    /// Pre: caller has paused the emulator. The session state is set to
-    ///      Idle after a successful load (the file does not carry live
-    ///      recording state; callers that want Detached can call
-    ///      SeekTo to position the emulator at any checkpoint).
-    ///
-    /// Refuses unknown future schema versions with a clear error message
-    /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
+    /// @brief Replace the session by the one in @p in: an engine session file,
+    /// or a v1 .ttd file (read by v1's manager and converted on the way in,
+    /// until v1 files are retired). Refused, leaving the current session as it
+    /// was, when the file is unreadable, recorded on another model or ROM set,
+    /// or with devices this machine lacks. The session is Idle afterwards;
+    /// SeekTo browses it, ResumeRecordingFrom continues it
     bool DeserializeSession(std::istream& in, std::string& err);
 
 private:
@@ -364,16 +349,14 @@ private:
     /// points into it
     std::unique_ptr<TimeTravelEngine> _engine;
 
-    /// The port journals of a file read by SearchPortEventsInFile
-    struct FilePortJournals
-    {
-        TTDPortJournal reads{TTDPortJournal::Direction::Read};
-        TTDPortJournal writes{TTDPortJournal::Direction::Write};
-    };
-    /// DeserializeSession's body. With `journalsOnly` the file is parsed and
-    /// checked the same way but nothing is committed: its port journals are
-    /// handed out, and the machine-compatibility checks are skipped
-    bool DeserializeSessionImpl(std::istream& in, std::string& err, FilePortJournals* journalsOnly);
+    /// Load @p source into a fresh engine, checked against this machine and
+    /// bound to it; nothing of the current session changes
+    std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
+                                                        std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
+                                                        std::string& err);
+    /// Make @p loaded the session: the side table, v1's journals and indexes from it
+    void CommitLoadedSession(std::unique_ptr<TimeTravelEngine> loaded, const TTDSessionFacts& facts,
+                             const std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks);
 
 public:
 

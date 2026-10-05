@@ -431,8 +431,9 @@ public:
     /// continue capturing from @p index as if it were the last capture. @p cut
     /// lies in @p index's frame. Live memory is unknown afterwards (the next
     /// RestoreToMemory writes every piece). The write journal is the holder's
-    /// to rebuild (Writes()). Branches that keep the old future come with
-    /// Phase 5, Step 2
+    /// to rebuild (Writes()). A session loaded from a file continues the same
+    /// way (it is no longer read-only). Branches that keep the old future come
+    /// with Phase 5, Step 2
     bool TruncateAfter(size_t index, const TTDPosition& cut, std::string& error);
 
     /// Write region @p region as it was at checkpoint @p index into @p out

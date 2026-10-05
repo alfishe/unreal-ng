@@ -876,9 +876,9 @@ bool TimeTravelEngine::DropOldestHeldSegment()
 
 bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::string& error)
 {
-    if (!_open || _readOnly)
+    if (!_open)
     {
-        error = _open ? "a session loaded from a file is not continued" : "no session";
+        error = "no session";
         return false;
     }
     if (!HasCheckpoint(index))
@@ -976,6 +976,8 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
         for (TimeLine& line : lines)
             line.valid = false;
     ForgetMemory();
+    // A loaded session continues from here too: the capture state is rebuilt
+    _readOnly = false;
     return true;
 }
 

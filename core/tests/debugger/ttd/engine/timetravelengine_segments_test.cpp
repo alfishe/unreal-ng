@@ -185,3 +185,48 @@ TEST(TimeTravelEngineSegments_Test, DropOldestHeldSegment)
     EXPECT_FALSE(all.engine.DropOldestHeldSegment()) << "the present's segment stays";
     EXPECT_EQ(all.engine.FirstCheckpoint(), 20u);
 }
+
+/// A saved session comes back with its holder's streams, and continues from
+/// a checkpoint like the live one (C4b): saved after 40 frames, loaded, cut
+/// at frame 25, 20 new frames - every checkpoint equals a session that
+/// recorded frames 0-25 and the same new ones live
+TEST(TimeTravelEngineSegments_Test, ALoadedSessionContinuesWithItsHolderStreams)
+{
+    Session live(Growable(10));
+    Session ref(Growable(10));
+    for (int i = 0; i < 40; ++i)
+        live.Frame();
+    for (int i = 0; i < 26; ++i)
+        ref.Frame();
+    TTDMemorySink sink;
+    TTDSessionSaveParams params;
+    params.checkpointsPerPart = 7;
+    params.holderStreams = {{0x0201, "coverage", {1, 2, 3}}, {0x0202, "bookmarks", {}}, {0x0203, "facts", {9}}};
+    std::string error;
+    ASSERT_TRUE(TTDSessionFile::Save(live.engine, sink, error, params)) << error;
+
+    Session loaded(Growable(10));
+    TTDMemorySource source(sink.bytes);
+    TTDSessionLoadReport report;
+    ASSERT_TRUE(TTDSessionFile::Load(loaded.engine, source, error, &report)) << error;
+    EXPECT_TRUE(loaded.engine.IsReadOnly());
+    ASSERT_EQ(report.holderStreams.size(), 2u) << "an empty one is not written";
+    EXPECT_EQ(report.holderStreams[0x0201], (std::vector<uint8_t>{1, 2, 3}));
+    EXPECT_EQ(report.holderStreams[0x0203], (std::vector<uint8_t>{9}));
+    params.holderStreams = {{0x0100, "frames", {1}}};
+    TTDMemorySink refused;
+    EXPECT_FALSE(TTDSessionFile::Save(live.engine, refused, error, params)) << "outside the holder range";
+
+    ASSERT_TRUE(loaded.engine.TruncateAfter(25, {0, 25, 0}, error)) << error;
+    EXPECT_FALSE(loaded.engine.IsReadOnly()) << "it continues";
+    loaded.memory = ref.memory;
+    loaded.frame = ref.frame;
+    for (int i = 0; i < 20; ++i)
+    {
+        loaded.Frame();
+        ref.Frame();
+    }
+    ASSERT_EQ(loaded.engine.CheckpointCount(), ref.engine.CheckpointCount());
+    for (size_t i = 0; i < ref.engine.CheckpointCount(); ++i)
+        ExpectSameCheckpoint(loaded.engine, i, ref.engine, i);
+}

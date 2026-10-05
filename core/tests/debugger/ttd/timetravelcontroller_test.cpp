@@ -12,17 +12,23 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -507,4 +513,118 @@ TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
     EXPECT_EQ(b.keyFrameCount, engine.Segments().size()) << "a key frame starts each segment";
     EXPECT_EQ(b.keyFrameCount + b.deltaFrameCount, b.checkpointCount);
     EXPECT_GE(_controller->GetHeapBreakdown().Total(), engine.HeapBreakdown().Total()) << "the engine's memory is counted";
+}
+
+/// A saved session loads back (C4b): the engine's file with the controller's
+/// facts, coverage and bookmarks. Seeks into the loaded session land where
+/// v1's in-memory session lands, a v1 file is refused with the reason, and
+/// the loaded session continues: resumed from frame 12, both record on and
+/// seek alike
+TEST_F(TimeTravelController_Test, ASavedSessionLoadsAndContinuesAsV1)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordBoth(/*journal=*/true));
+    std::string err;
+    ASSERT_TRUE(_controller->AddBookmark(_v1->GetCheckpoint(7)->time, "seven", &err)) << err;
+    const size_t coveredFrames = _controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed);
+    ASSERT_GT(coveredFrames, 0u);
+    std::stringstream file;
+    ASSERT_TRUE(_controller->SerializeSession(file, err)) << err;
+
+    std::stringstream v1File;
+    ASSERT_TRUE(_v1->SerializeSession(v1File, err)) << err;
+    EXPECT_FALSE(_controller->DeserializeSession(v1File, err));
+    EXPECT_NE(err.find("v1 .ttd file"), std::string::npos) << err;
+
+    _controller->InvalidateSession("test");
+    ASSERT_EQ(_controller->GetCheckpointCount(), 0u);
+    ASSERT_TRUE(_controller->DeserializeSession(file, err)) << err;
+    EXPECT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
+    EXPECT_TRUE(_controller->GetSessionInfo().loadedFromFile);
+    EXPECT_EQ(_controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed), coveredFrames);
+    ASSERT_EQ(_controller->GetBookmarks().size(), 1u);
+    EXPECT_EQ(_controller->GetBookmarks()[0].label, "seven");
+    EXPECT_EQ(_controller->GetInputJournal().Size(), _v1->GetInputJournal().Size()) << "the key events, as v1 counts them";
+
+    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
+    for (size_t i : {size_t(3), size_t(14), _v1->GetCheckpointCount() - 2})
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = 0xC010;
+    q.access = ttd::TTDAccessType::Write;
+    const auto a = _v1->FindLastAccess(q);
+    const auto b = _controller->FindLastAccess(q);
+    ASSERT_TRUE(a && b);
+    EXPECT_EQ(a->time, b->time) << "the write journal came back";
+
+    // Continue the loaded session from frame 12
+    const ttd::TTDTimePoint from{_v1->GetCheckpoint(12)->time.frame, span / 3};
+    ttd::TTDSeekResult r;
+    ASSERT_TRUE(_v1->SeekTo(from, &r));
+    ASSERT_TRUE(_controller->SeekTo(from, &r));
+    ASSERT_TRUE(_v1->ResumeRecordingFrom(from));
+    ASSERT_TRUE(_controller->ResumeRecordingFrom(from)) << "a loaded session continues";
+    for (int f = 0; f < 6; ++f)
+    {
+        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    }
+    _v1->StopRecording();
+    _controller->StopRecording();
+    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
+    for (size_t i : {size_t(5), size_t(13), _v1->GetCheckpointCount() - 2})
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
+}
+
+/// A session file on disk (C4b): file-info describes the recorded machine as
+/// v1's file does without loading it, and a port search of the file finds
+/// what the session itself finds
+TEST_F(TimeTravelController_Test, FileInfoAndPortSearchReadTheEngineFile)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordBoth());
+    std::string err;
+    ASSERT_TRUE(_controller->AddBookmark(_v1->GetCheckpoint(4)->time, "four", &err)) << err;
+    const std::string ours = TestPathHelper::GetUniqueTestScratchPath("controller-session.ttd");
+    const std::string theirs = TestPathHelper::GetUniqueTestScratchPath("v1-session.ttd");
+    {
+        std::ofstream out(FileHelper::ToFsPath(ours), std::ios::binary);
+        ASSERT_TRUE(_controller->SerializeSession(out, err)) << err;
+        std::ofstream v1Out(FileHelper::ToFsPath(theirs), std::ios::binary);
+        ASSERT_TRUE(_v1->SerializeSession(v1Out, err)) << err;
+    }
+    ttd::TTDFileInfo a, b;
+    ASSERT_TRUE(ttd::ReadTTDFileInfo(theirs, a, err)) << err;
+    ASSERT_TRUE(ttd::ReadTTDFileInfo(ours, b, err)) << err;
+    EXPECT_EQ(b.schemaVersion, 2u);
+    EXPECT_EQ(a.machine.modelId, b.machine.modelId);
+    EXPECT_EQ(a.machine.model, b.machine.model);
+    EXPECT_EQ(a.machine.peripheralMask, b.machine.peripheralMask);
+    EXPECT_EQ(a.machine.peripherals, b.machine.peripherals);
+    EXPECT_EQ(a.machine.romSignature, b.machine.romSignature);
+    EXPECT_EQ(a.machine.generalSound, b.machine.generalSound);
+    EXPECT_EQ(a.startFrame, b.startFrame);
+    EXPECT_EQ(a.endFrame, b.endFrame);
+    EXPECT_EQ(a.checkpointCount, b.checkpointCount);
+    EXPECT_EQ(a.hasPortJournals, b.hasPortJournals);
+    EXPECT_TRUE(b.hasCoverageIndex);
+    EXPECT_TRUE(b.hasBookmarks);
+    EXPECT_GT(b.fileBytes, 0u);
+
+    // Every IN of the keyboard row, in the file and in the session
+    ttd::TTDPortQuery q;
+    q.direction = ttd::TTDPortJournal::Direction::Read;
+    q.portMask = 0x00FF;
+    q.portValue = 0x00FE;
+    const ttd::TTDPortSearchResult live = _controller->SearchPortEvents(q);
+    const ttd::TTDPortSearchResult file = _controller->SearchPortEventsInFile(ours, q);
+    ASSERT_TRUE(live.ok) << live.error;
+    ASSERT_TRUE(file.ok) << file.error;
+    EXPECT_GT(live.hits.size(), 0u);
+    EXPECT_EQ(live.hits.size(), file.hits.size());
+    EXPECT_EQ(live.scanned, file.scanned);
+    const ttd::TTDPortSearchResult refused = _controller->SearchPortEventsInFile(theirs, q);
+    EXPECT_FALSE(refused.ok);
+    EXPECT_NE(refused.error.find("v1 .ttd file"), std::string::npos) << refused.error;
+    std::error_code ec;
+    std::filesystem::remove(FileHelper::ToFsPath(ours), ec);
+    std::filesystem::remove(FileHelper::ToFsPath(theirs), ec);
 }
