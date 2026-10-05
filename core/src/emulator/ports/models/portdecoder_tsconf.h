@@ -235,6 +235,8 @@ private:
     void ApplyTsBiosSdBootNvram();
     void UpdateSdStatus();
     /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
+    /// The 4-fclk clock stop of a DOS entry or a vdos exit (TIM-7)
+    void DosStall();
     void ApplyIdeStall();
     void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();

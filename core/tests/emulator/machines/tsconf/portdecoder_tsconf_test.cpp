@@ -483,3 +483,40 @@ TEST_F(PortDecoder_TSConf_Test, NmiButtonDoesNothing)
     EXPECT_TRUE(_decoder->RequestBoardNmi()) << "the board takes the press";
     EXPECT_FALSE(_z80->IsNmiPending()) << "and starts no NMI";
 }
+
+/// TIM-7: DOS entry and vdos exit stop the CPU clock for 4 fclk ([V] zclock.v:75,84-85: dos_stall = dos_on ||
+/// vdos_off loads stall_count 4, "4 tacts 28MHz"): half a T at 3.5 MHz, 2 T at 14 MHz. No wait was there (TS-Conf
+/// audit, interrupts row 37; the ATM3 decoder has its own)
+TEST_F(PortDecoder_TSConf_Test, TIM7_DosEntryAndVdosExitStall)
+{
+    TsConfState& ts = _decoder->GetState();
+    for (uint8_t clock : {uint8_t(0), uint8_t(2)})  // 3.5 and 14 MHz
+    {
+        SCOPED_TRACE(int(clock));
+        Reg(TsConfReg::SysConfig, clock);
+        const uint32_t fclkTicks = 256u * _context->emulatorState.current_z80_frequency_multiplier / 8u;
+
+        ts.dos = 0;
+        Reg(TsConfReg::MemConfig, 0x01);  // mapped, ROM128 = 1
+        _z80->tt = 1000u << 8;
+        _decoder->BeforeMachineM1(0x3D2F);
+        ASSERT_EQ(ts.dos, 1);
+        EXPECT_EQ(_z80->tt, (1000u << 8) + 4 * fclkTicks) << "DOS entry";
+        _z80->tt = 2000u << 8;
+        _decoder->BeforeMachineM1(0x3D30);
+        EXPECT_EQ(_z80->tt, 2000u << 8) << "already in DOS: no stall";
+
+        // vdos: a virtual drive's access enters it, a VG93 register access leaves it
+        Reg(TsConfReg::FddVirt, 0x02);
+        Out(0x00FF, 0x01);
+        In(0x001F);
+        _decoder->BeforeMachineM1(0x3D40);
+        ASSERT_EQ(ts.vdos, 1);
+        _z80->tt = 3000u << 8;
+        In(0x003F);
+        ASSERT_EQ(ts.vdos, 0);
+        EXPECT_EQ(_z80->tt, (3000u << 8) + 4 * fclkTicks) << "vdos exit";
+        Reg(TsConfReg::FddVirt, 0x00);
+        ts.dos = 0;
+    }
+}

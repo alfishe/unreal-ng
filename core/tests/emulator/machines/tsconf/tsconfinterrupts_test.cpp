@@ -220,10 +220,10 @@ TEST_F(TsConfVdosInt_Test, INT11b_VdosFreezesARunningPulse)
     ASSERT_TRUE(Ints().IsIntAsserted(10));
     EnterVdos(10);  // 9 clocks of the pulse are over
     EXPECT_FALSE(Ints().IsIntAsserted(400));
-    LeaveVdos(500);
-    EXPECT_TRUE(Ints().IsIntAsserted(500)) << "the pulse was frozen, not used up";
-    EXPECT_TRUE(Ints().IsIntAsserted(522)) << "23 clocks were left";
-    EXPECT_FALSE(Ints().IsIntAsserted(523));
+    LeaveVdos(500);  // + the vdos-exit stall (4 fclk, TIM-7), which freezes the pulse too: one more clock
+    EXPECT_TRUE(Ints().IsIntAsserted(501)) << "the pulse was frozen, not used up";
+    EXPECT_TRUE(Ints().IsIntAsserted(523)) << "23 clocks were left";
+    EXPECT_FALSE(Ints().IsIntAsserted(524));
 }
 
 TEST_F(TsConfVdosInt_Test, INT11c_APulseThatStartsInsideVdosBeginsWhenItEnds)
@@ -233,10 +233,10 @@ TEST_F(TsConfVdosInt_Test, INT11c_APulseThatStartsInsideVdosBeginsWhenItEnds)
     ArmVirtualDrive();
     EnterVdos(100);
     EXPECT_FALSE(Ints().IsIntAsserted(300));
-    LeaveVdos(1000);
-    EXPECT_TRUE(Ints().IsIntAsserted(1000));
-    EXPECT_TRUE(Ints().IsIntAsserted(1031));
-    EXPECT_FALSE(Ints().IsIntAsserted(1032)) << "32 clocks after vdos ended";
+    LeaveVdos(1000);  // + the vdos-exit stall (one clock here)
+    EXPECT_TRUE(Ints().IsIntAsserted(1001));
+    EXPECT_TRUE(Ints().IsIntAsserted(1032));
+    EXPECT_FALSE(Ints().IsIntAsserted(1033)) << "32 clocks after vdos and its stall ended";
 }
 
 TEST_F(TsConfVdosInt_Test, INT11d_VdosAcrossTheFrameEnd)
@@ -249,10 +249,10 @@ TEST_F(TsConfVdosInt_Test, INT11d_VdosAcrossTheFrameEnd)
     _z80->tt = 0;  // the rebase of the frame end
     Ints().OnMachineFrameRollover(TsConfInterrupts::kFrameTacts);
     EXPECT_FALSE(Ints().IsIntAsserted(20));
-    LeaveVdos(50);
-    EXPECT_TRUE(Ints().IsIntAsserted(50)) << "the event of the old frame's last tact, deferred";
-    EXPECT_TRUE(Ints().IsIntAsserted(81));
-    EXPECT_FALSE(Ints().IsIntAsserted(82));
+    LeaveVdos(50);  // + the vdos-exit stall (one clock here)
+    EXPECT_TRUE(Ints().IsIntAsserted(51)) << "the event of the old frame's last tact, deferred";
+    EXPECT_TRUE(Ints().IsIntAsserted(82));
+    EXPECT_FALSE(Ints().IsIntAsserted(83));
 }
 
 TEST_F(TsConfVdosInt_Test, INT11e_AWaitInsideVdosDoesNotShiftTwice)
@@ -260,9 +260,9 @@ TEST_F(TsConfVdosInt_Test, INT11e_AWaitInsideVdosDoesNotShiftTwice)
     ArmVirtualDrive();
     EnterVdos(10);
     Ints().OnWait(100u << 8, 200u << 8);  // the counter already stands still
-    LeaveVdos(500);
-    EXPECT_TRUE(Ints().IsIntAsserted(522));
-    EXPECT_FALSE(Ints().IsIntAsserted(523));
+    LeaveVdos(500);  // + the vdos-exit stall (one clock here)
+    EXPECT_TRUE(Ints().IsIntAsserted(523));
+    EXPECT_FALSE(Ints().IsIntAsserted(524));
 }
 
 /// TTD-2: the latches live in the TTD blob

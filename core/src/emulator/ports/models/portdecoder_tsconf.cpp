@@ -844,6 +844,7 @@ uint8_t PortDecoder_TSConf::FdcAccess(uint8_t port, bool isWrite, uint8_t value)
         _ts.vdos = 0;
         if (z80)
             _interrupts.OnVdosExit(z80->t);
+        DosStall();
         UpdateBanks();
         RefreshM1Hook();
     }
@@ -956,6 +957,7 @@ void PortDecoder_TSConf::BeforeMachineM1(uint16_t address)
             (memConfig & TsConfMemConfig::Rom128))
         {
             _ts.dos = 1;
+            DosStall();
             UpdateBanks();
             RefreshM1Hook();
         }
@@ -1356,9 +1358,23 @@ void PortDecoder_TSConf::ApplyExternalIoStall(uint16_t port, PortArm arm)
 {
     if (!(_ts.regs[TsConfReg::SysConfig] & 0x02)) [[likely]]
         return;
+    // A VG93 register access inside vdos ends it: the same cycle starts the DOS stall, which wins (zclock.v:82-85
+    // loads stall_count 4 for dos_stall), so FdcAccess's 4 fclk are all of it
+    if (arm == PortArm::Fdc && _ts.vdos && (port & 0xFF) != 0xFF)
+        return;
     const bool external = arm == PortArm::Ay || (arm == PortArm::Fdc && (port & 0xFF) != 0xFF);
     if (external && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->AddWaitStates(4);
+}
+
+/// DOS entry (the #3Dxx fetch) and vdos exit stop the CPU clock for 4 fclk ([V] zclock.v:75,84-85: dos_stall =
+/// dos_on || vdos_off, "4 tacts 28MHz"), at every CPU speed: half a T at 3.5 MHz, 2 T at 14 MHz. TIM-7
+void PortDecoder_TSConf::DosStall()
+{
+    if (!_context->pCore || !_context->pCore->GetZ80())
+        return;
+    const uint32_t multiplier = std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u);
+    _context->pCore->GetZ80()->AddWaitTicks(4u * 256u * multiplier / 8u);  // a CPU clock is 256 ticks, 8 / multiplier fclk
 }
 
 void PortDecoder_TSConf::ApplyIdeStall()
