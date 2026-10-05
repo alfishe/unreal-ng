@@ -183,6 +183,31 @@ are the tests per source file (one `*_test.cpp` per source file, class `ClassNam
 | `WriteBack_Test.IllegalHostNameEscapedAndRoundTrips` | `AUX`, a trailing dot |
 | `WriteBack_Test.RebuildAfterWriteBackShowsSameTree` | the guest-visible tree is unchanged by the flatten |
 
+### 3.9 Decision-tree coverage
+
+Every leaf of every decision tree ([architecture.md](architecture.md) §12) has at least one test that
+reaches it. The tests are parameterized per tree: one row per leaf, with the inputs that lead there
+and the expected outcome (result code, report line, written state).
+
+| Tree | Test (parameterized over leaves) |
+|---|---|
+| DT-1 entry admission | `UnionBuilder_Test.AdmissionLeaves` |
+| DT-2 merge | `UnionBuilder_Test.MergeLeaves` |
+| DT-3 names | `FatSynthVolume_Test.NameLeaves`, `IsoSynthVolume_Test.NameLeaves` |
+| DT-4 build strategy | `CompositeMediumFactory_Test.BuildStrategyLeaves` |
+| DT-5 boot structures | `BootPlan_Test.Leaves` |
+| DT-6 target file system | `TargetValidator_Test.FsSelectionLeaves` |
+| DT-7 source × target | `CompositeMediumFactory_Test.SupportMatrixLeaves` |
+| DT-8 attribution | `ChangeAttributor_Test.ClassificationLeaves` |
+| DT-9 save strategy | `MediaManager_Test.SaveStrategyLeaves` (+ the Qt dialog test) |
+| DT-10 S4 routing | `WriteBack_Test.RoutingLeaves` |
+| DT-11 delete policy | `WriteBack_Test.DeletePolicyLeaves` |
+| DT-12 plan gate | `WriteBack_Test.PlanGateLeaves` |
+| DT-13 delta restore | `ComposeDelta_Test.RestoreLeaves` |
+| DT-14 S3 preconditions, recovery | `GraftCommit_Test.PreconditionLeaves`, `.CrashAtEveryStepRecovers` |
+| DT-15 eject / insert over | `MediaManager_Test.CompositeDispositionLeaves` |
+| DT-16 rescan | `MediaManager_Test.CompositeRescanLeaves` |
+
 ## 4. Acceptance tests (real guests)
 
 | ID | Test class / case | Machine, software |

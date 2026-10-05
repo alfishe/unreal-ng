@@ -454,3 +454,111 @@ becomes the H1 spill file. Nothing in this design blocks H1 or depends on it.
 | `BlockFormats` | New writer: fixed VHD (`.vhd`): raw data + a 512-byte `conectix` footer with CHS geometry. |
 | `IBlockDevice` | Optional, phase C9: `ReadSectors(lba, count, dst)` with a default loop, overridden by `RawImage` and the composite for bulk reads. A/B gated (NFR-P7). |
 | Nothing else | Slots, peripherals, TTD tap, model switch, config parsing for other keys. |
+
+## 12. Decision trees
+
+Every policy of this design is a decision tree, drawn next to the rules it implements. This
+section maps when each one runs and adds the two that belong to the medium's life cycle.
+
+### 12.1 Which tree runs when
+
+```mermaid
+flowchart LR
+    subgraph Build["insert / compose / rescan (off the emulation thread)"]
+        direction TB
+        B7["DT-7 layer × target supported?"] --> B1["DT-1 entry admitted?"]
+        B1 --> B2["DT-2 merge policy"]
+        B2 --> B3["DT-3 target names"]
+        B3 --> B4["DT-4 rebuild / graft / ISO / partitions"]
+        B4 --> B6["DT-6 target file system"]
+        B6 --> B5["DT-5 boot structures"]
+        B5 --> B13["DT-13 delta restore"]
+    end
+    subgraph Run["guest running"]
+        direction TB
+        R1["writes → change layer<br/>(no policy on the hot path)"]
+    end
+    subgraph Ask["media changes"]
+        direction TB
+        A8["DT-8 classify entries"]
+    end
+    subgraph Leave["save / eject / insert over / flatten"]
+        direction TB
+        L15["DT-15 disposition"] --> L9["DT-9 save strategy"]
+        L9 --> L14["DT-14 S3 preconditions"]
+        L9 --> L10["DT-10 S4 routing"]
+        L10 --> L11["DT-11 delete policy"]
+        L10 --> L12["DT-12 plan gate, conflicts"]
+        L11 --> L12
+        L9 --> L8["DT-8 (S3, S4)"]
+    end
+    Build --> Run --> Ask
+    Run --> Leave
+    L16["DT-16 rescan"] --> Leave
+    L16 --> Build
+```
+
+| Tree | Policy | Where |
+|---|---|---|
+| DT-1 | entry admission: from, service files, links, include / exclude, manifest, limits | [tdd.md](tdd.md) §3.2 |
+| DT-2 | merge: whiteout, opaque, shadow / keep-lower / error, directory merge | [tdd.md](tdd.md) §3.2 |
+| DT-3 | target names: LFN / 8.3, ISO / Joliet, `onBadName` | [tdd.md](tdd.md) §3.3 |
+| DT-4 | build strategy: partitions, ISO, graft or rebuild, `auto` fallbacks | [tdd.md](tdd.md) §6.3 |
+| DT-5 | boot structures: boot layer, bottom source, relocation (D-6) | [tdd.md](tdd.md) §5 |
+| DT-6 | target file system: slot `fsCompatibility` / `defaultFs`, `auto` | [fs-compatibility.md](fs-compatibility.md) §6 |
+| DT-7 | which source may feed which target | [fs-compatibility.md](fs-compatibility.md) §3 |
+| DT-8 | change attribution: create / modify / delete / rename / attributes | [flatten-strategies.md](flatten-strategies.md) §2 |
+| DT-9 | save strategy: GUI dialog, automation policy, eject rule (D-7, D-8) | [flatten-strategies.md](flatten-strategies.md) §3 |
+| DT-10 | S4 routing per operation | [flatten-strategies.md](flatten-strategies.md) §3 S4 |
+| DT-11 | delete policy `onDelete` (D-4) | [flatten-strategies.md](flatten-strategies.md) §3 S4 |
+| DT-12 | S4 plan gate: inconsistent guest FS, host names, conflicts | [flatten-strategies.md](flatten-strategies.md) §3 S4 |
+| DT-13 | S2 delta on insert | [flatten-strategies.md](flatten-strategies.md) §3 S2 |
+| DT-14 | S3 preconditions and journal recovery | [flatten-strategies.md](flatten-strategies.md) §3 S3 |
+| DT-15 | eject / insert-over disposition of a composite | below |
+| DT-16 | rescan with pending changes | below |
+
+### 12.2 DT-15: a composite leaves its slot (eject, insert over it, model switch that drops it)
+
+```mermaid
+flowchart TD
+    A["eject / insert over / detach"] --> R{"TTD recording?"}
+    R -->|"yes, no endRecording"| RF["refuse: 'recording'"]
+    R -->|"no / endRecording"| D{"change layer dirty?"}
+    D -->|"no"| GO["remove; SourcePool closes every source"]
+    D -->|"yes"| P{"disposition"}
+    P -->|"none"| I{"interactive?"}
+    I -->|"yes"| Q["Qt prompt: save (→ DT-9) / export / discard / cancel"]
+    I -->|"no"| DR["refuse: 'dirty' (retry with a disposition)"]
+    P -->|"save"| S9["DT-9 (on eject: S3 / S4 only with an explicit strategy)"]
+    P -->|"export"| EX["S1 to exportPath"]
+    P -->|"discard"| DS["drop the change layer (a delta file on disk is kept)"]
+    S9 -->|"done"| GO
+    S9 -->|"refused"| DR2["eject refused: medium stays, reason reported"]
+    EX -->|"done"| GO
+    EX -->|"failed"| DR2
+    DS --> GO
+    Q -->|"cancel"| STAY["medium stays"]
+```
+
+A model switch (M5) keeps a composite whose slot exists on the new model, changes included. When
+the slot does not exist there, the switch applies DT-15 with the switch's own disposition.
+
+### 12.3 DT-16: rescan (FR-54)
+
+```mermaid
+flowchart TD
+    A["media rescan slot"] --> B["re-scan folder layers, re-open image layers"]
+    B --> C{"new ContentId equals the current one?"}
+    C -->|"yes"| N["nothing to do · report 'unchanged'"]
+    C -->|"no"| D{"change layer dirty?"}
+    D -->|"no"| R["rebuild; swap at the frame boundary (eject + insert for the guest)"]
+    D -->|"yes"| P{"disposition given?"}
+    P -->|"no"| I{"interactive?"}
+    I -->|"yes"| Q["prompt: save (DT-9) / export / discard / cancel"]
+    I -->|"no"| DR["refuse 'dirty': the old sectors would land on moved files"]
+    P -->|"save / export / discard"| X["apply it (DT-15 branches), then rebuild"]
+    Q -->|"chosen"| X
+```
+
+Changes cannot be carried across a rebuild with a different `ContentId`: every cluster may have
+moved. Only S3 / S4 (which turn changes into source content first) or S1 (a copy) keep them.

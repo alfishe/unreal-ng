@@ -60,6 +60,29 @@ today).
 | CHD CD / CUE+BIN data track (ISO inside) | ⚠ 2 | ⚠ 2 | ⚠ 2 | ✗ | ✓ | ✗ 3 |
 | Audio CD tracks | ✗ | ✗ | ✗ | ✗ | ✗ 4 | ✗ |
 
+**Decision tree DT-7: may this layer feed this target?** Run per layer (and per partition) before
+the union is built.
+
+```mermaid
+flowchart TD
+    A["layer source × target"] --> T{"target"}
+    T -->|"FAT rebuild / graft upper"| F{"source"}
+    F -->|"folder, FAT12/16/32 image or partition, CHD with FAT"| OK1["✓"]
+    F -->|"ISO, CHD CD, CUE/BIN data track"| OK2["✓ read-only files; guest edits copy up in S4 (note 2)"]
+    F -->|"audio CD tracks"| NO1["✗ NotSupported (note 4)"]
+    T -->|"graft base"| G{"source"}
+    G -->|"FAT16 / FAT32 image or partition, CHD with FAT"| OK3["✓ (CHD: no S3 commit)"]
+    G -->|"FAT12 image"| NO2["✗ NotSupported in v1"]
+    G -->|"folder, ISO"| NO3["✗ BadRequest: a graft base needs a FAT layout"]
+    T -->|"ISO 9660 + Joliet"| I{"source"}
+    I -->|"folder, any FAT, ISO, CHD, CUE/BIN data"| OK4["✓"]
+    I -->|"audio CD tracks"| NO1
+    T -->|"MBR partition passthrough"| P{"source"}
+    P -->|"FAT12/16/32 image or partition"| OK5["✓ (type checked by DT-6 rule 4)"]
+    P -->|"ISO"| NO4["✗ NotSupported (note 3)"]
+    P -->|"folder"| NO5["✗ BadRequest: compose it as a partition instead"]
+```
+
 Notes:
 
 1. **FAT32 source → FAT16 target** works when the selected files fit FAT16: the union is at most
@@ -140,6 +163,29 @@ BUGS.md #2), so a composite follows exactly the same per-slot rules as a folder 
 4. Partitions: each composed partition follows rules 1-2. Passthrough partitions are checked
    against `fsCompatibility` too, as inserted images are today.
 5. Optical slot: ISO.
+
+**Decision tree DT-6: the target file system.**
+
+```mermaid
+flowchart TD
+    A["slot + descriptor"] --> O{"slot kind optical?"}
+    O -->|"yes"| ISO["ISO 9660 (+ Joliet)"]
+    O -->|"no"| G{"build ends as graft? (DT-4)"}
+    G -->|"yes"| GB{"base type in the slot's fsCompatibility<br/>(or no list)?"}
+    GB -->|"yes"| BT["the base's type"]
+    GB -->|"no"| GR["refused BadRequest: 'slot reads X'"]
+    G -->|"no"| E{"descriptor fs explicit?"}
+    E -->|"yes"| EA{"in fsCompatibility (or no list)?"}
+    EA -->|"no"| GR
+    EA -->|"yes"| EF{"union + free fits it?"}
+    EF -->|"yes"| USE["that type"]
+    EF -->|"no"| DNF["DoesNotFit naming the entry and the limit"]
+    E -->|"no: auto"| C["candidates = fsCompatibility, else {defaultFs, then the other FAT type}"]
+    C --> L{"next candidate fits the union + free?"}
+    L -->|"yes"| PICK["that type · report it when it is not defaultFs"]
+    L -->|"no, more candidates"| L
+    L -->|"no candidates left"| DNF
+```
 
 **Consequences for the slot descriptors** (work items for phase C2):
 

@@ -44,6 +44,7 @@ target:
   free: 256MiB                  # room for guest writes (rebuild; costs nothing, never stored)
   label: GAMES
   codepage: cp866               # cp866 | cp1251 (FAT short names)
+  onBadName: skip               # skip | replace: a name the target cannot store (DT-3)
   partition: mbr                # mbr | none   (none = "superfloppy")
   iso: {level: 1, joliet: true} # optical only
   fixedTime: 2026-01-01T00:00:00Z  # tests / reproducible builds: every timestamp this value
@@ -241,6 +242,32 @@ struct UnionNode
 
 ### 3.2 Merge algorithm
 
+
+**Decision tree DT-1: is a source entry admitted into its layer?** Applied once per entry while
+the source is enumerated, before any merge.
+
+```mermaid
+flowchart TD
+    A["source entry e (path p relative to the source root)"] --> B{"p under the layer's from?"}
+    B -->|"no"| X1["not part of the layer (silent)"]
+    B -->|"yes"| C{"service file?<br/>(ServiceFileFilter: .DS_Store, Thumbs.db, ...)"}
+    C -->|"yes"| R1["skip · report 'service'"]
+    C -->|"no"| D{"symlink and followLinks off?"}
+    D -->|"yes"| R2["skip · report 'symlink'"]
+    D -->|"no"| E{"matches the layer's exclude<br/>or the folder manifest's exclude?"}
+    E -->|"yes"| R3["skip · report 'excluded by layer / manifest'"]
+    E -->|"no"| F{"directory?"}
+    F -->|"yes"| G["admit; recurse into it"]
+    F -->|"no"| H{"layer has include and the name<br/>matches none of it?"}
+    H -->|"yes"| R4["skip · report 'not included'"]
+    H -->|"no"| I{"size ≥ 4 GiB, or the tree is over<br/>maxEntries / maxDepth?"}
+    I -->|"yes"| R5["skip · report the limit"]
+    I -->|"no"| J["admit (manifest name / type overrides applied)"]
+```
+
+Include patterns filter files only; directories are always walked, and a directory left empty by
+the filters is kept (the guest sees the mount structure).
+
 ```
 UnionBuilder::Merge(layers, rules):
   tree ← empty root
@@ -267,6 +294,29 @@ Cost: O(total source entries) hash operations plus one sort per directory at the
 (O(n log n) total). Memory: the per-directory hash index is built only while that directory
 merges, so the peak is the largest single directory.
 
+**Decision tree DT-2: one entry of layer L meets the union.** This is `MergeDir`'s inner step, the
+merge policy of FR-10…FR-13.
+
+```mermaid
+flowchart TD
+    A["entry s of layer L at target path p"] --> W{"p or an ancestor whiteout-ed by L?"}
+    W -->|"yes"| W1["lower entry removed · report 'whiteout'<br/>(s itself, if any, is then added)"]
+    W -->|"no"| O{"parent directory opaque in L?"}
+    O -->|"yes"| O1["lower children of the parent dropped<br/>before L merges · report 'opaque'"]
+    O -->|"no"| K
+    W1 --> K
+    O1 --> K
+    K["d = union entry with Key(p) under the target's name equivalence (3.3)"] --> E{"d exists?"}
+    E -->|"no"| ADD["add s, owner L"]
+    E -->|"yes"| DD{"d and s both directories?"}
+    DD -->|"yes"| MERGE["merge: d.layerMask += L; recurse into s's children"]
+    DD -->|"no"| CP{"L.conflict"}
+    CP -->|"error"| FAIL["build fails: BadRequest naming p, d's layer and L"]
+    CP -->|"keep-lower"| KEEP["keep d · report 'kept lower'"]
+    CP -->|"shadow (default)"| SH["replace d's whole subtree by s, owner L<br/>report 'shadowed' (file↔dir type changes too)"]
+```
+
+
 ### 3.3 Name equivalence
 
 | Target | `Key(name)` | Notes |
@@ -277,6 +327,28 @@ merges, so the peak is the largest single directory.
 8.3 names are assigned per final directory by the target builder (`FatNameMapper::MapFolder` on
 the merged children), never during the merge. Generated names are unique within the directory,
 whatever layer each entry came from.
+
+**Decision tree DT-3: an entry's name on the target** (FR-21), per final directory after the merge.
+
+```mermaid
+flowchart TD
+    A["merged entry, target long name n"] --> T{"target"}
+    T -->|"FAT"| F1{"n representable in UTF-16 LFN<br/>(no / \\ : * ? quote < > |, length ≤ 255)?"}
+    F1 -->|"no"| F2{"descriptor onBadName"}
+    F2 -->|"skip (default)"| S1["skip · report 'name not storable'"]
+    F2 -->|"replace"| F3["replace bad characters by _ · report 'renamed'"]
+    F1 -->|"yes"| F4
+    F3 --> F4["8.3 name by FatNameMapper in the code page<br/>(the name itself if valid 8.3, else BASE~N.EXT)"]
+    F4 --> F5{"8.3 and long name identical<br/>(case included)?"}
+    F5 -->|"yes"| F6["one short entry"]
+    F5 -->|"no"| F7["short entry + LFN slots"]
+    T -->|"ISO"| I1["Joliet name: n, cut to 64 UCS-2 with a unique tail if longer"]
+    I1 --> I2["ISO name: upper-case d-characters, level 1: 8.3, level 2: 31"]
+    I2 --> I3{"ISO name taken in this directory?"}
+    I3 -->|"yes"| I4["unique tail ~N · report"]
+    I3 -->|"no"| I5["keep"]
+```
+
 
 ### 3.4 Ordering
 
@@ -362,6 +434,27 @@ refactor.
 
 Boot structures (D-6): `BootPlan` collects, in priority order, the descriptor's `boot` section and the bottom FAT image's boot code (MBR bytes 0-445, the volume boot sector's code area, and reserved sectors 1…reserved−1 that are not FSInfo or backup boot). `FatSynthVolume` reserves enough sectors for them and serves them from their `FileData` (a small slab when read from a file, an extent when from the base). Boot code larger than its area fails with `DoesNotFit`. `GraftVolume` keeps the base's own boot sectors, and a `boot` section patches them through the patch map.
 
+**Decision tree DT-5: where each boot structure comes from (D-6).** Run per structure: El Torito
+entry list (optical), MBR code, volume boot code, each reserved boot sector (block).
+
+```mermaid
+flowchart TD
+    A["boot structure x"] --> B{"descriptor boot: names x?"}
+    B -->|"yes"| B1{"its file exists and fits x's area?"}
+    B1 -->|"no"| F1["fail DoesNotFit / UnreadableSource"]
+    B1 -->|"yes"| USE1["x from the boot layer (FileData: union file or host file)"]
+    B -->|"no"| C{"bottom layer has x?<br/>(bootable ISO / FAT image with code)"}
+    C -->|"no"| N{"other layers have x?"}
+    N -->|"yes"| N1["not carried · report 'boot data in layer k ignored:<br/>only the bottom layer or a boot: section provides it'"]
+    N -->|"no"| Z["builder default (zero code / no El Torito)"]
+    C -->|"yes"| D{"compatible with the target?<br/>(El Torito → ISO only; FAT code → FAT only;<br/>catalog checksum valid)"}
+    D -->|"no"| D1["not carried · report why"]
+    D -->|"yes"| E{"builder"}
+    E -->|"GraftVolume"| E1["kept in place (base sectors unchanged)"]
+    E -->|"FatSynthVolume / IsoSynthVolume"| E2["copied by extent, LBAs relocated<br/>(El Torito catalog rebuilt)"]
+```
+
+
 Layout additions over today:
 - `size` (fixed total) as well as `free`.
 - Root directory sized for the merged root (FAT16: rounded up to whole sectors; ≥ 512 entries for
@@ -413,6 +506,33 @@ ReadSector(lba, dst):
 - **S3 commit** writes exactly the patch + graft runs + guest changes.
 - **Cost of a fallback:** if the free space is short or a FAT16 root is full, `auto` rebuilds. The
   report says so, because a rebuild moves every file.
+
+**Decision tree DT-4: which target builder (`build`, FR-30…FR-33).**
+
+```mermaid
+flowchart TD
+    A["descriptor"] --> P{"partitions: listed?"}
+    P -->|"yes"| P1["PartitionedDisk; each composed partition<br/>goes through this tree again (no MBR)"]
+    P -->|"no"| K{"slot kind / target.kind"}
+    K -->|"optical"| ISO["IsoSynthVolume (rebuild)"]
+    K -->|"block"| B{"build"}
+    B -->|"rebuild"| RB["FatSynthVolume"]
+    B -->|"graft"| G0
+    B -->|"auto"| G0{"bottom layer is a FAT image?"}
+    G0 -->|"no"| G0N{"build: graft?"}
+    G0N -->|"yes"| F1["fail BadRequest: graft needs a FAT image base"]
+    G0N -->|"no"| RB
+    G0 -->|"yes"| G1{"its FAT type allowed by the slot<br/>and equal to target.fs (when set)?"}
+    G1 -->|"no"| G1N{"build: graft?"}
+    G1N -->|"yes"| F2["fail BadRequest: base type vs target"]
+    G1N -->|"no"| RB2["FatSynthVolume · report 'rebuild: base type'"]
+    G1 -->|"yes"| G2{"base free clusters ≥ grafted data,<br/>FAT16 root slots enough, size not changed?"}
+    G2 -->|"yes"| GV["GraftVolume"]
+    G2 -->|"no"| G2N{"build: graft?"}
+    G2N -->|"yes"| F3["fail DoesNotFit (what is short, by how much)"]
+    G2N -->|"no"| RB3["FatSynthVolume · report 'rebuild: does not fit the base'<br/>(base boot code carried, D-6)"]
+```
+
 
 ## 7. ISO target: `IsoSynthVolume`
 

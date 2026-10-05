@@ -76,6 +76,10 @@ flatten, we must know **exactly which layer, which file and which blocks** each 
 | D-8 | **Sources are changed only on an explicit request.** S3 (commit) and S4 (write-back) run only from an explicit `flatten`, or a `save` / eject disposition whose request names `strategy: commit` / `write-back`, or the user's choice in the GUI dialog. A `writes.save: commit` / `write-back` in the descriptor alone never fires on eject: that eject saves as S2 delta and the report says why. |
 | D-9 | **Phase order**: the read side first (C1-C5); then attribution (`media changes`, read-only) with S1 and S2 (C6); partitions (C7); S3 and S4 last (C8). |
 
+Every policy (merge, names, build strategy, file system, boot, attribution, save, delete,
+conflicts, delta, commit, eject, rescan) is drawn as a decision tree; the map of all trees is
+[architecture.md](architecture.md) §12.
+
 ## 4. Actors and use cases
 
 | ID | Actor | Use case |
