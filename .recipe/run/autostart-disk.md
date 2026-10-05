@@ -76,11 +76,17 @@ are ever synthesized:
 
 | Disk content | Action |
 |:--|:--|
-| Not TR-DOS format (CP/M, +3 DSK, MGT...) | Mount only |
+| Not TR-DOS format (CP/M, +3 DSK, MGT, blank...): no TR-DOS id `#10` at byte `#E7` of track 0 sector 9, or catalog entries pointing outside a track | Mount only |
 | Has a `boot.B` file | Quick reset + direct entry into TR-DOS, boots it |
 | No `.B` files at all | Mount only |
 | Exactly **one** `.B` file (no `boot`) | Quick reset + direct entry; a one-shot hook rewrites TR-DOS's cold-start `RUN "boot"` into `RUN "<name>"` — disk stays untouched. If the loaded TR-DOS ROM lacks that cold-start hook, a generated one-line `boot.B` (`RUN "<name>"`) is injected into the image instead, so the image **is modified** (and the action degrades to mount only when the disk is full) |
 | Several `.B` files (no `boot`) | Injects the bundled Unreal commander as `boot.B` and boots it — you get a file menu on screen |
+
+The TR-DOS check is the one TR-DOS itself makes: TR-DOS 5.03 / 5.04T test only
+the id byte `#10` at `#E7` of sector 9 when they read a catalog ("Disc Error"
+otherwise); the disk type byte `#E3` is decoded (bit 0: 40 tracks, bit 3: one
+side), never checked. A disk whose type byte is not `#16-#19` (for example `#00`
+on some real disks) is a TR-DOS disk and autostarts.
 
 "Direct entry" pages the TR-DOS ROM in at `PC=0` and runs it — that is why
 no keyboard timing is needed and why this is reliable where typed
