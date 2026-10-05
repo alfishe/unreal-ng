@@ -988,7 +988,8 @@ TEST(Ym2203PairBoardsTtd_Test, SeekAndReplayKeepTheCursorAndTheAudio)
 /// The same register writes on both boards come out at the same level: the YM2203 FM calibration is one ([SOUND]
 /// TSFM_FmTrimDb, the audio settings' FM trim drives both). Per chip, the FM row's RMS of the TSFM in the socket and of
 /// the MultiSound agree within 0.1 dB at the shipped trim and at another one, and so do the master mixes of an
-/// FM-only program; the SSG rows differ by the MultiSound board's own SSG weight. (~0.5 s: two machines per trim and
+/// FM-only program; the SSG rows differ by the MultiSound board's own SSG weight, at every AY / SSG tone voicing preset
+/// (both boards' SSG is voiced alike, FM on neither). (~0.5 s: two machines per trim and
 /// chip, 0.3 s captures)
 TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
 {
@@ -1000,8 +1001,16 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
             sum += v * v;
         return std::sqrt(sum / double(x.empty() ? 1 : x.size()));
     };
+    // FM rows per board and chip at the first preset: the voicing must not touch them
+    double fmReference[2][2] = {};
+    double ssgFlatRatioDb = 0.0;   // card / TSFM SSG at Flat: every preset must keep it (the same voicing on both)
+    bool haveReference = false;
+    for (const FilterVoicing::Preset voicing :
+         {FilterVoicing::Preset::Flat, FilterVoicing::Preset::Classic, FilterVoicing::Preset::Headphones})
     for (const double trim : {7.4, 0.0})
     {
+        if (trim == 0.0 && voicing != FilterVoicing::Preset::Flat)
+            continue;   // the trim is independent of the voicing: one preset covers it
         for (const int fmChip : {0, 1})
         {
             double fmRms[2] = {};
@@ -1013,11 +1022,21 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
                 PairMachine m(board);
                 ASSERT_TRUE(m.Init());
                 ASSERT_TRUE(m.Context()->pSoundManager->setFmTrimDb(trim));
+                m.Context()->pSoundManager->setAYVoicing(voicing);
                 double readBack = -100.0;
                 ASSERT_TRUE(m.Context()->pSoundManager->fmTrimDb(readBack));
                 EXPECT_DOUBLE_EQ(readBack, trim);
                 m.PlayTones(fmChip);
                 m.Frames(6);
+                EXPECT_EQ(m.Context()->pSoundManager->getActiveAYVoicing(), voicing);
+                if (board == Board::MultiSound)
+                {
+                    const VoicingStage* stage = m.Context()->pSoundManager->getCardVoicingStage(m.SsgSource(1 - fmChip));
+                    ASSERT_NE(stage, nullptr) << "the card's SSG row is voiced";
+                    EXPECT_EQ(stage->active(), voicing);
+                    EXPECT_EQ(m.Context()->pSoundManager->getCardVoicingStage(m.FmSource(fmChip)), nullptr)
+                        << "FM rows are not voiced";
+                }
                 fmRms[b] = rms(m.Capture(m.FmSource(fmChip), 0.3));
                 ssgRms[b] = rms(m.Capture(m.SsgSource(1 - fmChip), 0.3));
                 // The master with the SSG muted at the chip (volume 0): the FM alone
@@ -1028,7 +1047,23 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
                 m.Frames(4);
                 masterRms[b] = rms(m.Capture(AudioSourceType::MasterMix, 0.3));
             }
-            const std::string where = "trim " + std::to_string(trim) + " dB, FM chip " + std::to_string(fmChip);
+            const std::string where = "voicing " + std::to_string(int(voicing)) + ", trim " + std::to_string(trim) +
+                                      " dB, FM chip " + std::to_string(fmChip);
+            if (trim == 7.4)
+            {
+                if (!haveReference || voicing == FilterVoicing::Preset::Flat)
+                {
+                    fmReference[fmChip][0] = fmRms[0];
+                    fmReference[fmChip][1] = fmRms[1];
+                }
+                else
+                {
+                    EXPECT_NEAR(fmRms[0], fmReference[fmChip][0], fmReference[fmChip][0] * 1e-4)
+                        << where << ": the TSFM's FM row moved with the AY voicing";
+                    EXPECT_NEAR(fmRms[1], fmReference[fmChip][1], fmReference[fmChip][1] * 1e-4)
+                        << where << ": the card's FM row moved with the AY voicing";
+                }
+            }
             EXPECT_GT(fmRms[0], 500.0) << where;
             EXPECT_NEAR(20.0 * std::log10(fmRms[1] / fmRms[0]), 0.0, 0.1) << where << ": FM row, card vs TSFM";
             EXPECT_NEAR(20.0 * std::log10(masterRms[1] / masterRms[0]), 0.0, 0.1) << where << ": master, card vs TSFM";
@@ -1036,10 +1071,22 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
             // the FM's 10 k (R13 / R14 vs R18; weight 0.417 = -7.6 dB), the TSFM gives FM and SSG equal weights. Same
             // chip-level SSG unit on both (0.30 per channel), so the card's SSG row sits the schematic's -7.6 dB below
             // the TSFM's (the TSFM's ABC pan law adds 0.06 dB)
-            EXPECT_NEAR(20.0 * std::log10(ssgRms[1] / ssgRms[0]), 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide),
-                        0.15)
+            // Both SSGs go through the same AY / SSG tone voicing ([SOUND] AYVoicing): at every preset the card / TSFM
+            // ratio is the Flat one (master 7bbc2eaaa made Classic the default: the card's then unvoiced SSG sat
+            // 0.09 dB off it, Headphones 0.05 dB the other way). Measured: within 0.006 dB
+            const double ssgRatioDb = 20.0 * std::log10(ssgRms[1] / ssgRms[0]);
+            if (voicing == FilterVoicing::Preset::Flat)
+                ssgFlatRatioDb = ssgRatioDb;
+            else
+                EXPECT_NEAR(ssgRatioDb, ssgFlatRatioDb, 0.02) << where << ": the card's SSG voiced unlike the TSFM's";
+            // And the ratio is the schematic's SSG weight (-7.60 dB: SSG A through 24 k against the FM's 10 k; the
+            // TSFM gives SSG and FM equal weights). Measured -7.75 dB at Flat: the 0.15 dB residual is a rendering
+            // difference of the two SSG paths (the card's per-channel decimators and coupling vs the TSFM's mixed
+            // stream), the same at every preset; not a calibration
+            EXPECT_NEAR(ssgRatioDb, 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide), 0.2)
                 << where << ": SSG row, card vs TSFM";
         }
+        haveReference = haveReference || voicing == FilterVoicing::Preset::Flat;
     }
 }
 

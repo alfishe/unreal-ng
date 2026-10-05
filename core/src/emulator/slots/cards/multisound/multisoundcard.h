@@ -229,6 +229,10 @@ public:
 
     /// A row of the last FrameEnd: interleaved stereo int16, RowFrames() frames
     const int16_t* Row(MultiSoundRow row) const { return _rows[static_cast<size_t>(row)].data(); }
+    /// The same row writable: the host's AY / SSG tone voicing runs on the SSG rows in place (SoundManager)
+    int16_t* MutableRow(MultiSoundRow row) { return _rows[static_cast<size_t>(row)].data(); }
+    /// Counts the restarts of the render layers (TTD restore); the host restarts its row processing with them
+    uint64_t RenderEpoch() const { return _renderEpoch; }
     size_t RowFrames() const { return _rowFrames; }
     /// endregion </Frames>
 
@@ -339,4 +343,5 @@ private:
     float _midiLast[2] = {};
     std::array<std::vector<int16_t>, static_cast<size_t>(MultiSoundRow::Count)> _rows;
     size_t _rowFrames = 0;
+    uint64_t _renderEpoch = 0;          // render-layer restarts (not TTD state)
 };

@@ -329,10 +329,21 @@ Every row's calibration and why:
 | Row | Calibration (1.0 = INT16_MAX) | Board weight | Level vs the TSFM | Why |
 |---|---|---|---|---|
 | MS FM 1 / 2 | 0.30 x 10^(TSFM_FmTrimDb / 20) = 0.7033 at 7.4 dB | 1.000 | equal (0.0 dB) | the YM3014B is the TSFM's; the 7.4 dB is the TSFM board measurement (an emulator calibration, shared) |
-| MS SSG 1 / 2 | 0.30 per channel (the emulator's SSG channel at volume 15, the TSFM's) | A, C 0.417; B 0.213 | -7.6 dB (A, C) | hardware: the MultiSound sums SSG A / C through 24 k and B through 47 k against the FM's 10 k (R13, R14, R16, R17 vs R18); the TSFM gives SSG and FM equal weights. Measured -7.7 dB (the TSFM's ABC pan law adds 0.06 dB) |
+| MS SSG 1 / 2 | 0.30 per channel (the emulator's SSG channel at volume 15, the TSFM's) | A, C 0.417; B 0.213 | -7.6 dB (A, C) | hardware: the MultiSound sums SSG A / C through 24 k and B through 47 k against the FM's 10 k (R13, R14, R16, R17 vs R18); the TSFM gives SSG and FM equal weights. Measured -7.75 dB at every voicing preset: a 0.15 dB rendering residual of the two SSG paths (the card's per-channel decimators and coupling vs the TSFM's mixed stream; same units, same pan 0.9 / 3 for A), not a calibration |
 | MS PCM | 2.5 V per DAC channel x 0.7033 / 1.25 V (volts against the YM3014B's +-1.25 V at the default trim) | 0.208 | - | hardware (schematic), placed against the FM in volts; the user's FM trim does not move it |
 | MS SAA | module units (unmeasured absolute level) | 0.833 | - | hardware weight; absolute SAA level unmeasured |
 | MS MIDI | module units (+-1.0) | 1.000 | - | hardware weight; absolute SAM2695 level unmeasured |
+
+**AY / SSG tone voicing (2026-10-05, after master 7bbc2eaaa):** the card's `MS SSG 1` / `MS SSG 2` rows run through the
+same AY / SSG tone voicing as the AY socket's chips (`[SOUND] AYVoicing`, the audio settings' voicing on every
+surface): `CardMixerRow::ssgVoicing` marks them, `SoundManager` keeps one `VoicingStage` per such row next to
+`_ayVoicing0` / `_ayVoicing1` and treats it the same way - the configured profile at attach, `setAYVoicing` requests
+(click-free crossfade at the next frame), `reset()`, `setup` on a rate change, history invalidated in a gap (turbo
+without audio, sound off) - and voices the row in place after the card's `FrameEnd` (`ICard::VoicedMixerBuffer`), so
+captures and the mix see the voiced row, as for the board. FM, SAA, PCM and MIDI rows are not voiced (FM is not on
+the board either). `[AY] Stereo` is **not** applied to the card: its A left / B centre / C right is the board's
+resistor wiring, not a setting. `Ym2203PairBoardsLevel_Test` holds the SSG relation (the schematic's -7.6 dB) at the
+Flat, Classic and Headphones presets and checks the FM rows do not move with the voicing on either board.
 
 The FM trim is the one calibration the user moves; the board's internal balance (SSG, PCM, SAA, MIDI against FM at the
 default trim) is the schematic's and stays. **Owner question:** the owner asked for the SSG rows to match the TSFM's

@@ -658,6 +658,7 @@ bool MultiSoundCard::TtdLoad(const uint8_t* src)
 
     // Render layers back to their start: the audio after a restore does not depend on what played before it
     _mixer.Reset();
+    ++_renderEpoch;   // the host's SSG voicing restarts with the mixer
     _midiLast[0] = _midiLast[1] = 0.0f;
     _rowFrames = 0;
     return true;

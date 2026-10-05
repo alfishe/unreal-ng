@@ -55,6 +55,9 @@ struct CardMixerRow
 {
     AudioSourceType type = AudioSourceType::Custom;
     std::string name;
+    /// An AY / SSG row: SoundManager runs it through the AY / SSG tone voicing ([SOUND] AYVoicing), exactly like the
+    /// AY socket's chips (the card hands the row over writable through VoicedMixerBuffer)
+    bool ssgVoicing = false;
 };
 
 /// One time-travel device of a card (a card may carry several modules, each with its own blob)
@@ -137,6 +140,19 @@ public:
     {
         (void)type;
         return nullptr;
+    }
+    /// The writable buffer of a row declared ssgVoicing (the same one MixerBuffer returns), voiced in place by
+    /// SoundManager after FrameEnd; nullptr for any other row
+    virtual int16_t* VoicedMixerBuffer(AudioSourceType type)
+    {
+        (void)type;
+        return nullptr;
+    }
+    /// Changes whenever the card restarted its render layers (a TTD restore: its rows no longer continue the audio
+    /// before): the host's processing of the rows (the SSG voicing) restarts with them
+    virtual uint64_t RenderEpoch() const
+    {
+        return 0;
     }
     /// Full-scale sources: the mixer sums on its wide float bus with the master limiter while the card is fitted
     virtual bool WantsWideMix() const

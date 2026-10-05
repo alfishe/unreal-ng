@@ -28,14 +28,16 @@ constexpr struct
     AudioSourceType type;
     MultiSoundRow row;
     const char* name;
+    bool ssgVoicing;   // the AY / SSG tone voicing, as for the AY socket's chips (not the [AY] Stereo panning: the
+                       // card's ABC is its board wiring)
 } kRows[] = {
-    { AudioSourceType::MultiSoundSsg1, MultiSoundRow::Ssg1, "MS SSG 1" },
-    { AudioSourceType::MultiSoundSsg2, MultiSoundRow::Ssg2, "MS SSG 2" },
-    { AudioSourceType::MultiSoundFm1, MultiSoundRow::Fm1, "MS FM 1" },
-    { AudioSourceType::MultiSoundFm2, MultiSoundRow::Fm2, "MS FM 2" },
-    { AudioSourceType::MultiSoundSaa, MultiSoundRow::Saa, "MS SAA" },
-    { AudioSourceType::MultiSoundPcm, MultiSoundRow::Pcm, "MS PCM" },
-    { AudioSourceType::MultiSoundMidi, MultiSoundRow::Midi, "MS MIDI" },
+    { AudioSourceType::MultiSoundSsg1, MultiSoundRow::Ssg1, "MS SSG 1", true },
+    { AudioSourceType::MultiSoundSsg2, MultiSoundRow::Ssg2, "MS SSG 2", true },
+    { AudioSourceType::MultiSoundFm1, MultiSoundRow::Fm1, "MS FM 1", false },
+    { AudioSourceType::MultiSoundFm2, MultiSoundRow::Fm2, "MS FM 2", false },
+    { AudioSourceType::MultiSoundSaa, MultiSoundRow::Saa, "MS SAA", false },
+    { AudioSourceType::MultiSoundPcm, MultiSoundRow::Pcm, "MS PCM", false },
+    { AudioSourceType::MultiSoundMidi, MultiSoundRow::Midi, "MS MIDI", false },
 };
 
 } // namespace
@@ -207,6 +209,16 @@ void MultiSoundSlotCard::SetOutputRate(uint32_t rate)
     _card.SetOutputRate(rate);
 }
 
+int16_t* MultiSoundSlotCard::VoicedMixerBuffer(AudioSourceType type)
+{
+    for (const auto& row : kRows)
+    {
+        if (row.type == type && row.ssgVoicing)
+            return _card.MutableRow(row.row);
+    }
+    return nullptr;
+}
+
 bool MultiSoundSlotCard::SetFmTrimDb(double db)
 {
     _card.SetFmTrimDb(db);
@@ -223,7 +235,7 @@ void MultiSoundSlotCard::MixerRows(std::vector<CardMixerRow>& out) const
 {
     for (const auto& row : kRows)
     {
-        out.push_back({ row.type, row.name });
+        out.push_back({ row.type, row.name, row.ssgVoicing });
     }
 }
 

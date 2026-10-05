@@ -163,6 +163,9 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   its own row, `FmTrimFollowsTheTsfmGainLaw`), the card's per-chip tone tests, `MultiSoundSlotCard_Test` (rows and keys
   only with the card, per-chip rows in the five-source program), `AudioActivityIndicators_Test.MultiSoundRowsLightTheirOwnIndicatorPerChip`,
   `Ym2203PairBoardsLevel_Test` (FM rows and master equal to the TSFM's within 0.1 dB at 7.4 and 0 dB)
+- [x] 2026-10-05, after master 7bbc2eaaa (AY voicing default back to Classic): the card's SSG rows run through the same
+  AY / SSG tone voicing as the socket's chips ([architecture.md](architecture.md) §5); `[AY] Stereo` deliberately not
+  applied to the card (board wiring). `Ym2203PairBoardsLevel_Test` over Flat / Classic / Headphones, FM unvoiced on both
 - [ ] owner question: the SSG rows are the schematic's -7.6 dB below the TSFM's (SSG through 24 k against the FM's
   10 k on the MultiSound, equal weights on the TSFM); kept as hardware, not matched
 - [ ] owner question: atm3 / atm450 / atm710 ship without `TSFM_FmTrimDb` (their socket holds a TurboSound): a TSFM

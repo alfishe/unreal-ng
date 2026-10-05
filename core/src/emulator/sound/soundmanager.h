@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -617,6 +618,14 @@ public:
     {
         return chip == 1 ? _ayVoicing1 : _ayVoicing0;
     }
+    /// The voicing stage of a slot card's SSG row (nullptr for a row that is not voiced)
+    const VoicingStage* getCardVoicingStage(AudioSourceType type) const
+    {
+        for (const CardVoicing& v : _cardVoicing)
+            if (v.type == type)
+                return v.stage.get();
+        return nullptr;
+    }
 
     void setAYPunch(bool enabled);
     bool getAYPunch() const
@@ -749,6 +758,16 @@ private:
     // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
     // drives their frames and mixes their rows
     std::vector<ICard*> _slotCards;
+    /// AY / SSG tone voicing of the slot cards' SSG rows (CardMixerRow::ssgVoicing): one stage per row, set up,
+    /// requested, reset and invalidated together with the AY socket's _ayVoicing0 / _ayVoicing1
+    struct CardVoicing
+    {
+        ICard* card = nullptr;
+        AudioSourceType type = AudioSourceType::Custom;
+        std::unique_ptr<VoicingStage> stage;
+        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage runs in
+    };
+    std::vector<CardVoicing> _cardVoicing;
     // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
     std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
     const int16_t* slotCardBuffer(AudioSourceType type) const;
