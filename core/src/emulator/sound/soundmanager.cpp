@@ -16,6 +16,7 @@
 #include "emulator/io/ide/ata/cdaudioplayer.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "stdafx.h"
 
@@ -165,6 +166,9 @@ SoundManager::SoundManager(EmulatorContext* context)
             gsKind = GSTypeKind::LW;
         }
         _gs = createGeneralSoundCard(gsKind);
+        // The slot set names the personality the machine has (the TTD fingerprint and registry check follow it)
+        if (_gs && gsKind != _context->config.sound.gsTypeKind && _context->pSlotManager)
+            _context->pSlotManager->FollowGeneralSoundSwitch(gsKind);
         _devices.push_back({AudioSourceType::GeneralSound, generalSoundDeviceName(), false, false, 1.0f, 0.0f, false});
         syncGeneralSoundAuxDevice();
         publishGeneralSoundSlot();
@@ -1936,6 +1940,10 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     _gs->restoreMailbox(mailbox);
     _gs->accumulateActivityCounters(counters);
 
+    // The slot set names the new personality, and so does the TTD configuration fingerprint (ZX-bus slots SL-6)
+    if (_context->pSlotManager)
+        _context->pSlotManager->FollowGeneralSoundSwitch(target);
+
     LOGINFO("SoundManager: General Sound personality switched %s -> %s%s", from, to,
             hadModule ? " (module upload replayed)" : "");
     return portsRegistered;
@@ -1984,6 +1992,18 @@ bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target, std::string*
     {
         const std::string refusal =
             _context->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+        if (!refusal.empty())
+        {
+            if (error)
+                *error = refusal;
+            return false;
+        }
+    }
+
+    // A real change goes through the slot plan (ZX-bus slots SL-6): it may only replace the card in the GS slot
+    if (_gs && _gs->implementation() != targetImplementation && _context->pSlotManager)
+    {
+        const std::string refusal = _context->pSlotManager->GeneralSoundSwitchRefusal(target);
         if (!refusal.empty())
         {
             if (error)

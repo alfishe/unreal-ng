@@ -29,6 +29,7 @@
 #include "emulator/slots/slotchange.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/slots/slotmanager.h"
+#include "emulator/sound/soundmanager.h"
 
 using slots::SlotRequest;
 
@@ -312,4 +313,49 @@ TEST_F(SlotChange_Test, RequestsThatCannotApplyAreRefused)
     nobody.emulatorId = "no-such-emulator";
     nobody.change = Plug("zxbus.next", "zxnetusb");
     EXPECT_EQ(SlotChange::Run(nobody).status, SlotChangeStatus::NoMachine);
+}
+
+/// R-OP-8: the General Sound personality switch as a slot replace - the card in the GS slot replaced by the other
+/// personality (no flag needed from the caller: replacing that card is the request), applied by the restart; the new
+/// machine's plan, card and TTD fingerprint name the new personality
+TEST_F(SlotChange_Test, GsPersonalitySwitchIsSlotReplace)
+{
+    std::shared_ptr<Emulator> old = Create("PENTAGON", {{"ay-socket", "tsfm"}, {"zxbus.1", "gs"}});
+    ASSERT_NE(old, nullptr);
+    const SlotManager::Result before = old->GetContext()->pSlotManager->Snapshot();
+
+    SlotChangeRequest request;
+    request.emulatorId = old->GetId();
+    std::string why;
+    ASSERT_TRUE(SlotManager::GeneralSoundRequest(before, old->GetContext()->config, GSTypeKind::NGS, request.change, &why))
+        << why;
+    EXPECT_EQ(request.change.slot, "zxbus.1");
+    EXPECT_EQ(request.change.card, "neogs");
+    old.reset();
+    const SlotChangeResult result = SlotChange::Run(request);
+    if (result.emulator)
+        _ids.push_back(result.emulator->GetId());
+    ASSERT_TRUE(result.Applied()) << result.message;
+    ASSERT_EQ(result.plan.plan.removed.size(), 1u);
+    EXPECT_TRUE(result.plan.plan.removed[0].replacedInSlot);
+    EXPECT_EQ(FittedOf(*result.emulator), (std::vector<std::string>{"ay-socket = tsfm", "zxbus.1 = neogs"}));
+    EXPECT_EQ(result.emulator->GetContext()->pSoundManager->fittedGeneralSoundKind(), GSTypeKind::NGS);
+
+    const auto field = [](const SlotManager::Result& plan) {
+        for (const auto& [name, value] : SlotManager::TtdFingerprintFields(plan))
+        {
+            if (name == "slots.zxbus.1")
+                return value;
+        }
+        return uint64_t(0);
+    };
+    EXPECT_NE(field(before), field(result.emulator->GetContext()->pSlotManager->Current()));
+
+    // A machine without a General Sound card has no personality to switch
+    std::shared_ptr<Emulator> bare = Create("PENTAGON", {{"zxbus.1", "zxnetusb"}});
+    ASSERT_NE(bare, nullptr);
+    slots::SlotRequest unused;
+    EXPECT_FALSE(SlotManager::GeneralSoundRequest(bare->GetContext()->pSlotManager->Current(),
+                                                  bare->GetContext()->config, GSTypeKind::NGS, unused, &why));
+    EXPECT_NE(why.find("no General Sound card is fitted"), std::string::npos) << why;
 }

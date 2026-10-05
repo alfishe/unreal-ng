@@ -46,6 +46,7 @@
 #include "emulator/slots/slotplanner.h"
 
 struct CONFIG;
+enum class GSTypeKind : uint8_t;
 class EmulatorContext;
 class ICard;
 namespace slots
@@ -217,6 +218,17 @@ public:
     /// new machine cannot take is dropped and reported. Writes the merged set into `config` (UseSlots)
     static CarryReport Carry(const Result& from, CONFIG& config);
 
+    /// The General Sound personality as a slot change (R-OP-8): a plug of `gs` / `gs-lw` / `neogs` into the slot the
+    /// fitted GS card is in, replacing it (the RAM option from [SOUND] GSRamSize / [NGS] RamSize, as a legacy key
+    /// would give it). False with the reason when no General Sound card is fitted or the kind is not a personality
+    static bool GeneralSoundRequest(const Result& current, const CONFIG& config, GSTypeKind kind,
+                                    slots::SlotRequest& request, std::string* error = nullptr);
+    /// The frame-boundary personality switch of a running machine (SoundManager::switchGeneralSoundCard) asks first:
+    /// why the plan refuses it ("" when it may); it may only replace the card in the GS slot
+    std::string GeneralSoundSwitchRefusal(GSTypeKind kind) const;
+    /// ... and reports it done: the plan's GS slot names the new personality, and so does the TTD fingerprint
+    void FollowGeneralSoundSwitch(GSTypeKind kind);
+
 
     // endregion
 
@@ -299,8 +311,8 @@ public:
 
     /// The registered slot-card devices against the plan: a card the plan fits has its device, a device has its
     /// card; a card the slots build themselves (card.h) has every device its CardType declares (none declared: it has
-    /// no time-travel state, refused). The General Sound personality may differ from the plan (the runtime switch,
-    /// until SL-6 moves it onto the plan). False with every difference in `why`
+    /// no time-travel state, refused). The General Sound personality is the plan's card (the runtime switch moves the
+    /// plan with it, FollowGeneralSoundSwitch). False with every difference in `why`
     static bool TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& live, std::string& why);
 
     /// The slot-set guard on a session load: the cards the recording held (its baseline checkpoint) against the

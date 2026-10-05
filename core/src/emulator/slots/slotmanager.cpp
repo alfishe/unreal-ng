@@ -492,6 +492,24 @@ std::string PlanRefusal(const SlotPlan& plan)
     return "needs replaceIfIncompatible: " + reasons;
 }
 
+/// The card id of a General Sound personality; "" for none
+const char* GsCardOf(GSTypeKind kind)
+{
+    switch (kind)
+    {
+        case GSTypeKind::Z80:
+            return "gs";
+        case GSTypeKind::LW:
+        case GSTypeKind::BASS:
+            return "gs-lw";
+        case GSTypeKind::NGS:
+            return "neogs";
+        case GSTypeKind::NONE:
+            break;
+    }
+    return "";
+}
+
 /// SetBuildFaultForTests
 std::string& BuildFault()
 {
@@ -909,6 +927,120 @@ SlotManager::ChangePlan SlotManager::PlanChange(const SlotRequest& request) cons
 void SlotManager::SetBuildFaultForTests(const std::string& card)
 {
     BuildFault() = card;
+}
+
+bool SlotManager::GeneralSoundRequest(const Result& current, const CONFIG& config, GSTypeKind kind, SlotRequest& request,
+                                      std::string* error)
+{
+    auto fail = [error](std::string why) {
+        if (error != nullptr)
+        {
+            *error = std::move(why);
+        }
+        return false;
+    };
+    const std::string card = GsCardOf(kind);
+    if (card.empty())
+    {
+        return fail("not a General Sound personality (gs, gs-lw, neogs)");
+    }
+    const Slot* slot = current.FindGroup(SlotCardGroup::GeneralSound);
+    if (slot == nullptr)
+    {
+        return fail("no General Sound card is fitted: plug one into a slot");
+    }
+    request = {};
+    request.op = SlotRequest::Op::Plug;
+    request.slot = slot->entry.slot;
+    request.card = card;
+    request.adapter = slot->entry.adapter;
+    request.replaceIfIncompatible = true;   // the request is the replacement of the card in this slot
+    // The RAM as a legacy key gives it (TranslateLegacy), so the fingerprint matches a machine created with the card
+    std::string options;
+    if (card == "gs")
+    {
+        options = config.sound.gsRamKB >= 512 ? "ram=512k" : config.sound.gsRamKB >= 256 ? "ram=256k" : "ram=128k";
+    }
+    else if (card == "neogs")
+    {
+        options = config.ngs.ramKB >= 4096 ? "ram=4m" : "ram=2m";
+    }
+    const CardDef* def = Planner().FindCard(card);
+    if (def != nullptr && !options.empty())
+    {
+        ParseCardOptions(*def, options, request.options);
+    }
+    return true;
+}
+
+std::string SlotManager::GeneralSoundSwitchRefusal(GSTypeKind kind) const
+{
+    if (_context == nullptr)
+    {
+        return {};
+    }
+    const Result current = Snapshot();
+    if (current.machine == nullptr)
+    {
+        return {};   // a model without a slot declaration: the sound manager decides alone, as before
+    }
+    SlotRequest request;
+    std::string why;
+    if (!GeneralSoundRequest(current, _context->config, kind, request, &why))
+    {
+        return why;
+    }
+    // The NeoGS's SD card follows the sound manager's own media rules in the running machine: no dirty-media check
+    const SlotPlan plan = Planner().Plan(current.model, current.Fitted(), request);
+    if (!plan.allowed)
+    {
+        return PlanRefusal(plan);
+    }
+    for (const RemovedCard& removed : plan.removed)
+    {
+        if (removed.slot != request.slot)
+        {
+            return "refused: the switch would also remove " + removed.slot + " = " + removed.card + " (" +
+                   removed.reason + "): a slot change with replaceIfIncompatible does that";
+        }
+    }
+    return {};
+}
+
+void SlotManager::FollowGeneralSoundSwitch(GSTypeKind kind)
+{
+    if (_context == nullptr)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(_resultMutex);
+    SlotRequest request;
+    if (_result.machine == nullptr || !GeneralSoundRequest(_result, _context->config, kind, request))
+    {
+        return;
+    }
+    // The slot's entry as the plan engine would leave it (options, fit); the card id and options in any case: the
+    // switch is done, the plan names what the machine has
+    const SlotPlan plan = Planner().Plan(_result.model, _result.Fitted(), request);
+    for (Slot& slot : _result.entries)
+    {
+        if (slot.entry.disabled || slot.entry.slot != request.slot)
+        {
+            continue;
+        }
+        slot.entry.card = request.card;
+        slot.entry.options = request.options;
+        for (const SlotEntry& planned : plan.resultingSlots)
+        {
+            if (plan.allowed && planned.slot == request.slot)
+            {
+                slot.entry = planned;
+                slot.fit = plan.fit;
+            }
+        }
+        slot.notes.push_back("personality switched to " + request.card + " in the running machine");
+    }
+    _ttdFingerprint = TtdFingerprintFields(_result);
 }
 
 std::string SlotManager::CarryReport::DroppedText() const

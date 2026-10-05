@@ -253,11 +253,15 @@ bool SlotManager::TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& 
             expectDevice = false;
         }
         bool matches = expectDevice == (fitted != "none");
-        // The socket's board decides the id (ay / ts: TurboSound, tsfm: TSFM); the General Sound personality may
-        // follow the runtime switch (SL-6 moves it onto the plan)
+        // The socket's board decides the id (ay / ts: TurboSound, tsfm: TSFM); the General Sound personality is the
+        // plan's card (the runtime switch moves the plan with it, SL-6)
         if (matches && expectDevice && position.group == SlotCardGroup::Socket)
         {
             matches = (planned->entry.card == "tsfm") == (fitted == "tsfm");
+        }
+        if (matches && expectDevice && position.group == SlotCardGroup::GeneralSound)
+        {
+            matches = fitted == planned->entry.card;
         }
         if (!matches)
         {

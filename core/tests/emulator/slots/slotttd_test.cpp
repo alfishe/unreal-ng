@@ -383,7 +383,7 @@ TEST(TtdSlots_Test, TwoInstancesOfOneModuleAreRefusedByName)
 }
 
 /// The registry checked against the plan: a card the plan fits has its device and the other way round; the socket's
-/// board decides the blob id; the General Sound personality may differ (the runtime switch, SL-6)
+/// board decides the blob id, the General Sound card's personality too (SL-6: the runtime switch moves the plan)
 TEST(TtdSlots_Test, RegistryFollowsThePlan)
 {
     const SlotManager::Result plan =
@@ -392,9 +392,17 @@ TEST(TtdSlots_Test, RegistryFollowsThePlan)
     EXPECT_TRUE(SlotManager::TtdDevicesMatchPlan(
         plan, Devices({PeripheralId::TSFM, PeripheralId::GeneralSound, PeripheralId::MoonSound}), why))
         << why;
+    // SL-6: the General Sound personality is the plan's card (a runtime switch moves the plan with it)
+    why.clear();
+    EXPECT_FALSE(SlotManager::TtdDevicesMatchPlan(
+        plan, Devices({PeripheralId::TSFM, PeripheralId::MoonSound}, Bit(PeripheralId::GeneralSoundLightweight)), why));
+    EXPECT_NE(why.find("zxbus.1: the plan fits gs, the device is gs-lw"), std::string::npos) << why;
+    const SlotManager::Result lightweight =
+        PlanOf(MM_PENTAGON, {{"ay-socket", "tsfm"}, {"zxbus.1", "gs-lw"}, {"zxbus.2", "moonsound"}});
     EXPECT_TRUE(SlotManager::TtdDevicesMatchPlan(
-        plan, Devices({PeripheralId::TSFM, PeripheralId::MoonSound}, Bit(PeripheralId::GeneralSoundLightweight)), why))
-        << "the personality switch keeps the card in its slot";
+        lightweight, Devices({PeripheralId::TSFM, PeripheralId::MoonSound}, Bit(PeripheralId::GeneralSoundLightweight)),
+        why))
+        << why;
 
     why.clear();
     EXPECT_FALSE(SlotManager::TtdDevicesMatchPlan(plan, Devices({PeripheralId::TurboSound, PeripheralId::GeneralSound}),
@@ -407,6 +415,42 @@ TEST(TtdSlots_Test, RegistryFollowsThePlan)
     EXPECT_FALSE(SlotManager::TtdDevicesMatchPlan(empty, Devices({PeripheralId::TurboSound, PeripheralId::NeoGS}), why));
     EXPECT_NE(why.find("ay-socket: the plan fits none, the device is ay / ts"), std::string::npos) << why;
     EXPECT_NE(why.find("General Sound card: the plan fits none, the device is neogs"), std::string::npos) << why;
+}
+
+/// SL-6: the frame-boundary personality switch of a running machine moves the plan's GS slot and the TTD fingerprint
+/// with it (the fingerprint a machine created with that card has), so a recording after the switch registers against
+/// a plan naming the active card; a switch the plan refuses is refused at the request. One machine (~20 ms)
+TEST(TtdSlots_Test, RuntimePersonalitySwitchMovesThePlanAndTheFingerprint)
+{
+    StagedMachine machine("pentagon128k", "zxbus.1 = gs\nzxbus.1.ram = 128k");
+    ASSERT_TRUE(machine.Ok());
+    SlotManager* slotManager = machine.Context()->pSlotManager;
+    SoundManager* sound = machine.Context()->pSoundManager;
+    ASSERT_NE(sound->getGeneralSound(), nullptr);
+    ttd::TTDConfigFingerprint before;
+    slotManager->AddTtdFingerprint(before);
+
+    EXPECT_EQ(slotManager->GeneralSoundSwitchRefusal(GSTypeKind::NGS), "");
+    ASSERT_TRUE(sound->switchGeneralSoundCard(GSTypeKind::NGS));
+    const SlotManager::Slot* gs = slotManager->Current().FindSlot("zxbus.1");
+    ASSERT_NE(gs, nullptr);
+    EXPECT_EQ(gs->entry.card, "neogs");
+
+    ttd::TTDConfigFingerprint after;
+    slotManager->AddTtdFingerprint(after);
+    EXPECT_EQ(DiffFields(before, after), std::vector<std::string>{"slots.zxbus.1"});
+    const SlotManager::Result created = PlanOf(MM_PENTAGON, {{"zxbus.1", "neogs"}, {"zxbus.1.ram", "2m"}});
+    EXPECT_TRUE(DiffFields(after, FingerprintOf(created)).empty()) << "as if the machine had been created with it";
+
+    // Recording registers the NeoGS against a plan that names it
+    ASSERT_TRUE(machine.Ttd()->StartRecording());
+    machine.Ttd()->StopRecording();
+
+    // No General Sound card fitted: nothing to switch
+    StagedMachine bare("pentagon128k", "zxbus.1 = zxnetusb");
+    ASSERT_TRUE(bare.Ok());
+    EXPECT_NE(bare.Context()->pSlotManager->GeneralSoundSwitchRefusal(GSTypeKind::NGS).find("no General Sound card"),
+              std::string::npos);
 }
 
 /// R-OP-7: no slot change while a user recording runs, the refusal names the session; allowed once it stopped.
