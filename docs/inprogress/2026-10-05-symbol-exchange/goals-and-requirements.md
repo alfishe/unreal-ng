@@ -21,7 +21,7 @@ Symbols come from many places, and each place writes them its own way:
 | A cross assembler's output | sjasmplus `.sym`, `.sld`, `.lst`; z88dk `.map`; pasmo `--equ` | plain text, one format per tool |
 | Another emulator or debugger | Unreal `user.l`, VICE labels, MAME comments, DeZog | plain text |
 | A disassembler project | IDA, Ghidra | their own databases; text or script exports |
-| A ZX assembler running **inside** the emulated machine | ALASM, XAS, STORM, GENS, MASM | **tokenized**: the source and the label table are binary structures in the machine's RAM or in a file on a TR-DOS disk |
+| A ZX assembler running **inside** the emulated machine | TASM, ALASM, XAS, STORM, GENS, MASM | **tokenized**: the source and the label table are binary structures in the machine's RAM or in a file on a TR-DOS disk |
 | Our own disassemblies | `data/symbols/*.map`, `docs/disasm/...` | our MAP text format |
 | A ROM or firmware we recognize | the 48K ROM, Sprinter BIOS 3.04, a GS firmware | a symbol file chosen by the ROM's SHA-256 |
 | The user | typing a name in the debugger | interactive |
@@ -37,8 +37,9 @@ Today the emulator handles a small part of this:
 - Names such as `PRINT-A-1` from the ROM maps are not valid in any assembler, so an export would break the target
   tool. Nothing renames them.
 - Two files that name the same address differently are merged silently: the last one wins.
-- The original Unreal debugger's "import labels from XAS / ALASM in memory" (Ctrl+A) was only ever declared: no
-  Unreal source has an implementation ([debugger additions TODO](../2026-10-04-debugger-additions/TODO.md) A9).
+- The original Unreal debugger's "import labels from XAS / ALASM in memory" (Ctrl+A) existed in Unreal 0.37.1 and
+  was dropped later (only the declarations remain); it bound every value to fixed RAM pages ([prior-art.md](prior-art.md)
+  P7).
 
 ### 0.1 Worked example: one game, three tools
 
@@ -60,7 +61,7 @@ the way.
 | ID | Goal |
 |---|---|
 | G-1 | **One symbol model.** Every symbol from every source becomes the same record: name, where (address space + offset), kind, size, scope, source position, comment, and **provenance** (which import, which file, which line). Nothing a source carries is dropped on import if the model can hold it. |
-| G-2 | **Importers for every source family.** Text formats (with a shared tokenizer), tokenized ZX assembler formats (sources and label tables, from a file or from a disk image), **live** label tables in the emulated machine's memory, ROM / firmware bundles chosen by hash. |
+| G-2 | **Codecs for every source family** (D-1: each reads and writes). Text formats (with a shared tokenizer), tokenized ZX assembler formats (sources and label tables, from a file or from a disk image), **live** label tables in the emulated machine's memory, ROM / firmware bundles chosen by hash. |
 | G-3 | **Exporters to every target that takes symbols.** Assemblers (include files), emulators and debuggers (their label files), disassemblers (IDA, Ghidra scripts), our own lossless native file. A name the target cannot take is renamed by the target's rules, and the renames are listed. |
 | G-4 | **Pages are kept.** A symbol is bound to a physical page (ROM 2, RAM 3, cache 0, a device region, the GS card's memory) when the source says so or the import is told so; a CPU-view symbol (`#4000`, any page) stays one. The same `#C000` in pages 1 and 3 are two symbols. |
 | G-5 | **Lossless native file.** The emulator's own symbol file keeps every field, so export then import gives the same set (a round trip is an identity). |
@@ -81,9 +82,18 @@ the way.
 | NG-5 | Reading IDA `.idb` / `.i64` or Ghidra project databases directly | Closed / complex binary databases. IDA and Ghidra are reached through their script and text exports, in both directions. |
 | NG-6 | A network symbol server | Not needed for ZX work. ROM bundles ship in `data/symbols/`. |
 
-## 3. Proposals (for the owner's decision)
+## 3. Decisions and proposals
 
-These are the design's proposals. The owner's answers go here as decisions, one question at a time.
+### 3.1 Decisions (owner, 2026-10-05)
+
+| ID | Decision |
+|---|---|
+| D-1 | **Every format is its own codec, and every codec reads and writes.** No import-only or export-only formats: a codec has a decoder (bytes → records) and an encoder (records → bytes), tested both ways. |
+| D-2 | **Nothing is vendored.** Existing converters and tools (local and public, [prior-art.md](prior-art.md)) are references for the formats only; every codec is a fresh implementation against these requirements, with its own tests. |
+
+### 3.2 Proposals (for the owner's decision)
+
+These are the design's proposals. The owner's answers go to §3.1, one question at a time.
 
 | ID | Proposal | Recommended |
 |---|---|---|
@@ -91,7 +101,7 @@ These are the design's proposals. The owner's answers go here as decisions, one 
 | P-2 | **The native file**: `*.usym.json` (one JSON document: header, sets, symbols). JSON over YAML: exact, fast, already parsed everywhere in the emulator. | yes |
 | P-3 | **`LabelManager` stays as the facade**: its API keeps working for every caller; its parsing is replaced by the module's importers; its `Label` struct becomes a view of `Symbol`. | yes |
 | P-4 | **Default merge policy** on import into a non-empty set: `keep both` (a second name for the same place becomes an alias), and **report** names that move (same name, other place). | yes |
-| P-5 | **Tokenized formats in two steps**: first a research document per assembler (ALASM 4.42-5.0x, XAS 7.x, STORM, GENS 3/4, MASM), made by running each assembler in the emulator on a known source; then importers. No format is coded from guesses. | yes |
+| P-5 | **Tokenized formats in two steps**: first a research document per assembler (TASM 3/4, ALASM 4.42-5.0x, XAS 7.x, STORM, GENS 3/4, MASM), made by running each assembler in the emulator on a known source; then the codec. No format is coded from guesses. **TASM first**: it has the most prior art (the owner's 2012 converter's token table, TRD test data) ([prior-art.md](prior-art.md)). | yes |
 | P-6 | **Live scans are explicit**: scanning RAM for an assembler's label table runs only on request (`symbols import --live alasm`), never in the background. | yes |
 | P-7 | **ROM bundles by hash**: `data/symbols/` gets a manifest that maps ROM page SHA-256 to symbol files; a machine loads the matching set at start and after a ROM change. | yes |
 

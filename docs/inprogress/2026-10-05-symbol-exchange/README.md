@@ -18,10 +18,11 @@ which stays as the facade. Closes the debugger additions' label import E7
 
 | File | Topic |
 |---|---|
-| [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem with a worked example, goals, non-goals, proposals for the owner (P-1…P-7), use cases, FR / NFR, acceptance, glossary |
+| [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem with a worked example, goals, non-goals, decisions D-1 / D-2, proposals for the owner (P-1…P-7), use cases, FR / NFR, acceptance, glossary |
 | [architecture.md](architecture.md) | Component view, data model, import workflow, sequences (import, live scan, export, ROM bundle), decision trees DT-1…DT-4, threading, relation to existing code, **code placement** (mermaid flowchart, class, sequence and decision diagrams) |
 | [formats.md](formats.md) | Format families (text, script, tokenized, live, native, bundle), lossiness matrix, catalog with detection and phases, examples side by side, name rules per target, the research plan for tokenized ZX assemblers, the native `*.usym.json` file |
-| [tdd.md](tdd.md) | Layers and the std-only rule, model structs, index, sources and sinks, `IFormat`, the tokenizer, tokenized decoders, live scanners, normalization and merge, export, bundles manifest, surfaces, memory budget, phases S0-S9 |
+| [prior-art.md](prior-art.md) | Existing converters and tools, local (the owner's 2012 TASM detokenizer, its 2025 port, a Python 3.x decoder, test data) and public, compared; what each reveals about the formats; nothing is vendored (D-2) |
+| [tdd.md](tdd.md) | Layers and the std-only rule, model structs, index, sources and sinks, `ICodec` (decode + encode per format), the tokenizer, tokenized codecs, live scanners, normalization and merge, export, bundles manifest, surfaces, memory budget, phases S0-S10 |
 | [test-and-benchmark-plan.md](test-and-benchmark-plan.md) | Golden corpus from the real tools, unit tests per file, round trips, fuzzing, live checks, benchmarks and targets |
 
 ## In one picture
@@ -49,7 +50,7 @@ flowchart LR
 
 ## Where the code goes
 
-`core/src/debugger/symbols/` (namespace `symbols`): `model/ io/ formats/ live/ bundles/` use only the standard
+`core/src/debugger/symbols/` (namespace `symbols`): `model/ io/ codecs/ live/ bundles/` use only the standard
 library, `adapters/` holds every emulator dependency; `LabelManager` stays the facade; `tools/symbols/symconv` is a
 command-line converter built from the std-only part; bundles get `data/symbols/manifest.json`. Details:
 [architecture.md](architecture.md) §9.

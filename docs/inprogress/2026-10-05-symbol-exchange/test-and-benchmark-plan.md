@@ -46,7 +46,7 @@ testdata/symbols/
 | `nameinterner_test.cpp` | identity, UTF-8 names, case fold sets |
 | `addressspace_test.cpp` | parse / format every spelling (`cpu:main`, `rom2`, `ram3`, `cache0`, `vram`, `const`, `port`, `gs.rom0`); bad spellings |
 | `tokenizer_test.cpp` | every number notation and width; identifiers per charset; strings; comments; columns; over-long lines; NUL and invalid UTF-8 bytes |
-| `formatregistry_test.cpp` | detection matrix: every corpus file is recognized as its format with ≥ 60 and ≥ 15 above the next; forced format; ambiguous and unknown reports |
+| `codecregistry_test.cpp` | detection matrix: every corpus file is recognized as its format with ≥ 60 and ≥ 15 above the next; forced format; ambiguous and unknown reports |
 | `namerules_test.cpp` | DT-3 per target: invalid characters, leading digit, reserved words, length, collisions → `_2` |
 | `<format>_test.cpp` (one per format) | import golden → expected JSON; export expected → golden bytes; diagnostics with line numbers on broken copies |
 | `roundtrip_test.cpp` | native identity on the whole corpus; sjasmplus ↔ native ↔ IDA ↔ VICE with the asserted loss lists |

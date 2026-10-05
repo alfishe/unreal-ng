@@ -207,14 +207,14 @@ sequenceDiagram
     participant C as Caller (WebAPI / CLI / MCP / Lua / Python / Qt)
     participant LM as LabelManager (facade)
     participant ST as SymbolStore
-    participant REG as FormatRegistry
-    participant FMT as Format (e.g. sjasmplus .sym)
+    participant REG as CodecRegistry
+    participant FMT as Codec (e.g. sjasmplus .sym)
     participant EMU as Emulator
     C->>LM: ImportSymbols("game.sym", {format: auto, set: "game.sym"})
     LM->>ST: Import(FileSource, options)
     ST->>REG: Detect(probe)
     REG-->>ST: sjasmplus-sym (score 95), z80asm-sym (40)
-    ST->>FMT: Import(source)
+    ST->>FMT: Decode(source)
     FMT-->>ST: 812 records, 1 warning (line 77: duplicate)
     ST->>ST: normalize, merge (policy both)
     ST->>EMU: RunAtCoherentMoment: swap Index
@@ -258,12 +258,12 @@ sequenceDiagram
     participant C as Caller
     participant ST as SymbolStore
     participant NR as NameRules (sjasmplus)
-    participant FMT as Format writer (sjasmplus-equ)
+    participant FMT as Codec (sjasmplus-equ)
     C->>ST: Export(view{sets: all, space: cpu+ram3}, "sjasmplus-equ", file)
     ST->>ST: resolve the view (enabled sets, filter)
     ST->>NR: check every name
     NR-->>ST: PRINT-A-1 → PRINT_A_1, IF → IF_ (reserved), 2 renames
-    ST->>FMT: Write(records, renames)
+    ST->>FMT: Encode(records, renames)
     FMT-->>ST: bytes
     ST-->>C: ExportReport (340 written, 2 renamed, 3 not representable: page symbols folded to comments)
 ```
@@ -381,27 +381,29 @@ core/src/debugger/symbols/                  # the module (namespace symbols)
 ├── io/
 │   ├── bytesource.h                        # ByteSource / ByteSink interfaces (file, buffer)
 │   └── tokenizer.h / .cpp                  # the shared text tokenizer
-├── formats/
-│   ├── format.h                            # IFormat, FormatId, Family, Capabilities
-│   ├── formatregistry.h / .cpp             # registration, detection (§4)
+├── codecs/                                 # one codec per format: decoder + encoder (D-1)
+│   ├── codec.h                             # ICodec, CodecId, Family, Capabilities
+│   ├── codecregistry.h / .cpp              # registration, detection (§4)
 │   ├── namerules.h / .cpp                  # DT-3 per target
-│   ├── text/                               # one file per text format
-│   │   ├── nativejson.cpp                  # *.usym.json (lossless)
-│   │   ├── unrealmap.cpp                   # our MAP (today's ParseMapFile)
-│   │   ├── simplesym.cpp                   # "ADDR NAME" / "NAME ADDR" (today's SYM, sos.l, user.l)
-│   │   ├── sjasmplus.cpp                   # .sym, EQU include, .sld, .lst labels
-│   │   ├── z88dk.cpp                       # .map
-│   │   ├── pasmo.cpp                       # --equ output
-│   │   ├── vice.cpp                        # VICE labels
-│   │   ├── mame.cpp                        # MAME debugger commands
-│   │   ├── ida.cpp                         # IDA names list, IDC, IDAPython
-│   │   ├── ghidra.cpp                      # Ghidra import script / names list
-│   │   └── ...
-│   └── tokenized/                          # after the research (formats.md §4)
-│       ├── alasm.cpp                       # label table + tokenized source
-│       ├── xas.cpp
-│       ├── storm.cpp
-│       └── gens.cpp
+│   ├── text/
+│   │   ├── native/       nativecodec.h / .cpp            # *.usym.json (lossless)
+│   │   ├── unrealmap/    unrealmapcodec.h / .cpp         # our MAP (today's ParseMapFile + a new encoder)
+│   │   ├── simplesym/    simplesymcodec.h / .cpp         # "ADDR NAME" (today's SYM, sos.l)
+│   │   ├── unreall/      unreallcodec.h / .cpp           # Unreal user.l
+│   │   ├── vice/         vicecodec.h / .cpp
+│   │   ├── sjasm/        sjasmequcodec.h / .cpp          # old SJASM "NAME EQU $ADDR"
+│   │   ├── sjasmplus/    sjasmplussymcodec / sjasmplussldcodec / sjasmpluslstcodec
+│   │   ├── z88dk/        z88dkmapcodec.h / .cpp
+│   │   ├── pasmo/        pasmocodec.h / .cpp
+│   │   └── cspect/       cspectmapcodec.h / .cpp
+│   ├── script/
+│   │   ├── ida/          idaidccodec / idapythoncodec
+│   │   ├── ghidra/       ghidracodec.h / .cpp
+│   │   └── mame/         mamecodec.h / .cpp
+│   └── tokenized/                          # after each research document (formats.md §4)
+│       ├── tasm/         tasmcodec.h / .cpp, tasmtokens.h   # first (prior art)
+│       ├── alasm/        alasmcodec, alasmtable (shared with the live scanner)
+│       ├── xas/  storm/  gens/  masm/  zxasm/
 ├── live/
 │   ├── memoryview.h                        # read-only pages copy (interface)
 │   └── alasmscanner.cpp ...                # label tables in RAM
@@ -424,4 +426,6 @@ core/benchmarks/debugger/symbols/           # benchmarks
 Why here and not a library now: the module is small enough to grow inside the debugger, and the rule "model,
 io, formats, live use std only; adapters hold every emulator dependency" keeps it extractable to a standalone MIT
 library (`unreal-symbols`) the same way the media layer is planned ([library-extraction](../2026-10-05-media-multisource/library-extraction/README.md)).
-The `symconv` tool proves it: it links only `model/`, `io/`, `formats/` and `bundles/`.
+The `symconv` tool proves it: it links only `model/`, `io/`, `codecs/` and `bundles/`. One folder per codec keeps
+each format's decoder, encoder, token tables and tests together; a new format is one new folder and one line in the
+registry.

@@ -3,7 +3,8 @@
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
-| **Status** | Draft for review; every row marked **verify** is checked against the real tool's output before its importer or exporter is written (golden files come from the tool, not from this table) |
+| **Status** | Draft for review; every row marked **verify** is checked against the real tool's output before its codec is written (golden files come from the tool, not from this table) |
+| **Rule** | Every format is one codec that **decodes and encodes** (decision D-1); nothing is vendored, prior art is reference only (D-2, [prior-art.md](prior-art.md)) |
 | **Architecture** | [architecture.md](architecture.md) |
 
 ## 1. Families
@@ -11,8 +12,8 @@
 | Family | What it is | How it is read | How it is written |
 |---|---|---|---|
 | **Text** | one symbol per line in a tool's text format | the shared tokenizer splits each line; the format's small line grammar picks the fields | the format's line writer, after the target's name rules |
-| **Script** | a program for another tool that sets names (IDC, IDAPython, a Ghidra script, MAME debugger commands) | where the script is a fixed pattern, read like text; otherwise export only | generated from a template |
-| **Tokenized** | a ZX assembler's own binary source and label table (ALASM, XAS, STORM, GENS, ...), in a file or on a disk image | the format's detokenizer decodes the label table and, where useful, the source lines | optional, after the research (§4) |
+| **Script** | a program for another tool that sets names (IDC, IDAPython, a Ghidra script, MAME debugger commands) | read like text: the codec recognizes the statement forms it writes and the common hand-written ones (`set_name(0x…, "…")`, `idc.set_name(…)`, `comadd …`) | generated from a template |
+| **Tokenized** | a ZX assembler's own binary source and label table (TASM, ALASM, XAS, STORM, GENS, ...), in a file or on a disk image | the codec's detokenizer: a **label table** gives names and values; a **source** gives names and lines, and values from `EQU` or by assembling the detokenized text with the core's `Z80TextAssembler` (§4.1) | the codec's tokenizer writes the assembler's own form (the round trip is tested on files the real assembler made) |
 | **Live** | the label table of an assembler or monitor running in the emulated machine | a scanner looks for the table in a read-only copy of the RAM pages and reads it with the tokenized decoder | — |
 | **Native** | the emulator's own lossless file `*.usym.json` | JSON | JSON |
 | **Bundle** | a native or MAP file shipped in `data/symbols/`, chosen by ROM SHA-256 through `data/symbols/manifest.json` | as its format | — |
@@ -41,7 +42,7 @@
 
 Phase numbers refer to [tdd.md](tdd.md) §10.
 
-| Format id | Family | Import | Export | Detection (content first, extension as hint) | Status | Phase |
+| Codec id | Family | Decode | Encode | Detection (content first, extension as hint) | Status | Phase |
 |---|---|---|---|---|---|---|
 | `native` | native | ● | ● | JSON with `"format": "unreal-symbols"` | new | S1 |
 | `unreal-map` | text | ● | ● | lines `[ROMn:]HHHH  NAME  (TYPE) ; comment`, often a `---` banner | existing parser (`ParseMapFile`) | S2 |
@@ -51,18 +52,19 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 | `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` | existing (`ParseSJASMSymFile`) | S2 |
 | `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | existing (`ParseZ88DKSymFile`) | S2 |
 | `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` **verify** (`--sym`, `--exp`) | new | S3 |
-| `sjasmplus-sld` | text | ● | – | first line `\|SLD.data.version\|N`, then `\|`-separated records **verify** the field order per SLD version | new | S3 |
-| `sjasmplus-lst` | text | ● | – | the `ListingParser` grammar; labels are the lines that define one | existing (`ListingParser`) | S3 |
+| `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|N`, then `\|`-separated records **verify** the field order per SLD version | new | S3 |
+| `sjasmplus-lst` | text | ● | ● | the `ListingParser` grammar; labels are the lines that define one | existing (`ListingParser`) | S3 |
 | `pasmo` | text | ● | ● | lines `NAME EQU 0HHHHH` **verify** the option and form | new | S3 |
-| `ida-python` | script | – | ● | — | new | S4 |
-| `ida-idc` | script | ● (fixed `set_name(0xHHHH, "name")` pattern) | ● | `set_name(` / `MakeName(` lines | new | S4 |
+| `ida-python` | script | ● | ● | — | new | S4 |
+| `ida-idc` | script | ● | ● | `set_name(` / `MakeName(` lines | new | S4 |
 | `ghidra` | script / text | ● | ● | lines `name address [type]` for Ghidra's symbol-import script **verify** | new | S4 |
-| `mame` | script | – | ● | — (debugger command file: `comadd HHHH,name`) **verify** | new | S4 |
+| `mame` | script | ● | ● | — (debugger command file: `comadd HHHH,name`) **verify** | new | S4 |
 | `cspect-map` | text | ● | ● | sjasmplus `--cspectmap` output **verify** | new | S4 |
-| `alasm` | tokenized + live | ● | optional | after research | research | S6 |
-| `xas` | tokenized + live | ● | optional | after research | research | S7 |
-| `storm`, `gens`, `masm`, `zxasm` | tokenized | ● | optional | after research | research | S8 |
-| `sts` (labels kept by the STS monitor) | live | ● | – | after research | research | S8 |
+| `tasm` | tokenized source | ● | ● | TR-DOS type `A` / `.$A`; line records `[len][bytes][trailer]`, tokens `#80-#F0`, `#0A n` = n spaces, `#FF` end (owner's 2012 converter; **verify** the trailer byte and TASM 3 vs 4 tables) | prior art | S6 |
+| `alasm` | tokenized + live | ● | ● | after research | research | S7 |
+| `xas` | tokenized + live | ● | ● | after research | research | S8 |
+| `storm`, `gens`, `masm`, `zxasm` | tokenized | ● | ● | after research | research | S9 |
+| `sts` (labels kept by the STS monitor) | live | ● | ● | after research | research | S9 |
 
 Tools without a symbol format in this table (for example Fuse) are not targets until someone asks; the registry
 makes adding one a single file.
@@ -104,8 +106,20 @@ the assembler's own letter). Reading labels from such a file or from the running
 things per assembler and version: where the label table is, how one entry is laid out (name encoding, value,
 flags, link to the next entry), and how the source refers to labels.
 
-**Nothing here is coded from guesses** (proposal P-5). No surviving Unreal source implements its XAS / ALASM import
-([debugger additions TODO](../2026-10-04-debugger-additions/TODO.md) A9), so each format is researched first:
+### 4.1 A source is not a label table
+
+A tokenized **source** file holds label *names* and the lines that define them, but not their addresses: those exist
+only after the assembler ran. A source codec therefore gives, per label: name, defining line, kind (from `EQU` /
+`DEFB` / an instruction), and a value only where the line itself says it (`EQU 24`). With `--assemble` the
+detokenized text goes through the core's two-pass `Z80TextAssembler`, whose symbol table supplies the addresses (and
+reports what it could not assemble: macros, includes it cannot reach). A **label table** (in RAM after assembling,
+or saved by the assembler) has the addresses directly.
+
+### 4.2 Research
+
+**Nothing here is coded from guesses** (proposal P-5). The references found ([prior-art.md](prior-art.md): the
+Unreal 0.37.1 table scans, ZX-M8XXX's detokenizer, H2ASM, the ZAsm View spec, our ALASM script) settle part of the
+layouts and disagree in places, so each format is still researched and confirmed on files the real assembler made:
 
 | Step | What | Output |
 |---|---|---|
@@ -116,7 +130,8 @@ flags, link to the next entry), and how the source refers to labels.
 | R5 | Golden corpus: the disk files and RAM dumps of R2 / R4 with the expected native JSON | `testdata/symbols/<assembler>/` |
 | R6 | Importer (file + live scanner) against the corpus | code |
 
-What is already known (from the Unreal 0.37 manual): XAS 7 keeps its labels in bank 6 (bank `#46` on a Pentagon with
+What is already known: **TASM** has a token table and a line layout in the owner's 2012 converter, plus TRD test
+data ([prior-art.md](prior-art.md) §1). From the Unreal 0.37 manual: XAS 7 keeps its labels in bank 6 (bank `#46` on a Pentagon with
 more than 128K); ALASM 4.42-5.0x can be anywhere in 128K RAM (pages 1-7, so a scan); with the STS monitor, STS's
 labels are in bank 7 (`#47`). These rules decide where the live scanners look first; the layouts come from R3.
 

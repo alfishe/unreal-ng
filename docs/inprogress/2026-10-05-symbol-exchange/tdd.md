@@ -13,13 +13,13 @@
 |---|---|---|---|
 | model | `core/src/debugger/symbols/model/` | std | anything of the emulator |
 | io | `.../symbols/io/` | std, model | the emulator |
-| formats | `.../symbols/formats/` | std, model, io | the emulator |
-| live | `.../symbols/live/` | std, model, io, formats (decoders) | the emulator (it sees a `MemoryView`) |
-| bundles | `.../symbols/bundles/` | std, model, formats | the emulator |
+| codecs | `.../symbols/codecs/` | std, model, io | the emulator (one folder per codec) |
+| live | `.../symbols/live/` | std, model, io, codecs (table decoders) | the emulator (it sees a `MemoryView`) |
+| bundles | `.../symbols/bundles/` | std, model, codecs | the emulator |
 | adapters | `.../symbols/adapters/` | everything above + emulator, memory, media | — |
-| facade | `core/src/debugger/labels/labelmanager.*` | adapters, model | formats directly (goes through `SymbolStore`) |
+| facade | `core/src/debugger/labels/labelmanager.*` | adapters, model | codecs directly (goes through `SymbolStore`) |
 
-A CMake check (`symbols-std-only`) compiles `model/ io/ formats/ live/ bundles/` as a separate object library with
+A CMake check (`symbols-std-only`) compiles `model/ io/ codecs/ live/ bundles/` as a separate object library with
 only the standard include paths, so a stray emulator include fails the build. `tools/symbols/symconv` links that
 library alone.
 
@@ -106,13 +106,16 @@ Implementations: `FileSource` / `FileSink` (paths through `FileHelper`, UTF-8), 
 (automation uploads and downloads), `DiskFileSource` (adapter: `disk:A/NAME.EXT` through the TR-DOS catalog or
 `FatVolumeReader::ReadFile`; a TR-DOS file read by name is a small addition to `TrdosCatalog`).
 
-## 4. Formats
+## 4. Codecs
+
+Every format is one codec with a decoder and an encoder (decision D-1); a codec that cannot encode is not accepted.
+Nothing is vendored (D-2): each codec is written fresh from its research document and the golden files.
 
 ```cpp
 enum class Family : uint8_t { Text, Script, Tokenized, Live, Native };
-struct Capabilities { bool import = false, exportable = false; uint32_t holds = 0; };   // bit per matrix column
+struct Capabilities { uint32_t holds = 0; };   // bit per lossiness-matrix column (decode and encode both exist)
 
-class IFormat
+class ICodec
 {
 public:
     virtual FormatId Id() const = 0;                    // "sjasmplus-sym"
@@ -121,8 +124,8 @@ public:
     virtual Capabilities Caps() const = 0;
     virtual const NameRules& Rules() const = 0;          // for export (DT-3)
     virtual int Detect(const Probe& probe) const = 0;    // 0..100
-    virtual ImportResult Import(std::span<const uint8_t> bytes, const ImportContext& ctx) const;
-    virtual ExportResult Export(const ExportView& view, const ExportContext& ctx, ByteSink& out) const;
+    virtual ImportResult Decode(std::span<const uint8_t> bytes, const ImportContext& ctx) const = 0;
+    virtual ExportResult Encode(const ExportView& view, const ExportContext& ctx, ByteSink& out) const = 0;
 };
 ```
 
@@ -133,8 +136,8 @@ public:
   `bindToCurrentPaging`), limits (max symbols, max line length).
 - `ExportView`: the resolved symbols to write, already filtered; `ExportContext`: unrepresentable policy (DT-4),
   header comment on / off, line ending (`\n` default, `\r\n` for tools that need it).
-- **Registry**: formats register in one table (`FormatRegistry::Builtin()`); `Detect` asks all with `Import` caps,
-  sorts by score, applies the thresholds of [architecture.md](architecture.md) §4 (60, and 15 above the next).
+- **Registry**: codecs register in one table (`CodecRegistry::Builtin()`); `Detect` asks all of them, sorts by
+  score, applies the thresholds of [architecture.md](architecture.md) §4 (60, and 15 above the next).
 
 ### 4.1 The tokenizer
 
@@ -161,12 +164,14 @@ class ITokenizedDecoder           // per assembler and version, written after th
 public:
     virtual int ScoreTable(std::span<const uint8_t> bytes, size_t at) const = 0;   // is a label table here?
     virtual ImportResult ReadTable(std::span<const uint8_t> bytes, size_t at, const ImportContext&) const = 0;
-    virtual ImportResult ReadSourceFile(std::span<const uint8_t> file, const ImportContext&) const = 0;  // optional
+    virtual ImportResult ReadSourceFile(std::span<const uint8_t> file, const ImportContext&) const = 0;
+    virtual bool WriteSourceFile(const std::vector<std::string>& lines, std::vector<uint8_t>& out) const = 0;  // tokenize
 };
 ```
 
-The tokenized `IFormat` for a file uses `ReadSourceFile` (labels with their source lines); the live scanner uses
-`ScoreTable` + `ReadTable` on the RAM copy.
+The tokenized codec for a file uses `ReadSourceFile` (labels with their source lines; addresses from `EQU` or, with
+`--assemble`, from `Z80TextAssembler` over the detokenized text) and its encoder writes the assembler's own form; the
+live scanner uses `ScoreTable` + `ReadTable` on the RAM copy.
 
 ### 4.3 Live scanning
 
@@ -254,13 +259,14 @@ Text import: one pass over the bytes, tokens as views, one record per line; 100 
 |---|---|---|
 | S0 | Design (this folder), owner decisions P-1…P-7 | decisions recorded |
 | S1 | Model, interner, index, store, merge, native JSON format, `symbols-std-only` build check | unit tests; native round trip |
-| S2 | The five existing formats + `unreal-l` moved into the registry; `LabelManager` becomes the facade | golden tests = today's parser output; every existing test passes unchanged |
+| S2 | The five existing formats + `unreal-l` as codecs (their encoders are new); `LabelManager` becomes the facade | golden tests = today's parser output; every existing test passes unchanged |
 | S3 | Tokenizer; sjasmplus `.sym` / `.sld` / `.lst` labels; pasmo | golden corpus from the real tools |
-| S4 | Export side: name rules, DT-3 / DT-4; IDA IDC + Python, Ghidra, MAME, CSpect; `symconv` tool | golden exports; cross round trips |
+| S4 | Name rules, DT-3 / DT-4; codecs IDA IDC + Python, Ghidra, MAME, CSpect (both ways); `symconv` tool | golden files both ways; cross round trips |
 | S5 | Surfaces (WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt), bundles + manifest, recipe | live checks, MCP / Qt tests |
-| S6 | ALASM: research (R1-R5) then file importer and live scanner | corpus + tests |
-| S7 | XAS (research, importer, scanner in bank 6 / `#46`) | corpus + tests |
-| S8 | STORM, GENS, MASM, ZX ASM, STS (research each first) | corpus + tests |
-| S9 | Benchmarks and the results table; docs (`docs/features/symbols.md`) | numbers meet NFR-1…3 |
+| S6 | TASM (3.x / 4.x): research from the prior art (token tables, line layout, version differences) then the codec (decode, encode, `--assemble`) | corpus from TRD test data + files made by TASM in the emulator |
+| S7 | ALASM: research (R1-R5), codec and live scanner | corpus + tests |
+| S8 | XAS (research, codec, scanner in bank 6 / `#46`) | corpus + tests |
+| S9 | STORM, GENS, MASM, ZX ASM, STS (research each first) | corpus + tests |
+| S10 | Benchmarks and the results table; docs (`docs/features/symbols.md`) | numbers meet NFR-1…3 |
 
-The debugger additions' E7 ("label import") closes with S6 + S7 (the two formats the TUI's import menu names).
+The debugger additions' E7 ("label import") closes with S7 + S8 (the two formats the TUI's import menu names).
