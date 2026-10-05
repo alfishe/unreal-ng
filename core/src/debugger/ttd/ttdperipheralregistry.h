@@ -93,6 +93,13 @@ public:
     /// @param outBlobs Output map of peripheral ID → serialized state
     void CaptureAll(std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const;
 
+    /// The engine's capture (Phase 5): every registered device's raw state, no
+    /// blob encoding, kept for LastCaptureState. @p present gets the ids that
+    /// have a state, ascending. A device marked in @p external is listed when
+    /// it has a state size but not serialized: its caller takes its state
+    /// another way (a region source's state without its memory)
+    void CaptureStates(std::vector<uint8_t>& present, const std::array<bool, 256>& external) const;
+
     /// Restore all peripherals from blob map.
     ///
     /// Driven by the registered devices rather than by the blobs: a device the

@@ -1756,6 +1756,10 @@ private:
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
     bool FeedShadow(const TTDCheckpoint& out, bool baseline);
+    /// The capture's device states (CaptureNow -> FeedShadow): the ids with a
+    /// state, and the region sources' states without their memory
+    std::vector<uint8_t> _capturedDevices;
+    std::vector<std::pair<uint8_t, std::vector<uint8_t>>> _withoutRegions;
     /// The shadow engine's history no longer matches v1's: it starts over at the next capture
     void ResetShadow();
     TTDPeripheralRegistry _peripherals;

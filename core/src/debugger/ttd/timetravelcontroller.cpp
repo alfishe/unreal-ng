@@ -1262,11 +1262,25 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
     }
     out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
 
-    // --- Device state, through the registry (TDD §6.4); the engine takes the raw states ---
-    _peripherals.CaptureAll(out.peripheralBlobs);
-    for (const auto& blob : out.peripheralBlobs)
-        _captureWork.deviceBlobBytes += blob.second.size();
+    // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
+    // device whose state also carries the memory it offers as regions (General Sound)
+    // gives its state without that memory; the registry does not serialize it whole ---
+    _withoutRegions.clear();
+    std::array<bool, 256> external{};
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+    {
+        uint8_t id = 0;
+        std::vector<uint8_t> state;
+        if (source->TTDStateWithoutRegions(id, state))
+        {
+            external[id] = true;
+            _withoutRegions.emplace_back(id, std::move(state));
+        }
+    }
+    _peripherals.CaptureStates(_capturedDevices, external);
     _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
+    for (const auto& [id, state] : _withoutRegions)
+        _captureWork.deviceStateBytes += state.size();
 
     // --- Port journal positions: a replay from here starts handing out records at them ---
     out.portReadCursor = _portJournalRecorded ? _portReads.Size() : 0;
@@ -1281,11 +1295,6 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
     _dirtyTracker->CollectAndClear(_dirtyScratch);
 
     const bool taken = FeedShadow(out, baseline);
-
-    // The engine keeps the device states; the first checkpoint keeps its blobs for the
-    // recorded machine's description (status), the others need none
-    if (!baseline)
-        out.peripheralBlobs.clear();
     _perf.lastCaptureWork = _captureWork;
     return taken;
 }
@@ -3678,27 +3687,16 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     in.chipset = out.chipset;
     // Device states, raw, as the capture serialized them; a device whose
     // state also carries its region memory (General Sound) gives the engine
-    // its state without that memory
-    std::deque<std::vector<uint8_t>> stripped;   // stable addresses while it grows
-    in.deviceStateBytes = _peripherals.LastCaptureStateBytes();
+    // its state without that memory (CaptureNow took both)
+    in.deviceStateBytes = _captureWork.deviceStateBytes;
     std::array<const std::vector<uint8_t>*, 256> without{};
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
-    {
-        uint8_t id = 0;
-        stripped.emplace_back();
-        if (!source->TTDStateWithoutRegions(id, stripped.back()) || !out.peripheralBlobs.count(id))
-        {
-            stripped.pop_back();
-            continue;
-        }
-        without[id] = &stripped.back();
-        // The engine serializes the state without the region memory
-        in.deviceStateBytes = in.deviceStateBytes - _peripherals.LastCaptureStateBytes(id) + stripped.back().size();
-    }
-    for (const auto& [id, blob] : out.peripheralBlobs)
+    for (const auto& [id, state] : _withoutRegions)
+        without[id] = &state;
+    for (const uint8_t id : _capturedDevices)
     {
         const std::vector<uint8_t>& raw = without[id] ? *without[id] : _peripherals.LastCaptureState(id);
-        in.deviceStates.push_back({id, raw.data(), raw.size()});
+        if (!raw.empty())
+            in.deviceStates.push_back({id, raw.data(), raw.size()});
     }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);

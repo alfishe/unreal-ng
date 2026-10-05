@@ -185,6 +185,35 @@ void TTDPeripheralRegistry::CaptureAll(
     }
 }
 
+void TTDPeripheralRegistry::CaptureStates(std::vector<uint8_t>& present, const std::array<bool, 256>& external) const
+{
+    present.clear();
+    _lastStateBytes.fill(0);
+    _lastStateTotal = 0;
+    for (std::vector<uint8_t>& s : _lastStates)
+        s.clear();   // keeps the capacity: no allocation per frame
+    std::vector<uint8_t> wide;   // an id past the kept range
+    for (const auto& [id, device] : _devices)
+    {
+        if (!device || device->TTDStateSize() == 0)
+            continue;
+        if (external[id])
+        {
+            present.push_back(id);
+            continue;
+        }
+        std::vector<uint8_t>& state = id < _lastStates.size() ? _lastStates[id] : wide;
+        device->TTDSaveStateTo(state);
+        if (state.empty())
+            continue;
+        present.push_back(id);
+        if (id < _lastStateBytes.size())
+            _lastStateBytes[id] = static_cast<uint32_t>(state.size());
+        _lastStateTotal += state.size();
+    }
+    std::sort(present.begin(), present.end());
+}
+
 TTDRestoreReport TTDPeripheralRegistry::RestoreAll(
     const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs) const
 {
