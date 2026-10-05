@@ -713,7 +713,8 @@ enum class AudioSource : uint8_t
     NeoGSMp3 = 10,    // NeoGS MP3 decoder output
     NeoGSDma = 11,    // NeoGS: the card's own DMA (SD card, MP3 decoder) moving data - not sound
     NeoGSTransfer = 12, // NeoGS: ZX-DMA moving data between the ZX and the card - not sound
-    CdAudio = 13        // CD-DA from an ATAPI CD drive (any IDE unit)
+    CdAudio = 13,       // CD-DA from an ATAPI CD drive (any IDE unit)
+    MultiSound = 14     // ZX-MultiSound card (any of its five rows: FM, SSG, SAA, DAC, MIDI)
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

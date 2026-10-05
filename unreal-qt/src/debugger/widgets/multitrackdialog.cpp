@@ -141,6 +141,11 @@ QString MultiTrackDialog::sourceToString(AudioSourceType source)
         case AudioSourceType::AY3_ChannelC:    return "AY-3 Ch.C";
         case AudioSourceType::FM1:             return "FM-1";
         case AudioSourceType::FM2:             return "FM-2";
+        case AudioSourceType::MultiSoundFm:    return "MS FM";
+        case AudioSourceType::MultiSoundSsg:   return "MS SSG";
+        case AudioSourceType::MultiSoundSaa:   return "MS SAA";
+        case AudioSourceType::MultiSoundDac:   return "MS DAC";
+        case AudioSourceType::MultiSoundMidi:  return "MS MIDI";
         case AudioSourceType::Custom:          return "Custom";
         default:                                return "Unknown";
     }
@@ -173,6 +178,11 @@ AudioSourceType MultiTrackDialog::stringToSource(const QString& str)
     if (str == "AY-3 Ch.C") return AudioSourceType::AY3_ChannelC;
     if (str == "FM-1") return AudioSourceType::FM1;
     if (str == "FM-2") return AudioSourceType::FM2;
+    if (str == "MS FM") return AudioSourceType::MultiSoundFm;
+    if (str == "MS SSG") return AudioSourceType::MultiSoundSsg;
+    if (str == "MS SAA") return AudioSourceType::MultiSoundSaa;
+    if (str == "MS DAC") return AudioSourceType::MultiSoundDac;
+    if (str == "MS MIDI") return AudioSourceType::MultiSoundMidi;
     return AudioSourceType::MasterMix;
 }
 

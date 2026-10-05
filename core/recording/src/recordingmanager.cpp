@@ -119,6 +119,16 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "FM1";
         case AudioSourceType::FM2:
             return "FM2";
+        case AudioSourceType::MultiSoundFm:
+            return "MultiSoundFm";
+        case AudioSourceType::MultiSoundSsg:
+            return "MultiSoundSsg";
+        case AudioSourceType::MultiSoundSaa:
+            return "MultiSoundSaa";
+        case AudioSourceType::MultiSoundDac:
+            return "MultiSoundDac";
+        case AudioSourceType::MultiSoundMidi:
+            return "MultiSoundMidi";
         case AudioSourceType::Custom:
             return "Custom";
         default:

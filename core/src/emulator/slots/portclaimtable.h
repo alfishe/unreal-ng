@@ -105,6 +105,8 @@ public:
     {
         _builtIns.clear();
     }
+    /// A socketed built-in taken out of its socket (Q7): it no longer drives the reads of its ports
+    void SetBuiltInRemoved(const char* id);
 
     /// Where the ROM-fetch lock and DOS-gated claims read their signals; nullptr: never locked, never DOS
     void BindSignals(const IClaimSignals* signals) { _signals = signals; }
@@ -217,6 +219,7 @@ public:
         const char* id = "";
         std::span<const PortClaim> claims{};
         bool shadowed = false;      ///< a card's IORQGE claim covers one of its documented ports (CardWins buses)
+        bool removed = false;       ///< taken out of its socket (SetBuiltInRemoved)
         uint8_t shadowedBySlot = 0; ///< the first such card's slot
     };
 
@@ -232,6 +235,8 @@ public:
 
     /// Whether the port is one the board hides from Iorq cards (BoardWins), for this direction and DOS state
     bool IsBoardPort(uint16_t port, Dir dir) const;
+    /// Whether a read of the port belongs to a built-in taken out of its socket (nothing on the board drives it)
+    bool IsRemovedBuiltInRead(uint16_t port) const;
 
     /// How many times Build() ran
     uint32_t BuildCount() const { return _buildCount; }

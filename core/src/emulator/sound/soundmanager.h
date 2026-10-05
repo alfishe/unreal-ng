@@ -30,6 +30,7 @@
 #include "stdafx.h"
 
 class EmulatorContext;
+class ICard;
 class SoundChip_Moonsound;
 
 /// The GS slot as other threads see it (SoundManager::generalSoundSlot)
@@ -117,6 +118,13 @@ protected:
 #ifdef UNREALNG_HAVE_OPL4
     SoundChip_Moonsound* _moonsound = nullptr;
 #endif
+    // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
+    // drives their frames and mixes their rows
+    std::vector<ICard*> _slotCards;
+    // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
+    std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
+    const int16_t* slotCardBuffer(AudioSourceType type) const;
+    bool wideMixNeeded() const;
     // SoundChip_SAA1099;
 
     // Pending GS personality switch request (gs_lightweight feature,
@@ -563,6 +571,18 @@ public:
     /// legacy integer path is used whenever the wide path is off (R6).
     void enableWideMix(bool enable);
     bool wideMixEnabled() const { return _wideMix; }
+
+    /// region <Slot-built cards (ZX-bus slots card.h)>
+    /// A card's mixer rows join the registry (volume / mute / solo / capture / HUD like any row) and its frames run
+    /// with the machine's: FrameStart at every frame start, FrameEnd with the frame's sample count (0 in turbo
+    /// without audio). Called by SlotManager at machine creation and release
+    void attachSlotCard(ICard* card);
+    void detachSlotCard(ICard* card);
+    const std::vector<ICard*>& slotCards() const { return _slotCards; }
+    /// Why a row is silent by hardware ("shadowed by zxbus.1"); empty when nothing hides it
+    void setDeviceState(AudioSourceType type, const std::string& state);
+    std::string deviceState(AudioSourceType type) const;
+    /// endregion </Slot-built cards>
 
     /// Compatibility shim for tape audio. Routes amplitude into the beeper's
     /// blip_buf at the given T-state position. New code should use

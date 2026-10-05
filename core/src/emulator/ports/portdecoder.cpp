@@ -70,9 +70,6 @@ PortDecoder::PortDecoder(EmulatorContext* context) : _ide(context)
     _tape = context->pTape;
     _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
-
-    // ROM-locked and DOS-gated claims of slot-built cards read the bus signals here (only when an entry needs them)
-    _fullDecodeClaims.BindSignals(&_claimSignals);
 }
 
 /// region <IDE board>
@@ -1569,22 +1566,11 @@ PortDevice* PortDecoder::LowByteObserver(uint16_t rawPort) const
 
 /// region <Slot-built cards>
 
-uint16_t PortDecoder::ClaimSignals::LastM1Address() const
-{
-    return _decoder.IoPc();
-}
-
-bool PortDecoder::ClaimSignals::DosActive() const
-{
-    return _decoder._context != nullptr && (_decoder._context->emulatorState.flags & CF_TRDOS) != 0;
-}
-
 void PortDecoder::ConfigureSlotBus(slots::Arbitration arbitration, slots::ReadRule readRule,
                                    std::span<const slots::PortClaim> boardPorts,
                                    std::span<const slots::BuiltInDef> builtIns)
 {
     _fullDecodeClaims.Configure(arbitration, readRule, boardPorts);
-    _removedBuiltInClaims.clear();
     _fullDecodeClaims.ClearBuiltIns();
     for (const slots::BuiltInDef& builtIn : builtIns)
         _fullDecodeClaims.AddBuiltIn(builtIn.id, builtIn.claims);
@@ -1608,9 +1594,14 @@ void PortDecoder::DetachSlotCard(PortDevice* card)
         RebuildFullDecodeClaims();
 }
 
-void PortDecoder::SetRemovedBuiltIn(std::span<const slots::PortClaim> claims)
+void PortDecoder::SetBuiltInRemoved(const char* builtInId)
 {
-    _removedBuiltInClaims.insert(_removedBuiltInClaims.end(), claims.begin(), claims.end());
+    _fullDecodeClaims.SetBuiltInRemoved(builtInId);
+}
+
+void PortDecoder::BindSlotSignals(const slots::IClaimSignals* claimSignals)
+{
+    _fullDecodeClaims.BindSignals(claimSignals);
 }
 
 bool PortDecoder::IsBuiltInShadowed(const char* builtInId) const
@@ -1635,14 +1626,10 @@ uint8_t PortDecoder::ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDro
         _claimCycle.active = false;
         boardDrove = _lastPortDecoded;
         // A chip out of its socket drives nothing, whatever the board's decode says about the port
-        for (const slots::PortClaim& claim : _removedBuiltInClaims)
+        if (boardDrove && _fullDecodeClaims.IsRemovedBuiltInRead(port))
         {
-            if ((port & claim.mask) == (claim.match & claim.mask) &&
-                (static_cast<uint8_t>(claim.dir) & static_cast<uint8_t>(slots::Dir::In)) != 0)
-            {
-                boardDrove = false;
-                _lastPortDecoded = false;
-            }
+            boardDrove = false;
+            _lastPortDecoded = false;
         }
         return boardDrove;
     });

@@ -27,6 +27,7 @@ namespace HudCategory
     constexpr const char* AudioMoonSound = "audio-moonsound";
     constexpr const char* AudioNeoGSDma = "audio-neogs-dma";
     constexpr const char* AudioCdda = "audio-cdda";
+    constexpr const char* AudioMultiSound = "audio-multisound";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -57,6 +58,7 @@ namespace HudCategory
             case AudioSource::NeoGSDma:   return AudioNeoGSDma;  // Data movement, not sound: its own switch
             case AudioSource::NeoGSTransfer: return AudioNeoGSDma;
             case AudioSource::CdAudio:    return AudioCdda;
+            case AudioSource::MultiSound: return AudioMultiSound;
             default: return nullptr;
         }
     }
@@ -1475,6 +1477,9 @@ void HudModel::onAudioActivity(int, Message* message)
             break;
         case AudioSource::CdAudio:
             key = "cdda"; label = "CD"; icon = "cdaudio";  // Red Book audio from an ATAPI CD drive
+            break;
+        case AudioSource::MultiSound:
+            key = "multisound"; label = "MultiSound"; icon = "turbosound";  // any of the card's five rows
             break;
         default:
             return;

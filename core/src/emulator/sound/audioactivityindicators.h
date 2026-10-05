@@ -52,7 +52,7 @@ public:
 
 private:
     static constexpr int SOURCE_TYPES = static_cast<int>(AudioSourceType::Custom) + 1;
-    static constexpr int HUD_SOURCES = 14;  // AudioSource values (checked in the .cpp)
+    static constexpr int HUD_SOURCES = 15;  // AudioSource values (checked in the .cpp)
 
     int _framesSinceSound[SOURCE_TYPES];
     int _framesSinceNeoGSDma;

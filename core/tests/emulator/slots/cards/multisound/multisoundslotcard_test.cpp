@@ -22,6 +22,7 @@
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/state/devicestate.h"
 
 namespace fs = std::filesystem;
 
@@ -275,6 +276,101 @@ TEST(MultiSoundSlotCard_Test, ZxEvoCardSeesTheBoardPorts)
 
     Out(m, 0x001F, 0x90);
     EXPECT_EQ(card->Card().Logic().Dac(1).sample, MultiSoundLogic::ConvertSample(0x90)) << "#1F: SounDrive channel 1";
+}
+
+// endregion
+
+// region <Step 3: the five mixer rows>
+
+namespace
+{
+
+const AudioSourceType kMsRows[] = { AudioSourceType::MultiSoundFm, AudioSourceType::MultiSoundSsg,
+                                    AudioSourceType::MultiSoundSaa, AudioSourceType::MultiSoundDac,
+                                    AudioSourceType::MultiSoundMidi };
+
+/// The mixer report's device for a source key; nullptr when the mixer has none
+const StateNode* MixerDevice(const StateNode& mixer, const std::string& key)
+{
+    const StateNode* devices = mixer.find("devices");
+    if (devices == nullptr)
+        return nullptr;
+    for (const StateNode& device : devices->items)
+    {
+        if (device.find("source") != nullptr && device.find("source")->s == key)
+            return &device;
+    }
+    return nullptr;
+}
+
+/// `DI; HALT` at #8000: the frames run with the CPU parked
+void ParkCpu(StagedMachine& m)
+{
+    Z80* z80 = m.Context()->pCore->GetZ80();
+    z80->DirectWrite(0x8000, 0xF3);
+    z80->DirectWrite(0x8001, 0x76);
+    z80->pc = 0x8000;
+}
+
+} // namespace
+
+/// Two Pentagons (~30 ms): the rows exist only with the card, carry their names and mixer keys, the shadowed board
+/// AY says why it is silent, and the mixer sums on its wide bus
+TEST(MultiSoundSlotCard_Test, MixerRowsOnlyWithTheCard)
+{
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = multisound");
+        ASSERT_TRUE(m.Ok());
+        SoundManager* sound = m.Context()->pSoundManager;
+        const char* names[] = { "MS FM", "MS SSG", "MS SAA", "MS DAC", "MS MIDI" };
+        for (size_t i = 0; i < std::size(kMsRows); i++)
+        {
+            const AudioDeviceInfo* row = sound->device(kMsRows[i]);
+            ASSERT_NE(row, nullptr) << names[i];
+            EXPECT_EQ(row->name, names[i]);
+        }
+        EXPECT_TRUE(sound->wideMixEnabled());
+        EXPECT_EQ(sound->deviceState(AudioSourceType::AY1_All), "shadowed by zxbus.1");
+
+        const StateNode mixer = DeviceState::AudioMixer(m.Context());
+        for (const char* key : { "ms_fm", "ms_ssg", "ms_saa", "ms_dac", "ms_midi" })
+        {
+            const StateNode* device = MixerDevice(mixer, key);
+            ASSERT_NE(device, nullptr) << key;
+            EXPECT_TRUE(device->find("capturable")->b) << key;
+        }
+        const StateNode* ay = MixerDevice(mixer, "ay1");
+        ASSERT_NE(ay, nullptr);
+        ASSERT_NE(ay->find("state"), nullptr);
+        EXPECT_EQ(ay->find("state")->s, "shadowed by zxbus.1");
+    }
+    {
+        StagedMachine m("pentagon128k", "zxbus.1 = moonsound");
+        ASSERT_TRUE(m.Ok());
+        for (AudioSourceType type : kMsRows)
+            EXPECT_EQ(m.Context()->pSoundManager->device(type), nullptr);
+        EXPECT_EQ(m.Context()->pSoundManager->deviceState(AudioSourceType::AY1_All), "");
+    }
+}
+
+/// One Pentagon, three frames (~25 ms): a tone written through the card's ports reaches the MS SSG row and the
+/// master mix; the shadowed board AY stays silent
+TEST(MultiSoundSlotCard_Test, SsgToneReachesItsRow)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound");
+    ASSERT_TRUE(m.Ok());
+    ParkCpu(m);
+    // U4 SSG: tone A period #0100, mixer: tone A only, volume 15
+    for (const auto& [reg, value] : { std::pair<uint8_t, uint8_t>{ 0, 0x00 }, { 1, 0x01 }, { 7, 0x3E }, { 8, 0x0F } })
+    {
+        Out(m, 0xFFFD, reg);
+        Out(m, 0xBFFD, value);
+    }
+    m.Machine().RunNFrames(3);
+    SoundManager* sound = m.Context()->pSoundManager;
+    EXPECT_GT(sound->device(AudioSourceType::MultiSoundSsg)->peak, 0.01f);
+    EXPECT_LT(sound->device(AudioSourceType::MultiSoundFm)->peak, 0.001f) << "FM muted after the reset";
+    EXPECT_LT(sound->device(AudioSourceType::AY1_All)->peak, 0.001f) << "the shadowed board AY got no write";
 }
 
 // endregion

@@ -38,6 +38,10 @@
 struct CONFIG;
 class EmulatorContext;
 class ICard;
+namespace slots
+{
+class IClaimSignals;
+}
 
 /// The card groups SL-4 moves onto slots, one per step
 enum class SlotCardGroup : uint8_t
@@ -152,6 +156,7 @@ private:
     EmulatorContext* _context = nullptr;
     Result _result;
     std::vector<std::unique_ptr<ICard>> _cards;
+    std::unique_ptr<slots::IClaimSignals> _signals;   ///< the claim table's view of M1 and DOS, while cards exist
 };
 
 #pragma pop_macro("signals")

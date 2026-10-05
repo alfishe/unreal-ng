@@ -381,6 +381,30 @@ const PortClaimTable::BuiltInState* PortClaimTable::FindBuiltIn(const char* id) 
     return nullptr;
 }
 
+void PortClaimTable::SetBuiltInRemoved(const char* id)
+{
+    for (BuiltInState& builtIn : _builtIns)
+    {
+        if (std::strcmp(builtIn.id, id) == 0)
+            builtIn.removed = true;
+    }
+}
+
+bool PortClaimTable::IsRemovedBuiltInRead(uint16_t port) const
+{
+    for (const BuiltInState& builtIn : _builtIns)
+    {
+        if (!builtIn.removed)
+            continue;
+        for (const PortClaim& claim : builtIn.claims)
+        {
+            if (Covers(claim, port) && HasDir(claim.dir, Dir::In))
+                return true;
+        }
+    }
+    return false;
+}
+
 /// endregion </Reports>
 
 } // namespace slots

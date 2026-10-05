@@ -35,6 +35,10 @@ const KeyName kKeys[] = {
     // The ATAPI CD drives by IDE unit (0 ide0.master .. 3 ide1.slave)
     {AudioSourceType::CdAudio0, "cd0"}, {AudioSourceType::CdAudio1, "cd1"},
     {AudioSourceType::CdAudio2, "cd2"}, {AudioSourceType::CdAudio3, "cd3"},
+    // ZX-MultiSound (a slot card)
+    {AudioSourceType::MultiSoundFm, "ms_fm"}, {AudioSourceType::MultiSoundSsg, "ms_ssg"},
+    {AudioSourceType::MultiSoundSaa, "ms_saa"}, {AudioSourceType::MultiSoundDac, "ms_dac"},
+    {AudioSourceType::MultiSoundMidi, "ms_midi"},
 };
 
 std::string Lower(std::string s)
@@ -241,6 +245,10 @@ StateNode AudioMixer(EmulatorContext* context)
         n["peak"] = std::round(1000.0 * static_cast<double>(d.peak)) / 1000.0;
         n["active"] = d.activeRecently;
         n["capturable"] = sm->deviceBuffer(d.type) != nullptr;
+        // Silent by hardware: a slot card's IORQGE hides the device ("shadowed by zxbus.1")
+        const std::string state = sm->deviceState(d.type);
+        if (!state.empty())
+            n["state"] = state;
         devices.push(n);
     }
     ret["devices"] = devices;

@@ -496,28 +496,6 @@ protected:
     /// The low-byte observer covering this raw port (nullptr when none); claimed ports only
     PortDevice* LowByteObserver(uint16_t rawPort) const;
 
-#pragma push_macro("slots")
-#undef slots
-
-    /// The bus signals the claim table reads for ROM-locked and DOS-gated claims: the IN / OUT instruction's M1
-    /// address and the TR-DOS state
-    class ClaimSignals : public slots::IClaimSignals
-    {
-    public:
-        explicit ClaimSignals(const PortDecoder& decoder) : _decoder(decoder)
-        {
-        }
-        uint16_t LastM1Address() const override;
-        bool DosActive() const override;
-
-    private:
-        const PortDecoder& _decoder;
-    };
-    ClaimSignals _claimSignals{ *this };
-    /// The ports of built-in chips taken out of their sockets (SetRemovedBuiltIn): read on the slot-card path only
-    std::vector<slots::PortClaim> _removedBuiltInClaims;
-#pragma pop_macro("slots")
-
     /// The claimed-port cycles of slot-built cards: the claim table's resolution (architecture.md §4.3) with the
     /// board's decode as its board side; a board the cards hide gets no cycle (the trace still records the access)
     uint8_t ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDrove);
@@ -1123,7 +1101,10 @@ public:
     bool IsBuiltInShadowed(const char* builtInId) const;
     /// A socketed chip a card took out of its socket (Q7): the board's decode of its ports still runs, but nothing
     /// on the board drives their reads any more
-    void SetRemovedBuiltIn(std::span<const slots::PortClaim> claims);
+    void SetBuiltInRemoved(const char* builtInId);
+    /// Where the claim table reads the ROM-fetch lock's M1 address and the DOS state (nullptr: never locked, never
+    /// DOS). The owner (SlotManager) keeps it alive while cards are attached
+    void BindSlotSignals(const slots::IClaimSignals* claimSignals);
 #pragma pop_macro("slots")
 
     /// endregion </Slot-built cards>

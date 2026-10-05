@@ -21,6 +21,7 @@
 
 #ifdef UNREALNG_HAVE_OPL4
 #include "emulator/sound/chips/soundchip_moonsound.h"
+#include "emulator/slots/card.h"
 #endif
 
 /// region <Constructors / Destructors>
@@ -283,6 +284,9 @@ void SoundManager::reset()
     if (_moonsound)
         _moonsound->reset();
 #endif
+    // Slot-built cards: the ZX /RESET line is on their bus
+    for (ICard* card : _slotCards)
+        card->BusReset();
 
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
@@ -539,8 +543,75 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _moonsound ? _moonsound->getPcmBuffer() : nullptr;
 #endif
         default:
-            return nullptr;
+            return slotCardBuffer(type);
     }
+}
+
+const int16_t* SoundManager::slotCardBuffer(AudioSourceType type) const
+{
+    for (const ICard* card : _slotCards)
+    {
+        if (const int16_t* buffer = card->MixerBuffer(type))
+            return buffer;
+    }
+    return nullptr;
+}
+
+bool SoundManager::wideMixNeeded() const
+{
+#ifdef UNREALNG_HAVE_OPL4
+    if (_moonsound)
+        return true;
+#endif
+    return std::any_of(_slotCards.begin(), _slotCards.end(), [](const ICard* card) { return card->WantsWideMix(); });
+}
+
+void SoundManager::attachSlotCard(ICard* card)
+{
+    if (!card || std::find(_slotCards.begin(), _slotCards.end(), card) != _slotCards.end())
+        return;
+    _slotCards.push_back(card);
+    card->SetOutputRate(static_cast<uint32_t>(_coreRate));
+    std::vector<CardMixerRow> rows;
+    card->MixerRows(rows);
+    for (const CardMixerRow& row : rows)
+        _devices.push_back({row.type, row.name, false, false, 1.0f, 0.0f, false});
+    // Several full-scale sources: the float bus and the master limiter own the master mix while the card is fitted
+    if (card->WantsWideMix())
+        enableWideMix(true);
+}
+
+void SoundManager::detachSlotCard(ICard* card)
+{
+    const auto it = std::find(_slotCards.begin(), _slotCards.end(), card);
+    if (it == _slotCards.end())
+        return;
+    _slotCards.erase(it);
+    std::vector<CardMixerRow> rows;
+    card->MixerRows(rows);
+    for (const CardMixerRow& row : rows)
+    {
+        std::erase_if(_devices, [&](const AudioDeviceInfo& d) { return d.type == row.type; });
+        std::erase_if(_deviceStates, [&](const auto& state) { return state.first == row.type; });
+    }
+    enableWideMix(wideMixNeeded());
+}
+
+void SoundManager::setDeviceState(AudioSourceType type, const std::string& state)
+{
+    std::erase_if(_deviceStates, [type](const auto& entry) { return entry.first == type; });
+    if (!state.empty())
+        _deviceStates.emplace_back(type, state);
+}
+
+std::string SoundManager::deviceState(AudioSourceType type) const
+{
+    for (const auto& [rowType, state] : _deviceStates)
+    {
+        if (rowType == type)
+            return state;
+    }
+    return {};
 }
 
 const int16_t* SoundManager::cdAudioBuffer(int unit) const
@@ -722,6 +793,8 @@ void SoundManager::applyCoreRate(size_t rate)
     if (_moonsound)
         _moonsound->setCoreRate(rate);
 #endif
+    for (ICard* card : _slotCards)
+        card->SetOutputRate(static_cast<uint32_t>(rate));
 
     // AY: sample PLL increment, decimation ratios, anti-alias FIR redesign
     if (_turboSound)
@@ -869,6 +942,10 @@ void SoundManager::handleFrameStart()
         if (_modelAudio)
             _modelAudio->AudioFrameStart(generationOff);
 
+        // Slot-built cards: the same rule - a card's coprocessors are machine state
+        for (ICard* card : _slotCards)
+            card->FrameStart();
+
         if (suppressed)
             return;  // Skip beeper frame setup and buffer clears (never consumed in turbo)
     }
@@ -966,6 +1043,8 @@ void SoundManager::handleFrameEnd()
         if (_moonsound)
             _moonsound->handleFrameEnd(0);
 #endif
+        for (ICard* card : _slotCards)
+            card->FrameEnd(0);
         return;
     }
 
@@ -1169,6 +1248,10 @@ void SoundManager::handleFrameEnd()
     if (_gs)
         _gs->handleFrameEnd(samplesThisFrame);
 
+    // Slot-built cards: run to the frame end and render their rows
+    for (ICard* card : _slotCards)
+        card->FrameEnd(samplesThisFrame);
+
     // NOTE: _turboSound->handleFrameEnd() is NOT called again here. It
     // already ran once at the top of this function (word-queue drain, §6.1)
     // and is "always called" - once.
@@ -1257,6 +1340,7 @@ void SoundManager::handleFrameEnd()
                 break;
 #endif
             default:
+                srcBuffer = slotCardBuffer(d.type);
                 break;
         }
 

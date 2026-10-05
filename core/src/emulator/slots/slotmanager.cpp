@@ -5,12 +5,15 @@
 #include <utility>
 
 #include "common/modulelogger.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotvocabulary.h"
+#include "emulator/sound/soundmanager.h"
 
 using namespace slots;
 
@@ -364,6 +367,28 @@ std::string NotEmulated(const CardDef& card, const CardOptions& options)
     }
     return {};
 }
+
+/// The bus signals the claim table reads for the slot-built cards' ROM-locked and DOS-gated claims: the IN / OUT
+/// instruction's M1 address (the last opcode fetch before the I/O cycle) and the TR-DOS state
+class SlotClaimSignals : public IClaimSignals
+{
+public:
+    explicit SlotClaimSignals(EmulatorContext* context) : _context(context)
+    {
+    }
+    uint16_t LastM1Address() const override
+    {
+        Z80* z80 = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+        return z80 != nullptr ? z80->m1_pc : 0;
+    }
+    bool DosActive() const override
+    {
+        return (_context->emulatorState.flags & CF_TRDOS) != 0;
+    }
+
+private:
+    EmulatorContext* _context;
+};
 
 std::string OptionValueId(const CardDef& card, const CardOptions& options, Opt key)
 {
@@ -1077,27 +1102,61 @@ void SlotManager::BuildCards()
                     const BuiltInDef* builtInDef = builtIn.removed ? FindBuiltIn(_result.machine, builtIn.id) : nullptr;
                     if (builtInDef != nullptr)
                     {
-                        decoder->SetRemovedBuiltIn(builtInDef->claims);
+                        decoder->SetBuiltInRemoved(builtInDef->id);
                     }
                 }
+                if (_signals == nullptr)
+                {
+                    _signals = std::make_unique<SlotClaimSignals>(_context);
+                }
+                decoder->BindSlotSignals(_signals.get());
             }
             const std::vector<PortClaim> claims = CardClaims(*def, slot.entry.options);
             const auto order = static_cast<uint8_t>(PortDecoder::kSlotCardSlotBase + _cards.size());
             decoder->AttachSlotCard(card.get(), claims, order, def->detection);
         }
+        if (SoundManager* sound = _context->pSoundManager)
+        {
+            sound->attachSlotCard(card.get());
+        }
         _cards.push_back(std::move(card));
+    }
+
+    // The socket's chip shadowed by a card's IORQGE: its rows are silent by hardware, and say so
+    const BuiltInDef* socketChip = SocketDefault(_result.machine);
+    const BuiltIn* socketState = socketChip != nullptr ? _result.FindBuiltIn(socketChip->id) : nullptr;
+    SoundManager* sound = _context->pSoundManager;
+    if (!_cards.empty() && sound != nullptr && socketState != nullptr && StartsWith(socketState->state, "shadowed by "))
+    {
+        for (AudioSourceType row : { AudioSourceType::AY1_All, AudioSourceType::AY2_All, AudioSourceType::FM1,
+                                     AudioSourceType::FM2 })
+        {
+            if (sound->device(row) != nullptr)
+            {
+                sound->setDeviceState(row, socketState->state);
+            }
+        }
     }
 }
 
 void SlotManager::ReleaseCards()
 {
     PortDecoder* decoder = _context != nullptr ? _context->pPortDecoder : nullptr;
+    SoundManager* sound = _context != nullptr ? _context->pSoundManager : nullptr;
     for (const std::unique_ptr<ICard>& card : _cards)
     {
         if (decoder != nullptr)
         {
             decoder->DetachSlotCard(card.get());
         }
+        if (sound != nullptr)
+        {
+            sound->detachSlotCard(card.get());
+        }
+    }
+    if (decoder != nullptr && !_cards.empty())
+    {
+        decoder->BindSlotSignals(nullptr);
     }
     _cards.clear();
 }
