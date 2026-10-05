@@ -43,11 +43,12 @@ uint32_t ScreenTSConf::Vdac2Level(uint32_t level, bool direct)
     // turns each channel into 8 bits for its ADV7125 DAC (tslabs/zx-evo,
     // pentevo/vdac/vdac2/cpld/top.v, module lut). PAL_SEL - CRAM bit 15 of the
     // pixel - selects the conversion:
-    //   PAL_SEL = 1: {in, 3'b0}, so the top level is 248, not 255 (the other
-    //                VDAC builds scale their 3/4/5 DAC bits to full scale)
+    //   PAL_SEL = 1: {in, 3'b0}, so the top level is 248, not 255
     //   PAL_SEL = 0: a table of the PWM-compatible levels 0..24, 255 above;
-    //                it is round(v * 255 / 24), one more than the truncating
-    //                formula of the other builds at 11, 14, 17, 19, 20, 22, 23
+    //                it is round(v * 255 / 24), one more than a truncating
+    //                formula at 11, 14, 17, 19, 20, 22, 23
+    // The 5-bit VDAC board's CPLD (pentevo/vdac/vdac1/cpld/top.v, module lut) is
+    // the same table: the 5-bit build (STATUS 3) goes through here too
     // vdac2-tdd.md §2.1 / §12 D6
     static constexpr uint8_t kLinear[32] = {0,   10,  21,  31,  42,  53,  63,  74,  85,  95,  106,
                                             117, 127, 138, 149, 159, 170, 181, 191, 202, 213, 223,
@@ -63,15 +64,14 @@ uint32_t ScreenTSConf::CramToRgba(uint16_t cram, uint8_t vdac)
     {
         if (vdac == 0)
             v = kPwm.level[v];                  // no VDAC: 2-bit DAC + PWM, time-averaged
-        else if (vdac == 7)
-            v = Vdac2Level(v, (cram & 0x8000) != 0);
+        else if (vdac == 7 || vdac == 3)
+            v = Vdac2Level(v, (cram & 0x8000) != 0);  // the VDAC / VDAC2 board's CPLD (one table)
         else if (!(cram & 0x8000))
             v = v >= 24 ? 255 : v * 255 / 24;   // PWM-compatible linear curve (hs §4.3)
         else
         {
-            // The DAC's bits of the channel, its full scale = 255 ([U] tsconf.cpp
-            // keeps Ccccc000 for 5 bits; the bit replication here makes 31 white)
-            const uint32_t bits = vdac == 1 ? 3u : (vdac == 2 ? 4u : 5u);
+            // 3 / 4-bit DACs (no build or board to check against): the DAC's bits of the channel scaled to full
+            const uint32_t bits = vdac == 1 ? 3u : 4u;
             const uint32_t code = v >> (5 - bits);
             v = code * 255 / ((1u << bits) - 1);
         }

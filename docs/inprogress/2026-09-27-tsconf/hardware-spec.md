@@ -334,10 +334,14 @@ Entry: `[14:10]` R, `[9:5]` G, `[4:0]` B, `[15]` VDAC mode flag.
   the 2-bit value is already 3, so levels 24-31 saturate ([V]
   `video_out.v:75-132`). Emulator: static time-average, i.e. [M]'s 32-entry
   `pwm_to_rgb` LUT.
-- **VDAC builds** (`5BIT`): bit 15 = 1 → direct 5-bit per channel; bit 15 = 0 →
-  PWM-compatible linear 0..24 curve ([U] `tsconf.cpp:49-62`). 3 / 4-bit DACs
-  take the top 3 / 4 bits. The emulator scales each DAC to full 255 (bit
-  replication: 31 = white; [U] keeps `Ccccc000`, max 248).
+- **VDAC builds** (`5BIT`): the board's CPLD converts each channel
+  ([V] `pentevo/vdac/vdac1/cpld/top.v`, module `lut`, the same table as the
+  VDAC2 card's): bit 15 = 1 → `{level, 3'b0}`, white = 248; bit 15 = 0 → the
+  PWM-compatible linear table round(v × 255 / 24), 255 from 24 ([U]
+  `tsconf.cpp:53-64` the same). 3 / 4-bit DACs have no build or board to check
+  against: the emulator takes the top 3 / 4 bits scaled to full 255. (Until the
+  2026-10-05 audit the 5-bit build was scaled to 255 too, white 255 and seven
+  linear levels one low.)
 - **Writes are immediate** (CRAM is dual-port, read per pixel): a mid-line
   write changes the rest of that line ([V] `zmaps.v:64-77`, `video_out.v:135-151`).
 - **Power-on contents** = `video/mem/video_cram.mif` loaded at FPGA

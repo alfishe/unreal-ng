@@ -70,10 +70,10 @@ public:
 
     /// Framebuffer RGBA (0xAABBGGRR) of a CRAM word (hs §4.3). `vdac` = the
     /// build's STATUS VDAC_VER ([MISC] TS_VDAC): 0 = no VDAC (2-bit DAC + PWM,
-    /// time-averaged); 1 / 2 / 3 = a 3 / 4 / 5-bit video DAC: CRAM bit 15
-    /// set = the channel's DAC bits scaled to full, clear = the PWM-compatible
-    /// linear curve (levels 0..24, then full); 7 = the VDAC2 card, whose CPLD
-    /// table is used exactly (Vdac2Level)
+    /// time-averaged); 3 = the 5-bit VDAC board and 7 = the VDAC2 card, whose
+    /// CPLDs share one table (Vdac2Level); 1 / 2 = a 3 / 4-bit video DAC (no
+    /// board known): CRAM bit 15 set = the DAC bits scaled to full, clear = the
+    /// PWM-compatible linear curve (levels 0..24, then full)
     static uint32_t CramToRgba(uint16_t cram, uint8_t vdac = 0);
     /// One 5-bit channel through the VDAC2 card's CPLD: direct (PAL_SEL = 1)
     /// = level << 3, otherwise the card's linear table (vdac2-tdd.md D6)
