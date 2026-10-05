@@ -25,8 +25,14 @@ public:
 
     /// Register a host file; `size` is the size the folder scan saw
     uint32_t AddHostFile(const std::filesystem::path& hostPath, uint64_t size);
-    /// Register a source device; returns its index for FileData::source
-    uint16_t AddDevice(std::shared_ptr<IBlockDevice> device);
+    /// Register a source device; returns its index for FileData::source. A
+    /// non-empty `key` (a canonical image path, plus a partition) lets later
+    /// layers find the same device instead of opening it again (NFR-M3)
+    uint16_t AddDevice(std::shared_ptr<IBlockDevice> device, std::string key = {});
+    /// The device registered under `key`, or -1
+    int FindDevice(const std::string& key) const;
+    std::shared_ptr<IBlockDevice> DevicePtr(uint16_t index) const { return _devices[index]; }
+    const std::string& DeviceKey(uint16_t index) const { return _deviceKeys[index]; }
 
     /// Read up to `wanted` bytes of host file `file` at `offset` into `dst`.
     /// Returns the bytes read; a file that shrank or vanished since the scan
@@ -56,6 +62,7 @@ private:
 
     std::vector<HostFile> _hostFiles;
     std::vector<std::shared_ptr<IBlockDevice>> _devices;
+    std::vector<std::string> _deviceKeys;
     std::list<OpenFile> _open;  ///< most recently used first
     std::vector<std::string> _warnings;
 };

@@ -52,6 +52,7 @@ struct CompositeInfo
     uint64_t contentId = 0;
     uint64_t files = 0;      ///< files in the merged tree
     uint64_t bytes = 0;
+    uint32_t sourceDevices = 0;  ///< images opened for the layers (one per image and partition, shared)
     std::vector<CompositeLayerInfo> layers;
 };
 

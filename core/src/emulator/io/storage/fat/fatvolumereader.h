@@ -26,6 +26,21 @@ enum class FatReaderType : uint8_t
     Fat32,
 };
 
+/// A run of consecutive sectors of the device the reader was opened on
+struct FatChainExtent
+{
+    uint64_t lba = 0;
+    uint32_t sectors = 0;
+};
+
+/// An MBR partition entry
+struct FatPartition
+{
+    uint64_t first = 0;   ///< LBA of the partition's first sector
+    uint64_t count = 0;   ///< its size in sectors
+    uint8_t type = 0;     ///< the partition type byte
+};
+
 struct FatDirEntryInfo
 {
     std::string name;        ///< the long name when there is one, else the short name (UTF-8)
@@ -41,8 +56,17 @@ struct FatDirEntryInfo
 class FatVolumeReader
 {
 public:
-    /// Find the volume on `device` and read its boot sector
+    /// Find the volume on `device` and read its boot sector. Open again after
+    /// the device changed under the reader: the FAT window is cached
     bool Open(IBlockDevice& device, CodePage page = CodePage::Cp866, std::string* error = nullptr);
+
+    /// MBR entry `number` (1-4) of `device` when it is a FAT partition
+    /// (types #01 #04 #06 #0B #0C #0E); false with the reason otherwise
+    static bool FindPartition(IBlockDevice& device, uint32_t number, FatPartition& partition, std::string* error = nullptr);
+
+    /// The UTC second count of a DOS date and time (read as UTC, the convention
+    /// FatSynthVolume writes with)
+    static int64_t DosToUnix(uint16_t date, uint16_t time);
 
     FatReaderType Type() const { return _type; }
     uint32_t ClusterCount() const { return _clusterCount; }
@@ -54,6 +78,18 @@ public:
     /// Path parts match long or short names, ASCII case-insensitively
     bool List(const std::string& path, std::vector<FatDirEntryInfo>& entries, std::string* error = nullptr);
     bool ReadFile(const std::string& path, std::vector<uint8_t>& data, std::string* error = nullptr);
+    /// The entry at `path`; "/" is the root (a directory with first cluster 0)
+    bool Stat(const std::string& path, FatDirEntryInfo& entry, std::string* error = nullptr);
+    /// The entries of the directory starting at `firstCluster` (0: the root)
+    bool ListDirectory(uint32_t firstCluster, std::vector<FatDirEntryInfo>& entries, std::string* error = nullptr);
+
+    /// Where the first `bytes` of the chain from `firstCluster` are: device
+    /// LBAs, adjacent clusters coalesced. Fails on a chain that leaves the
+    /// volume, loops or ends before `bytes`
+    bool ChainExtents(uint32_t firstCluster, uint64_t bytes, std::vector<FatChainExtent>& extents, std::string* error = nullptr);
+
+    /// FAT sectors read so far (tests: the FAT window cache)
+    uint64_t FatSectorReads() const { return _fatSectorReads; }
 
 private:
     bool ReadDirectory(uint32_t firstCluster, bool fixedRoot, std::vector<FatDirEntryInfo>& entries, std::string* error);
@@ -62,6 +98,7 @@ private:
     uint32_t NextCluster(uint32_t cluster);
     bool IsEndOfChain(uint32_t value) const;
     bool Sector(uint64_t volumeLba, uint8_t* dst);
+    uint64_t DataStart() const;
 
     IBlockDevice* _device = nullptr;
     CodePage _page = CodePage::Cp866;
@@ -76,4 +113,9 @@ private:
     uint32_t _clusterCount = 0;
     uint32_t _rootCluster = 0;
     std::string _label;
+
+    /// Two consecutive FAT sectors (a FAT12 entry may straddle them)
+    uint8_t _fatWindow[1024] = {};
+    uint64_t _fatWindowSector = UINT64_MAX;
+    uint64_t _fatSectorReads = 0;
 };

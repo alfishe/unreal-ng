@@ -1,6 +1,6 @@
 # C3 — FAT disk images as layers
 
-**Status:** design, 2026-10-05. Phase C3 of [tdd.md](../tdd.md) §13: `FatVolumeReader::ChainExtents` /
+**Status:** done 2026-10-05 (design first, as-built notes in §9). Phase C3 of [tdd.md](../tdd.md) §13: `FatVolumeReader::ChainExtents` /
 partitions, `FatImageSource`, `SubRangeDevice`; image layers in a rebuilt volume. Exit: FAT16 and FAT32
 images merged ([fs-compatibility.md](../fs-compatibility.md) S-1, S-2).
 
@@ -111,7 +111,7 @@ flowchart TD
     B -->|"no"| F{"sector 0 is a FAT boot sector?"}
     F -->|"yes"| G["the whole device"]
     F -->|"no"| H{"MBR with a FAT partition?"}
-    H -->|"yes"| I["the first one, as SubRangeDevice"]
+    H -->|"yes"| I["the first one<br/>(the reader's volume start)"]
     H -->|"no"| E2["error: no FAT volume"]
 ```
 
@@ -153,3 +153,39 @@ measured against folder layers (NFR-P1 budget: within 10%).
 - Writing to images (S3 / S4, C8), keeping the image's layout (graft, C4).
 - Non-FAT images (TR-DOS, +3DOS, MSX, ...): the library extraction's platform packs.
 - EBR / logical partitions (C7).
+
+## 9. As built
+
+- As designed, with these differences:
+  - Without `partition`, an MBR image's first FAT partition is read through the reader's volume start (what
+    `FatVolumeReader::Open` always did). Only an explicit `partition: n` makes a `SubRangeDevice`, registered in the
+    pool under `<image key>#partition<n>`.
+  - `exclude` works for image layers too (names of files and directories, report "path: skipped, excluded"), as it
+    does for folders through the scan.
+  - A directory entry with first cluster 0 (damaged: 0 means the root) is kept as an empty directory with a report
+    line instead of recursing into the root.
+  - `CompositeInfo::sourceDevices` (and `sourceDevices` in the `compose` / `layers` reply): images opened for the layers.
+- **FAT window cache:** `NextCluster` reads through a sliding two-sector window. A 400-cluster FAT12 file now costs at
+  most 4 FAT sector reads instead of 800. `ReadFile` and `List` gain the same.
+- **Test sources:** `core/tests/_helpers/fatsourceimage.h`: `FolderToFatDisk` (a folder through `FatSynthVolume`),
+  `SaveSparse`, `Fat12Floppy` (hand-made 1.44 MB FAT12), on a `SparseDisk` that stores only the written sectors.
+  The first version used `MemoryDisk`: a FAT32 source with 4 KiB clusters is 256 MiB, and clearing it cost
+  ~150 ms per test. With `SparseDisk` every C3 test runs in under 10 ms. The same observation is behind phase C10.
+- **Tests:** `FatVolumeReader_Test` (6 new: extents, broken chains, FAT reads, partition n, DOS time),
+  `SubRangeDevice_Test.Bounds`, `FatImageSource_Test` (6), `ComposeFat_Test` (5: S-1, S-2 both ways, a CHD named by
+  two layers opened once, image layer errors).
+- **NFR-P1** (`core/benchmarks/emulator/io/composeimage_benchmark.cpp`, the same files as the `HostFolderFat`
+  benchmarks, Linux, 4 cores, medians of 5):
+
+  | Benchmark | Time |
+  |---|---|
+  | `HostFolderFatSeqRead/fat16` (folder layer) | 756 ns |
+  | `ComposeImageSeqRead` (image layer) | 804 ns (+6%) |
+  | `ComposeImageDirectSeqRead` (the image itself, no composite) | 810 ns |
+  | `HostFolderFatRandRead/fat16` | 1740 ns |
+  | `ComposeImageRandRead` | 1090 ns |
+  | `HostFolderFatBuild/fat16` | 237 µs |
+  | `ComposeImageBuild` (open the image, walk it, lay out) | 462 µs |
+
+  The composite adds nothing over reading the image directly. The gap to a folder layer is `RawImage`'s own
+  per-sector seek and read, within the 10% budget.

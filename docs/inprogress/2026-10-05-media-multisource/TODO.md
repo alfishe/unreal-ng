@@ -1,6 +1,6 @@
 # Multi-source media — TODO
 
-**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C2 done, C3 in design ([phases/](phases/README.md)).
+**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C3 done ([phases/](phases/README.md)).
 PLAN.md row **#95**.
 
 ## Owner decisions (2026-10-05)
@@ -22,13 +22,17 @@ PLAN.md row **#95**.
 - [x] C0 baseline: `HostFolderFat` corpus hashes and read benchmark numbers on master
 - [x] C1 core + `HostFolderFat` parity refactor
 - [x] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`); Sprinter IDE slots `fsCompatibility = {Fat16}`
-- [ ] C3 FAT image sources
+- [x] C3 FAT image sources
 - [ ] C4 graft
 - [ ] C5 ISO reader, ISO target
 - [ ] C6 provenance, attribution (`changes`), S1 flat (+ VHD writer, compact), S2 delta
 - [ ] C7 partitions
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
+- [ ] C10 sparse and in-memory images (owner request 2026-10-05): sparse image files and sparse in-memory disks
+  (store only written / non-zero sectors: a FAT32 volume is >= 32 MiB, 256 MiB with 4 KiB clusters, nearly all
+  zeros), images held in memory instead of on disk where it pays, and packing back efficiently on save / flatten
+  (S1-S4): skip zero and unchanged runs, sparse output files, compact VHD / CHD. Design first, in phases/
 - [ ] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5)
 - [ ] User docs (`docs/features/media.md`) and recipe `.recipe/media/compose-media.md`
 - [ ] Follow-up after C0-C9: library extraction and unification, phases X0-X13 ([library-extraction/](library-extraction/README.md)), PLAN.md row **#96**

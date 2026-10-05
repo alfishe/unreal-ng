@@ -717,9 +717,10 @@ failing tests listed for it in [test-and-benchmark-plan.md](test-and-benchmark-p
 | **C7** | `PartitionedDisk` (MBR + EBR) | ACC-C4, S-5 |
 | **C8** | S3 base commit, S4 write-back (opt-in), Qt flatten dialog | journal crash tests; conflict tests; round-trip tests |
 | **C9** | Optional `IBlockDevice::ReadSectors` bulk path | A/B gain on bulk, no loss on single (NFR-P7) or dropped |
+| **C10** | Sparse and in-memory images: sparse image files and in-memory disks storing only written / non-zero sectors; images kept in memory where it pays; efficient packing on save / flatten (zero and unchanged runs skipped, sparse output, compact VHD / CHD) | design in phases/; memory and save-time A/B against C6 / C8 |
 | **CB** | Benchmarks and charts run across all modes (continuous from C1; final report) | ACC-C8 |
 
-Dependencies: C1 → C2 → {C3, C5} → C4 (needs C3) → C6 → {C7, C8}. C7 can move ahead of C6 if a
+Dependencies: C1 → C2 → {C3, C5} → C4 (needs C3) → C6 → {C7, C8} → C10. C7 can move ahead of C6 if a
 Profi user needs it first.
 
 ## 15. Risks

@@ -13,10 +13,23 @@ uint32_t SourcePool::AddHostFile(const std::filesystem::path& hostPath, uint64_t
     return static_cast<uint32_t>(_hostFiles.size() - 1);
 }
 
-uint16_t SourcePool::AddDevice(std::shared_ptr<IBlockDevice> device)
+uint16_t SourcePool::AddDevice(std::shared_ptr<IBlockDevice> device, std::string key)
 {
     _devices.push_back(std::move(device));
+    _deviceKeys.push_back(std::move(key));
     return static_cast<uint16_t>(_devices.size() - 1);
+}
+
+int SourcePool::FindDevice(const std::string& key) const
+{
+    if (key.empty())
+        return -1;
+    for (size_t i = 0; i < _deviceKeys.size(); i++)
+    {
+        if (_deviceKeys[i] == key)
+            return static_cast<int>(i);
+    }
+    return -1;
 }
 
 size_t SourcePool::ReadHost(uint32_t file, uint64_t offset, uint8_t* dst, size_t wanted)

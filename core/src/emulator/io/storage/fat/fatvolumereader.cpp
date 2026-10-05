@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 
 namespace
@@ -75,6 +76,53 @@ bool FatVolumeReader::Sector(uint64_t volumeLba, uint8_t* dst)
     return _device->ReadSector(_volumeStart + volumeLba, dst);
 }
 
+uint64_t FatVolumeReader::DataStart() const
+{
+    return _reservedSectors + static_cast<uint64_t>(_fats) * _fatSectors + _rootDirSectors;
+}
+
+bool FatVolumeReader::FindPartition(IBlockDevice& device, uint32_t number, FatPartition& partition, std::string* error)
+{
+    auto fail = [error](const std::string& text) {
+        if (error)
+            *error = text;
+        return false;
+    };
+    if (number < 1 || number > 4)
+        return fail("partition " + std::to_string(number) + ": the MBR has entries 1-4");
+    uint8_t s[kSector];
+    if (!device.ReadSector(0, s))
+        return fail("cannot read sector 0");
+    if (LooksLikeBootSector(s) || s[510] != 0x55 || s[511] != 0xAA)
+        return fail("no partition table (a superfloppy or no signature): leave out 'partition'");
+    const uint8_t* entry = s + 446 + (number - 1) * 16;
+    char type[8];
+    std::snprintf(type, sizeof type, "#%02X", entry[4]);
+    if (!IsFatPartitionType(entry[4]) || Get32(entry + 12) == 0)
+        return fail("partition " + std::to_string(number) + " is not a FAT partition (type " + type + ")");
+    partition.first = Get32(entry + 8);
+    partition.count = Get32(entry + 12);
+    partition.type = entry[4];
+    if (partition.first == 0 || partition.first + partition.count > device.SectorCount())
+        return fail("partition " + std::to_string(number) + " lies outside the disk");
+    return true;
+}
+
+int64_t FatVolumeReader::DosToUnix(uint16_t date, uint16_t time)
+{
+    // Howard Hinnant's days_from_civil
+    const int64_t year = 1980 + (date >> 9);
+    const int64_t month = std::clamp<int64_t>((date >> 5) & 0x0F, 1, 12);
+    const int64_t day = std::clamp<int64_t>(date & 0x1F, 1, 31);
+    const int64_t y = month <= 2 ? year - 1 : year;
+    const int64_t era = y / 400;
+    const int64_t yoe = y - era * 400;
+    const int64_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const int64_t days = era * 146097 + doe - 719468;
+    return days * 86400 + (time >> 11) * 3600 + ((time >> 5) & 0x3F) * 60 + (time & 0x1F) * 2;
+}
+
 bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* error)
 {
     auto fail = [error](const char* text) {
@@ -85,6 +133,7 @@ bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* err
 
     _device = &device;
     _page = page;
+    _fatWindowSector = UINT64_MAX;
     uint8_t s[kSector];
     if (!device.ReadSector(0, s))
         return fail("cannot read sector 0");
@@ -161,7 +210,6 @@ bool FatVolumeReader::IsEndOfChain(uint32_t value) const
 
 uint32_t FatVolumeReader::NextCluster(uint32_t cluster)
 {
-    uint8_t s[kSector * 2];
     uint64_t byteOffset = 0;
     switch (_type)
     {
@@ -171,8 +219,31 @@ uint32_t FatVolumeReader::NextCluster(uint32_t cluster)
     }
     const uint64_t sector = _reservedSectors + byteOffset / kSector;
     const uint32_t within = static_cast<uint32_t>(byteOffset % kSector);
-    if (!Sector(sector, s) || !Sector(sector + 1, s + kSector))
-        return 0x0FFFFFFF;
+    if (sector != _fatWindowSector)
+    {
+        // Slide the window: the second sector of the old one is the first of the new one
+        if (_fatWindowSector != UINT64_MAX && sector == _fatWindowSector + 1)
+        {
+            std::memmove(_fatWindow, _fatWindow + kSector, kSector);
+            _fatSectorReads++;
+            if (!Sector(sector + 1, _fatWindow + kSector))
+            {
+                _fatWindowSector = UINT64_MAX;
+                return 0x0FFFFFFF;
+            }
+        }
+        else
+        {
+            _fatSectorReads += 2;
+            if (!Sector(sector, _fatWindow) || !Sector(sector + 1, _fatWindow + kSector))
+            {
+                _fatWindowSector = UINT64_MAX;
+                return 0x0FFFFFFF;
+            }
+        }
+        _fatWindowSector = sector;
+    }
+    const uint8_t* s = _fatWindow;
 
     switch (_type)
     {
@@ -187,9 +258,51 @@ uint32_t FatVolumeReader::NextCluster(uint32_t cluster)
     return 0x0FFFFFFF;
 }
 
+bool FatVolumeReader::ChainExtents(uint32_t firstCluster, uint64_t bytes, std::vector<FatChainExtent>& extents, std::string* error)
+{
+    extents.clear();
+    uint64_t need = (bytes + kSector - 1) / kSector;
+    uint32_t cluster = firstCluster;
+    uint32_t steps = 0;
+    const uint64_t dataStart = _volumeStart + DataStart();
+    while (need > 0)
+    {
+        if (cluster < 2 || cluster >= _clusterCount + 2)
+        {
+            if (error)
+                *error = "the cluster chain leaves the volume at cluster " + std::to_string(cluster);
+            return false;
+        }
+        if (++steps > _clusterCount)
+        {
+            if (error)
+                *error = "the cluster chain loops";
+            return false;
+        }
+        const uint64_t lba = dataStart + static_cast<uint64_t>(cluster - 2) * _sectorsPerCluster;
+        const uint32_t take = static_cast<uint32_t>(std::min<uint64_t>(need, _sectorsPerCluster));
+        if (!extents.empty() && extents.back().lba + extents.back().sectors == lba)
+            extents.back().sectors += take;
+        else
+            extents.push_back({lba, take});
+        need -= take;
+        if (need == 0)
+            break;
+        const uint32_t next = NextCluster(cluster);
+        if (IsEndOfChain(next))
+        {
+            if (error)
+                *error = "the cluster chain is shorter than the file";
+            return false;
+        }
+        cluster = next;
+    }
+    return true;
+}
+
 bool FatVolumeReader::ReadClusterChain(uint32_t firstCluster, uint64_t maxBytes, std::vector<uint8_t>& data, std::string* error)
 {
-    const uint64_t dataStart = _reservedSectors + static_cast<uint64_t>(_fats) * _fatSectors + _rootDirSectors;
+    const uint64_t dataStart = DataStart();
     uint32_t cluster = firstCluster;
     uint32_t steps = 0;
     uint8_t s[kSector];
@@ -390,6 +503,18 @@ bool FatVolumeReader::Find(const std::string& path, FatDirEntryInfo& found, std:
         found = *it;
     }
     return true;
+}
+
+bool FatVolumeReader::Stat(const std::string& path, FatDirEntryInfo& entry, std::string* error)
+{
+    return Find(path, entry, error);
+}
+
+bool FatVolumeReader::ListDirectory(uint32_t firstCluster, std::vector<FatDirEntryInfo>& entries, std::string* error)
+{
+    entries.clear();
+    const bool root = firstCluster == 0;
+    return ReadDirectory(root ? _rootCluster : firstCluster, root && _type != FatReaderType::Fat32, entries, error);
 }
 
 bool FatVolumeReader::List(const std::string& path, std::vector<FatDirEntryInfo>& entries, std::string* error)

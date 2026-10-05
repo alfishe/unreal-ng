@@ -5,11 +5,13 @@
 #include <algorithm>
 
 #include "common/filehelper.h"
+#include "emulator/io/storage/compose/fatimagesource.h"
 #include "emulator/io/storage/compose/hostfoldersource.h"
 #include "emulator/io/storage/compose/sourcepool.h"
 #include "emulator/io/storage/compose/unionbuilder.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
+#include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/medium.h"
@@ -147,9 +149,6 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         result.report.push_back("target.onBadName: replace is not implemented yet; names a FAT volume cannot hold are skipped");
     for (const ComposeLayer& layer : d.layers)
     {
-        if (layer.source.kind == ComposeSource::Kind::Image)
-            return MediaResult::Fail(MediaError::NotSupported,
-                                     "layer '" + layer.name + "': image sources are a later phase (C3) of the multi-source work");
         if (layer.source.kind == ComposeSource::Kind::Iso)
             return MediaResult::Fail(MediaError::NotSupported,
                                      "layer '" + layer.name + "': ISO sources are a later phase (C5) of the multi-source work");
@@ -177,35 +176,75 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     {
         const ComposeLayer& layer = d.layers[i];
         const std::string where = "layer '" + layer.name + "'";
-        if (!FileHelper::IsFolder(PathText(layer.source.path)))
-            return MediaResult::Fail(MediaError::UnreadableSource, where + ": no folder '" + PathText(layer.source.path) + "'");
-
-        const FolderManifest manifest = FolderManifest::Load(layer.source.path);
-        for (const std::string& line : manifest.report)
-            result.report.push_back(where + ": " + line);
-        FolderScanOptions scan;
-        scan.excludePatterns = manifest.exclude;
-        scan.excludePatterns.insert(scan.excludePatterns.end(), layer.exclude.begin(), layer.exclude.end());
-        scan.cancelRequested = options.cancelRequested;
-        scan.onProgress = options.onProgress;
-        FolderSnapshot snapshot;
-        std::string error;
-        if (!FolderSnapshot::Scan(layer.source.path, scan, snapshot, &error))
+        uint64_t sourceIdentity = 0;
+        if (layer.source.kind == ComposeSource::Kind::Image)
         {
-            return MediaResult::Fail(error == FolderSnapshot::kCancelledError ? MediaError::Cancelled : MediaError::UnreadableSource,
-                                     where + ": " + error);
-        }
-        for (const SkippedEntry& skipped : snapshot.Skipped())
-            result.report.push_back(where + ": " + skipped.path + ": skipped, " + skipped.reason);
+            // A FAT disk image, opened once per path and only read
+            const std::string path = PathText(layer.source.path);
+            if (!FileHelper::FileExists(path) || FileHelper::IsFolder(path))
+                return MediaResult::Fail(MediaError::UnreadableSource, where + ": no image file '" + path + "'");
+            std::error_code ec;
+            const std::filesystem::path canonical = std::filesystem::weakly_canonical(layer.source.path, ec);
+            const std::string key = PathText(ec ? layer.source.path : canonical);
+            int device = pool->FindDevice(key);
+            if (device < 0)
+            {
+                std::string error;
+                const std::string format = HddImageFormats::Probe(path, &error);
+                std::unique_ptr<IBlockDevice> opened =
+                    format.empty() ? nullptr : HddImageFormats::OpenBlock(path, format, RawImage::Access::ReadOnly, &error);
+                if (!opened)
+                    return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + path + ": " + error);
+                device = pool->AddDevice(std::shared_ptr<IBlockDevice>(std::move(opened)), key);
+            }
 
-        HostFolderSourceOptions source;
-        source.from = layer.from;
-        source.include = layer.include;
-        std::vector<std::string> sourceReport;
-        if (!HostFolderSource::Enumerate(snapshot, source, *pool, trees[i], &sourceReport, &error))
-            return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + error);
-        for (const std::string& line : sourceReport)
-            result.report.push_back(where + ": " + line);
+            FatImageSourceOptions source;
+            source.from = layer.from;
+            source.include = layer.include;
+            source.exclude = layer.exclude;
+            source.partition = layer.source.partition;
+            source.codePage = layer.source.codePage.value_or(CodePage::Cp866);
+            std::vector<std::string> sourceReport;
+            std::string error;
+            if (!FatImageSource::Enumerate(static_cast<uint16_t>(device), source, *pool, trees[i], &sourceReport, &error,
+                                           &sourceIdentity))
+                return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + path + ": " + error);
+            for (const std::string& line : sourceReport)
+                result.report.push_back(where + ": " + line);
+        }
+        else
+        {
+            if (!FileHelper::IsFolder(PathText(layer.source.path)))
+                return MediaResult::Fail(MediaError::UnreadableSource, where + ": no folder '" + PathText(layer.source.path) + "'");
+
+            const FolderManifest manifest = FolderManifest::Load(layer.source.path);
+            for (const std::string& line : manifest.report)
+                result.report.push_back(where + ": " + line);
+            FolderScanOptions scan;
+            scan.excludePatterns = manifest.exclude;
+            scan.excludePatterns.insert(scan.excludePatterns.end(), layer.exclude.begin(), layer.exclude.end());
+            scan.cancelRequested = options.cancelRequested;
+            scan.onProgress = options.onProgress;
+            FolderSnapshot snapshot;
+            std::string error;
+            if (!FolderSnapshot::Scan(layer.source.path, scan, snapshot, &error))
+            {
+                return MediaResult::Fail(error == FolderSnapshot::kCancelledError ? MediaError::Cancelled : MediaError::UnreadableSource,
+                                         where + ": " + error);
+            }
+            for (const SkippedEntry& skipped : snapshot.Skipped())
+                result.report.push_back(where + ": " + skipped.path + ": skipped, " + skipped.reason);
+
+            HostFolderSourceOptions source;
+            source.from = layer.from;
+            source.include = layer.include;
+            std::vector<std::string> sourceReport;
+            if (!HostFolderSource::Enumerate(snapshot, source, *pool, trees[i], &sourceReport, &error))
+                return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + error);
+            for (const std::string& line : sourceReport)
+                result.report.push_back(where + ": " + line);
+            sourceIdentity = snapshot.Identity();
+        }
 
         CompositeLayerInfo layerInfo;
         layerInfo.name = layer.name;
@@ -213,10 +252,10 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         layerInfo.path = PathText(layer.source.path);
         layerInfo.mount = layer.mount;
         layerInfo.from = layer.from;
-        layerInfo.identity = snapshot.Identity();
+        layerInfo.identity = sourceIdentity;
         Count(trees[i], FileTree::kRoot, layerInfo.files, layerInfo.bytes);
         info.layers.push_back(layerInfo);
-        mix(snapshot.Identity());
+        mix(sourceIdentity);
 
         UnionLayer u;
         u.tree = &trees[i];
@@ -227,6 +266,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         u.whiteout = layer.whiteout;
         layers.push_back(std::move(u));
     }
+
+    info.sourceDevices = static_cast<uint32_t>(pool->DeviceCount());
 
     // --- Union ---
     auto tree = std::make_shared<FileTree>();

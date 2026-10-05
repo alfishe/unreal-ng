@@ -62,6 +62,7 @@ namespace
         value["contentId"] = Hex64(info.contentId);
         value["files"] = info.files;
         value["fileBytes"] = info.bytes;
+        value["sourceDevices"] = static_cast<uint64_t>(info.sourceDevices);
         StateNode layers = StateNode::Array();
         for (const CompositeLayerInfo& layer : info.layers)
         {

@@ -164,8 +164,7 @@ TEST(CompositeMediumFactory_Test, LaterPhasesSayNotSupported)
     f.root.File("base/a.bin", "a");
     std::unique_ptr<FatSynthVolume> volume;
     CompositeInfo info;
-    for (const char* yaml : {"version: 1\nlayers: [{source: {image: base.img}}]\n",
-                             "version: 1\nlayers: [{source: {iso: base.iso}}]\n",
+    for (const char* yaml : {"version: 1\nlayers: [{source: {iso: base.iso}}]\n",
                              "version: 1\ntarget: {fs: iso9660}\nlayers: [{source: {folder: base}}]\n",
                              "version: 1\ntarget: {build: graft}\nlayers: [{source: {folder: base}}]\n",
                              "version: 1\npartitions: []\n"})
