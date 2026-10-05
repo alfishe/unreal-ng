@@ -57,11 +57,15 @@ uint32_t TsConfEngine::TsStartTact() const
 
 uint16_t TsConfEngine::VideoCost(uint8_t vConfig, uint32_t line)
 {
-    // [V] video_mode.v:128-133: ZX 1 of 8 cycles, 16C 1 of 4, 256C 1 of 2, TXT 4 of 8
-    static constexpr uint8_t kShift[4] = {3, 2, 1, 1};
+    // [V] video_mode.v:128-133: ZX 1 of 8 cycles, 16C 1 of 4, 256C 1 of 2, TXT 4 of 8; a block starts on every
+    // `len` dots while video_go is high, which is w + 4 dots (video_sync.v:237; TsConfArbiter::FetchOf)
+    static constexpr uint8_t kLength[4] = {8, 4, 2, 8};
+    static constexpr uint8_t kNeed[4] = {1, 1, 1, 4};
     if ((vConfig & 0x20) || !TsConfGeometry::LineInWindow(vConfig, line))
         return 0;  // NOGFX stops the fetch
-    return static_cast<uint16_t>(TsConfGeometry::WindowOf(vConfig).w >> kShift[vConfig & 0x03]);
+    const uint32_t mode = vConfig & 0x03;
+    const uint32_t dots = TsConfGeometry::WindowOf(vConfig).w + 4u;
+    return static_cast<uint16_t>((dots + kLength[mode] - 1) / kLength[mode] * kNeed[mode]);
 }
 
 void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch)
