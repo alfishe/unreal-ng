@@ -78,7 +78,7 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     if (!gs)
     {
-        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80).") + NEWLINE);
+        session.SendResponse(std::string("Error: General Sound card is not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs).") + NEWLINE);
         return;
     }
 
@@ -209,7 +209,7 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs read_data                      - IN #B3 value, peeked (bit 7 not cleared)
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
-///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - runtime card swap
+///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - the card in the GS slot replaced (slots gs: a restart)
 ///   gs dump_module [path]             - write the last COM30..D2 upload
 ///   gs sd_insert <image> / sd_eject   - NeoGS SD card slot
 ///   gs flash_save                     - NeoGS: save the reprogrammed flash
@@ -229,7 +229,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     if (!gs)
     {
-        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80, LW or NGS).") + NEWLINE);
+        session.SendResponse(std::string("Error: General Sound card is not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs).") + NEWLINE);
         return;
     }
 
@@ -310,22 +310,16 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         }
         else
         {
-            std::string target = args[1];
-            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
-
-            GSTypeKind kind;
-            if (!gsParsePersonality(target, kind))
-            {
-                ss << "Error: unknown personality '" << args[1] << "' (expected " << GS_PERSONALITY_NAMES << ")." << NEWLINE;
-                session.SendResponse(ss.str());
-                return;
-            }
-
-            std::string refusal;
-            if (soundManager->requestGeneralSoundCardSwitch(kind, &refusal))
-                ss << "GS: personality switch to '" << target << "' requested (applied at the next frame boundary)." << NEWLINE;
-            else
-                ss << "Error: " << (refusal.empty() ? std::string("personality switch request failed.") : refusal) << NEWLINE;
+            // The card in the GS slot, replaced as a slot change applied by a restart (owner decision Q10): the
+            // same as `slots gs <card>`. Extra flags: --replace, --dry-run, --media save|discard
+            std::vector<std::string> slotArgs = {"gs", args[1]};
+            slotArgs.insert(slotArgs.end(), args.begin() + 2, args.end());
+            gs = nullptr;
+            soundManager = nullptr;
+            context = nullptr;
+            emulator.reset();
+            HandleSlots(session, slotArgs);
+            return;
         }
     }
     else if (sub == "dump_module")

@@ -192,6 +192,12 @@ public:
     /// Plans a change of this instance: its slot set, the media with unsaved changes (R-OP-6) and the TTD guard
     /// (R-OP-7: refused while a user recording runs, naming the session)
     ChangePlan PlanChange(const slots::SlotRequest& request) const;
+    /// A whole slot set for this instance (an Undo puts the previous one back, ConfigOf of the plan before the
+    /// change): refused while a user recording runs (R-OP-7) or when the machine would not be created from it (Q8)
+    ChangePlan PlanSet(const SlotConfig& slotConfig) const;
+    /// Why a machine with this configuration and slot set would not be created (Q8 conflicts, a card that cannot be
+    /// fitted); "" when it would
+    static std::string CreationRefusal(const CONFIG& config, const SlotConfig& slotConfig);
 
     /// What a model switch did with the cards of the old machine (R-OP-9)
     struct CarryReport

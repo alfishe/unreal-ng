@@ -159,7 +159,7 @@ of a TAP/TRD image instead, adapt the ~20-line `parse_tap()` from
 The proof that a snapshot works is *FM activity*, not a pretty border:
 
 ```bash
-# fresh instance with the TSFM device (Pentagon ini ships TurboSound=FM)
+# fresh instance with the TSFM device (the Pentagon config ships ay-socket = tsfm in [SLOTS])
 curl -s -X POST localhost:8090/api/v1/emulator/start -d '{"model":"PENTAGON"}'
 
 curl -s -X POST localhost:8090/api/v1/emulator/$ID/snapshot/load \
@@ -180,13 +180,14 @@ rule `verify_sna.py` applies to all 106 snapshots.
 (status-word semantics on `0xFFFD`). On a legacy 2×AY TurboSound the player's
 busy-poll reads the AY mixer (`0xFF`, bit7 set) and parks forever at
 `0x6293/0x6295` — silent *and* frozen. In unreal-ng use the Pentagon config
-with `TurboSound=FM`.
+(`ay-socket = tsfm`), or put a TSFM into the socket of another machine:
+`slots plug ay-socket tsfm --replace` ([slots.md](../../../features/slots.md)).
 
 ## 7. Troubleshooting
 
 | symptom | cause | fix |
 |---|---|---|
-| Loads, black screen, total silence, PC stuck at `0x6293/0x6295` | machine has legacy TurboSound (AY register readback, not status) | use a TSFM-capable config (Pentagon + `TurboSound=FM`) |
+| Loads, black screen, total silence, PC stuck at `0x6293/0x6295` | machine has legacy TurboSound (AY register readback, not status) | use a TSFM in the AY socket (`ay-socket = tsfm`, the Pentagon default) |
 | Plays but sounds like a stuttery 1/6 of the song | old-format module: `tune+9 != '2'` — INIT kept the frame divider | only `TFMcom1.12` tunes play at full rate |
 | Garbage/noise then crash | tune not aligned at `32768` (relocation offsets are tune-relative) | always poke the tune exactly at `0x8000` |
 | Nothing at all, PC runs off into ROM | PC slot clobbered — tune overlaps `0xFF00`, or SP wrong | check `32768 + len(tune) < 0xFF00` and `A8 61` at `0xFF00` |

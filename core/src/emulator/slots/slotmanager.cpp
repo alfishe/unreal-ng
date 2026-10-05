@@ -877,24 +877,52 @@ SlotManager::ChangePlan SlotManager::PlanChange(const Result& current, const CON
     }
 
     // The machine is created from it: the same checks as at creation (Q8 conflicts, a card the emulator cannot build)
+    out.refusal = CreationRefusal(config, out.config);
+    if (!out.refusal.empty())
+    {
+        out.config = {};
+    }
+    return out;
+}
+
+std::string SlotManager::CreationRefusal(const CONFIG& config, const SlotConfig& slotConfig)
+{
     auto trial = std::make_unique<CONFIG>(config);
-    UseSlots(out.config, *trial);
+    UseSlots(slotConfig, *trial);
     const Result created = Plan(*trial);
     if (!created.conflicts.empty())
     {
-        out.refusal = "refused: " + created.Refusal();
-        out.config = {};
-        return out;
+        return "refused: " + created.Refusal();
     }
     for (const Slot& slot : created.entries)
     {
         if (slot.entry.disabled)
         {
-            out.refusal = "refused: " + slot.entry.slot + " = " + slot.entry.card + " cannot be fitted: " +
-                          slot.entry.disabledReason;
-            out.config = {};
-            return out;
+            return "refused: " + slot.entry.slot + " = " + slot.entry.card + " cannot be fitted: " +
+                   slot.entry.disabledReason;
         }
+    }
+    return {};
+}
+
+SlotManager::ChangePlan SlotManager::PlanSet(const SlotConfig& slotConfig) const
+{
+    ChangePlan out;
+    out.plan.allowed = true;
+    out.config = slotConfig;
+    out.config.section = true;
+    static const CONFIG kNoConfig{};
+    out.refusal = CreationRefusal(_context != nullptr ? _context->config : kNoConfig, out.config);
+    const std::string recording = ChangeRefusal();
+    if (!recording.empty())
+    {
+        out.refusal = recording;
+        out.recording = true;
+    }
+    if (!out.refusal.empty())
+    {
+        out.plan.allowed = false;
+        out.config = {};
     }
     return out;
 }

@@ -47,7 +47,8 @@ inspect_state {"aspects":["fdc"]}
   that is the only decoder-level difference from `SCORPION`.
 - Beta128 disk interface is **built in** (`trdos_present`): TR-DOS boots
   without inserting anything, and `#FF` FDC ports are always decoded.
-- The shipped `GSType` is `NGS` (NeoGS, as on every model).
+- The shipped `[SLOTS]` fit `zxbus.1 = neogs` (NeoGS, as on every clone), a MoonSound, a SounDrive and the TSFM
+  (`inspect_state {"aspects":["slots"]}`).
 
 ## WebAPI
 

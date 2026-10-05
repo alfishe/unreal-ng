@@ -199,6 +199,10 @@ Content-Type: application/json
 
 Omitted, it follows `[MISC] RAMPowerOn` of the model's `unreal.ini` (`RANDOM` when unset). Any other value is a `400`. A ZX-Poly machine applies it to all four modules. Every identity block reports the mode as `ram_power_on`.
 
+`slots` (optional) gives the new machine its slot set in the `[SLOTS]` key form, replacing the INI's
+([ZX-bus Slots](#zx-bus-slots)): `{"ay-socket": "none", "zxbus.1": "multisound", "zxbus.1.dip": ["ym", "saa"]}`.
+Entries that conflict (two cards with one job) refuse the machine with a `400` naming every pair and its rule.
+
 **Response 201**:
 ```json
 {
@@ -307,6 +311,8 @@ not a ZX-Poly machine.
 ### 5b. Switch Model (validate-first)
 **Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep", "ram_power_on": "random|zero"}`; `ram_power_on` omitted = the mode the current machine was created with)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
+
+The cards go along ([slots.md → Model switch](../../../features/slots.md#model-switch)): `slots` in the reply lists the cards `kept` (in their slot, or moved behind an adapter: `zxbus.2 -> edge.2 = soundrive`) and `dropped` (slot, card, reason) and `report` the same lines for people.
 
 The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
@@ -1496,6 +1502,26 @@ POST /api/v1/emulator/{id}/tape/*         ✅ Implemented — see [Tape Control]
 POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
 POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 ```
+
+### ZX-bus Slots
+
+```
+GET  /api/v1/emulator/{id}/slots                         the slot report: buses, slots, fitted cards, built-ins, plan log
+GET  /api/v1/emulator/{id}/slots/catalog                 every card, its options, how it fits this machine
+GET  /api/v1/emulator/{id}/slots/matrix[?table=cards]    the compatibility tables (markdown)
+POST /api/v1/emulator/{id}/slots/{slot}/plug             {card, options, adapter, replaceIfIncompatible, dryRun, mediaDisposition}
+POST /api/v1/emulator/{id}/slots/{slot}/remove           {replaceIfIncompatible, dryRun, mediaDisposition}
+PUT  /api/v1/emulator/{id}/slots/{slot}/options          {options, replaceIfIncompatible, dryRun, mediaDisposition}
+```
+
+Every route is SlotControl ([command-interface.md section 14](./command-interface.md#14-zx-bus-slots); OpenAPI tag
+`Slots`). `{slot}`: `zxbus.2`, `zxbus.next`, `ay-socket`, or `auto` for a plug (where the planner puts the card).
+`options`: `"dip=ym,saa gsRam=2m"` or `{"dip": ["ym", "saa"], "gsRam": "2m"}`. A change is planned first; a refusal is
+`409` with the plan as the body (`status` `refused` or `recording`; `message` `needs replaceIfIncompatible: ...`;
+`plan.removed[]` names every card it would remove with the options that put it back, `undo`). Applied, the machine
+restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId` is the new id (`started` when the old
+one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
+card in the GS slot (owner decision Q10).
 
 ### Snapshots (Implemented Separately)
 ```

@@ -119,12 +119,17 @@ Create response and `GET /emulator/{id}` share the identity fields:
 
 ## Sound cards and config keys
 
-General Sound and MoonSound are on `master`, selected by config keys:
+The cards are slot cards, named in the model's `[SLOTS]` section and changed at run time by a slot change that
+restarts the machine ([slots.md](../machines/slots.md), user guide [docs/features/slots.md](../../docs/features/slots.md)):
 
-| Key | Values | Notes |
+| `[SLOTS]` entry | Values | Notes |
 |:--|:--|:--|
-| `[SOUND] GSType` | `NGS` (NeoGS card: shipped on the clones; the 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs ship none since 2026-10-04), `Z80` (classic GS, Z80 LLE), `LW` (lightweight player), `BASS` (deprecated alias of `LW`), `NONE` | `GS=rom/gs105a.rom` for the Z80 card |
-| `[SOUND] MoonSound` | `1` clones, `0` real Sinclairs | MoonSound (OPL4) engine; clone-only policy |
+| `ay-socket` | `tsfm` (shipped on most models), `ts`, `ay`, `none` | the AY socket's board |
+| `zxbus.N` (`edge.N`, `profi-bus.N`, ...) | `neogs` (shipped on the clones; the 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs ship none since 2026-10-04), `gs` (classic GS, Z80 LLE), `gs-lw` (lightweight player), `moonsound` (clones), `soundrive`, `covox-fb`, `multisound`, `zxnetusb`, `zx-wifi` | `GS=rom/gs105a.rom` for the `gs` card; options as `zxbus.N.<option>` |
+
+The legacy keys (`[SOUND] GSType`, `TurboSound`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card`) still work in an
+INI without `[SLOTS]`; they are translated into slots at creation. `inspect_state {"aspects":["slots"]}` shows the
+result.
 
 Check `server.git_branch` / `server.git_commit` before asserting behavior that
 depends on a side branch. Design docs: [docs/inprogress/](../../docs/inprogress/) —

@@ -343,10 +343,11 @@ def main() -> int:
                 emu_id = api.create_instance(model)
                 print(f"  fresh {model} instance: {emu_id}")
             if "gs" in options:
-                api.post(f"/emulator/{emu_id}/control/audio/gs",
-                         {"action": "switch_personality", "personality": options["gs"]})
-                run_frames(api, f"/emulator/{emu_id}", 2)  # the swap lands at a frame boundary
-                print(f"  General Sound card: {options['gs']}")
+                # A slot change (owner decision Q10): the machine restarts with the card, under a new id
+                reply = api.post(f"/emulator/{emu_id}/control/audio/gs",
+                                 {"action": "switch_personality", "personality": options["gs"]})
+                emu_id = reply.get("restart", {}).get("emulatorId", emu_id)
+                print(f"  General Sound card: {options['gs']} (machine {emu_id})")
             record_session(api, emu_id, out_path, args.frames,
                            from_root(snapshot) if snapshot else None, settle,
                            fresh=args.emulator_id is None)

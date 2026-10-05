@@ -191,6 +191,33 @@ media(verb, slot, path, opts)                           -- any verb
 Each returns the result table: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
 and the verb's fields (`slots`, `info`, `formats`, `targets`, ...).
 
+### ZX-bus Slots
+
+The cards on the machine's buses through one set of functions - the same verbs, options and replies as the CLI
+`slots`, the WebAPI `/slots`, MCP and Python ([command-interface.md section 14](./command-interface.md#14-zx-bus-slots),
+user guide [docs/features/slots.md](../../../features/slots.md)).
+
+```lua
+r = slots_state()          -- buses, slots (card, options, adapter, fit, state), built-ins, plan log
+c = slots_catalog()        -- every card: options, functions, ports, media, thisMachine {slot, fit, outcome, removes}
+m = slots_matrix("cards")  -- the compatibility tables as markdown (all without an argument)
+
+r = slots_plug("zxbus.next", "multisound", {dry_run = true})                -- the plan only
+r = slots_plug("zxbus.next", "multisound", {replace = true, gsRam = "2m"})  -- applied: the machine restarts
+r = slots_set("zxbus.1", {ctrlMask = "classic"})                            -- options merged over the current ones
+r = slots_remove("zxbus.1", {media = "discard"})                            -- unsaved sd.ngs writes: save | discard
+r = slots_gs("neogs")                                                       -- the General Sound personality
+ok, why = gs_switch_personality("lw")                                       -- the same as slots_gs("gs-lw")
+```
+
+`opts`: `replace` (allow the removals the plan lists, Q1), `dry_run`, `media` (`save` / `discard`), `adapter`,
+`options = "dip=ym,saa"` or `options = {dip = "ym,saa"}`; for `slots_plug` / `slots_set` any other key is a card
+option (`dip = {"ym", "saa"}` works too). Each returns the reply table every surface returns: `ok`, `status`
+(`applied`, `dry-run`, `refused`, `recording`, `no-machine`, `failed`, `bad-request`), `message`, and for a change
+`plan` (`removed` with each card's `undo`, `shadowed`, `lostFunctions`, `media`, `lines`, ...), `restart`
+(`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`. A change restarts the machine: a script bound
+to the old instance follows it to the new one; the selection follows too.
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands
@@ -815,7 +842,7 @@ print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` are refused and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality` and every slot change (`slots_*`: `status = "recording"`) are refused and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```lua
 local ok, reason = snapshot_load("game.sna")

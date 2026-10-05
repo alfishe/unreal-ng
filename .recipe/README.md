@@ -173,11 +173,11 @@ call.
 
 | Recipe | What it covers |
 |:--|:--|
-| [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `GSType` Z80 / LW / NGS, runtime personality switch, `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
+| [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `gs` / `gs-lw` / `neogs` slot cards (legacy `GSType`), personality switch (a slot change, machine restart), `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
 | [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card: `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, per-model `MoonSound=` defaults, state and capture sources, known issues |
 | [peripherals/neogs.md](peripherals/neogs.md) | NeoGS card (`neogs` in `[SLOTS]`, shipped on the clones; not on the Sinclair, Profi or Sprinter configs): SD slot `sd.ngs`, flash save, stereo mode, personality switch, MP3 path |
 | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | Per-device mixer (gain, mute, solo), audio capture by source, analyzing a capture |
-| [peripherals/turbosound.md](peripherals/turbosound.md) | TurboSound slot: `AY` pair vs TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
+| [peripherals/turbosound.md](peripherals/turbosound.md) | AY socket (`ay-socket`): `ts` AY pair vs `tsfm` TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
 | [peripherals/covox-sounddrive.md](peripherals/covox-sounddrive.md) | CovoxFB/CovoxDD/SoundDrive toggles, quad-DAC ports `#F1-#FB`, mono compat mode, capture+trace verification |
 | [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
 | [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |

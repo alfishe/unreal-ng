@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,10 @@ struct SlotChangeRequest
 {
     std::string emulatorId;
     slots::SlotRequest change;   ///< op, slot, card, options, adapter, replaceIfIncompatible, dryRun, mediaDisposition
+    /// Instead of `change`: this exact slot set (an Undo puts the set from before a change back, SlotManager::ConfigOf
+    /// of that plan). Checked as a creation is (Q8) and against the TTD guard; `change.dryRun` and
+    /// `change.mediaDisposition` still apply
+    std::optional<SlotConfig> slotSet;
     /// Called with the old machine stopped, before it is destroyed (a GUI unbinds its views here)
     std::function<void(Emulator& old)> beforeRelease;
 };

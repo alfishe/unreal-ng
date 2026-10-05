@@ -65,11 +65,15 @@ Filters: `adapter=isa2.eth` (or `zxnetusb`, `com.esp`, `isa1.esp`, `isa1.modem`,
 ## Fitting the card
 
 Machine config (`configs/<model>/unreal.ini`; shipped for ATM3, ATM710,
-Pentagon, Scorpion, Profi):
+Pentagon, Scorpion, Profi). The card is a slot card (`[SLOTS]`, the
+[slots recipe](../machines/slots.md)); the legacy `[NETWORK] Card=ZXNETUSB` still
+works in an INI without `[SLOTS]`:
 
 ```ini
+[SLOTS]
+zxbus.4 = zxnetusb             ; or zx-wifi (zxbus.N.port = ef | ee); no entry = no card: the ports read #FF
+
 [NETWORK]
-Card=ZXNETUSB                  ; NONE = no card: the ports read #FF (default)
 HostAccess=1                   ; 0 = internal services only (DHCP, hosts table, gateway ping)
 DnsMode=HOST                   ; HOST | PASS
 Hosts=next.zxart.ee=127.0.0.1  ; name=a.b.c.d,name=a.b.c.d

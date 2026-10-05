@@ -1,15 +1,20 @@
 # Recipe: TurboSound Slot (2x AY or TSFM)
 
-Every clone config carries a **TurboSound slot** — one configuration
-choice, two very different devices:
+Every machine has an **AY socket** slot (`ay-socket` in `[SLOTS]`, the
+[slots recipe](../machines/slots.md)) — one choice, very different devices:
 
-| `TurboSound=` | Device | What it is |
-|:--|:--|:--|
-| `AY` | classic TurboSound | two AY-3-8910/YS1284912 chips behind one register pair |
-| `FM` (current default) | **TSFM** — TurboSound FM | YM2203 (FM + SSG) based modern card |
+| `ay-socket =` | Legacy `TurboSound=` | Device | What it is |
+|:--|:--|:--|:--|
+| `ay` | `Single` / `None` on a board with an AY | the machine's own AY | one AY-3-8910 / YM2149 |
+| `ts` | `AY` | classic TurboSound | two AY-3-8910/YS1284912 chips behind one register pair |
+| `tsfm` (shipped default) | `FM` | **TSFM** — TurboSound FM | YM2203 (FM + SSG) based modern card |
+| `none` | | empty socket | no chip: the AY ports float |
 
-Config comment of record: *"Change needs a new emulator instance - no
-runtime switching."* `TSFM_FmTrimDb=7.4` calibrates FM loudness to the
+A change is a slot change that **restarts the machine** (a new instance,
+the media kept): `emulator_manage {"action":"slots_plug","slot":"ay-socket",
+"card":"ts","replace_if_incompatible":true}`, CLI `slots plug ay-socket ts
+--replace`. The legacy `[SOUND] TurboSound=` key still works in an INI
+without `[SLOTS]`. `TSFM_FmTrimDb=7.4` calibrates FM loudness to the
 real TSFM board (one FM carrier at TL 0 ≈ one SSG channel at volume 15).
 
 Ground truth: config `[SOUND]` block in any
@@ -27,7 +32,8 @@ chips [soundchip_turbosound.h](../../core/src/emulator/sound/chips/soundchip_tur
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"create","model":"PENTAGON"}   # TurboSound=FM default
+emulator_manage {"action":"create","model":"PENTAGON"}   # ay-socket = tsfm default
+emulator_manage {"action":"create","model":"PENTAGON","slots":{"ay-socket":"ts"}}   # classic TurboSound instead
 
 inspect_state {"aspects":["audio_ay"]}     # the AY pair (each chip's registers)
 inspect_state {"aspects":["audio_fm"]}     # the TSFM / YM2203 side
@@ -87,17 +93,18 @@ curl -s "$BASE/emulator/$EMU_ID/state/audio/beeper" | jq .
   engine renders at any core rate (44.1–192 kHz bit-identical filter
   design — see the TSFM filter work).
 - The AY pair is **also** the machine's base sound chip: with
-  `TurboSound=FM` the classic second AY is gone — software probing for a
+  `ay-socket = tsfm` the classic second AY is gone — software probing for a
   second AY will not find one.
 
 ## Pitfalls
 
-- **No runtime switching** — changing `TurboSound=` means editing the
-  model config and creating a new instance. Tests that need both variants
-  need two instances.
-- **Default is `FM`** — demos from the classic-TurboSound era may sound
+- **A change restarts the machine** — `slots_plug` on `ay-socket` creates the
+  machine again with the other board (a new emulator id; the machine state is
+  lost). Tests that need both variants create two instances (`create` with
+  `"slots": {"ay-socket": "ts"}`).
+- **Default is `tsfm`** — demos from the classic-TurboSound era may sound
   thin or half-instrumented on a fresh clone instance because only one AY
-  answers; flip the config to `AY` for period-correct playback.
+  answers; plug `ts` for period-correct playback.
 - **Assert on decoded fields, not raw bytes** — the register endpoints
   already compute `frequency_hz`, envelope shape flags and mixer
   direction; recomputing them client-side just duplicates the decode math.

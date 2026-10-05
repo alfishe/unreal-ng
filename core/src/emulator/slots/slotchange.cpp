@@ -70,7 +70,8 @@ SlotChangeResult SlotChange::Run(const SlotChangeRequest& request)
         return out;
     }
 
-    out.plan = context->pSlotManager->PlanChange(request.change);
+    out.plan = request.slotSet ? context->pSlotManager->PlanSet(*request.slotSet)
+                               : context->pSlotManager->PlanChange(request.change);
     if (!out.plan.Allowed())
     {
         out.status = out.plan.recording ? SlotChangeStatus::Recording : SlotChangeStatus::Refused;

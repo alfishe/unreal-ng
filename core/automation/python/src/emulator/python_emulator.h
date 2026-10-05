@@ -12,6 +12,7 @@
 #include <emulator/emulator.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotcontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
@@ -299,6 +300,40 @@ namespace python_rzx
         return id.empty() ? EmulatorManager::GetInstance()->GetSelectedEmulatorId() : id;
     }
 }  // namespace python_rzx
+
+namespace python_slots
+{
+    /// A kwargs value as option text: bool -> true / false, a list -> "a,b"
+    inline std::string Text(const pybind11::handle& value)
+    {
+        if (pybind11::isinstance<pybind11::bool_>(value))
+            return value.cast<bool>() ? "true" : "false";
+        if (pybind11::isinstance<pybind11::list>(value) || pybind11::isinstance<pybind11::tuple>(value))
+        {
+            std::string list;
+            for (const pybind11::handle item : value)
+                list += (list.empty() ? "" : ",") + pybind11::str(item).cast<std::string>();
+            return list.empty() ? "none" : list;
+        }
+        return pybind11::str(value).cast<std::string>();
+    }
+
+    /// One slots verb through SlotControl (ZX-bus slots architecture.md §9) on the emulator `emulatorId` ("" = the
+    /// selected one); every keyword argument is a card option (dip="ym,saa" or dip=["ym", "saa"]). The reply dict
+    /// every surface returns: ok, status, message and the verb's fields (a change: plan, restart.emulatorId, media)
+    inline pybind11::object Call(SlotControlRequest request, const std::string& emulatorId, const pybind11::kwargs& options)
+    {
+        for (const auto& [key, value] : options)
+            request.options += (request.options.empty() ? "" : " ") + pybind11::str(key).cast<std::string>() + "=" + Text(value);
+        request.emulatorId = python_rzx::ResolveId(emulatorId);
+        SlotControlReply reply;
+        {
+            pybind11::gil_scoped_release release;   // a restart stops and builds a machine
+            reply = SlotControl::Execute(request);
+        }
+        return StateNodeToPy(reply.ToValue());
+    }
+}  // namespace python_slots
 
 namespace PythonBindings
 {
@@ -773,6 +808,80 @@ namespace PythonBindings
                 throw std::invalid_argument("no emulator '" + emulatorId + "'");
             return python_rzx::StatusDict(emulator->GetRzxStatus());
         }, "RZX playback status (frame, progress, desyncs, drift)", py::arg("emulator_id") = "");
+
+        // ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9): the machine's buses, slots and cards.
+        // A change (plug / remove / set / gs) restarts the machine: the reply's restart.emulatorId is the new id
+        // (the selection follows it); emulator_id "" = the selected machine
+        m.def("slots_state", [](const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "list";
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "The slot report: buses, slots, fitted cards, built-in devices", py::arg("emulator_id") = "");
+        m.def("slots_catalog", [](const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "catalog";
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "Every card with its options and how it fits this machine (slot, fit, outcome)", py::arg("emulator_id") = "");
+        m.def("slots_matrix", [](const std::string& table) {
+            SlotControlRequest request;
+            request.verb = "matrix";
+            request.table = table;
+            return python_slots::Call(request, "", py::kwargs());
+        }, "The compatibility tables as markdown (one table, or all)", py::arg("table") = "");
+        m.def("slots_plug", [](const std::string& slot, const std::string& card, const std::string& options, bool replace,
+                               bool dryRun, const std::string& media, const std::string& adapter,
+                               const std::string& emulatorId, const py::kwargs& cardOptions) {
+            SlotControlRequest request;
+            request.verb = "plug";
+            request.slot = slot == "auto" ? std::string() : slot;
+            request.card = card;
+            request.options = options;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            request.adapter = adapter;
+            return python_slots::Call(request, emulatorId, cardOptions);
+        }, "Plug a card into a slot (zxbus.next, ay-socket, auto); options 'dip=ym,saa' or keywords dip='ym,saa'. "
+           "Refused with the plan when it would remove a card unless replace=True; dry_run=True: the plan only; "
+           "media='save'|'discard' for unsaved media of removed cards. Applied by a machine restart",
+           py::arg("slot"), py::arg("card"), py::arg("options") = "", py::arg("replace") = false,
+           py::arg("dry_run") = false, py::arg("media") = "", py::arg("adapter") = "", py::arg("emulator_id") = "");
+        m.def("slots_remove", [](const std::string& slot, bool replace, bool dryRun, const std::string& media,
+                                 const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "remove";
+            request.slot = slot;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "Remove the card from a slot (a machine restart)", py::arg("slot"), py::arg("replace") = false,
+           py::arg("dry_run") = false, py::arg("media") = "", py::arg("emulator_id") = "");
+        m.def("slots_set", [](const std::string& slot, const std::string& options, bool replace, bool dryRun,
+                              const std::string& media, const std::string& emulatorId, const py::kwargs& cardOptions) {
+            SlotControlRequest request;
+            request.verb = "set";
+            request.slot = slot;
+            request.options = options;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, cardOptions);
+        }, "Change a slot card's options ('dip=ym,gs' or keywords), merged over the current ones (a machine restart)",
+           py::arg("slot"), py::arg("options") = "", py::arg("replace") = false, py::arg("dry_run") = false,
+           py::arg("media") = "", py::arg("emulator_id") = "");
+        m.def("slots_gs", [](const std::string& card, bool replace, bool dryRun, const std::string& media,
+                             const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = card;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "The General Sound personality (gs, gs-lw, neogs): the card in the GS slot replaced (a machine restart)",
+           py::arg("card"), py::arg("replace") = false, py::arg("dry_run") = false, py::arg("media") = "",
+           py::arg("emulator_id") = "");
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
@@ -2687,26 +2796,23 @@ namespace PythonBindings
                 return gs ? (gs->getStatusRaw() | 0x7E) : -1;
             }, "Peek the GS status register (IN #BB value)")
             .def("gs_switch_personality", [](Emulator& self, const std::string& personality) -> bool {
-                // Runtime personality switch (GS card personalities design
-                // §11.3): requested here, applied at the next frame boundary
-                // on the emulation thread - same semantics as the WebAPI
-                // switch_personality action and the MCP gs_switch_personality
-                // tool action
-                auto* ctx = self.GetContext();
-                SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-                if (!sm) return false;
-
-                GSTypeKind target;
-                if (!gsParsePersonality(personality, target))
-                    return false;
-
-                std::string refusal;
-                const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
-                if (!requested && !refusal.empty())
-                    throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
-                return requested;
-            }, "Request a GS card personality swap ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'), applied at the next "
-               "frame boundary (RuntimeError while TTD records)",
+                // The card in the GS slot replaced as a slot change, applied by a machine restart (ZX-bus slots,
+                // owner decision Q10): the same as slots_gs(). This object then names the old machine; the new one
+                // is the selected emulator (emu_get_selected())
+                SlotControlRequest request;
+                request.verb = "gs";
+                request.card = personality;
+                request.emulatorId = self.GetId();
+                SlotControlReply reply;
+                {
+                    py::gil_scoped_release release;
+                    reply = SlotControl::Execute(request);
+                }
+                if (!reply.Ok())
+                    throw std::runtime_error(reply.message);
+                return true;
+            }, "Replace the GS-slot card ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'): a machine restart; the new "
+               "machine is emu_get_selected() (RuntimeError with the reason when refused, e.g. while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload

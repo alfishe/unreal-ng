@@ -88,6 +88,14 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getMediaSlot, "/api/v1/emulator/{id}/media/{slot}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postMediaVerb, "/api/v1/emulator/{id}/media/{slot}/{verb}", drogon::Post);
 
+    // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
+    // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
+    ADD_METHOD_TO(EmulatorAPI::getSlots, "/api/v1/emulator/{id}/slots", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getSlotsCatalog, "/api/v1/emulator/{id}/slots/catalog", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getSlotsMatrix, "/api/v1/emulator/{id}/slots/matrix", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postSlotVerb, "/api/v1/emulator/{id}/slots/{slot}/{verb}", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::putSlotOptions, "/api/v1/emulator/{id}/slots/{slot}/options", drogon::Put);
+
     ADD_METHOD_TO(EmulatorAPI::insertDisk, "/api/v1/emulator/{id}/disk/{drive}/insert", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::createDisk, "/api/v1/emulator/{id}/disk/{drive}/create", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::ejectDisk, "/api/v1/emulator/{id}/disk/{drive}/eject", drogon::Post);
@@ -1055,6 +1063,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioChannels(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                const std::string& id) const;
+
+    // ZX-bus slots (api/slots_api.cpp)
+    void getSlots(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void getSlotsCatalog(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getSlotsMatrix(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postSlotVerb(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& slot, const std::string& verb) const;
+    void putSlotOptions(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                        const std::string& slot) const;
 
     // Audio state inspection (active emulator - no ID required)
     // TurboSound FM / Beta Disk state (api/state_device_api.cpp)

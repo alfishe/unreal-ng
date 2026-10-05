@@ -9,6 +9,7 @@
 
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotmatrix.h>
 
 using namespace drogon;
 using namespace api::v1;
@@ -30,6 +31,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_lifecycle.inc"
 #include "openapi/openapi_tape_disk.inc"
 #include "openapi/openapi_media.inc"
+#include "openapi/openapi_slots.inc"
 #include "openapi/openapi_snapshot.inc"
 #include "openapi/openapi_rzx.inc"
 #include "openapi/openapi_capture.inc"
@@ -69,6 +71,7 @@ void buildSchemas(Json::Value& schemas)
 {
 #include "openapi/openapi_schemas.inc"
 #include "openapi/openapi_media_schemas.inc"
+#include "openapi/openapi_slots_schemas.inc"
 #include "openapi/openapi_joystick_schemas.inc"
 #include "openapi/openapi_ttdfile_schemas.inc"
 #include "openapi/openapi_temporal_schemas.inc"
@@ -132,6 +135,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagMedia["name"] = "Media";
     tagMedia["description"] = "Every media slot of the machine: insert, eject, swap, save, export (media-control-design.md)";
     tags.append(tagMedia);
+    Json::Value tagSlots;
+    tagSlots["name"] = "Slots";
+    tagSlots["description"] = "ZX-bus slots: buses, slots, cards; plug / remove / options applied by a machine restart";
+    tags.append(tagSlots);
     Json::Value tagDiskInsp;
     tagDiskInsp["name"] = "Disk Inspection";
     tagDiskInsp["description"] = "Low-level disk data inspection";

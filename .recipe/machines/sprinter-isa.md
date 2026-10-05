@@ -38,7 +38,9 @@ population refuses to load on another).
   for jumpers J5 / J6, `SlotNDecode=FULL|PARTIAL`): [sprinter-network.md](sprinter-network.md#isa-hayes-modem-and-sprinterserial).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
-- Built kinds: `ZXBUS` (the adapter; the GS behind it is `[SOUND] GSType`: `NGS`, `Z80`, `LW` or `NONE`; none as shipped), `NE2000`,
+- Built kinds: `ZXBUS` (the adapter; the GS behind it is a slot card in `[SLOTS]`: `isa.1 = neogs` | `gs` | `gs-lw`,
+  `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic` - the legacy `[SOUND] GSType` still works; none
+  as shipped), `NE2000`,
   `SPRINTERESP`, `MODEM`, `DUAL16552`. `Slot1=NONE` builds no GS at all (the machine has no ZX-bus then); a second
   `ZXBUS` adapter has an empty ZX-bus (one GS per machine). A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
@@ -216,7 +218,7 @@ GS port trace `/state/audio/gs/porttrace` sees ProPlay's traffic like any host's
 (`NeoGS (...): status #7E, silent; [SOUND] GSReset=0: ...`); `audio_gs` for the card. Qt: Network window, slot 1's
 row is the adapter's line.
 
-- `[SOUND] GSType=Z80` puts the classic GS (`rom/gs105a.rom`) behind the adapter; a TTD recording then replays
+- `isa.1 = gs` in `[SLOTS]` (legacy `[SOUND] GSType=Z80`) puts the classic GS (`rom/gs105a.rom`) behind the adapter; a TTD recording then replays
   exactly (its RAM is in its blob). The NeoGS replays the same music, not bit-exact (its RAM waits for TTD v2).
 - The NeoGS ZX-DMA cannot reach the Sprinter (the adapter passes no memory cycles); the TTD port journals record with
   the NeoGS fitted.

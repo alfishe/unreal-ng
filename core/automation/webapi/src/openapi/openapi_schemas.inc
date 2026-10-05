@@ -72,6 +72,12 @@
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["description"] =
         "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
 
+    schemas["CreateEmulatorRequest"]["properties"]["slots"]["type"] = "object";
+    schemas["CreateEmulatorRequest"]["properties"]["slots"]["additionalProperties"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["slots"]["description"] =
+        "The new machine's slot set in the [SLOTS] key form, replacing its INI's (ZX-bus slots): {\"ay-socket\": "
+        "\"none\", \"zxbus.1\": \"multisound\", \"zxbus.1.dip\": \"ym,saa,gs,sd\", \"builtin.covox\": \"off\"}; "
+        "a set option may be an array. Conflicting entries refuse the machine (400 with every pair and its rule, Q8)";
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["type"] = "string";
     for (const char* value : {"default", "matrix", "xt", "xttable"})

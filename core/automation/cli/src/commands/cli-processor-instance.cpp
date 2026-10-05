@@ -1446,7 +1446,8 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
            << "Switch the selected emulator to another model (see 'models'). The machine state is lost; disks, tapes" << NEWLINE
            << "and cards go into the slot with the same id on the new machine, unsaved writes included. Media with" << NEWLINE
            << "unsaved writes the new model has no slot for need --stranded: save (into their files), discard, or" << NEWLINE
-           << "keep (detached media on the new machine, see 'media list')." << NEWLINE
+           << "keep (detached media on the new machine, see 'media list'). The cards go along where the new machine" << NEWLINE
+           << "takes them (see 'slots'); the ones it cannot take are listed with the reason." << NEWLINE
            << "--ram-power-on: RAM contents of the new machine (default: the current machine's mode)." << NEWLINE;
         session.SendResponse(ss.str());
         return;
@@ -1525,7 +1526,8 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
     ss << "Switched to " << identity.Model << " - " << identity.ModelFullName << " (" << identity.RamKb
        << "KB, power-on RAM: " << identity.RamPowerOn << ")" << NEWLINE
        << "New emulator instance: " << switched.emulator->GetId() << NEWLINE;
-    for (const std::string& line : switched.media.lines)
+    // The cards that went along or were dropped (ZX-bus slots R-OP-9), then the media
+    for (const std::string& line : switched.result.report)
         ss << "  " << line << NEWLINE;
     session.SendResponse(ss.str());
 }

@@ -2295,7 +2295,7 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state audio ay <index>` | | `<chip-index>` | Show detailed information about selected AY chip (0-based indexing):<br/>• Chip index (0=first chip, 1=second chip for TurboSound)<br/>• Chip type (AY-3-8912, YM2149, etc.)<br/>• All register values (0-15) with decoding<br/>• Channel A/B/C: frequency, volume, mixer state<br/>• Envelope shape, period, and current phase<br/>• Noise period and LFSR state<br/>• I/O ports A/B values and direction<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio ay <chip> register <N>` | | `<chip-index> <register>` | Show specific AY register (0-15) of specified chip with full decoding and frequency calculations:<br/>**Example: `state audio ay 0 register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately)<br/>• Bit-by-bit decoding with meaning for each register type | 🔮 Planned |
 | `state audio gs` | | | Show the GS-slot card's state (classic GS, lightweight player or NeoGS) - the same report as WebAPI `/state/audio/gs`, Lua/Python `gs_state()` and MCP `audio_gs` (`DeviceState::Gs`):<br/>• Device, implementation, firmware / flash image, RAM size, MPAG<br/>• Mailbox status, pending flags, queue counts (single-latch mailbox: the counts mirror the flags, except the lightweight card's param buffer 0..16) and latches<br/>• DAC channels (4, or 8 on NeoGS) with volumes<br/>• Card CPU: PC/SP/AF/halted (`coprocessor: false` on the lightweight card)<br/>• NeoGS (`neogs`): stereo mode, flash, GSCFG0 raw and decoded (`gscfg0_flags`), clock, the four windows (flash/RAM page), readiness, LED, interrupts, `sctrl`, SD card, MP3 decoder (chip, DREQ, stream, frames, decode time, input fill), DMA modules and ZX-DMA (`neogs.dma.zx`: mode off / watch / divert, read latch, pending byte and address, bytes read / written / dropped, wait T-states, late starts, watch window); the GS port trace records each ZX-DMA byte as side `zxdma` | ✅ Implemented |
-| `gs <action>` | | `reset`, `reset_card`, `nmi`, `send_command <b>`, `send_data <b>`, `read_status`, `read_data`, `switch_personality <z80\|lle\|lw\|lightweight\|ngs\|neogs>`, `dump_module [path]`, `sd_insert <image>`, `sd_eject`, `flash_save`, `stereo_mode [separated\|gs\|mono]` | Drive the GS-slot card like ZX software does; switch the card at the next frame boundary; NeoGS only: SD card slot and flash save, stereo mode of the DAC channels (as on the board / classic GS 50% cross-feed / mono) (carried out on the machine thread - "queued" while it runs; insert/eject refused during a TTD recording) | ✅ Implemented |
+| `gs <action>` | | `reset`, `reset_card`, `nmi`, `send_command <b>`, `send_data <b>`, `read_status`, `read_data`, `switch_personality <z80\|lle\|lw\|lightweight\|ngs\|neogs>`, `dump_module [path]`, `sd_insert <image>`, `sd_eject`, `flash_save`, `stereo_mode [separated\|gs\|mono]` | Drive the GS-slot card like ZX software does; `switch_personality` replaces the card in the GS slot, a slot change applied by a machine restart (`slots gs`, section 14); NeoGS only: SD card slot and flash save, stereo mode of the DAC channels (as on the board / classic GS 50% cross-feed / mono) (carried out on the machine thread - "queued" while it runs; insert/eject refused during a TTD recording) | ✅ Implemented |
 | `state audio covox` | | | Show the Covox / SoundDrive DAC - the same report as WebAPI `/state/audio/covox`, Lua/Python `audio_covox_state()` and MCP `audio_covox` (`DeviceState::Covox`):<br/>• Fitment: `mono` (Covox on #FB) or `quad` (SoundDrive)<br/>• `ports`: the rows this model's decoder routes to it (port, mask, match, decode, gate) - taken from its port map (ZX-Evo: #FB only); the Sinclair models (48K, 128K, +2, +2A, +3) route no Covox port and their configs fit none<br/>• `shared_with_beta128`: Beta-128 registers a DAC row also decodes (SoundDrive mode 1 #1F / #5F) and `shared_port_rule` (Beta-128 owns them while TR-DOS is paged in)<br/>• The four DAC latches (left A/B, right A/B) with mute state<br/>• Last left / right amplitude, whether the DAC was written last frame, DC removal | ✅ Implemented |
 | `state rtc` / `rtc` / `cmos` | | | Show the CMOS clock (MC146818 / DS12887; the ZX-Evo AVR's emulation of one) - the same report as WebAPI `/state/rtc`, Lua/Python `rtc_state()` and MCP `rtc` (`DeviceState::Rtc`):<br/>• Chip, the ports the machine wires it to, cell count, NVRAM file, the guest's address latch<br/>• Time base: `host` (host local time plus the offset the guest set), `emulated` (while TTD records), `fixed` (tests)<br/>• Time as the guest reads it now; registers A-D and the alarms decoded<br/>• Every cell as hex, peeked (register C keeps its flags)<br/>Machines: ATM3 (ZX-Evo), PROFI, SCORPION / PROFSCORP with `[HDD] Scheme=SMUC`; elsewhere the reason why not | ✅ Implemented |
 | `rtc read <start> [count]` | | `<start> [count]` | CMOS cells as the guest reads them, without side effects (`RtcAccess::Read`, same as WebAPI `GET /rtc/cells`). Numbers: decimal, `0x..`, `#..` or `..h` | ✅ Implemented |
@@ -2717,7 +2717,7 @@ carried its device set: the reader then walks to the first checkpoint for it).
 | `rom_signature` | ROM set fingerprint as a hex string `0x...` (a 64-bit value does not survive a JSON number); null = unknown, not checked |
 | `peripheral_mask`, `peripherals` | Fitted devices: bit per TTD peripheral id, and their names (`betadisk`, `gs`, `neogs`, `tsfm`, `kempston-mouse`, ...) |
 | `not_recorded` | Devices fitted but deliberately not recorded, by name: `gs-lw` (the lightweight General Sound runs live through seeks). Empty for most sessions. CLI: the "Not recorded" line |
-| `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names) |
+| `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names: a slot change that restarts the machine, load into the reply's `emulatorId`; or create the machine with `"slots": {"zxbus.1": "gs"}`) |
 | `turbo_sound` | `none` / `turbosound` / `tsfm` |
 
 Provisioning a matching machine: read the info, create an instance of `machine.model`,
@@ -2764,7 +2764,7 @@ Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0.
 | ROM load | The recorded history relies on the current ROM. |
 | `ttd invalidate` | Stop the recording first, then discard it. |
 | Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
-| Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
+| Switching the General Sound card type (the `gs_lightweight` feature; `gs switch_personality` is a slot change, refused while recording like every slot change) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
 
 How each surface reports it:
@@ -3280,6 +3280,70 @@ and `POST .../joystick/press|release|set|tap` ([webapi-interface.md](./webapi-in
 MCP `joystick_input`, Lua `joystick_*` ([lua-interface.md](./lua-interface.md)), Python
 `emu.joystick_*` ([python-interface.md](./python-interface.md)); the Qt status bar shows a
 joystick LED while a button is held.
+
+### 14. ZX-bus Slots
+
+The cards on the machine's buses (General Sound, NeoGS, TurboSound FM, MoonSound, Covox / SounDrive, the network
+cards, the ZX-MultiSound): which bus and slot a card sits in, which cards fit together and what a change does to the
+others. Design: [ZX-bus slots](../../../inprogress/2026-10-03-zx-bus-slots/architecture.md) §9; the user guide is
+[docs/features/slots.md](../../../features/slots.md), the recipe [.recipe/machines/slots.md](../../../../.recipe/machines/slots.md).
+
+**How a change works.** Every change is planned first against the machine's slot set: the plan says which cards the
+new one would remove (two cards that do the same job, e.g. two General Sound cards), which built-in devices it hides
+(the Pentagon's own AY under a TurboSound card), whether the card really fits the bus (`real`, behind an `adapter`,
+or `unrealistic`) and which media a removed card takes along. A change that removes a card (or fits one
+unrealistically) is refused with that plan unless the request says `--replace` (owner decision Q1); `--dry-run` shows
+the plan and changes nothing. Applied, the machine **restarts** with the new slot set (owner decision Q6): a new
+emulator instance (a new id; the selection follows it), the machine state is lost, disks, tapes and cards' media follow
+into the slots with the same id. A removed card's medium with unsaved writes (`sd.ngs`) needs `--media save` or
+`--media discard`. No change while a TTD recording runs.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `slots` | `slots list` | `[--json]` | The board, its buses (kind, arbitration, physical slots; a bus the board has no connector for is marked as bolted on), every slot with its card, options, adapter, fit and state (a disabled card with the reason), the built-in devices (active, switched off, shadowed by a slot, replaced in their socket) and the plan log | ✅ Implemented |
+| `slots catalog` | | `[--json]` | Every card with its options (name, values, default) and how it would fit this machine now: the slot the planner suggests, the fit, `fits` / `needs-replace` (with the cards it would remove) / `refused`, the slots it is fitted in | ✅ Implemented |
+| `slots matrix` | | `[table]` | The compatibility tables (functions, cards, card-x-card, machines, card-x-machine) as markdown | ✅ Implemented |
+| `slots plug` | | `<slot> <card> [opt=val ...] [--replace] [--dry-run] [--media save\|discard] [--adapter <id>]` | Put a card into a slot: `zxbus.2`, `zxbus.next` (the next free one), `ay-socket`, or `auto` (where the planner puts it). Options as `name=value`, a set option as a comma list (`dip=ym,saa`) | ✅ Implemented |
+| `slots remove` | | `<slot> [--replace] [--dry-run] [--media save\|discard]` | Take the card out of a slot | ✅ Implemented |
+| `slots set` | | `<slot> opt=val ... [--replace] [--dry-run]` | Change the card's options (merged over the current ones) | ✅ Implemented |
+| `slots gs` | `gs switch_personality` | `<gs\|gs-lw\|neogs>` (also `z80`, `lw`, `ngs`) `[--replace] [--dry-run]` | The General Sound personality: the card in the GS slot replaced by the other one (owner decision Q10), applied by the restart like every change. Only the `gs_lightweight` feature still swaps the card in place | ✅ Implemented |
+
+The reply of a change: the status (`applied`, `dry-run`, `refused`, `recording`, `failed`), the plan line by line
+(`removes zxbus.1 = gs [ram=512k rom=1.05]: shares gs` - the options are the ones that put the card back), the restart
+(`restarted: emulator <old> -> <new> (running)`) and where the media went. `--json` prints the same object the WebAPI
+returns.
+
+**Worked example** (a Pentagon with the shipped TurboSound FM and a General Sound):
+
+```
+slots plug zxbus.next multisound --dry-run
+# needs replaceIfIncompatible: removes `ay-socket` `tsfm`: ...; removes `zxbus.1` `gs`: shares `gs`
+slots plug zxbus.next multisound gsRam=2m --replace
+# applied ... restarted: emulator 3f2a... -> 9c41... (running)
+slots set zxbus.1 ctrlMask=classic
+slots remove zxbus.1
+```
+
+A model switch (`model <name>`) carries the cards: each stays in its slot where the new machine has that bus, moves
+behind an adapter where it needs one, and the cards the new machine cannot take are listed with the reason. A new
+machine can be given its slot set at creation: WebAPI / MCP `create` with `"slots": {"zxbus.1": "multisound"}`.
+
+The legacy INI keys (`[SOUND] GSType`, `TurboSound`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card`) still work: they
+are translated into slots when the machine is created (a deprecation line in the log). New configs use `[SLOTS]`:
+
+```ini
+[SLOTS]
+ay-socket = tsfm
+zxbus.1 = neogs
+zxbus.1.ram = 4m
+```
+
+Every surface offers the same verbs and replies (one core layer, `SlotControl`): WebAPI `GET /emulator/{id}/slots`,
+`/slots/catalog`, `/slots/matrix`, `POST /slots/{slot}/plug|remove|options` ([webapi-interface.md](./webapi-interface.md),
+OpenAPI tag `Slots`), MCP `inspect_state` aspect `slots` and `emulator_manage` actions `slots_plug` / `slots_remove` /
+`slots_set` / `slots_catalog` / `slots_matrix`, Lua `slots_state()` / `slots_plug()` ... ([lua-interface.md](./lua-interface.md)),
+Python `unreal.slots_state()` / `unreal.slots_plug()` ... ([python-interface.md](./python-interface.md)), and the Qt
+window Machine > Slots.
 
 ## Future Capabilities
 

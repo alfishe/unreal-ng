@@ -4,6 +4,7 @@
 #include <emulator/ports/models/profiboard.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include "../emulator_api.h"
+#include "../common/statenode_json.h"
 
 #include <drogon/HttpResponse.h>
 #include <emulator/buildinfo.h>
@@ -13,6 +14,7 @@
 #include <emulator/zxpoly/zxpolygroup.h>
 #include <emulator/machinevariants.h>
 #include <emulator/media/modelswitch.h>
+#include <emulator/slots/slotcontrol.h>
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
 #include <json/json.h>
@@ -104,6 +106,52 @@ bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<
 }
 
 std::function<void(CONFIG&)> Combine(std::function<void(CONFIG&)> first, std::function<void(CONFIG&)> second);
+
+/// Optional "slots": {"zxbus.1": "multisound", "zxbus.1.dip": "ym,gs", "ay-socket": "none"} of a create / start body
+/// (ZX-bus slots architecture.md §9): the new machine's slot set in the [SLOTS] key form, replacing its INI's. A
+/// value may be an array (a set option). True when absent or valid; false with a 400 already sent
+bool ParseSlotsField(const std::shared_ptr<Json::Value>& json, std::function<void(CONFIG&)>& out,
+                     const std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (!json || !json->isMember("slots"))
+        return true;
+    const Json::Value& value = (*json)["slots"];
+    std::vector<std::pair<std::string, std::string>> keyValues;
+    std::string error = "slots must be an object of [SLOTS] keys: {\"zxbus.1\": \"multisound\", \"zxbus.1.dip\": \"ym,gs\"}";
+    bool ok = value.isObject();
+    if (ok)
+    {
+        for (const std::string& key : value.getMemberNames())
+        {
+            const Json::Value& v = value[key];
+            std::string text;
+            if (v.isArray())
+            {
+                for (const Json::Value& item : v)
+                    text += (text.empty() ? "" : ",") + item.asString();
+            }
+            else if (v.isBool())
+                text = v.asBool() ? "on" : "off";
+            else
+                text = v.asString();
+            keyValues.emplace_back(key, text);
+        }
+        std::string why;
+        ok = SlotControl::CreateOverride(keyValues, out, why);
+        if (!ok)
+            error = "slots: " + why;
+    }
+    if (ok)
+        return true;
+    Json::Value err;
+    err["error"] = "Bad Request";
+    err["message"] = error;
+    auto resp = HttpResponse::newHttpJsonResponse(err);
+    resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+    return false;
+}
 
 /// Optional "profi": {"keyboard": "matrix" | "xt" | "xttable" | "default", "zq3_mhz": 16..24 (even), "ay_clock":
 /// "old" | "new"} of a create / start body: the keyboard on a new Profi's keyboard connector ([PROFI] Keyboard=,
@@ -479,8 +527,11 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
     std::function<void(CONFIG&)> profiOverride;
     if (!ParseProfiField(json, profiOverride, callback))
         return;
+    std::function<void(CONFIG&)> slotsOverride;
+    if (!ParseSlotsField(json, slotsOverride, callback))
+        return;
     const std::function<void(CONFIG&)> createOverride =
-        Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride);
+        Combine(Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride), slotsOverride);
 
     try
     {
@@ -682,8 +733,11 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     std::function<void(CONFIG&)> profiOverride;
     if (!ParseProfiField(json, profiOverride, callback))
         return;
+    std::function<void(CONFIG&)> slotsOverride;
+    if (!ParseSlotsField(json, slotsOverride, callback))
+        return;
     const std::function<void(CONFIG&)> createOverride =
-        Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride);
+        Combine(Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride), slotsOverride);
 
     // ZX-Poly: "zxpoly": true or {"file": "<.zxp | .prom | disk image>"}
     const bool zxpoly = json && json->isMember("zxpoly") &&
@@ -1421,6 +1475,11 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         ret["new_emulator_id"] = newEmulator->GetId();
         ret["state"] = stateToString(newEmulator->GetState());
         ret["media"] = mediaJson();
+        // The cards went along (ZX-bus slots R-OP-9): kept, moved behind an adapter, dropped with the reason
+        ret["slots"] = StateNodeToJson(SlotControl::CarryValue(switched.slotCarry));
+        ret["report"] = Json::arrayValue;
+        for (const std::string& line : switched.result.report)
+            ret["report"].append(line);
         AddIdentityFields(ret, *newEmulator);
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);

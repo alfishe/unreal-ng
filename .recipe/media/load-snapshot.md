@@ -177,7 +177,7 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
   its current block; loading finds a linked image next to the snapshot first,
   then at the stored path, and inserts it with Session access (the linked
   file is never written). Images embedded in an `.szx` from another emulator
-  are loaded too. The classic GS card (GSType=Z80), the Covox level and the
+  are loaded too. The classic GS card (a `gs` slot card), the Covox level and the
   Kempston mouse type travel as well.
 - **Model mismatch**: a 128K snapshot loaded into a 48K instance (or vice
   versa) either fails cleanly or drops extension state; create the right
