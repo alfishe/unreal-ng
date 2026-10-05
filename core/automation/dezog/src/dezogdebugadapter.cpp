@@ -296,6 +296,7 @@ void DezogDebugAdapter::setRegister(dzrp::RegisterId regId, uint16_t value)
     Z80State* z80 = emulator->GetZ80State();
     if (!z80)
         return;
+    emulator->NoteDebugChange();   // the debugger snapshot's seq
 
     const uint8_t lo = static_cast<uint8_t>(value & 0xFF);
 

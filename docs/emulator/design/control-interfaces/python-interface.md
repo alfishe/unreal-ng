@@ -734,6 +734,9 @@ emu.page_write("ram", 5, 0x100, 0xFF)
 
 # Block operations
 data = emu.page_read_block("rom", 2, 0, 256)  # Read 256 bytes from ROM page 2
+data = emu.mem_read_bytes(0, 65536)           # the whole CPU view as bytes (wraps at 0xFFFF)
+data = emu.mem_read_bytes(0x1800, 768, space="ram5")  # a page window; "ram" = all RAM pages back to back
+# ValueError with the reason on a bad space, address or length
 emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 
 # Get memory configuration
@@ -1279,6 +1282,11 @@ emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 # or as a number
 emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
 emu.mem_find("CD ?? 00")             # ?? = any byte, "A?" = any low nibble
+
+# One coherent debugger snapshot (the same as GET /debug/snapshot): read at one moment, paused or between frames
+snap = emu.debug_snapshot(disasm=21, stack=8, memory=["cpu:0x8000:256", "ram5:0:6912"])
+# snap["seq"], snap["consistency"], snap["regs"]["special"]["pc"], snap["prev_regs"], snap["disasm"][0]["mnemonic"],
+# snap["memory"][0]["bytes"] (bytes); ValueError with the reason when refused
 emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
 emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
 emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match

@@ -28,7 +28,8 @@
         paths[kRegion]["get"]["description"] =
             "Bytes [offset, offset + length) of the region: format=hex (default; one hex string), data (an array), "
             "sparse (0x00 / 0xFF runs folded into fill segments) - at most 65536 bytes as JSON - or binary "
-            "(application/octet-stream, any length; headers X-Region, X-Offset). Pages of the same bytes: "
+            "(application/octet-stream, any length; headers X-Region, X-Offset and X-Unreal-Space / -Address / "
+            "-Length as every binary memory read). Pages of the same bytes: "
             "/memory/page/{name}/{n} (16 KB pages, the ram / rom page shape).";
         idParam(kRegion, "get");
         {

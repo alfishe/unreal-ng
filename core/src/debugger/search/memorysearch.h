@@ -59,6 +59,10 @@ struct MemorySearchResult
 
 namespace MemorySearch
 {
+/// RAM pages of the machine (config.ramsize / 16)
+uint32_t RamPageCount(EmulatorContext* context);
+/// The host memory of one physical page (RAM, ROM, cache); nullptr when the machine has no such page
+const uint8_t* PageHost(EmulatorContext* context, MemoryBankModeEnum type, uint32_t page);
 /// Pattern text into bytes and mask ("??" / "A?" wildcards). False with the reason in `error`
 bool ParsePattern(const std::string& text, std::vector<uint8_t>& pattern, std::vector<uint8_t>& mask, std::string& error);
 /// A number as a pattern, its hex digits as written: 0xAF3C -> "AF3C", 0xF -> "0F"

@@ -1,8 +1,12 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/logger.h"
@@ -44,6 +48,20 @@ protected:
     std::chrono::steady_clock::time_point _nextFrameTime{};
 
     std::function<void(bool rendered)> _frameEndHook;
+
+    /// Work for the emulation thread at the next frame boundary (RunAtFrameBoundary): a reader that needs one
+    /// coherent moment of a running machine without pausing it (the debugger snapshot)
+    struct FrameTask
+    {
+        std::function<void()> work;
+        bool started = false;
+        bool done = false;
+    };
+    std::mutex _frameTaskMutex;
+    std::condition_variable _frameTaskCV;
+    std::vector<std::shared_ptr<FrameTask>> _frameTasks;
+    std::atomic<bool> _hasFrameTasks{false};
+    void RunFrameTasks();
 
     /// region <Realtime scheduling>
 public:
@@ -173,6 +191,11 @@ public:
     void ConfirmPauseFromCpu();
 
     /// @brief The caller is the emulator loop's own thread
+    /// Run `work` on the emulation thread between two frames (from that thread itself: at once). True when it ran
+    /// within `timeoutMs`; false when the loop did not reach a frame boundary in time (paused, stopped), and then the
+    /// work never runs
+    bool RunAtFrameBoundary(const std::function<void()>& work, uint32_t timeoutMs);
+
     bool IsRunThread() const
     {
         return _runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id();

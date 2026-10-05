@@ -96,8 +96,7 @@ suspect (this SD boot path reads FAT from sector 0, no MBR support).
 
 `ATM3` boots NedoOS from the Z-Controller SD slot `sd.zc` (insert, then **reset**, see above): an SD image, or a host
 folder with the NedoOS release files (`SD_BOOT.$C`, `bin/term.com`, `bin/cmd.com`;
-a minimal set is `testdata/machines/zxevo/nedoos/sdcard/`; a ready test card:
-`~/Downloads/zx-spectrum/os/nedoos/nedoos-baseconf-sdcard-*.zip`, unpack it and insert the folder). In the ERS menu "5.
+a minimal set is `testdata/machines/zxevo/nedoos/sdcard/`). In the ERS menu "5.
 SDcard boot" starts it; the shell prompt is `M:/bin>`.
 
 The NedoOS ZX-Evo kernel reads the keyboard **only** from the AVR's PS/2 scan code
@@ -113,3 +112,32 @@ type_input {"action":"tap","key":"5"}                                           
 type_input {"action":"type","text":"free\n"}                                    # a shell command
 type_input {"action":"tap","key":"f1"}                                          # a PC key with no ZX key
 ```
+
+## NedoOS from a floppy or a hard disk
+
+Three things in the ERS look like faults and are not (checked 2026-10-04):
+
+- **A real floppy needs the virtual drive moved away from A.** The ERS makes drive A a virtual
+  drive by default; "TR-DOS boot" then reports "Virtual drive not formatted or image not loaded"
+  (or NEO-DOS shows `Virtual Drive: A`) whatever is in `fdd.a`. Press `Y` once (virtual drive B).
+- **"TR-DOS boot" takes two `Enter` presses.** The first lists the disk's BASIC files in a
+  window (`boot` highlighted), the second runs it. NedoOS `osatm3.trd` then reaches `A:/>`.
+- **"HDD boot" needs a boot block on the disk.** The ERS reads 24 KB from LBA 2 and jumps to it.
+  A freshly partitioned disk (the NedoOS `hdd_nedo.vhd` template) has zeros there, so nothing
+  starts. NedoOS writes the block itself: run `hddfdisk.com`, `0` (Nemo master), the partition
+  number, `b`, `y`; copy the HDD kernel `osatm3hd.$C` to the partition as `sd_boot.$C` and `bin/`
+  next to it. Then "B. HDD boot" (4th entry: down x3, Enter) shows "1.NedoOS"; `1` boots it. The
+  whole procedure and its limits:
+  [hdd-images/README.md](../../../testdata/machines/baseconf/hdd-images/README.md).
+
+```text
+media {"action":"insert","slot":"fdd.a","path":"scratch/osatm3.trd"}
+type_input {"action":"tap","key":"y"}            # virtual drive A -> B
+type_input {"action":"tap","key":"enter"}        # 2. TR-DOS boot: the list of BASIC files
+type_input {"action":"tap","key":"enter"}        # run "boot"; the prompt is "A:/>"
+```
+
+**A swapped SD card.** If the card is changed while NedoOS runs, the first reset ends in "SD card
+lost, Press RESET" (the ERS asks the new, uninitialised card for its OCR with CMD58 and gets
+silence); reset again. A card inserted before the first reset never shows it (and a big card
+such as the whole release with `nedogame/`, 6245 files, boots fine).

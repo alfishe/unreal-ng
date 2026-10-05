@@ -2,12 +2,16 @@
 // Debug endpoints for stepping, breakpoints, and inspection
 // Created 2026-01-21
 
+#include "../common/binaryresponse.h"
 #include "../common/jsonnumber.h"
+#include "../common/statenode_json.h"
 #include "../emulator_api.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 #include <drogon/HttpResponse.h>
+#include <drogon/utils/Utilities.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/cpu/z80.h>
@@ -15,6 +19,8 @@
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>
 #include <debugger/debugmanager.h>
+#include <debugger/memory/memoryread.h>
+#include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -1414,62 +1420,8 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
         return;
     }
     
-    Json::Value ret;
-    
-    // Main registers
-    Json::Value main;
-    main["af"] = z80->af;
-    main["bc"] = z80->bc;
-    main["de"] = z80->de;
-    main["hl"] = z80->hl;
-    ret["main"] = main;
-    
-    // Alternate registers
-    Json::Value alt;
-    alt["af_"] = z80->alt.af;
-    alt["bc_"] = z80->alt.bc;
-    alt["de_"] = z80->alt.de;
-    alt["hl_"] = z80->alt.hl;
-    ret["alternate"] = alt;
-    
-    // Index registers
-    Json::Value idx;
-    idx["ix"] = z80->ix;
-    idx["iy"] = z80->iy;
-    ret["index"] = idx;
-    
-    // Special registers
-    Json::Value special;
-    special["pc"] = z80->pc;
-    special["sp"] = z80->sp;
-    special["i"] = z80->i;
-    special["r"] = Z80::RegisterR(z80);
-    special["memptr"] = z80->memptr;
-    special["q"] = z80->q;
-    special["t"] = static_cast<Json::UInt>(z80->t);  // CPU T-states since the frame's start
-    ret["special"] = special;
-    
-    // Interrupt state
-    Json::Value interrupt;
-    interrupt["iff1"] = z80->iff1;
-    interrupt["iff2"] = z80->iff2;
-    interrupt["im"] = z80->im;
-    interrupt["halted"] = z80->halted != 0;
-    interrupt["boundary"] = Z80::BoundaryName(z80->boundary);  // what the next INT / NMI sampling sees
-    ret["interrupt"] = interrupt;
-    
-    // Flags decoded
-    uint8_t f = z80->af & 0xFF;
-    Json::Value flags;
-    flags["s"] = (f & 0x80) ? 1 : 0;
-    flags["z"] = (f & 0x40) ? 1 : 0;
-    flags["y"] = (f & 0x20) ? 1 : 0;
-    flags["h"] = (f & 0x10) ? 1 : 0;
-    flags["x"] = (f & 0x08) ? 1 : 0;
-    flags["pv"] = (f & 0x04) ? 1 : 0;
-    flags["n"] = (f & 0x02) ? 1 : 0;
-    flags["c"] = (f & 0x01) ? 1 : 0;
-    ret["flags"] = flags;
+    // One builder for GET /registers and the snapshot's regs (core DebugSnapshot)
+    const Json::Value ret = StateNodeToJson(DebugSnapshot::Registers(emulator->GetContext()));
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1554,6 +1506,7 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         callback(resp);
         return;
     }
+    emulator->NoteDebugChange();   // the debugger snapshot's seq
 
     // Read back to confirm
     uint16_t readBack;
@@ -1631,6 +1584,25 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     {
         len = std::stoul(lenParam);
     }
+    // format=binary: the raw bytes, the whole 64K at once (the JSON formats keep their 4096 cap)
+    if (req->getParameter("format") == "binary")
+    {
+        const MemoryRead::Result read =
+            MemoryRead::Bytes(emulator->GetContext(), "cpu", addr, std::clamp<unsigned>(len, 1, MemoryRead::kMaxLength));
+        if (!read.error.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = read.error;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        callback(BinaryMemoryResponse(read.space, read.address, read.bytes));
+        return;
+    }
     if (len > 4096) len = 4096;
     if (len < 1) len = 1;
 
@@ -1646,7 +1618,7 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full', 'sparse' or 'binary')";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1966,6 +1938,14 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
+    // format=binary: the same bytes, raw (the JSON answer stays the default)
+    if (req->getParameter("format") == "binary")
+    {
+        callback(BinaryMemoryResponse(std::string(typeName) + std::to_string(page), static_cast<uint32_t>(offset),
+                                      std::vector<uint8_t>(pagePtr + offset, pagePtr + offset + len)));
+        return;
+    }
+
     // Read memory
     Json::Value ret;
     ret["type"] = typeName;
@@ -2564,6 +2544,68 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
 /// @brief GET /api/v1/emulator/{id}/disasm
 /// @brief Disassemble Z80 code
 /// @brief Query params: address (default: PC), count (default: 10, max: 100)
+/// @brief GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end
+/// @brief Query: disasm (lines from PC, default 0, max 100), stack (words from SP, default 8, max 128),
+/// @brief memory (<space>:<addr>:<len>, repeatable or comma-separated, at most 8 windows)
+void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    DebugSnapshot::Options options;
+    auto number = [&](const char* key, unsigned& out) {
+        const std::string text = req->getParameter(key);
+        if (text.empty())
+            return true;
+        uint64_t value = 0;
+        if (!StringHelper::TryParseUInt64(text, value) || value > 0xFFFF)
+            return false;
+        out = static_cast<unsigned>(value);
+        return true;
+    };
+    if (!number("disasm", options.disasm) || !number("stack", options.stack))
+        return reply(HttpStatusCode::k400BadRequest, "disasm and stack are unsigned numbers");
+    // memory may repeat (memory=a&memory=b) and take a comma list: read the raw query, not the parameter map
+    const std::string& query = req->query();
+    size_t at = 0;
+    while (at <= query.size())
+    {
+        const size_t end = std::min(query.find('&', at), query.size());
+        const std::string pair = query.substr(at, end - at);
+        if (pair.rfind("memory=", 0) == 0)
+        {
+            const std::string value = drogon::utils::urlDecode(pair.substr(7));
+            size_t from = 0;
+            while (from <= value.size())
+            {
+                const size_t comma = std::min(value.find(',', from), value.size());
+                if (comma > from)
+                    options.memory.push_back(value.substr(from, comma - from));
+                from = comma + 1;
+            }
+        }
+        at = end + 1;
+    }
+    options.disasm = std::min(options.disasm, 100u);   // as GET /disasm clamps its count
+
+    const DebugSnapshot::Result result = DebugSnapshot::Build(emulator.get(), options);
+    if (!result.error.empty())
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.snapshot));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -2571,7 +2613,6 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
     if (!emulator) return;
     
     EmulatorContext* ctx = emulator->GetContext();
-    Memory* memory = ctx->pMemory;
     Z80* z80 = ctx->pCore->GetZ80();
     DebugManager* dbg = ctx->pDebugManager;
     
@@ -2586,8 +2627,6 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         return;
     }
     
-    Z80Disassembler* disasm = dbg->GetDisassembler().get();
-    LabelManager* labelMgr = dbg->GetLabelManager();
     
     // Parse query parameters
     std::string addrParam = req->getParameter("address");
@@ -2615,89 +2654,9 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         if (count < 1) count = 1;
     }
     
-    Json::Value ret;
-    ret["address"] = address;
-    ret["count"] = static_cast<unsigned int>(count);
-    ret["instructions"] = Json::arrayValue;
-    
-    uint16_t currentAddr = address;
-    for (size_t i = 0; i < count && currentAddr >= address; ++i)
-    {
-        // Read up to 4 bytes for instruction. Direct (non-mutating) reads:
-        // the disassembly view must not strobe the ProfROM quadrant machine
-        // on #0000-#0003 the way CPU-path MemoryReadFast does
-        std::vector<uint8_t> buffer;
-        for (int j = 0; j < 4; ++j)
-        {
-            buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(currentAddr + j)));
-        }
-        
-        uint8_t cmdLen = 0;
-        DecodedInstruction decoded;
-        std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, currentAddr, &cmdLen, z80, memory, &decoded);
-        
-        if (cmdLen == 0) cmdLen = 1;  // Safety: at least advance by 1
-        
-        Json::Value instr;
-        instr["address"] = currentAddr;
-        
-        // Build hex bytes string
-        std::string hexBytes;
-        for (uint8_t j = 0; j < cmdLen; ++j)
-        {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%02X", buffer[j]);
-            hexBytes += buf;
-        }
-        instr["bytes"] = hexBytes;
-        instr["mnemonic"] = mnemonic;
-        instr["size"] = cmdLen;
-        
-        // Label at the instruction address itself (e.g. jump destination marker)
-        if (labelMgr)
-        {
-            auto label = labelMgr->GetLabelByZ80Address(currentAddr);
-            if (label && !label->name.empty())
-                instr["label"] = label->name;
-        }
-        
-        // Add target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
-        // known at runtime - the field is omitted when the target could not be resolved
-        if (decoded.hasJump || decoded.hasRelativeJump)
-        {
-            uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-            if (!decoded.hasIndirect || decoded.hasRuntime)
-            {
-                instr["target"] = target;
-                
-                if (labelMgr)
-                {
-                    auto targetLabel = labelMgr->GetLabelByZ80Address(target);
-                    if (targetLabel && !targetLabel->name.empty())
-                        instr["targetLabel"] = targetLabel->name;
-                }
-            }
-        }
-        
-        // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
-        if (decoded.hasDisplacement && decoded.hasRuntime)
-        {
-            instr["displacement"] = decoded.displacement;
-            instr["effectiveAddress"] = decoded.displacementAddr;
-            
-            if (labelMgr)
-            {
-                auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
-                if (effectiveLabel && !effectiveLabel->name.empty())
-                    instr["effectiveAddressLabel"] = effectiveLabel->name;
-            }
-        }
-        
-        ret["instructions"].append(instr);
-        
-        currentAddr += cmdLen;
-    }
-    
+    // One builder for GET /disasm and the snapshot's disasm (core DebugSnapshot)
+    const Json::Value ret = StateNodeToJson(DebugSnapshot::Disasm(ctx, address, count));
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
