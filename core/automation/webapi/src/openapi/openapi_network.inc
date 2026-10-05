@@ -114,22 +114,50 @@
             "no ZiFi board; \"at\" = the original board's ESP-01 (ESP8266, 1 MB) with Espressif's AT firmware, NonOS 1.7.4 unless esp_chip names an ESP8266 build or "
             "\"at,esp8266-at222\" picks ESP-AT 2.2.2; \"zifi-native[,s3|esp01s]\" = the 2026 ZiFi firmwares). The ESP's firmware, state and session are "
             "\"esp\" in each port of GET /state/network. The settings in force are \"settings\" in "
-            "GET /state/network, with the host's serial devices in \"host_serial_devices\". Unset keys keep their value. Applied "
-            "at the next frame boundary (at once while paused): the devices are fitted again, so every connection closes. A "
-            "device the machine cannot take (a ZX-WiFi card on a ZX-Evo: #xxEF is the AVR's; a com_port with a keyboard controller "
-            "firmware without RS-232) is listed in the state's "
-            "not_fitted with the reason. "
-            "The same keys as CLI `network set` and Lua / Python network_configure(). Refused (409) while a TTD "
-            "recording runs.";
+            "GET /state/network, with the host's serial devices in \"host_serial_devices\". Unset keys keep their value. "
+            "The ZX-bus cards (zxnetusb, zxwifi) are slots (ZX-bus slots, owner decision Q11): a card value that changes them "
+            "is a slot change applied by a restart, as POST /slots/{slot}/plug and /remove - the removes and plugs are "
+            "planned as one change; one that would remove another card or fit a card unrealistically (a ZX-bus card behind "
+            "the ATM Turbo 2+ CPU-socket adapter) is refused (409, status \"refused\", the plan in \"plan\") unless "
+            "\"replaceIfIncompatible\": true; \"dryRun\": true returns the plan only; \"mediaDisposition\" (save | discard) "
+            "for unsaved media of a removed card; a card the plan refuses (a ZX-WiFi on a ZX-Evo or TS-Conf: #xxEF is the "
+            "board's) changes nothing. Applied (status \"applied\"): the machine restarts with the new slot set - a new "
+            "emulator id in restart.emulatorId, the machine state is lost, the media follow - and the other keys of the "
+            "request are applied to it (network.settingsApplied). Without a card change (status \"accepted\") the settings "
+            "apply at the next frame boundary (at once while paused): the devices are fitted again, so every connection "
+            "closes. A device the machine cannot take (a com_port with a keyboard controller firmware without RS-232) is "
+            "listed in the state's not_fitted with the reason. The reply is the slot change envelope (ok, status, message, "
+            "op = network, plan, restart, media, network {settings, cardChange, cardsBefore, cards, settingsApplied, note}). "
+            "The same keys as CLI `network set` and Lua / Python network_configure(). Refused (409, status \"recording\") "
+            "while a TTD recording runs.";
         paths[kConfig]["post"]["parameters"][0]["name"] = "id";
         paths[kConfig]["post"]["parameters"][0]["in"] = "path";
         paths[kConfig]["post"]["parameters"][0]["required"] = true;
         paths[kConfig]["post"]["parameters"][0]["schema"]["type"] = "string";
-        paths[kConfig]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
-        paths[kConfig]["post"]["responses"]["200"]["description"] = "Accepted";
+        Json::Value& configSchema = paths[kConfig]["post"]["requestBody"]["content"]["application/json"]["schema"];
+        configSchema["type"] = "object";
+        configSchema["properties"]["card"]["type"] = "string";
+        configSchema["properties"]["card"]["description"] =
+            "none | zxnetusb | zxwifi | atm2ioesp | a list with ','; a change of the ZX-bus cards restarts the machine";
+        configSchema["properties"]["replaceIfIncompatible"]["type"] = "boolean";
+        configSchema["properties"]["replaceIfIncompatible"]["description"] =
+            "A card change: allow the removals and an unrealistic fit the plan lists";
+        configSchema["properties"]["dryRun"]["type"] = "boolean";
+        configSchema["properties"]["dryRun"]["description"] = "Return the plan only, change nothing";
+        configSchema["properties"]["mediaDisposition"]["type"] = "string";
+        configSchema["properties"]["mediaDisposition"]["enum"].append("save");
+        configSchema["properties"]["mediaDisposition"]["enum"].append("discard");
+        configSchema["properties"]["mediaDisposition"]["description"] = "Unsaved media of a removed card";
+        configSchema["additionalProperties"] = true;
+        paths[kConfig]["post"]["responses"]["200"]["description"] =
+            "applied (the ZX-bus cards changed: the machine was restarted, restart.emulatorId), accepted (no card "
+            "change: applied in place) or dry-run (the plan)";
         paths[kConfig]["post"]["responses"]["400"]["description"] = "Unknown key or bad value (the reason is in message)";
-        paths[kConfig]["post"]["responses"]["404"]["description"] = "Emulator not found";
-        paths[kConfig]["post"]["responses"]["409"]["description"] = "A TTD recording is running";
+        paths[kConfig]["post"]["responses"]["404"]["description"] = "Emulator not found, or no network support";
+        paths[kConfig]["post"]["responses"]["409"]["description"] =
+            "refused (the card change needs replaceIfIncompatible, or the plan refuses it; the plan is in plan) or "
+            "recording (a TTD recording is running)";
+        paths[kConfig]["post"]["responses"]["500"]["description"] = "failed: the restarted machine could not be created; the old one stays";
     }
     // Ethernet frames of the frame-level cards (core EthernetAccess): the capture and a frame towards a card
     {

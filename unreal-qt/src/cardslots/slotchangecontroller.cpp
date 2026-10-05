@@ -84,6 +84,14 @@ SlotChangeResult SlotChangeController::Run(SlotChangeRequest request)
 
 bool SlotChangeController::Apply(const std::string& emulatorId, slots::SlotRequest change, QWidget* parent)
 {
+    return ApplyChanges(emulatorId, {std::move(change)}, parent);
+}
+
+bool SlotChangeController::ApplyChanges(const std::string& emulatorId, std::vector<slots::SlotRequest> changes,
+                                        QWidget* parent)
+{
+    if (changes.empty())
+        return true;
     const QString title = tr("Change the slots");
     std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(emulatorId);
     SlotManager* manager = emulator && emulator->GetContext() ? emulator->GetContext()->pSlotManager : nullptr;
@@ -94,10 +102,13 @@ bool SlotChangeController::Apply(const std::string& emulatorId, slots::SlotReque
     }
 
     // The GUI replaces what does not fit (Q1) and names it afterwards
-    change.replaceIfIncompatible = true;
-    change.dryRun = false;
+    for (slots::SlotRequest& change : changes)
+    {
+        change.replaceIfIncompatible = true;
+        change.dryRun = false;
+    }
     const SlotManager::Result before = manager->Snapshot();
-    SlotManager::ChangePlan plan = manager->PlanChange(change);
+    SlotManager::ChangePlan plan = manager->PlanChanges(changes);
 
     // A removed card's medium with unsaved writes needs a decision (R-OP-6)
     bool dirty = false;
@@ -118,8 +129,9 @@ bool SlotChangeController::Apply(const std::string& emulatorId, slots::SlotReque
                                {tr("Save"), tr("Discard"), tr("Cancel")});
         if (choice != 0 && choice != 1)
             return false;
-        change.mediaDisposition = choice == 0 ? slots::MediaDisposition::Save : slots::MediaDisposition::Discard;
-        plan = manager->PlanChange(change);
+        for (slots::SlotRequest& change : changes)
+            change.mediaDisposition = choice == 0 ? slots::MediaDisposition::Save : slots::MediaDisposition::Discard;
+        plan = manager->PlanChanges(changes);
     }
     if (!plan.Allowed())
     {
@@ -141,7 +153,9 @@ bool SlotChangeController::Apply(const std::string& emulatorId, slots::SlotReque
     emulator.reset();   // nothing here may keep the old machine alive across the restart
     SlotChangeRequest request;
     request.emulatorId = emulatorId;
-    request.change = change;
+    request.change = changes.front();   // the flags (dry run, media disposition)
+    if (changes.size() > 1)
+        request.changes = changes;
     const SlotChangeResult result = Run(request);
     if (!result.Applied())
     {
@@ -151,6 +165,7 @@ bool SlotChangeController::Apply(const std::string& emulatorId, slots::SlotReque
 
     _undo = SlotManager::ConfigOf(before);
     _undoEmulatorId = result.emulator->GetId();
+    _lastEmulatorId = _undoEmulatorId;
     _undoText = lines.isEmpty() ? tr("the last slot change") : lines.first();
     emit applied(Q(_undoEmulatorId));
     emit undoAvailable(true);
@@ -183,6 +198,29 @@ bool SlotChangeController::ApplyGeneralSound(const std::string& emulatorId, int 
     return Apply(emulatorId, change, parent);
 }
 
+bool SlotChangeController::ApplyNetworkCards(const std::string& emulatorId, uint8_t zxBusCards, QWidget* parent)
+{
+    std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(emulatorId);
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context || !context->pSlotManager)
+        return false;
+    std::vector<slots::SlotRequest> changes;
+    std::string why;
+    if (!SlotManager::NetworkRequests(context->pSlotManager->Snapshot(), zxBusCards, changes, &why))
+    {
+        Ask(parent, tr("Network cards"), Q(why), {tr("OK")});
+        return false;
+    }
+    context = nullptr;
+    emulator.reset();
+    if (changes.empty())
+    {
+        _lastEmulatorId = emulatorId;   // nothing to change: no restart
+        return true;
+    }
+    return ApplyChanges(emulatorId, std::move(changes), parent);
+}
+
 bool SlotChangeController::Undo(QWidget* parent)
 {
     if (!_undo)
@@ -206,6 +244,7 @@ bool SlotChangeController::Undo(QWidget* parent)
     }
     _undo.reset();
     _undoText.clear();
+    _lastEmulatorId = result.emulator->GetId();
     emit applied(Q(result.emulator->GetId()));
     emit undoAvailable(false);
     return true;

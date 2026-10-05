@@ -339,6 +339,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     };
     slotHooks.restarting = [this](bool on) { _switchingModel = on; };
     _slotChangeController = new SlotChangeController(std::move(slotHooks), this);
+    networkWindow->setController(_slotChangeController);   // the network cards are slots (Q11)
 
     // Slots window: hidden by default, Machine -> Slots (Ctrl+6)
     _slotsWindow = new SlotsWindow();

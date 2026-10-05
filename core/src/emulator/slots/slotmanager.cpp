@@ -927,7 +927,7 @@ SlotManager::ChangePlan SlotManager::PlanSet(const SlotConfig& slotConfig) const
     return out;
 }
 
-SlotManager::ChangePlan SlotManager::PlanChange(const SlotRequest& request) const
+PlanContext SlotManager::LiveContext() const
 {
     PlanContext context;
     if (_context != nullptr && _context->pMediaManager != nullptr)
@@ -940,16 +940,184 @@ SlotManager::ChangePlan SlotManager::PlanChange(const SlotRequest& request) cons
             }
         }
     }
-    static const CONFIG kNoConfig{};
-    ChangePlan out = PlanChange(Snapshot(), _context != nullptr ? _context->config : kNoConfig, request, context);
+    return context;
+}
+
+void SlotManager::GuardRecording(ChangePlan& plan) const
+{
     const std::string recording = ChangeRefusal();
     if (!recording.empty())
     {
-        out.refusal = recording;
-        out.recording = true;
-        out.config = {};
+        plan.refusal = recording;
+        plan.recording = true;
+        plan.config = {};
     }
+}
+
+SlotManager::ChangePlan SlotManager::PlanChange(const SlotRequest& request) const
+{
+    static const CONFIG kNoConfig{};
+    ChangePlan out = PlanChange(Snapshot(), _context != nullptr ? _context->config : kNoConfig, request, LiveContext());
+    GuardRecording(out);
     return out;
+}
+
+SlotManager::ChangePlan SlotManager::PlanChanges(const std::vector<SlotRequest>& requests) const
+{
+    static const CONFIG kNoConfig{};
+    ChangePlan out = PlanChanges(Snapshot(), _context != nullptr ? _context->config : kNoConfig, requests, LiveContext());
+    GuardRecording(out);
+    return out;
+}
+
+SlotManager::ChangePlan SlotManager::PlanChanges(const Result& current, const CONFIG& config,
+                                                 const std::vector<SlotRequest>& requests, const PlanContext& context)
+{
+    if (requests.size() == 1)
+    {
+        return PlanChange(current, config, requests.front(), context);
+    }
+    ChangePlan merged;
+    if (current.machine == nullptr)
+    {
+        merged.refusal = "refused: the model has no slot declaration";
+        return merged;
+    }
+    if (requests.empty())
+    {
+        merged.refusal = "refused: nothing to change";
+        return merged;
+    }
+
+    auto append = [](auto& into, const auto& from) { into.insert(into.end(), from.begin(), from.end()); };
+    SlotPlan& plan = merged.plan;
+    plan.allowed = true;
+    Result step = current;
+    bool plugged = false;
+    for (size_t i = 0; i < requests.size(); i++)
+    {
+        ChangePlan one = PlanChange(step, config, requests[i], context);
+        const SlotPlan& part = one.plan;
+        plan.allowed = plan.allowed && part.allowed;
+        plan.hardRefusal = plan.hardRefusal || part.hardRefusal;
+        plan.needsConfirmation = plan.needsConfirmation || part.needsConfirmation;
+        plan.dryRun = part.dryRun;
+        if (part.op == SlotRequest::Op::Plug || !plugged)
+        {
+            // What the change is about: the last plug (else the last step)
+            plugged = plugged || part.op == SlotRequest::Op::Plug;
+            plan.op = part.op;
+            plan.slot = part.slot;
+            plan.card = part.card;
+            plan.options = part.options;
+            plan.fit = part.fit;
+            plan.adapter = part.adapter;
+            plan.missingSignals = part.missingSignals;
+            plan.arbitration = part.arbitration;
+        }
+        append(plan.reasons, part.reasons);
+        append(plan.exceptions, part.exceptions);
+        append(plan.removed, part.removed);
+        append(plan.shadowed, part.shadowed);
+        append(plan.builtInSwitchedOff, part.builtInSwitchedOff);
+        append(plan.removedFromSocket, part.removedFromSocket);
+        append(plan.disabled, part.disabled);
+        append(plan.deadPorts, part.deadPorts);
+        append(plan.busFights, part.busFights);
+        append(plan.media, part.media);
+        for (Function function : part.lostFunctions)
+        {
+            if (std::find(plan.lostFunctions.begin(), plan.lostFunctions.end(), function) == plan.lostFunctions.end())
+            {
+                plan.lostFunctions.push_back(function);
+            }
+        }
+        plan.resultingSlots = part.resultingSlots;
+        merged.config = one.config;
+        if (!one.Allowed())
+        {
+            merged.refusal = one.refusal;
+            merged.config = {};
+            plan.allowed = false;
+            return merged;
+        }
+        if (i + 1 < requests.size())
+        {
+            // The next step plans against the set this one leaves, as the machine would be created from it
+            auto trial = std::make_unique<CONFIG>(config);
+            UseSlots(one.config, *trial);
+            step = Plan(*trial);
+        }
+    }
+    return merged;
+}
+
+uint8_t SlotManager::NetworkCardsOf(const Result& current)
+{
+    uint8_t cards = 0;
+    for (const Slot& slot : current.entries)
+    {
+        if (slot.entry.disabled)
+        {
+            continue;
+        }
+        if (slot.entry.card == "zxnetusb")
+        {
+            cards |= networkspec::kCardZxNetUsb;
+        }
+        else if (slot.entry.card == "zx-wifi")
+        {
+            cards |= networkspec::kCardZxWifi;
+        }
+    }
+    return cards;
+}
+
+bool SlotManager::NetworkRequests(const Result& current, uint8_t zxBusCards, std::vector<SlotRequest>& out,
+                                  std::string* error)
+{
+    out.clear();
+    if (current.machine == nullptr)
+    {
+        if (error != nullptr)
+        {
+            *error = "the model has no slot declaration";
+        }
+        return false;
+    }
+    struct NetworkCard
+    {
+        uint8_t bit;
+        const char* id;
+    };
+    static constexpr NetworkCard kCards[] = { { networkspec::kCardZxNetUsb, "zxnetusb" },
+                                              { networkspec::kCardZxWifi, "zx-wifi" } };
+    // Removals first: a card that goes frees its slot for the one that comes
+    for (const Slot& slot : current.entries)
+    {
+        for (const NetworkCard& card : kCards)
+        {
+            if (!slot.entry.disabled && slot.entry.card == card.id && (zxBusCards & card.bit) == 0)
+            {
+                SlotRequest request;
+                request.op = SlotRequest::Op::Remove;
+                request.slot = slot.entry.slot;
+                out.push_back(std::move(request));
+            }
+        }
+    }
+    const uint8_t fitted = NetworkCardsOf(current);
+    for (const NetworkCard& card : kCards)
+    {
+        if ((zxBusCards & card.bit) != 0 && (fitted & card.bit) == 0)
+        {
+            SlotRequest request;
+            request.op = SlotRequest::Op::Plug;
+            request.card = card.id;   // the slot the planner suggests (zxbus.next)
+            out.push_back(std::move(request));
+        }
+    }
+    return true;
 }
 
 void SlotManager::SetBuildFaultForTests(const std::string& card)

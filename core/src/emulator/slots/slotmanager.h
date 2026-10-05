@@ -235,6 +235,21 @@ public:
     /// ... and reports it done: the plan's GS slot names the new personality, and so does the TTD fingerprint
     void FollowGeneralSoundSwitch(GSTypeKind kind);
 
+    /// The ZX-bus network cards fitted (networkspec::kCardZxNetUsb | kCardZxWifi)
+    static uint8_t NetworkCardsOf(const Result& current);
+    /// The network settings' `card` as slot changes (owner decision Q11): a remove for every fitted ZX-bus network
+    /// card not in `zxBusCards`, then a plug (into the slot the planner suggests) for every wanted one not fitted.
+    /// Empty when nothing changes. False with the reason when the machine has no slot declaration
+    static bool NetworkRequests(const Result& current, uint8_t zxBusCards, std::vector<slots::SlotRequest>& out,
+                                std::string* error = nullptr);
+    /// Several requests planned one after the other into one change (one restart): each is planned against the set the
+    /// previous one leaves; the first refusal stops. The merged plan lists every step's removals, shadowed devices,
+    /// lost functions and media; its op / slot / card are the last plug's (else the last step's). Pure
+    static ChangePlan PlanChanges(const Result& current, const CONFIG& config,
+                                  const std::vector<slots::SlotRequest>& requests, const slots::PlanContext& context = {});
+    /// The same for this instance: the media with unsaved writes and the TTD guard (R-OP-7), as PlanChange
+    ChangePlan PlanChanges(const std::vector<slots::SlotRequest>& requests) const;
+
 
     // endregion
 
@@ -340,6 +355,11 @@ public:
     // endregion </TTD>
 
 private:
+    /// The live context of a change plan: the media with unsaved writes
+    slots::PlanContext LiveContext() const;
+    /// The TTD guard on a plan (R-OP-7)
+    void GuardRecording(ChangePlan& plan) const;
+
     static std::vector<Conflict> ConflictsOf(const slots::SlotPlan& plan, const Slot& slot, bool socketConfigured,
                                              const std::vector<Slot>& planned);
 

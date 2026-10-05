@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "common/network/hostframes.h"
+#include "emulator/io/network/networkspec.h"
 #include "emulator/io/network/traffic/trafficstream.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
@@ -92,7 +93,15 @@ public:
         /// the new address, every connection stays)
         bool OnlyRemoteAccess() const;
     };
+    /// A `card` whose ZX-bus cards differ from the fitted ones is refused (owner decision Q11): the ZX-bus cards are
+    /// slots, changed by a restart (SlotControl verb `network` takes the whole settings change: the card part as a slot
+    /// change, the rest applied here on the restarted machine). ATM2IOESP is not on a bus slot and changes here
     bool RequestChange(const Change& change, std::string& error);
+    /// The value checks of RequestChange (lengths, peer specs, phone book), without a machine: a surface checks the
+    /// settings before it restarts the machine for the card part
+    static bool ValidateChange(const Change& change, std::string& error);
+    /// The ZX-bus cards of a networkspec card mask (the slot cards)
+    static constexpr uint8_t kZxBusCards = networkspec::kCardZxNetUsb | networkspec::kCardZxWifi;
 
     /// The one parser every interface uses: keys card (none | zxnetusb |
     /// zxwifi | zxnetusb,zxwifi), host_access (on | off), dns_mode (host |
@@ -264,6 +273,8 @@ public:
     Status GetStatus() const;
 
 private:
+    /// Queue a checked change for the machine thread (RequestChange after its checks)
+    void Submit(const Change& change);
     /// What should be fitted now, from the machine, the config and the feature
     struct Plan
     {

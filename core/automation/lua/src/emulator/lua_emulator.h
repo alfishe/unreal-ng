@@ -3326,38 +3326,39 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
         });
-        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} -> true | nil, err
-        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only)
-        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} [, opts]
+        //   -> the reply table (truthy) | nil, err, reply
+        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only).
+        // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot change
+        // applied by a restart (opts: replace, dry_run, media as for slots_plug; an interpreter bound to the machine
+        // follows the restarted one), the other keys go to the restarted machine; without one they apply in place
+        // (status "accepted")
+        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings,
+                                                     sol::optional<sol::table> opts) -> sol::variadic_results {
             sol::variadic_results out;
-            Emulator* emulator = effectiveEmulator();
-            NetworkManager* manager = (emulator && emulator->GetContext()->pCore)
-                                          ? emulator->GetContext()->pCore->GetNetworkManager()
-                                          : nullptr;
-            std::string error = emulator ? "no network support in this machine" : "No emulator selected";
-            if (manager)
+            SlotControlRequest request;
+            request.verb = "network";
+            for (const auto& [key, value] : settings)
             {
-                std::vector<std::pair<std::string, std::string>> kv;
-                for (const auto& [key, value] : settings)
-                {
-                    std::string text;
-                    if (value.get_type() == sol::type::boolean)
-                        text = value.as<bool>() ? "on" : "off";
-                    else if (value.get_type() == sol::type::number)
-                        text = std::to_string(value.as<long long>());
-                    else
-                        text = value.as<std::string>();
-                    kv.emplace_back(key.as<std::string>(), text);
-                }
-                NetworkManager::Change change;
-                if (NetworkManager::ParseChange(kv, change, error) && manager->RequestChange(change, error))
-                {
-                    out.push_back(sol::make_object(s, true));
-                    return out;
-                }
+                std::string text;
+                if (value.get_type() == sol::type::boolean)
+                    text = value.as<bool>() ? "on" : "off";
+                else if (value.get_type() == sol::type::number)
+                    text = std::to_string(value.as<long long>());
+                else
+                    text = value.as<std::string>();
+                request.settings.emplace_back(key.as<std::string>(), text);
+            }
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            sol::object table = StateNodeToLua(s, reply.ToValue());
+            if (reply.Ok())
+            {
+                out.push_back(table);
+                return out;
             }
             out.push_back(sol::make_object(s, sol::lua_nil));
-            out.push_back(sol::make_object(s, error));
+            out.push_back(sol::make_object(s, reply.message));
+            out.push_back(table);
             return out;
         });
 

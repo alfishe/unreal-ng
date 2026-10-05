@@ -16,11 +16,16 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/network/networkmanager.h"
+#include "emulator/io/network/virtualnetwork.h"
+#include "emulator/io/serial/comport.h"
 #include "emulator/memory/memory.h"
 #include "emulator/slots/slotchange.h"
 #include "emulator/slots/slotcontrol.h"
@@ -369,3 +374,176 @@ TEST_F(SlotControl_Test, CarryValueListsKeptAndDropped)
               R"("reason":"the bus has no IORQGE"}],"lines":["zxbus.1 = gs","zxbus.2 = multisound not carried: )"
               R"(the bus has no IORQGE"]})");
 }
+
+// region <Network settings (owner decision Q11)>
+
+namespace
+{
+
+SlotControlRequest NetworkRequest(const std::string& id, const Lines& settings)
+{
+    SlotControlRequest request;
+    request.verb = "network";
+    request.emulatorId = id;
+    request.settings = settings;
+    return request;
+}
+
+/// The slot fields of a machine's TTD configuration fingerprint (`slots.*`)
+std::vector<std::string> SlotFingerprintDiff(const EmulatorContext& a, const EmulatorContext& b)
+{
+    std::vector<std::string> names;
+    for (const ttd::TTDFingerprintDiff& d :
+         ttd::Compare(ttd::CaptureConfigFingerprint(a, 0), ttd::CaptureConfigFingerprint(b, 0)))
+    {
+        if (d.field.rfind("slots.", 0) == 0)
+            names.push_back(d.field);
+    }
+    return names;
+}
+
+} // namespace
+
+/// A network `card` change is a slot change applied by a restart: the removes and plugs planned as one change, the
+/// other keys applied to the restarted machine; afterwards the slot report, the plan, the live devices and the TTD
+/// fingerprint agree with each other and with a machine created with that slot set
+TEST_F(SlotControl_Test, NetworkCardChangeIsASlotChange)
+{
+    std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"ay-socket", "ay"}});
+    ASSERT_NE(emulator, nullptr);
+    const std::string id = emulator->GetId();
+    emulator.reset();
+
+    const SlotControlReply both = Run(NetworkRequest(
+        id, {{"card", "zxnetusb,zxwifi"}, {"host_access", "off"}, {"hosts", "a.test=10.0.2.77"}, {"zx_wifi", "loopback"}}));
+    ASSERT_EQ(both.status, "applied") << both.message;
+    ASSERT_NE(both.emulator, nullptr);
+    EXPECT_NE(both.emulator->GetId(), id) << "a restart: a new emulator id";
+    EXPECT_EQ(Field(both.body, "op").s, "network");
+    EXPECT_TRUE(Field(Field(both.body, "network"), "cardChange").b);
+    EXPECT_TRUE(Field(Field(both.body, "network"), "settingsApplied").b);
+    EXPECT_TRUE(Field(Field(both.body, "restart"), "restarted").b);
+
+    EmulatorContext* context = both.emulator->GetContext();
+    const std::vector<std::string> fitted{"ay-socket = ay", "zxbus.1 = zxnetusb", "zxbus.2 = zx-wifi"};
+    EXPECT_EQ(FittedOf(*both.emulator), fitted) << "the plan";
+    std::vector<std::string> reported;
+    const StateNode report = DeviceState::Slots(context);
+    for (const StateNode& slot : Field(report, "slots").items)
+        reported.push_back(Field(slot, "slot").s + " = " + Field(slot, "card").s);
+    EXPECT_EQ(reported, fitted) << "the slot report";
+    EXPECT_EQ(context->config.network.card & NetworkManager::kZxBusCards, networkspec::kCardZxNetUsb | networkspec::kCardZxWifi);
+    ASSERT_NE(context->pZxNetUsb, nullptr) << "the live devices";
+    ASSERT_NE(context->pComPort, nullptr);
+    EXPECT_EQ(context->pComPort->Uart().GetParams().flavor, Uart16550::Flavor::Chip16550);
+    ASSERT_NE(context->pVirtualNetwork, nullptr);
+    EXPECT_EQ(context->pVirtualNetwork->Host(), nullptr) << "host_access=off went to the restarted machine";
+    EXPECT_EQ(context->pVirtualNetwork->Config().hosts.at("a.test"), NetIp(10, 0, 2, 77));
+
+    // The TTD fingerprint's slot fields equal those of a machine created with this slot set
+    const SlotConfig set = SlotManager::ConfigOf(context->pSlotManager->Snapshot());
+    std::string error;
+    std::shared_ptr<Emulator> fresh = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "PENTAGON", LoggerLevel::LogError, &error, [set](CONFIG& config) { SlotManager::UseSlots(set, config); });
+    ASSERT_NE(fresh, nullptr) << error;
+    _ids.push_back(fresh->GetId());
+    EXPECT_TRUE(SlotFingerprintDiff(*context, *fresh->GetContext()).empty());
+    EXPECT_NE(ttd::CaptureConfigFingerprint(*context, 0).Find("slots.zxbus.2"), nullptr);
+
+    // One card out, the other stays: a remove; then the swap (a remove and a plug, one restart)
+    const SlotControlReply wifi = Run(NetworkRequest(both.emulator->GetId(), {{"card", "zxwifi"}}));
+    ASSERT_EQ(wifi.status, "applied") << wifi.message;
+    EXPECT_EQ(FittedOf(*wifi.emulator), (std::vector<std::string>{"ay-socket = ay", "zxbus.2 = zx-wifi"}));
+    EXPECT_FALSE(Field(Field(wifi.body, "network"), "settingsApplied").b) << "the card was the only setting";
+    const SlotControlReply swap = Run(NetworkRequest(wifi.emulator->GetId(), {{"card", "zxnetusb"}}));
+    ASSERT_EQ(swap.status, "applied") << swap.message;
+    EXPECT_EQ(FittedOf(*swap.emulator), (std::vector<std::string>{"ay-socket = ay", "zxbus.1 = zxnetusb"}));
+    EXPECT_EQ(Field(swap.body, "card").s, "ZXNETUSB");
+    const StateNode& removed = Field(Field(swap.body, "plan"), "removed");
+    ASSERT_EQ(removed.size(), 1u) << swap.ToText();
+    EXPECT_EQ(Field(removed.items[0], "card").s, "zx-wifi");
+    EXPECT_EQ(swap.emulator->GetContext()->pComPort, nullptr);
+    EXPECT_NE(swap.emulator->GetContext()->pZxNetUsb, nullptr);
+}
+
+/// No card change: the settings apply to the running machine (status accepted, no restart); dry runs, bad keys, the
+/// replace flag for an unrealistic fit and the TTD recording behave as for every slot change
+TEST_F(SlotControl_Test, NetworkSettingsWithoutCardChangeStayInPlace)
+{
+    std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"zxbus.1", "zxnetusb"}});
+    ASSERT_NE(emulator, nullptr);
+    const std::string id = emulator->GetId();
+
+    const SlotControlReply same = Run(NetworkRequest(id, {{"card", "zxnetusb"}, {"host_access", "off"}}));
+    EXPECT_EQ(same.status, "accepted") << same.message;
+    EXPECT_TRUE(same.Ok());
+    EXPECT_EQ(same.emulator, nullptr) << "no restart";
+    EXPECT_FALSE(Field(Field(same.body, "network"), "cardChange").b);
+    EXPECT_EQ(emulator->GetContext()->config.network.hostAccess, 0);
+
+    SlotControlRequest dry = NetworkRequest(id, {{"card", "none"}});
+    dry.dryRun = true;
+    const SlotControlReply plan = Run(dry);
+    EXPECT_EQ(plan.status, "dry-run") << plan.message;
+    EXPECT_EQ(Field(Field(Field(plan.body, "plan"), "removed").items.at(0), "card").s, "zxnetusb");
+    EXPECT_NE(emulator->GetContext()->pZxNetUsb, nullptr) << "a dry run changes nothing";
+
+    EXPECT_EQ(Run(NetworkRequest(id, {{"card", "wifi"}})).httpStatus, 400);
+    EXPECT_EQ(Run(NetworkRequest(id, {{"connect_timeout_ms", "5"}})).httpStatus, 400) << "checked before any restart";
+    EXPECT_EQ(Run(NetworkRequest(id, {})).httpStatus, 400);
+
+    // A ZX-bus card on the 48K edge needs the adapter: an unrealistic fit, refused without the flag (Q1 / Q5)
+    std::shared_ptr<Emulator> small = Create("48K", {});
+    ASSERT_NE(small, nullptr);
+    SlotControlRequest edge = NetworkRequest(small->GetId(), {{"card", "zxnetusb"}});
+    edge.dryRun = true;
+    const SlotControlReply refused = Run(edge);
+    EXPECT_EQ(refused.status, "refused") << refused.message;
+    EXPECT_NE(refused.message.find("needs replaceIfIncompatible"), std::string::npos) << refused.message;
+    edge.replaceIfIncompatible = true;
+    EXPECT_EQ(Run(edge).status, "dry-run");
+
+    // R-OP-7: refused while TTD records, the card change and the in-place settings alike
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    emulator->GetContext()->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    ASSERT_TRUE(ttd->StartRecording());
+    const SlotControlReply card = Run(NetworkRequest(id, {{"card", "none"}}));
+    EXPECT_EQ(card.status, "recording") << card.message;
+    EXPECT_EQ(card.httpStatus, 409);
+    const SlotControlReply hosts = Run(NetworkRequest(id, {{"hosts", "b.test=10.0.2.9"}}));
+    EXPECT_EQ(hosts.status, "recording") << hosts.message;
+    ttd->StopRecording();
+}
+
+/// Several slot requests planned into one change: each against the set the previous one leaves
+TEST_F(SlotControl_Test, PlanChangesChainsTheRequests)
+{
+    std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"zxbus.1", "zx-wifi"}, {"zxbus.2", "gs"}});
+    ASSERT_NE(emulator, nullptr);
+    const SlotManager::Result current = emulator->GetContext()->pSlotManager->Snapshot();
+    std::vector<slots::SlotRequest> requests;
+    ASSERT_TRUE(SlotManager::NetworkRequests(current, networkspec::kCardZxNetUsb, requests));
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].op, slots::SlotRequest::Op::Remove);
+    EXPECT_EQ(requests[0].slot, "zxbus.1");
+    EXPECT_EQ(requests[1].op, slots::SlotRequest::Op::Plug);
+    EXPECT_EQ(requests[1].card, "zxnetusb");
+
+    const SlotManager::ChangePlan plan = emulator->GetContext()->pSlotManager->PlanChanges(requests);
+    ASSERT_TRUE(plan.Allowed()) << plan.refusal;
+    EXPECT_EQ(plan.plan.card, "zxnetusb") << "the merged plan names the last plug";
+    ASSERT_EQ(plan.plan.removed.size(), 1u);
+    EXPECT_EQ(plan.plan.removed[0].card, "zx-wifi");
+    std::vector<std::string> lines;
+    for (const SlotConfigEntry& entry : plan.config.entries)
+        lines.push_back(entry.slot + " = " + entry.card);
+    EXPECT_EQ(lines, (std::vector<std::string>{"zxbus.1 = zxnetusb", "zxbus.2 = gs"})) << "the freed slot is reused";
+
+    ASSERT_TRUE(SlotManager::NetworkRequests(current, networkspec::kCardZxWifi, requests));
+    EXPECT_TRUE(requests.empty()) << "nothing to change";
+}
+
+// endregion

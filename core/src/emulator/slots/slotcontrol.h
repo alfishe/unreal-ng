@@ -18,6 +18,10 @@
 ///   set       a slot's card options
 ///   gs        the General Sound personality (owner decision Q10): a plug of gs / gs-lw / neogs into the GS slot,
 ///             replacing the card there, applied by a restart like every slot change
+///   network   the network settings ([NETWORK] keys, NetworkManager::ParseChange) of every surface (owner decision
+///             Q11): a `card` that changes the ZX-bus cards (zxnetusb, zx-wifi) is a slot change applied by a restart
+///             (removes and plugs planned as one change), then the other keys are applied to the restarted machine;
+///             without a card change the settings apply in place (status "accepted", no restart)
 ///
 /// Example (what a surface does):
 /// @code
@@ -50,7 +54,7 @@ struct CONFIG;
 
 struct SlotControlRequest
 {
-    std::string verb;               ///< list, catalog, matrix, plug, remove, set, gs
+    std::string verb;               ///< list, catalog, matrix, plug, remove, set, gs, network
     std::string emulatorId;         ///< the instance; "" = the selected one
     std::string slot;               ///< plug: "zxbus.2", "zxbus.next", "ay-socket" ("" = the planner's choice)
     std::string card;               ///< plug: card id; gs: the personality (gs, gs-lw, neogs or the GS names z80, lw, ngs)
@@ -62,6 +66,9 @@ struct SlotControlRequest
     bool dryRun = false;            ///< the plan only
     std::string media;              ///< what happens to unsaved media of removed cards: "" (refuse), save, discard
     std::string table;              ///< matrix: one table ("functions", "cards", "card-x-card", ...); "" = all
+    /// network: the settings, key = value as NetworkManager::ParseChange takes them ("card" = "zxnetusb,zxwifi",
+    /// "hosts" = "a=10.0.2.7", ...)
+    std::vector<std::pair<std::string, std::string>> settings;
     /// Start the restarted machine when the old one ran (every automation surface); the Qt window starts it itself
     bool startWhenRunning = true;
     /// Called with the old machine stopped, before it is destroyed (a GUI unbinds its views here)
@@ -70,8 +77,8 @@ struct SlotControlRequest
 
 struct SlotControlReply
 {
-    /// "ok" (list, catalog, matrix), "applied", "dry-run", "refused", "recording", "no-machine", "failed",
-    /// "bad-request"
+    /// "ok" (list, catalog, matrix), "applied", "accepted" (network settings applied in place, no restart),
+    /// "dry-run", "refused", "recording", "no-machine", "failed", "bad-request"
     std::string status = "ok";
     std::string message;
     int httpStatus = 200;
@@ -83,7 +90,7 @@ struct SlotControlReply
 
     bool Ok() const
     {
-        return status == "ok" || status == "applied" || status == "dry-run";
+        return status == "ok" || status == "applied" || status == "accepted" || status == "dry-run";
     }
 
     /// The envelope every surface returns: ok, status, message, then the body's fields

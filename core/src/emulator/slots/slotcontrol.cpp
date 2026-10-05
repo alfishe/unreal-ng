@@ -8,6 +8,10 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/io/network/networkmanager.h"
+#include "emulator/io/network/networkspec.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/slots/slotmatrix.h"
@@ -208,15 +212,22 @@ StateNode StrandedValue(const std::vector<SlotInfo>& stranded)
     return array;
 }
 
-/// Runs a change through SlotChange and fills the reply 1:1 from its result
+/// Runs a change through SlotChange and fills the reply 1:1 from its result. `changes`: several requests planned into
+/// one restart (`change` then carries the flags); `afterRestart`: called with the restarted machine before it is started
 void RunChange(const SlotControlRequest& request, const std::string& emulatorId, const SlotRequest& change,
-               SlotControlReply& reply)
+               SlotControlReply& reply, const std::vector<SlotRequest>& changes = {},
+               const std::function<void(Emulator&)>& afterRestart = {})
 {
     SlotChangeRequest run;
     run.emulatorId = emulatorId;
     run.change = change;
+    run.changes = changes;
     run.beforeRelease = request.beforeRelease;
     SlotChangeResult result = SlotChange::Run(run);
+    if (result.Applied() && result.emulator && afterRestart)
+    {
+        afterRestart(*result.emulator);
+    }
 
     reply.status = SlotChange::StatusName(result.status);
     reply.message = result.message;
@@ -273,6 +284,179 @@ void RunChange(const SlotControlRequest& request, const std::string& emulatorId,
     reply.emulator = result.emulator;
 }
 
+/// network verb (owner decision Q11): the settings checked first; a card change of the ZX-bus cards becomes the slot
+/// changes of one restart and the other keys go to the restarted machine; without one the settings apply in place
+void Network(const SlotControlRequest& request, std::shared_ptr<Emulator>& emulator, SlotControlReply& reply)
+{
+    NetworkManager::Change change;
+    std::string error;
+    if (!NetworkManager::ParseChange(request.settings, change, error) || !NetworkManager::ValidateChange(change, error))
+    {
+        BadRequest(reply, error);
+        return;
+    }
+    if (change.Empty())
+    {
+        BadRequest(reply, "network: no settings given (card, host_access, hosts, com_port, ...)");
+        return;
+    }
+    SlotRequest flags;
+    flags.replaceIfIncompatible = request.replaceIfIncompatible;
+    flags.dryRun = request.dryRun;
+    if (!SlotControl::ParseMediaDisposition(request.media, flags.mediaDisposition))
+    {
+        BadRequest(reply, "media '" + request.media + "': expected save or discard");
+        return;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    const std::string emulatorId = emulator->GetId();
+    NetworkManager* network = context->pCore != nullptr ? context->pCore->GetNetworkManager() : nullptr;
+    if (network == nullptr)
+    {
+        reply.status = "no-machine";
+        reply.httpStatus = 404;
+        reply.message = "no network support in this machine";
+        return;
+    }
+    SlotManager* manager = context->pSlotManager;
+    const bool declared = manager != nullptr && manager->Current().machine != nullptr;
+    const SlotManager::Result current = declared ? manager->Snapshot() : SlotManager::Result{};
+    const uint8_t configured = context->config.network.card;
+    const uint8_t fitted = declared ? SlotManager::NetworkCardsOf(current)
+                                    : static_cast<uint8_t>(configured & NetworkManager::kZxBusCards);
+    const uint8_t wanted = change.card ? static_cast<uint8_t>(*change.card & NetworkManager::kZxBusCards) : fitted;
+    const bool cardChange = wanted != fitted;
+
+    StateNode settings = StateNode::Array();
+    for (const auto& [key, value] : request.settings)
+    {
+        settings.push(key + "=" + value);
+    }
+    StateNode net = StateNode::Object();
+    net["settings"] = std::move(settings);
+    net["cardChange"] = cardChange;
+    net["cardsBefore"] = networkspec::CardsToString(fitted);
+    net["cards"] = networkspec::CardsToString(wanted);
+    reply.body["op"] = "network";
+    reply.body["emulatorId"] = emulatorId;
+
+    if (!cardChange)
+    {
+        // Nothing on a bus slot changes: the settings apply to this machine, no restart
+        StateNode restart = StateNode::Object();
+        restart["restarted"] = false;
+        restart["emulatorId"] = emulatorId;
+        reply.body["restart"] = std::move(restart);
+        if (request.dryRun)
+        {
+            reply.status = "dry-run";
+            reply.message = "no card change: the settings would apply to the running machine, without a restart";
+            net["settingsApplied"] = false;
+            reply.body["network"] = std::move(net);
+            return;
+        }
+        if (!network->RequestChange(change, error))
+        {
+            const bool recording = context->pTimeTravelManager != nullptr && context->pTimeTravelManager->IsRecording();
+            reply.status = recording ? "recording" : "refused";
+            reply.httpStatus = 409;
+            reply.message = error;
+            net["settingsApplied"] = false;
+            reply.body["network"] = std::move(net);
+            return;
+        }
+        reply.status = "accepted";
+        reply.message = change.OnlyRemoteAccess()
+                            ? "the host listeners move at the next frame boundary (connections stay)"
+                            : "applied at the next frame boundary (at once while paused): the network devices are "
+                              "fitted again, every connection closes";
+        net["settingsApplied"] = true;
+        reply.body["network"] = std::move(net);
+        return;
+    }
+
+    if (!declared)
+    {
+        reply.status = "refused";
+        reply.httpStatus = 409;
+        reply.message = "refused: the model has no slot declaration, its ZX-bus network cards cannot change";
+        reply.body["network"] = std::move(net);
+        return;
+    }
+    std::vector<SlotRequest> requests;
+    SlotManager::NetworkRequests(current, wanted, requests, &error);
+    for (SlotRequest& one : requests)
+    {
+        one.replaceIfIncompatible = flags.replaceIfIncompatible;
+        one.dryRun = flags.dryRun;
+        one.mediaDisposition = flags.mediaDisposition;
+    }
+
+    // The other keys for the restarted machine (its cards are the wanted ones by then); ATM2IOESP is not a bus slot
+    NetworkManager::Change rest = change;
+    rest.card.reset();
+    if (change.card && ((*change.card ^ configured) & networkspec::kCardAtm2IoEsp) != 0)
+    {
+        rest.card = change.card;
+    }
+    auto applied = std::make_shared<std::string>();
+    auto applyRest = [rest, applied](Emulator& fresh) {
+        if (rest.Empty())
+        {
+            return;
+        }
+        EmulatorContext* freshContext = fresh.GetContext();
+        NetworkManager* freshNetwork =
+            freshContext != nullptr && freshContext->pCore != nullptr ? freshContext->pCore->GetNetworkManager() : nullptr;
+        std::string why;
+        if (freshNetwork == nullptr)
+        {
+            *applied = "no network manager on the restarted machine";
+        }
+        else if (!freshNetwork->RequestChange(rest, why))
+        {
+            *applied = why;
+        }
+        else
+        {
+            *applied = "ok";
+        }
+    };
+
+    network = nullptr;
+    manager = nullptr;
+    context = nullptr;
+    emulator.reset();   // nothing here may keep the old machine alive across the restart
+    RunChange(request, emulatorId, flags, reply, requests, applyRest);
+    reply.body["op"] = "network";
+    reply.body["slot"] = std::string();
+    reply.body["card"] = networkspec::CardsToString(wanted);
+    if (reply.status == "applied")
+    {
+        if (applied->empty())
+        {
+            net["settingsApplied"] = false;
+            net["note"] = "the card change was the only setting";
+        }
+        else if (*applied == "ok")
+        {
+            net["settingsApplied"] = true;
+            net["note"] = "the other settings were applied to the restarted machine";
+        }
+        else
+        {
+            net["settingsApplied"] = false;
+            net["note"] = "the cards changed, the other settings were not applied: " + *applied;
+            reply.message = net["note"].s;
+        }
+    }
+    else
+    {
+        net["settingsApplied"] = false;
+    }
+    reply.body["network"] = std::move(net);
+}
+
 } // namespace
 
 // region <SlotControlReply>
@@ -299,6 +483,18 @@ std::string SlotControlReply::ToText() const
 {
     std::ostringstream out;
     const StateNode* plan = body.find("plan");
+    const StateNode* network = body.find("network");
+    if (plan == nullptr && network != nullptr)
+    {
+        // Network settings without a card change (or refused before any plan): no restart
+        out << status;
+        if (!message.empty())
+        {
+            out << ": " << message;
+        }
+        out << "\n";
+        return out.str();
+    }
     if (plan == nullptr)
     {
         // Queries: the tree as text (matrix: the tables themselves)
@@ -352,6 +548,13 @@ std::string SlotControlReply::ToText() const
                 << medium.find("changes")->s << ")\n";
         }
     }
+    if (network != nullptr)
+    {
+        if (const StateNode* note = network->find("note"))
+        {
+            out << "network: " << note->s << "\n";
+        }
+    }
     return out.str();
 }
 
@@ -359,7 +562,7 @@ std::string SlotControlReply::ToText() const
 
 const std::vector<std::string>& SlotControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"list", "catalog", "matrix", "plug", "remove", "set", "gs"};
+    static const std::vector<std::string> verbs = {"list", "catalog", "matrix", "plug", "remove", "set", "gs", "network"};
     return verbs;
 }
 
@@ -822,6 +1025,11 @@ SlotControlReply SlotControl::Execute(const SlotControlRequest& request)
     const std::string emulatorId = emulator->GetId();
     SlotManager* manager = context->pSlotManager;
 
+    if (verb == "network")
+    {
+        Network(request, emulator, reply);
+        return reply;
+    }
     if (verb == "list")
     {
         reply.body = DeviceState::Slots(context);

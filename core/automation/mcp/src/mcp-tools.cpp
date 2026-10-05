@@ -94,11 +94,11 @@ namespace
 /// A slot change reply (WebAPI /slots/{slot}/{verb}, SlotControl) as a tool result: the status and message, the
 /// plan's lines (what it removes, shadows, loses) and the restart (the new emulator id). Refusals are errors that
 /// carry the whole plan, so the caller sees every card a replaceIfIncompatible would remove
-ToolResult SlotReplyResult(int status, Json::Value response)
+ToolResult SlotReplyResult(int status, Json::Value response, const std::string& what = "slots")
 {
     if (status == 0)
         return ToolResult::Error("WebAPI unreachable - is the emulator running with WebAPI enabled (port 8090)?");
-    std::string text = "slots: " + response.get("status", "").asString();
+    std::string text = what + ": " + response.get("status", "").asString();
     const std::string message = response.get("message", "").asString();
     if (!message.empty())
         text += ": " + message;
@@ -110,6 +110,9 @@ ToolResult SlotReplyResult(int status, Json::Value response)
                 restart.get("emulatorId", "").asString() + (restart.get("started", false).asBool() ? " (running)" : "");
     for (const Json::Value& line : response["media"]["lines"])
         text += "\n  media: " + line.asString();
+    const std::string networkNote = response["network"].get("note", "").asString();
+    if (!networkNote.empty())
+        text += "\nnetwork: " + networkNote;
     if (status >= 200 && status < 300)
         return ToolResult::Ok(std::move(text), std::move(response));
     return ToolResult::Error(text);
@@ -126,7 +129,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
                                "gs_stereo_mode",
-                               "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set"})
+                               "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
+                               "network_configure"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -164,7 +168,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "A change is planned first: one that would remove a card (or fit one unrealistically) is refused with the "
         "plan unless 'replace_if_incompatible' is true; 'dry_run' returns the plan only; 'media_disposition' "
         "save | discard for unsaved media of a removed card. Applied, the machine restarts with the new slot set: "
-        "a new emulator id (restart.emulatorId), the machine state is lost, the media follow.";
+        "a new emulator id (restart.emulatorId), the machine state is lost, the media follow. "
+        "'network_configure' changes the [NETWORK] settings ('settings': {\"card\": \"zxnetusb,zxwifi\", \"host_access\": "
+        "false, \"hosts\": \"name=10.0.2.7\", ...}, the keys of POST /network/config): a change of the ZX-bus network "
+        "cards (zxnetusb, zxwifi) is a slot change applied by a restart like slots_plug ('replace_if_incompatible', "
+        "'dry_run', 'media_disposition' apply; the other settings go to the restarted machine), any other setting "
+        "applies in place (status accepted).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
@@ -280,6 +289,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Slot changes: unsaved media of a removed card (sd.ngs) - save into their files or discard";
     schema["properties"]["table"]["type"] = "string";
     schema["properties"]["table"]["description"] = "slots_matrix: one table (functions, cards, card-x-card, machines, card-x-machine)";
+    schema["properties"]["settings"]["type"] = "object";
+    schema["properties"]["settings"]["description"] =
+        "network_configure: the [NETWORK] settings, e.g. {\"card\": \"zxwifi\", \"zx_wifi\": \"at\", \"host_access\": true} "
+        "(the keys of POST /network/config: card, host_access, dns_mode, hosts, forwards, remote_access, com_port, "
+        "zx_wifi, esp_chip, ...)";
     schema["properties"]["slots"]["type"] = "object";
     schema["properties"]["slots"]["description"] =
         "'create': the new machine's slot set in the [SLOTS] key form, replacing its INI's: {\"zxbus.1\": "
@@ -292,7 +306,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
         "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode) "
-        "and the ZX-bus slots (slots_catalog/slots_matrix/slots_plug/slots_remove/slots_set; a change restarts the machine).",
+        "and the ZX-bus slots (slots_catalog/slots_matrix/slots_plug/slots_remove/slots_set; a change restarts the machine); "
+        "network_configure changes the network settings (a network card change is a slot change: a restart).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -515,6 +530,25 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                             return;
                         }
                         done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
+                    });
+                }
+                else if (action == "network_configure")
+                {
+                    if (!args.isMember("settings") || !args["settings"].isObject() || args["settings"].empty())
+                    {
+                        done(ToolResult::Error("Action 'network_configure' requires 'settings' (an object, e.g. "
+                                               "{\"card\": \"zxnetusb\"})"));
+                        return;
+                    }
+                    Json::Value body = args["settings"];
+                    if (args.isMember("replace_if_incompatible"))
+                        body["replaceIfIncompatible"] = args["replace_if_incompatible"].asBool();
+                    if (args.isMember("dry_run"))
+                        body["dryRun"] = args["dry_run"].asBool();
+                    if (args.isMember("media_disposition") && args["media_disposition"].isString())
+                        body["mediaDisposition"] = args["media_disposition"].asString();
+                    caller.Call("POST", Endpoint(id, "/network/config"), &body, [done](int status, Json::Value response) {
+                        done(SlotReplyResult(status, std::move(response), "network"));
                     });
                 }
                 else if (action == "slots_plug" || action == "slots_remove" || action == "slots_set")

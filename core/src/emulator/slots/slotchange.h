@@ -49,6 +49,10 @@ struct SlotChangeRequest
     /// of that plan). Checked as a creation is (Q8) and against the TTD guard; `change.dryRun` and
     /// `change.mediaDisposition` still apply
     std::optional<SlotConfig> slotSet;
+    /// Instead of `change`: several requests planned one after the other into one restart
+    /// (SlotManager::PlanChanges; the network settings' card set, Q11: one card out, another in). `change.dryRun` and
+    /// `change.mediaDisposition` still apply
+    std::vector<slots::SlotRequest> changes;
     /// Called with the old machine stopped, before it is destroyed (a GUI unbinds its views here)
     std::function<void(Emulator& old)> beforeRelease;
 };

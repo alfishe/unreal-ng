@@ -154,5 +154,8 @@ curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
 - **ZX-Poly** machines share one configuration: slot changes are refused there.
 - **The legacy INI keys** (`[SOUND] GSType`, `TurboSound`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card`) still work
   in a configuration without `[SLOTS]`: they become slots at creation (`source` in the report names the key).
-- **The network settings** (`network set card=...`, the Network window) still fit and unplug the network cards of a
-  running machine in place; the slot report follows the configuration, not those changes (an open item of SL-7).
+- **The network settings** (`network set card=...`, `POST /network/config {"card": ...}`, MCP `network_configure`, Lua /
+  Python `network_configure`, the Network window's ZXNETUSB / ZX-WiFi boxes) change the ZX-bus network cards as a slot
+  change applied by a restart (owner decision Q11): the same plan, flags and reply as `plug` / `remove` here, then the
+  other settings of the request go to the restarted machine. Settings without a card change apply in place (status
+  `accepted`, no restart). ATM2IOESP (the ATM Turbo 2+ INTERNAL connector, not a bus slot) still changes in place.

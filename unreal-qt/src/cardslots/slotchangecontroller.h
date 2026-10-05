@@ -13,10 +13,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <QObject>
 #include <QString>
@@ -55,8 +57,22 @@ public:
     /// removed cards with an Undo button. False when refused, cancelled or failed (a message says why)
     bool Apply(const std::string& emulatorId, slots::SlotRequest change, QWidget* parent);
 
+    /// Several changes planned into one restart (SlotManager::PlanChanges), the same flow as Apply
+    bool ApplyChanges(const std::string& emulatorId, std::vector<slots::SlotRequest> changes, QWidget* parent);
+
     /// The General Sound personality (owner decision Q10): the card in the GS slot replaced, the same flow
     bool ApplyGeneralSound(const std::string& emulatorId, int gsTypeKind, QWidget* parent);
+
+    /// The ZX-bus network cards (owner decision Q11; networkspec::kCardZxNetUsb | kCardZxWifi): the removes and plugs
+    /// of SlotManager::NetworkRequests as one change, the same flow. True without a restart when nothing changes
+    bool ApplyNetworkCards(const std::string& emulatorId, uint8_t zxBusCards, QWidget* parent);
+
+    /// The machine after the last applied change or undo (the restarted one); the instance itself when a network card
+    /// request changed nothing
+    const std::string& LastEmulatorId() const
+    {
+        return _lastEmulatorId;
+    }
 
     /// Puts the slot set from before the last applied change back (another restart). False when there is nothing to
     /// undo or it is refused
@@ -87,6 +103,7 @@ private:
     std::optional<SlotConfig> _undo;   ///< the slot set before the last change
     std::string _undoEmulatorId;       ///< the machine the last change created
     QString _undoText;
+    std::string _lastEmulatorId;
 };
 
 #pragma pop_macro("slots")

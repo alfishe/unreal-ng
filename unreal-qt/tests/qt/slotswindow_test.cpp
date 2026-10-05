@@ -181,3 +181,33 @@ TEST_F(SlotsWindow_Test, MidiActivityListsTheParts)
     window.refresh();
     EXPECT_EQ(window.cellText(0, 0), "");
 }
+
+/// The Network window's card boxes (owner decision Q11): the ZX-bus network cards change through the controller - the
+/// removes and plugs as one change, the restart confirmed, the removed card named with Undo
+TEST_F(SlotsWindow_Test, NetworkCardsAreASlotChange)
+{
+    _current = Create({{"zxbus.1", "zx-wifi"}});
+    ASSERT_NE(_current, nullptr);
+    _binding.bind(_current.get());
+    auto controller = Controller();
+    const std::string firstId = _current->GetId();
+
+    _answers = {0 /* Restart */, 0 /* OK */};
+    ASSERT_TRUE(controller->ApplyNetworkCards(firstId, 0x01 /* ZXNETUSB */, nullptr));
+    ASSERT_GE(_asked.size(), 2);
+    EXPECT_TRUE(_asked[0].contains("The machine restarts")) << _asked[0].toStdString();
+    EXPECT_TRUE(_asked[0].contains("zxbus.1 = zx-wifi")) << _asked[0].toStdString();
+    EXPECT_TRUE(_asked[1].startsWith("Cards removed:")) << _asked[1].toStdString();
+    ASSERT_NE(_current, nullptr);
+    EXPECT_NE(_current->GetId(), firstId);
+    EXPECT_EQ(controller->LastEmulatorId(), _current->GetId());
+    EXPECT_EQ(FittedOf(*_current), (std::vector<std::string>{"zxbus.1 = zxnetusb"}));
+    EXPECT_TRUE(controller->CanUndo());
+
+    // The same cards again: nothing to change, no question, no restart
+    _asked.clear();
+    const std::string sameId = _current->GetId();
+    EXPECT_TRUE(controller->ApplyNetworkCards(sameId, 0x01, nullptr));
+    EXPECT_TRUE(_asked.isEmpty());
+    EXPECT_EQ(_current->GetId(), sameId);
+}

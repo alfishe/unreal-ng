@@ -791,7 +791,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | ZX Profi board chips (report) | `state profi` | `GET /state/profi` | `profi_state()` | `profi_state()` | `profi` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
-| Network settings (change) | `network set k=v ..` | `POST /network/config` | `network_configure{..}` | `network_configure(**kw)` | `invoke_api` POST `/network/config` |
+| Network settings (change; a ZX-bus card change restarts the machine, [§14](#14-zx-bus-slots)) | `network set k=v .. [--replace] [--dry-run]` | `POST /network/config` | `network_configure{..}[, opts]` | `network_configure(**kw)` | `emulator_manage` `network_configure` |
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
 | ISA slots (report; Sprinter) | `state isa` / `isa` | `GET /state/isa` | `isa_state()` | `isa_state()` | `isa` |
@@ -3372,6 +3372,12 @@ OpenAPI tag `Slots`), MCP `inspect_state` aspect `slots` and `emulator_manage` a
 `slots_set` / `slots_catalog` / `slots_matrix`, Lua `slots_state()` / `slots_plug()` ... ([lua-interface.md](./lua-interface.md)),
 Python `unreal.slots_state()` / `unreal.slots_plug()` ... ([python-interface.md](./python-interface.md)), and the Qt
 window Machine > Slots.
+
+The network settings change the ZX-bus network cards the same way (owner decision Q11): `network set card=zxnetusb
+[--replace] [--dry-run] [--media save|discard] [--json]` plans the removes and plugs as one slot change, restarts the
+machine and applies the other keys of the request to it; settings without a card change apply in place (`accepted`).
+WebAPI `POST /network/config` (with `replaceIfIncompatible` / `dryRun` / `mediaDisposition`), MCP `emulator_manage`
+`network_configure` (`settings`), Lua / Python `network_configure`, and the Qt Network window's card boxes do the same.
 
 ## Future Capabilities
 

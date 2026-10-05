@@ -243,8 +243,13 @@ class Emulator:
         """Where host and injected keys go: 'auto' | 'matrix' | 'ps2' | 'both' (the ZX matrix, the PS/2 keyboard
         controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force."""
 
-    def network_configure(self, **settings) -> None:
-        """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
+    def network_configure(self, **settings) -> dict:
+        """Change [NETWORK] settings (returns the reply dict: ok, status, message, plan, restart, network; ValueError
+        with the reason when refused). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change
+        applied by a machine restart (owner decision Q11; replace=True allows removals / an unrealistic fit,
+        dry_run=True returns the plan, media='save'|'discard'); the other keys go to the restarted machine
+        (emu_get_selected(), this object then names the old one); without a card change they apply in place
+        (status 'accepted'). Keys: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: True, default,
         = 0.0.0.0, other computers on the LAN can connect; False = 127.0.0.1 only; alone it keeps every connection; network_state()
         ['virtual_network']['listen_address'] shows it), connect_timeout_ms=n,

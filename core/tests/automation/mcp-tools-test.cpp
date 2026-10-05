@@ -681,6 +681,53 @@ TEST_F(McpTools_Test, EmulatorManage_SlotsPlug_RefusalCarriesThePlan)
     EXPECT_NE(result.text.find("removes zxbus.1 = gs"), std::string::npos) << result.text;
 }
 
+// network_configure (owner decision Q11): the settings and the slot flags go to POST /network/config; a card change
+// replies as a slot change (plan, restart), the other settings as accepted
+TEST_F(McpTools_Test, EmulatorManage_NetworkConfigure_PostsTheSettings)
+{
+    Json::Value response;
+    response["ok"] = true;
+    response["status"] = "applied";
+    response["op"] = "network";
+    response["plan"]["lines"].append("plug zxnetusb -> zxbus.1: allowed, fit real");
+    response["restart"]["restarted"] = true;
+    response["restart"]["previousEmulatorId"] = "emu-1";
+    response["restart"]["emulatorId"] = "emu-2";
+    response["restart"]["started"] = true;
+    response["network"]["note"] = "the other settings were applied to the restarted machine";
+    _caller->routes["POST /api/v1/emulator/emu-1/network/config"] = {200, response};
+
+    Json::Value args;
+    args["action"] = "network_configure";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError) << "needs settings";
+
+    args["settings"]["card"] = "zxnetusb";
+    args["settings"]["host_access"] = false;
+    args["replace_if_incompatible"] = true;
+    args["dry_run"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/network/config");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["card"].asString(), "zxnetusb");
+    EXPECT_FALSE(call->body["host_access"].asBool());
+    EXPECT_TRUE(call->body["replaceIfIncompatible"].asBool());
+    EXPECT_FALSE(call->body["dryRun"].asBool());
+    EXPECT_EQ(result.text.rfind("network: applied", 0), 0u) << result.text;
+    EXPECT_NE(result.text.find("restarted: emulator emu-1 -> emu-2 (running)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("network: the other settings were applied"), std::string::npos) << result.text;
+
+    Json::Value refused;
+    refused["ok"] = false;
+    refused["status"] = "refused";
+    refused["message"] = "needs replaceIfIncompatible: `zx-wifi` is a `zxbus` card";
+    _caller->routes["POST /api/v1/emulator/emu-1/network/config"] = {409, refused};
+    args["replace_if_incompatible"] = false;
+    result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("network: refused: needs replaceIfIncompatible"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, EmulatorManage_SlotsRemoveSetCatalogMatrix_Routes)
 {
     Json::Value args;

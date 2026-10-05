@@ -104,6 +104,26 @@ switch_personality ngs`, WebAPI `POST /control/audio/gs` `switch_personality`, t
 in its slot and restarts the machine like any slot change (owner decision Q10). Only the `gs_lightweight` feature still
 swaps the card while the machine runs.
 
+## The network cards
+
+The ZX-bus network cards (`zxnetusb`, `zx-wifi`) are slots like any card, and the network settings' `card` value
+changes them the same way (owner decision Q11): `network set card=zxnetusb hosts=a.test=10.0.2.7`, WebAPI `POST
+/network/config`, MCP `emulator_manage` `network_configure`, Lua / Python `network_configure`, or the ZXNETUSB / ZX-WiFi
+boxes of the Qt Network window. A card that comes or goes restarts the machine with the new slot set (one restart also
+for "ZX-WiFi out, ZXNETUSB in"), and the other settings of the same request are applied to the restarted machine.
+The flags and the reply are the slot change's (`--replace`, `--dry-run`, `replaceIfIncompatible`, the plan, the
+restart); the reply also has `network` (`cardChange`, `cardsBefore`, `cards`, `settingsApplied`, `note`).
+
+Example: a Pentagon without cards, `network set card=zxnetusb,zxwifi host_access=off` - the reply plans `plug zxnetusb
+-> zxbus.1` and `plug zx-wifi -> zxbus.2`, the machine restarts, and the restarted machine has both cards with host
+access off. A ZX-WiFi on a ZX-Evo or TS-Conf is refused (the board's own serial port answers `#xxEF`) and nothing
+changes; a ZX-bus card behind the ATM Turbo 2+ CPU-socket adapter is an unrealistic fit that needs `--replace`.
+
+Settings without a card change (`hosts`, `com_port`, `zx_wifi`, ...) apply to the running machine, without a restart
+(status `accepted`). The ATM2IOESP card sits on the ATM Turbo 2+ INTERNAL connector, not on a bus slot: it still
+changes in place. A restart starts the new machine from its configuration: network settings changed earlier at run
+time and not repeated in the request are not carried over.
+
 ## Model switch
 
 A model switch (`model ATM3`, WebAPI `POST /emulator/{id}/model`, MCP `switch_model`, the Machine menu) carries the
@@ -164,7 +184,8 @@ A configuration with `[SLOTS]` ignores the old keys.
 | Lua | `slots_state()`, `slots_catalog()`, `slots_matrix()` | `slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([lua-interface.md](../emulator/design/control-interfaces/lua-interface.md#zx-bus-slots)) |
 | Python | `unreal.slots_state()`, `slots_catalog()`, `slots_matrix()` | `unreal.slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([python-interface.md](../emulator/design/control-interfaces/python-interface.md#zx-bus-slots)) |
 | Qt | Machine > Slots | the same window: plug, remove, options, the plan preview, Undo |
+| Network settings | `network`, `/state/network`, `network_state()` | `card=` of `network set`, `POST /network/config`, MCP `network_configure`, Lua / Python `network_configure`, the Network window's card boxes: a slot change (see [The network cards](#the-network-cards)) |
 
-Every surface returns the same reply: `ok`, `status` (`applied`, `dry-run`, `refused`, `recording`, `no-machine`,
-`failed`, `bad-request`), `message`, the `plan` (`removed[]` with each card's `undo`, `shadowed[]`, `lostFunctions[]`,
+Every surface returns the same reply: `ok`, `status` (`applied`, `accepted` - network settings applied in place -,
+`dry-run`, `refused`, `recording`, `no-machine`, `failed`, `bad-request`), `message`, the `plan` (`removed[]` with each card's `undo`, `shadowed[]`, `lostFunctions[]`,
 `media[]`, `lines[]`), `restart` (`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`.

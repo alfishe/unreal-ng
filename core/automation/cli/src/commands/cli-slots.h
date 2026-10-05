@@ -104,6 +104,48 @@ inline bool ParseArgs(const std::vector<std::string>& args, SlotControlRequest& 
     return true;
 }
 
+/// The request of `network set key=value ... [--replace] [--dry-run] [--media save|discard] [--json]` (owner decision
+/// Q11: SlotControl verb network; a ZX-bus card change restarts the machine). `args` start after "set"
+inline bool ParseNetworkSet(const std::vector<std::string>& args, SlotControlRequest& out, bool& json, std::string& error)
+{
+    out = SlotControlRequest{};
+    out.verb = "network";
+    json = false;
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        const std::string& arg = args[i];
+        if (arg == "--json")
+            json = true;
+        else if (arg == "--replace" || arg == "--replace-if-incompatible")
+            out.replaceIfIncompatible = true;
+        else if (arg == "--dry-run" || arg == "--plan")
+            out.dryRun = true;
+        else if (arg == "--media" && i + 1 < args.size())
+            out.media = args[++i];
+        else if (arg.rfind("--", 0) == 0)
+        {
+            error = "unknown option '" + arg + "'";
+            return false;
+        }
+        else
+        {
+            const size_t eq = arg.find('=');
+            if (eq == std::string::npos)
+            {
+                error = "expected key=value, got '" + arg + "'";
+                return false;
+            }
+            out.settings.emplace_back(arg.substr(0, eq), arg.substr(eq + 1));
+        }
+    }
+    if (out.settings.empty())
+    {
+        error = "no settings given (key=value ...)";
+        return false;
+    }
+    return true;
+}
+
 inline std::string Text(const StateNode* node)
 {
     return node != nullptr && node->kind == StateNode::Kind::String ? node->s : std::string();

@@ -117,3 +117,51 @@ TEST(CliSlots_Test, RepliesAsText)
     EmulatorManager::GetInstance()->RemoveEmulator(id);
     MessageCenter::DisposeDefaultMessageCenter();
 }
+
+/// `network set` (owner decision Q11): the settings and the slot flags become the SlotControl network request; a card
+/// change prints the plan and the restart, the other settings the in-place line
+TEST(CliSlots_Test, NetworkSetIsTheNetworkVerb)
+{
+    SoundCardScope everySound;
+    bool json = false;
+    std::string error;
+    SlotControlRequest request;
+    ASSERT_TRUE(CliSlots::ParseNetworkSet({"card=zxnetusb,zxwifi", "host_access=off", "--replace", "--dry-run", "--media",
+                                           "discard"},
+                                          request, json, error))
+        << error;
+    EXPECT_EQ(request.verb, "network");
+    EXPECT_EQ(request.settings, (std::vector<std::pair<std::string, std::string>>{{"card", "zxnetusb,zxwifi"},
+                                                                                  {"host_access", "off"}}));
+    EXPECT_TRUE(request.replaceIfIncompatible);
+    EXPECT_TRUE(request.dryRun);
+    EXPECT_EQ(request.media, "discard");
+    EXPECT_FALSE(CliSlots::ParseNetworkSet({"card"}, request, json, error));
+    EXPECT_NE(error.find("key=value"), std::string::npos) << error;
+    EXPECT_FALSE(CliSlots::ParseNetworkSet({}, request, json, error));
+    EXPECT_FALSE(CliSlots::ParseNetworkSet({"--loud"}, request, json, error));
+
+    std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "PENTAGON", LoggerLevel::LogError, &error, [](CONFIG& config) {
+            SlotConfig slots;
+            ParseSlotsSection({{"ay-socket", "ay"}}, slots);
+            SlotManager::UseSlots(slots, config);
+        });
+    ASSERT_NE(emulator, nullptr) << error;
+    const std::string id = emulator->GetId();
+
+    ASSERT_TRUE(CliSlots::ParseNetworkSet({"card=zxnetusb", "--dry-run"}, request, json, error));
+    request.emulatorId = id;
+    std::string text = CliSlots::Render(request, SlotControl::Execute(request), json);
+    EXPECT_EQ(text.rfind("dry-run", 0), 0u) << text;
+    EXPECT_NE(text.find("zxnetusb"), std::string::npos) << text;
+
+    ASSERT_TRUE(CliSlots::ParseNetworkSet({"hosts=a.test=10.0.2.7"}, request, json, error));
+    request.emulatorId = id;
+    text = CliSlots::Render(request, SlotControl::Execute(request), json);
+    EXPECT_EQ(text.rfind("accepted: applied at the next frame boundary", 0), 0u) << text;
+
+    emulator.reset();
+    EmulatorManager::GetInstance()->RemoveEmulator(id);
+    MessageCenter::DisposeDefaultMessageCenter();
+}

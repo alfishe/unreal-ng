@@ -2650,26 +2650,48 @@ namespace PythonBindings
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
-            .def("network_configure", [](Emulator& self, py::kwargs settings) {
-                NetworkManager* manager = self.GetContext()->pCore ? self.GetContext()->pCore->GetNetworkManager() : nullptr;
-                if (!manager)
-                    throw py::value_error("no network support in this machine");
-                std::vector<std::pair<std::string, std::string>> kv;
+            .def("network_configure", [](Emulator& self, py::kwargs settings) -> py::object {
+                // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot
+                // change applied by a restart (replace=, dry_run=, media= as for slots_plug), the other keys go to the
+                // restarted machine (emu_get_selected(); this object then names the old one); without a card change
+                // they apply in place (status 'accepted')
+                SlotControlRequest request;
+                request.verb = "network";
+                request.emulatorId = self.GetId();
                 for (auto item : settings)
                 {
                     const std::string key = py::str(item.first);
+                    if (key == "replace" || key == "replace_if_incompatible")
+                    {
+                        request.replaceIfIncompatible = item.second.cast<bool>();
+                        continue;
+                    }
+                    if (key == "dry_run")
+                    {
+                        request.dryRun = item.second.cast<bool>();
+                        continue;
+                    }
+                    if (key == "media")
+                    {
+                        request.media = py::str(item.second);
+                        continue;
+                    }
                     std::string text;
                     if (py::isinstance<py::bool_>(item.second))
                         text = item.second.cast<bool>() ? "on" : "off";
                     else
                         text = py::str(item.second);
-                    kv.emplace_back(key, text);
+                    request.settings.emplace_back(key, text);
                 }
-                NetworkManager::Change change;
-                std::string error;
-                if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
-                    throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()); applied at the next frame boundary, every connection closes")
+                SlotControlReply reply;
+                {
+                    py::gil_scoped_release release;   // a restart stops and builds a machine
+                    reply = SlotControl::Execute(request);
+                }
+                if (!reply.Ok())
+                    throw py::value_error(reply.message);
+                return StateNodeToPy(reply.ToValue());
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a machine restart (replace=True allows removals / an unrealistic fit, dry_run=True returns the plan, media='save'|'discard'; the other keys are applied to the restarted machine, emu_get_selected()); other settings apply at the next frame boundary, every connection closes (status 'accepted'). Returns the reply dict (ok, status, message, plan, restart, network); ValueError with the reason when refused")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
