@@ -1262,6 +1262,11 @@ uint32_t OptionBits(const CardDef& card, const CardOptions& options, Opt key)
     return options.Has(key) ? options.bits[static_cast<size_t>(key)] : option->defaultBits;
 }
 
+std::vector<PortClaim> CardClaims(const CardDef& card, const CardOptions& options)
+{
+    return ActiveClaims(card, options);
+}
+
 bool ParseCardOptions(const CardDef& card, std::string_view text, CardOptions& out, std::string* error)
 {
     auto fail = [error](std::string message) {

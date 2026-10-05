@@ -8,6 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/platform.h"
+#include "emulator/slots/card.h"
 #include "emulator/slots/slotvocabulary.h"
 
 using namespace slots;
@@ -346,10 +347,6 @@ private:
 std::string NotEmulated(const CardDef& card, const CardOptions& options)
 {
     const std::string id = card.id;
-    if (id == "multisound")
-    {
-        return "the ZX-MultiSound is not emulated yet (docs/inprogress/2026-10-03-zx-multisound)";
-    }
 #ifndef UNREALNG_HAVE_OPL4
     if (id == "moonsound")
     {
@@ -736,6 +733,8 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
                      });
 
     // Plug the entries one by one, as an automation request without the replace flag would
+    const bool socketConfigured = std::any_of(requested.entries.begin(), requested.entries.end(),
+                                              [](const SlotConfigEntry& entry) { return entry.slot == kAySocket; });
     SlotSet set;
     for (const SlotConfigEntry& request : requested.entries)
     {
@@ -807,14 +806,20 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
         plug.options = slot.entry.options;
         plug.adapter = request.adapter;
         SlotPlan plan = Planner().Plan(result.model, set, plug);
-        if (!plan.allowed && !plan.hardRefusal && request.fitOverride)
+        if (!plan.allowed && !plan.hardRefusal && (request.fitOverride || !socketConfigured))
         {
-            // The fit override: accepted when it only overrides the bus fit, never when it would displace a card,
-            // switch a built-in off or take a chip out of its socket
+            // Two confirmations a config may give without the replace flag, never a displaced card or a built-in
+            // switched off:
+            // - the fit override (`<slot>.fit = unrealistic`): the bus fit only;
+            // - a socketed chip the config left in its socket by default (no `ay-socket` line) is taken out of it,
+            //   the physical step a card that fights it needs (Q7: the ZX-Evo YM2149 under a ZX-MultiSound). An
+            //   explicit `ay-socket = ay` keeps the chip, and the card that would need it out is not fitted
             plug.replaceIfIncompatible = true;
             SlotPlan forced = Planner().Plan(result.model, set, plug);
-            if (forced.allowed && forced.removed.empty() && forced.builtInSwitchedOff.empty() &&
-                forced.removedFromSocket.empty())
+            const bool fitAccepted = request.fitOverride || (forced.fit != Fit::Unrealistic && forced.busFights.empty());
+            const bool socketAccepted = forced.removedFromSocket.empty() || !socketConfigured;
+            if (forced.allowed && forced.removed.empty() && forced.builtInSwitchedOff.empty() && fitAccepted &&
+                socketAccepted)
             {
                 plan = std::move(forced);
             }
@@ -852,6 +857,20 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
                     builtIn.state = "shadowed by " + shadowed.by;
                 }
             }
+        }
+        for (const RemovedFromSocket& removed : plan.removedFromSocket)
+        {
+            for (BuiltIn& builtIn : result.builtIns)
+            {
+                if (builtIn.id == removed.builtIn)
+                {
+                    builtIn.removed = true;
+                    builtIn.state = "taken out of its socket for " + plan.slot;
+                    builtIn.source = slot.source;
+                }
+            }
+            result.info.push_back("Slots: " + slot.entry.slot + " = " + slot.entry.card + " (" + slot.source +
+                                  ") takes the " + removed.chip + " (" + removed.builtIn + ") out of its socket");
         }
         if (slot.entry.disabled)
         {
@@ -903,8 +922,11 @@ void SlotManager::Apply(const Result& result, CONFIG& config, uint32_t decidedGr
     {
         const bool configured = std::any_of(result.entries.begin(), result.entries.end(),
                                             [](const Slot& s) { return s.entry.slot == kAySocket; });
-        fields.turboSound =
-            !configured && SocketDefault(result.machine) != nullptr ? TurboSoundKind::Single : TurboSoundKind::None;
+        // The machine's own chip, unless a card took it out of its socket
+        const BuiltInDef* chip = SocketDefault(result.machine);
+        const BuiltIn* chipState = chip != nullptr ? result.FindBuiltIn(chip->id) : nullptr;
+        const bool removed = chipState != nullptr && chipState->removed;
+        fields.turboSound = !configured && chip != nullptr && !removed ? TurboSoundKind::Single : TurboSoundKind::None;
     }
 
     // General Sound: the personality from the card; its RAM from the card option when the slot names it
@@ -976,6 +998,11 @@ SlotManager::SlotManager(EmulatorContext* context) : _context(context)
 {
 }
 
+SlotManager::~SlotManager()
+{
+    ReleaseCards();
+}
+
 void SlotManager::PlanAtCreate()
 {
     if (_context == nullptr)
@@ -997,6 +1024,51 @@ void SlotManager::PlanAtCreate()
         }
     }
     Apply(_result, _context->config);
+}
+
+void SlotManager::BuildCards()
+{
+    ReleaseCards();
+    if (_context == nullptr || _result.machine == nullptr)
+    {
+        return;
+    }
+    for (const Slot& slot : _result.entries)
+    {
+        const CardType* type = slot.entry.disabled ? nullptr : FindCardType(slot.entry.card);
+        const CardDef* def = type != nullptr ? Planner().FindCard(slot.entry.card) : nullptr;
+        if (def == nullptr)
+        {
+            continue;
+        }
+        CardContext cardContext;
+        cardContext.emulator = _context;
+        cardContext.def = def;
+        cardContext.slot = slot.entry.slot;
+        cardContext.options = slot.entry.options;
+        std::unique_ptr<ICard> card = type->create(cardContext);
+        if (card != nullptr)
+        {
+            _cards.push_back(std::move(card));
+        }
+    }
+}
+
+void SlotManager::ReleaseCards()
+{
+    _cards.clear();
+}
+
+ICard* SlotManager::FindCard(const std::string& slot) const
+{
+    for (const std::unique_ptr<ICard>& card : _cards)
+    {
+        if (card->SlotId() == slot)
+        {
+            return card.get();
+        }
+    }
+    return nullptr;
 }
 
 // endregion

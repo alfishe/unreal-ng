@@ -21,6 +21,13 @@ enum class AudioSourceType
     FM2,  // TSFM chip 1 FM-only buffer
     GeneralSoundMp3, // NeoGS MP3 decoder output (a separate analogue path on the board)
     CdAudio0, CdAudio1, CdAudio2, CdAudio3,  // CD-DA line output of the ATAPI CD drive on IDE unit 0..3 (ide0.master .. ide1.slave)
+    // ZX-MultiSound card rows (a slot-built card, emulator/slots/cards/multisound): the board's weights are applied
+    // before them, so unity volume is the real board's balance
+    MultiSoundFm,    // MS FM: both YM2203 FM outputs
+    MultiSoundSsg,   // MS SSG: both YM2203 SSG parts
+    MultiSoundSaa,   // MS SAA: the SAA1099
+    MultiSoundDac,   // MS DAC: the four shared DACs (General Sound + SounDrive)
+    MultiSoundMidi,  // MS MIDI: the SAM2695 General MIDI synthesizer
     Custom
 };
 

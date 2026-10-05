@@ -499,6 +499,13 @@ bool Core::Init()
         _networkManager->ApplyConfiguration();
     }
 
+    // The cards the slots build themselves (ZX-bus slots card.h): their claims go onto the decoder, their mixer rows
+    // into the sound manager, both created above
+    if (result && _slotManager)
+    {
+        _slotManager->BuildCards();
+    }
+
     /// endregion </Activate IO devices>
 
     // Release all allocated object in case of at least single failure
@@ -514,6 +521,10 @@ void Core::Release()
 {
     // Unregister itself from context
     _context->pCore = nullptr;
+
+    // Slot-built cards first: they leave the decoder's claim table and the mixer while both exist
+    if (_slotManager)
+        _slotManager->ReleaseCards();
 
     // Network adapters first: the card releases its port claim while the decoder exists
     delete _networkManager;

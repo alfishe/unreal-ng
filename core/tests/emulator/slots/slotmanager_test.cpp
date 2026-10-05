@@ -441,15 +441,16 @@ TEST(SlotManager_Test, HardRefusalKeptEvenWithTheOverride)
 TEST(SlotManager_Test, NotEmulatedCardsAreDisabled)
 {
     auto config = MakeConfig(MM_PENTAGON);
-    SetSlots(*config, { { "zxbus.1", "multisound" }, { "zxbus.2", "zx-wifi" }, { "zxbus.2.port", "ee" },
+    // (the ZX-MultiSound is emulated since MS-4: a slot-built card, multisoundslotcard_test.cpp)
+    SetSlots(*config, { { "zxbus.2", "zx-wifi" }, { "zxbus.2.port", "ee" },
                                  { "zxbus.3", "covox-fb" }, { "zxbus.3.decode", "a2" }, { "zxbus.4", "nosuchcard" } });
     const SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
-    for (const char* slot : { "zxbus.1", "zxbus.2", "zxbus.3", "zxbus.4" })
+    for (const char* slot : { "zxbus.2", "zxbus.3", "zxbus.4" })
     {
         ASSERT_NE(Entry(result, slot), nullptr) << slot;
         EXPECT_TRUE(Entry(result, slot)->entry.disabled) << slot;
     }
-    EXPECT_NE(Entry(result, "zxbus.1")->entry.disabledReason.find("not emulated"), std::string::npos);
+    EXPECT_NE(Entry(result, "zxbus.2")->entry.disabledReason.find("not emulated"), std::string::npos);
     EXPECT_NE(Entry(result, "zxbus.4")->entry.disabledReason.find("unknown card"), std::string::npos);
 }
 

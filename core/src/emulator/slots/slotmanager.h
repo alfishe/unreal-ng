@@ -14,6 +14,11 @@
 /// after the INI was read (the test runner's sound policy, a snapshot transfer, the TTD bench) is honored: that
 /// group's slots are translated from the field again at creation.
 ///
+/// Cards written for the slots (a CardType in card.h; the ZX-MultiSound is the first) are built here, not by a legacy
+/// owner: BuildCards creates one ICard per fitted slot of such a card once the machine's sound manager and port
+/// decoder exist, puts its port claims into the decoder's claim table with the machine's bus arbitration and its
+/// mixer rows into SoundManager; ReleaseCards takes them out again before the machine goes.
+///
 /// No slot change in a running machine (Q6): SL-6 applies a change by restarting the instance.
 
 // Qt defines `slots` / `signals` as macros; this header names the slots namespace
@@ -23,6 +28,7 @@
 #undef signals
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +37,7 @@
 
 struct CONFIG;
 class EmulatorContext;
+class ICard;
 
 /// The card groups SL-4 moves onto slots, one per step
 enum class SlotCardGroup : uint8_t
@@ -74,6 +81,7 @@ public:
         std::string name;
         slots::BuiltInKind kind = slots::BuiltInKind::Fixed;
         bool on = true;                     ///< false: switched off (builtin.<id> = off)
+        bool removed = false;               ///< a socketed chip a card took out of its socket (Q7)
         std::string state;                  ///< "active", "switched off", "shadowed by zxbus.1", "replaced by tsfm"
         std::string source;                 ///< where a switch came from
     };
@@ -114,9 +122,26 @@ public:
     static SlotCardGroup GroupOf(const std::string& card);
 
     explicit SlotManager(EmulatorContext* context);
+    ~SlotManager();
+    SlotManager(const SlotManager&) = delete;
+    SlotManager& operator=(const SlotManager&) = delete;
 
     /// Create time (Core::Init, before any card exists): plans, logs and applies
     void PlanAtCreate();
+
+    /// Create time, once the sound manager and the port decoder exist: builds the cards the slots own (card.h) for
+    /// the fitted slots, in slot order
+    void BuildCards();
+    /// Detaches and destroys the built cards (Core::Release, while the sound manager and the decoder still exist)
+    void ReleaseCards();
+
+    /// The cards the slots built, in slot order
+    const std::vector<std::unique_ptr<ICard>>& Cards() const
+    {
+        return _cards;
+    }
+    /// The built card in a slot; nullptr when the slot holds none (or a card a legacy owner builds)
+    ICard* FindCard(const std::string& slot) const;
 
     const Result& Current() const
     {
@@ -126,6 +151,7 @@ public:
 private:
     EmulatorContext* _context = nullptr;
     Result _result;
+    std::vector<std::unique_ptr<ICard>> _cards;
 };
 
 #pragma pop_macro("signals")

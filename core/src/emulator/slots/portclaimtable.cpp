@@ -310,11 +310,15 @@ PortClaimTable::CardReads PortClaimTable::ReadCards(uint16_t port) const
             continue;
         if (e.owner != lastOwner && e.owner)
         {
-            const uint8_t v = e.owner->portDeviceInMethod(port);
-            if (reads.count == 0)
-                reads.firstValue = v;
-            reads.value = static_cast<uint8_t>(reads.value & v);
-            reads.count++;
+            bool drives = true;
+            const uint8_t v = e.owner->portDeviceReadCycle(port, drives);
+            if (drives)
+            {
+                if (reads.count == 0)
+                    reads.firstValue = v;
+                reads.value = static_cast<uint8_t>(reads.value & v);
+                reads.count++;
+            }
         }
         lastOwner = e.owner;
         if (DrivesIorqge(e, true))

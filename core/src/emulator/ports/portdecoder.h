@@ -309,6 +309,15 @@ public:
     /// arming FM2 reg 05). The default keeps the legacy-priority rule (R6).
     virtual bool portDeviceClaimsRead(uint16_t) { return false; }
 
+    /// A read cycle as the slot claim table resolves it (slots::PortClaimTable::Read): the value and whether the
+    /// device drove the data bus at all. A card may answer IORQGE on a port and still leave the data bus floating
+    /// (the ZX-MultiSound on #BFFD). The default drives whatever portDeviceInMethod returns
+    virtual uint8_t portDeviceReadCycle(uint16_t port, bool& drives)
+    {
+        drives = true;
+        return portDeviceInMethod(port);
+    }
+
     /// Self-decoding hook for devices whose address pattern can't be
     /// expressed as a single exact key in PortDecoder's dispatch map -
     /// e.g. Covox/SoundDrive, which recognize several bus addresses via a

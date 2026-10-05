@@ -870,6 +870,10 @@ struct CONFIG
     /// are translated into slots then
     SlotConfig slotConfig;
 
+    /// [MIDI] Bank= : the SoundFont 2 bank of a slot card's General MIDI synthesizer (the ZX-MultiSound's SAM2695),
+    /// resolved like a ROM path. Empty = the card's default (midi/generaluser-gs.sf2)
+    std::string midiBank;
+
     std::string romSetName;
     std::string romSet128Path;
     std::string romSetSOSPath;
