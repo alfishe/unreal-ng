@@ -713,9 +713,11 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
 {
     NoteDebugChange();
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    const bool recording = ttd && ttd->IsRecording();
+    // Recording, or a session being browsed: the engine continues a recording
+    // paused at this point and records the edit (D9)
+    const bool session = ttd && ttd->GetState() != ttd::TTDSessionState::Idle;
     const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
-    const bool park = recording && !onEmulationThread && IsRunning() && !IsPaused();
+    const bool park = session && !onEmulationThread && IsRunning() && !IsPaused();
     if (park)
     {
         Pause(false);
@@ -723,10 +725,10 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
     }
 
     // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
-    if (recording)
+    if (session)
         ttd->BeginToolEdit();
     edit();
-    if (recording)
+    if (session)
         ttd->EndToolEdit(source);
 
     if (park)

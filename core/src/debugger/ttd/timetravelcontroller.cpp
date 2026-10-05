@@ -2177,7 +2177,9 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 
 // A tool edit's bytes, as records: kind u8, id u16, index u32, length u32, bytes.
 // Kinds: 1 a machine RAM page (index = page), 2 a device-memory piece (id =
-// TTDRegionId, index = piece), 3 a device's whole state (id = v1 id)
+// TTDRegionId, index = piece), 3 a device's whole state (id = v1 id), 4 the
+// CPU (TTDCpuState), 5 the chipset latches (TTDChipsetState; its counters are
+// the machine time and stay as they are, the paging is decoded from it)
 namespace
 {
 enum : uint8_t
@@ -2185,6 +2187,8 @@ enum : uint8_t
     kEditRamPage = 1,
     kEditRegionPiece = 2,
     kEditDeviceState = 3,
+    kEditCpu = 4,
+    kEditChipset = 5,
 };
 void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
                    uint32_t length)
@@ -2201,6 +2205,21 @@ void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_
 
 void TimeTravelController::BeginToolEdit()
 {
+    // A paused recording (D8): an edit at the paused point is the next thing
+    // that happens in it, so the recording goes on and records the edit. One
+    // before it would make the machine leave the recorded history while
+    // running into the paused point continues it: the recording ends where
+    // it paused instead (an edit in the past starts a branch with Step 2b)
+    if (_recordingPaused && _state == TTDSessionState::Detached)
+    {
+        if (CurrentPosition() == _pausedEnd)
+            ContinueRecordingAt(_pausedEnd);
+        else
+        {
+            MLOGINFO("TimeTravelController: an edit before the paused end ends the paused recording");
+            StopRecording();
+        }
+    }
     _toolEditBefore.clear();
     _toolEditOpen = _state == TTDSessionState::Recording;
     if (!_toolEditOpen)
@@ -2255,6 +2274,15 @@ void TimeTravelController::EndToolEdit(const char* source)
             PutEditRecord(payload, kEditDeviceState, id, 0, after.data(), static_cast<uint32_t>(after.size()));
     }
     _toolEditBefore.clear();
+    // The CPU and the chipset latches as the edit left them (a debugger sets registers and paging)
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        const TTDCpuState cpu = CaptureCpuState(*static_cast<const Z80State*>(z80));
+        PutEditRecord(payload, kEditCpu, 0, 0, reinterpret_cast<const uint8_t*>(&cpu), sizeof(cpu));
+        const TTDChipsetState chipset =
+            CaptureChipsetState(_context->emulatorState, static_cast<uint32_t>(z80->t));
+        PutEditRecord(payload, kEditChipset, 0, 0, reinterpret_cast<const uint8_t*>(&chipset), sizeof(chipset));
+    }
 
     const size_t before = _externalEvents.Size();
     RecordExternalEvent(TTDExternalEventKind::DebuggerEdit, source);
@@ -2292,6 +2320,21 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
             if (it != _peripherals.Devices().end() && it->second &&
                 (it->second->TTDStateSize() == length || it->second->TTDVariableSize()))
                 it->second->TTDLoadState(bytes);
+        }
+        else if (kind == kEditCpu && length == sizeof(TTDCpuState) && _context && _context->pCore)
+        {
+            TTDCpuState cpu;
+            std::memcpy(&cpu, bytes, sizeof(cpu));
+            RestoreCpuState(cpu, static_cast<Z80State*>(_context->pCore->GetZ80()));
+        }
+        else if (kind == kEditChipset && length == sizeof(TTDChipsetState) && _context)
+        {
+            TTDChipsetState chipset;
+            std::memcpy(&chipset, bytes, sizeof(chipset));
+            EmulatorState& st = _context->emulatorState;
+            chipset.t_states = st.t_states;           // the machine time is not part of an edit
+            chipset.frame_counter = st.frame_counter;
+            RestoreChipsetState(chipset, &st);
         }
     }
     if (_memory)

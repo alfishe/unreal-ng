@@ -159,15 +159,13 @@ private:
     void ensureHistoryRecording(Emulator& emulator);
     void leaveHistory(Emulator& emulator);
     void leaveHistoryIfBrowsing();
-    // Out-of-band mutation (register/memory/slot/bank write from the debugger):
-    // TTD reconstructs history by deterministic replay, which such edits break.
-    // Both modes: record the marker, then restart recording from the edited
-    // state (history before the edit is dropped). Marker-only handling was
-    // tried for DebuggerLive and is UNSOUND - replay re-executes from the last
-    // checkpoint, so everything between it and the marker would decode as
-    // fabricated execution that never ran (§6.4). Journaling debugger writes
-    // into the TTD log is the Phase-3 fix that removes the wipe.
-    void onDebuggerEdit(Emulator& emulator, const char* what);
+    // Out-of-band mutation (register/memory/slot/bank write from the debugger).
+    // The engine (backend engine) records it as an event with what it changed,
+    // so replay reproduces it and no history is lost (D9). v1 reconstructs
+    // history by deterministic replay, which such edits break: it records the
+    // marker, then restarts recording from the edited state (history before
+    // the edit is dropped; marker-only handling is UNSOUND there, §6.4).
+    void editMachine(Emulator& emulator, const char* what, const std::function<void()>& edit);
     void subscribe();
     void unsubscribe();
     void notify(dzrp::BreakReason reason, uint16_t addr);

@@ -310,7 +310,7 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 - All tool edits already go through `Emulator::EditMemoryFromTool` (`EMU:680-697`) or the DeZog adapter. Both call `OnToolEdit(source)`.
 - At the present position the edit is recorded as an event with its content (bytes, registers, paging), so replay reproduces it and it is no longer a barrier. The event kind is Phase 3's (`phase-3-replay-inputs-tdd.md`, D24).
 - At a past position (`detached`) the engine first starts a branch at that position, then records the edit as the branch's first event.
-- DeZog's wipe-and-restart (`dezogdebugadapter.cpp:1044-1047`) is deleted.
+- DeZog's wipe-and-restart (`dezogdebugadapter.cpp:1044-1047`) is deleted. Done on the engine (2026-10-05): `DezogDebugAdapter::editMachine` goes through `EditMemoryFromTool`; the payload carries the CPU and the chipset latches too. Until branches (2b), an edit before a paused recording's end ends the recording there instead.
 
 #### 4.3.4 Loading a snapshot is an event (D10, D25, D26)
 

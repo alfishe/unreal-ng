@@ -710,6 +710,7 @@ TEST_F(DezogDebugAdapter_test, ReadFull64KMatchesMemory)
 
 /// region <Instruction history (TTD reverse debugging)>
 
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 
 class DezogHistory_test : public DezogEmulatorFixture
@@ -1279,6 +1280,49 @@ TEST_F(DezogHistory_test, DebuggerEditStartsNewHistorySegment)
         ++valid;
     }
     EXPECT_GT(valid, 0u);  // fresh segment has the post-edit loop's instructions
+    _adapter->resume();
+}
+
+/// The engine (Phase 5, D9): a debugger edit is recorded as an event with what
+/// it changed, so the history before it stays browsable and recording goes on
+class DezogHistoryEngine_test : public DezogHistory_test
+{
+protected:
+    void SetUp() override
+    {
+        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
+        DezogHistory_test::SetUp();
+    }
+    void TearDown() override
+    {
+        DezogHistory_test::TearDown();
+        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
+    }
+};
+
+TEST_F(DezogHistoryEngine_test, DebuggerEditKeepsTheHistory)
+{
+    ttd::TimeTravelController* controller = _emulator->GetContext()->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(2);
+    ASSERT_TRUE(_adapter->getHistoryEntry(3).has_value());
+    const ttd::TTDTimePoint first = controller->GetCheckpoint(0)->time;
+    const size_t events = controller->GetSessionInfo().externalEventCount;
+
+    _adapter->writeMemory(0x8100, {0x00});
+    _adapter->setRegister(dzrp::RegisterId::DE, 0x1234);
+    EXPECT_TRUE(_adapter->isHistoryRecording());
+    EXPECT_EQ(controller->GetCheckpoint(0)->time, first) << "no restart at the edit";
+    EXPECT_EQ(controller->GetSessionInfo().externalEventCount, events + 2) << "each edit is an event";
+    auto e = _adapter->getHistoryEntry(3);
+    ASSERT_TRUE(e.has_value()) << "the instructions before the edit stay browsable";
+    EXPECT_TRUE(isProgramPc(e->regs.pc));
+    EXPECT_EQ(_adapter->getRegisters().de, 0x1234);
+
+    runToJp(1);
+    EXPECT_EQ(controller->GetCheckpoint(0)->time, first);
     _adapter->resume();
 }
 

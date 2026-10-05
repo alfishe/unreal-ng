@@ -171,7 +171,11 @@ replay barrier — tape transport command, WD1793 sector/track write, or a
 memory edit made by a tool (WebAPI, CLI, Lua, Python, DeZog) while
 recording; the response carries `blocking_marker`, and
 `GET /ttd/markers` lists them all), `out_of_range`. Keyboard and mouse input
-are journaled and replayed, so they are not barriers.
+are journaled and replayed, so they are not barriers. On the engine
+(`GET /ttd/status` -> `backend: "engine"`, the default) tape commands, disk
+writes and tool memory / register edits are replayed too and never block a
+seek; only v1 stops at them. A seek before the earliest kept position
+answers `out_of_range` with `earliest` (also in `GET /ttd/status`).
 
 Every scrub pauses the emulator first and leaves it paused at the new
 position; the screen/UI repaint automatically. To continue live execution

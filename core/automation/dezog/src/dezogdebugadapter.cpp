@@ -297,58 +297,56 @@ void DezogDebugAdapter::setRegister(dzrp::RegisterId regId, uint16_t value)
     Z80State* z80 = emulator->GetZ80State();
     if (!z80)
         return;
-    emulator->NoteDebugChange();   // the debugger snapshot's seq
-
     const uint8_t lo = static_cast<uint8_t>(value & 0xFF);
 
-    using R = dzrp::RegisterId;
-    switch (regId)
-    {
-        case R::PC: z80->pc = value; break;
-        case R::SP: z80->sp = value; break;
-        case R::AF: z80->af = value; break;
-        case R::BC: z80->bc = value; break;
-        case R::DE: z80->de = value; break;
-        case R::HL: z80->hl = value; break;
-        case R::IX: z80->ix = value; break;
-        case R::IY: z80->iy = value; break;
-        case R::AF2: z80->alt.af = value; break;
-        case R::BC2: z80->alt.bc = value; break;
-        case R::DE2: z80->alt.de = value; break;
-        case R::HL2: z80->alt.hl = value; break;
-        case R::IM: z80->im = static_cast<uint8_t>(lo > 2 ? 2 : lo); break;
+    editMachine(*emulator, "dezog set register", [&]() {
+        using R = dzrp::RegisterId;
+        switch (regId)
+        {
+            case R::PC: z80->pc = value; break;
+            case R::SP: z80->sp = value; break;
+            case R::AF: z80->af = value; break;
+            case R::BC: z80->bc = value; break;
+            case R::DE: z80->de = value; break;
+            case R::HL: z80->hl = value; break;
+            case R::IX: z80->ix = value; break;
+            case R::IY: z80->iy = value; break;
+            case R::AF2: z80->alt.af = value; break;
+            case R::BC2: z80->alt.bc = value; break;
+            case R::DE2: z80->alt.de = value; break;
+            case R::HL2: z80->alt.hl = value; break;
+            case R::IM: z80->im = static_cast<uint8_t>(lo > 2 ? 2 : lo); break;
 
-        case R::F: z80->f = lo; break;
-        case R::A: z80->a = lo; break;
-        case R::C: z80->c = lo; break;
-        case R::B: z80->b = lo; break;
-        case R::E: z80->e = lo; break;
-        case R::D: z80->d = lo; break;
-        case R::L: z80->l = lo; break;
-        case R::H: z80->h = lo; break;
-        case R::IXL: z80->xl = lo; break;
-        case R::IXH: z80->xh = lo; break;
-        case R::IYL: z80->yl = lo; break;
-        case R::IYH: z80->yh = lo; break;
+            case R::F: z80->f = lo; break;
+            case R::A: z80->a = lo; break;
+            case R::C: z80->c = lo; break;
+            case R::B: z80->b = lo; break;
+            case R::E: z80->e = lo; break;
+            case R::D: z80->d = lo; break;
+            case R::L: z80->l = lo; break;
+            case R::H: z80->h = lo; break;
+            case R::IXL: z80->xl = lo; break;
+            case R::IXH: z80->xh = lo; break;
+            case R::IYL: z80->yl = lo; break;
+            case R::IYH: z80->yh = lo; break;
 
-        case R::F2: z80->alt.f = lo; break;
-        case R::A2: z80->alt.a = lo; break;
-        case R::C2: z80->alt.c = lo; break;
-        case R::B2: z80->alt.b = lo; break;
-        case R::E2: z80->alt.e = lo; break;
-        case R::D2: z80->alt.d = lo; break;
-        case R::L2: z80->alt.l = lo; break;
-        case R::H2: z80->alt.h = lo; break;
+            case R::F2: z80->alt.f = lo; break;
+            case R::A2: z80->alt.a = lo; break;
+            case R::C2: z80->alt.c = lo; break;
+            case R::B2: z80->alt.b = lo; break;
+            case R::E2: z80->alt.e = lo; break;
+            case R::D2: z80->alt.d = lo; break;
+            case R::L2: z80->alt.l = lo; break;
+            case R::H2: z80->alt.h = lo; break;
 
-        case R::R: z80->r_low = lo; break;
-        case R::I: z80->i = lo; break;
+            case R::R: z80->r_low = lo; break;
+            case R::I: z80->i = lo; break;
 
-        default:
-            std::cerr << "[DZRP] setRegister: unsupported register id " << static_cast<int>(regId) << "\n";
-            break;
-    }
-
-    onDebuggerEdit(*emulator, "dezog set register");
+            default:
+                std::cerr << "[DZRP] setRegister: unsupported register id " << static_cast<int>(regId) << "\n";
+                break;
+        }
+    });
 }
 
 /// endregion </Registers>
@@ -387,13 +385,12 @@ void DezogDebugAdapter::writeMemory(uint16_t addr, const std::vector<uint8_t>& d
     if (!memory)
         return;
 
-    for (size_t i = 0; i < data.size(); ++i)
-    {
-        memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), data[i]);
-    }
-
-    if (!data.empty())
-        onDebuggerEdit(*emulator, "dezog write memory");
+    if (data.empty())
+        return;
+    editMachine(*emulator, "dezog write memory", [&]() {
+        for (size_t i = 0; i < data.size(); ++i)
+            memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), data[i]);
+    });
 }
 
 /// endregion </Memory>
@@ -504,24 +501,22 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
             romPage = bank;
 
         if (romPage < MAX_ROM_PAGES)
-        {
-            memory->SetROMPage(romPage, true);
-            onDebuggerEdit(*emulator, "dezog set rom slot");
-        }
+            editMachine(*emulator, "dezog set rom slot", [&]() { memory->SetROMPage(romPage, true); });
         return;
     }
 
     // bank is uint8_t, so every value is < MAX_RAM_PAGES (256); no check needed.
 
-    switch (slot)
-    {
-        case 1: memory->SetRAMPageToBank1(bank); break;
-        case 2: memory->SetRAMPageToBank2(bank); break;
-        case 3: memory->SetRAMPageToBank3(bank, true); break;
-        default: return;
-    }
-
-    onDebuggerEdit(*emulator, "dezog set slot");
+    if (slot < 1 || slot > 3)
+        return;
+    editMachine(*emulator, "dezog set slot", [&]() {
+        switch (slot)
+        {
+            case 1: memory->SetRAMPageToBank1(bank); break;
+            case 2: memory->SetRAMPageToBank2(bank); break;
+            default: memory->SetRAMPageToBank3(bank, true); break;
+        }
+    });
 }
 
 void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data)
@@ -542,11 +537,9 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
     if (!page)
         return;
 
-    size_t len = data.size() < PAGE_SIZE ? data.size() : PAGE_SIZE;
-    std::memcpy(page, data.data(), len);
-
+    const size_t len = data.size() < PAGE_SIZE ? data.size() : PAGE_SIZE;
     if (len > 0)
-        onDebuggerEdit(*emulator, "dezog write bank");
+        editMachine(*emulator, "dezog write bank", [&]() { std::memcpy(page, data.data(), len); });
 }
 
 /// endregion </Banking>
@@ -1021,8 +1014,21 @@ void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
                   << (mgr->GetUnavailableReason().empty() ? "" : ": " + mgr->GetUnavailableReason()) << "\n";
 }
 
-void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)
+void DezogDebugAdapter::editMachine(Emulator& emulator, const char* what, const std::function<void()>& edit)
 {
+    // The engine records the edit as an event carrying what it changed (memory,
+    // registers, paging latches): replay reproduces it and the history before
+    // it stays (D9). The marker, the bytes and the debugger snapshot's seq are
+    // Emulator::EditMemoryFromTool's
+    if (emulator.GetContext() && emulator.GetContext()->pTimeTravelController)
+    {
+        emulator.EditMemoryFromTool(what, edit);
+        return;
+    }
+
+    // v1 - its replay cannot cross the edit: restart recording at the edited state
+    emulator.NoteDebugChange();   // the debugger snapshot's seq
+    edit();
     if (!isHistoryEnabled())
         return;
 

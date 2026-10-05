@@ -793,3 +793,91 @@ TEST_F(TimeTravelController_Test, AQueryWhileRecordingPausesAndRunningGoesOn)
     EXPECT_TRUE(_controller->IsRecording()) << "running on from the paused end records";
     EXPECT_EQ(_controller->GetCheckpointCount(), before + 3);
 }
+
+/// D9 at the present: a tool's edit while recording (registers, memory, the
+/// paging latch) is an event the replay applies. The history before it stays,
+/// and a seek past it lands on what the machine did live after it
+TEST_F(TimeTravelController_Test, AnEditWhileRecordingIsReplayed)
+{
+    EmulatorContext* context = _b->GetContext();
+    Z80* z80 = context->pCore->GetZ80();
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(6, /*skipBreakpoints=*/true);
+    _b->RunTStates(20000, /*skipBreakpoints=*/true);
+    const uint64_t firstFrame = _controller->GetCheckpoint(0)->time.frame;
+    const size_t before = _controller->GetCheckpointCount();
+
+    // The loop stores through HL: the edit moves it into #C000.., which the
+    // paging latch now maps to page 3, and pokes the program's data area
+    _b->EditMemoryFromTool("test edit", [&]() {
+        z80->hl = 0xC123;
+        context->pMemory->DirectWriteToZ80Memory(0x8100, 0x5A);
+        context->pMemory->SetRAMPageToBank3(3, true);
+    });
+    EXPECT_TRUE(_controller->IsRecording()) << "the edit does not restart anything";
+    EXPECT_EQ(_controller->GetCheckpointCount(), before);
+    EXPECT_EQ(_controller->GetCheckpoint(0)->time.frame, firstFrame) << "the history before the edit stays";
+
+    _b->RunTStates(10000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint afterEdit = _controller->CurrentPosition();
+    const MachineState liveAfterEdit = CaptureState(context, *_controller);
+    const uint8_t latchAfterEdit = context->emulatorState.p7FFD;
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    _b->RunTStates(15000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint later = _controller->CurrentPosition();
+    const MachineState liveLater = CaptureState(context, *_controller);
+    _controller->StopRecording();
+
+    auto expectSeekShows = [&](const ttd::TTDTimePoint& at, const MachineState& live, const char* where) {
+        ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, nullptr));
+        ASSERT_TRUE(_controller->SeekTo(at, nullptr)) << where;
+        const MachineState seen = CaptureState(context, *_controller);
+        EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0)
+            << where << ": CPU (HL " << seen.cpu.hl << " vs " << live.cpu.hl << ")";
+        EXPECT_TRUE(seen.ram == live.ram) << where << ": RAM";
+        EXPECT_TRUE(seen.devices == live.devices) << where << ": devices";
+    };
+    ASSERT_NO_FATAL_FAILURE(expectSeekShows(afterEdit, liveAfterEdit, "inside the edit's frame"));
+    EXPECT_EQ(context->emulatorState.p7FFD, latchAfterEdit) << "the paging latch the edit set";
+    ASSERT_NO_FATAL_FAILURE(expectSeekShows(later, liveLater, "frames after the edit"));
+}
+
+/// D9 with D8: an edit at the paused end continues the paused recording and is
+/// recorded; one before it ends the recording where it paused (branches: Step 2b)
+TEST_F(TimeTravelController_Test, AnEditWhilePausedContinuesAtTheEndOrEndsTheRecording)
+{
+    EmulatorContext* context = _b->GetContext();
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(6, /*skipBreakpoints=*/true);
+    _b->RunTStates(20000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint pausedAt = _controller->CurrentPosition();
+
+    // At the paused end
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, nullptr));
+    ASSERT_TRUE(_controller->SeekTo(pausedAt, nullptr));
+    ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    _b->EditMemoryFromTool("test edit", [&]() { context->pMemory->DirectWriteToZ80Memory(0x8100, 0x5A); });
+    EXPECT_TRUE(_controller->IsRecording()) << "the paused recording goes on with the edit";
+    EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused);
+    _b->RunTStates(5000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint afterEdit = _controller->CurrentPosition();
+    const MachineState live = CaptureState(context, *_controller);
+
+    // Before the paused end
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, nullptr));
+    ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
+    const size_t kept = _controller->GetCheckpointCount();
+    _b->EditMemoryFromTool("test edit", [&]() { context->pMemory->DirectWriteToZ80Memory(0x8101, 0xA5); });
+    EXPECT_FALSE(_controller->IsRecording());
+    EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused) << "the recording ended where it paused";
+    EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "and its history stays";
+    const size_t afterStop = _controller->GetCheckpointCount();
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_EQ(_controller->GetCheckpointCount(), afterStop) << "running from the edited past records nothing";
+
+    // The first edit is in the history
+    ASSERT_TRUE(_controller->SeekTo(afterEdit, nullptr));
+    const MachineState seen = CaptureState(context, *_controller);
+    EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0);
+    EXPECT_TRUE(seen.ram == live.ram);
+}
