@@ -1,0 +1,159 @@
+# Symbol exchange: formats
+
+| | |
+|---|---|
+| **Date** | 2026-10-05 |
+| **Status** | Draft for review; every row marked **verify** is checked against the real tool's output before its importer or exporter is written (golden files come from the tool, not from this table) |
+| **Architecture** | [architecture.md](architecture.md) |
+
+## 1. Families
+
+| Family | What it is | How it is read | How it is written |
+|---|---|---|---|
+| **Text** | one symbol per line in a tool's text format | the shared tokenizer splits each line; the format's small line grammar picks the fields | the format's line writer, after the target's name rules |
+| **Script** | a program for another tool that sets names (IDC, IDAPython, a Ghidra script, MAME debugger commands) | where the script is a fixed pattern, read like text; otherwise export only | generated from a template |
+| **Tokenized** | a ZX assembler's own binary source and label table (ALASM, XAS, STORM, GENS, ...), in a file or on a disk image | the format's detokenizer decodes the label table and, where useful, the source lines | optional, after the research (§4) |
+| **Live** | the label table of an assembler or monitor running in the emulated machine | a scanner looks for the table in a read-only copy of the RAM pages and reads it with the tokenized decoder | — |
+| **Native** | the emulator's own lossless file `*.usym.json` | JSON | JSON |
+| **Bundle** | a native or MAP file shipped in `data/symbols/`, chosen by ROM SHA-256 through `data/symbols/manifest.json` | as its format | — |
+
+## 2. What each format can hold (lossiness matrix)
+
+`●` holds it, `○` partly (see the note), `–` cannot hold it. On export, what a format cannot hold follows DT-4 of
+[architecture.md](architecture.md) §6 (fold, comment or drop) and is counted in the report.
+
+| Format | name | CPU address | page | device / other CPU | kind | size | local scope | source line | comment | aliases |
+|---|---|---|---|---|---|---|---|---|---|---|
+| native `*.usym.json` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
+| our MAP | ● | ● | ○ ROM page only (`ROMn:`) | – | ○ `(CODE)` etc. | – | – | – | ● | – |
+| simple SYM / Unreal `user.l` | ● | ● | ○ `PP:XXXX` in `user.l` | – | – | – | – | – | – | – |
+| sjasmplus `.sym` / `--exp` | ● | ● | – | – | ○ all `EQU` | – | ○ `main.loop` | – | – | – |
+| sjasmplus `.sld` | ● | ● | ● page per line | – | ● | – | ● | ● | – | – |
+| z88dk `.map` | ● | ● | – | – | ○ | – | ● local / public | ● | – | – |
+| pasmo symbol output | ● | ● | – | – | ○ | – | – | – | – | – |
+| VICE labels | ● | ● | – | – | – | – | – | – | – | – |
+| MAME commands | ○ as comments | ● | – | – | – | – | – | – | ● | – |
+| IDA IDC / IDAPython | ● | ● | ○ as a segment per page (script decides) | – | ○ code / data | ○ `create_data` | – | – | ● | – |
+| Ghidra script | ● | ● | ○ overlay blocks | – | ○ function / label | – | – | – | ● | – |
+| tokenized (ALASM, ...) | ● | ● | ○ the bank the assembler used | – | ○ | – | ○ | ○ | – | – |
+
+## 3. Catalog
+
+Phase numbers refer to [tdd.md](tdd.md) §10.
+
+| Format id | Family | Import | Export | Detection (content first, extension as hint) | Status | Phase |
+|---|---|---|---|---|---|---|
+| `native` | native | ● | ● | JSON with `"format": "unreal-symbols"` | new | S1 |
+| `unreal-map` | text | ● | ● | lines `[ROMn:]HHHH  NAME  (TYPE) ; comment`, often a `---` banner | existing parser (`ParseMapFile`) | S2 |
+| `simple-sym` | text | ● | ● | lines `HHHH NAME` (also `sos.l`) | existing (`ParseSymFile`) | S2 |
+| `unreal-l` | text | ● | ● | lines `HHHH name` / `PP:HHHH name` (Unreal `user.l`, TDD-DBG-01 §11) | new | S2 |
+| `vice` | text | ● | ● | lines `al C:HHHH .name` | existing (`ParseViceSymFile`) | S2 |
+| `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` | existing (`ParseSJASMSymFile`) | S2 |
+| `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | existing (`ParseZ88DKSymFile`) | S2 |
+| `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` **verify** (`--sym`, `--exp`) | new | S3 |
+| `sjasmplus-sld` | text | ● | – | first line `\|SLD.data.version\|N`, then `\|`-separated records **verify** the field order per SLD version | new | S3 |
+| `sjasmplus-lst` | text | ● | – | the `ListingParser` grammar; labels are the lines that define one | existing (`ListingParser`) | S3 |
+| `pasmo` | text | ● | ● | lines `NAME EQU 0HHHHH` **verify** the option and form | new | S3 |
+| `ida-python` | script | – | ● | — | new | S4 |
+| `ida-idc` | script | ● (fixed `set_name(0xHHHH, "name")` pattern) | ● | `set_name(` / `MakeName(` lines | new | S4 |
+| `ghidra` | script / text | ● | ● | lines `name address [type]` for Ghidra's symbol-import script **verify** | new | S4 |
+| `mame` | script | – | ● | — (debugger command file: `comadd HHHH,name`) **verify** | new | S4 |
+| `cspect-map` | text | ● | ● | sjasmplus `--cspectmap` output **verify** | new | S4 |
+| `alasm` | tokenized + live | ● | optional | after research | research | S6 |
+| `xas` | tokenized + live | ● | optional | after research | research | S7 |
+| `storm`, `gens`, `masm`, `zxasm` | tokenized | ● | optional | after research | research | S8 |
+| `sts` (labels kept by the STS monitor) | live | ● | – | after research | research | S8 |
+
+Tools without a symbol format in this table (for example Fuse) are not targets until someone asks; the registry
+makes adding one a single file.
+
+### 3.1 Text formats, by example
+
+The same three symbols in each text format the emulator reads today or will write (names as each tool needs
+them):
+
+| Format | `PRINT-A-1` (ROM 0, `#0010`) | `PLAYMUS` (RAM 3, `#0000`, shown at `#C000`) | `SCREEN` (`#4000`, any page) |
+|---|---|---|---|
+| native | `{"name":"PRINT-A-1","space":"rom0","offset":16,"kind":"entry"}` | `{"name":"PLAYMUS","space":"ram3","offset":0,"kind":"code"}` | `{"name":"SCREEN","space":"cpu:main","offset":16384,"kind":"data"}` |
+| unreal-map | `ROM0:0010  PRINT-A-1  (CODE)` | `C000  PLAYMUS  (CODE)` (page lost: folded) | `4000  SCREEN  (DATA)` |
+| unreal-l | `00:0010 PRINT-A-1` **verify** how `user.l` numbers ROM pages | `03:0000 PLAYMUS` | `4000 SCREEN` |
+| vice | `al C:0010 .PRINT_A_1` | `al C:C000 .PLAYMUS` (folded) | `al C:4000 .SCREEN` |
+| sjasmplus-sym | `PRINT_A_1: EQU 0x00000010` | `PLAYMUS: EQU 0x0000C000` (folded) | `SCREEN: EQU 0x00004000` |
+| ida-idc | `set_name(0x0010, "PRINT_A_1");` | `set_name(0xC000, "PLAYMUS");` (or in a `RAM3` segment) | `set_name(0x4000, "SCREEN");` |
+
+The rows marked **verify** are written down from documentation and memory; the golden files produced by the real
+tools decide.
+
+### 3.2 Name rules per target (DT-3)
+
+| Target | Allowed | First char | Case | Max length | Reserved |
+|---|---|---|---|---|---|
+| native, unreal-map, simple-sym, unreal-l | any printable except blank | any | kept | none | none |
+| sjasmplus / sjasm / pasmo | `A-Z a-z 0-9 _ . ? ! # @` **verify** | letter, `_`, `.` (local) | kept | none | instructions, registers, directives |
+| z88dk | C identifier + `_` | letter, `_` | kept | none | — |
+| VICE | **verify** | `.` prefix written by the exporter | kept | — | — |
+| IDA | C identifier + `@ $ ? .` **verify** | not a digit | kept | 511 **verify** | — |
+| Ghidra | no blanks **verify** | — | kept | — | — |
+
+## 4. Tokenized ZX assemblers: research plan
+
+**What tokenized means here.** ZX assemblers keep their source in RAM in a compact binary form: mnemonics,
+registers and often whole operands are single-byte codes (tokens), labels are numbers into a separate **label
+table**, and line numbers or lengths are binary. The same form is saved to disk (a TR-DOS file, often type `C` or
+the assembler's own letter). Reading labels from such a file or from the running assembler means knowing three
+things per assembler and version: where the label table is, how one entry is laid out (name encoding, value,
+flags, link to the next entry), and how the source refers to labels.
+
+**Nothing here is coded from guesses** (proposal P-5). No surviving Unreal source implements its XAS / ALASM import
+([debugger additions TODO](../2026-10-04-debugger-additions/TODO.md) A9), so each format is researched first:
+
+| Step | What | Output |
+|---|---|---|
+| R1 | Collect the assembler releases and their manuals (local ZX collection: ALASM 4.2-5.0, XAS 5.05 / 7.43, STORM 1.3, GENS 3 / 4, MONS-GENS, ZEUS-GENS, MASM, ZX ASM docs) | a materials index outside the repo |
+| R2 | Run the assembler in the emulator (TTD recording on), type or load a known source: labels of every kind (global, local, `EQU`, long names, names with every allowed character), assemble | a session file |
+| R3 | Dump RAM before / after defining each label; diff; find the table and the entry layout; confirm with a second source | `research-<assembler>.md` in this folder: table location rule, entry layout with offsets, name encoding, value width, flags, chain / hash / sorted, end marker, version differences |
+| R4 | Save the source to a TR-DOS disk; read the file; find the same structures | the file layout in the same document |
+| R5 | Golden corpus: the disk files and RAM dumps of R2 / R4 with the expected native JSON | `testdata/symbols/<assembler>/` |
+| R6 | Importer (file + live scanner) against the corpus | code |
+
+What is already known (from the Unreal 0.37 manual): XAS 7 keeps its labels in bank 6 (bank `#46` on a Pentagon with
+more than 128K); ALASM 4.42-5.0x can be anywhere in 128K RAM (pages 1-7, so a scan); with the STS monitor, STS's
+labels are in bank 7 (`#47`). These rules decide where the live scanners look first; the layouts come from R3.
+
+**Detection of a tokenized file** uses what the research finds: the TR-DOS file type and name extension, a header
+signature, and a table that parses consistently (every entry's name in the allowed character set, values in range,
+the chain ending where the table says).
+
+**Live scanning** (proposal P-6) runs on request only. The scanner copies the RAM pages at a coherent moment and
+scores candidate positions; with several candidates the caller picks one (`--at ram6:#0000`).
+
+## 5. The native file `*.usym.json`
+
+```json
+{
+  "format": "unreal-symbols",
+  "version": 1,
+  "generator": "unreal-ng 2026-10-05",
+  "sets": [
+    {
+      "id": "game.sym",
+      "title": "Game symbols (sjasmplus)",
+      "origin": { "kind": "file", "where": "game.sym", "sha256": "3f1c..." },
+      "priority": 100,
+      "enabled": true,
+      "symbols": [
+        { "name": "PLAYMUS", "space": "ram3", "offset": 0, "kind": "code", "size": 412,
+          "module": "music", "source": { "file": "music.asm", "line": 12 },
+          "comment": "plays one frame", "aliases": ["MUS_FRAME"],
+          "provenance": { "importer": "sjasmplus-sld", "raw": "|music.asm|12||3|49152|F|PLAYMUS" } },
+        { "name": "PLAYMUS.loop", "space": "ram3", "offset": 7, "kind": "local",
+          "scope": { "parent": "PLAYMUS" } }
+      ]
+    }
+  ]
+}
+```
+
+Rules: offsets are numbers (no hex strings: exact and fast); a missing field means "unknown" (not zero); `space`
+uses the spellings of [architecture.md](architecture.md) §3.1; unknown fields are kept on import and written back on
+export (forward compatible).
