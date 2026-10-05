@@ -168,6 +168,10 @@ public:
 
     const MultiSoundCardConfig& Config() const { return _config; }
 
+    /// A host MIDI panic at time t: the SAM2695 stops every voice (sam2695::Synth::Panic); its controllers, programs and
+    /// the MIDI stream in progress stay
+    void MidiPanic(uint64_t t);
+
     /// DIP functions and the control mask, live (the CPLD reads its DIP inputs continuously). gsRam stays the
     /// construction value
     void SetOptions(const MultiSoundOptions& options);

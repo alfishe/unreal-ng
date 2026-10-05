@@ -49,6 +49,7 @@ public:
     /// region <ICard>
     uint8_t Peek(uint16_t port, bool& drives) const override;
     void BusReset() override;
+    bool MidiPanic() override;
     void FrameStart() override;
     void FrameEnd(size_t samples) override;
     void SetOutputRate(uint32_t rate) override;

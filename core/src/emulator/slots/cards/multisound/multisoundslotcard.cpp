@@ -165,6 +165,12 @@ void MultiSoundSlotCard::BusReset()
     _card.BusReset(Now());
 }
 
+bool MultiSoundSlotCard::MidiPanic()
+{
+    _card.MidiPanic(Now());
+    return true;
+}
+
 /// endregion </Bus>
 
 /// region <Frames>

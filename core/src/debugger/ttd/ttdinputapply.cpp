@@ -12,6 +12,8 @@
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -29,6 +31,7 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
     devices.network = context->pVirtualNetwork;
     devices.portDecoder = context->pPortDecoder;
+    devices.slotManager = context->pSlotManager;
     return devices;
 }
 
@@ -165,6 +168,17 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
                 return false;
             devices.network->ApplyHostFrame(payload, net->payloadLength);
             break;
+
+        case TTDInputKind::MidiPanic:
+        {
+            bool any = false;
+            if (devices.slotManager)
+            {
+                for (const std::unique_ptr<ICard>& card : devices.slotManager->Cards())
+                    any = card->MidiPanic() || any;
+            }
+            return any;
+        }
     }
     return true;
 }

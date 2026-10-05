@@ -875,6 +875,12 @@ void SynthCore::NoteOff(uint8_t chIndex, uint8_t key, uint32_t offset)
         }
 }
 
+void SynthCore::Panic()
+{
+    for (Voice& v : _voices)
+        v.Kill();
+}
+
 void SynthCore::Describe(SynthReport& out) const
 {
     out.polyphonyLimit = PolyphonyLimit();
@@ -920,6 +926,7 @@ void SynthCore::Describe(SynthReport& out) const
         {
             out.activeVoices++;
             out.channels[v.channel].activeVoices++;
+            out.channels[v.channel].keys[v.midiKey >> 6] |= uint64_t{1} << (v.midiKey & 63);
         }
         else if (v.state == VoiceState::Dying)
             out.fadingVoices++;

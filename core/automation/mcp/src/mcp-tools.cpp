@@ -1315,7 +1315,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
-                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "slots"})
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "slots",
+                               "audio_multisound", "audio_midi"})
     {
         allowed.append(aspect);
     }
@@ -1352,6 +1353,11 @@ void RegisterInspectState(ToolRegistry& registry)
         "its traffic section is the tap of everything every adapter sent and received (records through invoke_api GET "
         "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
         "{action: clear | start (path: a pcapng file, unbounded) | stop | ring}), "
+        "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
+        "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report, DACs, MIDI summary), "
+        "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
+        "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
+        "{action: panic}), "
         "'slots' = the ZX-bus slot report (board, buses with kind / arbitration / retrofit note, every slot's card, "
         "options, adapter, fit real / adapter / unrealistic, state, functions, port claims, media, and the built-in "
         "devices: active, switched off, shadowed by a slot, replaced in their socket; change it with emulator_manage "
@@ -1496,11 +1502,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" &&
-                    aspect != "slots")
+                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, slots"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, slots, audio_multisound, audio_midi"));
                     return;
                 }
             }
@@ -2048,6 +2054,18 @@ void RegisterInspectState(ToolRegistry& registry)
                             const std::string path = aspect == "audio_opl4_fm"    ? "/state/audio/moonsound/fm"
                                                      : aspect == "audio_opl4_pcm" ? "/state/audio/moonsound/pcm"
                                                                                   : "/state/audio/moonsound";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_multisound" || aspect == "audio_midi")
+                        {
+                            // ZX-MultiSound / its MIDI synthesizer via the WebAPI (DeviceState::MultiSound / Midi); 404 = not fitted
+                            const std::string path = aspect == "audio_midi" ? "/state/audio/midi" : "/state/audio/multisound";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -2781,6 +2799,44 @@ void RegisterInspectState(ToolRegistry& registry)
                                             out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
                                                 << ", " << slot["playback_rate_hz"].asDouble() << " Hz, "
                                                 << slot["envelope"]["phase"].asString();
+                                }
+                            }
+                            else if (aspect == "audio_multisound")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_multisound] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_multisound] " << value["card"].asString() << " in " << value["slot"].asString()
+                                        << ", " << value["options"]["text"].asString() << "; FM "
+                                        << (value["logic"]["fm_muted"].asBool() ? "muted" : "on") << ", SAA "
+                                        << (value["saa"]["sound_enabled"].asBool() ? "on" : "off") << ", GS "
+                                        << (value["gs"]["firmware_ready"].asBool() ? "ready" : "booting") << ", MIDI "
+                                        << value["midi"]["bytes_received"].asUInt64() << " byte(s), "
+                                        << value["midi"]["active_voices"].asUInt() << " voice(s)";
+                                    for (const Json::Value& device : value["shadowed_devices"])
+                                        out << "\n  built-in " << device["id"].asString() << ": " << device["state"].asString();
+                                }
+                            }
+                            else if (aspect == "audio_midi")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_midi] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_midi] bank " << value["bank"]["status"].asString() << ", voices "
+                                        << value["active_voices"].asUInt() << "/" << value["polyphony_limit"].asUInt()
+                                        << ", bytes " << value["counters"]["bytes_received"].asUInt64() << ", framing errors "
+                                        << value["counters"]["framing_errors"].asUInt64();
+                                    for (const Json::Value& part : value["parts"])
+                                    {
+                                        if (part["active_voices"].asUInt() == 0)
+                                            continue;
+                                        out << "\n  ch" << part["channel"].asUInt() << " prog " << part["program"].asUInt() << " "
+                                            << part["preset"].asString() << ":";
+                                        for (const Json::Value& note : part["notes"])
+                                            out << " " << note.asString();
+                                    }
                                 }
                             }
                             else if (aspect == "slots")

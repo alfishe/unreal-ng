@@ -25,6 +25,7 @@
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -3523,6 +3524,23 @@ public:
         lua.set_function("audio_covox_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Covox(ctx));
+        });
+        // ZX-MultiSound (DeviceState::MultiSound), its MIDI synthesizer (DeviceState::Midi) and the MIDI panic
+        // (MidiControl: every voice stops, a TTD live input); unavailable / (false, reason) without the card
+        lua.set_function("multisound_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::MultiSound(ctx));
+        });
+        lua.set_function("midi_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Midi(ctx));
+        });
+        lua.set_function("midi_panic", [this]() -> std::tuple<bool, std::string> {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (!ctx)
+                return {false, "no emulator selected"};
+            const MidiControlReply reply = MidiControl::Execute(ctx, "panic");
+            return {reply.ok, reply.message};
         });
         // MoonSound: overview, or part "fm" / "pcm"
         lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {

@@ -27,7 +27,8 @@ constexpr uint32_t kMaxOutputRate = 192000;
 enum class EventKind : uint8_t
 {
     Byte,
-    Reset
+    Reset,
+    Panic   // every voice of every part stops (Synth::Panic)
 };
 
 struct Event
@@ -110,6 +111,11 @@ struct Synth::Impl
 
     void Apply(const Event& e, uint32_t offset)
     {
+        if (e.kind == EventKind::Panic)
+        {
+            core.Panic();
+            return;
+        }
         if (e.kind == EventKind::Reset)
         {
             core.PowerOn();
@@ -251,6 +257,13 @@ void Synth::Reset(uint64_t t)
     d.parser.ClearCounters();
     d.droppedBusy = d.droppedQueueFull = 0;
     d.Enqueue(d.SampleAt(t), 0, EventKind::Reset);
+}
+
+void Synth::Panic(uint64_t t)
+{
+    Impl& d = *_impl;
+    d.AdvanceUart(t);
+    d.Enqueue(d.SampleAt(t), 0, EventKind::Panic);
 }
 
 void Synth::WriteLine(uint64_t t, bool level)

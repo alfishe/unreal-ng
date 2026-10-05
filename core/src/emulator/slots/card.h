@@ -104,6 +104,13 @@ public:
     }
     /// endregion </Bus>
 
+    /// A host MIDI panic (the TTD input MidiPanic, applied at an instruction boundary): the card's MIDI synthesizer
+    /// stops every voice. False: the card has no MIDI synthesizer
+    virtual bool MidiPanic()
+    {
+        return false;
+    }
+
     /// region <Frames and audio (SoundManager)>
     virtual void FrameStart()
     {

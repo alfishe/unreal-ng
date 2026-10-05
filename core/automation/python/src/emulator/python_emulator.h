@@ -13,6 +13,7 @@
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
@@ -2739,6 +2740,21 @@ namespace PythonBindings
             .def("audio_covox_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Covox(self.GetContext()));
             }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
+            .def("multisound_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::MultiSound(self.GetContext()));
+            }, "The ZX-MultiSound card: options, shadowed built-ins, CPLD latches, YM2203 pair (the TSFM report's chips), "
+               "SAA1099, General Sound, DACs, MIDI summary ({'available': False, ...} without the card)")
+            .def("midi_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Midi(self.GetContext()));
+            }, "The MIDI line and the SAM2695 synthesizer: 16 parts (program, preset, volume, pan, voices, notes), "
+               "polyphony, effects, counters, bank")
+            .def("midi_panic", [](Emulator& self) -> py::dict {
+                const MidiControlReply reply = MidiControl::Execute(self.GetContext(), "panic");
+                py::dict d;
+                d["ok"] = reply.ok;
+                d["message"] = reply.message;
+                return d;
+            }, "MIDI panic: every voice of the synthesizer stops (applied at the next instruction boundary, a TTD input)")
             .def("audio_moonsound_state", [](Emulator& self, const std::string& part) -> py::object {
                 if (part == "fm")
                     return StateNodeToPy(DeviceState::MoonSoundFm(self.GetContext()));

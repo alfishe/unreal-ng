@@ -443,6 +443,9 @@ GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, p
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
+GET  /api/v1/emulator/{id}/state/audio/multisound ZX-MultiSound: slot, options, fit, shadowed built-ins, CPLD latches, ym.chips[2] {ssg: the AY chip report, fm: the TSFM chip report}, saa, gs (the GS report), dac[4], midi summary; 404 without the card
+GET  /api/v1/emulator/{id}/state/audio/midi     MIDI line + SAM2695: parts[16] (program, preset, volume, pan, voices, keys / notes sounding), polyphony, effects, counters, bank; 404 without a synthesizer
+POST /api/v1/emulator/{id}/control/audio/midi   {"action": "panic"}: every voice stops (a TTD live input); 404 without a synthesizer, 409 while a TTD replay owns input
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)

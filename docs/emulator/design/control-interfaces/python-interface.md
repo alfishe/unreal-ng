@@ -309,6 +309,14 @@ class Emulator:
         network_inject_frame(link, hex) (a frame towards the card at the next frame boundary;
         ValueError without a gateway / bad hex / unknown link)"""
 
+    def multisound_state(self) -> dict:
+        """ZX-MultiSound card: options, shadowed built-ins, CPLD latches, ym chips {ssg, fm} (the AY / TSFM chip
+        reports), saa, gs (the GS report), dac[4], midi summary; {'available': False, 'description': ...} without it"""
+    def midi_state(self) -> dict:
+        """Its MIDI line and SAM2695: parts[16] (program, preset, volume, pan, active_voices, keys, notes), polyphony,
+        effects, counters, bank"""
+    def midi_panic(self) -> dict:
+        """Every voice stops (applied at the next instruction boundary, a TTD live input): {'ok', 'message'}"""
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).

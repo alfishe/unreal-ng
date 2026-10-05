@@ -103,12 +103,15 @@ enum class TTDInputKind : uint8_t
 
     FrontPanelSwitch,   ///< a front-panel switch operated (key = FrontPanelSwitch, pressed = on), e.g. the Profi's TURBO
 
-    NetFrame            ///< an Ethernet frame from the host LAN for the bridged gateway (network SN6): a network
+    NetFrame,           ///< an Ethernet frame from the host LAN for the bridged gateway (network SN6): a network
                         ///< record like NetEvent's (netIndex), the frame bytes in the payload store
+
+    MidiPanic           ///< MIDI panic from automation / the GUI (ZX-MultiSound MS-6): every slot card's MIDI
+                        ///< synthesizer stops all its voices (sam2695::Synth::Panic); no fields
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::NetFrame;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::MidiPanic;
 
 /// The kinds that carry a network record (netIndex) and payload bytes
 constexpr bool HasNetRecord(TTDInputKind kind)

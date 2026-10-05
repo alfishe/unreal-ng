@@ -15,6 +15,7 @@
 #include <emulator/io/network/networkmanager.h>
 #include <emulator/cpu/core.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/state/devicestate.h>
 #include <json/json.h>
 
@@ -124,6 +125,48 @@ void EmulatorAPI::getStateAudioMoonSound(const HttpRequestPtr& req,
     if (!emulator)
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
     ReplyState(DeviceState::MoonSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/multisound
+void EmulatorAPI::getStateAudioMultiSound(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::MultiSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/midi
+void EmulatorAPI::getStateAudioMidi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Midi(emulator->GetContext()), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/audio/midi  {"action": "panic"}
+/// panic: every voice of the MIDI synthesizer stops (MidiControl), at the next instruction boundary as a TTD live
+/// input; 404 without a synthesizer, 409 while a TTD replay owns the input
+void EmulatorAPI::postControlAudioMidi(const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto json = req->getJsonObject();
+    const std::string action = json ? json->get("action", "").asString() : req->getParameter("action");
+    const MidiControlReply reply = MidiControl::Execute(emulator->GetContext(), action);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/moonsound/{fm|pcm}

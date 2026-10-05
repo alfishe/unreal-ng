@@ -297,6 +297,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundActive, "/api/v1/emulator/state/audio/moonsound", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPartActive, "/api/v1/emulator/state/audio/moonsound/{part}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
+    // ZX-MultiSound and its MIDI synthesizer (api/state_device_api.cpp, DeviceState::MultiSound / Midi, MidiControl)
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMultiSound, "/api/v1/emulator/{id}/state/audio/multisound", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMidi, "/api/v1/emulator/{id}/state/audio/midi", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postControlAudioMidi, "/api/v1/emulator/{id}/control/audio/midi", drogon::Post);
     // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
     ADD_METHOD_TO(EmulatorAPI::getStateIde, "/api/v1/emulator/{id}/state/ide", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateIdeActive, "/api/v1/emulator/state/ide", drogon::Get);
@@ -1063,6 +1067,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioChannels(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                const std::string& id) const;
+
+    // ZX-MultiSound / MIDI (api/state_device_api.cpp)
+    void getStateAudioMultiSound(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void getStateAudioMidi(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postControlAudioMidi(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // ZX-bus slots (api/slots_api.cpp)
     void getSlots(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

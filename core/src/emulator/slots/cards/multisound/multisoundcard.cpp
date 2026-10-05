@@ -339,6 +339,12 @@ uint8_t MultiSoundCard::Peek(uint16_t port, bool& drives) const
     return 0xFF;
 }
 
+void MultiSoundCard::MidiPanic(uint64_t t)
+{
+    _now = std::max(_now, t);
+    _synth->Panic(t);
+}
+
 void MultiSoundCard::BusReset(uint64_t t)
 {
     _now = std::max(_now, t);

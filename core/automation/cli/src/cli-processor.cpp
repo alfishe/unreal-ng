@@ -213,6 +213,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // ZX-bus slots: buses, slots, cards (plug / remove / set restart the machine)
                         {"slots", &CLIProcessor::HandleSlots},
 
+                        // ZX-MultiSound card and its MIDI synthesizer
+                        {"multisound", &CLIProcessor::HandleMultiSound},
+                        {"midi", &CLIProcessor::HandleMidi},
+
                         // CD audio of the ATAPI CD drives
                         {"cdaudio", &CLIProcessor::HandleCdAudio},
 
@@ -740,6 +744,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  slots plug <slot> <card> [opt=val ..] [--replace] [--dry-run] - e.g. plug zxbus.next multisound" << NEWLINE;
     oss << "  slots remove <slot> | set <slot> opt=val .. | gs <gs|gs-lw|neogs> | matrix [table]" << NEWLINE;
     oss << "  slots help             - All verbs and flags" << NEWLINE;
+    oss << NEWLINE;
+    oss << "ZX-MultiSound and MIDI:" << NEWLINE;
+    oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;
+    oss << "  midi [--json]          - MIDI line, bank, 16 parts (program, volume, notes sounding)" << NEWLINE;
+    oss << "  midi panic             - Every voice of the synthesizer stops" << NEWLINE;
     oss << NEWLINE;
     oss << "CD Audio (ATAPI CD drives):" << NEWLINE;
     oss << "  cdaudio [status]       - Disc, tracks, audio status, head, volume of every CD drive" << NEWLINE;

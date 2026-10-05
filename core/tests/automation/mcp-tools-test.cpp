@@ -713,6 +713,59 @@ TEST_F(McpTools_Test, EmulatorManage_CreateWithSlots_PassesTheSet)
     EXPECT_EQ(call->body["slots"]["ay-socket"].asString(), "none");
 }
 
+// The ZX-MultiSound aspects read their WebAPI reports and summarize them; a card that is not fitted is a line, not an
+// error
+TEST_F(McpTools_Test, InspectState_MultiSoundAndMidiAspects)
+{
+    Json::Value card;
+    card["available"] = true;
+    card["card"] = "ZX-MultiSound (UzixLS)";
+    card["slot"] = "zxbus.1";
+    card["options"]["text"] = "dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro";
+    card["logic"]["fm_muted"] = false;
+    card["saa"]["sound_enabled"] = true;
+    card["gs"]["firmware_ready"] = true;
+    card["midi"]["bytes_received"] = 3;
+    card["midi"]["active_voices"] = 1;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/multisound"] = {200, card};
+    Json::Value midi;
+    midi["available"] = true;
+    midi["bank"]["status"] = "loaded";
+    midi["active_voices"] = 1;
+    midi["polyphony_limit"] = 38;
+    midi["counters"]["bytes_received"] = 3;
+    midi["counters"]["framing_errors"] = 0;
+    Json::Value part;
+    part["channel"] = 1;
+    part["program"] = 1;
+    part["preset"] = "Grand Piano";
+    part["active_voices"] = 1;
+    part["notes"].append("C4");
+    midi["parts"].append(part);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/midi"] = {200, midi};
+
+    Json::Value args;
+    args["aspects"].append("audio_multisound");
+    args["aspects"].append("audio_midi");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_multisound] ZX-MultiSound (UzixLS) in zxbus.1, dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro; "
+                               "FM on, SAA on, GS ready, MIDI 3 byte(s), 1 voice(s)"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("[audio_midi] bank loaded, voices 1/38"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ch1 prog 1 Grand Piano: C4"), std::string::npos) << result.text;
+
+    Json::Value missing;
+    missing["message"] = "no ZX-MultiSound card fitted";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/multisound"] = {404, missing};
+    Json::Value one;
+    one["aspects"].append("audio_multisound");
+    result = RunTool(*_registry, "inspect_state", one, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_multisound] no ZX-MultiSound card fitted"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_SlotsAspect_SummarizesTheReport)
 {
     Json::Value report;
