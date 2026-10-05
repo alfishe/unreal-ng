@@ -286,6 +286,28 @@ TEST_F(PortDecoder_TSConf_Test, BetaPortsGatedByDosOrVgOpen)
     EXPECT_EQ(_decoder->ClassifyPort(0x009F), PortDecoder_TSConf::PortArm::ZxBus) << "there is no #9F";
 }
 
+/// #xxF7 belongs to the mainboard outside DOS, whatever A8 ([V] zports.v:330 porthit (loa == PORTF7) && !dos;
+/// :474-475 any other #xxF7 reads #FF), and to the ZX-Bus inside DOS - except the CMOS ports with A8 = 1 inside
+/// vdos (portf7_wr / portf7_rd allow vdos, :720-721). A8 = 0 went to the ZX-Bus outside DOS and A8 = 1 stayed
+/// on the mainboard in DOS (TS-Conf audit, memory-ports B5)
+TEST_F(PortDecoder_TSConf_Test, GlukPortOwnershipFollowsDos)
+{
+    TsConfState& ts = _decoder->GetState();
+    EXPECT_EQ(_decoder->ClassifyPort(0xFEF7), PortDecoder_TSConf::PortArm::Gluk) << "A8 = 0 outside DOS";
+    EXPECT_EQ(In(0xFEF7), 0xFF);
+    Out(0xEEF7, 0x80);  // A8 = 0: not #EFF7
+    EXPECT_EQ(ts.eff7, 0x00);
+    EXPECT_EQ(_decoder->ClassifyPort(0xBFF7), PortDecoder_TSConf::PortArm::Gluk);
+    ts.dos = 1;
+    EXPECT_EQ(_decoder->ClassifyPort(0xBFF7), PortDecoder_TSConf::PortArm::ZxBus) << "in DOS";
+    EXPECT_EQ(_decoder->ClassifyPort(0xFEF7), PortDecoder_TSConf::PortArm::ZxBus);
+    ts.vdos = 1;
+    EXPECT_EQ(_decoder->ClassifyPort(0xBFF7), PortDecoder_TSConf::PortArm::Gluk) << "the CMOS inside vdos";
+    EXPECT_EQ(_decoder->ClassifyPort(0xBEF7), PortDecoder_TSConf::PortArm::ZxBus) << "A8 = 0 inside vdos";
+    ts.vdos = 0;
+    ts.dos = 0;
+}
+
 /// JOY-5 (TS-Conf): #1F outside DOS answers the joystick device; with DOS open it is the VG93 again
 TEST_F(PortDecoder_TSConf_Test, JOY5_JoystickAtPort1F)
 {

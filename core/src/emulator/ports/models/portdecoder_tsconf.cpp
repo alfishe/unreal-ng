@@ -342,7 +342,11 @@ PortDecoder_TSConf::PortArm PortDecoder_TSConf::ClassifyPort(uint16_t port) cons
         case 0xFF:
             return fdcOpen ? PortArm::Fdc : PortArm::ZxBus;
         case 0xF7:
-            return (port & 0x0100) ? PortArm::Gluk : PortArm::ZxBus;
+            // Outside DOS the mainboard owns every #xxF7 ([V] zports.v:330 porthit && !dos; A8 = 0 reads #FF,
+            // :474-475); in DOS the ZX-Bus, but the CMOS ports (A8 = 1) still reach the AVR inside vdos (:720-721)
+            if (!_ts.dos || (_ts.vdos && (port & 0x0100)))
+                return PortArm::Gluk;
+            return PortArm::ZxBus;
         case 0xDF:
             return PortArm::Mouse;
         case 0x57:
@@ -862,7 +866,7 @@ uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
     // Only the data port (#BFF7, A14 = 0) answers. Inside vdos the AVR gets the read (portf7_rd allows vdos,
     // [V] zports.v:721) but the FPGA does not drive the bus: porthit takes #xxF7 only while !dos (:330), and vdos
     // is always in DOS - the CPU reads #FF
-    if ((port & 0x4000) == 0 && CmosReachable())
+    if ((port & 0x0100) && (port & 0x4000) == 0 && CmosReachable())  // portf7_rd needs A8 = 1 (zports.v:721)
     {
         const uint8_t value = _evoAvr.ReadData();
         return _ts.dos ? 0xFF : value;
@@ -872,6 +876,9 @@ uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
 
 void PortDecoder_TSConf::DecodeF7Out(uint16_t port, uint8_t value)
 {
+    if (!(port & 0x0100))
+        return;  // portf7_wr needs A8 = 1 ([V] zports.v:720): the mainboard takes A8 = 0 and does nothing
+
     // Gating as latched before this cycle
     const bool cmos = CmosReachable();
 
