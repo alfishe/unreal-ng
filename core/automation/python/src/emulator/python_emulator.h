@@ -4,6 +4,7 @@
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/media/sectorwrite.h"
+#include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -966,10 +967,27 @@ namespace PythonBindings
             }, "Long-poll: block until the debugger snapshot's seq moves past `since` (default: the current one) or "
                "timeout_ms (at most 60000) passes -> dict {seq, changed, state, pause}",
                py::arg("since") = py::none(), py::arg("timeout_ms") = 10000)
-            .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory) -> py::object {
+            .def("pc_history", [](Emulator& self, unsigned depth) -> py::object {
+                const PcHistory::Result result = PcHistory::Report(&self, depth);
+                if (result.busy)
+                    throw std::runtime_error(result.error);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                return StateNodeToPy(result.report);
+            }, "PC history (debugger additions tdd §7): the newest instructions the CPU started with their window's page "
+               "-> dict {armed, started_now, total, capacity, entries [{address, kind, page}]}; the first call starts "
+               "recording (costs nothing until then)", py::arg("depth") = 32)
+            .def("pc_history_arm", [](Emulator& self, bool on) {
+                const std::string error = PcHistory::SetArmed(&self, on);
+                if (!error.empty())
+                    throw std::runtime_error(error);
+            }, "Start (empty) or stop the PC history", py::arg("on"))
+            .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory,
+                                      unsigned pchist) -> py::object {
                 DebugSnapshot::Options options;
                 options.disasm = std::min(disasm, 100u);
                 options.stack = stack;
+                options.pchist = pchist;
                 options.memory = memory;
                 options.rawBytes = true;
                 DebugSnapshot::Result result = DebugSnapshot::Build(&self, options);
@@ -1002,7 +1020,8 @@ namespace PythonBindings
             }, "One coherent debugger snapshot (core DebugSnapshot, GET /debug/snapshot): seq, state, pause, consistency, "
                "regs, prev_regs, pages, stack, time, disasm, memory windows ('cpu:0x8000:256', 'ram5:0:6912') with their "
                "bytes; ValueError when refused",
-               py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>())
+               py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>(),
+               py::arg("pchist") = 0)
             .def("mem_read_bytes", [](Emulator& self, uint32_t addr, uint32_t len, const std::string& space) -> py::bytes {
                 const MemoryRead::Result read = MemoryRead::Bytes(self.GetContext(), space, addr, len);
                 if (!read.error.empty())

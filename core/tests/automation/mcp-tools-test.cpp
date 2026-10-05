@@ -701,6 +701,27 @@ TEST_F(McpTools_Test, InspectState_SnapshotAspect_OneRequest)
     EXPECT_TRUE(result.structured.isMember("snapshot"));
 }
 
+TEST_F(McpTools_Test, InspectState_PcHistoryAspect)
+{
+    Json::Value history;
+    history["armed"] = true;
+    history["started_now"] = false;
+    history["total"] = 7;
+    Json::Value entry;
+    entry["address"] = 0xC000;
+    entry["kind"] = "ram";
+    entry["page"] = 32;
+    history["entries"].append(entry);
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/pchist?depth=4"] = {200, history};
+
+    Json::Value args;
+    args["aspects"].append("pchist");
+    args["count"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[pchist] 1 of 7: C000 ram32"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};

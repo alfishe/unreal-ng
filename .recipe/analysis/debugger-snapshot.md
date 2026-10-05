@@ -16,6 +16,7 @@ memory reads come as **raw bytes**. Design:
 | One redraw of a debugger window | the snapshot (`disasm`, `stack`, `memory` windows as needed) |
 | "Did anything change since my last redraw?" | the snapshot's `seq`: equal = nothing changed |
 | "Tell me when it changes" (no WebSocket) | `GET /debug/wait?since=<seq>` (long-poll) |
+| "How did it get here?" | the PC history: `GET /debug/pchist?depth=32` or the snapshot's `pchist=32` (address + page per instruction) |
 | What changed in the registers | `regs` vs `prev_regs` (the registers at the previous stop) |
 | A whole 64K or page dump for a tool | `format=binary` on the memory reads (WebAPI), `mem_read_bytes` (Lua / Python), `memory save` (CLI) |
 
@@ -65,6 +66,19 @@ curl -s "$BASE/emulator/$EMU_ID/debug/wait?since=42&timeout_ms=5000" | jq -c .
 MCP `control_execution {"action":"wait","since":42,"timeout_ms":5000}`, CLI `debug-wait 42 --timeout 5000`, Lua
 `debug_wait(42, 5000)`, Python `emu.debug_wait(since=42, timeout_ms=5000)`. A 503 answer means no
 coherent moment came within 500 ms (the emulator was being stepped from another client): ask again.
+
+## PC history
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/debug/pchist?depth=8" | jq -c '.entries[] | [.address, .kind, .page]'
+# The first read starts recording ("started_now": true): step or run, then read again. Stop it when done:
+curl -s -X POST "$BASE/emulator/$EMU_ID/debug/pchist" -H 'Content-Type: application/json' -d '{"enabled":false}'
+```
+
+One entry per instruction the CPU starts (not per prefix; an accepted interrupt adds none), newest first, the newest
+1024 kept. While it records, every instruction costs a little; stopped, it costs nothing. MCP `inspect_state
+{"aspects":["pchist"],"count":8}`, CLI `pchist 8`, Lua `pc_history(8)`, Python `emu.pc_history(depth=8)`, Qt
+debugger toolbar "PC history".
 
 ## Lua / Python / CLI
 

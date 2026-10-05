@@ -746,6 +746,10 @@ emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 # breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
 
+# PC history: the newest instructions with their window's page; the first call starts recording
+h = emu.pc_history(depth=16)                  # dict {armed, started_now, total, capacity, entries [{address, kind, page}]}
+emu.pc_history_arm(False)                     # stop (True: restart empty); emu.debug_snapshot(pchist=16) carries it too
+
 # Long-poll: block (GIL released) until the debugger snapshot's seq moves past `since` (default: now) or the timeout
 w = emu.debug_wait(since=snap["seq"], timeout_ms=5000)   # dict {seq, changed, state, pause}
 # ValueError for a bad port (0..0xFFFF) or value (0..0xFF); RuntimeError when no coherent moment came (503 case)

@@ -316,10 +316,57 @@ GET /api/v1/emulator/{id}/debug/wait?since=42&timeout_ms=5000
 while another thread pauses a running machine returns `changed` with reason `pause`; `since` already behind
 answers at once. MCP unit test for `wait`; WebAPI live: a wait, then a pause from another request ends it.
 
-## 7. The rest (outline; designed when reached)
+## 7. E2: PC history with pages
+
+### 7.1 The problem in one example
+
+A TS-Conf program jumps into code paged in at `#C000` and crashes. The TUI's "PC hist" panel (TDD-DBG-02 §4.11)
+shows the last instructions before the stop, each with the page its window showed, so "C000 ram32" and "C000 ram33"
+are told apart. No server data existed for it.
+
+```text
+GET /api/v1/emulator/{id}/debug/pchist?depth=4
+-> {"armed":true,"started_now":false,"total":5123,"capacity":1024,
+    "entries":[{"address":49155,"kind":"ram","page":32},{"address":49152,"kind":"ram","page":32}, ...]}
+```
+
+### 7.2 Design
+
+- **What is recorded**: one entry per instruction the CPU starts - its address and the physical page (kind and
+  number) of the 16K window it lies in, at that moment. An accepted interrupt is not an instruction (no entry); a
+  prefix is part of its instruction (one entry; the original Unreal debugger counted every M1 fetch, prefixes
+  included - noise in a history). Pages for every machine, not only TS-Conf.
+- **The ring**: the newest 1024 entries (`PcHistory`, owned by the debug manager).
+- **Cost**: nothing until a debugger asks. `PcHistory::Arm(true)` raises the step-work bit `kStepWorkPcHistory`
+  (the combined gate every step already loads, performance guidelines "combined gate"); only then does
+  `Z80::StepInstructionWithWork` call `Record`. A machine that already takes the work path (TS-Conf, Sprinter, ATM3,
+  Profi ...) pays one more bit test per step while the history is off - measured by A/B (7.4).
+- **Arming**: the first read arms it (`started_now` says the entries start now); `POST /debug/pchist
+  {"enabled": false}` stops it again, `true` restarts it empty. Reads happen at a coherent moment.
+- **In the snapshot**: `pchist=N` adds the same report, so the TUI still repaints with one request.
+
+| Surface | Form |
+|---|---|
+| WebAPI | `GET /debug/pchist?depth=`, `POST /debug/pchist {"enabled"}`, `GET /debug/snapshot?pchist=` |
+| MCP | `inspect_state` aspect `pchist` (`count`), `snapshot` with `pchist` |
+| CLI | `pchist [depth]`, `pchist on / off`, `debug-snapshot --pchist N` |
+| Lua | `pc_history([depth])`, `pc_history_arm(on)`, `debug_snapshot{pchist = N}` |
+| Python | `emu.pc_history(depth=32)`, `emu.pc_history_arm(on)`, `emu.debug_snapshot(pchist=N)` |
+| Qt | debugger toolbar "PC history" (opening it starts the recording; Stop ends it) |
+
+### 7.3 Tests
+
+`PcHistory_Test`: off until armed (no step-work bit, nothing recorded), newest first, disarm keeps the entries, the
+ring keeps the newest 1024, the TS-Conf page of window 3, the first report arms it, the snapshot's `pchist` field
+and its limit. MCP `InspectState_PcHistoryAspect`; Qt `PcHistoryDialog_Test`.
+
+### 7.4 A/B benchmark
+
+See the TODO row A7 for the measured rounds.
+
+## 8. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| E2 | PC history with page, `GET /debug/pchist?depth=` | per-instruction ring armed only while a debugger asks for it; A/B benchmark |
 | D9 | `read_write` per window in `/state/paging` for TS-Conf | verify first |
 | E7 | Label import (XAS / ALASM) | low priority |

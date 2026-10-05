@@ -7,6 +7,7 @@
 
 #include "debugger/debugmanager.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/pchistory/pchistory.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
 #include "emulator/cpu/core.h"
@@ -195,6 +196,8 @@ std::string Validate(const Options& options)
 {
     if (options.stack > kMaxStackWords)
         return "stack: at most " + std::to_string(kMaxStackWords) + " words";
+    if (options.pchist > PcHistory::kCapacity)
+        return "pchist: at most " + std::to_string(PcHistory::kCapacity) + " entries";
     if (options.memory.size() > kMaxWindows)
         return "memory: at most " + std::to_string(kMaxWindows) + " windows";
     for (const std::string& window : options.memory)
@@ -306,6 +309,9 @@ StateNode Capture(Emulator* emulator, const Options& options)
     if (const StateNode* dot = beam.find("dot_in_line"))
         time["dot"] = *dot;
     node["time"] = time;
+
+    if (options.pchist && context->pDebugManager)
+        node["pchist"] = context->pDebugManager->GetPcHistory()->ReportNow(options.pchist);
 
     if (options.disasm)
     {

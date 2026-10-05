@@ -11,6 +11,7 @@
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/media/sectorwrite.h"
+#include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -853,6 +854,25 @@ public:
             return {StateNodeToLua(s, DebugSnapshot::Wait(emulator, from, timeout)), sol::make_object(s, sol::lua_nil)};
         });
 
+        // PC history (debugger additions tdd §7): pc_history([depth]) -> {armed, started_now, total, capacity, entries
+        // [{address, kind, page}]} | nil, error (the first call starts recording); pc_history_arm(on) -> true | nil, error
+        lua.set_function("pc_history", [this](sol::this_state s, sol::optional<unsigned> depth) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const PcHistory::Result result = PcHistory::Report(emulator, depth.value_or(32));
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {StateNodeToLua(s, result.report), sol::make_object(s, sol::lua_nil)};
+        });
+        lua.set_function("pc_history_arm", [this](sol::this_state s, bool on) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            const std::string error = emulator ? PcHistory::SetArmed(emulator, on) : std::string("no emulator");
+            if (!error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
+        });
+
         lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator)
@@ -863,6 +883,7 @@ public:
             {
                 options.disasm = std::min<unsigned>(opts->get_or("disasm", 0u), 100u);
                 options.stack = opts->get_or("stack", 8u);
+                options.pchist = opts->get_or("pchist", 0u);
                 if (sol::optional<sol::table> windows = opts->get<sol::optional<sol::table>>("memory"))
                     for (auto& pair : *windows)
                         if (pair.second.is<std::string>())

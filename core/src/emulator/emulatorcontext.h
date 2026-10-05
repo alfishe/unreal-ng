@@ -272,7 +272,8 @@ public:
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
         kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
         kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
-        // Next free: 1u << 6
+        kStepWorkPcHistory = 1u << 6,        ///< a debugger records the PC history (PcHistory::Arm)
+        // Next free: 1u << 7
     };
     std::atomic<uint32_t> stepWork{0};
 

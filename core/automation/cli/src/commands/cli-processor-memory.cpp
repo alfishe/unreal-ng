@@ -5,6 +5,7 @@
 #include "cli-memory-region.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -1932,6 +1933,50 @@ void CLIProcessor::HandlePortOut(const ClientSession& session, const std::vector
     session.SendResponse(std::string(text) + NEWLINE);
 }
 
+// HandlePcHistory - pchist [depth] | pchist on | off: the PC history, newest first (core PcHistory, the WebAPI
+// GET / POST /debug/pchist); the first read starts recording
+void CLIProcessor::HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    if (!args.empty() && (args[0] == "on" || args[0] == "off"))
+    {
+        const std::string error = PcHistory::SetArmed(emulator.get(), args[0] == "on");
+        session.SendResponse((error.empty() ? std::string("PC history ") + (args[0] == "on" ? "started (empty)" : "stopped")
+                                            : "pchist: " + error) + NEWLINE);
+        return;
+    }
+    size_t depth = 16;
+    try
+    {
+        if (!args.empty())
+            depth = std::stoul(args[0], nullptr, 0);
+    }
+    catch (const std::exception&)
+    {
+        session.SendResponse("Usage: pchist [depth] | pchist on | pchist off" + std::string(NEWLINE));
+        return;
+    }
+    const PcHistory::Result result = PcHistory::Report(emulator.get(), depth);
+    if (!result.error.empty())
+    {
+        session.SendResponse("pchist: " + result.error + NEWLINE);
+        return;
+    }
+    std::ostringstream ss;
+    const StateNode& report = result.report;
+    ss << "PC history: " << report.find("entries")->items.size() << " of " << report.find("total")->i
+       << (report.find("started_now")->b ? " (recording started now)" : "") << NEWLINE;
+    for (const StateNode& entry : report.find("entries")->items)
+        ss << "  " << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << entry.find("address")->i
+           << "  " << entry.find("kind")->s << std::dec << entry.find("page")->i << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
 // HandleDebugWait - debug-wait [since] [--timeout ms]: long-poll on the debugger snapshot's seq (core
 // DebugSnapshot::Wait, the WebAPI GET /debug/wait)
 void CLIProcessor::HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args)
@@ -1994,9 +2039,11 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
                 options.stack = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
             else if (args[i] == "--memory" && value)
                 options.memory.push_back(args[++i]);
+            else if (args[i] == "--pchist" && value)
+                options.pchist = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
             else
             {
-                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]..." + std::string(NEWLINE));
+                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N]" + std::string(NEWLINE));
                 return;
             }
         }
@@ -2057,6 +2104,15 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
         if (const StateNode* words = stack->find("words"))
             for (const StateNode& w : words->items)
                 o << " " << std::setw(4) << w.i;
+        o << NEWLINE;
+    }
+    if (const StateNode* history = s.find("pchist"))
+    {
+        o << "PC history:";
+        if (const StateNode* entries = history->find("entries"))
+            for (const StateNode& e : entries->items)
+                o << " " << std::hex << std::setw(4) << num(&e, "address") << std::dec << ":" << text(&e, "kind")
+                  << num(&e, "page");
         o << NEWLINE;
     }
     if (const StateNode* code = s.find("disasm"))

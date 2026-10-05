@@ -395,6 +395,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getDebugSnapshot, "/api/v1/emulator/{id}/debug/snapshot", drogon::Get);
     // Long-poll: answers when the snapshot's seq moves past `since` (debugger additions tdd §6)
     ADD_METHOD_TO(EmulatorAPI::getDebugWait, "/api/v1/emulator/{id}/debug/wait", drogon::Get);
+    // PC history with pages (debugger additions tdd §7)
+    ADD_METHOD_TO(EmulatorAPI::getPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
 
@@ -1307,6 +1310,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           const std::string& id) const;
     void getDebugWait(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
+    void getPcHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void postPcHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
     void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,

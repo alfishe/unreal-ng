@@ -25,6 +25,7 @@
 #include <emulator/memory/memorymap.h>
 #include <debugger/debugmanager.h>
 #include <debugger/memory/memoryread.h>
+#include <debugger/pchistory/pchistory.h>
 #include <debugger/ports/portwrite.h>
 #include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/breakpoints/breakpointmanager.h>
@@ -2597,8 +2598,8 @@ void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void
         out = static_cast<unsigned>(value);
         return true;
     };
-    if (!number("disasm", options.disasm) || !number("stack", options.stack))
-        return reply(HttpStatusCode::k400BadRequest, "disasm and stack are unsigned numbers");
+    if (!number("disasm", options.disasm) || !number("stack", options.stack) || !number("pchist", options.pchist))
+        return reply(HttpStatusCode::k400BadRequest, "disasm, stack and pchist are unsigned numbers");
     // memory may repeat (memory=a&memory=b) and take a comma list: read the raw query, not the parameter map
     const std::string& query = req->query();
     size_t at = 0;
@@ -2751,6 +2752,69 @@ void EmulatorAPI::getDebugWait(const HttpRequestPtr& req, std::function<void(con
         addCorsHeaders(resp);
         waiter->callback(resp);
     });
+}
+
+/// @brief GET /api/v1/emulator/{id}/debug/pchist?depth=32 - the PC history, newest first (debugger additions tdd §7):
+/// {armed, started_now, total, capacity, entries [{address, kind, page}]}. The first read arms it (entries from then
+/// on); recording costs the emulation nothing until then
+void EmulatorAPI::getPcHistory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    uint64_t depth = 32;
+    const std::string text = req->getParameter("depth");
+    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!text.empty() && (!StringHelper::TryParseUInt64(text, depth) || depth > PcHistory::kCapacity))
+        return reply(HttpStatusCode::k400BadRequest, "depth is 0.." + std::to_string(PcHistory::kCapacity));
+    const PcHistory::Result result = PcHistory::Report(emulator.get(), static_cast<size_t>(depth));
+    if (!result.error.empty())
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.report));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/debug/pchist {"enabled": true | false} - start (empty) or stop the PC history
+void EmulatorAPI::postPcHistory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    const auto json = req->getJsonObject();
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    if (!json || !json->isMember("enabled") || !(*json)["enabled"].isBool())
+    {
+        code = HttpStatusCode::k400BadRequest;
+        body["error"] = "Bad Request";
+        body["message"] = "body must be {\"enabled\": true | false}";
+    }
+    else
+    {
+        const bool on = (*json)["enabled"].asBool();
+        const std::string error = PcHistory::SetArmed(emulator.get(), on);
+        if (error.empty())
+            body["armed"] = on;
+        else
+        {
+            code = HttpStatusCode::k503ServiceUnavailable;
+            body["error"] = "Service Unavailable";
+            body["message"] = error;
+        }
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

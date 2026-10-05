@@ -588,6 +588,10 @@ page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 -- breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 ok, err = port_out(0x13AF, 0x20)            -- TS-Conf: RAM page #20 into window 3 -> true
 
+-- PC history: the newest instructions with their window's page; the first call starts recording
+h = pc_history(16)                          -- {armed, started_now, total, capacity, entries = {{address, kind, page}, ...}}
+pc_history_arm(false)                       -- stop (true: restart empty); debug_snapshot{pchist = 16} carries it too
+
 -- Long-poll: block until the debugger snapshot's seq moves past `since` (default: now) or the timeout (ms)
 w = debug_wait(snap.seq, 5000)              -- {seq, changed, state, pause = {reason, breakpoint_id, address}}
 ok, err = port_out(0x7FFD, 256)             -- nil, "bad value '256' (0..#FF)"
