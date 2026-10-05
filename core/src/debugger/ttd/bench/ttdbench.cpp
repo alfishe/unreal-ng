@@ -15,6 +15,7 @@
 #include "common/filehelper.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/engine/ttdsessionfile.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/config.h"
@@ -246,7 +247,7 @@ uint32_t MeasuredFrames(const Case& c, const Options& options)
 void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine* engine,
                std::vector<double>& frameUs, std::vector<double>* captureUs, CaptureWork* work = nullptr)
 {
-    TimeTravelManager* ttd = emulator.GetContext()->pTimeTravelManager;
+    ITimeTravelHooks* ttd = emulator.GetContext()->pTimeTravelHooks;   // whichever records
     const uint32_t frames = MeasuredFrames(c, options);
     size_t nextInput = 0;
     frameUs.reserve(frames);
@@ -469,6 +470,193 @@ private:
 };
 
 /// endregion </Engine v1>
+
+/// region <Engine: the controller>
+
+/// The engine as the application runs it since the Phase 5 switch: the
+/// TimeTravelController records, seeks and saves on its own, with no v1 in the
+/// frame (PR-1 on the engine alone). Wired onto the machine the way
+/// Emulator::Init wires it (hooks, write sink, pTimeTravelController)
+class EngineController final : public Engine
+{
+public:
+    ~EngineController() override { Unwire(); }
+
+    std::string Name() const override { return "controller"; }
+
+    bool Start(Emulator& emulator, Mode mode, std::string& error) override
+    {
+        if (!Wire(emulator, error))
+            return false;
+        _ctl->SetEnableWriteJournal(mode != Mode::NoJournal);
+        _ctl->SetEnableCoverageIndex(mode == Mode::JournalCoverage);
+        if (!_ctl->StartRecording())
+        {
+            error = "StartRecording refused";
+            return false;
+        }
+        return true;
+    }
+
+    void Stop() override
+    {
+        if (_ctl)
+            _ctl->StopRecording();
+    }
+
+    uint64_t LastCaptureNs() const override { return _ctl ? _ctl->GetPerfCounters().lastCaptureNs : 0; }
+
+    CaptureWork LastCaptureWork() const override
+    {
+        CaptureWork w;
+        if (!_ctl)
+            return w;
+        const TTDEngineCaptureWork& e = _ctl->GetEngine().LastCaptureWork();
+        w.deltaBaseBytes = e.deltaBaseBytes;
+        w.deviceBlobBytes = e.deviceBlobBytes;
+        w.deviceStateBytes = e.deviceStateBytes;
+        w.compressCalls = e.compressCalls;
+        w.compressInputBytes = e.compressInputBytes;
+        w.bytesScanned = e.piecesOffered * kTTDPieceSize;
+        return w;
+    }
+    size_t Checkpoints() const override { return _ctl ? _ctl->GetCheckpointCount() : 0; }
+
+    uint64_t FirstFrame() const override
+    {
+        const TTDCheckpoint* cp = _ctl ? _ctl->GetCheckpoint(0) : nullptr;
+        return cp ? cp->time.frame : 0;
+    }
+
+    uint64_t LastFrame() const override
+    {
+        const size_t n = Checkpoints();
+        const TTDCheckpoint* cp = n ? _ctl->GetCheckpoint(n - 1) : nullptr;
+        return cp ? cp->time.frame : 0;
+    }
+
+    uint32_t FrameSpan() const override { return _ctl ? _ctl->FrameSpan() : 0; }
+
+    StreamBytes Bytes() const override
+    {
+        StreamBytes b;
+        if (!_ctl)
+            return b;
+        const TTDEngineHeapBreakdown h = _ctl->GetEngine().HeapBreakdown();
+        b.ramPayload = h.piecePayload;
+        b.pageRefs = h.referenceTables + h.pieceVersions;
+        b.deviceBlobs = h.deviceBlobs;
+        b.checkpointCore = h.checkpoints;
+        b.writeJournal = h.writeJournal;
+        b.inputJournal = h.eventLog;
+        b.coverage = _ctl->GetCoverageIndex().HeapBytes();
+        b.versions = _ctl->GetEngine().PieceStore().LiveVersions();
+        return b;
+    }
+
+    uint64_t ResidentBytes() const override { return _ctl ? _ctl->GetSessionInfo().sessionHeapBytes : 0; }
+
+    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
+    {
+        if (!_ctl)
+            return {};
+        const TTDHeapBreakdown h = _ctl->GetHeapBreakdown();
+        return {
+            {"page_store_table", h.pageStoreTable}, {"ram_payload", h.ramPayload},
+            {"ram_payload_slack", h.ramPayloadSlack}, {"checkpoints", h.checkpoints},
+            {"page_refs", h.pageRefs}, {"device_blobs", h.deviceBlobs},
+            {"input_journals", h.inputJournals}, {"write_journal", h.writeJournal},
+            {"write_journal_slack", h.writeJournalSlack}, {"coverage", h.coverage},
+            {"coverage_slack", h.coverageSlack}, {"port_reads", h.portReads},
+            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
+            {"frame_cache", h.frameCache},
+        };
+    }
+
+    bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
+    {
+        const Clock::time_point start = Clock::now();
+        TTDSeekResult result;
+        const bool ok = _ctl->SeekTo(TTDTimePoint{frame, tInFrame}, &result);
+        out.totalUs = ElapsedUs(start, Clock::now());
+        const TTDPerfCounters& perf = _ctl->GetPerfCounters();
+        out.cpuChipsetUs = static_cast<double>(perf.lastRestoreCpuChipsetNs) / 1000.0;
+        out.devicesUs = static_cast<double>(perf.lastRestoreDevicesNs) / 1000.0;
+        out.memoryUs = static_cast<double>(perf.lastRestoreMemoryNs) / 1000.0;
+        out.screenUs = static_cast<double>(perf.lastRestoreScreenNs) / 1000.0;
+        out.restoreUs = static_cast<double>(perf.lastRestoreTotalNs()) / 1000.0;
+        out.replayUs = static_cast<double>(perf.lastReplayNs) / 1000.0;
+        out.presentUs = static_cast<double>(perf.lastPresentNs) / 1000.0;
+        out.otherUs = std::max(0.0, out.totalUs - out.restoreUs - out.replayUs - out.presentUs);
+        return ok;
+    }
+
+    bool Save(const std::string& path, uint64_t& bytes, std::string& error) override
+    {
+        std::ofstream file(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
+        if (!file || !_ctl->SerializeSession(file, error))
+            return false;
+        file.flush();
+        bytes = static_cast<uint64_t>(file.tellp());
+        return static_cast<bool>(file);
+    }
+
+    bool Load(Emulator& emulator, const std::string& path, std::string& error) override
+    {
+        if (!Wire(emulator, error))
+            return false;
+        std::ifstream file(FileHelper::ToFsPath(path), std::ios::binary);
+        return file && _ctl->DeserializeSession(file, error);
+    }
+
+    uint64_t CaptureNow() override
+    {
+        _ctl->OnFrameBoundary();
+        return _ctl->GetPerfCounters().lastCaptureNs;
+    }
+
+private:
+    bool Wire(Emulator& emulator, std::string& error)
+    {
+        Unwire();
+        _context = emulator.GetContext();
+        if (!_context || !_context->pTimeTravelManager)
+        {
+            error = "no time travel on this machine";
+            return false;
+        }
+        _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        _owned = std::make_unique<TimeTravelController>(_context);
+        _ctl = _owned.get();
+        _context->pTimeTravelHooks = _ctl;
+        _context->ttdWriteSink = _ctl;
+        _context->pTimeTravelController = _ctl;
+        return true;
+    }
+
+    void Unwire()
+    {
+        if (!_owned)
+            return;
+        _owned->StopRecording();
+        // The machine may be gone already (the runner releases it first): only
+        // a context still pointing at this controller is put back
+        if (_context && _context->pTimeTravelController == _owned.get())
+        {
+            _context->pTimeTravelHooks = _context->pTimeTravelManager;
+            _context->ttdWriteSink = _context->pTimeTravelManager;
+            _context->pTimeTravelController = nullptr;
+        }
+        _owned.reset();
+        _ctl = nullptr;
+    }
+
+    EmulatorContext* _context = nullptr;
+    std::unique_ptr<TimeTravelController> _owned;
+    TimeTravelController* _ctl = nullptr;
+};
+
+/// endregion </Engine: the controller>
 
 /// region <Engine: TimeTravelEngine>
 
@@ -808,7 +996,7 @@ std::string PeripheralSet::Name() const
 
 std::vector<std::string> EngineNames()
 {
-    return {"v1", "engine"};
+    return {"v1", "engine", "controller"};
 }
 
 std::unique_ptr<Engine> CreateEngine(const std::string& name)
@@ -817,6 +1005,8 @@ std::unique_ptr<Engine> CreateEngine(const std::string& name)
         return std::make_unique<EngineV1>();
     if (name == "engine")
         return std::make_unique<EngineTimeTravel>();
+    if (name == "controller")
+        return std::make_unique<EngineController>();
     return nullptr;
 }
 
