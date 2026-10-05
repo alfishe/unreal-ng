@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "codecs/sjasmplus/sjasmpluscodec.h"
+#include "codecs/tasm/tasmcodec.h"
 #include "codecs/text/textcodec.h"
 
 namespace unrealasm
@@ -14,6 +15,8 @@ const CodecRegistry& CodecRegistry::Builtin()
         // One line per codec (decision D-6)
         r.Add(std::make_unique<codecs::TextCodec>());
         r.Add(std::make_unique<codecs::SjasmplusCodec>());
+        r.Add(std::make_unique<codecs::TasmCodec>(3));
+        r.Add(std::make_unique<codecs::TasmCodec>(4));
         return r;
     }();
     return registry;

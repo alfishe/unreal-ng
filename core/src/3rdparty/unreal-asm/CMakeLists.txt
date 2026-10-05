@@ -34,6 +34,9 @@ add_library(unreal-asm STATIC
     src/core/registry.cpp
     src/codecs/text/textcodec.cpp
     src/codecs/sjasmplus/sjasmpluscodec.cpp
+    src/codecs/tasm/tasmtokens.cpp
+    src/codecs/tasm/tasmcodec.cpp
+    src/containers/trdos.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -45,7 +48,7 @@ target_link_libraries(zxasm PRIVATE unreal-asm)
 target_compile_options(zxasm PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Examples (decision D-14): small programs on the public API, built with the library
-foreach(example detect-encoding decode-encode)
+foreach(example detect-encoding decode-encode read-hobeta)
     string(REPLACE "-" "" exampleTarget "unrealasmexample${example}")
     add_executable(${exampleTarget} examples/${example}/main.cpp)
     target_link_libraries(${exampleTarget} PRIVATE unreal-asm)
@@ -63,14 +66,17 @@ function(unrealasm_add_tests)
         return()
     endif()
     add_executable(unreal-asm-tests
+        ${UNREAL_ASM_DIR}/tests/main.cpp
         ${UNREAL_ASM_DIR}/tests/codepages_test.cpp
         ${UNREAL_ASM_DIR}/tests/detectors_test.cpp
         ${UNREAL_ASM_DIR}/tests/document_test.cpp
         ${UNREAL_ASM_DIR}/tests/registry_test.cpp
         ${UNREAL_ASM_DIR}/tests/textcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/sjasmpluscodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/tasmcodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
     )
-    target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest gtest_main)
+    target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)
     target_compile_definitions(unreal-asm-tests PRIVATE UNREAL_ASM_TESTDATA_DIR="${UNREAL_ASM_DIR}/testdata")
     target_compile_options(unreal-asm-tests PRIVATE ${UNREAL_ASM_WARNINGS_LIST})

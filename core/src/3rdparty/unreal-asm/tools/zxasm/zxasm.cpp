@@ -5,9 +5,16 @@
 //   zxasm encoding <file>                           code page ranking, line ends, text score
 //   zxasm decode   <file> [-o out] [--codec id] [--codepage cp]
 //   zxasm encode   <file> --codec id [-o out] [--codepage cp] [--line-end lf|crlf|cr]
+//   zxasm files    <image.trd>                      list the files of a TR-DOS image
+//
+// Containers: a hobeta file (NAME.$A, ...) is unwrapped and its catalog fields used for detection; a file inside a
+// TR-DOS image is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
+// as a hobeta file of type X.
 //
 // Decoded text is written as UTF-8 (decision D-11). Exit code 0 on success, 1 on errors, 2 on bad usage.
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -25,7 +32,8 @@ int Usage()
 {
     std::cerr << "usage: zxasm formats | detect <file> | encoding <file> |\n"
                  "       decode <file> [-o out] [--codec id] [--codepage cp] |\n"
-                 "       encode <file> --codec id [-o out] [--codepage cp] [--line-end lf|crlf|cr]\n";
+                 "       encode <file> --codec id [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
+                 "       files <image.trd>      (decode/detect/encoding take --file NAME[.T] for a file in an image)\n";
     return 2;
 }
 
@@ -61,7 +69,7 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 
 struct Args
 {
-    std::string command, file, output, codec, codePage, lineEnd;
+    std::string command, file, output, codec, codePage, lineEnd, inner;
 };
 
 bool Parse(int argc, char** argv, Args& args)
@@ -80,14 +88,65 @@ bool Parse(int argc, char** argv, Args& args)
         };
         if (a == "-o" ? !value(args.output) : a == "--codec" ? !value(args.codec)
                                           : a == "--codepage" ? !value(args.codePage)
-                                          : a == "--line-end" ? !value(args.lineEnd) : false)
+                                          : a == "--line-end" ? !value(args.lineEnd)
+                                          : a == "--file" ? !value(args.inner) : false)
             return false;
-        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end")
+        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end" && a != "--file")
         {
             if (!args.file.empty())
                 return false;
             args.file = a;
         }
+    }
+    return true;
+}
+
+std::string Lower(std::string text)
+{
+    for (char& c : text)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+}
+
+/// Hobeta / TR-DOS image -> the file's bytes and catalog hints; false with a message when the container is broken or
+/// the named file is missing. Plain host files pass through.
+bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
+{
+    const std::string extension = Lower(Extension(args.file));
+    containers::TrdosFile file;
+    std::string error;
+    if (extension == "trd")
+    {
+        std::vector<containers::TrdosFile> files;
+        if (!containers::ReadTrd(bytes, files, error))
+        {
+            std::cerr << "zxasm: " << error << "\n";
+            return false;
+        }
+        if (args.inner.empty())
+            return true;   // the image itself (detect reports none; "files" lists it)
+        const size_t dot = args.inner.find_last_of('.');
+        const std::string name = dot == std::string::npos ? args.inner : args.inner.substr(0, dot);
+        const char type = dot == std::string::npos ? 0 : args.inner[dot + 1];
+        for (const auto& f : files)
+            if (f.TrimmedName() == name && (type == 0 || f.type == type))
+            {
+                bytes = f.data;
+                hints = f.Hints();
+                return true;
+            }
+        std::cerr << "zxasm: no file " << args.inner << " in " << args.file << "\n";
+        return false;
+    }
+    if (!extension.empty() && extension[0] == '$')
+    {
+        if (!containers::ReadHobeta(bytes, file, error))
+        {
+            std::cerr << "zxasm: " << error << "\n";
+            return false;
+        }
+        bytes = file.data;
+        hints = file.Hints();
     }
     return true;
 }
@@ -116,6 +175,25 @@ int main(int argc, char** argv)
     }
     CatalogHints hints;
     hints.extension = Extension(args.file);
+    if (args.command == "files")
+    {
+        std::vector<containers::TrdosFile> files;
+        std::string error;
+        if (!containers::ReadTrd(bytes, files, error))
+        {
+            std::cerr << "zxasm: " << error << "\n";
+            return 1;
+        }
+        for (const auto& f : files)
+        {
+            const DetectResult detected = registry.Detect(f.data, f.Hints());
+            std::cout << f.TrimmedName() << "." << f.type << "\t" << f.start << "\t" << f.length << "\t"
+                      << (detected.chosen ? detected.chosen->Info().id : "-") << "\n";
+        }
+        return 0;
+    }
+    if (args.command != "encode" && !Unwrap(args, bytes, hints))
+        return 1;
 
     if (args.command == "detect")
     {
@@ -205,8 +283,22 @@ int main(int argc, char** argv)
         options.codePage = codePage;
         if (!args.lineEnd.empty())
             options.lineEnd = args.lineEnd == "crlf" ? encoding::LineEnd::CrLf : args.lineEnd == "cr" ? encoding::LineEnd::Cr : encoding::LineEnd::Lf;
-        const EncodeResult encoded = codec->Encode(document, options);
+        EncodeResult encoded = codec->Encode(document, options);
         PrintDiagnostics(encoded.diagnostics);
+        const std::string outExtension = Extension(args.output);
+        if (outExtension.size() == 2 && outExtension[0] == '$')
+        {
+            // Hobeta output: name from the output file, type from the extension; TASM 3 sources carry its start
+            containers::TrdosFile file;
+            const size_t slash = args.output.find_last_of("/\\");
+            file.name = args.output.substr(slash == std::string::npos ? 0 : slash + 1);
+            file.name = file.name.substr(0, std::min<size_t>(file.name.size() - 3, 8));
+            file.type = outExtension[1];
+            file.start = codec->Info().id == "tasm3" ? 40872 : 0;
+            file.length = static_cast<uint16_t>(encoded.bytes.size());
+            file.data = encoded.bytes;
+            encoded.bytes = containers::WriteHobeta(file);
+        }
         if (args.output.empty())
             std::cout.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
         else if (!WriteFile(args.output, encoded.bytes))

@@ -22,6 +22,7 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem, goals, non-goals, decisions, open questions, use cases, requirements, acceptance, glossary |
 | [architecture.md](architecture.md) | Layers, data model (source document, line, IR), the three pipelines (decode / encode, format conversion, dialect conversion), plugin model, consumers, decision trees, emulator integration (mermaid diagrams) |
 | [source-formats.md](source-formats.md) | Every source format and sub-version: what is known, from where, how it is detected, what a byte-exact round trip has to keep |
+| [research-tasm.md](research-tasm.md) | TASM 3 / 4: the stream, the token table, the canonical tokenizer, what the real TASM 3.2 files show (phase A2) |
 | [dialect-conversion.md](dialect-conversion.md) | The intermediate representation, frontend and backend plugins, the construct matrix, what cannot be converted, a worked ALASM → sjasmplus example |
 | [prior-art.md](prior-art.md) | Existing converters and tools, local and public, compared; nothing is vendored |
 | [tdd.md](tdd.md) | Library layout, namespaces, interfaces (`ISourceCodec`, `IDialectFrontend`, `IDialectBackend`), registry, CLI, emulator adapters, phases |

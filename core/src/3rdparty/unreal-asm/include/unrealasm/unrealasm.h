@@ -3,6 +3,7 @@
 // unreal-asm: the whole public API in one include.
 
 #include "unrealasm/codec.h"
+#include "unrealasm/containers.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/document.h"
 #include "unrealasm/encoding.h"
