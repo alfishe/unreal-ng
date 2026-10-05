@@ -37,6 +37,8 @@ phase; master only after the owner's review.
   - [x] emulator oracle for ALASM (2026-10-05): a 4.5 → 5.07 conversion opens in ALASM 5.09 and shows the decoded text ([research-alasm.md](research-alasm.md) §6.1)
   - [ ] ALASM 2.x and 5.00-5.06 binaries (not found)
 - [ ] A4 `storm`, `zxasm`
+  - [x] `zxasm`, every version 2.4 … 4.20 (2026-10-05, branch `unreal-asm`): editor rules derived on 372 real sources (byte-exact all, canonical 99.86 %), version detection, testdata `zxasm/` ([research-zxasm.md](research-zxasm.md))
+  - [ ] `storm` (STORM 1.0beta … 1.3i: machine-code-like lines, packed labels; corpus of 42 files collected)
 - [ ] A5 IR, transforms, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe

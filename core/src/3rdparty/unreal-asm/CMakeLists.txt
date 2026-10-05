@@ -38,6 +38,7 @@ add_library(unreal-asm STATIC
     src/codecs/tasm/tasmcodec.cpp
     src/codecs/alasm/alasmtokens.cpp
     src/codecs/alasm/alasmcodec.cpp
+    src/codecs/zxasm/zxasmcodec.cpp
     src/containers/trdos.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -77,6 +78,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/sjasmpluscodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/alasmcodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zxasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)

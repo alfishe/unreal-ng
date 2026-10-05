@@ -15,7 +15,7 @@
 | `tasm` | TASM 2.0 (`2.0`, text), 3.0-3.5 (`3`), 4.0 XLD / 4.4 KVA (`4.0`), 4.12 (`4.12`) | `tasm` | TR-DOS type `A` (2.0: type `C`, start 38750); version: start 39221 → 3, 40872 → 4.0, ≤ 4096 → 4.12, else from the bytes | every release's binary; [research-tasm.md](research-tasm.md) | confirmed on 127 real files | A2, A3 |
 | `alasm` | ALASM 3.8, 4.2, 4.42, 4.5, 4.44, 5.07-5.09 | `alasm` | type `H`; signature `F3 76 C7 DD FD ED B0 D9` at `+#28`; version: the newest that re-tokenizes the file exactly | ALASM 5.09's own sources (P9), every release's binary; [research-alasm.md](research-alasm.md) | confirmed on 429 real files | A3 |
 | `storm` | STORM 1.x | `storm` | type `C` start `#C00B` / `#C003`, or type `R` start `#C00B` (P1) | P1 | medium | A4 |
-| `zxasm` | ZX-ASM 2.5 / 3.x, ZAsm 3.01 / 3.10 | `zxasm` | types `a` / `z` / `C` with P1's start rules | P3 (written spec), P1 | medium-high | A4 |
+| `zxasm` | ZX-ASM 2.4-2.6 (`2`), 3.0-3.10 (`3.0`), Lite 1.07 (`lite`), ZAsm 3.15-4.20 (`3.15`) | `zxasm` | type `C` at #A135-#A1DF / #2020 (2.x) / 35151 (3.0), `z` "as" (3.01), `a` "sm" (3.10+); else from the bytes | every release's binary, za_format.txt; [research-zxasm.md](research-zxasm.md) | confirmed on 372 real files | A4 |
 | `xas` | XAS 5 / 7 | `xas` | type `X` / `x`, start bytes `AS` (P1) | none public (P4 binary) | research | A6 |
 | `masm` | MASM (Spectrum), MASM80 (Sprinter) | `masm` | type `a`, start 38667 / 38821 (P1) | none public | research | A6 |
 | `gens3` | GENS 3 / 4 compressed | `gens` | — | the Devpac manual (no byte layout) | research | A6 |

@@ -1,0 +1,78 @@
+        ORG  #6000
+        PHASE #5B00
+
+RESOLUT EQU #05
+VERTSTP EQU #08
+
+FATAL   DS   3        ;DRV+0
+EP1     JR   INITLPT  ;DRV+3
+EP2     JR   INITGFX  ;DRV+5
+EP3     JR   OUTLPT   ;DRV+7
+EP4     JR   CAR_RET  ;DRV+9
+EP5     JR   EJECT    ;DRV+11
+
+STRING  DB   "EPSON LX-800",#FF
+
+INITLPT LD   A,7
+        CALL OUTLPT
+        LD   A,#1B
+        CALL OUTLPT
+        LD   A,#40
+        CALL OUTLPT
+        LD   A,#1B
+        CALL OUTLPT
+        LD   A,#41
+        CALL OUTLPT
+        LD   A,VERTSTP
+        JR   OUTLPT
+
+INITGFX LD   A,#1B
+        CALL OUTLPT
+        LD   A,#2A
+        CALL OUTLPT
+        LD   A,RESOLUT
+        CALL OUTLPT
+        LD   A,L 
+        CALL OUTLPT
+        LD   A,H 
+        JR   OUTLPT
+
+OUTLPT  LD   C,A 
+        OUT  (#FB),A 
+BUSYLPT CALL BREAK
+        JR   NC,FATAL
+        IN   A,(#7B)
+        AND  #80
+        JR   NZ,BUSYLPT
+        LD   A,C 
+
+        OUT  (#FB),A 
+        OUT  (#7B),A 
+
+OK_EXIT AND  A 
+        RET 
+
+CAR_RET LD   A,#0A
+        CALL OUTLPT
+        LD   A,#0D
+        JP   OUTLPT
+
+EJECT   LD   A,#0C
+        CALL OUTLPT
+        LD   A,#0A
+        JP   OUTLPT
+
+BREAK   LD   A,#FE
+        IN   A,(#FE)
+        RRA
+        RET  C
+        LD   A,#7F
+        IN   A,(#FE)
+        RRA
+        RET 
+
+        UNPHASE
+
+        SAVEOBJ "printer.drv"
+
+;-----------------------------------EOF-
