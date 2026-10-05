@@ -10,6 +10,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/card.h"
 
 #include <algorithm>
 
@@ -38,29 +39,43 @@ uint64_t Fnv1a(const std::string& text)
     return hash;
 }
 
-/// A card position with a device of its own: the AY socket, the General Sound card, the MoonSound card. A v1
-/// checkpoint holds one blob per id, so each position is known by the ids its cards save under
+/// A card position with a device of its own: the AY socket, the General Sound card, the MoonSound card, and one per
+/// card the slots build themselves (card.h: the ZX-MultiSound), known by its own device's id. A v1 checkpoint holds
+/// one blob per id, so each position is known by the ids its cards save under
 struct TtdPosition
 {
     SlotCardGroup group;
-    const char* label;   ///< when the plan names no slot for it
+    std::string label;   ///< when the plan names no slot for it
     struct Card
     {
         PeripheralId id;
         const char* name;
     };
     std::vector<Card> cards;
+    const CardType* slotBuilt = nullptr;   ///< a slot-built card: its slot is the fitted entry of this card id
 };
 
 const std::vector<TtdPosition>& TtdPositions()
 {
-    static const std::vector<TtdPosition> positions = {
-        {SlotCardGroup::Socket, kAySocket, {{PeripheralId::TurboSound, "ay / ts"}, {PeripheralId::TSFM, "tsfm"}}},
-        {SlotCardGroup::GeneralSound,
-         "General Sound card",
-         {{PeripheralId::GeneralSound, "gs"}, {PeripheralId::GeneralSoundLightweight, "gs-lw"}, {PeripheralId::NeoGS, "neogs"}}},
-        {SlotCardGroup::MoonSound, "MoonSound card", {{PeripheralId::MoonSound, "moonsound"}}},
-    };
+    static const std::vector<TtdPosition> positions = [] {
+        std::vector<TtdPosition> list = {
+            {SlotCardGroup::Socket, kAySocket, {{PeripheralId::TurboSound, "ay / ts"}, {PeripheralId::TSFM, "tsfm"}}},
+            {SlotCardGroup::GeneralSound,
+             "General Sound card",
+             {{PeripheralId::GeneralSound, "gs"},
+              {PeripheralId::GeneralSoundLightweight, "gs-lw"},
+              {PeripheralId::NeoGS, "neogs"}}},
+            {SlotCardGroup::MoonSound, "MoonSound card", {{PeripheralId::MoonSound, "moonsound"}}},
+        };
+        for (const CardType& type : CardTypes())
+        {
+            if (!type.ttdIds.empty())
+            {
+                list.push_back({SlotCardGroup::Count, std::string(type.id) + " card", {{type.ttdIds[0], type.id}}, &type});
+            }
+        }
+        return list;
+    }();
     return positions;
 }
 
@@ -93,6 +108,23 @@ const SlotManager::Slot* PlannedSlot(const SlotManager::Result& result, SlotCard
         return result.FindSlot(kAySocket);
     }
     return result.FindGroup(group);
+}
+
+/// The plan's fitted entry of a position (a slot-built card: the first fitted slot with its card id)
+const SlotManager::Slot* PlannedSlot(const SlotManager::Result& result, const TtdPosition& position)
+{
+    if (position.slotBuilt == nullptr)
+    {
+        return PlannedSlot(result, position.group);
+    }
+    for (const SlotManager::Slot& slot : result.entries)
+    {
+        if (!slot.entry.disabled && slot.entry.card == position.slotBuilt->id)
+        {
+            return &slot;
+        }
+    }
+    return nullptr;
 }
 
 std::string Lower(std::string text)
@@ -167,6 +199,10 @@ void SlotManager::AddTtdFingerprint(ttd::TTDConfigFingerprint& fingerprint) cons
     {
         fingerprint.Add(name, value, true);
     }
+    for (const auto& [name, value] : _ttdCardFingerprint)
+    {
+        fingerprint.Add(name, value, true);
+    }
 }
 
 std::string SlotManager::TtdInstance(const Result& result, SlotCardGroup group, const std::string& module)
@@ -178,9 +214,33 @@ std::string SlotManager::TtdInstance(const Result& result, SlotCardGroup group, 
 bool SlotManager::TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& live, std::string& why)
 {
     std::string differences;
+    // Every slot-built card records its state: all of its devices registered, or refused naming the slot (a card
+    // without time-travel state would be silently missing from every checkpoint)
+    for (const Slot& slot : result.entries)
+    {
+        const CardType* type = slot.entry.disabled ? nullptr : FindCardType(slot.entry.card);
+        if (type == nullptr)
+        {
+            continue;
+        }
+        if (type->ttdIds.empty())
+        {
+            differences += (differences.empty() ? "" : "; ") + slot.entry.slot + ": " + slot.entry.card +
+                           " has no time-travel state, a recording would lose it";
+            continue;
+        }
+        for (const PeripheralId id : type->ttdIds)
+        {
+            if (!Holds(live, id))
+            {
+                differences += (differences.empty() ? "" : "; ") + slot.entry.slot + ": " + slot.entry.card +
+                               " did not register its device " + std::to_string(static_cast<unsigned>(id));
+            }
+        }
+    }
     for (const TtdPosition& position : TtdPositions())
     {
-        const Slot* planned = PlannedSlot(result, position.group);
+        const Slot* planned = PlannedSlot(result, position);
         const std::string fitted = CardsAt(position, live);
         // The AY socket without an entry holds the machine's own chip (or none): nothing to compare
         if (position.group == SlotCardGroup::Socket && planned == nullptr)
@@ -201,7 +261,7 @@ bool SlotManager::TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& 
         }
         if (!matches)
         {
-            const std::string where = planned != nullptr ? planned->entry.slot : std::string(position.label);
+            const std::string where = planned != nullptr ? planned->entry.slot : position.label;
             differences += (differences.empty() ? "" : "; ") + where + ": the plan fits " +
                            (planned != nullptr ? planned->entry.card : std::string("none")) + ", the device is " + fitted;
         }
@@ -227,8 +287,8 @@ bool SlotManager::TtdSlotSetMatches(const Result& result, const TtdDeviceSet& re
         {
             continue;
         }
-        const Slot* planned = PlannedSlot(result, position.group);
-        const std::string where = planned != nullptr ? planned->entry.slot : std::string(position.label);
+        const Slot* planned = PlannedSlot(result, position);
+        const std::string where = planned != nullptr ? planned->entry.slot : position.label;
         differences += (differences.empty() ? "" : "; ") + where + ": recorded " + was + ", this machine " + is;
     }
     if (differences.empty())
@@ -247,6 +307,14 @@ bool SlotManager::TtdSessionMatches(const std::unordered_map<uint8_t, std::vecto
     if (!TtdSlotSetMatches(_result, TtdDeviceSet::Of(blobs, notRecordedMask), TtdDeviceSet::Of(live), why))
     {
         return false;
+    }
+    // The slot-built cards' own checks (configuration the session must share: the MultiSound's MIDI bank)
+    for (const std::unique_ptr<ICard>& card : _cards)
+    {
+        if (!card->TtdSessionMatches(blobs, why))
+        {
+            return false;
+        }
     }
     // The machine's own slots (the Sprinter's ISA slots): their population is compared by the board until SL-8
     // reports them in the slot set

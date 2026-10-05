@@ -358,6 +358,18 @@ bool Synth::LoadState(const uint8_t* in, size_t size)
     return true;
 }
 
+bool Synth::StateBank(const uint8_t* in, size_t size, BankDigest& digest)
+{
+    if (in == nullptr)
+        return false;
+    StateReader header(in, size);
+    uint32_t magic = 0, version = 0;
+    header(magic);
+    header(version);
+    header(digest);
+    return header.Ok() && magic == kStateMagic && version == kStateVersion;
+}
+
 void Synth::SetChannelMute(int channel, bool mute)
 {
     if (channel >= 0 && channel < 16)

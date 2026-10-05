@@ -19,6 +19,10 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotconfig.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 
 /// @file ttdmodelstatecontract_test.cpp
@@ -262,6 +266,9 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::EvoAvrVolatile, 55, "EvoAvrVolatile"},
         {ttd::PeripheralId::KeyboardMatrix, 56, "KeyboardMatrix"},
         {ttd::PeripheralId::RzxPlayback, 57, "RzxPlayback"},
+        {ttd::PeripheralId::MultiSound, 58, "MultiSound"},
+        {ttd::PeripheralId::Sam2695, 59, "Sam2695"},
+        {ttd::PeripheralId::MultiSoundGs, 60, "MultiSoundGs"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 
@@ -331,6 +338,56 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
         }
     }
     EXPECT_EQ(checked, 32u) << "every model is creatable in this build";
+
+    // The cards the slots build themselves (the ZX-MultiSound), on every model with a ZX-bus: the card's devices
+    // (MultiSound, SAA1099, SAM2695, its GS) next to the machine's own. The card replaces the config's slot set (a GS
+    // card would conflict with the card's GS). Where the bus cannot take it (the Scorpion's system port has no +12 V)
+    // the card is left out with the reason and nothing is checked; ~25 ms per machine
+    std::vector<std::string> fitted;
+    for (const char* model : {"PENTAGON", "SCORPION", "PROFSCORP", "ATM3", "TSL", "ATM710", "ATM450"})
+    {
+        SCOPED_TRACE(std::string(model) + " + ZX-MultiSound");
+        const bool atm = std::string(model) == "ATM710" || std::string(model) == "ATM450";
+        const std::string slot = atm ? "cpu-socket.1" : "zxbus.1";
+        std::string createError;
+        std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+            "", model, LoggerLevel::LogError, &createError, [&slot, atm](CONFIG& config) {
+                std::vector<std::pair<std::string, std::string>> lines = {{slot, "multisound"}};
+                if (atm)
+                    lines.push_back({slot + ".adapter", "atm-cpu-socket-zxbus"});
+                config.slotConfig = SlotConfig{};
+                ParseSlotsSection(lines, config.slotConfig);
+                SlotManager::Project(config.slotConfig, config);
+            });
+        ASSERT_NE(emulator, nullptr) << createError;
+        struct Remove
+        {
+            std::string id;
+            ~Remove() { EmulatorManager::GetInstance()->RemoveEmulator(id); }
+        } remove{emulator->GetId()};
+        EmulatorContext* context = emulator->GetContext();
+        if (context->pSlotManager->FindCard(slot) == nullptr)
+        {
+            for (const SlotManager::Slot& entry : context->pSlotManager->Current().entries)
+                if (entry.entry.slot == slot)
+                    EXPECT_FALSE(entry.entry.disabledReason.empty());
+            continue;
+        }
+        fitted.push_back(model);
+
+        ttd::TTDPeripheralRegistry registry;
+        std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
+        std::string error;
+        EXPECT_TRUE(ttd::RegisterMachinePeripherals(context, registry, owned, &error)) << error;
+        for (ttd::PeripheralId id : {ttd::PeripheralId::MultiSound, ttd::PeripheralId::Saa1099, ttd::PeripheralId::Sam2695,
+                                     ttd::PeripheralId::MultiSoundGs})
+            EXPECT_TRUE(registry.IsRegistered(id)) << static_cast<int>(id);
+        std::string tableError;
+        EXPECT_TRUE(registry.CheckDeviceTable(tableError)) << tableError;
+        EXPECT_EQ(registry.DeviceEntries().size(), registry.Count());
+    }
+    EXPECT_EQ(fitted, (std::vector<std::string>{"PENTAGON", "PROFSCORP", "ATM3", "TSL", "ATM710", "ATM450"}))
+        << "every ZX-bus but the Scorpion's (no +12 V) takes the card";
 }
 
 namespace

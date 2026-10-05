@@ -26,13 +26,20 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "debugger/ttd/ttdserializable.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotplanner.h"
 #include "emulator/sound/audiodeviceinfo.h"
 
 class EmulatorContext;
+namespace ttd
+{
+class ITTDRegionSource;
+}
 
 /// What a card is built from
 struct CardContext
@@ -48,6 +55,15 @@ struct CardMixerRow
 {
     AudioSourceType type = AudioSourceType::Custom;
     std::string name;
+};
+
+/// One time-travel device of a card (a card may carry several modules, each with its own blob)
+struct CardTtdDevice
+{
+    ttd::PeripheralId id = ttd::PeripheralId::Count;
+    ttd::TTDSerializable* device = nullptr;          ///< owned by the card
+    std::string instance;                            ///< the engine's instance name: "<slot>.<card>[.<module>]"
+    ttd::ITTDRegionSource* regions = nullptr;        ///< memory the engine records as regions (a GS RAM); may be null
 };
 
 /// A running card (architecture.md §3.2). Every call comes from the emulation thread
@@ -122,6 +138,30 @@ public:
     }
     /// endregion </Frames and audio (SoundManager)>
 
+    /// region <Time travel (ZX-bus slots architecture.md §8; MultiSound MS-5)>
+    /// Every device the card's state is in, each under the id its CardType declares (CardType::ttdIds), named by
+    /// slot. A card registers all of them or recording is refused naming its slot (SlotManager::TtdDevicesMatchPlan)
+    virtual void CollectTtdDevices(std::vector<CardTtdDevice>& out)
+    {
+        (void)out;
+    }
+    /// Configuration a session must share that the slot's card id and options do not name (a sound bank, firmware
+    /// the card loads): `slots.<slot>.<what>` fields of the configuration fingerprint, each affecting a restore
+    virtual void TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const
+    {
+        (void)out;
+    }
+    /// The session-load guard's part for this card: the session's baseline blobs (by id) against this card. False
+    /// with the reason, naming the slot
+    virtual bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+                                   std::string& why) const
+    {
+        (void)blobs;
+        (void)why;
+        return true;
+    }
+    /// endregion </Time travel>
+
 private:
     const slots::CardDef* _def;
     std::string _slot;
@@ -133,6 +173,9 @@ struct CardType
 {
     const char* id = "";
     std::unique_ptr<ICard> (*create)(const CardContext& context) = nullptr;
+    /// The time-travel ids the card's devices register under (CollectTtdDevices), the card's own first. Empty: the
+    /// card has no time-travel state yet - recording on a machine with it is refused, naming the slot
+    std::span<const ttd::PeripheralId> ttdIds{};
 };
 
 /// Every registered card type

@@ -1260,6 +1260,11 @@ void SlotManager::BuildCards()
         }
         _cards.push_back(std::move(card));
     }
+    _ttdCardFingerprint.clear();
+    for (const std::unique_ptr<ICard>& card : _cards)
+    {
+        card->TtdFingerprint(_ttdCardFingerprint);
+    }
 
     // The socket's chip shadowed by a card's IORQGE: its rows are silent by hardware, and say so
     const BuiltInDef* socketChip = SocketDefault(_result.machine);

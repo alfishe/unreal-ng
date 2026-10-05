@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "common/filehelper.h"
+#include "debugger/ttd/ttdserializable.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/tsfm/ym2203pair.h"
@@ -37,6 +38,48 @@ std::string ResolveDataFile(const std::string& path)
         return inResources;
     return {};
 }
+/// Little-endian fixed-width fields of the card's time-travel blob
+struct TtdWriter
+{
+    uint8_t* p;
+    void U8(uint8_t v) { *p++ = v; }
+    void U16(uint16_t v)
+    {
+        for (int i = 0; i < 2; i++)
+            *p++ = static_cast<uint8_t>(v >> (8 * i));
+    }
+    void U64(uint64_t v)
+    {
+        for (int i = 0; i < 8; i++)
+            *p++ = static_cast<uint8_t>(v >> (8 * i));
+    }
+};
+
+struct TtdReader
+{
+    const uint8_t* p;
+    uint8_t U8() { return *p++; }
+    uint16_t U16()
+    {
+        uint16_t v = 0;
+        for (int i = 0; i < 2; i++)
+            v = static_cast<uint16_t>(v | (static_cast<uint16_t>(*p++) << (8 * i)));
+        return v;
+    }
+    uint64_t U64()
+    {
+        uint64_t v = 0;
+        for (int i = 0; i < 8; i++)
+            v |= static_cast<uint64_t>(*p++) << (8 * i);
+        return v;
+    }
+};
+
+/// Offsets of the card's blob (multisoundcard.h, "Time travel")
+constexpr size_t kTtdTimesOffset = 1;
+constexpr size_t kTtdFmChangesOffset = kTtdTimesOffset + 5 * 8 + 1 + 2;
+constexpr size_t kTtdLatchesOffset = kTtdFmChangesOffset + MultiSoundCard::kMaxFmMuteChanges * 9;
+constexpr size_t kTtdYmOffset = kTtdLatchesOffset + 11 + 4 * 2;
 }  // namespace
 
 /// region <Construction>
@@ -498,3 +541,119 @@ void MultiSoundCard::DescribeSynth(sam2695::SynthReport& out) const
 }
 
 /// endregion </Report>
+
+/// region <Time travel>
+
+size_t MultiSoundCard::TtdStateSize() const
+{
+    return kTtdYmOffset + 8 + _ym->TTDStateSize() + _midiLine.TTDStateSize() + _dacs.TTDStateSize();
+}
+
+void MultiSoundCard::TtdSave(uint8_t* dst) const
+{
+    TtdWriter w{ dst };
+    w.U8(kTtdVersion);
+    w.U64(_now);
+    w.U64(_frameBase);
+    w.U64(_frameTicks);
+    w.U64(_renderedTo);
+    w.U64(_frameAccumulator);
+    w.U8(_fmMutedRendered ? 1 : 0);
+    w.U16(static_cast<uint16_t>(_fmMuteChanges.size()));
+    for (size_t i = 0; i < kMaxFmMuteChanges; i++)
+    {
+        const FmMuteChange change = i < _fmMuteChanges.size() ? _fmMuteChanges[i] : FmMuteChange{ 0, false };
+        w.U64(change.t);
+        w.U8(change.muted ? 1 : 0);
+    }
+    const MultiSoundLatches& l = _logic.Latches();
+    for (const uint8_t v : { l.ymChip, static_cast<uint8_t>(l.ymReadStatus), static_cast<uint8_t>(l.fmMuted),
+                             static_cast<uint8_t>(l.saaClock), static_cast<uint8_t>(l.romLock), l.gsData, l.gsCommand,
+                             l.gsPage, l.gsOutput, static_cast<uint8_t>(l.dataFlag), static_cast<uint8_t>(l.commandFlag) })
+        w.U8(v);
+    for (int ch = 0; ch < 4; ch++)
+    {
+        w.U8(_logic.Dac(ch).sample);
+        w.U8(_logic.Dac(ch).volume);
+    }
+    int64_t ymSynced = 0;
+    _ym->TTDSyncedTime(0, ymSynced);
+    w.U64(static_cast<uint64_t>(ymSynced));
+    _ym->TTDSaveState(w.p);
+    w.p += _ym->TTDStateSize();
+    _midiLine.TTDSaveState(w.p);
+    w.p += _midiLine.TTDStateSize();
+    _dacs.TTDSaveState(w.p);
+}
+
+bool MultiSoundCard::TtdLoad(const uint8_t* src)
+{
+    TtdReader r{ src };
+    if (r.U8() != kTtdVersion)
+        return false;
+    _now = r.U64();
+    _frameBase = r.U64();
+    _frameTicks = r.U64();
+    _renderedTo = r.U64();
+    _frameAccumulator = r.U64();
+    _fmMutedRendered = r.U8() != 0;
+    const size_t changes = std::min<size_t>(r.U16(), kMaxFmMuteChanges);
+    _fmMuteChanges.clear();
+    for (size_t i = 0; i < kMaxFmMuteChanges; i++)
+    {
+        const uint64_t t = r.U64();
+        const bool muted = r.U8() != 0;
+        if (i < changes)
+            _fmMuteChanges.push_back({ t, muted });
+    }
+    MultiSoundLatches l;
+    l.ymChip = static_cast<uint8_t>(r.U8() & 1);
+    l.ymReadStatus = r.U8() != 0;
+    l.fmMuted = r.U8() != 0;
+    l.saaClock = r.U8() != 0;
+    l.romLock = r.U8() != 0;
+    l.gsData = r.U8();
+    l.gsCommand = r.U8();
+    l.gsPage = r.U8();
+    l.gsOutput = r.U8();
+    l.dataFlag = r.U8() != 0;
+    l.commandFlag = r.U8() != 0;
+    std::array<MultiSoundDacState, 4> dac{};
+    for (MultiSoundDacState& channel : dac)
+    {
+        channel.sample = r.U8();
+        channel.volume = r.U8();
+    }
+    _logic.Restore(l, dac);
+    const uint64_t ymSynced = r.U64();
+    _ym->TTDLoadState(r.p, ymSynced);
+    r.p += _ym->TTDStateSize();
+    _midiLine.TTDLoadState(r.p);
+    r.p += _midiLine.TTDStateSize();
+    _dacs.TTDLoadState(r.p);
+
+    // Render layers back to their start: the audio after a restore does not depend on what played before it
+    _mixer.Reset();
+    _midiLast[0] = _midiLast[1] = 0.0f;
+    _rowFrames = 0;
+    return true;
+}
+
+void MultiSoundCard::TtdTimeFields(std::vector<ttd::TTDTimeField>& out, uint16_t offset) const
+{
+    for (const size_t field : { size_t(0), size_t(1), size_t(3) })   // now, frame base, rendered-to
+        out.push_back({ static_cast<uint16_t>(offset + kTtdTimesOffset + field * 8), 8 });
+    out.push_back({ static_cast<uint16_t>(offset + kTtdYmOffset), 8 });   // the pair's synced time
+    Ym2203Pair::TTDTimeFields(out, static_cast<uint16_t>(offset + kTtdYmOffset + 8 + Ym2203Pair::kStateChipsOffset));
+    // The DACs' time axis: after the version byte and the four channels
+    const size_t dacs = kTtdYmOffset + 8 + _ym->TTDStateSize() + _midiLine.TTDStateSize();
+    out.push_back({ static_cast<uint16_t>(offset + dacs + 1 + 4 * 2), 8 });
+}
+
+bool MultiSoundCard::TtdSynced(uint64_t now, int64_t& offset) const
+{
+    return _ym->TTDSyncedTime(now, offset);
+}
+
+/// endregion </Time travel>
+

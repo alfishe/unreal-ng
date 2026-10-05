@@ -20,6 +20,7 @@
 
 #include "emulator/slots/card.h"
 #include "emulator/slots/cards/multisound/multisoundcard.h"
+#include "emulator/slots/cards/multisound/multisoundttd.h"
 
 class EmulatorContext;
 
@@ -37,7 +38,7 @@ public:
     static MultiSoundCardConfig ConfigFrom(const CardContext& context);
 
     MultiSoundSlotCard(const CardContext& context, const MultiSoundCardConfig& config);
-    ~MultiSoundSlotCard() override = default;
+    ~MultiSoundSlotCard() override;
 
     /// region <PortDevice: bus cycles at the machine's now>
     uint8_t portDeviceInMethod(uint16_t port) override;
@@ -57,6 +58,14 @@ public:
     {
         return true;
     }
+
+    /// Time travel (multisoundttd.h): the card, its SAA1099, SAM2695 and General Sound, named by the slot
+    void CollectTtdDevices(std::vector<CardTtdDevice>& out) override;
+    /// `slots.<slot>.bank`: the MIDI bank's SHA-256 folded to 64 bits (0: no bank)
+    void TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const override;
+    /// A session recorded with another MIDI bank is refused (the synthesizer's blob names its bank)
+    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+                           std::string& why) const override;
     /// endregion </ICard>
 
     MultiSoundCard& Card()
@@ -75,6 +84,29 @@ public:
     {
         return _origin;
     }
+    /// The latest card time handed out (Now is monotonic)
+    uint64_t LastTime() const
+    {
+        return _last;
+    }
+    /// The card axis at the CPU's position, without moving the monotonic clamp (time-travel checks)
+    uint64_t Position() const;
+    /// A time-travel restore puts the time base back
+    void RestoreTime(uint64_t origin, uint64_t last)
+    {
+        _origin = origin;
+        _last = last;
+    }
+
+    /// The time-travel devices (tests)
+    MultiSoundCardTtd& CardTtd()
+    {
+        return *_cardTtd;
+    }
+    Sam2695Ttd& SynthTtd()
+    {
+        return *_synthTtd;
+    }
 
 private:
     uint64_t FrameDuration() const;
@@ -84,4 +116,6 @@ private:
     MultiSoundCard _card;
     uint64_t _origin = 0;
     uint64_t _last = 0;
+    std::unique_ptr<MultiSoundCardTtd> _cardTtd;
+    std::unique_ptr<Sam2695Ttd> _synthTtd;
 };

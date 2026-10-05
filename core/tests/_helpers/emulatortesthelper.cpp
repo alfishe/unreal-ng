@@ -270,7 +270,13 @@ void EmulatorTestHelper::CleanupEmulator(Emulator* emulator)
 
         std::string uuid = emulator->GetUUID();
         EmulatorManager* manager = EmulatorManager::GetInstance();
-        manager->RemoveEmulator(uuid);
+        if (!manager->RemoveEmulator(uuid))
+        {
+            // Never registered (CreateEmulatorWithTurboSoundKind boots a bare instance): released here, or it lives
+            // on - a leaked Sprinter keeps its instance number and the next one's automatic MAC moves
+            emulator->Release();
+            delete emulator;
+        }
     }
 }
 

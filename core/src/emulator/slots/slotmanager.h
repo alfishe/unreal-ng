@@ -203,7 +203,8 @@ public:
     /// its slot set): `slots.<slot>` = FNV-1a 64 over the card id, every option's effective value and the adapter, per
     /// fitted slot; `slots.builtin.<id>` = 1 / 0 per switchable built-in. Disabled cards are not fitted, not listed
     static std::vector<std::pair<std::string, uint64_t>> TtdFingerprintFields(const Result& result);
-    /// Adds this instance's fields (computed once, at creation) to a fingerprint
+    /// Adds this instance's fields (computed once, at creation; the built cards' own, such as the MultiSound's MIDI
+    /// bank, once they are built) to a fingerprint
     void AddTtdFingerprint(ttd::TTDConfigFingerprint& fingerprint) const;
 
     /// The TTD device instance of a slot card's device: "<slot>.<module>" ("zxbus.1.neogs", "ay-socket.tsfm"), so
@@ -216,8 +217,9 @@ public:
     }
 
     /// The registered slot-card devices against the plan: a card the plan fits has its device, a device has its
-    /// card. The General Sound personality may differ from the plan (the runtime switch, until SL-6 moves it onto
-    /// the plan). False with every difference in `why`
+    /// card; a card the slots build themselves (card.h) has every device its CardType declares (none declared: it has
+    /// no time-travel state, refused). The General Sound personality may differ from the plan (the runtime switch,
+    /// until SL-6 moves it onto the plan). False with every difference in `why`
     static bool TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& live, std::string& why);
 
     /// The slot-set guard on a session load: the cards the recording held (its baseline checkpoint) against the
@@ -247,6 +249,7 @@ private:
     std::vector<std::unique_ptr<ICard>> _cards;
     std::unique_ptr<slots::IClaimSignals> _signals;   ///< the claim table's view of M1 and DOS, while cards exist
     std::vector<std::pair<std::string, uint64_t>> _ttdFingerprint;   ///< TtdFingerprintFields(_result)
+    std::vector<std::pair<std::string, uint64_t>> _ttdCardFingerprint;   ///< the built cards' own (ICard::TtdFingerprint)
 };
 
 #pragma pop_macro("signals")

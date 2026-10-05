@@ -108,6 +108,8 @@ public:
     size_t StateSize() const;               // constant after Configure + LoadBank
     void SaveState(uint8_t* out) const;
     bool LoadState(const uint8_t* in, size_t size); // refuses another bank, another layout
+    // The bank a state blob names (its SHA-256), without a synthesizer; false when the blob is not one
+    static bool StateBank(const uint8_t* in, size_t size, BankDigest& digest);
 
     // Taps for the UI and tests. Mute acts on the mix only, never on chip state.
     void SetChannelMute(int channel, bool mute);

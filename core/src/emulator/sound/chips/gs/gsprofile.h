@@ -110,6 +110,14 @@ struct GSProfile
     /// clock and frame geometry (GSHostClock)
     const IGSHostClock* hostClock = nullptr;
 
+    /// Time-travel identity: the blob id (ttd::PeripheralId), the RAM region
+    /// id (ttd::TTDRegionId), the device and region names. A board GS next to
+    /// a GS card needs its own (the engine binds devices and regions by id)
+    uint8_t ttdPeripheralId = 5;            // PeripheralId::GeneralSound
+    uint16_t ttdRegionId = 1;               // TTDRegionId::GeneralSoundRam
+    const char* ttdDeviceName = "GeneralSound";
+    const char* ttdRegionName = "gs.ram";
+
     /// region <Derived timing (card units)>
     uint64_t UnitsPerSecond() const { return std::lcm(static_cast<uint64_t>(cpuClockHz), static_cast<uint64_t>(intClockHz)); }
     int64_t UnitsPerCpuCycle() const { return static_cast<int64_t>(UnitsPerSecond() / cpuClockHz); }
@@ -143,6 +151,10 @@ struct GSProfile
         p.romPath = kMultiSoundRomPath;
         p.dacSink = sink;
         p.hostClock = clock;
+        p.ttdPeripheralId = 60;             // PeripheralId::MultiSoundGs
+        p.ttdRegionId = 17;                 // TTDRegionId::MultiSoundGsRam
+        p.ttdDeviceName = "MultiSoundGs";
+        p.ttdRegionName = "multisound.gs.ram";
         return p;
     }
 

@@ -50,6 +50,11 @@
 #include "emulator/sound/chips/saa1099/saa1099.h"
 #include "emulator/sound/midi/midiline.h"
 
+namespace ttd
+{
+struct TTDTimeField;
+}
+
 class EmulatorContext;
 class SoundChip_GeneralSound;
 class Ym2203Pair;
@@ -234,9 +239,34 @@ public:
     MidiLine& MidiIn() { return _midiLine; }
     const MidiLine& MidiIn() const { return _midiLine; }
     sam2695::Synth& Synth() { return *_synth; }
+    const sam2695::Synth& Synth() const { return *_synth; }
     const MultiSoundMixer& Mixer() const { return _mixer; }
     bool MidiBankLoaded() const { return _bankLoaded; }
     /// endregion </Modules>
+
+    /// region <Time travel (MS-5, tdd-integration.md §4)>
+    /// The card's own state (the slot adapter's PeripheralId::MultiSound blob carries it after its time base). Layout
+    /// (kTtdVersion 1, little-endian, fixed size):
+    ///   0     u1  version
+    ///   1     u8  now, u8 frame base, u8 frame ticks, u8 rendered-to, u8 output-sample accumulator (card axis)
+    ///   41    u1  FM muted at the render cursor; u2 FM mute changes pending, then kMaxFmMuteChanges x (u8 t, u1 muted)
+    ///   2348  CPLD latches (11 x u1: chip select, read mode, FM mute, SAA clock, ROM lock, GS data / command / page /
+    ///         output, data flag, command flag), 4 x DAC registers (u1 sample, u1 volume)
+    ///   2367  u8  the YM2203 pair's synced time, then the pair's blob (Ym2203Pair::TTDSaveState)
+    ///   then  the MIDI line (MidiLine::TTDSaveState), the shared DACs (MultiSoundDacs::TTDSaveState)
+    /// The SAA1099, the SAM2695 and the board's GS have blobs of their own. Render layers (the mixer's filters, the
+    /// modules' output buffers, the last MIDI level) are not state: a load resets them, so the audio after a restore
+    /// does not depend on what played before it
+    static constexpr uint8_t kTtdVersion = 1;
+    size_t TtdStateSize() const;
+    void TtdSave(uint8_t* dst) const;
+    /// False when the blob has another layout (nothing is changed)
+    bool TtdLoad(const uint8_t* src);
+    /// The counters that advance with time, for the engine's descriptor (`offset`: where the card's blob starts)
+    void TtdTimeFields(std::vector<ttd::TTDTimeField>& out, uint16_t offset) const;
+    /// The YM2203 pair caught up to the card axis position `now` (or adopts it at its next sync)
+    bool TtdSynced(uint64_t now, int64_t& offset) const;
+    /// endregion </Time travel>
 
 private:
     // IGSHostClock: the card axis, frame-relative to the last FrameStart

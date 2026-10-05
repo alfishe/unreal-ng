@@ -254,7 +254,8 @@ public:
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
-    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::GeneralSound; }
+    /// GeneralSound (5) for the card, the profile's own id for a board GS (the ZX-MultiSound's: MultiSoundGs)
+    ttd::PeripheralId TTDPeripheralId() const override { return static_cast<ttd::PeripheralId>(_profile.ttdPeripheralId); }
     ttd::TTDDeviceDescriptor TTDDescribe() const override
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
@@ -270,7 +271,7 @@ public:
         offset = totalGsCycles() - _frameStartGsCycles;
         return offset >= 0 && (_frameGsCycles <= 0 || offset < _frameGsCycles);
     }
-    std::string TTDDeviceName() const override { return "GeneralSound"; }
+    std::string TTDDeviceName() const override { return _profile.ttdDeviceName; }
     uint64_t TTDHashState() const override;
     /// endregion </TTDSerializable interface>
 

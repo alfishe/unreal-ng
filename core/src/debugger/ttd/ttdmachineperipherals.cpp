@@ -25,6 +25,7 @@
 #include "emulator/rzx/rzxttdstate.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
@@ -102,6 +103,22 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
                           SlotCardInstance(context, context->pSoundManager->getMoonSound()));
         registry.RegisterRegionSource(context->pSoundManager->getMoonSound());   // wave RAM as an engine region
 #endif
+        // Cards the slots build themselves (card.h; the ZX-MultiSound): each of their devices under its own id,
+        // named by the card's slot ("zxbus.1.multisound", "zxbus.1.multisound.gs"); memories as engine regions
+        if (const SlotManager* slotManager = context->pSlotManager)
+        {
+            std::vector<CardTtdDevice> devices;
+            for (const std::unique_ptr<ICard>& card : slotManager->Cards())
+            {
+                devices.clear();
+                card->CollectTtdDevices(devices);
+                for (const CardTtdDevice& device : devices)
+                {
+                    registry.Register(device.id, device.device, device.instance);
+                    registry.RegisterRegionSource(device.regions);
+                }
+            }
+        }
         // The registry against the slot set: a card the plan fits has its device, a device has its card
         // (a build without OPL4 builds no MoonSound: that group is not compared there)
         if (const SlotManager* slotManager = context->pSlotManager; slotManager && slotManager->Current().machine)

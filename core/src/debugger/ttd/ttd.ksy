@@ -654,7 +654,16 @@ types:
           u1 player state (0 playing, 1 finished, 2 desynced, 3 stopped), u1 last IN value, u1 first desync kind,
           u8 recording fingerprint (FNV-1a over the frames and IN values), u8 frames done, u4 fetches, u4 IN position,
           u8 interrupts, u8 desyncs, u8 snapshots applied, s4 drift, s4 max drift, then the first desync: u4 block,
-          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session).
+          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session),
+          58 MultiSound (a ZX-MultiSound card, slot-built, instance <slot>.multisound: u1 version 1, u8 adapter
+          origin, u8 adapter last time, then the card: u1 version 1, u8 now, u8 frame base, u8 frame ticks,
+          u8 rendered-to, u8 sample accumulator, u1 FM muted, u2 FM mute changes + 256 x (u8 time, u1 muted), 11 CPLD
+          latches, 4 x (u1 DAC sample, u1 volume), u8 YM2203 pair synced time + the pair's blob, the MIDI line
+          (18 bytes), the shared DACs; layout in multisoundcard.h),
+          59 Sam2695 (a Dream SAM2695 synthesizer, instance <slot>.multisound.sam2695: sam2695::Synth::SaveState, magic
+          "SAM2", version, the bank's SHA-256, UART, parser, queue, channels, voices; a load refuses another bank),
+          60 MultiSoundGs (the ZX-MultiSound's General Sound, instance <slot>.multisound.gs: the GeneralSound (5)
+          layout with 1-2 MB RAM; the engine region MultiSoundGsRam (17)).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

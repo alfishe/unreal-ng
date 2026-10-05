@@ -1181,15 +1181,23 @@ uint64_t SoundChip_GeneralSound::TTDHashState() const
 
 /// endregion </TTDSerializable>
 
+// gsprofile.h names the time-travel ids by number (it does not include the TTD headers)
+static_assert(GSProfile{}.ttdPeripheralId == static_cast<uint8_t>(ttd::PeripheralId::GeneralSound) &&
+                  GSProfile{}.ttdRegionId == static_cast<uint16_t>(ttd::TTDRegionId::GeneralSoundRam),
+              "GSProfile's default time-travel ids are the GS card's");
+static_assert(static_cast<uint8_t>(ttd::PeripheralId::MultiSoundGs) == 60 &&
+                  static_cast<uint16_t>(ttd::TTDRegionId::MultiSoundGsRam) == 17,
+              "GSProfile::MultiSound names these ids by number");
+
 /// region <Time-travel engine region>
 
 void SoundChip_GeneralSound::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
 {
     _ramTracker.Bind(_ram.data(), _ram.size());
     ttd::TTDDeviceRegion ram;
-    ram.desc.id = ttd::TTDRegionId::GeneralSoundRam;
-    ram.desc.name = "gs.ram";
-    ram.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::GeneralSound);
+    ram.desc.id = static_cast<ttd::TTDRegionId>(_profile.ttdRegionId);
+    ram.desc.name = _profile.ttdRegionName;
+    ram.desc.ownerType = _profile.ttdPeripheralId;
     ram.desc.memory = _ram.data();
     ram.desc.bytes = static_cast<uint32_t>(_ram.size());
     ram.desc.pieces = _ramTracker.Pieces();
@@ -1199,7 +1207,7 @@ void SoundChip_GeneralSound::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
 
 bool SoundChip_GeneralSound::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
 {
-    peripheralId = static_cast<uint8_t>(ttd::PeripheralId::GeneralSound);
+    peripheralId = _profile.ttdPeripheralId;
     state.resize(TTD_FIXED_STATE_SIZE);
     serializeFixedState(state.data());
     return true;
