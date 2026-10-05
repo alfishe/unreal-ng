@@ -60,11 +60,17 @@ first; tests that assert the current wrong value are named and change with the f
   and 2 fclk short for reads. All 118 instruction loops in every video mode match fclk for fclk.
 - ~~`stall357` (row 35).~~ **Settled:** it never fires at 3.5 / 7 MHz (384 simulated cases); no DRAM waits there,
   as unreal-ng has it.
-- **New (from the simulation):** a refused video cycle in 256C / TXT, after the CPU took a block's spare cycles, is
-  charged by unreal-ng to the next DRAM access (4 fclk); the RTL stretches the machine cycle it falls in, and only
-  1-3 of its 4 fclk when it overlaps the start of the next read (a race on the Z80's MREQ / RD delay). Differences
-  of -6..+6 fclk in rare access patterns (3 writes then a read in TXT, an isolated write in 256C); no instruction
-  loop hits it. `results/cpu-waits.txt` has the cases.
+- ~~**New (from the simulation):** a refused video cycle in 256C / TXT was charged by unreal-ng to the next DRAM
+  access.~~ **Fixed 2026-10-05:** `TsConfArbiter` now simulates the refused cycles fclk by fclk as the RTL stops the
+  Z80 clock (`stall14_cyc = memrd ? stall14_cycrd : !cpu_next`: stopped in every fclk without a memory read seen on
+  the pins, the edge already on its way still comes) and charges the stopped fclk to the machine cycle whose clock
+  edge they delay, settling on the following machine cycles (ROM / cache-hit reads and opcode fetches included).
+  Test `TsConfArbiter_Test.ARB6_CpuWaitsMatchTheRtl` replays all 1170 14 MHz tests of `results/cpu-waits.txt`
+  (copy in `testdata/machines/tsconf/rtl-sim/`) through the emulated CPU's bus cycles and matches every machine
+  cycle's length; before the fix 48 differed (16 isolated 256C writes, 16 + 13 "three writes and a read" in
+  256C / TXT, 3 `PUSH` loops in 256C, 21 of them in total time). Reference: pin delay 1; with a Z80 slower than
+  41 ns (pin delay 2) the RTL moves the overlap with the next read by one fclk (20 tests), a race the hardware has
+  too.
 - 3 / 4-bit VDAC curves: no such board or firmware to compare ([video.md](video.md) row 46).
 - Whether the fetch window 4 dots wider than the picture costs DRAM slots ([video.md](video.md) row 47).
 - IDE DMA hangs on real VDAC firmware, works in unreal-ng with an IDE scheme ([dma.md](dma.md) row 32).

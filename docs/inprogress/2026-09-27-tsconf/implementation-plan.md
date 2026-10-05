@@ -567,6 +567,16 @@ has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
   frame, so TTD needs nothing. Other emulators model none of it (MAME: a
   flat 2 T per miss; Unreal: dead code; Xpeccy: nothing). The 3.5 / 7 MHz
   stall (stall357) never fires in any mode, so it is not modeled.
+  **Revised 2026-10-05 (TS-Conf RTL audit, RTL simulation
+  `tools/machines/tsconf/rtl-sim`):** a refused cycle stops the clock only in
+  the fclk the CPU is not seen in a memory read, so it stretches the machine
+  cycle it falls in (a write's T3, the next M1) and costs 1 fclk instead of 4
+  when the next read's MREQ / RD arrive inside it. The arbiter keeps the
+  refused window open after the grant, simulates it fclk by fclk against the
+  machine cycles that follow (ROM and cache-hit reads, opcode fetches through
+  the M1 hook) and charges each stop to the cycle whose clock edge it delays.
+  `TsConfArbiter_Test.ARB6_CpuWaitsMatchTheRtl`: all 1170 simulated 14 MHz
+  tests, every machine cycle fclk for fclk.
 - **TIM-2**: 14 MHz I/O to the AY (#FD with A15 = 1) or an open VG93
   (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
 - **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the

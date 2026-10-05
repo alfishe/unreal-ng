@@ -404,25 +404,34 @@ the RTL's.
 | `POP`, `PUSH`, `LDI` loops, four window modes | 36, 28 / 32, 44 / 47.7 | same | yes |
 | Total time of all 118 loop tests | | | identical, fclk for fclk |
 | Isolated M1 / read / write at 64 fclk positions in ZX, 16C, TXT windows; M1 / read in 256C | | | yes (all 64) |
-| Isolated write in 256C, 8 of 64 positions | +1 (pin delay 2: +2) | +4 | no: RTL 3 (2) fclk less |
-| Three writes and a read in TXT, 13 of 64 positions | see below | see below | no: per test -4 .. +6 (pin delay 2: -6 .. +2) |
+| Isolated write in 256C, 8 of 64 positions | +1 (pin delay 2: +2) | +1 (before the fix: +4) | yes (pin delay 1) |
+| Three writes and a read in TXT, 13 of 64 positions | see below | same | yes (before the fix: per test -4 .. +6) |
+| Every machine cycle of all 1170 14 MHz tests | | | yes (before the fix: 48 tests differed) |
 | 3.5 / 7 MHz, 384 tests | 0 | 0 | yes |
 
-Both differences come from refused cycles (rule 5):
+Both differences came from refused cycles (rule 5) and are fixed (2026-10-05, test
+`TsConfArbiter_Test.ARB6_CpuWaitsMatchTheRtl`, which replays every 14 MHz test of this file through the emulated
+CPU's bus cycles):
 
 - **Part of a refused cycle overlaps a read.** When the cycle after the CPU's grant is
   refused and the Z80 starts its next memory read (MREQ and RD seen) inside it, the RTL
-  stops the clock only for the fclk before that, 1 to 3 of the 4; unreal-ng charges the
+  stops the clock only for the fclk before that, 1 to 3 of the 4; unreal-ng charged the
   whole cycle (4 fclk). Which fclk the read starts in depends on the Z80's MREQ / RD output
   delay (pin delay 1 and 2 differ by one fclk here), so this is an RTL race, not a fixed
-  number. It needs a refused cycle, so it happens only after the CPU took a block's spare
-  cycles: a write granted at the first cycle of a 256C block and followed by a read cycle
-  at certain alignments, or back-to-back writes in TXT. The loops above never hit it.
+  number; unreal-ng follows pin delay 1. It needs a refused cycle, so it happens only after
+  the CPU took a block's spare cycles: a write granted at the first cycle of a 256C block
+  and followed by a read cycle at certain alignments, or back-to-back writes in TXT. The
+  loops above never hit it.
 - **When the frozen fclk are charged.** The RTL stretches the machine cycle the refused
-  cycle falls in (for example the ROM fetch after a read); unreal-ng adds refused cycles
-  that pass between two DRAM accesses to the second access. The total over a program is
-  the same apart from the overlap above; the moment the CPU loses the time differs by up
-  to the distance to the next DRAM access.
+  cycle falls in (for example the ROM fetch after a read); unreal-ng added refused cycles
+  that pass between two DRAM accesses to the second access.
+
+unreal-ng now keeps the refused cycles open after the grant (`TsConfArbiter`), simulates
+the clock in them fclk by fclk as `stall14_cyc` and `zclock.v` do (stopped in every fclk in
+which no memory read is seen on the pins, the edge already on its way still comes, stopped
+to the end once two fclk in a row stop) against the machine cycles that follow, including
+ROM and cache-hit reads and opcode fetches, and charges each stop to the machine cycle
+whose clock edge it delays.
 
 Audit verdicts: row 33, unreal-ng's read wait +4..+7 is right and the `zmem.v` comment
 table is 2 fclk short for reads (its M1 column is right); row 35, `stall357` cannot

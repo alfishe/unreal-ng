@@ -204,8 +204,12 @@ each with its own 13-bit tag `{page[7:0], A[13:9]}` + valid bit ([V] `zmem.v:210
   comment table at `zmem.v:153-172` says read +2..+5; the RTL releases a data
   read at c2 of the cycle after the grant and an M1 at c1 (`zmem.v:204`), so a
   read waits one fclk longer than an M1 (corrected 2026-09-30). When video
-  holds the next DRAM cycle (`cpu_next = 0`) a read waits for the grant and a
-  write or any non-read cycle freezes the clock - the arbiter model in
+  holds the next DRAM cycle (`cpu_next = 0`) a read waits for the grant, and
+  the clock stops in every fclk of such a cycle in which the FPGA does not see
+  a memory read on the pins (`stall14_cyc = memrd ? stall14_cycrd :
+  !cpu_next`): the machine cycle it falls in stretches, by less than the 4
+  fclk when the next read's MREQ / RD arrive inside it (checked against the
+  RTL simulation, `tools/machines/tsconf/rtl-sim`) - the arbiter model in
   `platforms/tsconf/tsconfarbiter.h`.
 
 Emulator: functional behavior (hit returns cached word even if RAM changed
