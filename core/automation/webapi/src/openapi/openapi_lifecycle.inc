@@ -143,6 +143,8 @@
         sprinter["description"] =
             "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
     }
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["slots"]["$ref"] = "#/components/schemas/CreateEmulatorRequest/properties/slots";
     {
         Json::Value& profi = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                   ["schema"]["properties"]["profi"];
@@ -332,7 +334,9 @@
         "slot with the same id on the new machine, unsaved writes included (media.attached). A medium the new "
         "model has no slot for is closed when it has nothing unsaved (media.closed); with unsaved writes the "
         "switch answers 409 and lists them in 'stranded', unless 'stranded' says save, discard or keep "
-        "(keep: detached media on the new machine, media.detached).";
+        "(keep: detached media on the new machine, media.detached). The cards go along (ZX-bus slots R-OP-9): "
+        "'slots' (SlotCarry) lists the cards kept in their slot or moved behind an adapter and the ones the new "
+        "machine cannot take, with the reason; 'report' has the same lines for people.";
     paths["/api/v1/emulator/{id}/model"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["in"] = "path";
@@ -373,6 +377,8 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "object";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["status"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["slots"]["$ref"] = "#/components/schemas/SlotCarry";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["old_emulator_id"]["type"] = "string";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]

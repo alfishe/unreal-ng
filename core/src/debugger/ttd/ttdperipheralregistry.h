@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <memory>
 #include <functional>
+#include <string>
 
 #include "ttdserializable.h"
 
@@ -74,7 +75,13 @@ public:
     /// Only connected devices should be registered.
     /// @param id Unique peripheral identifier
     /// @param device Pointer to the device (must remain valid while registered)
-    void Register(PeripheralId id, TTDSerializable* device);
+    /// @param instance The engine's device instance name ("zxbus.1.neogs": a slot card's device named by its slot);
+    ///        empty keeps the device's own (TTDDescribe)
+    /// @return false when another device already holds @p id: a v1 checkpoint keeps one state per id, so two
+    ///         instances of one module (two cards carrying the same chip) cannot both be recorded. The first stays,
+    ///         the second is refused and named by CheckDeviceTable, which then refuses recording (before, the second
+    ///         silently replaced the first). Registering the same device again only updates its instance name
+    bool Register(PeripheralId id, TTDSerializable* device, const std::string& instance = {});
 
     /// Unregister a peripheral (called when device disconnected).
     void Unregister(PeripheralId id);   ///< also drops a not-recorded mark
@@ -185,6 +192,8 @@ public:
 
 private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
+    std::unordered_map<uint8_t, std::string> _instances;   ///< instance names given at registration, by id
+    std::vector<std::string> _duplicates;                  ///< devices refused for an id already held
     std::vector<ITTDRegionSource*> _regionSources;
     uint64_t _notRecorded = 0;
     mutable std::array<uint32_t, 64> _lastStateBytes{};   ///< raw state bytes of the last CaptureAll, by id

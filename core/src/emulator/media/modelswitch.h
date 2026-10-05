@@ -14,6 +14,10 @@
 /// Example: Pentagon -> ZX-Evo keeps floppy A and the tape; ZX-Evo -> Pentagon
 /// strands `sd.zc`: a card with 48 unsaved sectors refuses the switch
 /// ("dirty") until the request says save, discard or keep.
+///
+/// The cards go along too (ZX-bus slots R-OP-9): the old machine's slot set is
+/// planned against the new model, a card the new machine cannot take is
+/// dropped and reported (ModelSwitchResult::slotCarry, also in the report lines).
 
 #include <cstdint>
 #include <functional>
@@ -24,6 +28,8 @@
 
 #include "emulator/media/mediamanager.h"
 #include "emulator/platform.h"
+#include "emulator/slots/slotconfig.h"
+#include "emulator/slots/slotmanager.h"
 
 class Emulator;
 
@@ -48,6 +54,19 @@ struct ModelSwitchRequest
     /// Power-on RAM of the new machine; unset = the old machine's mode, so a
     /// machine created with zeroed RAM stays that way across a model switch
     std::optional<RamPowerOn> ramPowerOn;
+    /// The new machine's slot set, exactly ([SLOTS]): a restart with a planned
+    /// slot change (SlotChange, ZX-bus slots SL-6). Unset: the old machine's
+    /// cards are carried and planned against the new model (R-OP-9,
+    /// SlotManager::Carry), the cards it cannot take reported in the result
+    std::optional<SlotConfig> slotSet;
+    /// The old instance's create-time config override applies to the new
+    /// machine too (a restart of the same model: a machine variant's board, a
+    /// create-time option); off for a switch to another model
+    bool keepConfigOverride = false;
+    /// Running settings the new machine takes over from the old one (configuration, not machine state), applied
+    /// after the instance override and before the slot set: a slot restart carries [NETWORK] this way (owner decision
+    /// 2026-10-05, ZX-bus slots tdd §16). Empty: the new machine starts from its configuration alone
+    std::function<void(CONFIG&)> carrySettings;
 };
 
 struct ModelSwitchResult
@@ -56,6 +75,7 @@ struct ModelSwitchResult
     std::shared_ptr<Emulator> emulator;  ///< the new machine, created and not started
     std::vector<SlotInfo> stranded;      ///< dirty media the new model has no slot for
     MediaTransferReport media;           ///< where the media went
+    SlotManager::CarryReport slotCarry;  ///< the cards carried and dropped (a switch without an exact slot set)
 };
 
 class ModelSwitch

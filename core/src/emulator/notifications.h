@@ -713,7 +713,16 @@ enum class AudioSource : uint8_t
     NeoGSMp3 = 10,    // NeoGS MP3 decoder output
     NeoGSDma = 11,    // NeoGS: the card's own DMA (SD card, MP3 decoder) moving data - not sound
     NeoGSTransfer = 12, // NeoGS: ZX-DMA moving data between the ZX and the card - not sound
-    CdAudio = 13        // CD-DA from an ATAPI CD drive (any IDE unit)
+    CdAudio = 13,       // CD-DA from an ATAPI CD drive (any IDE unit)
+    // ZX-MultiSound card: the YM2203 pair per chip as for the TurboSound FM (2 x AY, 2 x FM), its DACs (PCM), the SAA
+    // and the MIDI synthesizer - one indicator per row
+    MultiSoundSsg1 = 14,
+    MultiSoundSsg2 = 15,
+    MultiSoundFm1 = 16,
+    MultiSoundFm2 = 17,
+    MultiSoundPcm = 18,
+    MultiSoundSaa = 19,
+    MultiSoundMidi = 20
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

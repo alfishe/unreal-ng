@@ -41,6 +41,7 @@ const std::vector<std::string> kRegistrationFiles = {
     "debugger/ttd/ttdserializable.h",   // the PeripheralId Sprinter rows (serializers in debugger/ttd/sprinter/)
     "debugger/ttd/engine/ttdregion.h",  // the TTDRegionId Sprinter rows (the engine's region id table)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
+    "emulator/slots/refdata/machines.cpp",  // the per-model slot declaration (buses, built-ins; ZX-bus slots SL-1)
 };
 
 /// Identifiers no shared file may use

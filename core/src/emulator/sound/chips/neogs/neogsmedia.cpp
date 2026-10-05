@@ -139,7 +139,7 @@ const char* NeoGSMediaResultText(NeoGSMediaResult r)
     {
         case NeoGSMediaResult::Done: return "done";
         case NeoGSMediaResult::Queued: return "queued: carried out at the next instruction boundary (while paused: when execution continues)";
-        case NeoGSMediaResult::NoNeoGS: return "only the NeoGS card (GSType=NGS) has an SD slot and a flash chip";
+        case NeoGSMediaResult::NoNeoGS: return "only the NeoGS card (a neogs slot card) has an SD slot and a flash chip";
         case NeoGSMediaResult::TtdRecording: return "refused: a TTD recording is running - the machine's configuration is fixed while recording";
         case NeoGSMediaResult::ReplayOwnsInput: return "refused: a TTD replay owns the machine";
         case NeoGSMediaResult::NoPath: return "needs an SD image path";

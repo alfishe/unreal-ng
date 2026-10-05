@@ -16,7 +16,10 @@
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
-    , _fitment(context->config.sound.sd ? Fitment::Quad : Fitment::Mono)
+    , _fitment(!context->config.sound.sd           ? Fitment::Mono
+               : context->config.sound.sdMode == 1 ? (context->config.sound.covoxFB ? Fitment::Mode1Mono : Fitment::Mode1)
+               : context->config.sound.sdMode == 2 ? Fitment::Mode2
+                                                   : Fitment::Quad)
     , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
@@ -196,6 +199,13 @@ namespace
                        (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
             case Covox::Fitment::Mono:
                 return lowByte == (Covox::PORT_RIGHT_B & 0xFF);
+            case Covox::Fitment::Mode1:
+                return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
+            case Covox::Fitment::Mode2:
+                return (lowByte & Covox::PORT_MASK) == Covox::PORT_MATCH;
+            case Covox::Fitment::Mode1Mono:
+                return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1 ||
+                       lowByte == (Covox::PORT_RIGHT_B & 0xFF);
         }
         return false;
     }
@@ -208,6 +218,24 @@ bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 
     portDeviceOutMethod(rawPort, value);
     return true;
+}
+
+std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
+{
+    switch (_fitment)
+    {
+        case Fitment::Quad:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mono:
+            return { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+        case Fitment::Mode1:
+            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mode2:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+        case Fitment::Mode1Mono:
+            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+    }
+    return {};
 }
 
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)

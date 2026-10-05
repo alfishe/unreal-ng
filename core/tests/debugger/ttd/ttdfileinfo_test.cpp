@@ -215,7 +215,8 @@ TEST(TTDFileInfo_Names, GeneralSoundOfAMask)
     EXPECT_EQ(ttd::GeneralSoundOf(bit(PeripheralId::GeneralSoundLightweight)), GSTypeKind::LW);
     EXPECT_EQ(ttd::GeneralSoundOf(bit(PeripheralId::NeoGS) | bit(PeripheralId::BetaDisk)), GSTypeKind::NGS);
     EXPECT_EQ(ttd::PeripheralIdName(static_cast<uint8_t>(PeripheralId::BetaDisk)), "betadisk");
-    EXPECT_EQ(ttd::PeripheralIdName(60), "id60");
+    EXPECT_EQ(ttd::PeripheralIdName(60), "multisound-gs");
+    EXPECT_EQ(ttd::PeripheralIdName(63), "id63");
 
     ttd::TTDRecordedMachine m;
     m.peripheralMask = bit(PeripheralId::TSFM) | bit(PeripheralId::NeoGS);

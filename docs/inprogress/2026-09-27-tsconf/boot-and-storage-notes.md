@@ -115,8 +115,8 @@ that look for a BPB first see a superfloppy:
   state including the sector buffer and the adapter's #11 latch, so a
   checkpoint between the two halves of a word or mid-sector continues exactly.
   The disk contents are media, not TTD state.
-- **CPU stall** on IDE bus cycles: `[HDD] IdeStall=1` (off by default,
-  hardware-spec §8.3).
+- **CPU stall** on IDE bus cycles: `[HDD] IdeStall=1` (on by default since
+  2026-10-05, as the RTL; `IdeStall=0` bypasses it; hardware-spec §8.3).
 
 ## 4. Test data
 

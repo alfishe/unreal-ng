@@ -163,8 +163,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         schema["properties"]["profile"]["enum"].append(name);
     schema["properties"]["profile"]["description"] =
         "record_start: output profile. native (default) = the picture at its own size times scale. 1080p / 1440p / 4k "
-        "= a fixed frame (4k = 3840x2160): the picture is scaled sharply into it (nearest, the largest integer "
-        "factor that fits, aspect kept, black bars - no blur). h264 / h265 only, any container";
+        "= a fixed frame (4k = 3840x2160): the picture is fitted into it with its aspect kept (as large as the "
+        "frame allows, black bars, nearest-neighbor sampling - no blur). h264 / h265 only, any container";
     schema["properties"]["acceleration"]["type"] = "string";
     schema["properties"]["acceleration"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* name : {"auto", "hardware", "software"})
@@ -197,7 +197,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "screenshot: presented (default: the finished frame the window shows, a couple of frames behind) or live "
         "(the frame as drawn now, no delay, no ZX DLSS; a paused machine also reports where the beam stopped). "
         "audio_capture: one mixer device instead of the master mix - beeper, ay1, ay2, fm1, fm2, covox (also the "
-        "Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm (inspect_state aspect audio_mixer lists "
+        "Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm, a ZX-MultiSound's ms_ssg1, ms_ssg2, "
+        "ms_fm1, ms_fm2 (its YM2203 pair per chip), ms_saa, ms_pcm (GS + SounDrive DACs), ms_midi (inspect_state aspect audio_mixer lists "
         "the fitted ones); its own buffer, before mute / volume";
     schema["properties"]["wav"]["type"] = "boolean";
     schema["properties"]["wav"]["default"] = false;

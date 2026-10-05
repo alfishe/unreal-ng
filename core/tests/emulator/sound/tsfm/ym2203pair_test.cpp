@@ -7,12 +7,33 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
 
+#include <string>
+#include <tuple>
+
+#include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
+#include "base/featuremanager.h"
+#include "debugger/analyzers/analyzermanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/memory/memory.h"
+#include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
+#include "debugger/debugmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/sound/soundmanager.h"
+#ifdef UNREALNG_HAVE_SAM2695
+#include "emulator/slots/cards/multisound/multisoundcard.h"
+#include "emulator/slots/cards/multisound/multisoundslotcard.h"
+#include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
+#endif
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/ayioport.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
@@ -222,6 +243,7 @@ TEST_F(Ym2203Pair_Test, PerChipAndChannelOutputs)
                 for (int ch = 0; ch < 3; ch++)
                     block.ssg[c][ch] = ssg[c][ch].data() + b * kBlock;
             }
+            pair.beginChannelRender(kBlock);
             ASSERT_EQ(pair.renderChannels(kBlock, block, fmEnabled), kBlock);
         }
     };
@@ -242,6 +264,96 @@ TEST_F(Ym2203Pair_Test, PerChipAndChannelOutputs)
     const std::vector<float> fmTail(fm[0].begin() + kBlock, fm[0].end());
     EXPECT_LT(Peak(fmTail), 1e-6f);
     EXPECT_GT(Peak(ssg[1][1]), 0.5f);
+}
+
+TEST_F(Ym2203Pair_Test, PerChannelOutputsRenderAWholeSyncedFrameAtOnce)
+{
+    // A board that syncs a whole frame and then renders it (the MultiSound's FrameEnd) leaves the cursor a frame
+    // behind the chips with that frame's words queued: the render must take every word, not re-anchor to the end.
+    // A steady carrier then has the same swing in every frame, on both host rates
+    for (const uint32_t host : {kMasterHz, kHost128Hz})
+    {
+        Ym2203PairConfig config = RatioConfig();
+        config.hostTickRate = host;
+        Ym2203Pair pair(_context, config);
+        pair.configureChannelOutputs(44100);
+        pair.syncTo(0);
+        ProgramFmNote(pair, 0);
+
+        const uint64_t frameTicks = host == kMasterHz ? 71680 : 70908;
+        std::vector<float> fm(2000);
+        uint64_t samplesAcc = 0;
+        for (int frame = 0; frame < 8; frame++)
+        {
+            pair.syncTo(pair.syncedT() + frameTicks);
+            samplesAcc += frameTicks * 44100;
+            const size_t frames = static_cast<size_t>(samplesAcc / host);
+            samplesAcc %= host;
+            Ym2203ChannelBlock block;
+            block.fm[0] = fm.data();
+            pair.beginChannelRender(frames);
+            ASSERT_EQ(pair.renderChannels(frames, block, true), frames);
+            if (frame < 2)
+                continue;  // attack and decimator warm-up
+            const auto [lo, hi] = std::minmax_element(fm.begin(), fm.begin() + static_cast<std::ptrdiff_t>(frames));
+            // One carrier at TL 0: the DAC word swings +-8168 (the TSFM output tests' reference note)
+            EXPECT_NEAR(*hi - *lo, 2.0f * 8168.0f / 32768.0f, 0.005f) << "host " << host << " frame " << frame;
+        }
+    }
+}
+
+TEST_F(Ym2203Pair_Test, PerChannelOutputsFollowTheChipsAfterAResetOnAContinuousAxis)
+{
+    // The MultiSound's host axis is continuous (never rebased). A reset there - a snapshot load, a reset of a running
+    // machine - leaves the cursor far from the chips, and the re-anchor must put it where the next block ENDS the
+    // render lag behind them: anchored at the chips instead, every block rendered a block ahead of them, consumed a
+    // whole frame of words at its first half-tick and held the last one (MS-7 owner report 2026-10-05: clicks for
+    // FM). The FM stream then carries the note's frequency (zero crossings, not a level), on both host rates
+    for (const uint32_t host : {kMasterHz, kHost128Hz})
+    {
+        Ym2203PairConfig config = RatioConfig();
+        config.hostTickRate = host;
+        Ym2203Pair pair(_context, config);
+        pair.configureChannelOutputs(44100);
+        pair.syncTo(0);
+
+        const uint64_t frameTicks = host == kMasterHz ? 71680 : 70908;
+        std::vector<float> frameOut(2000);
+        std::vector<float> fm;
+        uint64_t samplesAcc = 0;
+        auto frame = [&](bool keep)
+        {
+            pair.syncTo(pair.syncedT() + frameTicks);
+            samplesAcc += frameTicks * 44100;
+            const size_t frames = static_cast<size_t>(samplesAcc / host);
+            samplesAcc %= host;
+            Ym2203ChannelBlock block;
+            block.fm[0] = frameOut.data();
+            pair.beginChannelRender(frames);
+            ASSERT_EQ(pair.renderChannels(frames, block, true), frames);
+            if (keep)
+                fm.insert(fm.end(), frameOut.begin(), frameOut.begin() + static_cast<std::ptrdiff_t>(frames));
+        };
+
+        // Ten frames of a running machine, then a reset mid-frame
+        for (int i = 0; i < 10; i++)
+            frame(false);
+        pair.syncTo(pair.syncedT() + 12345);
+        pair.reset();
+        pair.syncTo(pair.syncedT());
+        ProgramFmNote(pair, 0);
+        for (int i = 0; i < 2; i++)
+            frame(false);  // attack and decimator warm-up
+        for (int i = 0; i < 8; i++)
+            frame(true);
+
+        size_t crossings = 0;
+        for (size_t i = 1; i < fm.size(); i++)
+            crossings += (fm[i - 1] < 0.0f) != (fm[i] < 0.0f) ? 1 : 0;
+        const double hz = static_cast<double>(crossings) / 2.0 / (static_cast<double>(fm.size()) / 44100.0);
+        const double note = 256.0 * 64.0 * (kMasterHz / 72.0) / 1048576.0;   // F-number #100, block 7: 759.5 Hz
+        EXPECT_NEAR(hz, note, note * 0.01) << "host " << host;
+    }
 }
 
 TEST_F(Ym2203Pair_Test, SsgIoPortListenerOnChip1)
@@ -453,3 +565,530 @@ TEST_F(Ym2203Pair_Test, SyncedTimeAdoptsAfterResetAndFollowsTheHost)
 }
 
 /// endregion </Time-travel engine descriptor>
+
+#ifdef UNREALNG_HAVE_SAM2695
+/// region <Render-cursor invariant on both boards>
+//
+// The render cursor and the chips' time are kept together by one rule (Ym2203Pair::anchorRender). The suite below
+// drives the two boards that own a pair - the TurboSound FM in the AY socket (frame-relative axis, renders as the CPU
+// runs) and the ZX-MultiSound in a ZX-bus slot (continuous axis, syncs a frame and then renders it) - through every
+// event that moves time or the cursor, at several T-states inside a frame, and checks what the owner hears: an FM note
+// and an SSG tone at their frequencies (zero crossings, not a level), with regular periods, the cursor's lag in
+// bounds and no re-anchor in the steady state.
+
+namespace pairboards
+{
+
+enum class Board
+{
+    Tsfm,
+    MultiSound
+};
+
+enum class Event
+{
+    None,          ///< frame boundaries only
+    MachineReset,  ///< Emulator::Reset (the bus /RESET: the TSFM's reset, the card's BusReset)
+    SnapshotLoad,  ///< a .sna load (machine reset + state load)
+    CoreRate,      ///< the core sample rate to 48 kHz (decimators redesigned at a frame boundary)
+    HostSpeed,     ///< host speed x2 for four frames, back to x1
+    FmMute         ///< FM muted by the board's control byte for a frame, unmuted
+};
+
+const char* EventName(Event e)
+{
+    switch (e)
+    {
+        case Event::None: return "None";
+        case Event::MachineReset: return "MachineReset";
+        case Event::SnapshotLoad: return "SnapshotLoad";
+        case Event::CoreRate: return "CoreRate";
+        case Event::HostSpeed: return "HostSpeed";
+        case Event::FmMute: return "FmMute";
+    }
+    return "?";
+}
+
+constexpr uint16_t kCode = 0x8000;
+constexpr uint32_t kFrameT = 71680;              // Pentagon
+const double kFmNoteHz = 256.0 * 64.0 * (3500000.0 / 72.0) / 1048576.0;   // F-number #100, block 7: 759.5 Hz
+const double kSsgToneHz = 1750000.0 / 16.0 / 256.0;                        // tone period #100: 427.2 Hz
+
+/// The tones as a Z80 program (a TTD replay re-runs it): both chips quiet (fast release, key off, SSG off), then an FM
+/// carrier on channel 2 of `fmChip` and SSG tone A of the other chip, the control byte left on `fmChip` with FM on
+std::vector<uint8_t> ToneProgram(int fmChip)
+{
+    std::vector<uint8_t> code{0xF3};   // DI
+    auto out = [&](uint16_t port, uint8_t value)
+    {
+        code.insert(code.end(), {0x01, uint8_t(port), uint8_t(port >> 8), 0x3E, value, 0xED, 0x79});
+    };
+    auto reg = [&](uint8_t r, uint8_t v)
+    {
+        out(0xFFFD, r);
+        out(0xBFFD, v);
+    };
+    for (int chip = 0; chip < 2; chip++)
+    {
+        out(0xFFFD, uint8_t(0xF8 | chip));   // chip select, status read, FM on (TSFM and the card alike)
+        for (uint8_t r = 0x80; r <= 0x8E; r++)
+            reg(r, 0xFF);                    // release fastest
+        for (uint8_t ch = 0; ch < 3; ch++)
+            reg(0x28, ch);                   // key off
+        for (uint8_t r = 0x40; r <= 0x4E; r++)
+            reg(r, 0x7F);                    // every operator silent
+        reg(0x07, 0x3F);
+        reg(0x08, 0x00);
+    }
+    const int ssgChip = 1 - fmChip;
+    out(0xFFFD, uint8_t(0xF8 | ssgChip));
+    reg(0x00, 0x00);
+    reg(0x01, 0x01);
+    reg(0x07, 0x3E);                         // tone A only
+    reg(0x08, 0x0F);
+    out(0xFFFD, uint8_t(0xF8 | fmChip));
+    for (const auto& [r, v] : std::initializer_list<std::pair<uint8_t, uint8_t>>{
+             {0x4E, 0x00}, {0x5E, 0x1F}, {0x3E, 0x01}, {0xA6, 0x39}, {0xA2, 0x00}, {0x28, 0xF2}})
+        reg(r, v);
+    code.insert(code.end(), {0xF3, 0x76});   // DI; HALT
+    return code;
+}
+
+/// One machine with a pair: a Pentagon with the TSFM in its AY socket, or with the AY in the socket and the
+/// MultiSound in ZX-bus slot 1; the audio capture analyzer on
+class PairMachine
+{
+public:
+    explicit PairMachine(Board board)
+        : _board(board),
+          _m("pentagon128k", board == Board::Tsfm ? "ay-socket = tsfm" : "ay-socket = ay\nzxbus.1 = multisound")
+    {
+    }
+
+    bool Init()
+    {
+        if (!_m.Ok())
+            return false;
+        AnalyzerManager* analyzers = _m.Context()->pDebugManager->GetAnalyzerManager();
+        analyzers->activate("audiocapture");
+        _capture = analyzers->getAnalyzer<AudioCaptureAnalyzer>("audiocapture");
+        return _capture != nullptr && Pair() != nullptr;
+    }
+
+    Emulator& Machine() { return _m.Machine(); }
+    EmulatorContext* Context() const { return _m.Context(); }
+    Board board() const { return _board; }
+
+    Ym2203Pair* Pair() const
+    {
+        if (_board == Board::MultiSound)
+            return _m.Card() != nullptr ? &_m.Card()->Card().Ym() : nullptr;
+        auto* tsfm = dynamic_cast<SoundChip_TurboSoundFM*>(Context()->pSoundManager->getTurboSound());
+        return tsfm != nullptr ? &tsfm->pair() : nullptr;
+    }
+
+    AudioSourceType FmSource(int chip) const
+    {
+        if (_board == Board::MultiSound)
+            return chip == 0 ? AudioSourceType::MultiSoundFm1 : AudioSourceType::MultiSoundFm2;
+        return chip == 0 ? AudioSourceType::FM1 : AudioSourceType::FM2;
+    }
+    AudioSourceType SsgSource(int chip) const
+    {
+        if (_board == Board::MultiSound)
+            return chip == 0 ? AudioSourceType::MultiSoundSsg1 : AudioSourceType::MultiSoundSsg2;
+        return chip == 0 ? AudioSourceType::AY1_All : AudioSourceType::AY2_All;
+    }
+
+    /// Runs the tone program from the current position (the CPU ends parked in DI; HALT)
+    void PlayTones(int fmChip)
+    {
+        const std::vector<uint8_t> code = ToneProgram(fmChip);
+        Z80* z80 = Context()->pCore->GetZ80();
+        for (size_t i = 0; i < code.size(); i++)
+            z80->DirectWrite(static_cast<uint16_t>(kCode + i), code[i]);
+        z80->halted = 0;
+        z80->pc = kCode;
+    }
+
+    void Out(uint16_t port, uint8_t value) { multisoundtest::Out(_m, port, value); }
+
+    void Frames(int n)
+    {
+        for (int i = 0; i < n; i++)
+            Machine().RunFrame(true);
+    }
+
+    /// `seconds` of one source's left channel from the next frame on, mean removed
+    std::vector<double> Capture(AudioSourceType source, double seconds)
+    {
+        const size_t rate = Context()->pSoundManager->getCoreRate();
+        _capture->startCapture(static_cast<size_t>(seconds * double(rate)) * 2, source);
+        for (int guard = 0; guard < 400 && !_capture->isCaptureComplete(); guard++)
+            Machine().RunFrame(true);
+        std::vector<double> left(_capture->getCapturedSamples() / 2);
+        double mean = 0.0;
+        for (size_t i = 0; i < left.size(); i++)
+            mean += left[i] = _capture->getBuffer()[i * 2];
+        mean /= double(left.empty() ? 1 : left.size());
+        for (double& v : left)
+            v -= mean;
+        _capture->stopCapture();
+        return left;
+    }
+
+    double Rate() const { return double(Context()->pSoundManager->getCoreRate()); }
+
+private:
+    Board _board;
+    multisoundtest::StagedMachine _m;
+    AudioCaptureAnalyzer* _capture = nullptr;
+};
+
+/// The tone in a capture: frequency from the rising zero crossings (interpolated) and the largest deviation of one
+/// period from their mean (a cursor jump, a held word or a dropped stretch shows up as a broken period)
+struct Tone
+{
+    double hz = 0.0;
+    double worstPeriod = 1.0;   // max |period - mean| / mean
+    size_t periods = 0;
+};
+
+Tone Measure(const std::vector<double>& x, double rate)
+{
+    std::vector<double> at;
+    for (size_t i = 1; i < x.size(); i++)
+        if (x[i - 1] < 0.0 && x[i] >= 0.0)
+            at.push_back(double(i - 1) + x[i - 1] / (x[i - 1] - x[i]));
+    Tone tone;
+    if (at.size() < 3)
+        return tone;
+    tone.periods = at.size() - 1;
+    const double mean = (at.back() - at.front()) / double(tone.periods);
+    tone.hz = rate / mean;
+    tone.worstPeriod = 0.0;
+    for (size_t i = 1; i < at.size(); i++)
+        tone.worstPeriod = std::max(tone.worstPeriod, std::abs((at[i] - at[i - 1]) - mean) / mean);
+    return tone;
+}
+
+/// Words queued per chip stay bounded (nothing piles up) and, for the card (which renders right after syncing),
+/// the cursor ends every frame within one SSG tick and the decimators' phase of kRenderLag behind the chips
+void ExpectCursorInBounds(PairMachine& m, const char* where)
+{
+    Ym2203Pair& pair = *m.Pair();
+    for (int c = 0; c < 2; c++)
+        EXPECT_LT(pair.chip(c)->words.size(), 2u * 996u + 64u) << where << ": chip " << c << " words pile up";
+    if (m.board() == Board::MultiSound)
+    {
+        // The frame's sample count saws (903 / 904 at 44.1 kHz on a Pentagon) and the decimator's phase carries
+        // over: the end of a frame's render sits within two output samples of kRenderLag behind the chips
+        const int64_t slack = 2 * int64_t(3500000.0 / m.Rate()) + 16;
+        const int64_t lag = pair.chipT() - pair.renderT();
+        EXPECT_GE(lag, Ym2203Pair::kRenderLag - slack) << where;
+        EXPECT_LE(lag, Ym2203Pair::kRenderLag + slack) << where;
+    }
+}
+
+} // namespace pairboards
+
+using pairboards::Board;
+using pairboards::Event;
+
+class Ym2203PairBoards_Test : public ::testing::TestWithParam<std::tuple<Board, Event, uint32_t>>
+{
+};
+
+/// One board, one event at one T-state inside a frame (~150-300 ms: a machine with its sound devices, about 40
+/// emulated frames and two captures; the card renders all five of its paths each frame)
+TEST_P(Ym2203PairBoards_Test, ToneSurvivesEventAtAnyTState)
+{
+    using namespace pairboards;
+    const auto [board, event, offset] = GetParam();
+    // Both chips are covered across the offsets: the FM note on chip 0 at offset 0 and the frame end, on chip 1 mid
+    const int fmChip = offset == kFrameT / 2 ? 1 : 0;
+    const int ssgChip = 1 - fmChip;
+    const std::string where = std::string(board == Board::Tsfm ? "TSFM" : "MultiSound") + " " + EventName(event) +
+                              " at T " + std::to_string(offset) + ", FM chip " + std::to_string(fmChip);
+
+    PairMachine m(board);
+    ASSERT_TRUE(m.Init()) << where;
+    m.PlayTones(fmChip);
+    m.Frames(3);
+
+    // The event at `offset` T-states into a frame
+    if (offset > 0)
+        m.Machine().RunTStates(offset);
+    switch (event)
+    {
+        case Event::None:
+            break;
+        case Event::MachineReset:
+            m.Machine().Reset();
+            m.PlayTones(fmChip);
+            break;
+        case Event::SnapshotLoad:
+        {
+            const auto sna = TestPathHelper::FindProjectRoot() / "testdata/sound/tsfm/tech_support.sna";
+            ASSERT_TRUE(m.Machine().LoadSnapshot(sna.string()));
+            m.PlayTones(fmChip);
+            break;
+        }
+        case Event::CoreRate:
+            m.Context()->pSoundManager->requestCoreRate(48000);
+            break;
+        case Event::HostSpeed:
+            ASSERT_TRUE(m.Machine().SetSpeedMultiplier(2));
+            m.Frames(4);
+            ASSERT_TRUE(m.Machine().SetSpeedMultiplier(1));
+            break;
+        case Event::FmMute:
+            m.Out(0xFFFD, uint8_t(0xFC | fmChip));
+            m.Frames(1);
+            m.Out(0xFFFD, uint8_t(0xF8 | fmChip));
+            break;
+    }
+    m.Frames(4);   // the note's attack, the decimators and the coupling settle
+    if (event == Event::CoreRate)
+        ASSERT_EQ(m.Rate(), 48000.0) << where;
+
+    Ym2203Pair& pair = *m.Pair();
+    const uint64_t anchors = pair.renderAnchors();
+
+    const Tone fm = Measure(m.Capture(m.FmSource(fmChip), 0.3), m.Rate());
+    EXPECT_NEAR(fm.hz, kFmNoteHz, kFmNoteHz * 0.01) << where << ": FM note";
+    EXPECT_LT(fm.worstPeriod, 0.05) << where << ": an FM period broken (" << fm.periods << " periods)";
+    const Tone ssg = Measure(m.Capture(m.SsgSource(ssgChip), 0.3), m.Rate());
+    EXPECT_NEAR(ssg.hz, kSsgToneHz, kSsgToneHz * 0.01) << where << ": SSG tone";
+    EXPECT_LT(ssg.worstPeriod, 0.05) << where << ": an SSG period broken (" << ssg.periods << " periods)";
+
+    for (int i = 0; i < 20; i++)
+    {
+        m.Frames(1);
+        ExpectCursorInBounds(m, where.c_str());
+    }
+    EXPECT_EQ(pair.renderAnchors(), anchors) << where << ": the cursor was re-anchored in the steady state";
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BoardsEventsOffsets, Ym2203PairBoards_Test,
+    ::testing::Combine(::testing::Values(Board::Tsfm, Board::MultiSound),
+                       ::testing::Values(Event::None, Event::MachineReset, Event::SnapshotLoad, Event::CoreRate,
+                                         Event::HostSpeed, Event::FmMute),
+                       ::testing::Values(0u, pairboards::kFrameT / 2, pairboards::kFrameT - 1)),
+    [](const ::testing::TestParamInfo<Ym2203PairBoards_Test::ParamType>& info)
+    {
+        return std::string(std::get<0>(info.param) == Board::Tsfm ? "Tsfm" : "MultiSound") + "_" +
+               pairboards::EventName(std::get<1>(info.param)) + "_T" + std::to_string(std::get<2>(info.param));
+    });
+
+/// The steady state over a long run, both boards (~3.5 s in all, on purpose: drift shows only over many frames):
+/// 1000 frames (20 s of emulated time; PAIR_LONG_RUN_FRAMES overrides, 10 000 checked by hand 2026-10-05) with the
+/// note and the tone playing, the cursor in bounds every frame, the queues bounded, not one re-anchor, and the note
+/// still at its frequency with regular periods at the end
+TEST(Ym2203PairBoardsLongRun_Test, NoDriftOverAThousandFrames)
+{
+    using namespace pairboards;
+    const char* framesOverride = std::getenv("PAIR_LONG_RUN_FRAMES");
+    const int frames = framesOverride != nullptr ? std::atoi(framesOverride) : 1000;
+    for (const Board board : {Board::Tsfm, Board::MultiSound})
+    {
+        const char* name = board == Board::Tsfm ? "TSFM" : "MultiSound";
+        PairMachine m(board);
+        ASSERT_TRUE(m.Init()) << name;
+        m.PlayTones(0);
+        m.Frames(3);
+        Ym2203Pair& pair = *m.Pair();
+        const uint64_t anchors = pair.renderAnchors();
+        for (int i = 0; i < frames; i++)
+        {
+            m.Frames(1);
+            ExpectCursorInBounds(m, name);
+            if (HasFailure())
+                break;
+        }
+        EXPECT_EQ(pair.renderAnchors(), anchors) << name;
+        const Tone fm = Measure(m.Capture(m.FmSource(0), 0.3), m.Rate());
+        EXPECT_NEAR(fm.hz, kFmNoteHz, kFmNoteHz * 0.01) << name;
+        EXPECT_LT(fm.worstPeriod, 0.05) << name;
+    }
+}
+
+/// TTD: a seek at any T-state inside a frame and the replay from there bring the cursor back exactly where it was
+/// live (the same lag behind the chips at every later frame end) and the same audio: the FM capture taken at the same
+/// frames live and replayed agrees within 1 % of its peak once the flushed output layers (coupling, decimator
+/// history) have settled. Both boards, three offsets (~1 s in all: two machines, TTD recording, 50 frames x 4 runs)
+TEST(Ym2203PairBoardsTtd_Test, SeekAndReplayKeepTheCursorAndTheAudio)
+{
+    using namespace pairboards;
+    for (const Board board : {Board::Tsfm, Board::MultiSound})
+    {
+        const char* name = board == Board::Tsfm ? "TSFM" : "MultiSound";
+        PairMachine m(board);
+        ASSERT_TRUE(m.Init()) << name;
+        FeatureManager* features = m.Machine().GetFeatureManager();
+        features->setFeature(Features::kDebugMode, true);
+        features->setFeature(Features::kTimeTravel, true);
+        m.Context()->pMemory->UpdateFeatureCache();
+        ttd::TimeTravelManager* ttd = m.Context()->pTimeTravelManager;
+        ASSERT_NE(ttd, nullptr);
+        Ym2203Pair& pair = *m.Pair();
+        const uint64_t& frame = m.Context()->emulatorState.frame_counter;
+
+        ASSERT_TRUE(ttd->StartRecording()) << name;
+        const uint64_t start = frame;
+        m.PlayTones(0);
+        std::vector<int64_t> liveLag;
+        std::vector<uint32_t> liveCpuT;   // the CPU's T-state after each frame (the next frame's overshoot)
+        for (int i = 0; i < 36; i++)
+        {
+            m.Frames(1);
+            liveLag.push_back(pair.chipT() - pair.renderT());
+            liveCpuT.push_back(m.Context()->pCore->GetZ80()->t);
+        }
+        const uint64_t captureFrame = frame;
+        const std::vector<double> live = m.Capture(m.FmSource(0), 0.2);
+        ttd->StopRecording();
+        ASSERT_GT(live.size(), 8000u) << name;
+
+        for (const uint32_t offset : {0u, kFrameT / 2, kFrameT - 1})
+        {
+            const std::string where = std::string(name) + " seek at T " + std::to_string(offset);
+            ASSERT_TRUE(ttd->SeekTo({10, offset})) << where;
+            // To the end of the sought frame (RunFrame from inside a frame runs a whole frame's length and stops
+            // inside the next one), then frame by frame as live
+            Z80& z80 = *m.Context()->pCore->GetZ80();
+            if (frame < start + 11)
+                m.Machine().RunTStates(kFrameT - z80.t);
+            ASSERT_EQ(frame, start + 11) << where;
+            for (uint64_t f = 11; f <= liveLag.size(); f++)
+            {
+                if (f > 11)
+                    m.Frames(1);
+                ASSERT_EQ(z80.t, liveCpuT[f - 1]) << where << ", frame " << f << ": the CPU is where it was live";
+                // The live lag at the end of the same frame (liveLag[i] is the end of frame start + 1 + i)
+                EXPECT_EQ(pair.chipT() - pair.renderT(), liveLag[f - 1]) << where << ", frame " << f;
+            }
+            ASSERT_EQ(frame, captureFrame) << where;
+            const std::vector<double> replay = m.Capture(m.FmSource(0), 0.2);
+            ASSERT_EQ(replay.size(), live.size()) << where;
+            double peak = 0.0;
+            double worst = 0.0;
+            for (size_t i = 0; i < live.size(); i++)
+            {
+                peak = std::max(peak, std::abs(live[i]));
+                worst = std::max(worst, std::abs(live[i] - replay[i]));
+            }
+            EXPECT_GT(peak, 1000.0) << where;
+            EXPECT_LT(worst, peak * 0.01) << where << ": replayed FM differs from live";
+        }
+    }
+}
+
+/// The same register writes on both boards come out at the same level: the YM2203 FM calibration is one ([SOUND]
+/// TSFM_FmTrimDb, the audio settings' FM trim drives both). Per chip, the FM row's RMS of the TSFM in the socket and of
+/// the MultiSound agree within 0.1 dB at the shipped trim and at another one, and so do the master mixes of an
+/// FM-only program; the SSG rows differ by the MultiSound board's own SSG weight, at every AY / SSG tone voicing preset
+/// (both boards' SSG is voiced alike, FM on neither). (~0.5 s: two machines per trim and
+/// chip, 0.3 s captures)
+TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
+{
+    using namespace pairboards;
+    auto rms = [](const std::vector<double>& x)
+    {
+        double sum = 0.0;
+        for (double v : x)
+            sum += v * v;
+        return std::sqrt(sum / double(x.empty() ? 1 : x.size()));
+    };
+    // FM rows per board and chip at the first preset: the voicing must not touch them
+    double fmReference[2][2] = {};
+    double ssgFlatRatioDb = 0.0;   // card / TSFM SSG at Flat: every preset must keep it (the same voicing on both)
+    bool haveReference = false;
+    for (const FilterVoicing::Preset voicing :
+         {FilterVoicing::Preset::Flat, FilterVoicing::Preset::Classic, FilterVoicing::Preset::Headphones})
+    for (const double trim : {7.4, 0.0})
+    {
+        if (trim == 0.0 && voicing != FilterVoicing::Preset::Flat)
+            continue;   // the trim is independent of the voicing: one preset covers it
+        for (const int fmChip : {0, 1})
+        {
+            double fmRms[2] = {};
+            double ssgRms[2] = {};
+            double masterRms[2] = {};
+            for (const Board board : {Board::Tsfm, Board::MultiSound})
+            {
+                const int b = board == Board::Tsfm ? 0 : 1;
+                PairMachine m(board);
+                ASSERT_TRUE(m.Init());
+                ASSERT_TRUE(m.Context()->pSoundManager->setFmTrimDb(trim));
+                m.Context()->pSoundManager->setAYVoicing(voicing);
+                double readBack = -100.0;
+                ASSERT_TRUE(m.Context()->pSoundManager->fmTrimDb(readBack));
+                EXPECT_DOUBLE_EQ(readBack, trim);
+                m.PlayTones(fmChip);
+                m.Frames(6);
+                EXPECT_EQ(m.Context()->pSoundManager->getActiveAYVoicing(), voicing);
+                if (board == Board::MultiSound)
+                {
+                    const VoicingStage* stage = m.Context()->pSoundManager->getCardVoicingStage(m.SsgSource(1 - fmChip));
+                    ASSERT_NE(stage, nullptr) << "the card's SSG row is voiced";
+                    EXPECT_EQ(stage->active(), voicing);
+                    EXPECT_EQ(m.Context()->pSoundManager->getCardVoicingStage(m.FmSource(fmChip)), nullptr)
+                        << "FM rows are not voiced";
+                }
+                fmRms[b] = rms(m.Capture(m.FmSource(fmChip), 0.3));
+                ssgRms[b] = rms(m.Capture(m.SsgSource(1 - fmChip), 0.3));
+                // The master with the SSG muted at the chip (volume 0): the FM alone
+                m.Out(0xFFFD, uint8_t(0xF8 | (1 - fmChip)));
+                m.Out(0xFFFD, 0x08);
+                m.Out(0xBFFD, 0x00);
+                m.Out(0xFFFD, uint8_t(0xF8 | fmChip));
+                m.Frames(4);
+                masterRms[b] = rms(m.Capture(AudioSourceType::MasterMix, 0.3));
+            }
+            const std::string where = "voicing " + std::to_string(int(voicing)) + ", trim " + std::to_string(trim) +
+                                      " dB, FM chip " + std::to_string(fmChip);
+            if (trim == 7.4)
+            {
+                if (!haveReference || voicing == FilterVoicing::Preset::Flat)
+                {
+                    fmReference[fmChip][0] = fmRms[0];
+                    fmReference[fmChip][1] = fmRms[1];
+                }
+                else
+                {
+                    EXPECT_NEAR(fmRms[0], fmReference[fmChip][0], fmReference[fmChip][0] * 1e-4)
+                        << where << ": the TSFM's FM row moved with the AY voicing";
+                    EXPECT_NEAR(fmRms[1], fmReference[fmChip][1], fmReference[fmChip][1] * 1e-4)
+                        << where << ": the card's FM row moved with the AY voicing";
+                }
+            }
+            EXPECT_GT(fmRms[0], 500.0) << where;
+            EXPECT_NEAR(20.0 * std::log10(fmRms[1] / fmRms[0]), 0.0, 0.1) << where << ": FM row, card vs TSFM";
+            EXPECT_NEAR(20.0 * std::log10(masterRms[1] / masterRms[0]), 0.0, 0.1) << where << ": master, card vs TSFM";
+            // The SSG is the board's own balance, not a calibration: the MultiSound sums SSG A through 24 k against
+            // the FM's 10 k (R13 / R14 vs R18; weight 0.417 = -7.6 dB), the TSFM gives FM and SSG equal weights. Same
+            // chip-level SSG unit on both (0.30 per channel), so the card's SSG row sits the schematic's -7.6 dB below
+            // the TSFM's (the TSFM's ABC pan law adds 0.06 dB)
+            // Both SSGs go through the same AY / SSG tone voicing ([SOUND] AYVoicing): at every preset the card / TSFM
+            // ratio is the Flat one (master 7bbc2eaaa made Classic the default: the card's then unvoiced SSG sat
+            // 0.09 dB off it, Headphones 0.05 dB the other way). Measured: within 0.006 dB
+            const double ssgRatioDb = 20.0 * std::log10(ssgRms[1] / ssgRms[0]);
+            if (voicing == FilterVoicing::Preset::Flat)
+                ssgFlatRatioDb = ssgRatioDb;
+            else
+                EXPECT_NEAR(ssgRatioDb, ssgFlatRatioDb, 0.02) << where << ": the card's SSG voiced unlike the TSFM's";
+            // And the ratio is the schematic's SSG weight (-7.60 dB: SSG A through 24 k against the FM's 10 k; the
+            // TSFM gives SSG and FM equal weights). Measured -7.75 dB at Flat: the 0.15 dB residual is a rendering
+            // difference of the two SSG paths (the card's per-channel decimators and coupling vs the TSFM's mixed
+            // stream), the same at every preset; not a calibration
+            EXPECT_NEAR(ssgRatioDb, 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide), 0.2)
+                << where << ": SSG row, card vs TSFM";
+        }
+        haveReference = haveReference || voicing == FilterVoicing::Preset::Flat;
+    }
+}
+
+/// endregion </Render-cursor invariant on both boards>
+#endif // UNREALNG_HAVE_SAM2695

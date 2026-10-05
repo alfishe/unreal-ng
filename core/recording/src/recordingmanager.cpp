@@ -119,6 +119,20 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "FM1";
         case AudioSourceType::FM2:
             return "FM2";
+        case AudioSourceType::MultiSoundSsg1:
+            return "MultiSoundSsg1";
+        case AudioSourceType::MultiSoundSsg2:
+            return "MultiSoundSsg2";
+        case AudioSourceType::MultiSoundFm1:
+            return "MultiSoundFm1";
+        case AudioSourceType::MultiSoundFm2:
+            return "MultiSoundFm2";
+        case AudioSourceType::MultiSoundSaa:
+            return "MultiSoundSaa";
+        case AudioSourceType::MultiSoundPcm:
+            return "MultiSoundPcm";
+        case AudioSourceType::MultiSoundMidi:
+            return "MultiSoundMidi";
         case AudioSourceType::Custom:
             return "Custom";
         default:
@@ -1046,10 +1060,10 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     bool deliveredToEncoder = false;  // the frame went into the encoder's own buffer (zero-copy)
     if (HasFixedOutput())
     {
-        // Fixed output frame (4K, 1080p...): the picture scaled sharply into it - nearest, integer factor, aspect
-        // kept. An encoder that lends its own buffer (the hardware encoder's pixel buffer, the ffmpeg queue slot)
-        // gets the picture written straight into it: the 33 MB 4K frame is built once and never copied. Any other
-        // encoder takes one pass into a reused buffer and the usual hand-over
+        // Fixed output frame (4K, 1080p...): the picture fitted into it - as large as it can be with its aspect kept,
+        // nearest sampling. An encoder that lends its own buffer (the hardware encoder's pixel buffer, the ffmpeg
+        // queue slot) gets the picture written straight into it: the 33 MB 4K frame is built once and never copied.
+        // Any other encoder takes one pass into a reused buffer and the usual hand-over
         EncoderBase* lender = _activeEncoders.size() == 1 ? _activeEncoders.front().get() : nullptr;
         FrameTarget target;
         FrameTargetResult lent = FrameTargetResult::Unsupported;

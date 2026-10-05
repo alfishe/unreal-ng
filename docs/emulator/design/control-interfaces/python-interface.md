@@ -243,8 +243,13 @@ class Emulator:
         """Where host and injected keys go: 'auto' | 'matrix' | 'ps2' | 'both' (the ZX matrix, the PS/2 keyboard
         controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force."""
 
-    def network_configure(self, **settings) -> None:
-        """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
+    def network_configure(self, **settings) -> dict:
+        """Change [NETWORK] settings (returns the reply dict: ok, status, message, plan, restart, network; ValueError
+        with the reason when refused). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change
+        applied by a machine restart (owner decision Q11; replace=True allows removals / an unrealistic fit,
+        dry_run=True returns the plan, media='save'|'discard'); the other keys go to the restarted machine
+        (emu_get_selected(), this object then names the old one); without a card change they apply in place
+        (status 'accepted'). Keys: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: True, default,
         = 0.0.0.0, other computers on the LAN can connect; False = 127.0.0.1 only; alone it keeps every connection; network_state()
         ['virtual_network']['listen_address'] shows it), connect_timeout_ms=n,
@@ -309,6 +314,14 @@ class Emulator:
         network_inject_frame(link, hex) (a frame towards the card at the next frame boundary;
         ValueError without a gateway / bad hex / unknown link)"""
 
+    def multisound_state(self) -> dict:
+        """ZX-MultiSound card: options, shadowed built-ins, CPLD latches, ym chips {ssg, fm} (the AY / TSFM chip
+        reports), saa, gs (the GS report), dac[4], midi summary; {'available': False, 'description': ...} without it"""
+    def midi_state(self) -> dict:
+        """Its MIDI line and SAM2695: parts[16] (program, preset, volume, pan, active_voices, keys, notes), polyphony,
+        effects, counters, bank"""
+    def midi_panic(self) -> dict:
+        """Every voice stops (applied at the next instruction boundary, a TTD live input): {'ok', 'message'}"""
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
@@ -473,6 +486,36 @@ emu.media(verb, slot, path, **options)                   # any verb
 
 Each returns the result dict: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
 and the verb's fields. Errors are results (`ok: False`), not exceptions.
+
+### ZX-bus Slots
+
+Module functions (the machine is restarted by a change, so they take an `emulator_id`, default the selected machine,
+and return the reply dict) - the same verbs, options and replies as the CLI `slots`, the WebAPI `/slots`, MCP and Lua
+([command-interface.md section 14](./command-interface.md#14-zx-bus-slots), user guide
+[docs/features/slots.md](../../../features/slots.md)):
+
+```python
+import unreal
+unreal.slots_state()                      # buses, slots (card, options, adapter, fit, state), built-ins, plan log
+unreal.slots_catalog()                    # every card: options, functions, ports, media, thisMachine {slot, fit, outcome}
+unreal.slots_matrix("cards")              # the compatibility tables as markdown ("" = all)
+
+r = unreal.slots_plug("zxbus.next", "multisound", dry_run=True)          # the plan only
+r = unreal.slots_plug("zxbus.next", "multisound", replace=True, gsRam="2m", dip=["ym", "saa", "gs", "sd"])
+new_id = r["restart"]["emulatorId"]                                       # the restarted machine (selected if the old one was)
+unreal.slots_set("zxbus.1", ctrlMask="classic")                          # options merged over the current ones
+unreal.slots_remove("zxbus.1", media="discard")                           # unsaved sd.ngs writes: save | discard
+unreal.slots_gs("neogs")                                                  # the General Sound personality
+```
+
+`slots_plug(slot, card, options="", replace=False, dry_run=False, media="", adapter="", emulator_id="", **card_options)`,
+`slots_set(slot, options="", replace=False, dry_run=False, media="", emulator_id="", **card_options)`,
+`slots_remove(slot, replace=False, dry_run=False, media="", emulator_id="")`, `slots_gs(card, ...)`. The reply: `ok`,
+`status` (`applied`, `dry-run`, `refused`, `recording`, `no-machine`, `failed`, `bad-request`), `message`, and for a
+change `plan` (`removed` with each card's `undo`, `shadowed`, `lostFunctions`, `media`, `lines`, ...), `restart`
+(`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`. A refusal is a reply, not an exception.
+`Emulator.gs_switch_personality(name)` is the same change as `slots_gs` (a restart: the `Emulator` object then names
+the old machine; `emu_get_selected()` the new one); it raises `RuntimeError` with the reason when refused.
 
 ### Disk Operations
 
@@ -1016,7 +1059,7 @@ print(unreal.rzx_status(r["emulator_id"])["summary"])
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` raise `RuntimeError` with the reason (`disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` raise `RuntimeError` with the reason (the `slots_*` functions answer `status: 'recording'`; `disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```python
 try:
@@ -1402,7 +1445,7 @@ emu.video_record("start", {"format": "h264", "filename": "run.mp4", "audio": "aa
                                      # "audio" = video only; gif + audio is refused
 emu.video_record("start", {"format": "h264", "filename": "run.mkv", "profile": "4k", "acceleration": "software"})
                                      # profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
-                                     # picture scaled sharply into it (nearest, integer factor, black bars; h264 /
+                                     # picture fitted into it (aspect kept, nearest, black bars; h264 /
                                      # h265 only). acceleration: "auto" | "hardware" | "software"
 emu.video_record("stop")             # also "pause" / "resume"
 emu.video_record_status()             # recording state + live stats (frames, duration, fps,

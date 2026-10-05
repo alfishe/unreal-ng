@@ -323,6 +323,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     }
 
     LOGERROR("EmulatorManager::CreateEmulatorWithModel - Failed to initialize emulator with model: '%s'", modelName.c_str());
+    if (!emulator->GetInitError().empty())
+    {
+        SetCreateError(outError, "model '" + modelName + "': " + emulator->GetInitError());
+        return nullptr;
+    }
     SetCreateError(outError,
                    "initialization failed for model '" + modelName + "' (config folder '" +
                        Config::GetConfigFolderForModel(modelInfo->Model, modelInfo->defaultRAM) +
@@ -452,6 +457,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
 
     LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Failed to initialize emulator with model: '%s', RAM: %dKB",
             modelName.c_str(), ramSize);
+    if (!emulator->GetInitError().empty())
+    {
+        SetCreateError(outError, "model '" + modelName + "': " + emulator->GetInitError());
+        return nullptr;
+    }
     SetCreateError(outError,
                    "initialization failed for model '" + modelName + "' with " + std::to_string(ramSize) +
                        "KB RAM (config folder '" +

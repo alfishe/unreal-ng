@@ -36,6 +36,17 @@ void MultiSoundMixer::Configure(const MultiSoundMixerConfig& cfg)
     DesignFilters();
 }
 
+double MultiSoundMixer::FmFullScale(double trimDb)
+{
+    return kFmBaseGain * std::pow(10.0, trimDb / 20.0);
+}
+
+void MultiSoundMixer::SetFmTrimDb(double db)
+{
+    _trim.fmDb = db;
+    _fmLevel = FmFullScale(db);
+}
+
 void MultiSoundMixer::Reset()
 {
     DesignFilters();
@@ -56,11 +67,15 @@ void MultiSoundMixer::SetRenderMode(MultiSoundRenderMode mode)
 void MultiSoundMixer::DesignFilters()
 {
     const double fs = _cfg.outputRate;
-    _couplingFm = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kFmCouplingOhms), fs);
-    _couplingSsgCenter = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kSsgCenterCouplingOhms), fs);
+    for (size_t chip = 0; chip < 2; chip++)
+    {
+        _couplingFm[chip] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kFmCouplingOhms), fs);
+        _couplingSsgCenter[chip] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kSsgCenterCouplingOhms), fs);
+        for (size_t side = 0; side < 2; side++)
+            _couplingSsgSide[chip][side] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kSsgSideInputOhms), fs);
+    }
     for (size_t side = 0; side < 2; side++)
     {
-        _couplingSsgSide[side] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kSsgSideInputOhms), fs);
         _couplingSaa[side] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kSaaCouplingOhms), fs);
         _couplingMidi[side] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kMidiInputOhms), fs);
         _couplingDac[side] = MultiSoundRcFilter::HighPass1(CouplingCornerHz(kDacCouplingOhms), fs);
@@ -80,29 +95,30 @@ void MultiSoundMixer::Mix(const MultiSoundMixerInput& in, const MultiSoundMixerO
 
     for (size_t i = 0; i < in.frames; i++)
     {
-        // FM: both chips centre, one weight; summed before the (linear) coupling filter of equal corner
-        if (out.fm)
+        // FM per chip: centred, weight 1.0, each through its own coupling capacitor
+        for (size_t chip = 0; chip < 2; chip++)
         {
-            double fm = 0.0;
-            for (const float* chip : in.fm)
-                fm += chip ? chip[i] : 0.0f;
-            const double level = couple(_couplingFm, fm * kFmFullScale) * kWeightFm;
-            out.fm[i * 2] = ToSample(level);
-            out.fm[i * 2 + 1] = ToSample(level);
+            if (!out.fm[chip])
+                continue;
+            const double fm = in.fm[chip] ? in.fm[chip][i] : 0.0f;
+            const double level = couple(_couplingFm[chip], fm * _fmLevel) * kWeightFm;
+            out.fm[chip][i * 2] = ToSample(level);
+            out.fm[chip][i * 2 + 1] = ToSample(level);
         }
 
-        // SSG: A -> L, B -> both, C -> R, both chips
-        if (out.ssg)
+        // SSG per chip: A -> L, B -> both, C -> R
+        for (size_t chip = 0; chip < 2; chip++)
         {
+            if (!out.ssg[chip])
+                continue;
             double channel[3] = {};
-            for (const auto& chip : in.ssg)
-                for (int c = 0; c < 3; c++)
-                    channel[c] += chip[c] ? chip[c][i] : 0.0f;
-            const double a = couple(_couplingSsgSide[0], channel[0] * kSsgChannelFullScale);
-            const double b = couple(_couplingSsgCenter, channel[1] * kSsgChannelFullScale);
-            const double c = couple(_couplingSsgSide[1], channel[2] * kSsgChannelFullScale);
-            out.ssg[i * 2] = ToSample(a * kWeightSsgSide + b * kWeightSsgCenter);
-            out.ssg[i * 2 + 1] = ToSample(c * kWeightSsgSide + b * kWeightSsgCenter);
+            for (int c = 0; c < 3; c++)
+                channel[c] = in.ssg[chip][c] ? in.ssg[chip][c][i] : 0.0f;
+            const double a = couple(_couplingSsgSide[chip][0], channel[0] * kSsgChannelFullScale);
+            const double b = couple(_couplingSsgCenter[chip], channel[1] * kSsgChannelFullScale);
+            const double c = couple(_couplingSsgSide[chip][1], channel[2] * kSsgChannelFullScale);
+            out.ssg[chip][i * 2] = ToSample(a * kWeightSsgSide + b * kWeightSsgCenter);
+            out.ssg[chip][i * 2 + 1] = ToSample(c * kWeightSsgSide + b * kWeightSsgCenter);
         }
 
         // SAA: each side through its own ladder (Authentic) and coupling capacitor

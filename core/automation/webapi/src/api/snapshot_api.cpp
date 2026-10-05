@@ -13,6 +13,7 @@
 #include <loaders/snapshot/snapshotlauncher.h>
 
 #include "../emulator_api.h"
+#include "../common/statenode_json.h"
 #include "../common/upload_helper.h"
 
 using namespace drogon;
@@ -124,6 +125,11 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         request.switchModel = (*json)["switch_model"].asBool();
     else if (const std::string flag = req->getParameter("switch_model"); !flag.empty())
         request.switchModel = flag == "true" || flag == "1";
+    // Who commits: the plan's default, "legacy", or a registered policy (body field or query parameter)
+    if (auto json = req->getJsonObject(); json && json->isMember("commit"))
+        request.commit = (*json)["commit"].asString();
+    else
+        request.commit = req->getParameter("commit");
     emulator.reset();
     const SnapshotLoadResult result = SnapshotLauncher::Load(request);
     const bool success = result.ok;
@@ -149,6 +155,9 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         ret["required_model"] = result.requiredModel;
         ret["required_ram_kb"] = result.requiredRamKb;
     }
+    // What the snapshot pipeline did (empty when the load never reached a loader)
+    if (!result.report.format.empty())
+        ret["report"] = StateNodeToJson(result.report.ToStateNode());
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(success               ? HttpStatusCode::k200OK
@@ -156,6 +165,74 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
                                                : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/snapshot/inspect
+/// @brief What loading a snapshot file would do on this machine: the image and the plan; nothing is written
+void EmulatorAPI::inspectSnapshot(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto reply = [&callback](HttpStatusCode code, const Json::Value& body) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        reply(k404NotFound, error);
+        return;
+    }
+
+    // The same sources as a load: a path in JSON, an upload, or a raw body
+    auto content = extractMediaContent(req, MediaType::Snapshot);
+    if (!content.valid)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = content.errorMsg;
+        reply(k400BadRequest, error);
+        return;
+    }
+    std::string path = content.path;
+    if (content.isEmbedded)
+    {
+        std::string stageError;
+        path = UploadHelper::Instance().stageUpload(content.data, content.filename, MediaType::Snapshot, stageError);
+        if (path.empty())
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Failed to stage upload: " + stageError;
+            reply(k500InternalServerError, error);
+            return;
+        }
+    }
+
+    std::string commit;
+    if (auto json = req->getJsonObject(); json && json->isMember("commit"))
+        commit = (*json)["commit"].asString();
+    else
+        commit = req->getParameter("commit");
+
+    StateNode result;
+    std::string error;
+    if (!SnapshotLauncher::Inspect(emulator->GetId(), path, commit, result, error))
+    {
+        Json::Value body;
+        body["error"] = "Bad Request";
+        body["message"] = error;
+        reply(k400BadRequest, body);
+        return;
+    }
+    Json::Value ret = StateNodeToJson(result);
+    ret["status"] = "success";
+    reply(k200OK, ret);
 }
 
 /// @brief GET /api/v1/emulator/:id/snapshot/info
@@ -186,6 +263,9 @@ void EmulatorAPI::getSnapshotInfo(const HttpRequestPtr& req, std::function<void(
 
     ret["status"] = isLoaded ? "loaded" : "empty";
     ret["file"] = snapshotPath;
+    // The snapshot pipeline's report of the last load: the commit that ran (or the refusal), verdicts, blocks
+    if (!emulator->LastSnapshotReport().format.empty())
+        ret["report"] = StateNodeToJson(emulator->LastSnapshotReport().ToStateNode());
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

@@ -210,6 +210,21 @@ TEST_F(DezogDebugAdapter_test, SetSlotRAMBank3)
     EXPECT_EQ(_adapter->getSlots()[3], 0);
 }
 
+TEST_F(DezogDebugAdapter_test, SetSlotRAMBank1And2AreDebuggerForced)
+{
+    // Windows 1/2 have no port latch: the mapping must be flagged so TTD
+    // checkpoints carry it across a restore
+    _adapter->setSlot(1, 3);
+    _adapter->setSlot(2, 6);
+    auto slots = _adapter->getSlots();
+    ASSERT_EQ(slots.size(), 4u);
+    EXPECT_EQ(slots[1], 3);
+    EXPECT_EQ(slots[2], 6);
+    Memory* memory = _emulator->GetMemory();
+    EXPECT_EQ(memory->GetDebuggerBankOverride(1), 3);
+    EXPECT_EQ(memory->GetDebuggerBankOverride(2), 6);
+}
+
 TEST_F(DezogDebugAdapter_test, SetSlotROMAliases)
 {
     _adapter->setSlot(0, DezogDebugAdapter::ROM1_ALIAS);

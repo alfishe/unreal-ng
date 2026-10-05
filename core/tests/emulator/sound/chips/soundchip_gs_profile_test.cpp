@@ -447,20 +447,25 @@ TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_MatchesTheEngineDescripto
         image[1] = 0x76;
         EXPECT_EQ(d.firmwareFingerprint, ttd::FirmwareFingerprint(image.data(), image.size()));
 
+        // Its own ids next to a GS card's (MS-5): device MultiSoundGs, region MultiSoundGsRam
+        EXPECT_EQ(card->TTDPeripheralId(), ttd::PeripheralId::MultiSoundGs);
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::GeneralSound, card.get());
+        registry.Register(ttd::PeripheralId::MultiSoundGs, card.get());
         std::string error;
         EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 
         std::vector<ttd::TTDDeviceRegion> regions;
         card->TTDRegions(regions);
         ASSERT_EQ(regions.size(), 1u);
+        EXPECT_EQ(regions[0].desc.id, ttd::TTDRegionId::MultiSoundGsRam);
+        EXPECT_EQ(regions[0].desc.name, "multisound.gs.ram");
         EXPECT_EQ(regions[0].desc.bytes, ramKB * 1024);
         EXPECT_EQ(regions[0].desc.pieces, ramKB * 1024 / ttd::kTTDPieceSize);
 
         uint8_t id = 0;
         std::vector<uint8_t> state;
         ASSERT_TRUE(card->TTDStateWithoutRegions(id, state));
+        EXPECT_EQ(id, static_cast<uint8_t>(ttd::PeripheralId::MultiSoundGs));
         EXPECT_EQ(state.size(), kFixed);
 
         runFrames(*card, 1);

@@ -171,8 +171,9 @@ our port decoder names it GigaScreen and only logs it - no effect either way.
 | Pentagon 512 (any card) | stops about 6 s in, during the assembly: the 1024K build of ALASM and the page plan need 1024K |
 
 The reported hang came from a build of `master`, which has no NeoGS: its GS
-slot holds the classic card (`GSType=Z80`). On the `neogs` branch the shipped
-configs fit NeoGS (`GSType=NGS`) and the demo runs on "Pentagon" with 1024K.
+slot held the classic card (then the `[SOUND] GSType=Z80` key, today a `gs` card in
+`[SLOTS]`). On the `neogs` branch the shipped configs fit NeoGS (`zxbus.1 = neogs`)
+and the demo runs on "Pentagon" with 1024K.
 
 **How to run it:** a build of the `neogs` branch, Pentagon with 1024K RAM,
 insert `TheLink.trd`, `RUN "THELINK"` in TR-DOS. Expect about 28 s of disk

@@ -41,7 +41,24 @@ class EmulatorContext;
 /// remainder (the phase) is TTD state. With equal rates the ratio is 1 : 1 and the master-clock axis IS the
 /// host axis, frame-relative and rebased with it - exactly the TSFM's original arithmetic. With a true ratio
 /// (the MultiSound's own 3.5 MHz oscillator on a 3.5469 MHz 128K host) the master-clock axis is continuous and
-/// never rebased; the host axis still is.
+/// never rebased; the host axis still is. A board whose host axis itself is continuous (the MultiSound's card axis,
+/// never rebased) says so in the configuration: the master-clock axis is then continuous at 1 : 1 too.
+///
+/// The render cursor. Every output path renders on the master-clock axis behind the chips: the render cursor
+/// trails the time the chips were advanced to by kRenderLag, so every FM word and timed SSG write has landed before
+/// the cursor reaches it. ONE rule keeps it there on every path (anchorRender): a render that is about to advance
+/// the cursor by `span` master clocks must END within kRenderWindow behind its reference position - where the
+/// chips' time stands for that render; outside the window the owner lost the timeline (a reset of a frame-relative
+/// axis, a gap in rendering, a host speed or rate change) and the cursor is placed so that the render ends
+/// kRenderLag behind the reference. The two kinds of owner differ only in the reference they pass:
+///  - the TSFM renders as the CPU runs, through the frame (renderTick): the reference is the frame origin of its
+///    frame-relative axis (0) at each frame start, with nothing rendered yet (span 0);
+///  - the MultiSound syncs the chips to the frame end and then renders the frame (renderChannels): the reference is
+///    the chips' synced position and the span the master clocks the frame's output samples cover
+///    (beginChannelRender).
+/// A reset moves the cursor only where time itself restarts: on a frame-relative axis to the frame origin (the
+/// rule, forced); on a continuous axis time does not jump at a reset and the cursor keeps its place. A TTD restore
+/// puts it back exactly (saveTimeline / loadTimeline: relative to the chips).
 
 /// Pair parameters (board configuration, not state)
 struct Ym2203PairConfig
@@ -52,6 +69,9 @@ struct Ym2203PairConfig
     uint32_t hostTickRate = static_cast<uint32_t>(CPU_CLOCK_RATE);
     /// Stereo output stage: FM output coupling high-pass corner (the TSFM's C14 / C15 into the DA5 mixer)
     double fmCouplingHz = 1.0 / (2.0 * 3.14159265358979323846 * 12000.0 * 10e-6);
+    /// The owner's host axis is continuous, never rebased (the MultiSound's card axis); false: frame-relative and
+    /// rebased every frame (rebaseFrame; the TSFM in the AY socket)
+    bool continuousHostAxis = false;
 };
 
 /// FM input rate of the output stage (TSFM §6.3): the YM2203 sample clock at prescaler /6 is master / 8 =
@@ -151,6 +171,10 @@ class Ym2203Pair
 public:
     /// Constant lag of the render cursor behind the newest timed event (see kTurboSoundRenderLagT)
     static constexpr int64_t kRenderLag = kTurboSoundRenderLagT;
+    /// How far behind its reference a render may end before the cursor is re-anchored (anchorRender): four render
+    /// lags, the TSFM's original frame-start window. The steady state ends every render kRenderLag behind, within
+    /// one SSG tick and the decimators' fractional phase
+    static constexpr int64_t kRenderWindow = 4 * kRenderLag;
 
     /// TTD sizes. The per-chip payload and the timeline tail are the TSFM blob's (§8.2), byte for byte:
     /// per chip: address(1) + fmClockPhase(4) + timer[2](8) + busy(4) + ymfmSize(2) + ymfm(494) + SSG(73)
@@ -301,9 +325,32 @@ public:
     {
         return _renderT;
     }
-    void setRenderT(int64_t t)
+
+    /// THE render-cursor rule (see the file comment), for every owner and path: a render about to advance the
+    /// cursor by `span` master clocks, whose chips' time stands at `reference`, must end within
+    /// [reference - kRenderWindow, reference]; outside that window, or when `force`d (the owner knows it lost the
+    /// timeline: a rate or quality switch), the cursor is placed so that the render ends kRenderLag behind
+    /// `reference`. Returns whether the cursor moved
+    bool anchorRender(int64_t reference, int64_t span, bool force = false)
     {
-        _renderT = t;
+        const int64_t end = _renderT + span;
+        if (!force && end <= reference && end >= reference - kRenderWindow)
+            return false;
+        _renderT = reference - kRenderLag - span;
+        ++_renderAnchors;
+        return true;
+    }
+
+    /// Times the cursor was re-anchored since construction (diagnostics and tests; not TTD state)
+    uint64_t renderAnchors() const
+    {
+        return _renderAnchors;
+    }
+
+    /// The master-clock axis is frame-relative (rebased with the TSFM's host axis): 1 : 1 on a frame-relative host
+    bool frameRelativeChipAxis() const
+    {
+        return _unity && !_config.continuousHostAxis;
     }
 
     /// Consume every FM word of chip `index` that landed by half-tick boundary h into the hold register (the raw
@@ -420,9 +467,23 @@ public:
     /// the stereo output stage is not used then
     void configureChannelOutputs(size_t rate, FilterDecimator::Quality quality = FilterDecimator::Quality::Reference);
 
-    /// Render `frames` output samples of the per-channel streams into `block`. The cursor follows the master-clock
-    /// axis (kRenderLag behind the synced position; re-anchored when the owner lost the timeline). Returns the
-    /// samples written (0 before configureChannelOutputs)
+    /// Master clocks `frames` per-channel output samples cover at the configured output rate
+    int64_t channelSpan(size_t frames) const
+    {
+        return static_cast<int64_t>(frames) * int64_t(_config.masterClockHz) / int64_t(_channelRate);
+    }
+
+    /// The cursor rule for an owner that synced the chips to the end of the time it now renders as `frames`
+    /// output samples (possibly in several renderChannels blocks, e.g. split at mute changes): reference = the
+    /// synced master clock, span = those samples. Call once per synced period, before its blocks
+    bool beginChannelRender(size_t frames)
+    {
+        return anchorRender(_chipT, channelSpan(frames));
+    }
+
+    /// Render `frames` output samples of the per-channel streams into `block`, from where the previous render
+    /// stopped (the cursor placed by beginChannelRender). Returns the samples written (0 before
+    /// configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
     /// endregion </Per-channel outputs>
 
@@ -489,8 +550,9 @@ private:
     bool _synthesisSuppressed = false;
     bool _coreSynthesisSkipped = false;
 
-    // Render cursor on the master-clock axis, kRenderLag behind the word and SSG-write timeline
+    // Render cursor on the master-clock axis, kRenderLag behind the word and SSG-write timeline (anchorRender)
     int64_t _renderT = -kRenderLag;
+    uint64_t _renderAnchors = 0;  // re-anchors since construction (diagnostics, not TTD state)
 
     // Per-channel outputs (configureChannelOutputs, allocated on first use): master = SSG chip 0 channel A
     struct ChannelOutputs
@@ -499,4 +561,5 @@ private:
         FilterDecimator ssg[2][3];
     };
     std::unique_ptr<ChannelOutputs> _channels;
+    size_t _channelRate = 44100;   // output rate of the per-channel streams (configureChannelOutputs)
 };

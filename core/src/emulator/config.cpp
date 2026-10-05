@@ -19,6 +19,7 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/slots/slotmanager.h"
 #include <cassert>
 #include <array>
 #include <algorithm>
@@ -668,7 +669,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (const char* scheme = inimanager.GetValue(hdd, "Scheme", nullptr); scheme && !ParseIdeScheme(scheme, config.ide_scheme))
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
 		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
-		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
+		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 1) != 0 ? 1 : 0;
 		// Units 0-1: ide0 master / slave; units 2-3: ide1 (the Sprinter's second channel)
 		static const char* const kUnitSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
 		for (int unit = 0; unit < 4; unit++)
@@ -812,8 +813,36 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
 
-	// AY / SSG tone voicing (FilterVoicing profile ID): headphones (default:
-	// classic bass + soft highs), classic (the pre-45812176 bass balance),
+	// AY / SSG stereo layout ([AY] Stereo): abc (default), acb or mono. A
+	// missing key resets to the default; unknown values warn and keep it
+	{
+		config.sound.ayStereo = AYStereoMode::ABC;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(ay, "Stereo", nullptr), line, sizeof line);
+		// The shipped inis carry an inline "; comment" after the value: only the first word counts
+		for (char* p = line; *p; p++)
+		{
+			if (*p == ' ' || *p == '\t' || *p == ';')
+			{
+				*p = '\0';
+				break;
+			}
+		}
+		if (line[0] != '\0')
+		{
+			if (StringHelper::CompareCaseInsensitive(line, "ABC", strlen("ABC")) == 0)
+				config.sound.ayStereo = AYStereoMode::ABC;
+			else if (StringHelper::CompareCaseInsensitive(line, "ACB", strlen("ACB")) == 0)
+				config.sound.ayStereo = AYStereoMode::ACB;
+			else if (StringHelper::CompareCaseInsensitive(line, "MONO", strlen("MONO")) == 0)
+				config.sound.ayStereo = AYStereoMode::Mono;
+			else
+				MLOGWARNING("Config: unsupported [AY] Stereo='%s', using ABC", line);
+		}
+	}
+
+	// AY / SSG tone voicing (FilterVoicing profile ID): classic (default: the
+	// pre-45812176 bass balance), headphones (classic bass + soft highs),
 	// flat (hardware line out), warm (softer bass and highs), tv (TV
 	// speaker) or small_speaker; alias
 	// legacy = classic. Hidden (untuned) profiles are rejected like unknown
@@ -1221,6 +1250,40 @@ bool Config::ParseConfig(IniFile& inimanager)
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");
 
+	// SLOTS section (ZX-bus slots, architecture.md §6): the single source of the cards when present. The legacy
+	// card keys are still parsed above (they keep working for INIs without [SLOTS]); their names are kept so the
+	// slot plan at creation can log each one as deprecated (or as ignored next to [SLOTS]). With [SLOTS] the card
+	// fields of the groups that moved onto slots are its projection from here on
+	{
+		config.slotConfig.Clear();
+		const auto slotLines = inimanager.GetSectionEntries(slotsSection);
+		const std::vector<std::string> sections = inimanager.GetAllSections();
+		const bool hasSlots = !slotLines.empty() ||
+		                      std::any_of(sections.begin(), sections.end(), [](const std::string& name) {
+			                      return StringHelper::ToUpper(name) == slotsSection;
+		                      });
+		if (hasSlots)
+			ParseSlotsSection(slotLines, config.slotConfig);
+		static const std::pair<const char*, const char*> kLegacyCardKeys[] = {
+			{sound, "TurboSound"}, {sound, "GSType"}, {sound, "MoonSound"}, {sound, "CovoxFB"}, {sound, "SD"},
+			{network, "Card"}};
+		for (const auto& [section, key] : kLegacyCardKeys)
+		{
+			if (inimanager.GetValue(section, key, nullptr) != nullptr)
+				config.slotConfig.legacyKeys.push_back(std::string("[") + section + "] " + key);
+		}
+		if (config.slotConfig.section)
+			SlotManager::Project(config.slotConfig, config);
+	}
+
+	// MIDI section: the General MIDI bank of a slot card's synthesizer (ZX-MultiSound)
+	{
+		const char* bank = inimanager.GetValue(midi, "Bank", nullptr);
+		_midiBank = bank != nullptr ? bank : "";
+		if (const MidiBankHook& hook = MidiBankHookStorage())
+			hook(_midiBank);
+	}
+
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))
 	{
@@ -1262,6 +1325,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 
 	return result;
+}
+
+Config::MidiBankHook& Config::MidiBankHookStorage()
+{
+	static MidiBankHook hook;
+	return hook;
+}
+
+void Config::SetMidiBankHook(MidiBankHook hook)
+{
+	MidiBankHookStorage() = std::move(hook);
 }
 
 Config::ConfigLoadedHook& Config::ConfigLoadedHookStorage()

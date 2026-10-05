@@ -25,7 +25,9 @@
 #include <algorithm>
 #include <functional>
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "debugger/ttd/ttdsessiontypes.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
@@ -325,11 +327,11 @@ void TrafficWindow::updateSeek()
     bool can = false;
     if (!r)
         why = tr("Select a record to travel to its moment");
-    else if (!ctx || !ctx->pTimeTravelManager)
+    else if (!ctx || !ctx->pTimeTravelHooks)
         why = tr("No time travel on this machine");
     else
     {
-        const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetPublishedSessionInfo();
+        const ttd::TTDSessionInfo info = ctx->pTimeTravelHooks->GetPublishedSessionInfo();
         if (info.checkpointCount == 0)
             why = tr("Start a TTD recording first: records before it cannot be reached");
         else if (r->frame < info.sessionStartFrame || r->frame > info.currentEndFrame)
@@ -349,28 +351,26 @@ void TrafficWindow::onSeek()
 {
     EmulatorContext* ctx = context();
     const TrafficRow* r = selectedRow();
-    if (!r || !ctx || !ctx->pTimeTravelManager || !_seek->isEnabled())
+    if (!r || !ctx || !ctx->pTimeTravelHooks || !_seek->isEnabled())
         return;
-    // Like the WebAPI's seek: the machine parks first, and a running recording ends (its history stays; a seek is
-    // refused while recording)
-    Emulator* emulator = _binding->emulator();
-    if (emulator->IsRunning() && !emulator->IsPaused())
-    {
-        emulator->Pause();
-        emulator->WaitForPauseConfirmation(1000);
-    }
-    ttd::TimeTravelManager* ttd = ctx->pTimeTravelManager;
-    if (ttd->IsRecording())
-        ttd->StopRecording();
-    ttd::TimeTravelManager::TTDSeekResult result;
-    const bool ok = ttd->SeekTo(ttd::TTDTimePoint{r->frame, static_cast<uint32_t>(r->tInFrame)}, &result);
-    if (ok)
+    // The seek verb every surface uses: it parks the machine; a running recording ends on v1
+    // and pauses on the engine (its history stays either way)
+    ttd::TTDControl control(ctx);
+    if (ctx->pTimeTravelController == nullptr && ctx->pTimeTravelHooks->IsRecording())
+        (void)control.Execute({"stop", {}});
+    const ttd::TTDReply reply = control.Execute(
+        {"seek", {{"frame", std::to_string(r->frame)}, {"tinframe", std::to_string(r->tInFrame)}}});
+    const StateNode* reached = reply.body.find("reached");
+    const StateNode* at = reply.body.find("arrived_at");
+    if (reached && reached->b)
         _status->setText(tr("At record #%1: frame %2, %3 units in").arg(r->index).arg(r->frame).arg(r->tInFrame));
-    else
+    else if (at)
         _status->setText(tr("The seek to frame %1 stopped at frame %2, %3 units in")
                              .arg(r->frame)
-                             .arg(result.arrivedAt.frame)
-                             .arg(result.arrivedAt.tInFrame));
+                             .arg(at->find("frame")->i)
+                             .arg(at->find("tinframe")->i));
+    else
+        _status->setText(QString::fromStdString(reply.message));
     emit seeked();
     updateSeek();
 }

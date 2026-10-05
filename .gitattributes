@@ -38,6 +38,7 @@
 *.ttd binary
 *.rbf binary
 *.wav binary
+*.sf2 binary
 *.mp3 binary
 *.ogg binary
 *.png binary

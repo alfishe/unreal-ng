@@ -588,9 +588,11 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime swap of the "
-        "GS-slot card: classic GS, lightweight player or NeoGS - the host mailbox and activity counters survive "
-        "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (the card in the "
+        "GS slot - classic GS, lightweight player or NeoGS - replaced as a slot change, applied by a restart of the "
+        "machine (owner decision Q10): the reply is SlotControl's (status applied / dry-run / refused / recording, "
+        "plan, restart.emulatorId = the new id, media); 'replaceIfIncompatible', 'dryRun' and 'mediaDisposition' as "
+        "for POST slots/{slot}/plug), dump_module "
         "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
         "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
@@ -653,15 +655,16 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
-        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the requested "
-        "target and the current personality; dump_module carries 'path', 'bytes' and 'playing')";
+        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the slot "
+        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing')";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
         "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
-        "switch_personality while a TTD recording runs (the message says why: stop the recording first), "
+        "switch_personality refused by the slot plan (it would remove another card without replaceIfIncompatible) "
+        "or while a TTD recording runs (the message names the session), "
         "or any of them while a TTD replay owns the machine";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
         "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";

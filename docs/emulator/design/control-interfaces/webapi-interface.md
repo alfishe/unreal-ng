@@ -199,6 +199,10 @@ Content-Type: application/json
 
 Omitted, it follows `[MISC] RAMPowerOn` of the model's `unreal.ini` (`RANDOM` when unset). Any other value is a `400`. A ZX-Poly machine applies it to all four modules. Every identity block reports the mode as `ram_power_on`.
 
+`slots` (optional) gives the new machine its slot set in the `[SLOTS]` key form, replacing the INI's
+([ZX-bus Slots](#zx-bus-slots)): `{"ay-socket": "none", "zxbus.1": "multisound", "zxbus.1.dip": ["ym", "saa"]}`.
+Entries that conflict (two cards with one job) refuse the machine with a `400` naming every pair and its rule.
+
 **Response 201**:
 ```json
 {
@@ -307,6 +311,8 @@ not a ZX-Poly machine.
 ### 5b. Switch Model (validate-first)
 **Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep", "ram_power_on": "random|zero"}`; `ram_power_on` omitted = the mode the current machine was created with)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
+
+The cards go along ([slots.md → Model switch](../../../features/slots.md#model-switch)): `slots` in the reply lists the cards `kept` (in their slot, or moved behind an adapter: `zxbus.2 -> edge.2 = soundrive`) and `dropped` (slot, card, reason) and `report` the same lines for people.
 
 The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
@@ -441,6 +447,9 @@ GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, p
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
+GET  /api/v1/emulator/{id}/state/audio/multisound ZX-MultiSound: slot, options, fit, shadowed built-ins, CPLD latches, ym.chips[2] {ssg: the AY chip report, fm: the TSFM chip report}, saa, gs (the GS report), dac[4], midi summary; 404 without the card
+GET  /api/v1/emulator/{id}/state/audio/midi     MIDI line + SAM2695: parts[16] (program, preset, volume, pan, voices, keys / notes sounding), polyphony, effects, counters, bank; 404 without a synthesizer
+POST /api/v1/emulator/{id}/control/audio/midi   {"action": "panic"}: every voice stops (a TTD live input); 404 without a synthesizer, 409 while a TTD replay owns input
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
@@ -452,7 +461,7 @@ GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, p
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550; replaceIfIncompatible / dryRun / mediaDisposition as for /slots) - change [NETWORK] settings: a card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a restart (owner decision Q11; the reply is the slot change envelope with plan, restart.emulatorId and network {cardChange, settingsApplied, note}; 409 refused with the plan without replaceIfIncompatible), the other keys go to the restarted machine; without a card change they apply in place (status accepted); 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, summary_line, the card's own fields (the ZX-bus adapter's zx_bus: the General Sound / NeoGS behind it - personality, ports #B3 / #BB / #33, cpu_addresses, status flags, machine_reset, reset_held / reset_pulses; or why its ZX-bus is empty), irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
@@ -1503,6 +1512,26 @@ POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
 POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 PUT  /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}   Write into a sector's data field ({"offset": 245, "hex": "4D59..."} | "data": [..] | "base64"): sector by its ID, data CRC recalculated, image modified, TTD tool edit; 400 with the reason when refused (empty drive, write-protected, no such sector, past the data field), 503 when busy
 ```
+
+### ZX-bus Slots
+
+```
+GET  /api/v1/emulator/{id}/slots                         the slot report: buses, slots, fitted cards, built-ins, plan log
+GET  /api/v1/emulator/{id}/slots/catalog                 every card, its options, how it fits this machine
+GET  /api/v1/emulator/{id}/slots/matrix[?table=cards]    the compatibility tables (markdown)
+POST /api/v1/emulator/{id}/slots/{slot}/plug             {card, options, adapter, replaceIfIncompatible, dryRun, mediaDisposition}
+POST /api/v1/emulator/{id}/slots/{slot}/remove           {replaceIfIncompatible, dryRun, mediaDisposition}
+PUT  /api/v1/emulator/{id}/slots/{slot}/options          {options, replaceIfIncompatible, dryRun, mediaDisposition}
+```
+
+Every route is SlotControl ([command-interface.md section 14](./command-interface.md#14-zx-bus-slots); OpenAPI tag
+`Slots`). `{slot}`: `zxbus.2`, `zxbus.next`, `ay-socket`, or `auto` for a plug (where the planner puts the card).
+`options`: `"dip=ym,saa gsRam=2m"` or `{"dip": ["ym", "saa"], "gsRam": "2m"}`. A change is planned first; a refusal is
+`409` with the plan as the body (`status` `refused` or `recording`; `message` `needs replaceIfIncompatible: ...`;
+`plan.removed[]` names every card it would remove with the options that put it back, `undo`). Applied, the machine
+restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId` is the new id (`started` when the old
+one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
+card in the GS slot (owner decision Q10).
 
 ### Snapshots (Implemented Separately)
 ```

@@ -298,6 +298,8 @@ bool TimeTravelController::StartRecording()
         return refuse();
     }
 
+    ++_recordingNumber;   // past the last refusal: this is a new recording session
+
     // Engaged before the baseline (past the last refusal above), so the very
     // first checkpoint already holds the 1x machine; SetState below is then a no-op
     EngageRecordingLock();
@@ -1148,6 +1150,9 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
         case TTDGuardedAction::SwitchModel:
             return "Cannot switch the machine model while TTD is recording: the recorded history belongs to this "
                    "machine. Stop the recording first.";
+        case TTDGuardedAction::ChangeSlots:
+            return "Cannot change the slot set while TTD is recording session " + RecordingSessionLabel() +
+                   ": the device set is fixed for a session. Stop the recording first.";
         case TTDGuardedAction::CdFrontPanel:
             return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                    "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
@@ -1309,6 +1314,39 @@ void TimeTravelController::OnFrameBoundary()
     }
 }
 
+std::string TimeTravelController::RecordingSessionLabel() const
+{
+    if (!IsRecording())
+        return {};
+    std::string label = "#" + std::to_string(_recordingNumber);
+    if (!_timeline.empty())
+        label += ", started at frame " + std::to_string(_timeline.front().time.frame);
+    return label;
+}
+
+void TimeTravelController::CaptureBankOverrides(TTDBankOverrides& out) const
+{
+    out = TTDBankOverrides{};
+    if (!_memory)
+        return;
+    for (uint8_t bank = 1; bank <= 2; ++bank)
+        out.page[bank - 1] = _memory->GetDebuggerBankOverride(bank);  // MEMORY_UNMAPPABLE (0xFFFF) = none
+}
+
+void TimeTravelController::ApplyBankOverrides(const TTDBankOverrides& in)
+{
+    if (!_memory)
+        return;
+    for (uint8_t bank = 1; bank <= 2; ++bank)
+    {
+        const uint16_t page = in.page[bank - 1];
+        if (page < MAX_RAM_PAGES)
+            _memory->SetDebuggerRAMPageToBank(bank, page);
+        else
+            _memory->RevertDebuggerBankOverride(bank);  // the checkpoint had none
+    }
+}
+
 void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
 {
     _blackBox = on;
@@ -1423,6 +1461,7 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
         out.cpu.nmi_pending = cpu->IsNmiPending() ? 1 : 0;
     }
     out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
+    CaptureBankOverrides(out.bankOverrides);
 
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
@@ -1617,6 +1656,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
                     memory.message.empty() ? "" : "; ", devices.message.c_str());
     _memory->UpdateZ80Banks();
+    ApplyBankOverrides(cp.bankOverrides);
     _shadowRescan = true;   // live memory now differs from the engine's delta base
     const PerfClock::time_point devicesEnd = PerfClock::now();
 
@@ -2333,7 +2373,8 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 // TTDRegionId, index = piece), 3 a device's whole state (id = v1 id), 4 the
 // CPU (TTDCpuState), 5 the chipset latches (TTDChipsetState; its counters are
 // the machine time and stay as they are, the paging is decoded from it), 6 the
-// CPU time the edit spent (a fast loader's trap: u32, Z80::tt units)
+// CPU time the edit spent (a fast loader's trap: u32, Z80::tt units), 7 the
+// debugger-forced RAM windows 1/2 (TTDBankOverrides; applied after the banks)
 namespace
 {
 enum : uint8_t
@@ -2344,6 +2385,7 @@ enum : uint8_t
     kEditCpu = 4,
     kEditChipset = 5,
     kEditClock = 6,
+    kEditBanks = 7,
 };
 void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
                    uint32_t length)
@@ -2442,6 +2484,9 @@ void TimeTravelController::EndToolEdit(const char* source)
         const TTDChipsetState chipset =
             CaptureChipsetState(_context->emulatorState, static_cast<uint32_t>(z80->t));
         PutEditRecord(payload, kEditChipset, 0, 0, reinterpret_cast<const uint8_t*>(&chipset), sizeof(chipset));
+        TTDBankOverrides banks;
+        CaptureBankOverrides(banks);
+        PutEditRecord(payload, kEditBanks, 0, 0, reinterpret_cast<const uint8_t*>(&banks), sizeof(banks));
         // A trap runs its effect in no time steps: the replay advances the clock as it did, last
         if (const uint32_t spent = z80->tt - _toolEditTt)
             PutEditRecord(payload, kEditClock, 0, 0, reinterpret_cast<const uint8_t*>(&spent), sizeof(spent));
@@ -2458,6 +2503,8 @@ void TimeTravelController::EndToolEdit(const char* source)
 void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
 {
     std::vector<TTDRegionDesc> regions = LiveRegions();
+    TTDBankOverrides banks;
+    bool haveBanks = false;
     size_t at = 0;
     while (at + 11 <= payload.size())
     {
@@ -2501,6 +2548,11 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
             chipset.frame_counter = st.frame_counter;
             RestoreChipsetState(chipset, &st);
         }
+        else if (kind == kEditBanks && length == sizeof(TTDBankOverrides))
+        {
+            std::memcpy(&banks, bytes, sizeof(banks));
+            haveBanks = true;
+        }
         else if (kind == kEditClock && length == sizeof(uint32_t) && _context && _context->pCore)
         {
             uint32_t spent = 0;
@@ -2509,7 +2561,11 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         }
     }
     if (_memory)
+    {
         _memory->UpdateZ80Banks();
+        if (haveBanks)
+            ApplyBankOverrides(banks);
+    }
 }
 
 void TimeTravelController::RecordExternalEvent(TTDExternalEventKind kind, const char* reason)
@@ -5683,6 +5739,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
         out.cpu.nmi_pending = z80->IsNmiPending() ? 1 : 0;
     }
     out.chipset = CaptureChipsetState(_context->emulatorState, z80 ? static_cast<uint32_t>(z80->t) : 0u);
+    CaptureBankOverrides(out.bankOverrides);
     if (_context->pScreen)
     {
     }
@@ -5767,7 +5824,10 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     }
     _peripherals.RestoreAll(snap.peripheralBlobs);
     if (_memory)
+    {
         _memory->UpdateZ80Banks();
+        ApplyBankOverrides(snap.bankOverrides);
+    }
 
     if (!snap.ram.empty() && _memory)
     {

@@ -72,6 +72,7 @@
 #include "ttdbookmarks.h"
 #include "ttdsessionfacts.h"
 #include "ttdinputjournal.h"
+#include "ttdmachineperipherals.h"
 #include "ttdv1events.h"
 #include "engine/ttdrestoreresult.h"
 #include "engine/ttdwriteindex.h"
@@ -287,6 +288,9 @@ public:
     /// starts. The fast loaders' traps are recorded edits. Real-time clocks still run on emulated time. Applies to
     /// the next StartRecording; off: an explicit recording (the lock)
     void SetBlackBox(bool on, uint32_t minutes = 5);
+    /// The recording session as a refusal names it: "#3, started at frame 1200" (the instance's recordings
+    /// counted from 1). Empty while nothing records
+    std::string RecordingSessionLabel() const;
     bool IsBlackBox() const { return _blackBox; }
     /// Whether host speed or turbo mode is on now
     bool AccelerationActive() const;
@@ -1382,13 +1386,14 @@ public:
     /// time) is harmless - Unregister on an absent id is a no-op.
     inline void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device) override
     {
-        if (oldId != newId)
-            _peripherals.Unregister(oldId);
+        // The outgoing device leaves its id, also when the new one takes the same id (the registry refuses a
+        // second device under a held id)
+        _peripherals.Unregister(oldId);
         // The lightweight GS is fitted but not recorded (state registry)
         if (newId == PeripheralId::GeneralSoundLightweight)
             _peripherals.MarkNotRecorded(newId);
         else
-            _peripherals.Register(newId, device);
+            _peripherals.Register(newId, device, SlotCardInstance(_context, device));
     }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
@@ -1625,6 +1630,7 @@ private:
     {
         TTDCpuState     cpu{};
         TTDChipsetState chipset{};
+        TTDBankOverrides bankOverrides{};  ///< debugger-forced windows 1/2
         uint32_t        z80TInFrame = 0;   ///< z80.t (host-side, not in TTDCpuState)
         std::vector<uint8_t> ram;          ///< model RAM, _modelRamPages × 16 KB
         /// Peripheral state, keyed by PeripheralId — same representation the
@@ -2074,6 +2080,10 @@ private:
     uint8_t _savedHostSpeedMultiplier = 1;  // restored on release
     bool _accelerationLocked = false;       // this session's lock covers acceleration (not a black box)
     bool _blackBox = false;                 // SetBlackBox
+    uint32_t _recordingNumber = 0;          // recordings this instance started (RecordingSessionLabel)
+    /// DeZog-forced RAM windows 1/2 (no latch describes them): beside each checkpoint, re-applied after the banks
+    void CaptureBankOverrides(TTDBankOverrides& out) const;
+    void ApplyBankOverrides(const TTDBankOverrides& in);
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
 };

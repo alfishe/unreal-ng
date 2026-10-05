@@ -192,10 +192,18 @@ TEST_F(TsConfVideoMapper_Test, MAP5_TextCellsAndBorder)
     EXPECT_EQ(cells[5].codeSource.page, 0x10);
     EXPECT_EQ(cells[5].attrSource.offset, 0x85u);
 
+    // TXT shows the border as {PAL_SEL[3:0], BORDER[3:0]} ([V] video_render.v / video_out.v, as ScreenTSConf
+    // draws it); the mapper reported the whole BORDER register (TS-Conf audit, video row 48)
+    Reg(TsConfReg::Border, 0x2B);
+    Reg(TsConfReg::PalSel, 0x05);
     LayerContribution border;
     TsConfVideoMapper().BorderSources(service.State(), border);
     EXPECT_EQ(border.layer, "border");
-    EXPECT_EQ(border.colourIndex, _decoder->GetState().regs[TsConfReg::Border]);
+    EXPECT_EQ(border.colourIndex, 0x5B);
+
+    Reg(TsConfReg::VConfig, 0x02);  // 256C: the whole register
+    TsConfVideoMapper().BorderSources(service.State(), border);
+    EXPECT_EQ(border.colourIndex, 0x2B);
 }
 
 namespace

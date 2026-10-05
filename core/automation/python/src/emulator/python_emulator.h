@@ -16,6 +16,8 @@
 #include <emulator/emulator.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotcontrol.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
@@ -325,6 +327,40 @@ namespace python_rzx
         return id.empty() ? EmulatorManager::GetInstance()->GetSelectedEmulatorId() : id;
     }
 }  // namespace python_rzx
+
+namespace python_slots
+{
+    /// A kwargs value as option text: bool -> true / false, a list -> "a,b"
+    inline std::string Text(const pybind11::handle& value)
+    {
+        if (pybind11::isinstance<pybind11::bool_>(value))
+            return value.cast<bool>() ? "true" : "false";
+        if (pybind11::isinstance<pybind11::list>(value) || pybind11::isinstance<pybind11::tuple>(value))
+        {
+            std::string list;
+            for (const pybind11::handle item : value)
+                list += (list.empty() ? "" : ",") + pybind11::str(item).cast<std::string>();
+            return list.empty() ? "none" : list;
+        }
+        return pybind11::str(value).cast<std::string>();
+    }
+
+    /// One slots verb through SlotControl (ZX-bus slots architecture.md §9) on the emulator `emulatorId` ("" = the
+    /// selected one); every keyword argument is a card option (dip="ym,saa" or dip=["ym", "saa"]). The reply dict
+    /// every surface returns: ok, status, message and the verb's fields (a change: plan, restart.emulatorId, media)
+    inline pybind11::object Call(SlotControlRequest request, const std::string& emulatorId, const pybind11::kwargs& options)
+    {
+        for (const auto& [key, value] : options)
+            request.options += (request.options.empty() ? "" : " ") + pybind11::str(key).cast<std::string>() + "=" + Text(value);
+        request.emulatorId = python_rzx::ResolveId(emulatorId);
+        SlotControlReply reply;
+        {
+            pybind11::gil_scoped_release release;   // a restart stops and builds a machine
+            reply = SlotControl::Execute(request);
+        }
+        return StateNodeToPy(reply.ToValue());
+    }
+}  // namespace python_slots
 
 namespace PythonBindings
 {
@@ -724,11 +760,13 @@ namespace PythonBindings
 
         // Snapshots by emulator id (default: the selected one). A file that
         // needs another model (an SPG: TS-Conf) switches it: emulator_id is the new one
-        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel) -> py::dict {
+        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel,
+                                  const std::string& commit) -> py::dict {
             SnapshotLoadRequest request;
             request.emulatorId = python_rzx::ResolveId(emulatorId);
             request.path = path;
             request.switchModel = switchModel;
+            request.commit = commit;
             if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(request.emulatorId))
             {
                 if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
@@ -742,9 +780,34 @@ namespace PythonBindings
             d["model_switched"] = result.modelSwitched;
             d["previous_emulator_id"] = result.previousEmulatorId;
             d["required_model"] = result.requiredModel;
+            // What the snapshot pipeline did: the commit that ran, or the refusal and why
+            d["report"] = result.report.format.empty() ? py::none() : StateNodeToPy(result.report.ToStateNode());
             return d;
-        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False",
-           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true);
+        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False. "
+           "commit chooses who writes the machine: '' = the plan decides (the machine's own policy, else the legacy "
+           "commit), 'legacy', or a registered policy name; the answer's report says what was done or why not",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true, py::arg("commit") = "");
+
+        // What loading a file would do on the machine (default: the selected one), nothing written: the file's image
+        // (format, banks as size + hash, CPU, paging, extensions) and the plan (who would commit, or the refusal)
+        m.def("snapshot_inspect", [](const std::string& path, const std::string& emulatorId,
+                                     const std::string& commit) -> py::object {
+            StateNode result;
+            std::string error;
+            if (!SnapshotLauncher::Inspect(python_rzx::ResolveId(emulatorId), path, commit, result, error))
+                throw std::runtime_error(error);
+            return StateNodeToPy(result);
+        }, "Inspect a snapshot file against a machine without loading it (RuntimeError when it cannot be read)",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("commit") = "");
+
+        // The snapshot pipeline's report of the last load (None before the first)
+        m.def("snapshot_report", [](const std::string& emulatorId) -> py::object {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator || emulator->LastSnapshotReport().format.empty())
+                return py::none();
+            return StateNodeToPy(emulator->LastSnapshotReport().ToStateNode());
+        }, "What the snapshot pipeline did with the last load: commit, verdicts, per-block outcomes, warnings, refusal",
+           py::arg("emulator_id") = "");
 
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
@@ -799,6 +862,80 @@ namespace PythonBindings
                 throw std::invalid_argument("no emulator '" + emulatorId + "'");
             return python_rzx::StatusDict(emulator->GetRzxStatus());
         }, "RZX playback status (frame, progress, desyncs, drift)", py::arg("emulator_id") = "");
+
+        // ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9): the machine's buses, slots and cards.
+        // A change (plug / remove / set / gs) restarts the machine: the reply's restart.emulatorId is the new id
+        // (the selection follows it); emulator_id "" = the selected machine
+        m.def("slots_state", [](const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "list";
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "The slot report: buses, slots, fitted cards, built-in devices", py::arg("emulator_id") = "");
+        m.def("slots_catalog", [](const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "catalog";
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "Every card with its options and how it fits this machine (slot, fit, outcome)", py::arg("emulator_id") = "");
+        m.def("slots_matrix", [](const std::string& table) {
+            SlotControlRequest request;
+            request.verb = "matrix";
+            request.table = table;
+            return python_slots::Call(request, "", py::kwargs());
+        }, "The compatibility tables as markdown (one table, or all)", py::arg("table") = "");
+        m.def("slots_plug", [](const std::string& slot, const std::string& card, const std::string& options, bool replace,
+                               bool dryRun, const std::string& media, const std::string& adapter,
+                               const std::string& emulatorId, const py::kwargs& cardOptions) {
+            SlotControlRequest request;
+            request.verb = "plug";
+            request.slot = slot == "auto" ? std::string() : slot;
+            request.card = card;
+            request.options = options;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            request.adapter = adapter;
+            return python_slots::Call(request, emulatorId, cardOptions);
+        }, "Plug a card into a slot (zxbus.next, ay-socket, auto); options 'dip=ym,saa' or keywords dip='ym,saa'. "
+           "Refused with the plan when it would remove a card unless replace=True; dry_run=True: the plan only; "
+           "media='save'|'discard' for unsaved media of removed cards. Applied by a machine restart",
+           py::arg("slot"), py::arg("card"), py::arg("options") = "", py::arg("replace") = false,
+           py::arg("dry_run") = false, py::arg("media") = "", py::arg("adapter") = "", py::arg("emulator_id") = "");
+        m.def("slots_remove", [](const std::string& slot, bool replace, bool dryRun, const std::string& media,
+                                 const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "remove";
+            request.slot = slot;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "Remove the card from a slot (a machine restart)", py::arg("slot"), py::arg("replace") = false,
+           py::arg("dry_run") = false, py::arg("media") = "", py::arg("emulator_id") = "");
+        m.def("slots_set", [](const std::string& slot, const std::string& options, bool replace, bool dryRun,
+                              const std::string& media, const std::string& emulatorId, const py::kwargs& cardOptions) {
+            SlotControlRequest request;
+            request.verb = "set";
+            request.slot = slot;
+            request.options = options;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, cardOptions);
+        }, "Change a slot card's options ('dip=ym,gs' or keywords), merged over the current ones (a machine restart)",
+           py::arg("slot"), py::arg("options") = "", py::arg("replace") = false, py::arg("dry_run") = false,
+           py::arg("media") = "", py::arg("emulator_id") = "");
+        m.def("slots_gs", [](const std::string& card, bool replace, bool dryRun, const std::string& media,
+                             const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = card;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "The General Sound personality (gs, gs-lw, neogs): the card in the GS slot replaced (a machine restart)",
+           py::arg("card"), py::arg("replace") = false, py::arg("dry_run") = false, py::arg("media") = "",
+           py::arg("emulator_id") = "");
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
@@ -1680,7 +1817,7 @@ namespace PythonBindings
                py::arg("source"), py::arg("output"), py::arg("hysteresis") = py::none())
             
             // Snapshot operations
-            .def("snapshot_load", [](Emulator& self, const std::string& path) -> bool {
+            .def("snapshot_load", [](Emulator& self, const std::string& path, const std::string& commit) -> bool {
                 if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 // This object is one machine: a file for another model (an SPG:
@@ -1689,11 +1826,29 @@ namespace PythonBindings
                 request.emulatorId = self.GetId();
                 request.path = path;
                 request.switchModel = false;
+                request.commit = commit;
                 const SnapshotLoadResult result = SnapshotLauncher::Load(request);
                 if (result.modelMismatch)
                     throw std::runtime_error(result.message + " (unreal.snapshot_load switches it)");
+                if (!result.ok && result.report.refused)
+                    throw std::runtime_error(result.message);  // the pipeline refused: RuntimeError with the reason
                 return result.ok;
-            }, "Load snapshot file (RuntimeError while TTD records or when the file needs another model)", py::arg("path"))
+            }, "Load snapshot file (RuntimeError while TTD records, when the file needs another model, or when the "
+               "snapshot pipeline refuses it; commit as in unreal.snapshot_load)",
+               py::arg("path"), py::arg("commit") = "")
+            .def("snapshot_inspect", [](Emulator& self, const std::string& path, const std::string& commit) -> py::object {
+                StateNode result;
+                std::string error;
+                if (!SnapshotLauncher::Inspect(self.GetId(), path, commit, result, error))
+                    throw std::runtime_error(error);
+                return StateNodeToPy(result);
+            }, "What loading the file would do on this machine, nothing written (RuntimeError when it cannot be read)",
+               py::arg("path"), py::arg("commit") = "")
+            .def("snapshot_report", [](Emulator& self) -> py::object {
+                if (self.LastSnapshotReport().format.empty())
+                    return py::none();
+                return StateNodeToPy(self.LastSnapshotReport().ToStateNode());
+            }, "What the snapshot pipeline did with the last load (None before the first)")
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
             // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
             .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")
@@ -2562,26 +2717,48 @@ namespace PythonBindings
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
-            .def("network_configure", [](Emulator& self, py::kwargs settings) {
-                NetworkManager* manager = self.GetContext()->pCore ? self.GetContext()->pCore->GetNetworkManager() : nullptr;
-                if (!manager)
-                    throw py::value_error("no network support in this machine");
-                std::vector<std::pair<std::string, std::string>> kv;
+            .def("network_configure", [](Emulator& self, py::kwargs settings) -> py::object {
+                // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot
+                // change applied by a restart (replace=, dry_run=, media= as for slots_plug), the other keys go to the
+                // restarted machine (emu_get_selected(); this object then names the old one); without a card change
+                // they apply in place (status 'accepted')
+                SlotControlRequest request;
+                request.verb = "network";
+                request.emulatorId = self.GetId();
                 for (auto item : settings)
                 {
                     const std::string key = py::str(item.first);
+                    if (key == "replace" || key == "replace_if_incompatible")
+                    {
+                        request.replaceIfIncompatible = item.second.cast<bool>();
+                        continue;
+                    }
+                    if (key == "dry_run")
+                    {
+                        request.dryRun = item.second.cast<bool>();
+                        continue;
+                    }
+                    if (key == "media")
+                    {
+                        request.media = py::str(item.second);
+                        continue;
+                    }
                     std::string text;
                     if (py::isinstance<py::bool_>(item.second))
                         text = item.second.cast<bool>() ? "on" : "off";
                     else
                         text = py::str(item.second);
-                    kv.emplace_back(key, text);
+                    request.settings.emplace_back(key, text);
                 }
-                NetworkManager::Change change;
-                std::string error;
-                if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
-                    throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()); applied at the next frame boundary, every connection closes")
+                SlotControlReply reply;
+                {
+                    py::gil_scoped_release release;   // a restart stops and builds a machine
+                    reply = SlotControl::Execute(request);
+                }
+                if (!reply.Ok())
+                    throw py::value_error(reply.message);
+                return StateNodeToPy(reply.ToValue());
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a machine restart (replace=True allows removals / an unrealistic fit, dry_run=True returns the plan, media='save'|'discard'; the other keys are applied to the restarted machine, emu_get_selected()); other settings apply at the next frame boundary, every connection closes (status 'accepted'). Returns the reply dict (ok, status, message, plan, restart, network); ValueError with the reason when refused")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -2702,6 +2879,21 @@ namespace PythonBindings
             .def("audio_covox_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Covox(self.GetContext()));
             }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
+            .def("multisound_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::MultiSound(self.GetContext()));
+            }, "The ZX-MultiSound card: options, shadowed built-ins, CPLD latches, YM2203 pair (the TSFM report's chips), "
+               "SAA1099, General Sound, DACs, MIDI summary ({'available': False, ...} without the card)")
+            .def("midi_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Midi(self.GetContext()));
+            }, "The MIDI line and the SAM2695 synthesizer: 16 parts (program, preset, volume, pan, voices, notes), "
+               "polyphony, effects, counters, bank")
+            .def("midi_panic", [](Emulator& self) -> py::dict {
+                const MidiControlReply reply = MidiControl::Execute(self.GetContext(), "panic");
+                py::dict d;
+                d["ok"] = reply.ok;
+                d["message"] = reply.message;
+                return d;
+            }, "MIDI panic: every voice of the synthesizer stops (applied at the next instruction boundary, a TTD input)")
             .def("audio_moonsound_state", [](Emulator& self, const std::string& part) -> py::object {
                 if (part == "fm")
                     return StateNodeToPy(DeviceState::MoonSoundFm(self.GetContext()));
@@ -2759,26 +2951,23 @@ namespace PythonBindings
                 return gs ? (gs->getStatusRaw() | 0x7E) : -1;
             }, "Peek the GS status register (IN #BB value)")
             .def("gs_switch_personality", [](Emulator& self, const std::string& personality) -> bool {
-                // Runtime personality switch (GS card personalities design
-                // §11.3): requested here, applied at the next frame boundary
-                // on the emulation thread - same semantics as the WebAPI
-                // switch_personality action and the MCP gs_switch_personality
-                // tool action
-                auto* ctx = self.GetContext();
-                SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-                if (!sm) return false;
-
-                GSTypeKind target;
-                if (!gsParsePersonality(personality, target))
-                    return false;
-
-                std::string refusal;
-                const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
-                if (!requested && !refusal.empty())
-                    throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
-                return requested;
-            }, "Request a GS card personality swap ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'), applied at the next "
-               "frame boundary (RuntimeError while TTD records)",
+                // The card in the GS slot replaced as a slot change, applied by a machine restart (ZX-bus slots,
+                // owner decision Q10): the same as slots_gs(). This object then names the old machine; the new one
+                // is the selected emulator (emu_get_selected())
+                SlotControlRequest request;
+                request.verb = "gs";
+                request.card = personality;
+                request.emulatorId = self.GetId();
+                SlotControlReply reply;
+                {
+                    py::gil_scoped_release release;
+                    reply = SlotControl::Execute(request);
+                }
+                if (!reply.Ok())
+                    throw std::runtime_error(reply.message);
+                return true;
+            }, "Replace the GS-slot card ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'): a machine restart; the new "
+               "machine is emu_get_selected() (RuntimeError with the reason when refused, e.g. while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload

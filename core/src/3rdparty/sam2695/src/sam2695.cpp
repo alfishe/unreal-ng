@@ -27,7 +27,8 @@ constexpr uint32_t kMaxOutputRate = 192000;
 enum class EventKind : uint8_t
 {
     Byte,
-    Reset
+    Reset,
+    Panic   // every voice of every part stops (Synth::Panic)
 };
 
 struct Event
@@ -110,6 +111,11 @@ struct Synth::Impl
 
     void Apply(const Event& e, uint32_t offset)
     {
+        if (e.kind == EventKind::Panic)
+        {
+            core.Panic();
+            return;
+        }
         if (e.kind == EventKind::Reset)
         {
             core.PowerOn();
@@ -253,6 +259,13 @@ void Synth::Reset(uint64_t t)
     d.Enqueue(d.SampleAt(t), 0, EventKind::Reset);
 }
 
+void Synth::Panic(uint64_t t)
+{
+    Impl& d = *_impl;
+    d.AdvanceUart(t);
+    d.Enqueue(d.SampleAt(t), 0, EventKind::Panic);
+}
+
 void Synth::WriteLine(uint64_t t, bool level)
 {
     Impl& d = *_impl;
@@ -356,6 +369,18 @@ bool Synth::LoadState(const uint8_t* in, size_t size)
     d.streamHead = d.streamCount = 0;
     d.resampler.Reset();
     return true;
+}
+
+bool Synth::StateBank(const uint8_t* in, size_t size, BankDigest& digest)
+{
+    if (in == nullptr)
+        return false;
+    StateReader header(in, size);
+    uint32_t magic = 0, version = 0;
+    header(magic);
+    header(version);
+    header(digest);
+    return header.Ok() && magic == kStateMagic && version == kStateVersion;
 }
 
 void Synth::SetChannelMute(int channel, bool mute)

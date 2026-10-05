@@ -6,10 +6,14 @@
 //
 // Machine-level but short: no firmware run is needed (the mailbox flip-flops answer at once); each test creates one
 // Sprinter instance.
+//
+// The shipped Sprinter config fits no GS (owner decision 2026-10-04: the adapter in slot 1 stays, empty). The tests
+// about the card fit the NeoGS behind it at creation, as a user's [SLOTS] isa.1 = neogs would.
 
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -49,7 +53,19 @@ protected:
             _manager->RemoveEmulator(id);
     }
 
+    /// A Sprinter with the NeoGS behind the adapter (the field the slot set is translated from at creation), then
+    /// @p configOverride
     void Create(std::function<void(CONFIG&)> configOverride = nullptr)
+    {
+        CreateShipped([extra = std::move(configOverride)](CONFIG& config) {
+            config.sound.gsTypeKind = GSTypeKind::NGS;
+            if (extra)
+                extra(config);
+        });
+    }
+
+    /// A Sprinter as the shipped config makes it (no GS), then @p configOverride
+    void CreateShipped(std::function<void(CONFIG&)> configOverride = nullptr)
     {
         _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-zxbus", "SPRINTER", 4096, LoggerLevel::LogError,
                                                             nullptr, std::move(configOverride));
@@ -71,21 +87,31 @@ protected:
     }
 };
 
-// Owner decision Q2: slot 1 = the ZX-bus adapter with the NeoGS ([SOUND] GSType=NGS of the Sprinter config), slot 2 =
-// the NE2000. The machine has a ZX-bus only through the adapter; its bus carries no memory cycles
-TEST_F(IsaZxBusAdapter_Test, DefaultPopulation_AdapterWithTheNeoGsInSlot1)
+// Owner decision Q2: slot 1 = the ZX-bus adapter, slot 2 = the NE2000. Owner decision 2026-10-04: the shipped config
+// puts no GS behind the adapter. The machine has a ZX-bus only through the adapter; its bus carries no memory cycles
+TEST_F(IsaZxBusAdapter_Test, DefaultPopulation_EmptyAdapterInSlot1)
 {
-    Create();
+    CreateShipped();
     ASSERT_NE(_decoder->GetIsaBus().Card(0), nullptr);
     EXPECT_STREQ(_decoder->GetIsaBus().Card(0)->Kind(), "zxbus");
-    EXPECT_TRUE(_decoder->ZxBusPresent());
+    EXPECT_TRUE(_decoder->ZxBusPresent()) << "the adapter is there";
     EXPECT_FALSE(_decoder->ZxBusMemoryCycles());
     EXPECT_EQ(_decoder->ZxBusSlot(), 0);
-    ASSERT_NE(Gs(), nullptr) << "SoundManager fits the GS behind the adapter";
-    EXPECT_EQ(Gs()->implementation(), GSCardImplementation::NGS);
+    EXPECT_EQ(Gs(), nullptr) << "no GS in the shipped config";
+    EXPECT_EQ(Isa("io_read", 1, 0x0BB), 0xFF) << "nothing on its ZX-bus";
     ASSERT_NE(_decoder->GetIsaBus().Card(1), nullptr);
     EXPECT_STREQ(_decoder->GetIsaBus().Card(1)->Kind(), "ne2000");
     EXPECT_EQ(_context->config.sound.gsreset, 0) << "Q9: a machine reset does not pulse ISA RESET DRV";
+}
+
+// The NeoGS added behind the adapter (a user's [SLOTS] isa.1 = neogs): SoundManager fits it there
+TEST_F(IsaZxBusAdapter_Test, AddedNeoGsSitsBehindTheAdapter)
+{
+    Create();
+    EXPECT_TRUE(_decoder->ZxBusPresent());
+    EXPECT_EQ(_decoder->ZxBusSlot(), 0);
+    ASSERT_NE(Gs(), nullptr) << "SoundManager fits the GS behind the adapter";
+    EXPECT_EQ(Gs()->implementation(), GSCardImplementation::NGS);
 }
 
 // ProPlay's path: ISA I/O #0B3 / #0BB of slot 1 are the GS data and command / status ports. The host flip-flops answer

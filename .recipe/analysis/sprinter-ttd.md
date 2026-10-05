@@ -29,7 +29,7 @@ CMOS), a checkpoint carries the Sprinter blobs:
 Input: keys travel as journaled PC key events (`PcKey`), the mouse as the journaled Kempston counters
 (the serial mouse samples them). A seek replays them; a restore in the middle of a PS/2 byte or of a
 mouse packet resumes on the same bit. Port journals stay off on the Sprinter ("the machine's interrupt
-source supplies the IM2 vector"; with the shipped NeoGS: "NeoGS: its ZX-DMA ..."): replay runs against
+source supplies the IM2 vector"; with a NeoGS added behind the ISA ZX-bus adapter also "NeoGS: its ZX-DMA ..."): replay runs against
 the live devices, so keep the same floppy / HDD images inserted.
 
 Recording turns the host turbo mode off (as on every machine): 21 MHz Sprinter frames run at their

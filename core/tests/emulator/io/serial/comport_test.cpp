@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "_helpers/fakehostnet.h"
+#include "_helpers/networksettings.h"
 #include "common/serial/hostserialport.h"
 #include "debugger/ttd/network/ttdserialport.h"
 #include "emulator/cpu/core.h"
@@ -47,16 +48,17 @@ protected:
         _context = _emulator->GetContext();
     }
 
+    /// The settings as every surface applies them: a ZX-bus card change restarts the machine (Q11), the fixture
+    /// follows it; `_lastReply` keeps the reply (a refusal's reason)
     bool Apply(const std::vector<std::pair<std::string, std::string>>& settings)
     {
-        NetworkManager::Change change;
-        std::string error;
         std::vector<std::pair<std::string, std::string>> all = settings;
         all.emplace_back("host_access", "off");
-        if (!NetworkManager::ParseChange(all, change, error))
-            return false;
-        return _context->pCore->GetNetworkManager()->RequestChange(change, error);
+        _lastReply = NetworkSettings::Apply(_emulator, all);
+        _context = _emulator ? _emulator->GetContext() : nullptr;
+        return _lastReply.Ok();
     }
+    SlotControlReply _lastReply;
 
     bool Fit(const std::string& comPort) { return Apply({{"com_port", comPort}}); }
 
@@ -222,12 +224,20 @@ TEST_F(ComPort_Test, TheZxWifiCardRunsAtByDefault)
 
 TEST_F(ComPort_Test, AZxWifiCardClashesWithTheEvoAvr)
 {
+    // The card change is a slot change (Q11): the plan refuses the ZX-WiFi (#xxEF and its serial function are the
+    // AVR COM port's, a fixed built-in), so nothing changes - not even the ZXNETUSB of the same request
     Create("ATM3", 4096);
-    ASSERT_TRUE(Apply({{"card", "zxnetusb,zxwifi"}}));
-    EXPECT_NE(_context->pZxNetUsb, nullptr) << "the other card still fits";
+    const std::string before = _emulator->GetId();
+    EXPECT_FALSE(Apply({{"card", "zxnetusb,zxwifi"}}));
+    EXPECT_EQ(_lastReply.status, "refused") << _lastReply.message;
+    EXPECT_NE(_lastReply.message.find("com"), std::string::npos) << _lastReply.message;
+    EXPECT_EQ(_emulator->GetId(), before) << "no restart";
+    EXPECT_EQ(_context->pZxNetUsb, nullptr);
     ASSERT_NE(_context->pComPort, nullptr);
     EXPECT_EQ(_context->pComPort->Uart().GetParams().flavor, Uart16550::Flavor::EvoAvr) << "#xxEF stays the AVR's";
-    EXPECT_TRUE(HasNote(Notes(), "ZXWIFI: not fitted"));
+
+    ASSERT_TRUE(Apply({{"card", "zxnetusb"}})) << _lastReply.message;
+    EXPECT_NE(_context->pZxNetUsb, nullptr) << "the other card fits";
 }
 
 TEST_F(ComPort_Test, StatusShowsTheUartAndThePeer)
@@ -293,9 +303,9 @@ TEST_F(ComPort_Test, TsConfHasTheTsAvrPort)
     ASSERT_TRUE(Fit("loopback"));
     ASSERT_NE(_context->pComPort, nullptr);
     EXPECT_EQ(_context->pComPort->Uart().GetParams().avr, Uart16550::AvrFirmware::Ts2016Apr);
-    ASSERT_TRUE(Apply({{"card", "zxwifi"}}));
+    EXPECT_FALSE(Apply({{"card", "zxwifi"}})) << "the slot plan refuses it (Q11): #EF is a board port";
+    EXPECT_EQ(_lastReply.status, "refused") << _lastReply.message;
     EXPECT_EQ(_context->pComPort->Uart().GetParams().flavor, Uart16550::Flavor::EvoAvr);
-    EXPECT_TRUE(HasNote(Notes(), "ZXWIFI: not fitted"));
 }
 
 TEST_F(ComPort_Test, TheAvrFirmwareSetsTheUart)

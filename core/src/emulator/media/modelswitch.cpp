@@ -9,6 +9,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace
 {
@@ -86,13 +87,33 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     const RamPowerOn ramPowerOn =
         request.ramPowerOn ? *request.ramPowerOn
                            : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
+    // The new machine's config: the old instance's own override (a restart of the same model), the power-on RAM,
+    // the running settings the request carries, then the slot set
+    // (exact, or the old machine's cards carried and planned against the new model)
+    std::optional<SlotManager::Result> carried;
+    if (!request.slotSet && old->GetContext()->pSlotManager != nullptr)
+        carried = old->GetContext()->pSlotManager->Snapshot();
+    auto carryReport = std::make_shared<SlotManager::CarryReport>();
+    std::function<void(CONFIG&)> configOverride =
+        [instance = request.keepConfigOverride ? old->GetConfigOverride() : std::function<void(CONFIG&)>{},
+         ram = Config::RamPowerOnOverride(ramPowerOn), carrySettings = request.carrySettings, slotSet = request.slotSet,
+         carried, carryReport](CONFIG& config) {
+            if (instance)
+                instance(config);
+            ram(config);
+            if (carrySettings)
+                carrySettings(config);
+            if (slotSet)
+                SlotManager::UseSlots(*slotSet, config);
+            else if (carried)
+                *carryReport = SlotManager::Carry(*carried, config);
+        };
     std::shared_ptr<Emulator> created =
         request.ramKb > 0
             ? emulators.CreateEmulatorWithModelAndRAM(old->GetSymbolicId(), request.model, request.ramKb,
-                                                      LoggerLevel::LogWarning, &error,
-                                                      Config::RamPowerOnOverride(ramPowerOn))
+                                                      LoggerLevel::LogWarning, &error, configOverride)
             : emulators.CreateEmulatorWithModel(old->GetSymbolicId(), request.model, LoggerLevel::LogWarning, &error,
-                                                Config::RamPowerOnOverride(ramPowerOn));
+                                                configOverride);
     if (!created || !created->GetContext() || !created->GetContext()->pMediaManager)
     {
         if (created)
@@ -149,7 +170,9 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     if (wasSelected)
         emulators.SetSelectedEmulatorId(created->GetId());
     out.emulator = created;
+    out.slotCarry = *carryReport;
     out.result = MediaResult::Success();
-    out.result.report = out.media.lines;
+    out.result.report = out.slotCarry.lines;
+    out.result.report.insert(out.result.report.end(), out.media.lines.begin(), out.media.lines.end());
     return out;
 }

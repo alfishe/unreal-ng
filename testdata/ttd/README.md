@@ -195,11 +195,22 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-05: the engine corpus re-recorded after master's ZX-bus slots (the slot set is in the engine's configuration
+fingerprint). `record_fixtures.py` plugs the General Sound card into a ZX-bus slot when the shipped config fits none;
+`sprinter_boot` has no ZX-bus and is recorded without a GS card, as the Sprinter now ships.
+
 2026-10-05: the engine corpus re-recorded: the controller's own streams moved to the ids the Phase 4 stream table
 names (8 coverage, 12 bookmarks, 17 facts; 0x02xx is reserved for branches).
 
 2026-10-05: the engine corpus (`engine/`, all seven fixtures) recorded for the first time, by the application on the
 engine after the Phase 5 switch; 3 to 7 times smaller than the v1 files of the same sessions.
+
+2026-10-04 (zx-bus-slots, owner decision): the shipped 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs fit no
+General Sound any more. No fixture was re-recorded: `sprinter_boot` (Sprinter) and `greenberet-load` (128K) were
+recorded with the classic GS, and the tests that load them now fit the recorded card at creation
+(`GeneralSoundFitScope`, `core/tests/_helpers/soundcardscope.h`) instead of switching the shipped card. A re-record
+from the stock app needs the card in the instance's `[SLOTS]` first: the recorders' `switch_personality` changes a
+fitted card but cannot fill an empty slot (until SL-6).
 
 2026-10-04: the whole corpus (all seven fixtures) re-recorded after `ttd-engine` landed on master: the engine's
 peripheral ids moved to 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback; master kept 44-53), and master's

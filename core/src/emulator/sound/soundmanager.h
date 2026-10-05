@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -30,6 +31,7 @@
 #include "stdafx.h"
 
 class EmulatorContext;
+class ICard;
 class SoundChip_Moonsound;
 
 /// The GS slot as other threads see it (SoundManager::generalSoundSlot)
@@ -439,6 +441,15 @@ public:
         _sampleAccumulator = tstateRatePhase;
     }
 
+    /// The frame-start sample phase (T-states x rate, modulo CPU_CLOCK_RATE): the authority for how many samples
+    /// every frame has. A device that renders with its own copy (SoundChip_TurboSoundFM) takes it back at the
+    /// first 1x frame after a host speed multiplier (it rendered the faster frames' multiplied time); at 1x the two
+    /// are equal by construction
+    uint64_t samplePhase() const
+    {
+        return _sampleAccumulator;
+    }
+
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
 
@@ -564,6 +575,18 @@ public:
     void enableWideMix(bool enable);
     bool wideMixEnabled() const { return _wideMix; }
 
+    /// region <Slot-built cards (ZX-bus slots card.h)>
+    /// A card's mixer rows join the registry (volume / mute / solo / capture / HUD like any row) and its frames run
+    /// with the machine's: FrameStart at every frame start, FrameEnd with the frame's sample count (0 in turbo
+    /// without audio). Called by SlotManager at machine creation and release
+    void attachSlotCard(ICard* card);
+    void detachSlotCard(ICard* card);
+    const std::vector<ICard*>& slotCards() const { return _slotCards; }
+    /// Why a row is silent by hardware ("shadowed by zxbus.1"); empty when nothing hides it
+    void setDeviceState(AudioSourceType type, const std::string& state);
+    std::string deviceState(AudioSourceType type) const;
+    /// endregion </Slot-built cards>
+
     /// Compatibility shim for tape audio. Routes amplitude into the beeper's
     /// blip_buf at the given T-state position. New code should use
     /// Beeper::handlePortOut() or Beeper::handleTapeAudio() directly.
@@ -595,6 +618,14 @@ public:
     {
         return chip == 1 ? _ayVoicing1 : _ayVoicing0;
     }
+    /// The voicing stage of a slot card's SSG row (nullptr for a row that is not voiced)
+    const VoicingStage* getCardVoicingStage(AudioSourceType type) const
+    {
+        for (const CardVoicing& v : _cardVoicing)
+            if (v.type == type)
+                return v.stage.get();
+        return nullptr;
+    }
 
     void setAYPunch(bool enabled);
     bool getAYPunch() const
@@ -621,6 +652,13 @@ public:
     void setDeviceMute(AudioSourceType type, bool mute);
     void setDeviceSolo(AudioSourceType type, bool solo);
     void setDeviceVolume(AudioSourceType type, float volume);
+
+    /// YM2203 FM loudness trim in dB ([SOUND] TSFM_FmTrimDb), applied live to every YM2203 FM in the machine: the
+    /// TurboSound FM in the AY socket and every slot card with YM2203 FM (the ZX-MultiSound) - one calibration, shown
+    /// as one control. Returns false when the machine has no YM2203 FM
+    bool setFmTrimDb(double db);
+    /// The trim in force (the TSFM's, else the first card's); false when the machine has no YM2203 FM
+    bool fmTrimDb(double& db) const;
 
     // Legacy master volume controls (delegate to registry entries)
     void setAYVolume(double volume);
@@ -713,4 +751,26 @@ public:
     bool detachFromPorts();
 
     /// endregion </Port interconnection>
+
+    /// region <Slot-built cards: state>
+    // Kept at the end of the class, so the members above keep the offsets they had before slot-built cards
+private:
+    // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
+    // drives their frames and mixes their rows
+    std::vector<ICard*> _slotCards;
+    /// AY / SSG tone voicing of the slot cards' SSG rows (CardMixerRow::ssgVoicing): one stage per row, set up,
+    /// requested, reset and invalidated together with the AY socket's _ayVoicing0 / _ayVoicing1
+    struct CardVoicing
+    {
+        ICard* card = nullptr;
+        AudioSourceType type = AudioSourceType::Custom;
+        std::unique_ptr<VoicingStage> stage;
+        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage runs in
+    };
+    std::vector<CardVoicing> _cardVoicing;
+    // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
+    std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
+    const int16_t* slotCardBuffer(AudioSourceType type) const;
+    bool wideMixNeeded() const;
+    /// endregion </Slot-built cards: state>
 };

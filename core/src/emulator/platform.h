@@ -2,8 +2,10 @@
 #include "stdafx.h"
 
 #include "sysdefs.h"
+#include "common/sound/aystereomode.h"
 #include "common/sound/filters/filtervoicing.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/slots/slotconfig.h"
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -607,7 +609,7 @@ struct CONFIG
 	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
-	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
+	uint8_t ide_stall = 1;			// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (1 = on, the default, as the RTL; 0 = bypass)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
@@ -665,15 +667,23 @@ struct CONFIG
 		/// taps, beta 9, ~90 dB). Read at sound-stack construction
 		bool decimatorHighFidelity = false;
 
-		/// AY / SSG tone voicing ([SOUND] AYVoicing = headphones (default) |
-		/// classic | flat | warm | tv | small_speaker; alias
+		/// AY / SSG tone voicing ([SOUND] AYVoicing = classic (default) |
+		/// headphones | flat | warm | tv | small_speaker; alias
 		/// legacy = classic): the fixed EQ after the chip model, before punch
 		/// (FilterVoicing, docs/inprogress/2026-09-25-ay-tone-voicing). The
 		/// default for a new sound stack; runtime changes (GUI, automation)
 		/// go through SoundManager::setAYVoicing and are not written back
 		FilterVoicing::Preset ayVoicing = FilterVoicing::DEFAULT_PRESET;
 
+		/// AY / SSG stereo layout ([AY] Stereo = ABC (default) | ACB | MONO):
+		/// applied to every AY and TSFM SSG chip of the machine when the sound
+		/// stack is built; runtime changes (GUI, automation) are not written back
+		AYStereoMode ayStereo = AYStereoMode::ABC;
+
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
+		/// The SounDrive card's port set (ZX-bus slots `soundrive` option `mode`): 0 both (the emulator decode, the
+		/// legacy SD=1), 1 mode 1 (#0F / #1F / #4F / #5F), 2 mode 2 (#F1 / #F3 / #F9 / #FB)
+		uint8_t sdMode = 0;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
@@ -863,6 +873,11 @@ struct CONFIG
 		uint8_t mix_frames;
 		uint8_t mode; // RSM_MODE
 	} rsm;
+
+    /// [SLOTS] (ZX-bus slots, architecture.md §6): the cards of the machine; SlotManager plans it at creation. Empty
+    /// without the section: the legacy card keys ([SOUND] TurboSound, GSType, MoonSound, CovoxFB, SD, [NETWORK] Card)
+    /// are translated into slots then
+    SlotConfig slotConfig;
 
     std::string romSetName;
     std::string romSet128Path;

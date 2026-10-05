@@ -56,7 +56,7 @@ hot path does a `std::map::find` on every IN / OUT even with no card fitted.
 ```mermaid
 flowchart TB
     subgraph Machine["Machine (PortDecoder_X)"]
-        DECL["DescribeBuses():<br/>buses, signals, slots,<br/>built-in devices + functions"]
+        DECL["MachineDef (refdata, by model):<br/>buses, signals, slots,<br/>built-in devices + functions"]
         NATIVE["native decode<br/>(#FE, #7FFD, ...)"]
     end
     subgraph Slots["SlotManager (one per emulator)"]
@@ -97,6 +97,13 @@ flowchart TB
 
 ### 3.1 Machine side
 
+**As built (SL-1):** the declaration is a `MachineDef` in `core/src/emulator/slots/refdata/machines.cpp`, keyed by
+`MEM_MODEL` ([reference-data.md](reference-data.md) §3-4: `BusDef`, `BuiltInDef` with `Fixed` / `Switchable` /
+`Socketed`, board ports as `PortClaim`s). There is **no** `DescribeBuses()` virtual on the decoders: decoders are chosen
+by model as well, so a table keyed by model is the same single source without needing a decoder instance (a model
+switch plans the slot set against the target model before any decoder exists), and the docs are generated from it.
+The sketch below is the original idea, kept for the field list.
+
 ```cpp
 // core/src/emulator/slots/busdeclaration.h (sketch)
 enum class BusKind : uint8_t { AySocket, ZxBus, SinclairEdge, AtmIoBus, ProfiBus, Isa8 };   // Scorpion = ZxBus (research §11)
@@ -131,7 +138,7 @@ struct MachineBuses { std::vector<BusDeclaration> buses; std::vector<BuiltInDevi
 virtual MachineBuses DescribeBuses() const;
 ```
 
-`DescribeNetwork()`'s `expansionSlots` and `zxBus` become views derived from `DescribeBuses()` (one source). The
+`DescribeNetwork()`'s `expansionSlots` and `zxBus` become views derived from the machine's `MachineDef` (one source). The
 Sprinter answers its ISA slots and, through a fitted ZX-bus adapter, a `zxbus` bus.
 
 ### 3.2 Card side
@@ -185,6 +192,16 @@ public:
 `ICard` deliberately mirrors `IIsaCard` / `IIoBusDevice` (Sprinter): an existing `IIoBusDevice` network device gets a
 thin `ICard` wrapper, as `IsaBusDeviceCard` does for ISA.
 
+**As built (MS-4, the ZX-MultiSound,** [tdd.md](tdd.md) §9**):** `core/src/emulator/slots/card.{h,cpp}`. `CardType` is
+`{id, create}` only (everything else is the reference data's `CardDef`); `CardContext` carries the emulator, the
+`CardDef`, the slot id and the planned options. `ICard` derives from `PortDevice`, so the claim table's owner pointer
+is the card: the bus cycles are `portDeviceOutMethod` / `portDeviceReadCycle(port, drives)` at the machine's now (the
+card keeps its own time base; the access path passes no `t`), plus `Peek(port, drives)`, `BusReset`, `FrameStart`,
+`FrameEnd(samples)`, `SetOutputRate`, `MixerRows`, `MixerBuffer`, `WantsWideMix`. TTD, media and `Describe` join the
+interface with the first card that needs them (MultiSound MS-5 / MS-6). **MS-5 (2026-10-05):** `CollectTtdDevices`
+(`CardTtdDevice`: id, device, instance named by slot, region source), `TtdFingerprint` (`slots.<slot>.<what>` fields)
+and `TtdSessionMatches` (the card's part of the load guard); `CardType` gains `ttdIds`, the ids its devices register.
+
 ### 3.3 Functions
 
 A function is a short string from one enum-backed table (`ay-socket`, `gs`, `saa`, `soundrive`, `covox-fb`, `opl4`,
@@ -222,6 +239,14 @@ Q6), never on the hot path.
   lockedOnRomFetch, detection, ICard*}`, sorted IORQGE first, then slot order.
 - Per machine: the set of board ports (`porthit` for `BoardWins` machines), precomputed into a second bitmap.
 
+**As built (SL-2,** `core/src/emulator/slots/portclaimtable.{h,cpp}`**):** the buckets are sorted by **slot order
+only**, not "IORQGE first": an IORQGE card hides the cycle from *later* slots (§4.3 step 2), so a passive card in an
+earlier slot must still see it. The owner is today's `PortDevice*` (an `ICard` wraps one from SL-4 on). Entries also
+carry the claim's `Gate` (DOS-gated claims and board ports); the DOS state and the last M1 address come from an
+`IClaimSignals` read only when an entry needs it. `ReadRule::SlotOrder` puts the board before the slots (a modeling
+choice like `WiredAnd`, flagged as a bus fight). The table is rebuilt whenever a device registers or leaves (the
+existing observers register at attach and at a network refit, both at a frame boundary), never on the access path.
+
 ### 4.3 Cycle resolution
 
 For an access to port `p` (read or write):
@@ -243,7 +268,8 @@ cards (reported as an incompatibility at plan time, not as shadowing) and a bus 
 
 **Socketed built-ins.** A built-in chip in a socket (the ZX-Evo YM2149, the AY of boards that socket it) can be
 *removed* by a plan, the physical fix for a bus fight (owner decision Q7: the MultiSound on ZX-Evo empties the
-socket).
+socket). As built (MS-4): the board AY device is not built and the table marks the built-in removed, so the board's
+decode of its ports no longer drives a read (`PortClaimTable::IsRemovedBuiltInRead`).
 
 **The `#DFFD` case (MultiSound on `CardWins`):** the card claims `#DFFD` writes without IORQGE; the write reaches the
 card and the machine's `#DFFD` paging, as on the real board.
@@ -253,6 +279,22 @@ card and the machine's `#DFFD` paging, as on the real board.
 **Migration of today's rules:** R6 and `OverrideDecodeForFullDecodeClaim` become step 3 / step 5 of the resolution;
 the Beta-128 exception becomes a declared built-in property; "IDE decodes first" stays a machine rule. Each move is a
 separate tested step (tdd.md SL-3).
+
+**As built (SL-3,** [tdd.md](tdd.md) §7**):** the Z80 runs one bus cycle, `PortDecoder::ReadCycle` / `WriteCycle`: a
+port no card claims is one bit test and the board's decode; a claimed port is resolved in one out-of-line pass (one
+lookup, the card's access, the board's stand-down decided once, the board decode, R6). The self-decoding devices and
+the exact peripheral port map are claim tables too, but three role instances rather than one (raw address before the
+board, raw address after the board, decoded port): the board decode is not yet expressed as claims, so the single
+table and `Read` / `Write` arrive with the card declarations of SL-4. The Beta-128 exception stays in the override.
+
+**As built (MS-4):** `Read` / `Write` run in production for slot-built cards. Their claims join `_fullDecodeClaims` in
+slots `PortDecoder::kSlotCardSlotBase` (2) and up, after the two legacy observer slots, so the one inline bit test
+still covers every bus card; on a claimed port the cycle's single lookup tells the paths apart (first claim in a card
+slot: `ReadSlotCardCycle` / `WriteSlotCardCycle`, the table's resolution with the board decode as its board side; a
+hidden board gets no cycle, the trace still records the access; otherwise the legacy pass with R6). The table is
+configured from the card's bus (or its adapter's arbitration) and the machine's built-ins when the first card is
+attached; `IClaimSignals` (M1 address, TR-DOS) is `SlotManager`'s, bound while cards exist. A port a legacy observer
+covers first stays on the legacy path (no slot-built card shares a port with one today).
 
 ## 5. SlotManager: plan and apply
 
@@ -291,6 +333,12 @@ public:
 };
 ```
 
+**As built (SL-1):** the pure part is `SlotPlanner::Plan(model, slotSet, request, context)`
+(`core/src/emulator/slots/slotplanner.h`), returning the `SlotPlan` above plus `removedFromSocket`, `disabled`,
+`deadPorts`, `busFights`, `exceptions` and `resultingSlots` (the slot set once applied). `SlotManager` (SL-6) keeps
+the slot set of a running emulator and calls it. Steps 7-8 below take their state from a `PlanContext` (dirty media;
+the TTD check arrives with SL-5).
+
 **Plan algorithm** (deterministic, R-OP-2):
 1. Resolve the target slot (`zxbus.next` = the first empty `zxbus` slot; a new one is created, unlimited).
 2. Compute the new card's functions from its options and its ports.
@@ -322,6 +370,22 @@ new machine fails to start, the previous configuration is restored and started a
 error. There is no card creation or destruction inside a running machine, so no frame-boundary queue, no partial
 state and no rollback of live objects.
 
+**As built (SL-6,** [tdd.md](tdd.md) §14**):** the sketch's `Plan` / `Request` are `SlotManager::PlanChange(request)`
+(pure over the instance's slot set: the plan engine, the dirty media, the TTD guard, the resulting `[SLOTS]` checked as
+the machine's creation checks it) and `SlotChange::Run(SlotChangeRequest)` (`core/src/emulator/slots/slotchange.h`):
+refusal, dry run, or the restart through `ModelSwitch::Run` with the same model, `ModelSwitchRequest::slotSet` = the new
+set and `keepConfigOverride` (the instance's own create override - a machine variant's board, a create option - applies
+again). The new machine is created next to the old one, so a failed start (a card that cannot be built:
+`SlotManager::BuildCards` now refuses the machine) leaves the old one running with its slot set; an applied change gives
+a new emulator id, as a model switch does. `SlotChangeResult` carries the status (`applied`, `dry-run`, `refused`,
+`recording`, `no-machine`, `failed`), the plan, the restarted emulator, the media report: the type SL-7's surfaces expose
+1:1. A plan that would leave the new card disabled for an accidental port clash is refused as a change (Q8 would refuse
+the configuration at the restart). The General Sound personality switch is the request
+`SlotManager::GeneralSoundRequest` builds (a plug of the other personality into the GS slot, replacing that card).
+The network settings' card change (Q11, [tdd.md](tdd.md) §16) is the requests `SlotManager::NetworkRequests` builds
+(a remove per card that goes, a plug per card that comes), planned one after the other into one change
+(`SlotManager::PlanChanges`, `SlotChangeRequest::changes`) and applied by one restart.
+
 **UI flow:** the Qt slot window calls `Plan` with `replaceIfIncompatible = true`; a plan with `fit = Unrealistic`
 first shows the "not possible on real hardware" explanation and a confirm button; applying shows a warning toast
 listing removed / shadowed / lost with an Undo action that replays the removed cards' configurations.
@@ -336,31 +400,58 @@ zxbus.1.dip = ym,saa,gs,sd       ; card options: zxbus.N.<option> = value
 zxbus.1.gsRam = 1M
 zxbus.1.ctrlMask = pro
 zxbus.2 = zxnetusb
-zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the first wins, zxbus.3 disabled (R-CFG-3)
+zxbus.3 = gs                     ; would clash with zxbus.1's gs: the machine is not created, the error names both (Q8)
 ```
 
 - Parsed into `SlotRequest`s in slot order through the same `Plan` (without the override), so an INI can never
-  produce a state that the API cannot.
+  produce a state that the API cannot. Entries that conflict with each other (D1, D3 / D12, D7, a chip kept in its
+  socket against Q7) refuse the machine with every pair in the reason (Q8, 2026-10-05).
 - **Legacy keys** (Q4): `[SOUND] TurboSound`, `GSType`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card=` are translated
   into `[SLOTS]` entries at load with a deprecation warning; the card-specific settings sections (`[NGS]`,
   `[MOONSOUND]`, `[ROM] GS`, ...) stay as the cards' option sources until each card's migration moves them under
   `zxbus.N.*` (each move listed in tdd.md).
+- **As built (SL-4,** [tdd.md](tdd.md) §8**):** `[SLOTS]` is `CONFIG::slotConfig` (`slots/slotconfig.{h,cpp}`), planned
+  by `SlotManager` in `Core::Init` before any card is built. Two keys beyond the sketch: `<slot>.adapter = <id>` and
+  `<slot>.fit = unrealistic` (the fit override per slot: an INI is planned without the replace flag, but the shipped and
+  old configs fit cards the reference data calls unrealistic, such as NeoGS on the Sinclair edge; every translated
+  legacy key carries it, so an old INI keeps its devices; it never displaces a card and never lifts a hard refusal);
+  and `builtin.<id> = on | off` for a switchable built-in (wired: the board Covox). A missing `ay-socket` means the
+  machine's own chip. `[NETWORK] Card=ATM2IOESP` stays a network key (INTERNAL connector). The card-specific sections
+  (`[NGS]`, `[MOONSOUND]`, `[SOUND] GSRamSize`) stay option sources; a slot option (`ram`) overrides them.
 - **Model switch:** `ModelSwitch::Run` today rebuilds everything from the target model's INI. New: the current slot set
   is carried as the request list and planned against the new machine; non-fitting cards are reported in the switch
   result (R-OP-9), exactly as stranded media are reported today.
+- **As built (SL-6,** [tdd.md](tdd.md) §14**):** `SlotManager::Carry` in the new machine's config override. The carried
+  cards keep their slot where the new machine has that bus, else go where the planner puts them behind the adapter that
+  connects them; the ones the new machine cannot take are dropped first, with the reason; the new machine's own
+  configured cards fill the free slots and give way to a carried card in a conflict (Q8 rules). The switch result's
+  `slotCarry` (kept, dropped, the new config's cards that gave way) also goes into its report lines. Removals are not
+  carried (owner question, [TODO.md](TODO.md)).
 
 ## 7. Ownership of existing devices
 
 | Device | Today | After migration |
 |---|---|---|
 | AY / TS / TSFM | `SoundManager::_turboSound` from `[SOUND] TurboSound` | the `ay-socket` slot's content; `SoundManager` keeps mixing |
-| GS / LW / NeoGS | `SoundManager::_gs`, runtime personality switch | cards `gs`, `gs-lw`, `neogs` (function `gs`); the personality switch becomes a slot replace (one plan, applied by a restart) |
+| GS / LW / NeoGS | `SoundManager::_gs`, runtime personality switch | cards `gs`, `gs-lw`, `neogs` (function `gs`); the personality switch becomes a slot replace (one plan, applied by a restart). As built (SL-6): `SlotManager::GeneralSoundRequest` + `SlotChange::Run`; the surfaces' frame-boundary switch stays until SL-7, planned at the request and followed by the plan and the TTD fingerprint |
 | MoonSound | `SoundManager` behind `[SOUND] MoonSound` | card `moonsound`; Profi's `#7E` clash becomes a declared built-in claim (palette) -> the card is disabled with the reason, no INI comment needed |
 | Covox / SounDrive | one `Covox` device, `Fitment {Mono, Quad}` | cards `covox-fb` (`#FB`) and `soundrive` (mode 1 + mode 2 ports) built on the same `Covox` module |
 | ZXNETUSB, ZX-WiFi | `NetworkManager::MakePlan` / `Refit` | cards `zxnetusb`, `zx-wifi`; `NetworkManager` keeps the virtual network and peers, `SlotManager` decides fitting |
 | ATM2IOESP | `IIoBusDevice` on the ATM INTERNAL connector | a slot on a machine-declared `atm-internal` bus (same model, one more bus kind) |
 | Sprinter ISA cards | `SprinterIsaBus` | unchanged; `isa1` / `isa2` appear in the slot report; the ZX-bus adapter hosts a `zxbus` |
-| Built-ins (Beta-128 on Pentagon, ZX-Evo TurboSound, board Covox, Kempston on Pentagon) | inline in decoders | declared in `DescribeBuses().builtIn` with functions and ports; behavior unchanged |
+| Built-ins (Beta-128 on Pentagon, ZX-Evo TurboSound, board Covox, Kempston on Pentagon) | inline in decoders | declared as `BuiltInDef`s of the machine's `MachineDef` with functions and ports; behavior unchanged |
+
+**As built (SL-4):** `SlotManager` owns the decision and the slot report (`DeviceState::Slots`), not the card
+objects: it writes the fitted set into the CONFIG card fields `SoundManager` / `NetworkManager` / the Covox module
+read (`SlotManager::Apply`), and those keep building, mixing and wiring the cards. `ICard` objects come with the
+ZX-MultiSound and the restart path (SL-6).
+
+**As built (MS-4):** a card with a `CardType` (the ZX-MultiSound) has no legacy owner: `SlotManager::BuildCards` builds
+it (Core::Init, once the sound manager and the port decoder exist), attaches its claims to the decoder and its mixer
+rows to `SoundManager`, and `ReleaseCards` takes them out before the machine goes. The cards above keep their legacy
+owners until SL-6. The board Covox (ATM, ZX-Evo, TS-Conf, Profi v3 / v5) is a switchable
+built-in on the same Covox module; the SounDrive card's `mode` (1 / 2 / `both`, the emulator's decode) selects the
+module's decode.
 | Beta-128 / IDE / Kempston as *interfaces* on Sinclair machines | config flags | later cards (function `beta128`, `ide.*`, `kempston-*`); not in the first migration (tdd.md "later") |
 
 ## 8. TTD and snapshots
@@ -378,6 +469,22 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the fi
   instance}` and refuses duplicates, but the per-id map still collapses them before. Rule: cards name their chip
   instances by slot (`zxbus.1.saa`); a configuration with two instances of one id lands only after `ttd-engine` (and
   its id-keyed map is replaced by the device key). Until then the plan refuses such a set with that reason.
+- **As built in SL-5** ([tdd.md](tdd.md) §10): the fingerprint fields as above plus `slots.builtin.<id>` per
+  switchable built-in; `SlotManager` refuses changes while recording through `ChangeRefusal()` (wired in SL-6:
+  `PlanChange` refuses every change and dry run while a user recording runs, `SlotChangeStatus::Recording`). The cards are still built by `SoundManager`: `RegisterMachinePeripherals` registers them as before, names
+  each engine device by its slot (`ay-socket.tsfm`, `zxbus.1.neogs`) and checks the registry against the plan. The
+  load guard compares per card position (AY socket, GS card, MoonSound) from the blob ids, since a v1 file carries no
+  slot set; the TurboSound and GS guards are folded into it, the Sprinter ISA check is still the decoder's (SL-8).
+  The id-keyed registry now refuses a second device under a held id and names both (recording refused), instead of
+  the silent overwrite; two instances of one module still need the v1 checkpoint to go (Phase 5), so the plan rule
+  above stays.
+- **As built for slot-built cards (MultiSound MS-5,** [tdd.md](tdd.md) §13**):** `RegisterMachinePeripherals` registers
+  every device a built card hands out (`ICard::CollectTtdDevices`), named `<slot>.<card>[.<module>]`; the plan check
+  requires every id the card's `CardType::ttdIds` declares and refuses recording, naming the slot, for a card that
+  declares none. The load guard has a position per slot-built card type and then asks each card
+  (`ICard::TtdSessionMatches`: the MultiSound's MIDI bank); the cards' own fingerprint fields
+  (`ICard::TtdFingerprint`, `slots.zxbus.1.bank`) join the slot set's. Two instances of one module are refused by the
+  planner as a conflict (Q8) before any registry sees them.
 - **Fixture corpus:** the Sprinter and TS-Conf fixtures were recorded with the classic GS swapped in; card migration must
   keep every blob byte-identical (`TTD_Corpus_Test.EveryFixtureLoadsRestoresAndReplaysExactly`).
 - **Snapshots** (SZX and our own): the slot set is written where the format allows (SZX has blocks for some cards);
@@ -396,6 +503,15 @@ the shared report builder.
 | Lua / Python | `slots_state()`, `slots_catalog()`, `slots_matrix()`, `slots_plug(slot, card, opts)`, `slots_remove(slot, opts)`, `slots_set(slot, opts)` returning the plan |
 | Qt | Machine > Slots window: one row per slot (bus, card, options, state, fit), the catalog with the matrix (incompatible entries marked, tooltip with the reason), plan preview, warning toast with Undo, override confirmation |
 | Recipe | `.recipe/machines/slots.md` (plug, replace, dry-run, undo) |
+
+As built (SL-7, [tdd.md](tdd.md) §15): `SlotControl::Execute(SlotControlRequest)` with the verbs list, catalog,
+matrix, plug, remove, set, gs; WebAPI `POST /slots/{slot}/{plug|remove|options}` and `PUT .../options` (body as above,
+`{slot}` = `auto` lets the planner choose); MCP `emulator_manage` also `slots_matrix`; Lua `slots_gs`; Python module
+functions `unreal.slots_*(..., emulator_id)`; the GS personality on every surface is the `gs` verb (Q10); Qt
+Machine > Slots with Undo through `SlotChangeRequest::slotSet`. The network settings of every surface (CLI `network
+set`, WebAPI `POST /network/config`, MCP `network_configure`, Lua / Python `network_configure`, the Qt Network window)
+are the verb `network` (Q11, [tdd.md](tdd.md) §16): a ZX-bus card change is a slot change applied by a restart, the
+other keys go to the restarted machine; `NetworkManager::RequestChange` refuses a ZX-bus card change.
 
 The create-time options (`"sprinter": {"isa_slot1": ...}`, `[ISA] SlotN`) stay for the Sprinter and gain the general
 `"slots": {...}` form on create.

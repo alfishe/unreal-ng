@@ -10,7 +10,7 @@ is in [generalsound.md](generalsound.md); the mixer and capture of its
 output are in [audio-mixer-and-capture.md](audio-mixer-and-capture.md).
 
 Ground truth: config parse in
-[config.cpp](../../core/src/emulator/config.cpp) (`[SOUND] GSType`), card in
+[slotmanager.cpp](../../core/src/emulator/slots/slotmanager.cpp) (`[SLOTS]`, the legacy `[SOUND] GSType` translated), card in
 [soundchip_neogs.h](../../core/src/emulator/sound/chips/neogs/soundchip_neogs.h),
 SD/flash request rules in
 [neogsmedia.cpp](../../core/src/emulator/sound/chips/neogs/neogsmedia.cpp),
@@ -28,11 +28,14 @@ MCP actions in [mcp-tools.cpp](../../core/automation/mcp/src/mcp-tools.cpp)
 
 ## Is the card fitted?
 
-The card kind comes from `[SOUND] GSType=` at instance creation. Every
-shipped config under `data/configs/` sets `GSType=NGS` (`NGS`, `Z80`, `LW`,
-`BASS`, `NONE`; the table is in [generalsound.md](generalsound.md)). A config
-that leaves the key out gets `NONE` — that is the parser default, the
-shipped default is `NGS`. The card's own settings sit in the `[NGS]` block of
+The card is a slot card: a `neogs` (`gs`, `gs-lw`) card in `[SLOTS]` at instance
+creation (`zxbus.1 = neogs`, `zxbus.1.ram = 4m`; the legacy `[SOUND] GSType=NGS`
+still works and is translated; the table is in [generalsound.md](generalsound.md)),
+or plugged later with `slots plug zxbus.next neogs` ([slots recipe](../machines/slots.md)).
+`inspect_state {"aspects":["slots"]}` shows where it sits. The shipped clone configs
+fit the NeoGS; the 48K / 128K / +2 / +2A / +3, Profi (v5, v3) and Sprinter
+configs fit none since 2026-10-04 (owner decision: none of their buses takes
+a ZX-bus card without an adapter). The card's own settings sit in the `[NGS]` block of
 the same `unreal.ini`:
 
 | Key | Values (shipped first) | Meaning |
@@ -50,7 +53,7 @@ the same `unreal.ini`:
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"create","model":"PENTAGON"}     # GSType=NGS from the shipped config
+emulator_manage {"action":"create","model":"PENTAGON"}     # zxbus.1 = neogs from the shipped config
 
 inspect_state   {"aspects":["audio_gs"]}                   # the card report (see fields below)
 
@@ -66,9 +69,10 @@ emulator_manage {"action":"gs_flash_save"}
 # Listening layout of the 8 DAC channels
 emulator_manage {"action":"gs_stereo_mode","mode":"gs"}    # separated | gs | mono
 
-# Swap the card in the GS slot at the next frame boundary
+# Replace the card in the GS slot: a slot change, the machine restarts (new emulator id in the reply)
 emulator_manage {"action":"gs_switch_personality","personality":"z80"}   # z80|lle, lw|lightweight, ngs|neogs
 emulator_manage {"action":"gs_switch_personality","personality":"ngs"}
+emulator_manage {"action":"slots_plug","slot":"zxbus.1","card":"neogs","options":"ram=4m","replace_if_incompatible":true}
 
 # Diagnostics: the last COM30..D2 module upload as a file (classic-card style upload)
 emulator_manage {"action":"gs_dump_module","path":"scratch/module.mod"}
@@ -106,7 +110,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: appl
 curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: application/json' \
      -d '{"action":"stereo_mode","mode":"mono"}' | jq '{mode, neogs_fitted}'
 curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: application/json' \
-     -d '{"action":"switch_personality","personality":"neogs"}' | jq '{personality, current, requested, note}'
+     -d '{"action":"switch_personality","personality":"neogs"}' | jq '{status, personality, previous, restart}'
 ```
 
 ## The state report (assert on these)
@@ -146,13 +150,12 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: appl
 
 - **Only the NeoGS has the SD slot and the flash.** `sd_insert` / `sd_eject`
   / `flash_save` on the classic or lightweight card answer `409` ("only the
-  NeoGS card (GSType=NGS) has an SD slot and a flash chip"). `stereo_mode`
+  NeoGS card (a neogs slot card) has an SD slot and a flash chip"). `stereo_mode`
   is accepted on any card but only reaches a NeoGS (`neogs_fitted` says
   whether it did; a NeoGS fitted later by `switch_personality` starts with
   the stored choice).
 - **No card at all is `404`.** The handler answers "General Sound card not
-  fitted" when `GSType=NONE` (its hint text still names only `Z80` or `LW`;
-  `NGS` works as well).
+  fitted" when no GS card is in the slots (`slots plug zxbus.next neogs` fits one).
 - **Media actions are queued while the machine runs.** `sd_insert`,
   `sd_eject`, `flash_save` reply `status: "queued"` and happen at the next
   instruction boundary (while paused: when execution continues); `done`
@@ -168,10 +171,12 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: appl
 - **`dump_module` answers `404`** until a COM30..D2 module upload finished;
   it is a classic-card diagnostic, a NeoGS state that never saw one has
   nothing to dump (unconfirmed for NeoGS firmware that streams modules).
-- **`switch_personality` is asynchronous.** The reply shows `requested` and
-  the *current* card (`current`); the swap happens at the next frame
-  boundary, so run a frame before asserting `implementation`. Per the handler
-  the host mailbox and activity counters survive the swap.
+- **`switch_personality` restarts the machine.** It is a slot change (owner
+  decision Q10): the reply carries the plan and `restart.emulatorId`, the new
+  machine; the machine state (and the card's mailbox) starts fresh, the SD card
+  `sd.ngs` follows when the new card has the slot (a NeoGS -> classic GS switch
+  with unsaved SD writes needs `mediaDisposition`). Only the `gs_lightweight`
+  feature still swaps the card in place.
 - **`stereo_mode` values:** `separated` (as on the board), `gs` (50%
   cross-feed like the classic card), `mono`. Applied at the next frame.
   Other words are a `400`.

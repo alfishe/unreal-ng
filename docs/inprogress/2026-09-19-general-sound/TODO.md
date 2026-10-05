@@ -203,7 +203,8 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 
 **NeoGS configuration and GUI** - done 2026-09-28
 - [x] Shipped configs list every `[NGS]` key with its default; `MP3Support` defaults to `software`
-- [x] Every shipped model fits NeoGS (`GSType=NGS`)
+- [x] Every shipped model fits NeoGS (`GSType=NGS`); superseded 2026-10-04 (owner decision): the 48K / 128K / +2 / +2A /
+  +3, Profi and Sprinter configs fit none ([zx-bus-slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md) §8)
 - [x] Audio Settings: "General Sound slot" section (card switch; NeoGS SD insert/eject) over `SoundManager::generalSoundSlot()`
 - [x] HUD: the GS nudge names the card ("GS", "NeoGS", "NeoGS MP3", "NeoGS+MP3"); "NeoGS DMA" and "NeoGS <->" show data movement without sound
 - [x] `[NGS] StereoMode` separated / gs (50% cross-feed) / mono - config, Audio Settings, CLI/WebAPI/MCP/Lua/Python

@@ -40,7 +40,9 @@ public:
     static constexpr size_t INFO_TRDOS_ID = 0xE7;
 
 public:
-    /// True when the image carries a TR-DOS file system (id byte, disk type, geometry)
+    /// True when the image carries a TR-DOS file system as TR-DOS itself sees it: the id byte #10 at #E7 of sector 9
+    /// (the only check of TR-DOS 5.03 / 5.04T; the disk type byte is decoded, not checked), the catalog sectors
+    /// present and their entries inside a track
     static bool IsTrdos(DiskImage& image);
 
     /// Parse the catalog. Returns false when the image is not TR-DOS formatted

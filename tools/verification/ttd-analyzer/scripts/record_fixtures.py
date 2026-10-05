@@ -93,6 +93,10 @@ CORPUS_DIR = "testdata/ttd"
 # v1's corpus is re-recorded with the application started with UNREAL_TTD_BACKEND=v1
 ENGINE_CORPUS_DIR = "testdata/ttd/engine"
 
+# The General Sound cards of the slot catalog and the card of each personality
+GS_CARDS = ("gs", "gs-lw", "neogs")
+GS_CARD_OF = {"z80": "gs", "lle": "gs", "lightweight": "gs-lw", "ngs": "neogs"}
+
 # Per-fixture extras. "out": where the fixture lives when it is not a Pentagon
 # corpus file (testdata/machines/<machine>/ttd, next to the machine's other
 # test data; TTD_Corpus_Test picks those up too). "gs": the General Sound card
@@ -351,10 +355,24 @@ def main() -> int:
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
             print(f"  recorder: {backend}")
             if "gs" in options:
-                api.post(f"/emulator/{emu_id}/control/audio/gs",
-                         {"action": "switch_personality", "personality": options["gs"]})
-                run_frames(api, f"/emulator/{emu_id}", 2)  # the swap lands at a frame boundary
-                print(f"  General Sound card: {options['gs']}")
+                # A slot change (owner decision Q10): the machine restarts with the card, under a new id.
+                # A machine whose shipped config fits no General Sound (48K / 128K / Profi / Sprinter since
+                # the ZX-bus slots) gets the card plugged first; switch_personality changes a fitted card only
+                # A machine without a ZX-bus (the Sprinter) takes no card: it records as shipped
+                slots = api.get(f"/emulator/{emu_id}/slots") or {}
+                fitted = any(str(s.get("card", "")) in GS_CARDS for s in slots.get("slots", []))
+                hasBus = any(str(s.get("slot", "")).startswith("zxbus.") for s in slots.get("slots", []))
+                if not fitted and hasBus:
+                    reply = api.post(f"/emulator/{emu_id}/slots/zxbus.next/plug", {"card": GS_CARD_OF[options["gs"]]})
+                    emu_id = reply.get("restart", {}).get("emulatorId", emu_id)
+                    fitted = True
+                if fitted:
+                    reply = api.post(f"/emulator/{emu_id}/control/audio/gs",
+                                     {"action": "switch_personality", "personality": options["gs"]})
+                    emu_id = reply.get("restart", {}).get("emulatorId", emu_id)
+                    print(f"  General Sound card: {options['gs']} (machine {emu_id})")
+                else:
+                    print("  General Sound card: none (the machine has no ZX-bus)")
             record_session(api, emu_id, out_path, args.frames,
                            from_root(snapshot) if snapshot else None, settle,
                            fresh=args.emulator_id is None)

@@ -343,6 +343,11 @@ private:
 
     // Media command handlers (every slot through MediaControl)
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    // ZX-bus slots: buses, slots, cards; plug / remove / set applied by a restart (cli-processor-slots.cpp, SlotControl)
+    void HandleSlots(const ClientSession& session, const std::vector<std::string>& args);
+    // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
+    void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
     // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
     void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);
     void ShowCdAudioHelp(const ClientSession& session);
@@ -380,7 +385,9 @@ private:
                             const std::vector<std::string>& args);
     void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
                             const std::vector<std::string>& args);
-    void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
+    void HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleSnapshotInspect(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                               const std::vector<std::string>& args);
 
     // Capture command handlers (OCR, screen capture, ROM text)
     void HandleCapture(const ClientSession& session, const std::vector<std::string>& args);

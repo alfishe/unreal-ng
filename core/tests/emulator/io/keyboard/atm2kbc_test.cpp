@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/networksettings.h"
+
 #include <cstring>
 #include <memory>
 
@@ -328,10 +330,14 @@ protected:
     {
         Create("ATM710", 1024);
         _emulator->RunNFrames(9);   // v4.x: 120 ms power-on delay
-        NetworkManager::Change change;
-        std::string error;
-        ASSERT_TRUE(NetworkManager::ParseChange(settings, change, error)) << error;
-        ASSERT_TRUE(_context->pCore->GetNetworkManager()->RequestChange(change, error)) << error;
+        // As every surface applies them: a ZX-bus card restarts the machine (Q11), which boots the controller again.
+        // A ZX-bus card behind the ATM Turbo 2+ CPU-socket adapter is an unrealistic fit (Q5): the flag accepts it
+        const std::string before = _emulator->GetId();
+        const SlotControlReply reply = NetworkSettings::Apply(_emulator, settings, true);
+        ASSERT_TRUE(reply.Ok()) << reply.message;
+        _context = _emulator->GetContext();
+        if (_emulator->GetId() != before)
+            _emulator->RunNFrames(9);
     }
 
     /// An IN #FE as a driver loop issues it: ~40 T of its own code first. Back

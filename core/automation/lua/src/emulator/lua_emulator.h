@@ -28,6 +28,8 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotcontrol.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -213,6 +215,83 @@ protected:
         if (!value.find("reached"))
             value["reached"] = false;
         return StateNodeToLua(ts, value);
+    }
+
+    /// One slots verb (SlotControl) for the effective emulator. `opts`: the flags (replace, dry_run, media, adapter),
+    /// options = "..." or {name = value}, and - when `cardOptions` - any other key as a card option. A restart of the
+    /// instance this interpreter is bound to rebinds it to the new machine
+    SlotControlReply slotsCall(SlotControlRequest request, const sol::optional<sol::table>& opts, bool cardOptions)
+    {
+        auto text = [](const sol::object& value) -> std::string {
+            if (value.is<bool>())
+                return value.as<bool>() ? "true" : "false";
+            if (value.get_type() == sol::type::number)
+            {
+                const double number = value.as<double>();
+                return number == static_cast<double>(static_cast<long long>(number))
+                           ? std::to_string(static_cast<long long>(number))
+                           : std::to_string(number);
+            }
+            if (value.get_type() == sol::type::table)
+            {
+                std::string list;
+                for (const auto& item : value.as<sol::table>())
+                {
+                    if (item.second.is<std::string>())
+                        list += (list.empty() ? "" : ",") + item.second.as<std::string>();
+                }
+                return list.empty() ? "none" : list;
+            }
+            return value.is<std::string>() ? value.as<std::string>() : std::string();
+        };
+        auto addOption = [&request](const std::string& name, const std::string& value) {
+            request.options += (request.options.empty() ? "" : " ") + name + "=" + value;
+        };
+        if (opts)
+        {
+            for (const auto& [keyObject, value] : *opts)
+            {
+                if (!keyObject.is<std::string>())
+                    continue;
+                const std::string key = keyObject.as<std::string>();
+                if (key == "replace" || key == "replaceIfIncompatible" || key == "replace_if_incompatible")
+                    request.replaceIfIncompatible = value.is<bool>() ? value.as<bool>() : text(value) == "true";
+                else if (key == "dry_run" || key == "dryRun")
+                    request.dryRun = value.is<bool>() ? value.as<bool>() : text(value) == "true";
+                else if (key == "media" || key == "mediaDisposition")
+                    request.media = text(value);
+                else if (key == "adapter")
+                    request.adapter = text(value);
+                else if (key == "options" && value.is<std::string>())
+                    request.options += (request.options.empty() ? "" : " ") + value.as<std::string>();
+                else if (key == "options" && value.get_type() == sol::type::table)
+                {
+                    for (const auto& [name, v] : value.as<sol::table>())
+                    {
+                        if (name.is<std::string>())
+                            addOption(name.as<std::string>(), text(v));
+                    }
+                }
+                else if (cardOptions)
+                    addOption(key, text(value));
+            }
+        }
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator && request.verb != "matrix")
+        {
+            SlotControlReply none;
+            none.status = "no-machine";
+            none.httpStatus = 404;
+            none.message = "no emulator selected";
+            return none;
+        }
+        const bool bound = _emulator != nullptr && _emulator == emulator;
+        request.emulatorId = emulator ? emulator->GetId() : std::string();
+        emulator = nullptr;
+        SlotControlReply reply = SlotControl::Execute(request);
+        if (bound && reply.emulator)
+            _emulator = reply.emulator.get();   // the restarted machine; the manager owns it
+        return reply;
     }
 
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
@@ -1363,6 +1442,59 @@ public:
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
 
+        // region <ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9)>
+        // slots_state(), slots_catalog(), slots_matrix([table]),
+        // slots_plug(slot, card [, opts]), slots_remove(slot [, opts]), slots_set(slot, opts), slots_gs(card [, opts]).
+        // slot: zxbus.1, zxbus.next, ay-socket ("" or "auto" for plug: the planner's choice).
+        // opts: {options = "dip=ym,saa" | {dip = "ym,saa"}, replace = true, dry_run = true, media = "save" | "discard",
+        //        adapter = "..."}; any other key is a card option (slots_set(slot, {dip = "ym,gs"})).
+        // Each returns the reply table every surface returns: ok, status, message and the verb's fields (the report,
+        // cards, tables; for a change the plan, restart = {restarted, emulatorId, ...}, media). A change restarts
+        // the machine: a script bound to the old instance follows it to the new one
+        lua.set_function("slots_state", [this](sol::this_state s) {
+            SlotControlRequest request;
+            request.verb = "list";
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_catalog", [this](sol::this_state s) {
+            SlotControlRequest request;
+            request.verb = "catalog";
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_matrix", [this](sol::this_state s, sol::optional<std::string> table) {
+            SlotControlRequest request;
+            request.verb = "matrix";
+            request.table = table.value_or("");
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_plug", [this](sol::this_state s, const std::string& slot, const std::string& card,
+                                              sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "plug";
+            request.slot = slot == "auto" ? std::string() : slot;
+            request.card = card;
+            return StateNodeToLua(s, slotsCall(request, opts, true).ToValue());
+        });
+        lua.set_function("slots_remove", [this](sol::this_state s, const std::string& slot, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "remove";
+            request.slot = slot;
+            return StateNodeToLua(s, slotsCall(request, opts, false).ToValue());
+        });
+        lua.set_function("slots_set", [this](sol::this_state s, const std::string& slot, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "set";
+            request.slot = slot;
+            return StateNodeToLua(s, slotsCall(request, opts, true).ToValue());
+        });
+        lua.set_function("slots_gs", [this](sol::this_state s, const std::string& card, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = card;
+            return StateNodeToLua(s, slotsCall(request, opts, false).ToValue());
+        });
+        // endregion </ZX-bus slots>
+
         // region <Media: every slot through MediaControl (media-control-design.md)>
         // media_list(), media_info(slot), media_formats([kind]),
         // media_insert(slot, path [, opts]), media_swap(slot, path [, opts]),
@@ -2325,11 +2457,14 @@ public:
         });
 
         // Snapshot operations
-        // ok, reason, emulator_id: the reason is set when TTD refuses the load
-        // (recording) or the load fails. A file that needs another model (an
-        // SPG: TS-Conf) switches it first when this Lua is not bound to one
-        // machine (as rzx_play); emulator_id is then the new instance
-        lua.set_function("snapshot_load", [this](const std::string& path) -> std::tuple<bool, std::string, std::string> {
+        // snapshot_load(path [, commit]) -> ok, reason, emulator_id: the reason is set when TTD refuses the load
+        // (recording), the snapshot pipeline refuses it (the machine's policy, an unknown commit name) or the load
+        // fails. `commit` chooses who writes the machine: omitted = the plan decides (the machine's own policy, else
+        // the legacy commit), "legacy" = the legacy commit always, or a registered policy name. A file that needs
+        // another model (an SPG: TS-Conf) switches it first when this Lua is not bound to one machine (as
+        // rzx_play); emulator_id is then the new instance
+        lua.set_function("snapshot_load", [this](const std::string& path, sol::optional<std::string> commit)
+                                              -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator", ""};
             if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
@@ -2338,8 +2473,34 @@ public:
             request.emulatorId = emulator->GetId();
             request.path = path;
             request.switchModel = _emulator == nullptr;
+            request.commit = commit.value_or("");
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};
+        });
+
+        // snapshot_inspect(path [, commit]) -> table | nil, error: what loading the file would do here, nothing
+        // written. {path, image = {format, format_version, machine_hint, memory_model, banks = {{bank, size, hash}},
+        // cpu, paging, border, ay, extensions, warnings}, plan = {commit, refused, reason, needs, verdicts,
+        // warnings}, would_load, would_commit}
+        lua.set_function("snapshot_inspect", [this](sol::this_state state, const std::string& path,
+                                                    sol::optional<std::string> commit)
+                                                     -> std::tuple<sol::object, std::string> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return {sol::lua_nil, "no emulator"};
+            StateNode result;
+            std::string error;
+            if (!SnapshotLauncher::Inspect(emulator->GetId(), path, commit.value_or(""), result, error))
+                return {sol::lua_nil, error};
+            return {StateNodeToLua(state, result), std::string()};
+        });
+
+        // snapshot_report() -> table | nil: what the snapshot pipeline did with the last load {format, machine_hint,
+        // commit, refused, reason, needs, verdicts, items = {{item, outcome, note}}, warnings}
+        lua.set_function("snapshot_report", [this](sol::this_state state) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || emulator->LastSnapshotReport().format.empty())
+                return sol::lua_nil;
+            return StateNodeToLua(state, emulator->LastSnapshotReport().ToStateNode());
         });
 
         // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,
@@ -3217,38 +3378,39 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
         });
-        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} -> true | nil, err
-        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only)
-        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} [, opts]
+        //   -> the reply table (truthy) | nil, err, reply
+        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only).
+        // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot change
+        // applied by a restart (opts: replace, dry_run, media as for slots_plug; an interpreter bound to the machine
+        // follows the restarted one), the other keys go to the restarted machine; without one they apply in place
+        // (status "accepted")
+        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings,
+                                                     sol::optional<sol::table> opts) -> sol::variadic_results {
             sol::variadic_results out;
-            Emulator* emulator = effectiveEmulator();
-            NetworkManager* manager = (emulator && emulator->GetContext()->pCore)
-                                          ? emulator->GetContext()->pCore->GetNetworkManager()
-                                          : nullptr;
-            std::string error = emulator ? "no network support in this machine" : "No emulator selected";
-            if (manager)
+            SlotControlRequest request;
+            request.verb = "network";
+            for (const auto& [key, value] : settings)
             {
-                std::vector<std::pair<std::string, std::string>> kv;
-                for (const auto& [key, value] : settings)
-                {
-                    std::string text;
-                    if (value.get_type() == sol::type::boolean)
-                        text = value.as<bool>() ? "on" : "off";
-                    else if (value.get_type() == sol::type::number)
-                        text = std::to_string(value.as<long long>());
-                    else
-                        text = value.as<std::string>();
-                    kv.emplace_back(key.as<std::string>(), text);
-                }
-                NetworkManager::Change change;
-                if (NetworkManager::ParseChange(kv, change, error) && manager->RequestChange(change, error))
-                {
-                    out.push_back(sol::make_object(s, true));
-                    return out;
-                }
+                std::string text;
+                if (value.get_type() == sol::type::boolean)
+                    text = value.as<bool>() ? "on" : "off";
+                else if (value.get_type() == sol::type::number)
+                    text = std::to_string(value.as<long long>());
+                else
+                    text = value.as<std::string>();
+                request.settings.emplace_back(key.as<std::string>(), text);
+            }
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            sol::object table = StateNodeToLua(s, reply.ToValue());
+            if (reply.Ok())
+            {
+                out.push_back(table);
+                return out;
             }
             out.push_back(sol::make_object(s, sol::lua_nil));
-            out.push_back(sol::make_object(s, error));
+            out.push_back(sol::make_object(s, reply.message));
+            out.push_back(table);
             return out;
         });
 
@@ -3470,6 +3632,23 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Covox(ctx));
         });
+        // ZX-MultiSound (DeviceState::MultiSound), its MIDI synthesizer (DeviceState::Midi) and the MIDI panic
+        // (MidiControl: every voice stops, a TTD live input); unavailable / (false, reason) without the card
+        lua.set_function("multisound_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::MultiSound(ctx));
+        });
+        lua.set_function("midi_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Midi(ctx));
+        });
+        lua.set_function("midi_panic", [this]() -> std::tuple<bool, std::string> {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (!ctx)
+                return {false, "no emulator selected"};
+            const MidiControlReply reply = MidiControl::Execute(ctx, "panic");
+            return {reply.ok, reply.message};
+        });
         // MoonSound: overview, or part "fm" / "pcm"
         lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -3548,23 +3727,16 @@ public:
             return gs ? (gs->getStatusRaw() | 0x7E) : -1;
         });
 
-        // Runtime personality switch (GS card personalities design §11.3):
-        // requested here, applied at the next frame boundary on the
-        // emulation thread - same semantics as the WebAPI switch_personality
-        // action and the MCP gs_switch_personality tool action
-        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> std::tuple<bool, std::string> {
-            if (!effectiveEmulator()) return {false, ""};
-            auto* ctx = effectiveEmulator()->GetContext();
-            SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-            if (!sm) return {false, ""};
-
-            GSTypeKind target;
-            if (!gsParsePersonality(personality, target))
-                return {false, ""};
-
-            std::string refusal;  // a TTD recording refuses the switch (FR-4)
-            const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
-            return {requested, refusal};
+        // The General Sound personality: the card in the GS slot replaced as a slot change, applied by a machine
+        // restart (ZX-bus slots, owner decision Q10) - the same as slots_gs(card). Returns (ok, message); the reply
+        // table of slots_gs has the plan and the new emulator id
+        lua.set_function("gs_switch_personality", [this](const std::string& personality,
+                                                          sol::optional<sol::table> opts) -> std::tuple<bool, std::string> {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = personality;
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            return {reply.Ok(), reply.message};
         });
 
         // Diagnostics: write the last completed COM30..D2 upload (the raw

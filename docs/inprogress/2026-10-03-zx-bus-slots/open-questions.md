@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-03 |
 | **For** | the ZX-bus slot design (PLAN row #82); first consumer: [ZX-MultiSound](../2026-10-03-zx-multisound/) |
-| **Order** | most important first |
+| **Order** | most important first (Q8 added 2026-10-05; Q9, Q10 from SL-6, Q11 from SL-7, decided 2026-10-05) |
 
 ## Q1. What happens when a card is incompatible with cards already plugged in?
 
@@ -110,3 +110,93 @@ so its writes reach both chips and a `#FFFD` read is driven by both (a bus fight
   `replaceIfIncompatible`.
 - With the override that keeps the chip, reads follow the bus's read rule and the fit is reported as `unrealistic`.
 - The TS-Conf `FREE_IORQ` FPGA build stays a possible later machine option (not in this work).
+
+## Q8. What happens when the configured cards conflict with each other?
+
+**Owner decision (2026-10-05): the machine is not created.** Until now an INI whose `[SLOTS]` entries conflicted was
+planned "first wins": the later card was left out with a log line and the machine started (R-CFG-3). A config that adds
+`zxbus.1 = multisound` to a shipped Pentagon or ZX-Evo config (TurboSound FM or TurboSound in the socket, NeoGS,
+SounDrive) then started without the MultiSound, and nothing on screen said why.
+
+- **Rule:** when two configured entries conflict under the compatibility matrix, creating the machine fails with an
+  error (HTTP 400 on the WebAPI, the same reason on every surface). The reason lists each conflicting pair, the rule
+  and what it says, for example: `the [SLOTS] cards conflict, the machine is not created (Q8): zxbus.2 = gs and
+  zxbus.1 = multisound: shares `gs` (D1: one function, one card)`.
+- **Conflicts:** a shared function (D1, matrix code **D**), a socket board a card would shadow or fight (D3 / D12,
+  **⊘**), an accidental port clash (D7, **P**), and a socketed chip kept by an explicit `ay-socket = ay` while a card
+  needs it out of its socket (Q7). This covers every card, not only the MultiSound.
+- **Q7 stays:** with no `ay-socket` line the card may take the ZX-Evo's YM2149 out of its socket. `ay-socket = ay`
+  together with the MultiSound on the ZX-Evo is now a conflict and refuses the machine. On the Pentagon the board AY
+  under the card is shadowed (matrix **S**), as on real hardware: no conflict.
+- **Not a conflict between entries:** a card the machine itself cannot take (a fixed built-in holds its function, a bus
+  signal is missing, the card is not emulated) is still left out with its reason, and the machine starts.
+- **Shipped configs:** every shipped config still creates (`SlotManagerShipped_Test`).
+
+**Owner addition (2026-10-05): the shipped configs do not fit the MultiSound.** No shipped config has a
+`zxbus.N = multisound` line. The MultiSound is fitted only in tests (test-local configs, or slot entries the test
+builds). A user who wants it writes the line into a config that has no conflicting card, for example without
+`ay-socket = tsfm` and without a NeoGS / SounDrive card.
+
+## Q9. What does a model switch do with the new machine's own configured cards?
+
+**Owner decision (2026-10-05): A, merge** (as built in SL-6).
+
+A model switch carries the old machine's cards (Q6, R-OP-9). The new machine's config also names cards: the shipped
+Pentagon fits a TurboSound FM, a NeoGS, a MoonSound and a SounDrive; the shipped 48K only a TurboSound FM.
+
+- **A (built in SL-6):** merge. The carried cards come first; the new machine's own cards fill the slots and functions
+  they leave free and give way where they conflict. 48K -> Pentagon gives the Pentagon its shipped cards, as before
+  SL-6; Pentagon -> ZX-Evo keeps the Pentagon's cards and adds the ZX-Evo's that do not clash. A card the user removed
+  from the old machine comes back if the new machine's config fits it (removals are not carried).
+- **B:** carry only. The new machine gets exactly the carried cards (planned against it); its own configured cards are
+  ignored. 48K -> Pentagon gives a Pentagon with only the TurboSound FM.
+- **C:** carry only what the user changed (the difference between the instance's set and its model's config), merged
+  with the new machine's config. Needs the instance to remember its changes.
+
+**Recommendation: A.** It keeps a model switch of an untouched machine as it was (the shipped config of the target),
+and every card the user plugged in follows it. If removals should follow too, C on top of A later.
+
+## Q10. Does the running machine's General Sound personality switch stay in place?
+
+**Decision (2026-10-05), following Q6 / R-OP-8:** the explicit personality switch on every surface becomes a slot
+replace applied by a restart (SL-7); the in-place frame-boundary switch stays only for the `gs_lightweight` feature,
+an emulation shortcut that changes no hardware.
+
+R-OP-8 makes the personality switch a slot replace applied by a restart. SL-6 built that (`GeneralSoundRequest` +
+`SlotChange::Run`). The surfaces (WebAPI `switch_personality`, CLI `gs`, MCP, Lua, Python, the Qt audio settings) and
+the `gs_lightweight` feature still use the frame-boundary switch of the running machine, which keeps the running
+program, hands the card's mailbox over and replays an uploaded module; SL-6 routes it through the plan and makes the
+plan and the TTD fingerprint follow it.
+
+- **A:** SL-7 moves every surface to the restart (R-OP-8 as written); the running program is lost on a switch, the
+  `gs_lightweight` feature becomes a slot replace too.
+- **B:** keep the in-place switch for the personality only (one card, one slot, the same function and ports; planned and
+  followed as built), the restart for everything else.
+
+**Recommendation: B** for the `gs_lightweight` feature (an emulation shortcut, not a hardware change: restarting the
+machine for it would surprise), **A** for the explicit personality switch on the surfaces, so a user-visible card change
+behaves like every other slot change.
+
+
+## Q11. Does the network card change of a running machine go through the slots?
+
+**Owner decision (2026-10-05): A** - a network `card` change is a slot change applied by a restart, like every
+other card change (Q6, Q10). Raised in SL-7.
+
+**Also decided (2026-10-05):** the General Sound personality restart does not carry the classic GS's `ram` option
+to the NeoGS (or back): the two cards have different option sets; the NeoGS RAM stays `[NGS] RamSize`.
+
+The network settings (`network set card=...`, WebAPI `POST /network/config {card}`, Lua / Python `network_configure`,
+the Qt Network window's ZXNETUSB / ZX-WiFi boxes) still unplug and fit the ZX-bus network cards of a running machine in
+place (`NetworkManager::RequestChange`), as before the slots. The slot report, the plan and the TTD fingerprint keep the
+configured set, so after such a change they disagree with the machine until the next restart.
+
+- **A:** like the General Sound personality (Q10): a `card` change becomes a slot change applied by a restart (the
+  network settings call SlotControl for the card part, then apply the other keys to the new machine); the Network
+  window's card boxes open the slot change's confirmation.
+- **B:** keep the in-place change and make the plan follow it (as SL-6 did for the GS switch before Q10).
+- **C:** refuse `card` in the network settings and point to `slots plug / remove`.
+
+**Recommendation: A** - every card change behaves the same (Q6), and the surfaces keep their `card` key.
+
+**As built (2026-10-05):** [tdd.md](tdd.md) §16.

@@ -35,6 +35,7 @@ struct SynthReport
         uint8_t volume = 0, pan = 0, expression = 0;
         uint16_t pitchBend = 0x2000;
         uint8_t activeVoices = 0;
+        std::array<uint64_t, 2> keys{};  // the keys sounding (a voice that counts): bit k of keys[k / 64]
         bool muted = false;
         uint8_t rxChannel = 0;         // MIDI channel the part receives (16 = none)
         uint8_t voiceReserve = 0;      // GS voice reserve
@@ -86,6 +87,11 @@ public:
     // Power-on state at time t: channels, voices, effects word, UART and parser.
     void Reset(uint64_t t);
 
+    // MIDI panic at time t (a host control, not a MIDI message): every voice of every part fades out as with All
+    // Sound Off, while the controllers, programs and the MIDI parser (running status, a SysEx in progress) stay as they
+    // are, so a stream the guest is sending goes on. Queued in time order with the MIDI bytes: chip state.
+    void Panic(uint64_t t);
+
     // Serial MIDI IN, idle high. The UART decodes 8N1 at 31 250 baud from the line edges.
     void WriteLine(uint64_t t, bool level);
     // Whole bytes (a host-side UART, a parallel port, a file player).
@@ -108,6 +114,8 @@ public:
     size_t StateSize() const;               // constant after Configure + LoadBank
     void SaveState(uint8_t* out) const;
     bool LoadState(const uint8_t* in, size_t size); // refuses another bank, another layout
+    // The bank a state blob names (its SHA-256), without a synthesizer; false when the blob is not one
+    static bool StateBank(const uint8_t* in, size_t size, BankDigest& digest);
 
     // Taps for the UI and tests. Mute acts on the mix only, never on chip state.
     void SetChannelMute(int channel, bool mute);

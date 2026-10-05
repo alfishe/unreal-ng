@@ -10,7 +10,7 @@ class SoundManager;
 /// source (CLI 'setting', WebAPI /settings, Lua, Python; MCP through the
 /// WebAPI router), so names, accepted values and errors are identical:
 ///
-///   ay_voicing    headphones (default) | classic | flat | warm | tv | small_speaker (alias legacy = classic)  AY / SSG tone voicing
+///   ay_voicing    classic (default) | headphones | flat | warm | tv | small_speaker (alias legacy = classic)  AY / SSG tone voicing
 ///   ay_punch      on | off                                AY transient enhancement (HQ only)
 ///   ay_room       9db (default) | off | 15db | 14db | 13db | 12db | 6db | 3db | 2db | 1db
 ///   beeper_punch  on | off                                beeper attack enhancement (HQ only)

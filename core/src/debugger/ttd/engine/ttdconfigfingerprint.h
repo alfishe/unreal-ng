@@ -7,8 +7,11 @@
 /// frame and interrupt timing, the audio and screen rendering settings, the
 /// board options that change timing (Sprinter turbo, Profi switches, ...) and
 /// a signature of the machine's ROM set (every model's, the Sprinter BIOS
-/// among them). The device set and its firmware are not here: the engine's
-/// device table already compares them on every restore (Phase 2).
+/// among them), and the machine's slot set: `slots.<slot>` per fitted card
+/// (a hash of the card, its options and adapter) and `slots.builtin.<id>`
+/// per switchable built-in (ZX-bus slots SL-5, affectsRestore). The devices
+/// themselves and their firmware are not here: the engine's device table
+/// already compares them on every restore (Phase 2).
 ///
 /// Worked example: a session recorded with the Reference decimator is
 /// opened on a machine set to HighFidelity. Compare gives one difference,

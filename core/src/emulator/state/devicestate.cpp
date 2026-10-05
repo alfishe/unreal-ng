@@ -170,9 +170,8 @@ double OpnHz(uint32_t blockFreq, double sampleRateHz)
     return double(fnum) * std::ldexp(1.0, block - 1) * sampleRateHz / 1048576.0;
 }
 
-StateNode FmChipNode(SoundChip_TurboSoundFM* device, int index)
+StateNode FmChipNode(TsfmChip* c, int index, double masterClockHz, double fmTrimDb)
 {
-    TsfmChip* c = device->chip(index);
     Ym2203Engine& fm = c->fm;
     auto& engine = fm.fmEngine();
     auto& regs = engine.regs();
@@ -183,7 +182,7 @@ StateNode FmChipNode(SoundChip_TurboSoundFM* device, int index)
     ret["chip_type"] = "YM2203";
 
     const uint32_t prescale = fm.fmClockPrescale();
-    const double fs = double(CPU_CLOCK_RATE) / (12.0 * prescale);
+    const double fs = masterClockHz / (12.0 * prescale);
     ret["prescaler"] = int(prescale);
     ret["fm_sample_rate_hz"] = fs;
 
@@ -314,7 +313,7 @@ StateNode FmChipNode(SoundChip_TurboSoundFM* device, int index)
     StateNode out = StateNode::Object();
     out["dac_last_word"] = int(std::lround(c->out.hold * 32768.0));
     out["dac_last_value"] = c->out.hold;
-    out["fm_trim_db"] = device->fmTrimDb();
+    out["fm_trim_db"] = fmTrimDb;
     ret["output"] = out;
     return ret;
 }
@@ -643,6 +642,16 @@ StateNode AyChip(EmulatorContext* context, int chip)
     return node;
 }
 
+StateNode AyChipReport(SoundChip_AY8910& chip, int index, double clockHz)
+{
+    return AyChipNode(&chip, index, clockHz);
+}
+
+StateNode Ym2203ChipReport(Ym2203Chip& chip, int index, double masterClockHz, double fmTrimDb)
+{
+    return FmChipNode(&chip, index, masterClockHz, fmTrimDb);
+}
+
 StateNode Fm(EmulatorContext* context)
 {
     SoundManager* sm = context ? context->pSoundManager : nullptr;
@@ -665,7 +674,7 @@ StateNode Fm(EmulatorContext* context)
     StateNode chips = StateNode::Array();
     for (int i = 0; i < 2; i++)
     {
-        StateNode full = FmChipNode(device, i);
+        StateNode full = FmChipNode(device->chip(i), i, double(CPU_CLOCK_RATE), device->fmTrimDb());
         StateNode info = StateNode::Object();
         info["index"] = i;
         info["type"] = "YM2203";
@@ -687,8 +696,13 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
         return Unavailable("Sound manager not available");
     GeneralSoundCard* gs = sm->getGeneralSound();
     if (!gs)
-        return Unavailable("General Sound card not fitted (configure [SOUND] GSType=Z80, LW or NGS)");
+        return Unavailable("General Sound card not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs, or [SLOTS] zxbus.N = gs)");
+    return GeneralSoundReport(*gs, sm, ramWindow);
+}
 
+StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, bool ramWindow)
+{
+    GeneralSoundCard* gs = &card;
     const uint8_t status = gs->getStatusRaw();
     StateNode ret = StateNode::Object();
     ret["available"] = true;
@@ -736,7 +750,7 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
     if (gs->neogsState(ngs))
     {
         StateNode n = StateNode::Object();
-        n["stereo_mode"] = neogsStereoModeName(sm->neoGSStereoMode());
+        n["stereo_mode"] = sm != nullptr ? neogsStereoModeName(sm->neoGSStereoMode()) : "separated";
         n["flash"] = ngs.flashTitle;
         n["flash_modified"] = ngs.flashModified;
         n["gscfg0"] = int(ngs.gscfg0);
@@ -864,11 +878,16 @@ StateNode Covox(EmulatorContext* context)
     if (!covox)
         return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
 
-    const bool quad = covox->fitment() == ::Covox::Fitment::Quad;
+    const ::Covox::Fitment fitment = covox->fitment();
+    const bool mono = fitment == ::Covox::Fitment::Mono;
     StateNode ret = StateNode::Object();
     ret["available"] = true;
-    ret["device"] = quad ? "SoundDrive (4 x 8-bit DAC)" : "Covox (8-bit DAC on #FB)";
-    ret["fitment"] = quad ? "quad" : "mono";
+    ret["device"] = mono ? "Covox (8-bit DAC on #FB)" : "SoundDrive (4 x 8-bit DAC)";
+    ret["fitment"] = fitment == ::Covox::Fitment::Quad    ? "quad"
+                     : fitment == ::Covox::Fitment::Mode1 ? "mode1"
+                     : fitment == ::Covox::Fitment::Mode2 ? "mode2"
+                     : fitment == ::Covox::Fitment::Mode1Mono ? "mode1+mono"
+                                                              : "mono";
 
     // Ports: this model's decode, straight from its port map (the same rows
     // /ports and `ports` list), and the ones it shares with Beta-128
@@ -1286,7 +1305,7 @@ StateNode FmChip(EmulatorContext* context, int chip)
         return Unavailable("TurboSound slot device is not TSFM (no FM half); set [SOUND] TurboSound=FM");
     if (chip < 0 || chip > 1)
         return Unavailable("FM chip index must be 0 or 1");
-    return FmChipNode(device, chip);
+    return FmChipNode(device->chip(chip), chip, double(CPU_CLOCK_RATE), device->fmTrimDb());
 }
 
 StateNode Fdc(EmulatorContext* context)

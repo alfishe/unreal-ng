@@ -57,8 +57,8 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   `AtaChannel` = 17, every surface; ATM3 already uses it
 - [x] D2 decided 2026-09-29: Nemo IDE **emulated** in phase 6 on that core -
   decode = scheme `NEMO-DIVIDE` (bit-identical to BaseConf), DMA 0x3/0xB in
-  16-bit words, the TSConf-only CPU stall emulated but off by default
-  (`[HDD] IdeStall=0`); full description in hardware-spec §8.3, design in
+  16-bit words, the TSConf-only CPU stall emulated, on by default since
+  2026-10-05 (`[HDD] IdeStall=1`, as the RTL); full description in hardware-spec §8.3, design in
   technical-design §3.11, tests IDE-1..5 / DMA-15 / BOOT-4. Already landed
   (`762d813e`): `[HDD] Scheme=NEMO-DIVIDE` in the ts-conf config and
   `IdeAdapter::DmaReadWord` / `DmaWriteWord` with their tests

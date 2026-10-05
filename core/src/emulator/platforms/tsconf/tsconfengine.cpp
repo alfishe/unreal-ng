@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
@@ -57,11 +58,15 @@ uint32_t TsConfEngine::TsStartTact() const
 
 uint16_t TsConfEngine::VideoCost(uint8_t vConfig, uint32_t line)
 {
-    // [V] video_mode.v:128-133: ZX 1 of 8 cycles, 16C 1 of 4, 256C 1 of 2, TXT 4 of 8
-    static constexpr uint8_t kShift[4] = {3, 2, 1, 1};
+    // [V] video_mode.v:128-133: ZX 1 of 8 cycles, 16C 1 of 4, 256C 1 of 2, TXT 4 of 8; a block starts on every
+    // `len` dots while video_go is high, which is w + 4 dots (video_sync.v:237; TsConfArbiter::FetchOf)
+    static constexpr uint8_t kLength[4] = {8, 4, 2, 8};
+    static constexpr uint8_t kNeed[4] = {1, 1, 1, 4};
     if ((vConfig & 0x20) || !TsConfGeometry::LineInWindow(vConfig, line))
         return 0;  // NOGFX stops the fetch
-    return static_cast<uint16_t>(TsConfGeometry::WindowOf(vConfig).w >> kShift[vConfig & 0x03]);
+    const uint32_t mode = vConfig & 0x03;
+    const uint32_t dots = TsConfGeometry::WindowOf(vConfig).w + 4u;
+    return static_cast<uint16_t>((dots + kLength[mode] - 1) / kLength[mode] * kNeed[mode]);
 }
 
 void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch)
@@ -148,6 +153,10 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         return;
     }
 
+    // The SPI / IDE device phase is time: 8 fclk per raster tact, whatever the DRAM load
+    if (raster > _ts.budgetRaster)
+        _ts.dmaDeviceFclk += (raster - _ts.budgetRaster) * kFclkPerTact;
+
     uint32_t free = 0;
     for (uint32_t pos = _ts.budgetRaster; pos < raster;)
     {
@@ -155,11 +164,23 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         const uint32_t lineStart = line * kLineTacts;
         const uint32_t end = std::min(lineStart + kLineTacts, raster);
         const TsConfLine& set = _lines[line];
-        const uint32_t cost = set.videoCost + set.tsuCost;
         const uint32_t a = pos - lineStart;
         const uint32_t b = end - lineStart;
-        const uint32_t dots = 2 * (b - a);
-        const uint32_t share = cost * b / kLineTacts - cost * a / kLineTacts;  // telescopes over calls
+        const uint32_t dots = 2 * (b - a);  // DRAM cycles of the span
+        // The video takes its cycles inside its fetch window [h0, h1) only ([V] arbiter.v:171-189): the border
+        // gives the DMA every cycle. The TSU's are spread over the line. Both telescope over calls
+        uint32_t share = set.tsuCost * b / kLineTacts - set.tsuCost * a / kLineTacts;
+        if (set.videoCost)
+        {
+            const TsConfArbiter::Fetch fetch = TsConfArbiter::FetchOf(set, line);
+            const uint32_t h0 = fetch.h0;
+            const uint32_t width = fetch.h1 > fetch.h0 ? fetch.h1 - fetch.h0 : 0u;
+            auto taken = [&](uint32_t cycle) {
+                const uint32_t in = cycle > h0 ? std::min(cycle - h0, width) : 0u;
+                return width ? set.videoCost * in / width : 0u;
+            };
+            share += taken(2 * b) - taken(2 * a);
+        }
         free += dots > share ? dots - share : 0;
         pos = end;
     }
@@ -184,6 +205,14 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         else
         {
             _ts.dmaCredit -= _dma.Run(_ts.dmaCredit);
+        }
+
+        // A device transfer waits word by word: the time and the DRAM cycles it could not use while the other
+        // was short do not bank up for a burst later (one word's worth stays: the word in progress)
+        if (const uint32_t device = _dma.DeviceFclk())
+        {
+            _ts.dmaDeviceFclk = std::min(_ts.dmaDeviceFclk, device);
+            _ts.dmaCredit = std::min(_ts.dmaCredit, _dma.WordCost());
         }
     }
 }

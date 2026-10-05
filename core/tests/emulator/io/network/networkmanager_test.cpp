@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/networksettings.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -224,24 +226,41 @@ TEST_F(NetworkManager_Test, SettingsChangeAtRuntime)
     NetworkManager* manager = _context->pCore->GetNetworkManager();
     ASSERT_NE(manager, nullptr);
 
+    // The ZX-bus card is a slot (owner decision Q11): the network manager refuses to plug it in place
     NetworkManager::Change change;
     std::string error;
     ASSERT_TRUE(NetworkManager::ParseChange({{"card", "ZXNETUSB"}, {"host_access", "off"}, {"hosts", "a.test=10.0.2.77"}},
                                             change, error))
         << error;
-    ASSERT_TRUE(manager->RequestChange(change, error)) << error;
-    ASSERT_NE(_context->pZxNetUsb, nullptr) << "applied at once: the machine is not running";
+    EXPECT_FALSE(manager->RequestChange(change, error));
+    EXPECT_NE(error.find("slots"), std::string::npos) << error;
+    EXPECT_EQ(_context->pZxNetUsb, nullptr);
+
+    // Through the surfaces' layer: the card by a restart, the other keys applied to the restarted machine
+    const SlotControlReply reply = NetworkSettings::Apply(_emulator, {{"card", "ZXNETUSB"}, {"host_access", "off"},
+                                                                      {"hosts", "a.test=10.0.2.77"}});
+    ASSERT_EQ(reply.status, "applied") << reply.message;
+    _context = _emulator->GetContext();
+    manager = _context->pCore->GetNetworkManager();
+    ASSERT_NE(_context->pZxNetUsb, nullptr) << "the restarted machine has the card";
+    ASSERT_NE(_context->pVirtualNetwork, nullptr);
     EXPECT_EQ(_context->pVirtualNetwork->Host(), nullptr);
     EXPECT_EQ(_context->pVirtualNetwork->Config().hosts.at("a.test"), NetIp(10, 0, 2, 77));
 
-    // A second change fits the card again (new settings take effect)
+    // A change without a card change fits the devices again in place (new settings take effect)
+    const std::string id = _emulator->GetId();
     ASSERT_TRUE(NetworkManager::ParseChange({{"hosts", "b.test=10.0.2.78"}}, change = {}, error)) << error;
     ASSERT_TRUE(manager->RequestChange(change, error)) << error;
     EXPECT_EQ(_context->pVirtualNetwork->Config().hosts.count("a.test"), 0u);
     EXPECT_EQ(_context->pVirtualNetwork->Config().hosts.at("b.test"), NetIp(10, 0, 2, 78));
+    // Naming the fitted card again is no change
+    ASSERT_TRUE(NetworkManager::ParseChange({{"card", "zxnetusb"}}, change = {}, error)) << error;
+    EXPECT_TRUE(manager->RequestChange(change, error)) << error;
 
-    ASSERT_TRUE(NetworkManager::ParseChange({{"card", "none"}}, change = {}, error)) << error;
-    ASSERT_TRUE(manager->RequestChange(change, error)) << error;
+    const SlotControlReply none = NetworkSettings::Apply(_emulator, {{"card", "none"}});
+    ASSERT_EQ(none.status, "applied") << none.message;
+    EXPECT_NE(_emulator->GetId(), id);
+    _context = _emulator->GetContext();
     EXPECT_EQ(_context->pZxNetUsb, nullptr);
 }
 

@@ -64,7 +64,12 @@ protected:
 
     void StartMachine(const std::string& model, GSTypeKind generalSound, bool fitGs)
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3, Profi
+        // and Sprinter configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
+        {
+            GeneralSoundFitScope fit(fitGs ? generalSound : GSTypeKind::NONE);
+            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        }
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
         _v1 = _context->pTimeTravelManager;

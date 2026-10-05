@@ -335,6 +335,8 @@ if (NOT TARGET ${PROJECT_NAME})
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"

@@ -61,6 +61,9 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioCdda, QObject::tr("CD Audio Activity"),
      QObject::tr("Show when an ATAPI CD drive plays an audio track (Red Book CD-DA) - 'CD'"),
      QObject::tr("Audio"), true},  // Default on - a CD drive is opt-in hardware
+    {HudNotificationCategory::AudioMultiSound, QObject::tr("ZX-MultiSound Activity"),
+     QObject::tr("Show when the ZX-MultiSound card produces sound on any of its rows (FM, SSG, SAA, DAC, MIDI) - 'MultiSound'"),
+     QObject::tr("Audio"), true},  // Default on - the card is opt-in hardware
 
     // Recording
     {HudNotificationCategory::RecordingVideo, QObject::tr("Video Recording"),

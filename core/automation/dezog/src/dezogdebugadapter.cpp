@@ -510,12 +510,11 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
     if (slot < 1 || slot > 3)
         return;
     editMachine(*emulator, "dezog set slot", [&]() {
-        switch (slot)
-        {
-            case 1: memory->SetRAMPageToBank1(bank); break;
-            case 2: memory->SetRAMPageToBank2(bank); break;
-            default: memory->SetRAMPageToBank3(bank, true); break;
-        }
+        // Windows 1/2 follow no port latch: a debugger-forced mapping (checkpoints carry it)
+        if (slot == 3)
+            memory->SetRAMPageToBank3(bank, true);
+        else
+            memory->SetDebuggerRAMPageToBank(slot, bank);
     });
 }
 

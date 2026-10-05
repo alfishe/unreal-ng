@@ -27,6 +27,7 @@ namespace HudCategory
     constexpr const char* AudioMoonSound = "audio-moonsound";
     constexpr const char* AudioNeoGSDma = "audio-neogs-dma";
     constexpr const char* AudioCdda = "audio-cdda";
+    constexpr const char* AudioMultiSound = "audio-multisound";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -57,6 +58,13 @@ namespace HudCategory
             case AudioSource::NeoGSDma:   return AudioNeoGSDma;  // Data movement, not sound: its own switch
             case AudioSource::NeoGSTransfer: return AudioNeoGSDma;
             case AudioSource::CdAudio:    return AudioCdda;
+            case AudioSource::MultiSoundSsg1:
+            case AudioSource::MultiSoundSsg2:
+            case AudioSource::MultiSoundFm1:
+            case AudioSource::MultiSoundFm2:
+            case AudioSource::MultiSoundPcm:
+            case AudioSource::MultiSoundSaa:
+            case AudioSource::MultiSoundMidi: return AudioMultiSound;  // one category, one indicator per row
             default: return nullptr;
         }
     }
@@ -1475,6 +1483,28 @@ void HudModel::onAudioActivity(int, Message* message)
             break;
         case AudioSource::CdAudio:
             key = "cdda"; label = "CD"; icon = "cdaudio";  // Red Book audio from an ATAPI CD drive
+            break;
+        // ZX-MultiSound: one indicator per row, labelled like its mixer row (the YM2203 pair as the TSFM's AY / FM)
+        case AudioSource::MultiSoundSsg1:
+            key = "ms-ssg1"; label = "MS AY 1"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundSsg2:
+            key = "ms-ssg2"; label = "MS AY 2"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundFm1:
+            key = "ms-fm1"; label = "MS FM 1"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundFm2:
+            key = "ms-fm2"; label = "MS FM 2"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundPcm:
+            key = "ms-pcm"; label = "MS PCM"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundSaa:
+            key = "ms-saa"; label = "MS SAA"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundMidi:
+            key = "ms-midi"; label = "MS MIDI"; icon = "multisound";
             break;
         default:
             return;

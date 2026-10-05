@@ -200,8 +200,7 @@ void VideowallRecorder::captureVideoFrame()
     if (img.isNull())
         return;
 
-    // A fixed profile (1080p / 1440p / 4K) is scaled sharply by the RecordingManager (nearest, integer factor, black
-    // bars): the grab goes in as it is. Only a custom size is stretched here
+    // A fixed profile (1080p / 1440p / 4K) is fitted by the RecordingManager (aspect kept, nearest, black bars): the grab goes in as it is. Only a custom size is stretched here
     if (!_recordingManager->HasFixedOutput() && _targetWidth > 0 && _targetHeight > 0 &&
         (img.width() != static_cast<int>(_targetWidth) || img.height() != static_cast<int>(_targetHeight)))
     {

@@ -24,6 +24,8 @@ set(SOURCES
     src/commands/cli-processor-tape.cpp
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-media.cpp
+    src/commands/cli-processor-slots.cpp
+    src/commands/cli-processor-multisound.cpp
     src/commands/cli-processor-cdaudio.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-rzx.cpp

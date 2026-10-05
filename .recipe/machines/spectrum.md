@@ -39,12 +39,12 @@ emulator_manage {"action":"create","model":"PLUS3"}
 inspect_state {"aspects":["audio_ay","registers"]}
 #   → verified 2026-09-23: with this repo's SHIPPED default configs, ALL
 #     models including 48K return full AY/TSFM chip data here and decode
-#     #FFFD/#BFFD in /ports - data/configs/spectrum48/unreal.ini sets
-#     TurboSound=FM same as every other model (config convenience, not
-#     hardware fidelity). "audio_ay answers" is NOT a reliable 48K-vs-128k
-#     test against this build's defaults - if you need that distinction,
-#     edit TurboSound out of a 48K instance's config first and diff against
-#     a fresh instance, don't assume the shipped config is hardware-accurate.
+#     #FFFD/#BFFD in /ports - data/configs/spectrum48/unreal.ini fits
+#     ay-socket = tsfm on a retrofitted AY interface (the slot report says
+#     so: inspect_state aspect slots). "audio_ay answers" is NOT a reliable
+#     48K-vs-128k test against this build's defaults - if you need that
+#     distinction, empty the socket (emulator_manage slots_plug
+#     {"slot":"ay-socket","card":"none"}, a restart) and diff.
 
 inspect_state {"aspects":["fdc"]}
 #   → NOT PLUS3-exclusive (verified 2026-09-23): 48K/128k also answer here
@@ -76,8 +76,10 @@ inspect_state {"aspects":["contention"]}
 - **Card policy boundary**: the shipped Sinclair configs (`spectrum48`,
   `spectrum128`, `spectrum2`, `spectrum2a`, `spectrum3`) set `MoonSound=0`
   (a real Sinclair never had it; the Pentagon and Scorpion configs keep
-  `MoonSound=1`) and ship `GSType=NGS` like every model (NeoGS is the shipped
-  General Sound card on every model). `audio_gs` is a real `inspect_state`
+  `MoonSound=1`) and, since 2026-10-04 (owner decision), fit no General Sound
+  card either: no ZX-bus card works on the Sinclair edge connector. One can be
+  added in `[SLOTS]` (`edge.1 = neogs`, `edge.1.adapter = zxbus-to-sinclair-edge`,
+  `edge.1.fit = unrealistic`). `audio_gs` is a real `inspect_state`
   aspect (General Sound mailbox flags, MPAG page, DAC channels); check the
   instance's actual config values rather than trusting the model name.
 
@@ -112,8 +114,8 @@ insert directly.
   trip on `PLUS3` ROM entry points.
 - **`ram_size` is fixed per model** (48/128/128/128/128) — any other value is a 400.
 - **Don't assume 48K is AY-silent in this build** — see the `audio_ay` note
-  above: the shipped `spectrum48` config enables TurboSound=FM like every
-  other model, so `audio_ay`/`/ports` both report the chip. Real 48K
+  above: the shipped `spectrum48` config fits `ay-socket = tsfm` (a retrofitted
+  AY interface) like every other model, so `audio_ay`/`/ports` both report the chip. Real 48K
   hardware has no AY; this emulator's *default config* does not currently
   enforce that distinction. If a test depends on 48K being genuinely silent,
   verify the instance's actual `TurboSound`/`SD`/`CovoxFB` config values

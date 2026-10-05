@@ -28,7 +28,8 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   Python `isa_*`, the port trace codes `isa_io` / `isa_mem`, hardware-reference §11 corrected. `ZxBusPresent()` stays
   `false` until I2 fits the adapter ([tdd.md](tdd.md) §14)
 - [x] I2 ZX-bus adapter + GS / NeoGS, ProPlay end to end vs MAME (2026-10-04, branch `sprinter-isa-i2-neogs`, as built in
-  [tdd.md](tdd.md) §14, MAME comparison in [i2-outcome.md](i2-outcome.md)): slot 1 = adapter + NeoGS by default,
+  [tdd.md](tdd.md) §14, MAME comparison in [i2-outcome.md](i2-outcome.md)): slot 1 = adapter + NeoGS by default (since
+  2026-10-04 the adapter ships empty, owner decision; the GS is added in `[SLOTS]` `isa.1`),
   `ZxBusPresent()` follows it, the NeoGS ZX-DMA needs host memory cycles (`ZxBusMemoryCycles`), the port journals record
   with the GS; ProPlay plays the generated MOD at MAME's pitch (0.00 cents) and timing, NeoGS waveform correlation
   0.9998; env-gated HDD test with TTD replay (exact on the classic GS)

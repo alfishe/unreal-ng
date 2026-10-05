@@ -4,22 +4,24 @@
 #include <cstdint>
 #include <vector>
 
-/// @brief Sharp output scaler for recordings: nearest-neighbor, aspect kept, black bars (the algorithm of the UI
-/// window, which also samples with Nearest).
+/// @brief Sharp output scaler for recordings: nearest-neighbor, FIT with the aspect kept, black bars - the algorithm of
+/// the UI window, which also samples with Nearest.
 ///
-/// A picture that grows is multiplied by the largest INTEGER factor that fits the output, so every source pixel
-/// becomes the same k x k block - no uneven pixel widths, no blur - and is centered in the output; the rest is black.
-/// A picture that is larger than the output (a videowall window above the file size) is sampled nearest, aspect kept.
+/// The picture is made as large as the output allows (a 16:9 frame gets the full height of a 4:3 picture and bars left
+/// and right) and centered. Every output pixel takes the nearest source pixel: nothing is blurred; at a factor that is
+/// not whole, source pixels are k and k+1 output pixels wide, as in the window. An exact whole multiple (1080p in
+/// 4K) is the fast path: every source pixel is the same k x k block. A picture larger than the output is sampled the
+/// same way.
 ///
 /// Built for a 3840x2160 frame at 50 Hz (33 MB per frame): the output buffer is reused, the bars are written once
-/// (only the picture rectangle is rewritten per frame), a source row is expanded once and the other k-1 rows of its
-/// block are a memcpy of it.
+/// (only the picture rectangle is rewritten per frame), a source row is gathered / expanded once and the output rows
+/// that map to it are a memcpy of it.
 namespace FrameScaler
 {
 /// Where the picture lands in the output
 struct Layout
 {
-    uint32_t scale = 0;    ///< Integer factor (0 = the picture is sampled nearest, not multiplied)
+    uint32_t scale = 0;    ///< Whole factor when the picture is an exact multiple of the source (0 = sampled nearest)
     uint32_t width = 0;    ///< Picture width in the output
     uint32_t height = 0;   ///< Picture height in the output
     uint32_t offsetX = 0;  ///< Left bar width

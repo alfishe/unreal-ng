@@ -890,6 +890,26 @@ void Memory::UpdateZ80Banks()
     EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
 
+    // A debugger-forced window 1/2 has no latch behind it. Models whose decoder
+    // re-derives these windows overwrite it below (the page changes, the force is
+    // gone); on models that leave them alone the force stays in effect.
+    struct ForcedWindowGuard
+    {
+        Memory& m;
+        ttd::PhysPage before[3];
+        explicit ForcedWindowGuard(Memory& mem) : m(mem)
+        {
+            before[1] = m._bank_ram_page_cache[1];
+            before[2] = m._bank_ram_page_cache[2];
+        }
+        ~ForcedWindowGuard()
+        {
+            for (int b = 1; b <= 2; ++b)
+                if (m._bank_ram_page_cache[b] != before[b] || m._bank_mode[b] != BANK_RAM)
+                    m._debugger_bank_forced[b] = false;
+        }
+    } forcedWindowGuard(*this);
+
     // Model derivatives may own the whole latch-to-bank translation
     // (ScorpionMemory does for MM_SCORP / MM_PROFSCORP); a true return skips
     // the generic body below and keeps every base model byte-identical
@@ -1195,6 +1215,41 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     {
         _ramSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
     }
+}
+
+void Memory::SetDebuggerRAMPageToBank(uint8_t bank, uint16_t page)
+{
+    if ((bank == 1 || bank == 2) && !_debugger_bank_forced[bank])
+        _debugger_bank_base[bank] = GetRAMPageForBank(bank);
+    switch (bank)
+    {
+        case 1: SetRAMPageToBank1(page); break;
+        case 2: SetRAMPageToBank2(page); break;
+        default: return;
+    }
+    _debugger_bank_forced[bank] = true;
+}
+
+void Memory::RevertDebuggerBankOverride(uint8_t bank)
+{
+    if ((bank != 1 && bank != 2) || !_debugger_bank_forced[bank])
+        return;
+    const uint16_t base = _debugger_bank_base[bank];
+    _debugger_bank_forced[bank] = false;
+    if (base < MAX_RAM_PAGES)
+    {
+        if (bank == 1)
+            SetRAMPageToBank1(base);
+        else
+            SetRAMPageToBank2(base);
+    }
+}
+
+uint16_t Memory::GetDebuggerBankOverride(uint8_t bank) const
+{
+    if ((bank != 1 && bank != 2) || !_debugger_bank_forced[bank] || _bank_mode[bank] != BANK_RAM)
+        return MEMORY_UNMAPPABLE;
+    return _bank_ram_page_cache[bank];
 }
 
 bool Memory::IsBank0ROM()

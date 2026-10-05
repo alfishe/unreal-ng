@@ -38,6 +38,8 @@ private:
     static constexpr const char* ngs = "NGS";
     static constexpr const char* zc = "ZC";
     static constexpr const char* network = "NETWORK";
+    static constexpr const char* slotsSection = "SLOTS";   // not `slots`: a Qt macro
+    static constexpr const char* midi = "MIDI";
     static constexpr const char* vdac2 = "VDAC2";
 
     // Separate ROM file variables within ROMSET profile
@@ -94,6 +96,10 @@ protected:
     std::vector<MediaSetEntry> _mediaSet;
     std::vector<std::string> _mediaReport;
 
+    // [MIDI] Bank= (here, not in CONFIG: a field in CONFIG moves every EmulatorContext member after it, so the CPU
+    // and port paths' code changes for a card no machine fits by default - ZX-bus slots tdd.md §12)
+    std::string _midiBank;
+
 public:
 	static const char* GetDefaultConfig();
 
@@ -120,6 +126,17 @@ public:
 	const std::vector<MediaSetEntry>& GetMediaSet() const { return _mediaSet; }
 	const std::vector<std::string>& GetMediaReport() const { return _mediaReport; }
 
+	/// [MIDI] Bank= : the SoundFont 2 bank of a slot card's General MIDI synthesizer (the ZX-MultiSound's SAM2695),
+	/// resolved like a ROM path. Empty = the card's default (midi/generaluser-gs.sf2, shipped from data/midi);
+	/// NONE = no bank (the synthesizer stays silent, nothing is loaded)
+	const std::string& GetMidiBank() const { return _midiBank; }
+
+	/// Process-wide hook on the [MIDI] Bank= value of every config as it is read (the bank is loader state, not in
+	/// CONFIG, so ConfigLoadedHook cannot reach it). The test runner keeps the shipped default bank (30 MB, about
+	/// 165 ms to load per card) out of machines whose test did not ask for it. An empty hook changes nothing
+	using MidiBankHook = std::function<void(std::string& bank)>;
+	static void SetMidiBankHook(MidiBankHook hook);
+
 	/// Process-wide hook called for every config that loaded and validated
 	/// successfully (model resolved, model timing defaults applied) - the last
 	/// step of ParseConfig, before any device is created from the config.
@@ -138,6 +155,7 @@ public:
 
 private:
 	static ConfigLoadedHook& ConfigLoadedHookStorage();
+	static MidiBankHook& MidiBankHookStorage();
 
 public:
 

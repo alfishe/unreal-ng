@@ -65,7 +65,8 @@ enum class TTDGuardedAction : uint8_t
     Invalidate,          ///< discards the session
     SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
     CdFrontPanel,        ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
-    SwitchModel          ///< another machine model (a snapshot that needs one, a machine state transfer): D26
+    SwitchModel,         ///< another machine model (a snapshot that needs one, a machine state transfer): D26
+    ChangeSlots          ///< a slot change (plug, remove, options) changes the device set (D38, ZX-bus slots R-OP-7)
 };
 
 /// What replaced the machine's state or its media (OnLoad). On the engine a

@@ -55,6 +55,9 @@ public:
     /// (macOS virtual key, Windows scan code, Linux evdev keycode): the same key
     /// under any keyboard layout. Falls back to the Qt key on other platforms
     static PcKey mapQtEventToPcKey(const QKeyEvent* event);
+    /// The ZX key of a physical key whose Qt key a non-Latin layout hides (a Cyrillic letter on the K key):
+    /// letters, digits and the punctuation keys the ZX extended keys use (US positions). ZXKEY_NONE for others
+    static quint8 mapPcKeyToEmulatorKey(PcKey pcKey);
     /// Layout-dependent fallback: Qt key (as Qt reports it) -> physical key (US layout), the macOS
     /// Control / Command swap undone (physicalQtKey)
     static PcKey mapQtKeyToPcKey(int qtKey);

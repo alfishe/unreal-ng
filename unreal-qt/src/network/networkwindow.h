@@ -22,6 +22,7 @@
 #include "network/core/networkpanelmodel.h"
 
 class EmulatorBinding;
+class SlotChangeController;
 class QCheckBox;
 class QComboBox;
 class QGroupBox;
@@ -77,6 +78,9 @@ public:
     explicit NetworkWindow(QWidget* parent = nullptr);
 
     void setBinding(EmulatorBinding* binding);
+    /// The slot changes (owner decision Q11): the ZXNETUSB / ZX-WiFi boxes apply through it (a confirmed restart, the
+    /// removed cards named with Undo); the other settings then go to the restarted machine
+    void setController(SlotChangeController* controller);
 
 signals:
     /// Visibility changed via the window's own close box (keeps the menu in sync)
@@ -101,6 +105,7 @@ private:
     void fillTree(QTreeWidgetItem* parent, const QString& path, const StateNode& node);
 
     EmulatorBinding* _binding = nullptr;
+    SlotChangeController* _controller = nullptr;
     QTimer* _timer = nullptr;
 
     NetworkForm _applied;      ///< the settings in force when the form was loaded

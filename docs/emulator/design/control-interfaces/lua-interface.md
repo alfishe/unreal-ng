@@ -191,6 +191,33 @@ media(verb, slot, path, opts)                           -- any verb
 Each returns the result table: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
 and the verb's fields (`slots`, `info`, `formats`, `targets`, ...).
 
+### ZX-bus Slots
+
+The cards on the machine's buses through one set of functions - the same verbs, options and replies as the CLI
+`slots`, the WebAPI `/slots`, MCP and Python ([command-interface.md section 14](./command-interface.md#14-zx-bus-slots),
+user guide [docs/features/slots.md](../../../features/slots.md)).
+
+```lua
+r = slots_state()          -- buses, slots (card, options, adapter, fit, state), built-ins, plan log
+c = slots_catalog()        -- every card: options, functions, ports, media, thisMachine {slot, fit, outcome, removes}
+m = slots_matrix("cards")  -- the compatibility tables as markdown (all without an argument)
+
+r = slots_plug("zxbus.next", "multisound", {dry_run = true})                -- the plan only
+r = slots_plug("zxbus.next", "multisound", {replace = true, gsRam = "2m"})  -- applied: the machine restarts
+r = slots_set("zxbus.1", {ctrlMask = "classic"})                            -- options merged over the current ones
+r = slots_remove("zxbus.1", {media = "discard"})                            -- unsaved sd.ngs writes: save | discard
+r = slots_gs("neogs")                                                       -- the General Sound personality
+ok, why = gs_switch_personality("lw")                                       -- the same as slots_gs("gs-lw")
+```
+
+`opts`: `replace` (allow the removals the plan lists, Q1), `dry_run`, `media` (`save` / `discard`), `adapter`,
+`options = "dip=ym,saa"` or `options = {dip = "ym,saa"}`; for `slots_plug` / `slots_set` any other key is a card
+option (`dip = {"ym", "saa"}` works too). Each returns the reply table every surface returns: `ok`, `status`
+(`applied`, `dry-run`, `refused`, `recording`, `no-machine`, `failed`, `bad-request`), `message`, and for a change
+`plan` (`removed` with each card's `undo`, `shadowed`, `lostFunctions`, `media`, `lines`, ...), `restart`
+(`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`. A change restarts the machine: a script bound
+to the old instance follows it to the new one; the selection follows too.
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands
@@ -387,6 +414,9 @@ fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
 cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
+zm  = multisound_state()   -- ZX-MultiSound: options, shadowed built-ins, CPLD, ym.chips[2] {ssg, fm}, saa, gs, dac, midi
+md  = midi_state()         -- its MIDI line + SAM2695: parts[16] {program, preset, volume, pan, active_voices, notes}, counters
+ok, msg = midi_panic()     -- every voice stops (a TTD live input)
 ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, wave_memory, keyed channels/slots
 msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
@@ -427,7 +457,8 @@ r = audio_capture_start(1.0, "covox")             -- capture one device's own bu
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 profi = profi_state()       -- ZX Profi board chips: port_map (ext_ports, dos_latch, cpm, rom14, extended_map), ppi8255, pit8253.counters[], usart8251; available=false on other machines
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
-ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
+r, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings: the reply table (nil, err, reply when refused); a ZX-bus card change (zxnetusb / zxwifi) is a slot change applied by a restart (owner decision Q11: r.status "applied", r.restart.emulatorId; the other keys go to the restarted machine), else "accepted" (in place)
+r = network_configure({card="zxwifi"}, {replace=true, dry_run=true})  -- the flags of slots_plug: replace (removals / an unrealistic fit), dry_run (the plan only), media
 ok, err = network_configure{remote_access=false}   -- guest servers listen on 127.0.0.1 only (true, default: 0.0.0.0, the LAN can connect); alone it keeps every connection; network_state().virtual_network.listen_address
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
 ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,firmware][,baud] (firmware esp32 | esp8266 | esp8266-at221 | esp8266-at222 for this module alone; an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"|"esp8266-at221"|"esp8266-at222" (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222); isa1_peer / isa2_peer="at"|"modem[,guest port]"|"loopback"|"tcp:host:port"|"serial:device[,baud]" (Sprinter: a UART card's line; network_state().slots[n].esp shows the SprinterESP's module, .modem the ISA modem's mode / call / lines / journal); isa1_peer_b / isa2_peer_b (SprinterSerial COM2, slots[n].channel_b); modem_phonebook="5551234=host:port,..." (the numbers a Hayes modem peer dials; com_port="modem" puts one on any machine's serial port)
@@ -831,7 +862,7 @@ print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions are refused while recording (`ttd_seek` returns `reached = false` and `error` = the reason, the boolean functions return `false`), so call `ttd_stop()` first; a seek or a step leaves the machine paused at the target, and `ttd_resume()` runs it again (the same on every surface); `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` are refused and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions are refused while recording (`ttd_seek` returns `reached = false` and `error` = the reason, the boolean functions return `false`), so call `ttd_stop()` first; a seek or a step leaves the machine paused at the target, and `ttd_resume()` runs it again (the same on every surface); `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality` and every slot change (`slots_*`: `status = "recording"`) are refused and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```lua
 local ok, reason = tape_load("game.tap")
@@ -1196,7 +1227,7 @@ emu.video_record("start", {format = "h264", filename = "run.mp4", audio = "aac"}
                                      -- in kbps). Omit audio for video only. gif + audio is refused
 emu.video_record("start", {format = "h264", filename = "run.mkv", profile = "4k", acceleration = "software"})
                                      -- profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
-                                     -- picture scaled sharply into it (nearest, integer factor, black bars; h264 /
+                                     -- picture fitted into it (aspect kept, nearest, black bars; h264 /
                                      -- h265 only). acceleration: "auto" | "hardware" | "software"
 emu.video_record("stop")             -- also "pause" / "resume"
 emu.video_record_status()             -- recording state + live stats (frames, duration, fps,

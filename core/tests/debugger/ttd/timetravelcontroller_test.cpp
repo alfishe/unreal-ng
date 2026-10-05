@@ -1134,3 +1134,25 @@ TEST_F(TimeTravelController_Test, AFastTapeTrapInTheBlackBoxIsReplayed)
     EXPECT_EQ(_controller->CurrentPosition(), later);
     expectSame(CaptureState(context, *_controller), liveLater, "running across the trap");
 }
+
+/// A debugger-forced RAM window (DeZog SET_SLOT, windows 1/2) follows no port
+/// latch: the controller keeps it beside each checkpoint and a seek brings it back
+TEST_F(TimeTravelController_Test, ADebuggerForcedWindowComesBackWithASeek)
+{
+    Memory* memory = _b->GetContext()->pMemory;
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    memory->SetDebuggerRAMPageToBank(1, 6);
+    ASSERT_EQ(memory->GetDebuggerBankOverride(1), 6);
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint forced = _controller->GetCheckpoint(3)->time;
+    memory->RevertDebuggerBankOverride(1);
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    _controller->StopRecording();
+
+    ASSERT_TRUE(_controller->SeekTo(forced, nullptr));
+    EXPECT_EQ(memory->GetDebuggerBankOverride(1), 6) << "the forced window at that checkpoint";
+    EXPECT_EQ(memory->GetRAMPageForBank1(), 6);
+    ASSERT_TRUE(_controller->SeekTo(_controller->GetCheckpoint(1)->time, nullptr));
+    EXPECT_EQ(memory->GetDebuggerBankOverride(1), MEMORY_UNMAPPABLE) << "none before it";
+}

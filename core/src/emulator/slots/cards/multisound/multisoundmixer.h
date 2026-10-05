@@ -1,15 +1,17 @@
 #pragma once
 
 // ZX-MultiSound mixer: the board's weights (hardware-reference.md §4.5, the rev.A2 schematic) applied to every source,
-// giving the five stereo rows the card registers with SoundManager (architecture.md §5): MS FM, MS SSG, MS SAA, MS DAC,
-// MS MIDI. A row played at unity volume is what the board puts on its jack for that source.
+// giving the seven stereo rows the card registers with SoundManager (architecture.md §5): MS SSG 1, MS SSG 2 (the two
+// YM2203 SSG parts), MS FM 1, MS FM 2 (their FM parts), MS SAA, MS PCM (the four DACs: General Sound + SounDrive) and
+// MS MIDI - the YM2203 pair per chip, as the TurboSound FM in the AY socket shows it. A row played at unity volume is
+// what the board puts on its jack for that source.
 //
 // Units. The rows are int16 sample units (row value x INT16_MAX). Each source arrives in its module's own convention
 // and is turned into a level by a calibration constant (kFmFullScale and the others below, each with its source), then
 // multiplied by its board weight:
 //
 //   source        input                                          calibration          weight L / R
-//   FM 1, FM 2    mono, DAC word / 32768 (Ym2203 decimator)       kFmFullScale         1.000 / 1.000 (centre)
+//   FM 1, FM 2    mono, DAC word / 32768 (Ym2203 decimator)       FmFullScale(trim)    1.000 / 1.000 (centre)
 //   SSG A         mono per chip, YM2149 table level 0..1          kSsgChannelFullScale 0.417 / 0
 //   SSG B         mono per chip, same                             kSsgChannelFullScale 0.213 / 0.213 (centre)
 //   SSG C         mono per chip, same                             kSsgChannelFullScale 0     / 0.417
@@ -42,6 +44,16 @@ struct MultiSoundMixerConfig
     bool acCoupling = true;
 };
 
+/// FM loudness trim in dB over the YM2203 FM baseline, the TurboSound FM's [SOUND] TSFM_FmTrimDb: the same value, shown
+/// and applied the same way on both boards. 7.4 dB is the real TSFM board's measurement (one FM carrier at TL 0 sits
+/// 0.4-1.2 dB above one SSG channel at volume 15; shipped in every config)
+inline constexpr double kMultiSoundDefaultFmTrimDb = 7.4;
+
+struct MultiSoundMixerTrim
+{
+    double fmDb = kMultiSoundDefaultFmTrimDb;
+};
+
 /// One block of every source at the output rate; a null pointer is a silent source
 struct MultiSoundMixerInput
 {
@@ -57,10 +69,10 @@ struct MultiSoundMixerInput
 /// The rows, interleaved L / R, `frames` each; a null pointer skips the row
 struct MultiSoundMixerOutput
 {
-    int16_t* fm = nullptr;
-    int16_t* ssg = nullptr;
+    int16_t* fm[2] = {};                ///< per chip, centred
+    int16_t* ssg[2] = {};               ///< per chip: A left, B centre, C right
     int16_t* saa = nullptr;
-    int16_t* dac = nullptr;
+    int16_t* dac = nullptr;             ///< the PCM row
     int16_t* midi = nullptr;
     int16_t* external = nullptr;        ///< no row yet: the board's line input has no emulated source
 };
@@ -71,10 +83,14 @@ public:
     // Calibration: module units to a level (1.0 = INT16_MAX), before the board weight.
     //
     // FM: the TurboSound FM module's level, which the real TSFM board's measurement set (one carrier at TL 0 sits
-    // 0.8 dB above one SSG channel at volume 15): kFmBaseGain 0.30 x TSFM_FmTrimDb 7.4 dB
-    // (docs/inprogress/2026-09-10-turbosound-fm/ISSUES.md #1, tsfm-tdd.md §7.1). The MultiSound's FM path has weight
-    // 1.0, so the MS FM row equals the TSFM module's FM; every other source is placed relative to it.
-    static constexpr double kFmFullScale = 0.70327;     // 0.30 x 10^(7.4 / 20) = 0.703269
+    // 0.8 dB above one SSG channel at volume 15): kFmBaseGain 0.30 x 10^(TSFM_FmTrimDb / 20), the trim 7.4 dB by
+    // default (docs/inprogress/2026-09-10-turbosound-fm/ISSUES.md #1, tsfm-tdd.md §7.1). The MultiSound's FM path has
+    // weight 1.0, so an MS FM row equals the TSFM's FM row of the same chip at the same trim. The trim is live
+    // (SetFmTrimDb, the audio settings' FM trim); the volt-based sources below are placed against the DEFAULT level -
+    // the board's own balance, which the user's FM trim does not move
+    static constexpr double kFmBaseGain = 0.30;          // SoundChip_TurboSoundFM::kFmBaseGain
+    static constexpr double kFmFullScale = 0.70327;      // at the default trim: 0.30 x 10^(7.4 / 20) = 0.703269
+    static double FmFullScale(double trimDb);
     // SSG: the emulator's SSG channel at full volume is 0..0.30 (soundchip_ay8910: table level x pan 0.9 / 3), the
     // level the TSFM measurement above was taken against. The TSFM board gives FM and SSG A equal weights, so 0.30 is
     // the SSG's chip-level swing in the same units as kFmFullScale
@@ -103,6 +119,10 @@ public:
     void SetOutputRate(uint32_t rate);
     void SetRenderMode(MultiSoundRenderMode mode);
 
+    /// FM trim in dB (the TSFM's TSFM_FmTrimDb), applied from the next block
+    void SetFmTrimDb(double db);
+    double FmTrimDb() const { return _trim.fmDb; }
+
     /// Mixes one block: every row of `out` gets `in.frames` stereo frames
     void Mix(const MultiSoundMixerInput& in, const MultiSoundMixerOutput& out);
 
@@ -110,11 +130,13 @@ private:
     void DesignFilters();
 
     MultiSoundMixerConfig _cfg;
+    MultiSoundMixerTrim _trim;
+    double _fmLevel = kFmFullScale;             // FmFullScale(_trim.fmDb)
 
-    // Coupling high-passes, one per capacitor group (linear: one filter per corner and side carries every chip)
-    MultiSoundRcFilter _couplingFm;
-    MultiSoundRcFilter _couplingSsgSide[2];     // A (L), C (R)
-    MultiSoundRcFilter _couplingSsgCenter;      // B
+    // Coupling high-passes, one per capacitor (per chip: the rows are per chip)
+    MultiSoundRcFilter _couplingFm[2];
+    MultiSoundRcFilter _couplingSsgSide[2][2];  // per chip: A (L), C (R)
+    MultiSoundRcFilter _couplingSsgCenter[2];   // per chip: B
     MultiSoundRcFilter _couplingSaa[2];
     MultiSoundRcFilter _couplingMidi[2];
     MultiSoundRcFilter _couplingDac[2];

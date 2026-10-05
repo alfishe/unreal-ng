@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <mutex>
+#include <string>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
@@ -36,6 +37,7 @@ class DiskFastLoad;
 class DiskAutostart;
 class HostBusOverlay;
 class NetworkManager;
+class SlotManager;
 
 class Core
 {
@@ -86,6 +88,8 @@ protected:
 #endif
     IdeController* _ide = nullptr;
     NetworkManager* _networkManager = nullptr;  // network adapters (ZXNETUSB); empty unless fitted
+    SlotManager* _slotManager = nullptr;        // the slot set, planned before any card is built (ZX-bus slots SL-4)
+    std::string _initError;                     // why Init() refused the configuration (the slot set's conflicts, Q8)
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
@@ -114,6 +118,8 @@ public:
     /// region <Initialization>
     [[nodiscard]] bool Init();
     void Release();
+    /// Why Init() refused the machine's configuration (the slot set's conflicts, ZX-bus slots Q8); "" otherwise
+    const std::string& GetInitError() const { return _initError; }
     /// endregion </Initialization>
 
     /// region <Peripherals>
@@ -133,6 +139,7 @@ public:
     void OnNetworkFrame();
 
     NetworkManager* GetNetworkManager() { return _networkManager; }
+    SlotManager* GetSlotManager() { return _slotManager; }
     /// endregion </Peripherals>
 
     /// region <Properties>

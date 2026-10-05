@@ -1081,6 +1081,7 @@ void MachineStateTransfer::FitSourceDevices(const CONFIG& source, CONFIG& target
     target.sound.covoxFB = source.sound.covoxFB;
     target.sound.covoxDD = source.sound.covoxDD;
     target.sound.sd = source.sound.sd;
+    target.sound.sdMode = source.sound.sdMode;
     target.moonsound = source.moonsound;
     target.ngs = source.ngs;
     target.trdos_present = source.trdos_present || target.trdos_present;

@@ -25,6 +25,8 @@
 #include "emulator/rzx/rzxttdstate.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
 #include "emulator/sound/covox.h"
@@ -60,12 +62,17 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     // actually connected.
     if (context->pSoundManager)
     {
+        // The slot cards (ZX-bus slots SL-5): the slot set decides which exist, SoundManager built them. Each is
+        // registered under its own blob id (unchanged since before the slots) and named by its slot in the engine's
+        // device table ("zxbus.1.neogs"); after the sound devices the registry is checked against the slot set.
+        //
         // TurboSound slot: register under the live device's own peripheral
         // id (legacy TurboSound = 0, TSFM = 4) so a session recorded on one
         // device cannot load on the other (design §8.2). An empty slot
         // (TurboSound = None) registers nothing, same as an absent Covox.
         if (ITurboSoundDevice* turboSoundDevice = context->pSoundManager->getTurboSound())
-            registry.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
+            registry.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice,
+                              SlotCardInstance(context, turboSoundDevice));
         registry.Register(PeripheralId::Covox, context->pSoundManager->getCovox());
         // General Sound card ([SOUND] GSType, GS design §5.3): absent when
         // the config did not fit one. Registered under the live card's own
@@ -83,7 +90,7 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             }
             else
             {
-                registry.Register(gs->TTDPeripheralId(), gs);
+                registry.Register(gs->TTDPeripheralId(), gs, SlotCardInstance(context, gs));
                 // Card memory recorded as engine regions (NeoGS RAM and flash)
                 registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(gs));
             }
@@ -92,9 +99,46 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         // MoonSound registers only when the config flag built it; a null
         // pointer leaves no entry, so state from a MoonSound machine meets a
         // MoonSound-less one as a visible missing blob (R7).
-        registry.Register(PeripheralId::MoonSound, context->pSoundManager->getMoonSound());
+        registry.Register(PeripheralId::MoonSound, context->pSoundManager->getMoonSound(),
+                          SlotCardInstance(context, context->pSoundManager->getMoonSound()));
         registry.RegisterRegionSource(context->pSoundManager->getMoonSound());   // wave RAM as an engine region
 #endif
+        // Cards the slots build themselves (card.h; the ZX-MultiSound): each of their devices under its own id,
+        // named by the card's slot ("zxbus.1.multisound", "zxbus.1.multisound.gs"); memories as engine regions
+        if (const SlotManager* slotManager = context->pSlotManager)
+        {
+            std::vector<CardTtdDevice> devices;
+            for (const std::unique_ptr<ICard>& card : slotManager->Cards())
+            {
+                devices.clear();
+                card->CollectTtdDevices(devices);
+                for (const CardTtdDevice& device : devices)
+                {
+                    registry.Register(device.id, device.device, device.instance);
+                    registry.RegisterRegionSource(device.regions);
+                }
+            }
+        }
+        // The registry against the slot set: a card the plan fits has its device, a device has its card
+        // (a build without OPL4 builds no MoonSound: that group is not compared there)
+        if (const SlotManager* slotManager = context->pSlotManager; slotManager && slotManager->Current().machine)
+        {
+            SlotManager::TtdDeviceSet live = SlotManager::TtdDeviceSet::Of(registry);
+#ifndef UNREALNG_HAVE_OPL4
+            if (slotManager->Current().FindGroup(SlotCardGroup::MoonSound))
+                live.ids.push_back(static_cast<uint8_t>(PeripheralId::MoonSound));
+#endif
+            std::string why;
+            if (!SlotManager::TtdDevicesMatchPlan(slotManager->Current(), live, why))
+            {
+                MLOGERROR("RegisterMachinePeripherals - %s", why.c_str());
+                if (error)
+                    *error = why;
+                registry.Clear();
+                ownedSerializers.clear();
+                return false;
+            }
+        }
     }
     registry.Register(PeripheralId::Tape, context->pTape);
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
@@ -285,6 +329,31 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     }
 
     return true;
+}
+
+std::string SlotCardInstance(const EmulatorContext* context, const TTDSerializable* device)
+{
+    if (!context || !device || !context->pSlotManager)
+        return {};
+    SlotCardGroup group = SlotCardGroup::Count;
+    switch (device->TTDPeripheralId())
+    {
+        case PeripheralId::TurboSound:
+        case PeripheralId::TSFM:
+            group = SlotCardGroup::Socket;
+            break;
+        case PeripheralId::GeneralSound:
+        case PeripheralId::GeneralSoundLightweight:
+        case PeripheralId::NeoGS:
+            group = SlotCardGroup::GeneralSound;
+            break;
+        case PeripheralId::MoonSound:
+            group = SlotCardGroup::MoonSound;
+            break;
+        default:
+            return {};
+    }
+    return context->pSlotManager->TtdInstance(group, device->TTDDeviceName());
 }
 
 } // namespace ttd

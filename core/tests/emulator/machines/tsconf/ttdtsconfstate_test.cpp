@@ -37,7 +37,7 @@ TEST_F(TTDTsConfState_Test, TTD1_RoundTripRestoresStateAndMapping)
     _decoder->reset();
     _decoder->GetState().cram[7] = 0;
     EXPECT_NE(serializer.TTDHashState(), hash);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 0u);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write counter, always there";
     EXPECT_EQ(Tag(0xC000), 0x00);
 
     serializer.TTDLoadState(blob.data());
@@ -49,5 +49,5 @@ TEST_F(TTDTsConfState_Test, TTD1_RoundTripRestoresStateAndMapping)
     EXPECT_EQ(Tag(0xC000), 0x03);
     EXPECT_TRUE(_decoder->IsPagingLocked());
     EXPECT_EQ(_decoder->GetState().fmStash, 0x21);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "FM window + cache snoop";
+    EXPECT_EQ(_core->GetBusOverlayCount(), 3u) << "the DRAM write counter + FM window + cache snoop";
 }

@@ -215,6 +215,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen unreal-qt --help
           test -f /usr/lib/unreal-ng/configs/pentagon512k/unreal.ini
           test -f /usr/lib/unreal-ng/rom/README-ROMS.md
+          test -f /usr/lib/unreal-ng/midi/generaluser-gs.sf2
 
   # ========================================
   # Windows MSVC Build (x86_64 and native arm64)

@@ -342,7 +342,11 @@ PortDecoder_TSConf::PortArm PortDecoder_TSConf::ClassifyPort(uint16_t port) cons
         case 0xFF:
             return fdcOpen ? PortArm::Fdc : PortArm::ZxBus;
         case 0xF7:
-            return (port & 0x0100) ? PortArm::Gluk : PortArm::ZxBus;
+            // Outside DOS the mainboard owns every #xxF7 ([V] zports.v:330 porthit && !dos; A8 = 0 reads #FF,
+            // :474-475); in DOS the ZX-Bus, but the CMOS ports (A8 = 1) still reach the AVR inside vdos (:720-721)
+            if (!_ts.dos || (_ts.vdos && (port & 0x0100)))
+                return PortArm::Gluk;
+            return PortArm::ZxBus;
         case 0xDF:
             return PortArm::Mouse;
         case 0x57:
@@ -601,9 +605,9 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         case PortArm::KeyboardBorder:
             FlushVideo();
             PortFeOut(port, value, pc);
-            // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the latched PAL_SEL (§3.4)
-            _ts.regs[TsConfReg::Border] =
-                static_cast<uint8_t>(((_ts.regs[TsConfReg::PalSel] & 0x0F) << 4) | (value & 0x07));
+            // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the PAL_SEL latched at the line start (§3.4; [V]
+            // video_ports.v:109 takes `palsel`, :160): FlushVideo brought the line engine up to this write
+            _ts.regs[TsConfReg::Border] = static_cast<uint8_t>(((_ts.latPalSel & 0x0F) << 4) | (value & 0x07));
             break;
         case PortArm::Covox:
             DacWrite(value);  // any #xxFB, never gated ([V] zports.v:490)
@@ -679,6 +683,13 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
         FlushVideo();
     else if (reg >= TsConfReg::DmaSAl && reg <= TsConfReg::DmaNum)
         CatchUpEngine();  // the DMA runs up to the write
+    else if (reg == TsConfReg::IntMask || reg == TsConfReg::HsInt || reg == TsConfReg::VsIntL || reg == TsConfReg::VsIntH)
+    {
+        // The interrupt events up to the write happened under the old mask / position (the controller evaluates
+        // them lazily): a line end at tact 0 must not latch because the mask is set later in that tact
+        if (_context->pCore && _context->pCore->GetZ80())
+            _interrupts.CatchUpTo(_context->pCore->GetZ80()->t);
+    }
     _ts.regs[reg] = value;
 
     switch (reg)
@@ -810,17 +821,30 @@ uint8_t PortDecoder_TSConf::FdcAccess(uint8_t port, bool isWrite, uint8_t value)
         else
             result = PeripheralPortIn(port);
     }
+    if (systemPort && !isWrite)
+    {
+        // VGSYS: {INTRQ, DRQ, 111111}, driven while DOS || VG_OPEN whatever the chip select ([V] zports.v:330,
+        // 344-347,447-448) - also for a virtual drive and inside vdos
+        result = static_cast<uint8_t>((chipSelected ? result : PeripheralPortIn(port)) | 0x3F);
+    }
     if (isWrite && systemPort)
         _ts.vgDrive = value & 0x03;
 
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (_ts.dos && !_ts.vdos && virtualDrive)
     {
+        // The interrupt controller's vdos is pre_vdos: it holds INT from this access on ([V] top.v:1106)
+        if (!_ts.preVdos && z80)
+            _interrupts.OnVdosEnter(z80->t);
         _ts.preVdos = 1;
         RefreshM1Hook();
     }
     else if (_ts.vdos && !systemPort)
     {
         _ts.vdos = 0;
+        if (z80)
+            _interrupts.OnVdosExit(z80->t);
+        DosStall();
         UpdateBanks();
         RefreshM1Hook();
     }
@@ -840,14 +864,22 @@ bool PortDecoder_TSConf::CmosReachable() const
 
 uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
 {
-    // Only the data port (#BFF7, A14 = 0) drives the bus
-    if ((port & 0x4000) == 0 && CmosReachable())
-        return _evoAvr.ReadData();
+    // Only the data port (#BFF7, A14 = 0) answers. Inside vdos the AVR gets the read (portf7_rd allows vdos,
+    // [V] zports.v:721) but the FPGA does not drive the bus: porthit takes #xxF7 only while !dos (:330), and vdos
+    // is always in DOS - the CPU reads #FF
+    if ((port & 0x0100) && (port & 0x4000) == 0 && CmosReachable())  // portf7_rd needs A8 = 1 (zports.v:721)
+    {
+        const uint8_t value = _evoAvr.ReadData();
+        return _ts.dos ? 0xFF : value;
+    }
     return 0xFF;
 }
 
 void PortDecoder_TSConf::DecodeF7Out(uint16_t port, uint8_t value)
 {
+    if (!(port & 0x0100))
+        return;  // portf7_wr needs A8 = 1 ([V] zports.v:720): the mainboard takes A8 = 0 and does nothing
+
     // Gating as latched before this cycle
     const bool cmos = CmosReachable();
 
@@ -925,6 +957,7 @@ void PortDecoder_TSConf::BeforeMachineM1(uint16_t address)
             (memConfig & TsConfMemConfig::Rom128))
         {
             _ts.dos = 1;
+            DosStall();
             UpdateBanks();
             RefreshM1Hook();
         }
@@ -1108,19 +1141,21 @@ void PortDecoder_TSConf::ApplyClock()
         _tsMemory->SetDramWaits(waits14 ? z80 : nullptr, &_arbiter);
     _arbiter.Reset();
     if (Core* core = _context->pCore)
-    {
-        if (waits14)
-            core->AddBusOverlay(&_dramWriteWait);
-        else
-            core->RemoveBusOverlay(&_dramWriteWait);
-    }
+        core->AddBusOverlay(&_dramWriteWait);  // every CPU write: the DRAM budget, at 14 MHz also its wait
     RefreshM1Hook();
     if (_state->hw_turbo_ratio == ratio)
         return;
 
     _state->hw_turbo_ratio = ratio;
-    if (_context->pCore && _context->pCore->GetZ80())
-        _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+    if (z80)
+    {
+        // A running frame pulse keeps the clocks it has counted across the switch (TsConfInterrupts)
+        uint32_t elapsed = 0;
+        const bool pulse = _interrupts.BeforeClockSwitch(z80->t, elapsed);
+        z80->ApplyHardwareTurboNow();
+        if (pulse)
+            _interrupts.AfterClockSwitch(z80->t, elapsed);
+    }
 }
 
 /// V_PAGE on the ZX screen until the TS video engine (phase 3): pages 5 and 7
@@ -1330,9 +1365,23 @@ void PortDecoder_TSConf::ApplyExternalIoStall(uint16_t port, PortArm arm)
 {
     if (!(_ts.regs[TsConfReg::SysConfig] & 0x02)) [[likely]]
         return;
+    // A VG93 register access inside vdos ends it: the same cycle starts the DOS stall, which wins (zclock.v:82-85
+    // loads stall_count 4 for dos_stall), so FdcAccess's 4 fclk are all of it
+    if (arm == PortArm::Fdc && _ts.vdos && (port & 0xFF) != 0xFF)
+        return;
     const bool external = arm == PortArm::Ay || (arm == PortArm::Fdc && (port & 0xFF) != 0xFF);
     if (external && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->AddWaitStates(4);
+}
+
+/// DOS entry (the #3Dxx fetch) and vdos exit stop the CPU clock for 4 fclk ([V] zclock.v:75,84-85: dos_stall =
+/// dos_on || vdos_off, "4 tacts 28MHz"), at every CPU speed: half a T at 3.5 MHz, 2 T at 14 MHz. TIM-7
+void PortDecoder_TSConf::DosStall()
+{
+    if (!_context->pCore || !_context->pCore->GetZ80())
+        return;
+    const uint32_t multiplier = std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u);
+    _context->pCore->GetZ80()->AddWaitTicks(4u * 256u * multiplier / 8u);  // a CPU clock is 256 ticks, 8 / multiplier fclk
 }
 
 void PortDecoder_TSConf::ApplyIdeStall()
