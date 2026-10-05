@@ -1,4 +1,4 @@
-// The TASM codec, every version: 3.0-3.5, 4.0 XLD / 4.4 KVA, 4.12. Real sources of each version decode to the expected
+// The TASM codec, every version: 2.0 (text), 3.0-3.5, 4.0 XLD / 4.4 KVA, 4.12. Real sources of each version decode to the expected
 // text and round-trip byte-exact; the canonical tokenizer alone (no kept bytes) reproduces TASM's own bytes; the
 // version comes from the catalog's start field, or from the stream; conversion between the versions.
 
@@ -239,4 +239,45 @@ TEST(TasmCodec_Test, KeywordMissingInTheTargetVersionIsReported)
     DecodeOptions as3Reading;
     as3Reading.subversion = "3";
     EXPECT_EQ(codec.Decode(as3.bytes, as3Reading).document.Text(), decoded.document.Text()) << "the text is unchanged";
+}
+
+TEST(TasmCodec_Test, Tasm20IsTextWithEditorTabs)
+{
+    // TASM 2.0 keeps plain text (CR LF), its editor turning a blank run that reaches a tab stop into TABs. T20SRC was
+    // typed into TASM 2.0 in the emulator and saved (type C, start 38750)
+    const codecs::TasmCodec codec;
+    containers::TrdosFile file;
+    std::string error;
+    ASSERT_TRUE(containers::ReadHobeta(ReadTestData("tasm/T20SRC.$C"), file, error)) << error;
+    EXPECT_EQ(codec.Detect(file.data, file.Hints()), 95);
+    const DetectResult detected = CodecRegistry::Builtin().Detect(file.data, file.Hints());
+    ASSERT_NE(detected.chosen, nullptr) << detected.reason;
+    EXPECT_EQ(detected.chosen->Info().id, "tasm");
+
+    DecodeOptions options;
+    options.catalog = file.Hints();
+    const DecodeResult decoded = codec.Decode(file.data, options);
+    ASSERT_TRUE(decoded.ok);
+    EXPECT_EQ(decoded.document.subversion, "2.0");
+    EXPECT_EQ(decoded.document.Text() + "\n", ReadTestText("tasm/T20SRC.txt"));
+    EXPECT_EQ(codec.Encode(decoded.document, {}).bytes, file.data) << "byte-exact";
+
+    // The editor's tab rule, from the bytes TASM 2.0 wrote
+    SourceDocument plain = WithoutAttributes(decoded.document);
+    plain.format = "tasm";
+    plain.subversion = "2.0";
+    EXPECT_EQ(codec.Encode(plain, {}).bytes, file.data) << "the canonical encoder writes what TASM 2.0 wrote";
+    EncodeOptions to20;
+    to20.subversion = "2.0";
+    const EncodeResult one = codec.Encode(SourceDocument::FromText("1234567 X\nA                       B\nX  Y", "tasm"), to20);
+    EXPECT_EQ(std::string(one.bytes.begin(), one.bytes.end()), "1234567\tX\r\nA\t\t\tB\r\nX  Y\r\n");
+
+    // Into TASM 4.0: re-tokenized (lower-case keywords become tokens), read back with the same text
+    EncodeOptions to40;
+    to40.subversion = "4.0";
+    const EncodeResult as40 = codec.Encode(decoded.document, to40);
+    ASSERT_TRUE(as40.ok);
+    DecodeOptions as40Reading;
+    as40Reading.subversion = "4.0";
+    EXPECT_EQ(codec.Decode(as40.bytes, as40Reading).document.Text(), decoded.document.Text());
 }

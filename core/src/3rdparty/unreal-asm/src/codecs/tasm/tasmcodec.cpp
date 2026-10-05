@@ -54,11 +54,105 @@ bool IsWordChar(char c)
 {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '@' || c == '$' || c == '#';
 }
+constexpr size_t kTabStop = 8;
+constexpr uint16_t kTasm2Start = 38750;   // TASM 2.0 saves sources as type C with this start
+
+/// TASM 2.0 keeps its source as text: printable bytes, TAB, CR LF
+bool LooksLikeTasm2Text(std::span<const uint8_t> bytes)
+{
+    if (bytes.empty())
+        return false;
+    size_t crlf = 0;
+    for (size_t i = 0; i < bytes.size(); ++i)
+    {
+        const uint8_t b = bytes[i];
+        if (b == '\r' && i + 1 < bytes.size() && bytes[i + 1] == '\n')
+            ++crlf, ++i;
+        else if (b < 0x20 && b != '\t')
+            return false;
+    }
+    return crlf > 0;
+}
+
+/// One TASM 2.0 line -> text: TABs to the next multiple of 8 (as the editor shows them), CP866 above #7F
+std::string DecodeTasm2Line(std::span<const uint8_t> line)
+{
+    std::string text;
+    size_t column = 0;
+    for (const uint8_t b : line)
+    {
+        if (b == '\t')
+        {
+            const size_t next = (column / kTabStop + 1) * kTabStop;
+            text.append(next - column, ' ');
+            column = next;
+            continue;
+        }
+        if (b >= 0x20 && b < 0x80)
+            text.push_back(static_cast<char>(b));
+        else if (b >= 0x80)
+            utf8::Append(text, encoding::ByteToCodePoint(b, encoding::CodePage::Cp866));
+        else
+            utf8::Append(text, kRawBase + b);
+        ++column;
+    }
+    return text;
+}
+
+/// Text -> one TASM 2.0 line the way its editor stores it: a blank run that reaches a tab stop becomes one TAB per
+/// stop, the blanks after the last stop stay (strings and comments included)
+bool EncodeTasm2Line(const std::string& text, std::vector<uint8_t>& out, std::string& error)
+{
+    out.clear();
+    const auto* data = reinterpret_cast<const uint8_t*>(text.data());
+    size_t column = 0, i = 0;
+    while (i < text.size())
+    {
+        if (text[i] == ' ')
+        {
+            size_t end = i;
+            while (end < text.size() && text[end] == ' ')
+                ++end;
+            const size_t from = column, to = column + (end - i);
+            size_t at = from;
+            for (size_t stop = (from / kTabStop + 1) * kTabStop; stop <= to; stop += kTabStop)
+            {
+                out.push_back('\t');
+                at = stop;
+            }
+            out.insert(out.end(), to - at, ' ');
+            column = to;
+            i = end;
+            continue;
+        }
+        char32_t cp = 0;
+        const size_t length = utf8::DecodeOne(std::span<const uint8_t>(data + i, text.size() - i), cp);
+        uint8_t b = 0;
+        if (length == 0)
+        {
+            error = "invalid UTF-8 at column " + std::to_string(column + 1);
+            return false;
+        }
+        if (cp >= kRawBase && cp <= kRawBase + 0xFF)
+            b = static_cast<uint8_t>(cp - kRawBase);
+        else if (cp < 0x80)
+            b = static_cast<uint8_t>(cp);
+        else if (!encoding::CodePointToByte(cp, encoding::CodePage::Cp866, b))
+        {
+            error = "a character TASM cannot hold at column " + std::to_string(column + 1);
+            return false;
+        }
+        out.push_back(b);
+        ++column;
+        i += length;
+    }
+    return true;
+}
 }  // namespace
 
 TasmCodec::TasmCodec()
     : _info{"tasm", "TASM source (tokenized)", "tasm", CodecFamily::Tokenized,
-            {{"3", "TASM 3.0-3.5 (Rst7)"}, {"4.0", "TASM 4.0 (XL Design) / 4.4 (KVA)"}, {"4.12", "TASM 4.12 (Rst7)"}}}
+            {{"2.0", "TASM 2.0 (Rst7): plain text"}, {"3", "TASM 3.0-3.5 (Rst7)"}, {"4.0", "TASM 4.0 (XL Design) / 4.4 (KVA)"}, {"4.12", "TASM 4.12 (Rst7)"}}}
 {
 }
 
@@ -85,8 +179,15 @@ std::vector<std::span<const uint8_t>> TasmCodec::Bodies(std::span<const uint8_t>
 
 std::string TasmCodec::DetectVersion(std::span<const uint8_t> bytes, const CatalogHints& hints, std::vector<std::string>* consistent)
 {
+    // TASM 2.0: a type-C file with its start, or plain text where the others have records
     bool ended = false;
     const auto bodies = Bodies(bytes, ended);
+    if ((hints.type == 'C' && hints.start == kTasm2Start && LooksLikeTasm2Text(bytes)) || (!ended && LooksLikeTasm2Text(bytes)))
+    {
+        if (consistent)
+            *consistent = {"2.0"};
+        return "2.0";
+    }
     if (!ended)
         return {};
     // The TR-DOS catalog's start field: each version saves sources with its own value (the word is in its binary)
@@ -137,6 +238,8 @@ std::string TasmCodec::DetectVersion(std::span<const uint8_t> bytes, const Catal
 
 int TasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints) const
 {
+    if (hints.type == 'C' && hints.start == kTasm2Start && LooksLikeTasm2Text(bytes))
+        return 95;   // TASM 2.0 text; without the catalog any text codec reads it as well
     bool ended = false;
     const size_t lines = Bodies(bytes, ended).size();
     if (!ended || lines == 0)
@@ -312,6 +415,30 @@ DecodeResult TasmCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptio
         document.subversion = DetectVersion(bytes, options.catalog, &result.subversions);
     if (document.subversion.empty())
         document.subversion = _info.subversions.back().id;   // framing broken: the diagnostics below say where
+    if (document.subversion == "2.0")
+    {
+        // Lines end with CR LF; a last line without one is marked in the file attributes
+        document.codePage = encoding::CodePage::Cp866;
+        document.lineEnd = encoding::LineEnd::CrLf;
+        size_t start = 0;
+        for (size_t i = 0; i + 1 < bytes.size(); ++i)
+            if (bytes[i] == '\r' && bytes[i + 1] == '\n')
+            {
+                const auto line = bytes.subspan(start, i - start);
+                document.lines.push_back({DecodeTasm2Line(line), {_info.id, std::vector<uint8_t>(line.begin(), line.end())}});
+                start = i + 2;
+                ++i;
+            }
+        const bool unterminated = start < bytes.size();
+        if (unterminated)
+        {
+            const auto line = bytes.subspan(start);
+            document.lines.push_back({DecodeTasm2Line(line), {_info.id, std::vector<uint8_t>(line.begin(), line.end())}});
+        }
+        document.attrs = {_info.id, {static_cast<uint8_t>(unterminated ? 1 : 0)}};
+        result.ok = true;
+        return result;
+    }
     document.codePage = encoding::CodePage::Ascii;
     document.lineEnd = encoding::LineEnd::Lf;
     size_t p = 0;
@@ -354,6 +481,28 @@ EncodeResult TasmCodec::Encode(const SourceDocument& document, const EncodeOptio
                                 : sameFormat && !document.subversion.empty() ? document.subversion : _info.subversions.back().id;
     // Kept bytes are reused only when they are this version's bytes of the same text
     const bool keep = sameFormat && document.subversion == version;
+    if (version == "2.0")
+    {
+        std::vector<uint8_t> line;
+        const bool unterminated = keep && document.attrs.codec == _info.id && document.attrs.bytes == std::vector<uint8_t>{1};
+        for (size_t i = 0; i < document.lines.size(); ++i)
+        {
+            const SourceLine& source = document.lines[i];
+            std::string error;
+            if (keep && source.attrs.codec == _info.id && DecodeTasm2Line(source.attrs.bytes) == source.text)
+                line = source.attrs.bytes;
+            else if (!EncodeTasm2Line(source.text, line, error))
+            {
+                result.diagnostics.push_back({Severity::Error, static_cast<uint32_t>(i + 1), result.bytes.size(), error});
+                continue;
+            }
+            result.bytes.insert(result.bytes.end(), line.begin(), line.end());
+            if (!(unterminated && i + 1 == document.lines.size()))
+                result.bytes.insert(result.bytes.end(), {'\r', '\n'});
+        }
+        result.ok = !HasErrors(result.diagnostics);
+        return result;
+    }
     std::vector<uint8_t> body;
     for (size_t i = 0; i < document.lines.size(); ++i)
     {
@@ -370,7 +519,7 @@ EncodeResult TasmCodec::Encode(const SourceDocument& document, const EncodeOptio
                 continue;
             }
             // Another version of the same format: a keyword of the source version that the target lacks stays text
-            if (sameFormat && !document.subversion.empty() && document.subversion != version)
+            if (sameFormat && !document.subversion.empty() && document.subversion != version && document.subversion != "2.0")
             {
                 std::vector<uint8_t> sourceBody;
                 std::string ignored;
