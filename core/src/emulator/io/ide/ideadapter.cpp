@@ -195,7 +195,9 @@ bool IdeAdapter::EvoIn(uint16_t port, uint8_t& value)
         value = ReadRegister(Control);
         return true;
     }
-    const bool cs0 = (low & 0x1E) == 0x10;   // rrr1000x
+    // rrr10000, and #11 alone among the odd ports ([V] zports.v ide_even || port 11 in TS-Conf and the Base
+    // Configuration: #31, #51 ... #F1 are not IDE)
+    const bool cs0 = (low & 0x1F) == 0x10 || low == 0x11;
     const bool alias = (low & 0x1F) == 0x08; // rrr01000: RTL aliases of CS0 (#C8 is CS1, above)
     if (!cs0 && !alias)
         return false;
@@ -240,7 +242,7 @@ bool IdeAdapter::EvoOut(uint16_t port, uint8_t value)
         WriteRegister(Control, value);
         return true;
     }
-    const bool cs0 = (low & 0x1E) == 0x10;
+    const bool cs0 = (low & 0x1F) == 0x10 || low == 0x11;  // as EvoIn
     const bool alias = (low & 0x1F) == 0x08;
     if (!cs0 && !alias)
         return false;
