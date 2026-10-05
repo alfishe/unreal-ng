@@ -241,6 +241,33 @@ void ProgramFmNote(Rig& rig)
         rig.Reg(reg, data);
 }
 
+/// Frequency of one side of a collected row from its zero crossings (about the mean): the tone a row carries, not its
+/// level. Each period crosses twice
+double ToneHz(const std::vector<int16_t>& row, int side, double outputRate)
+{
+    const size_t n = row.size() / 2;
+    if (n < 2)
+        return 0.0;
+    double mean = 0.0;
+    for (size_t i = 0; i < n; i++)
+        mean += row[i * 2 + static_cast<size_t>(side)];
+    mean /= static_cast<double>(n);
+    size_t crossings = 0;
+    for (size_t i = 1; i < n; i++)
+    {
+        const bool before = row[(i - 1) * 2 + static_cast<size_t>(side)] < mean;
+        const bool now = row[i * 2 + static_cast<size_t>(side)] < mean;
+        crossings += before != now ? 1 : 0;
+    }
+    return static_cast<double>(crossings) / 2.0 / (static_cast<double>(n) / outputRate);
+}
+
+/// The YM2203 FM frequency of F-number `fnum` in `block` at the card's 3.5 MHz, prescaler /6 (sample rate master / 72)
+double FmNoteHz(int fnum, int block)
+{
+    return fnum * std::ldexp(1.0, block - 1) * (3500000.0 / 72.0) / 1048576.0;
+}
+
 /// SAA voice `voice` at full amplitude on one side (or both), middle A
 void ProgramSaaTone(Rig& rig, int voice, uint8_t amplitude)
 {
@@ -760,6 +787,89 @@ TEST_F(MultiSoundCard_Test, MissingBankLeavesTheSynthSilentAndTheReportSaysNoBan
 }
 
 /// endregion </MIDI>
+
+/// region <Tones>
+
+/// Owner report 2026-10-05 (tech_support.sna through the card: clicks instead of FM): the card's YM2203 pair runs on
+/// the card's continuous host axis, and after a bus reset anywhere but t = 0 (a snapshot load, a reset of a running
+/// machine) the FM render cursor sat a whole block ahead of the chips - every frame consumed all its FM words at once
+/// and held the last one, so the FM row carried a frame-rate staircase instead of the note. The invariant: the FM row
+/// carries the tone each chip plays, before and after a reset at any time. One note per chip (U4 759 Hz, U10 380 Hz,
+/// one carrier each), measured on both sides (FM is centered). ~60 ms: 40 frames of the whole card
+TEST_F(MultiSoundCard_Test, FmRowCarriesTheNoteOfEachChipAfterAResetAtAnyTime)
+{
+    Rig rig(_context.get(), QuietConfig());
+    const double rate = 44100.0;
+    for (const uint64_t resetFrame : {uint64_t{0}, uint64_t{7}})
+    {
+        // A running machine: the reset lands mid-frame, frames after the card's start
+        rig.RunFrames(static_cast<int>(resetFrame));
+        rig.Advance(12345);
+        rig.card.BusReset(rig.t);
+
+        // U4: the reference note (block 7, F-number #100)
+        rig.Out(kYmRegister, 0xF0);
+        ProgramFmNote(rig);
+        rig.RunFrames(2);
+        rig.Clear();
+        rig.RunFrames(8);
+        const double u4 = FmNoteHz(0x100, 7);
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 0, rate), u4, u4 * 0.01)
+            << "U4 note, reset in frame " << resetFrame;
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 1, rate), u4, u4 * 0.01);
+
+        // U4 silenced (carrier TL #7F), U10 an octave lower (block 6)
+        rig.Reg(0x4E, 0x7F);
+        rig.Out(kYmRegister, 0xF1);
+        ProgramFmNote(rig);
+        rig.Reg(0xA6, 0x31);
+        rig.Reg(0xA2, 0x00);
+        rig.RunFrames(2);
+        rig.Clear();
+        rig.RunFrames(8);
+        const double u10 = FmNoteHz(0x100, 6);
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 0, rate), u10, u10 * 0.01)
+            << "U10 note, reset in frame " << resetFrame;
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 1, rate), u10, u10 * 0.01);
+        rig.Clear();
+    }
+}
+
+/// The SSG row carries each chip's tone after a reset at any time too: tone A period #100 = 1.75 MHz / 16 / 256 =
+/// 427 Hz on U4 (A: left), tone C period #80 = 854 Hz on U10 (C: right). ~40 ms
+TEST_F(MultiSoundCard_Test, SsgRowCarriesTheToneOfEachChipAfterAResetAtAnyTime)
+{
+    Rig rig(_context.get(), QuietConfig());
+    const double rate = 44100.0;
+    for (const uint64_t resetFrame : {uint64_t{0}, uint64_t{7}})
+    {
+        rig.RunFrames(static_cast<int>(resetFrame));
+        rig.Advance(12345);
+        rig.card.BusReset(rig.t);
+
+        rig.Out(kYmRegister, 0xF4);   // U4, FM muted
+        rig.Reg(0x00, 0x00);
+        rig.Reg(0x01, 0x01);
+        rig.Reg(0x07, 0x3E);          // tone A only
+        rig.Reg(0x08, 0x0F);
+        rig.Out(kYmRegister, 0xF5);   // U10
+        rig.Reg(0x04, 0x80);
+        rig.Reg(0x05, 0x00);
+        rig.Reg(0x07, 0x3B);          // tone C only
+        rig.Reg(0x0A, 0x0F);
+        rig.RunFrames(2);
+        rig.Clear();
+        rig.RunFrames(8);
+        const std::vector<int16_t>& ssg = rig.collected[static_cast<size_t>(MultiSoundRow::Ssg)];
+        EXPECT_NEAR(ToneHz(ssg, 0, rate), 1750000.0 / 16 / 256, 1750000.0 / 16 / 256 * 0.01)
+            << "U4 tone A, left; reset in frame " << resetFrame;
+        EXPECT_NEAR(ToneHz(ssg, 1, rate), 1750000.0 / 16 / 128, 1750000.0 / 16 / 128 * 0.01)
+            << "U10 tone C, right; reset in frame " << resetFrame;
+        rig.Clear();
+    }
+}
+
+/// endregion </Tones>
 
 /// region <Real program>
 

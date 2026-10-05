@@ -279,6 +279,59 @@ TEST_F(Ym2203Pair_Test, PerChannelOutputsRenderAWholeSyncedFrameAtOnce)
     }
 }
 
+TEST_F(Ym2203Pair_Test, PerChannelOutputsFollowTheChipsAfterAResetOnAContinuousAxis)
+{
+    // The MultiSound's host axis is continuous (never rebased). A reset there - a snapshot load, a reset of a running
+    // machine - leaves the cursor far from the chips, and the re-anchor must put it where the next block ENDS the
+    // render lag behind them: anchored at the chips instead, every block rendered a block ahead of them, consumed a
+    // whole frame of words at its first half-tick and held the last one (MS-7 owner report 2026-10-05: clicks for
+    // FM). The FM stream then carries the note's frequency (zero crossings, not a level), on both host rates
+    for (const uint32_t host : {kMasterHz, kHost128Hz})
+    {
+        Ym2203PairConfig config = RatioConfig();
+        config.hostTickRate = host;
+        Ym2203Pair pair(_context, config);
+        pair.configureChannelOutputs(44100);
+        pair.syncTo(0);
+
+        const uint64_t frameTicks = host == kMasterHz ? 71680 : 70908;
+        std::vector<float> frameOut(2000);
+        std::vector<float> fm;
+        uint64_t samplesAcc = 0;
+        auto frame = [&](bool keep)
+        {
+            pair.syncTo(pair.syncedT() + frameTicks);
+            samplesAcc += frameTicks * 44100;
+            const size_t frames = static_cast<size_t>(samplesAcc / host);
+            samplesAcc %= host;
+            Ym2203ChannelBlock block;
+            block.fm[0] = frameOut.data();
+            ASSERT_EQ(pair.renderChannels(frames, block, true), frames);
+            if (keep)
+                fm.insert(fm.end(), frameOut.begin(), frameOut.begin() + static_cast<std::ptrdiff_t>(frames));
+        };
+
+        // Ten frames of a running machine, then a reset mid-frame
+        for (int i = 0; i < 10; i++)
+            frame(false);
+        pair.syncTo(pair.syncedT() + 12345);
+        pair.reset();
+        pair.syncTo(pair.syncedT());
+        ProgramFmNote(pair, 0);
+        for (int i = 0; i < 2; i++)
+            frame(false);  // attack and decimator warm-up
+        for (int i = 0; i < 8; i++)
+            frame(true);
+
+        size_t crossings = 0;
+        for (size_t i = 1; i < fm.size(); i++)
+            crossings += (fm[i - 1] < 0.0f) != (fm[i] < 0.0f) ? 1 : 0;
+        const double hz = static_cast<double>(crossings) / 2.0 / (static_cast<double>(fm.size()) / 44100.0);
+        const double note = 256.0 * 64.0 * (kMasterHz / 72.0) / 1048576.0;   // F-number #100, block 7: 759.5 Hz
+        EXPECT_NEAR(hz, note, note * 0.01) << "host " << host;
+    }
+}
+
 TEST_F(Ym2203Pair_Test, SsgIoPortListenerOnChip1)
 {
     // The MultiSound's MIDI line hangs on YM chip 1 IOA2: the pair's SSG reports pin changes of chip 1 with the

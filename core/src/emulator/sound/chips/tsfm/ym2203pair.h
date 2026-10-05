@@ -425,9 +425,11 @@ public:
     void configureChannelOutputs(size_t rate, FilterDecimator::Quality quality = FilterDecimator::Quality::Reference);
 
     /// Render `frames` output samples of the per-channel streams into `block`, from where the previous render
-    /// stopped. The cursor follows the master-clock axis (it ends a render about kRenderLag behind the synced
-    /// position when the owner synced the time it renders; re-anchored only when it is ahead of the chips or more
-    /// than kMaxRenderBehind behind). Returns the samples written (0 before configureChannelOutputs)
+    /// stopped. The owner syncs the time it renders first (syncTo), then renders it. The cursor follows the
+    /// master-clock axis and ends a render about kRenderLag behind the synced position; it is re-anchored (so that
+    /// this block ends kRenderLag behind the chips) only when the block would end past the chips or more than
+    /// kMaxRenderBehind behind them - after a reset on a continuous host axis, a gap in rendering, a speed change.
+    /// Returns the samples written (0 before configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
     /// endregion </Per-channel outputs>
 
@@ -504,4 +506,5 @@ private:
         FilterDecimator ssg[2][3];
     };
     std::unique_ptr<ChannelOutputs> _channels;
+    size_t _channelRate = 44100;   // output rate of the per-channel streams (configureChannelOutputs)
 };

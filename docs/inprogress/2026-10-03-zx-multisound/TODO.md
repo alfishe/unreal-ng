@@ -132,6 +132,16 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   TurboSound FM or TurboSound that replaced the board AY (owner report: "board AY active" with Ball Quest)
 - [x] Ball Quest click with `ctrlMask = pro`: **not modeled** (owner decision 2026-10-05). The card's logic does what
   the RTL does (the `#F0-#F7` writes switch the chip and unmute FM), the FM mute output stays silence
+- [x] MS-7 owner report 2026-10-05, FM through the card was clicks (`tech_support.sna`; the TSFM in the socket played it
+  right): `Ym2203Pair::renderChannels` re-anchored its cursor at the chips, i.e. at the END of the block it was about to
+  render, and the 1 : 1 reset left the cursor frame-relative on the card's continuous axis. After any bus reset at a
+  time other than 0 (a snapshot load) every block rendered one block ahead of the chips: all queued FM words consumed at
+  the first half-tick, the last one held - a frame-rate staircase. Fixed: the re-anchor checks where the block ends and
+  places it to end `kRenderLag` behind the chips ([tdd-integration.md](tdd-integration.md) §6.1, [architecture.md](architecture.md)
+  §1 module changes). The SSG was not affected (its tones are right; only its write timing moved by a block). Tests
+  that assert the tone, not a level: `MultiSoundCard_Test.FmRowCarriesTheNoteOfEachChipAfterAResetAtAnyTime` /
+  `SsgRowCarriesTheToneOfEachChipAfterAResetAtAnyTime`, `Ym2203Pair_Test.PerChannelOutputsFollowTheChipsAfterAResetOnAContinuousAxis`.
+  The earlier tests passed because they measured peak-to-peak swing, which a staircase of FM words also has
 - [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
 - [ ] owner question: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits); confirm
   on a real board before changing anything

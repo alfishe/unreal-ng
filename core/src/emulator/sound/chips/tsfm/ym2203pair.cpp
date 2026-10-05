@@ -285,6 +285,7 @@ void Ym2203Pair::configureChannelOutputs(size_t rate, FilterDecimator::Quality q
     // held on a half-tick grid of master / 8
     const double ssgRate = double(_config.masterClockHz) / 16.0;
     const double fmRate = double(_config.masterClockHz) / 8.0;
+    _channelRate = std::max<size_t>(rate, 1);
     if (!_channels)
         _channels = std::make_unique<ChannelOutputs>();
     FilterDecimator* master = &_channels->ssg[0][0];
@@ -306,12 +307,18 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     if (!_channels)
         return 0;
 
-    // The cursor trails the synced master clock: by the render lag right after a render, by the lag plus the time
-    // synced since then before the next one (a board that syncs a whole frame and then renders it is a frame
-    // behind here, with that frame's words queued). Only a cursor ahead of the chips, or behind by more than the
-    // word queue can hold, means the owner lost the timeline (a gap in rendering, a speed change): re-anchor
-    if (_renderT < _chipT - kMaxRenderBehind || _renderT > _chipT)
-        _renderT = _chipT - kRenderLag;
+    // The owner syncs the time it renders first, then renders it: this block covers the `span` master clocks
+    // before the synced position and ends about kRenderLag behind it (a board that syncs a whole frame and then
+    // renders it starts a frame plus the lag behind, with that frame's words queued). The check is on where the
+    // block ENDS: a block that would end past the chips renders time they have not run yet - every queued word is
+    // consumed at its first half-tick and the last one held for the whole block, a block-rate staircase instead of
+    // the chips' output (MS-7 owner report 2026-10-05) - and one that ends more than the word queue can hold behind
+    // has lost the timeline (a gap in rendering, a speed change, a reset on a continuous axis). Either way the
+    // cursor is re-anchored so that this block ends kRenderLag behind the chips
+    const int64_t span = static_cast<int64_t>(frames) * int64_t(_config.masterClockHz) / int64_t(_channelRate);
+    const int64_t end = _renderT + span;
+    if (end > _chipT || end < _chipT - kMaxRenderBehind)
+        _renderT = _chipT - kRenderLag - span;
 
     FilterDecimator& master = _channels->ssg[0][0];
     FilterDecimator* const fmDec = _channels->fm;
