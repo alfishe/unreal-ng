@@ -1,38 +1,38 @@
-NUMBER  defs    5,0
-PRINTHL push    hl
-        push    de
-        ld      a,h
-        srl     a
-        srl     a
-        srl     a
-        srl     a
-        call    TRANS
-        ld      (NUMBER),a
-        ld      a,h
-        and     #0F
-        call    TRANS
-        ld      (NUMBER+1),a
-        ld      a,l
-        srl     a
-        srl     a
-        srl     a
-        srl     a
-        call    TRANS
-        ld      (NUMBER+2),a
-        ld      a,l
-        and     #0F
-        call    TRANS
-        ld      (NUMBER+3),a
-        ld      de,#5040
-        ld      hl,NUMBER
-        call    PTEXT1
-        pop     de
-        pop     hl
-        ret
-TRANS   add     a,48
-        cp      58
-        ret     c
-        add     a,7
-        ret
+NUMBER  DEFS    5,0
+PRINTHL PUSH    HL
+        PUSH    DE
+        LD      A,H
+        SRL     A
+        SRL     A
+        SRL     A
+        SRL     A
+        CALL    TRANS
+        LD      (NUMBER),A
+        LD      A,H
+        AND     #0F
+        CALL    TRANS
+        LD      (NUMBER+1),A
+        LD      A,L
+        SRL     A
+        SRL     A
+        SRL     A
+        SRL     A
+        CALL    TRANS
+        LD      (NUMBER+2),A
+        LD      A,L
+        AND     #0F
+        CALL    TRANS
+        LD      (NUMBER+3),A
+        LD      DE,#5040
+        LD      HL,NUMBER
+        CALL    PTEXT1
+        POP     DE
+        POP     HL
+        RET
+TRANS   ADD     A,48
+        CP      58
+        RET     C
+        ADD     A,7
+        RET
 
 

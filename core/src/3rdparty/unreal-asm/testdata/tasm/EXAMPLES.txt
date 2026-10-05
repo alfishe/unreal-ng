@@ -1,53 +1,53 @@
 ;
-        org     #8000
+        ORG     #8000
 ;
-        defmac  MOVE
-        ld      hl,/0
-        ld      de,/1
-        ld      bc,/2
-        ldir
-        endmac
+        DEFMAC  MOVE
+        LD      HL,/0
+        LD      DE,/1
+        LD      BC,/2
+        LDIR
+        ENDMAC
 ;
-        defmac  hl*8
+        DEFMAC  HL*8
 ;
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        jp      ...1
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        JP      ...1
 ...1
 ;
-        endmac
+        ENDMAC
 ;
-        defmac  hl*16
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        add     hl,hl
-        jr      ...1
+        DEFMAC  HL*16
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        JR      ...1
 ...1
-        endmac
+        ENDMAC
 ;
         .LOCAL
-        ld      b,0
+        LD      B,0
 ...1
-        dec     b
-        jp      nz,...1
+        DEC     B
+        JP      NZ,...1
 ;
-        ld      hl,10
-        hl*8
-        display ...1
+        LD      HL,10
+        HL*8
+        DISPLAY ...1
         .LOCAL
-        ld      c,0
+        LD      C,0
 ...1
-        dec     c
-        jp      nz,...1
+        DEC     C
+        JP      NZ,...1
 ;
-        ld      hl,4
-        hl*16
-        display ...1
-        ld      hl,0
-        hl*8
-        display ...1
+        LD      HL,4
+        HL*16
+        DISPLAY ...1
+        LD      HL,0
+        HL*8
+        DISPLAY ...1
         MOVE    0,16384,6144
-        ret
+        RET
 

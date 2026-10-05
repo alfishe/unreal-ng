@@ -137,10 +137,17 @@ Ten files, each chosen for a version range or a case of §5: `ZADACHA` (3.8 disk
 `128KDRV`, `fibo`, `SNAKE`, `2Kolonki`, `RECPIC`, `BUILD+` (`DISPLAY /D`), `AL442nfo` (`DEFM "string"`), `AL444nfo`
 (`DD` as text). Expected text = the codec's output, read against ALASM's own display rules above.
 
+## 6.1 Checked in the emulator
+
+`AL442nfo` (ALASM 4.x, `DEFM`) converted by the codec to 5.07 and added to the ALASM 5.09 disk opens in ALASM 5.09
+(`W`, the file from the list, `E`): the editor shows the decoded text line for line (CP866 Russian, keyword
+spellings, indents; the pseudographics header is drawn by ALASM's font). Own emulator instance, TTD recorded; the
+screenshot is kept with the research materials. ALASM, like TASM, starts with the keyboard in inverted case: a file
+name typed in capitals arrives in lower case.
+
 ## 7. Open items
 
 | Item | Note |
 |---|---|
-| Emulator oracle | load a converted file into ALASM 5.09 / 4.44 in the emulator and compare the screen |
 | ALASM 2.x, 5.00-5.06 | no binaries found; add when found |
 | `#10` placement | the canonical encoder writes `#10` right before the first Russian letter; files with `#10` earlier keep their bytes |

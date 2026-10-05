@@ -5,23 +5,24 @@ namespace unrealasm::codecs::tasm
 namespace
 {
 // TASM 4.0 XLD / 4.4 KVA, #80-#F0 (the owner's 2012 converter's table; #80-#E6 are the table in the TASM 3.0 and 3.5
-// binaries, word for word). Confirmed on 91 real 4.0 / 4.4 sources, which use #E7-#F0 too
+// binaries, word for word). Confirmed on 91 real 4.0 / 4.4 sources, which use #E7-#F0 too. Upper case: TASM shows
+// its keywords in capitals (seen in the emulator on 3.0, 4.0 and 4.12), the tables in the binaries are upper case
 constexpr TokenTable kTasm40 = {
-    "a",     "adc ",   "add ",     "af'",     "af",     "and ",   "b",      "bc",        // 80-87
-    "bit ",  "c",      "call ",    "ccf",     "cp ",    "cpd",    "cpdr",   "cpi",       // 88-8F
-    "cpir",  "cpl",    "d",        "daa",     "de",     "dec ",   "defb ",  "defm ",     // 90-97
-    "defs ", "defw ",  "di",       "phase ",  "djnz ",  "e",      "ei",     "unphase",   // 98-9F
-    "equ ",  "ex ",    "exx",      "h",       "halt",   "hl",     "i",      "im ",       // A0-A7
-    "in ",   "inc ",   "ind",      "indr",    "ini",    "inir",   "ix",     "iy",        // A8-AF
-    "jp ",   "jr ",    "l",        "ld ",     "ldd",    "lddr",   "ldi",    "ldir",      // B0-B7
-    "m",     "nc",     "neg",      "nop",     "nv",     "nz",     "or ",    "org ",      // B8-BF
-    "otdr",  "otir",   "out ",     "outd",    "outi",   "p",      "pe",     "po",        // C0-C7
-    "pop ",  "push ",  "r",        "res ",    "ret",    "reti",   "retn",   "rl ",       // C8-CF
-    "rla",   "rlc ",   "rlca",     "rld",     "rr ",    "rra",    "rrc ",   "rrca",      // D0-D7
-    "rrd",   "rst ",   "sbc ",     "scf",     "set ",   "sla ",   "sp",     "sra ",      // D8-DF
-    "srl ",  "sub ",   "v",        "xor ",    "z",      "include ", "incbin ", "sli ",   // E0-E7
-    "inf",   "lx",     "hx",       "ly",      "hy",     "db ",    "dm ",    "ds ",       // E8-EF
-    "dw ",                                                                               // F0
+    "A",     "ADC ",   "ADD ",     "AF'",     "AF",     "AND ",   "B",      "BC",        // 80-87
+    "BIT ",  "C",      "CALL ",    "CCF",     "CP ",    "CPD",    "CPDR",   "CPI",       // 88-8F
+    "CPIR",  "CPL",    "D",        "DAA",     "DE",     "DEC ",   "DEFB ",  "DEFM ",     // 90-97
+    "DEFS ", "DEFW ",  "DI",       "PHASE ",  "DJNZ ",  "E",      "EI",     "UNPHASE",   // 98-9F
+    "EQU ",  "EX ",    "EXX",      "H",       "HALT",   "HL",     "I",      "IM ",       // A0-A7
+    "IN ",   "INC ",   "IND",      "INDR",    "INI",    "INIR",   "IX",     "IY",        // A8-AF
+    "JP ",   "JR ",    "L",        "LD ",     "LDD",    "LDDR",   "LDI",    "LDIR",      // B0-B7
+    "M",     "NC",     "NEG",      "NOP",     "NV",     "NZ",     "OR ",    "ORG ",      // B8-BF
+    "OTDR",  "OTIR",   "OUT ",     "OUTD",    "OUTI",   "P",      "PE",     "PO",        // C0-C7
+    "POP ",  "PUSH ",  "R",        "RES ",    "RET",    "RETI",   "RETN",   "RL ",       // C8-CF
+    "RLA",   "RLC ",   "RLCA",     "RLD",     "RR ",    "RRA",    "RRC ",   "RRCA",      // D0-D7
+    "RRD",   "RST ",   "SBC ",     "SCF",     "SET ",   "SLA ",   "SP",     "SRA ",      // D8-DF
+    "SRL ",  "SUB ",   "V",        "XOR ",    "Z",      "INCLUDE ", "INCBIN ", "SLI ",   // E0-E7
+    "INF",   "LX",     "HX",       "LY",      "HY",     "DB ",    "DM ",    "DS ",       // E8-EF
+    "DW ",                                                                               // F0
 };
 
 void Clear(TokenTable& table, uint8_t from, uint8_t to)
@@ -43,9 +44,9 @@ TokenTable MakeTasm412()
 {
     TokenTable table = kTasm40;
     Clear(table, 0xE5, kLastToken);
-    table[0x97 - kFirstToken] = "defmac ";
-    table[0x9B - kFirstToken] = "display ";
-    table[0x9F - kFirstToken] = "endmac";
+    table[0x97 - kFirstToken] = "DEFMAC ";
+    table[0x9B - kFirstToken] = "DISPLAY ";
+    table[0x9F - kFirstToken] = "ENDMAC";
     return table;
 }
 }  // namespace

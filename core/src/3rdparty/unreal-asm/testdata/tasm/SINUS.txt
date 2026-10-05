@@ -1,21 +1,21 @@
 ;
 ;----------------------------
         .IF     PASS
-PASS    equ     1
-REPTCNT equ     1
+PASS    EQU     1
+REPTCNT EQU     1
         .ENDIF
 ;
-        defmac  GENSINUS
+        DEFMAC  GENSINUS
 ;
-        org     SIN_ADR
-        defb    SIN_X/256
-        org     $+127
-        defb    0-(SIN_X/256)
+        ORG     SIN_ADR
+        DEFB    SIN_X/256
+        ORG     $+127
+        DEFB    0-(SIN_X/256)
 ;
-        org     SIN_ADR-1+(REPTCNT*2)
-        defb    SIN_X/256
-        org     $+127
-        defb    0-(SIN_X/256)
+        ORG     SIN_ADR-1+(REPTCNT*2)
+        DEFB    SIN_X/256
+        ORG     $+127
+        DEFB    0-(SIN_X/256)
 ;
 SIN_ADR =       SIN_ADR+1
 ;
@@ -27,16 +27,16 @@ REPTCNT =       REPTCNT-1
         .ELSE
         GENSINUS
         .ENDIF
-        endmac
+        ENDMAC
 ;
 ;=====================
-        org     #8000
+        ORG     #8000
 ;
-SIN_X           equ     0
-SIN_Y           equ     #7F00
-SIN_ADR         equ     $
+SIN_X           EQU     0
+SIN_Y           EQU     #7F00
+SIN_ADR         EQU     $
         GENSINUS
 REPTCNT         =       64
-        org     SIN_ADR+256
+        ORG     SIN_ADR+256
 ;
 

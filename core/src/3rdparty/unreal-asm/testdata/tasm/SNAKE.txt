@@ -1,9 +1,9 @@
         .IF     PASS
-PASS    equ     1
-PASS2   equ     1
+PASS    EQU     1
+PASS2   EQU     1
         .ENDIF
 ;
-        defmac  PLAYPIT
+        DEFMAC  PLAYPIT
 ;
 KEY     =       [#5C08]
         .IF     KEY-"q"
@@ -25,8 +25,8 @@ YPOS    =       23
         .IF     YPOS-24
 YPOS    =       0
         .ENDIF
-        org     32*[LAST+#7001]+[LAST+#7000]+#5800
-        defb    ATRFREE
+        ORG     32*[LAST+#7001]+[LAST+#7000]+#5800
+        DEFB    ATRFREE
 HADR    =       32*YPOS+XPOS+#5800
 ;
         .IF     [HADR]-ATRSN
@@ -36,11 +36,11 @@ GAMEOVER        =       1
 RABBIT          =       0
         .ENDIF
 ;
-        org     HADR
-        defb    ATRSN
-        org     HEAD+#7000
-        defb    XPOS
-        defb    YPOS
+        ORG     HADR
+        DEFB    ATRSN
+        ORG     HEAD+#7000
+        DEFB    XPOS
+        DEFB    YPOS
 HEAD    =       HEAD+2&#0FFF
         .IF     FLAG
 LAST    =       LAST+2&#0FFF
@@ -51,8 +51,8 @@ FLAG    =       FLAG-1
         .IF     RABBIT
 HADR    =       256*[HEAD+LAST]+[HEAD+LAST+1]&#2FF+#5800
         .IF     [HADR]-ATRFREE
-        org     HADR
-        defb    ATRFREE+128
+        ORG     HADR
+        DEFB    ATRFREE+128
 RABBIT  =       1
 FLAG    =       4
         .ENDIF
@@ -60,44 +60,44 @@ FLAG    =       4
         .IF     PASS2|GAMEOVER
         PLAYPIT
         .ENDIF
-        endmac
+        ENDMAC
 ;
-ATRFREE equ     [#5800]
-ATRSN   equ     ATRFREE&7*8+(ATRFREE/8&7)
+ATRFREE EQU     [#5800]
+ATRSN   EQU     ATRFREE&7*8+(ATRFREE/8&7)
 ;
-        org     #4000
-        defs    256,#FF
-        defs    2048-512,#81
-        defs    256,#FF
-        defs    256,#FF
-        defs    2048-512,#81
-        defs    256,#FF
-        defs    256,#FF
-        defs    2048-512,#81
-        defs    256,#FF
-        org     #5800
-        defs    768,ATRFREE
-        org     #7000
-        defs    #1000
-HEAD    equ     4
-LAST    equ     0
-XPOS    equ     0
-YPOS    equ     0
-KEY     equ     "p"
-HADR    equ     0
-GAMEOVER        equ     0
-RABBIT  equ     0
-FLAG    equ     0
+        ORG     #4000
+        DEFS    256,#FF
+        DEFS    2048-512,#81
+        DEFS    256,#FF
+        DEFS    256,#FF
+        DEFS    2048-512,#81
+        DEFS    256,#FF
+        DEFS    256,#FF
+        DEFS    2048-512,#81
+        DEFS    256,#FF
+        ORG     #5800
+        DEFS    768,ATRFREE
+        ORG     #7000
+        DEFS    #1000
+HEAD    EQU     4
+LAST    EQU     0
+XPOS    EQU     0
+YPOS    EQU     0
+KEY     EQU     "p"
+HADR    EQU     0
+GAMEOVER        EQU     0
+RABBIT  EQU     0
+FLAG    EQU     0
 ;
-        org     #5C08
-        defb    "p"
+        ORG     #5C08
+        DEFB    "p"
 ;
         PLAYPIT
 ;
         .IF     GAMEOVER-1
-        display GAMEOVER
-TOTALSCORE      equ     HEAD-LAST&#FFF/2
-        display TOTALSCORE
+        DISPLAY GAMEOVER
+TOTALSCORE      EQU     HEAD-LAST&#FFF/2
+        DISPLAY TOTALSCORE
         .ENDIF
 ;
 PASS2   =       0

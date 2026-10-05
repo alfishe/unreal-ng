@@ -52,7 +52,8 @@ size_t BlankRun(std::span<const uint8_t> body, size_t i, Spacing spacing, size_t
 
 bool IsWordChar(char c)
 {
-    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '@' || c == '$' || c == '#';
+    // A keyword never starts or ends next to these (a backslash starts a TASM 4.12 macro parameter: \r, \0)
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '@' || c == '$' || c == '#' || c == '\\';
 }
 constexpr size_t kTabStop = 8;
 constexpr uint16_t kTasm2Start = 38750;   // TASM 2.0 saves sources as type C with this start
@@ -296,7 +297,7 @@ bool TasmCodec::EncodeBody(const std::string& text, const std::string& version, 
         if (count == 1)
             body.push_back(' ');
     };
-    // TASM tokenizes every lower-case keyword word wherever it stands: labels, operands, strings and comments alike
+    // TASM tokenizes every keyword word, in any case, wherever it stands: labels, operands, strings and comments alike
     // (research-tasm.md §4)
     size_t i = 0;
     while (i < n)
@@ -333,12 +334,15 @@ bool TasmCodec::EncodeBody(const std::string& text, const std::string& version, 
             i = j;
             continue;
         }
-        if (std::islower(static_cast<unsigned char>(c)) && (i == 0 || !IsWordChar(text[i - 1])))
+        if (std::isalpha(static_cast<unsigned char>(c)) && (i == 0 || !IsWordChar(text[i - 1])))
         {
+            // A whole word of letters, compared with the keywords without regard to case (TASM shows them in capitals)
             size_t j = i;
-            while (j < n && std::islower(static_cast<unsigned char>(text[j])))
+            while (j < n && std::isalpha(static_cast<unsigned char>(text[j])))
                 ++j;
-            const std::string_view word(text.data() + i, j - i);
+            std::string word(text.data() + i, j - i);
+            for (char& ch : word)
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
             const bool wordEnds = j >= n || !IsWordChar(text[j]);
             int token = -1;
             size_t consumed = 0;
@@ -347,7 +351,7 @@ bool TasmCodec::EncodeBody(const std::string& text, const std::string& version, 
                 const std::string_view name = tokens[t];
                 if (name.empty())
                     continue;
-                if (name == "af'" && word == "af" && j < n && text[j] == '\'')
+                if (name == "AF'" && word == "AF" && j < n && text[j] == '\'')
                     token = static_cast<int>(t), consumed = 3;
                 else if (wordEnds && name.size() == word.size() + 1 && name.back() == ' ' && name.substr(0, word.size()) == word &&
                          j < n && text[j] == ' ')

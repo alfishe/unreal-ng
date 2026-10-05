@@ -1,109 +1,109 @@
-        org #61A8
-        ei
-        call 49152
-        ld b,#3000
+        ORG #61A8
+        EI
+        CALL 49152
+        LD B,#3000
 R3
-        push bc
-        call 49158
-        halt
-        pop bc
-        djnz R3
-        call 49158
-        call 26500      ;SPR I.SOFT A4
-        call 49158
-        ld b,#3000
+        PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ R3
+        CALL 49158
+        CALL 26500      ;SPR I.SOFT A4
+        CALL 49158
+        LD B,#3000
 R2
-        push bc
-        call 49158
-        halt
-        pop bc
-        djnz R2
-        call 49158
-        halt
-        call 49158
-        halt
-        call 49158
-        call 28000      ;SPR RAMKA  A5
-        ld b,150
-B1      push bc
-        call 49158
-        halt
-        pop bc
-        djnz B1
-        call 49158
-        call MET
-        ld b,#3000
-A1      push bc
-        call 49158
-        halt
-        pop bc
-        djnz A1
-        ld b,#3000
-A2      push bc
-        call 49158
-        halt
-        pop bc
-        djnz A2
-        ld b,#3000
-A3      push bc
-        call 49158
-        halt
-        pop bc
-        djnz A3
-        ld b,40
-A4      push bc
-        call 49158
-        halt
-        pop bc
-        djnz A4
-        call 49158
-        halt
-        call 30200      ;SPR SK. A2
-        call 31000      ;SPR SK. A3
-        call 49158
-        call 30200
-        call 31000
-MET     ld      de,#4829
-        ld      b,#08
-        ld      hl,SPR
+        PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ R2
+        CALL 49158
+        HALT
+        CALL 49158
+        HALT
+        CALL 49158
+        CALL 28000      ;SPR RAMKA  A5
+        LD B,150
+B1      PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ B1
+        CALL 49158
+        CALL MET
+        LD B,#3000
+A1      PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ A1
+        LD B,#3000
+A2      PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ A2
+        LD B,#3000
+A3      PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ A3
+        LD B,40
+A4      PUSH BC
+        CALL 49158
+        HALT
+        POP BC
+        DJNZ A4
+        CALL 49158
+        HALT
+        CALL 30200      ;SPR SK. A2
+        CALL 31000      ;SPR SK. A3
+        CALL 49158
+        CALL 30200
+        CALL 31000
+MET     LD      DE,#4829
+        LD      B,#08
+        LD      HL,SPR
 
-        call    PROGA
+        CALL    PROGA
 
-        ret
-PROGA   ld      b,086
-CIKL    push    bc
-        push    de
-        ld      b,014
-CIKL1   ld      a,(hl)
-        ld      (de),a
-        inc     hl
-        inc     e
-        djnz    CIKL1
-        pop     de
-        inc     d
-        ld      a,d
-        and     #07
-        jr      nz,ART
-        ld      a,e
-        add     a,#20
-        ld      e,a
-        jr      c,ART
-        ld      a,d
-        sub     #08
-        ld      d,a
-ART     pop     bc
-        push af
-        push bc
-        push de
-        push hl
-        call 49158
-        halt
-        pop hl
-        pop de
-        pop bc
-        pop af
-        djnz    CIKL
-        ret
+        RET
+PROGA   LD      B,086
+CIKL    PUSH    BC
+        PUSH    DE
+        LD      B,014
+CIKL1   LD      A,(HL)
+        LD      (DE),A
+        INC     HL
+        INC     E
+        DJNZ    CIKL1
+        POP     DE
+        INC     D
+        LD      A,D
+        AND     #07
+        JR      NZ,ART
+        LD      A,E
+        ADD     A,#20
+        LD      E,A
+        JR      C,ART
+        LD      A,D
+        SUB     #08
+        LD      D,A
+ART     POP     BC
+        PUSH AF
+        PUSH BC
+        PUSH DE
+        PUSH HL
+        CALL 49158
+        HALT
+        POP HL
+        POP DE
+        POP BC
+        POP AF
+        DJNZ    CIKL
+        RET
 SPR
         .INCBIN a1
 

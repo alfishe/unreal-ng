@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
 
 #include "codecs/tasm/tasmcodec.h"
 #include "testdata.h"
@@ -120,7 +121,8 @@ TEST(TasmCodec_Test, CanonicalTokenizerReproducesTasmsOwnBytes)
 
 TEST(TasmCodec_Test, KeywordsAreTokenizedEverywhere)
 {
-    // TASM replaces a lower-case keyword word wherever it stands: in a label field, a string, a comment
+    // TASM replaces a keyword word, in any case, wherever it stands: in a label field, a string, a comment; it shows
+    // keywords in capitals
     const codecs::TasmCodec codec;
     EncodeOptions to40;
     to40.subversion = "4.0";
@@ -138,7 +140,7 @@ TEST(TasmCodec_Test, EditedLineIsTokenizedAndTheRestKept)
     const codecs::TasmCodec codec;
     const auto data = Unwrap("000LOAD").data;
     DecodeResult decoded = codec.Decode(data, {});
-    decoded.document.lines[1].text = "LOOP        djnz      LOOP ; again";
+    decoded.document.lines[1].text = "LOOP        DJNZ      LOOP ; again";
     const EncodeResult encoded = codec.Encode(decoded.document, {});
     ASSERT_TRUE(encoded.ok);
     const DecodeResult again = codec.Decode(encoded.bytes, {});
@@ -155,7 +157,7 @@ TEST(TasmCodec_Test, EditedLineIsTokenizedAndTheRestKept)
 TEST(TasmCodec_Test, Tasm412CountsBlanksDirectly)
 {
     const codecs::TasmCodec codec;
-    const SourceDocument document = SourceDocument::FromText("        org     #6000\nSTART   ld      a,1\n        ret", "tasm");
+    const SourceDocument document = SourceDocument::FromText("        ORG     #6000\nSTART   LD      A,1\n        RET", "tasm");
     EncodeOptions to412;
     to412.subversion = "4.12";
     const EncodeResult encoded = codec.Encode(document, to412);
@@ -226,7 +228,7 @@ TEST(TasmCodec_Test, ConversionBetweenVersions)
 
 TEST(TasmCodec_Test, KeywordMissingInTheTargetVersionIsReported)
 {
-    // "db" (#ED) exists in TASM 4.0 only: written into TASM 3 it stays text, with a warning
+    // DB (#ED) exists in TASM 4.0 only: written into TASM 3 it stays text, with a warning
     const codecs::TasmCodec codec;
     const DecodeResult decoded = codec.Decode(Unwrap("TABLES_L").data, {});
     ASSERT_EQ(decoded.document.subversion, "4.0");
@@ -235,7 +237,7 @@ TEST(TasmCodec_Test, KeywordMissingInTheTargetVersionIsReported)
     const EncodeResult as3 = codec.Encode(decoded.document, to3);
     ASSERT_TRUE(as3.ok);
     EXPECT_TRUE(std::any_of(as3.diagnostics.begin(), as3.diagnostics.end(),
-                            [](const Diagnostic& d) { return d.message == "'db' is not a keyword of TASM 3: written as text"; }));
+                            [](const Diagnostic& d) { return d.message == "'DB' is not a keyword of TASM 3: written as text"; }));
     DecodeOptions as3Reading;
     as3Reading.subversion = "3";
     EXPECT_EQ(codec.Decode(as3.bytes, as3Reading).document.Text(), decoded.document.Text()) << "the text is unchanged";
@@ -272,12 +274,18 @@ TEST(TasmCodec_Test, Tasm20IsTextWithEditorTabs)
     const EncodeResult one = codec.Encode(SourceDocument::FromText("1234567 X\nA                       B\nX  Y", "tasm"), to20);
     EXPECT_EQ(std::string(one.bytes.begin(), one.bytes.end()), "1234567\tX\r\nA\t\t\tB\r\nX  Y\r\n");
 
-    // Into TASM 4.0: re-tokenized (lower-case keywords become tokens), read back with the same text
+    // Into TASM 4.0: re-tokenized; TASM 4.0 then shows the keywords in capitals, the rest is unchanged
     EncodeOptions to40;
     to40.subversion = "4.0";
     const EncodeResult as40 = codec.Encode(decoded.document, to40);
     ASSERT_TRUE(as40.ok);
     DecodeOptions as40Reading;
     as40Reading.subversion = "4.0";
-    EXPECT_EQ(codec.Decode(as40.bytes, as40Reading).document.Text(), decoded.document.Text());
+    auto upper = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return text;
+    };
+    const std::string as40Text = codec.Decode(as40.bytes, as40Reading).document.Text();
+    EXPECT_EQ(upper(as40Text), upper(decoded.document.Text()));
+    EXPECT_NE(as40Text.find("start   LD A,7      ; BORDER"), std::string::npos) << as40Text.substr(0, 80);
 }

@@ -1,184 +1,184 @@
-        org     30000
+        ORG     30000
 
-INIT    equ     25000
-PLAY    equ     25006
+INIT    EQU     25000
+PLAY    EQU     25006
 
-        di
-        ld      a,(#5D16)
-        res     4,a
-        ld      (DRIVE1+1),a
-        set     4,a
-        ld      (DRIVE2+1),a
-        call    INIT
-        ld      hl,#F300
-        ld      de,#F301
-        ld      c,l
-        ld      b,e
-        ld      a,h
-        ld      (hl),#F4
-        ldir
-        ld      i,a
-        im      2
-        ld      hl,BARS
-        ld      de,#F4F4
-        ld      bc,END-BARS
-        ldir
-        ei
-        ld      b,91            ; SECTORS
-        ld      hl,0            ; START ADRESS
-        push    hl
-        ld      de,(#5CF4)      ; TRK/SEC
-        call    DISK
-        ld      (#5CF4),de      ; NEW TRK/SEC
-        di
-        im      0
-        ei
-        call    INIT
-STOP    jr      STOP
+        DI
+        LD      A,(#5D16)
+        RES     4,A
+        LD      (DRIVE1+1),A
+        SET     4,A
+        LD      (DRIVE2+1),A
+        CALL    INIT
+        LD      HL,#F300
+        LD      DE,#F301
+        LD      C,L
+        LD      B,E
+        LD      A,H
+        LD      (HL),#F4
+        LDIR
+        LD      I,A
+        IM      2
+        LD      HL,BARS
+        LD      DE,#F4F4
+        LD      BC,END-BARS
+        LDIR
+        EI
+        LD      B,91            ; SECTORS
+        LD      HL,0            ; START ADRESS
+        PUSH    HL
+        LD      DE,(#5CF4)      ; TRK/SEC
+        CALL    DISK
+        LD      (#5CF4),DE      ; NEW TRK/SEC
+        DI
+        IM      0
+        EI
+        CALL    INIT
+STOP    JR      STOP
 
 
-BARS    ex      af,af'
-        cp      b
-Z1      jr      L1
-        ld      (Z2+1),a
-        ex      af,af'
-        ei
-        jp      #3D2F
-L1      exx
-        ld      a,1
-        out     (254),a
-        call    PLAY    ; SONG
-        sub     a
-        out     (254),a
-L4      ld      a,0
-        exx
-        ld      a,h
-        inc     a
-        jr      nz,L3
-        ld      a,l
-        inc     a
-        jr      nz,L3
-        inc     sp
-        inc     sp
-L3      sub     a
-        ld      (L4+1),a
-        ex      af,af'
-        ei
-        jp      #3D2F
-DISK    ld      a,#18
-        ld      (Z1),a
-        ld      a,d
-        srl     a
-        call    MOPS
-        ld      a,#18
-        call    MIXI
-        call    MOPS1
-FUCK    ld      a,d
-        srl     a
-        call    MIXI1
-        bit     0,d
-DRIVE1  ld      a,#2C
-        jr      nz,DUST
-DRIVE2  ld      a,#3C
-DUST    call    MOPS2
-FUCK2   ld      a,e
-        inc     a
-        call    MIXI2
-AGAIN   push    hl
-        ld      a,#84
-        ld      c,1
-        call    MIXI
-        push    bc
-        ld      bc,#7F
-        ld      a,1
-        ld      (Z2+1),a
-        ld      a,#28
-        ld      (Z1),a
-        sub     a
-        ex      af,af'
-        call    MOPS1
-        ex      af,af'
-        push    bc
-        ld      a,#18
-        ld      (Z1),a
-Z2      ld      a,1
-        and     a
-        call    z,BARS
-        pop     bc
-        ld      a,b
-        pop     bc
-        and     a
-        jr      z,BACK
-TURN    pop     hl
-        jr      AGAIN
-BACK    call    MIXI3
-        and     8
-        jr      z,SHIT
-        ld      a,2
-        ld      (L4+1),a
-        jr      TURN
-SHIT    pop     af
-        ld      a,e
-        add     a,c
-        bit     4,a
-        jr      z,MIXI4
-        sub     a
-        ld      e,a
-        inc     d
-        bit     0,d
-        jr      nz,BACK2
-        ld      a,#58
-        call    MIXI
-        call    MOPS1
-BACK2   ld      a,b
-        sub     c
-        ld      b,a
-        ret     z
-        jp      FUCK
-MIXI4   inc     e
-        djnz    FUCK2
-        ret
-MIXI    push    hl
-        ld      hl,#2FC3
-        ex      (sp),hl
-        jp      #3D2F
-MIXI3   push    bc,hl
-        ld      hl,FIKUS
-        push    hl
-        ld      hl,#3FEC
-        push    hl
-        ld      c,#1F
-        ld      hl,#FFFE
-        ei
-        jp      #3D2F
-FIKUS   dec     hl
-        ld      a,(hl)
-        pop     hl,bc
-        ret
-MIXI1   push    hl
-        ld      hl,#1E3A
-        ex      (sp),hl
-        jp      #3D2F
-MIXI2   push    bc
-        ld      c,#5F
-ZIRK    push    hl
-        ld      hl,FIKUS2
-        push    hl
-        ld      hl,#2A53
-        push    hl
-        jp      #3D2F
-FIKUS2  pop     hl,bc
-        ret
-MOPS    push    bc
-        ld      c,#7F
-        jr      ZIRK
-MOPS2   push    hl
-        ld      hl,#1FF3
-        ex      (sp),hl
-        jp      #3D2F
-MOPS1   push    hl
-        ld      hl,#3FE5
-        ex      (sp),hl
-        jp      #3D2F
-END     ret
+BARS    EX      AF,AF'
+        CP      B
+Z1      JR      L1
+        LD      (Z2+1),A
+        EX      AF,AF'
+        EI
+        JP      #3D2F
+L1      EXX
+        LD      A,1
+        OUT     (254),A
+        CALL    PLAY    ; SONG
+        SUB     A
+        OUT     (254),A
+L4      LD      A,0
+        EXX
+        LD      A,H
+        INC     A
+        JR      NZ,L3
+        LD      A,L
+        INC     A
+        JR      NZ,L3
+        INC     SP
+        INC     SP
+L3      SUB     A
+        LD      (L4+1),A
+        EX      AF,AF'
+        EI
+        JP      #3D2F
+DISK    LD      A,#18
+        LD      (Z1),A
+        LD      A,D
+        SRL     A
+        CALL    MOPS
+        LD      A,#18
+        CALL    MIXI
+        CALL    MOPS1
+FUCK    LD      A,D
+        SRL     A
+        CALL    MIXI1
+        BIT     0,D
+DRIVE1  LD      A,#2C
+        JR      NZ,DUST
+DRIVE2  LD      A,#3C
+DUST    CALL    MOPS2
+FUCK2   LD      A,E
+        INC     A
+        CALL    MIXI2
+AGAIN   PUSH    HL
+        LD      A,#84
+        LD      C,1
+        CALL    MIXI
+        PUSH    BC
+        LD      BC,#7F
+        LD      A,1
+        LD      (Z2+1),A
+        LD      A,#28
+        LD      (Z1),A
+        SUB     A
+        EX      AF,AF'
+        CALL    MOPS1
+        EX      AF,AF'
+        PUSH    BC
+        LD      A,#18
+        LD      (Z1),A
+Z2      LD      A,1
+        AND     A
+        CALL    Z,BARS
+        POP     BC
+        LD      A,B
+        POP     BC
+        AND     A
+        JR      Z,BACK
+TURN    POP     HL
+        JR      AGAIN
+BACK    CALL    MIXI3
+        AND     8
+        JR      Z,SHIT
+        LD      A,2
+        LD      (L4+1),A
+        JR      TURN
+SHIT    POP     AF
+        LD      A,E
+        ADD     A,C
+        BIT     4,A
+        JR      Z,MIXI4
+        SUB     A
+        LD      E,A
+        INC     D
+        BIT     0,D
+        JR      NZ,BACK2
+        LD      A,#58
+        CALL    MIXI
+        CALL    MOPS1
+BACK2   LD      A,B
+        SUB     C
+        LD      B,A
+        RET     Z
+        JP      FUCK
+MIXI4   INC     E
+        DJNZ    FUCK2
+        RET
+MIXI    PUSH    HL
+        LD      HL,#2FC3
+        EX      (SP),HL
+        JP      #3D2F
+MIXI3   PUSH    BC,HL
+        LD      HL,FIKUS
+        PUSH    HL
+        LD      HL,#3FEC
+        PUSH    HL
+        LD      C,#1F
+        LD      HL,#FFFE
+        EI
+        JP      #3D2F
+FIKUS   DEC     HL
+        LD      A,(HL)
+        POP     HL,BC
+        RET
+MIXI1   PUSH    HL
+        LD      HL,#1E3A
+        EX      (SP),HL
+        JP      #3D2F
+MIXI2   PUSH    BC
+        LD      C,#5F
+ZIRK    PUSH    HL
+        LD      HL,FIKUS2
+        PUSH    HL
+        LD      HL,#2A53
+        PUSH    HL
+        JP      #3D2F
+FIKUS2  POP     HL,BC
+        RET
+MOPS    PUSH    BC
+        LD      C,#7F
+        JR      ZIRK
+MOPS2   PUSH    HL
+        LD      HL,#1FF3
+        EX      (SP),HL
+        JP      #3D2F
+MOPS1   PUSH    HL
+        LD      HL,#3FE5
+        EX      (SP),HL
+        JP      #3D2F
+END     RET
 
