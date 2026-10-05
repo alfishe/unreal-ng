@@ -853,9 +853,14 @@ bool PortDecoder_TSConf::CmosReachable() const
 
 uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
 {
-    // Only the data port (#BFF7, A14 = 0) drives the bus
+    // Only the data port (#BFF7, A14 = 0) answers. Inside vdos the AVR gets the read (portf7_rd allows vdos,
+    // [V] zports.v:721) but the FPGA does not drive the bus: porthit takes #xxF7 only while !dos (:330), and vdos
+    // is always in DOS - the CPU reads #FF
     if ((port & 0x4000) == 0 && CmosReachable())
-        return _evoAvr.ReadData();
+    {
+        const uint8_t value = _evoAvr.ReadData();
+        return _ts.dos ? 0xFF : value;
+    }
     return 0xFF;
 }
 

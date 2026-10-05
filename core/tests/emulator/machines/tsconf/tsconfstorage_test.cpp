@@ -163,6 +163,9 @@ TEST_F(TsConfStorage_Test, VDOS1_VirtualDriveHidesTheController)
 /// VDOS-2 (hs §9): the CMOS answers inside vdos, not from the TR-DOS ROM
 TEST_F(TsConfStorage_Test, VDOS2_CmosInsideVdos)
 {
+    // [V] zports.v:330 porthit takes #xxF7 only while !dos, and dataout = porthit && iord (:347) is the only way
+    // the FPGA drives a port read: inside vdos (always in DOS) a CMOS read floats (#FF). Writes do reach the AVR
+    // (portf7_wr allows vdos, :720). The CMOS answered inside vdos (TS-Conf audit, memory-ports B1)
     TsConfState& ts = _decoder->GetState();
     Out(0xEFF7, 0x80);
     Out(0xDFF7, 0x0E);
@@ -171,7 +174,12 @@ TEST_F(TsConfStorage_Test, VDOS2_CmosInsideVdos)
     EXPECT_EQ(In(0xBFF7), 0xFF);
     ts.vdos = 1;
     Out(0xDFF7, 0x0E);
-    EXPECT_EQ(In(0xBFF7), 0x5A);
+    EXPECT_EQ(In(0xBFF7), 0xFF) << "the read floats inside vdos";
+    Out(0xBFF7, 0x33);  // the write lands
+    ts.vdos = 0;
+    ts.dos = 0;
+    Out(0xDFF7, 0x0E);
+    EXPECT_EQ(In(0xBFF7), 0x33);
 }
 
 /// IDE-4 (hs §8.3): with [HDD] IdeStall=1 a bus cycle to the drive costs

@@ -550,7 +550,7 @@ branch and is reused (technical-design §3.11).
   takes effect at the **next M1** (`pre_vdos`) ([V] `zports.v:640-651`, `zmem.v:100-116`).
 - **vdos off**: an IN/OUT to 1F/3F/5F/7F (not FF) while vdos; immediate.
 - While vdos: writes to FF only update the drive-select bits; window 0 = RAM
-  page 0xFF writable; INT output gated (§5); CMOS reachable (§9).
+  page 0xFF writable; INT output gated (§5); CMOS writable, its reads float (§9).
 - The "virtual drive" is therefore **Z80 code in RAM page 0xFF** (placed by the
   BIOS/software); the emulator only implements the swap — nothing is served
   host-side.
@@ -645,7 +645,7 @@ for an empty unit (#FFFF), and the transfer completes.
 
 | Device | Decode | Notes |
 |:--|:--|:--|
-| Gluk CMOS | low byte `F7`, A8 = 1; `#DFF7` address (A13 = 0), `#BFF7` data (A14 = 0), `#EFF7` (A12 = 0) | `#EFF7` writable only outside DOS, only bit 7 used (CMOS enable). CMOS reachable when `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` — i.e. **not** from the TR-DOS ROM, yes inside vdos ([V] `zports.v:719-732`; [U] allows any DOS state — divergence) |
+| Gluk CMOS | low byte `F7`, A8 = 1; `#DFF7` address (A13 = 0), `#BFF7` data (A14 = 0), `#EFF7` (A12 = 0) | `#EFF7` writable only outside DOS, only bit 7 used (CMOS enable). CMOS reachable when `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` — i.e. **not** from the TR-DOS ROM; inside vdos the AVR takes writes and sees reads, but a read gives `#FF`: `porthit` takes `#xxF7` only while `!dos` (`zports.v:330`) and vdos is always in DOS ([V] `zports.v:719-732`; [U] answers in any DOS state — divergence; unreal-ng answered inside vdos until the 2026-10-05 audit) |
 | Gluk extension | CMOS regs **0xF0-0xFF**; mode selected by writing F0 | 0 config version, 1 bootloader version, 2 PS/2 keyboard scancode log, 3 config/modes; reg 0x0C = 0 disables EEPROM mode first (`zx-evo-docs/GluExt`) |
 | Kempston mouse | `xxDF`: A8 = 0 → `{wheel[3:0], 1, btn[2:0]}`; A8 = 1 → A10 ? Y : X | `#FADF/#FBDF/#FFDF` ([V] `zkbdmus.v:107`) |
 | Kempston joystick | `0x1F`, 8-bit | only when `!DOS && !FDD_VIRT[7]` ([V] `zports.v:334,450-455`) |
