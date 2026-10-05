@@ -100,6 +100,11 @@ public:
     /// A built-in device of the machine, for the shadow report (architecture.md §4.3 "Shadowing"). `id` must outlive
     /// the table (reference data strings)
     void AddBuiltIn(const char* id, std::span<const PortClaim> claims);
+    /// Drops the built-ins (a reconfiguration); the claims stay
+    void ClearBuiltIns()
+    {
+        _builtIns.clear();
+    }
 
     /// Where the ROM-fetch lock and DOS-gated claims read their signals; nullptr: never locked, never DOS
     void BindSignals(const IClaimSignals* signals) { _signals = signals; }

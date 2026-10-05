@@ -70,6 +70,9 @@ PortDecoder::PortDecoder(EmulatorContext* context) : _ide(context)
     _tape = context->pTape;
     _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
+
+    // ROM-locked and DOS-gated claims of slot-built cards read the bus signals here (only when an entry needs them)
+    _fullDecodeClaims.BindSignals(&_claimSignals);
 }
 
 /// region <IDE board>
@@ -1559,9 +1562,125 @@ void PortDecoder::SetFullDecodeScanTrapForTests(PortDevice* trap)
 
 PortDevice* PortDecoder::LowByteObserver(uint16_t rawPort) const
 {
+    // Legacy low-byte observers only: a slot-built card's low-byte claim is resolved by the claim table
     const slots::ClaimEntry* entry = _fullDecodeClaims.FindByMask(rawPort, kLowByteObserverMask);
-    return entry ? entry->owner : nullptr;
+    return entry && entry->slot < kSlotCardSlotBase ? entry->owner : nullptr;
 }
+
+/// region <Slot-built cards>
+
+uint16_t PortDecoder::ClaimSignals::LastM1Address() const
+{
+    return _decoder.IoPc();
+}
+
+bool PortDecoder::ClaimSignals::DosActive() const
+{
+    return _decoder._context != nullptr && (_decoder._context->emulatorState.flags & CF_TRDOS) != 0;
+}
+
+void PortDecoder::ConfigureSlotBus(slots::Arbitration arbitration, slots::ReadRule readRule,
+                                   std::span<const slots::PortClaim> boardPorts,
+                                   std::span<const slots::BuiltInDef> builtIns)
+{
+    _fullDecodeClaims.Configure(arbitration, readRule, boardPorts);
+    _removedBuiltInClaims.clear();
+    _fullDecodeClaims.ClearBuiltIns();
+    for (const slots::BuiltInDef& builtIn : builtIns)
+        _fullDecodeClaims.AddBuiltIn(builtIn.id, builtIn.claims);
+    RebuildFullDecodeClaims();
+}
+
+void PortDecoder::AttachSlotCard(PortDevice* card, std::span<const slots::PortClaim> claims, uint8_t slotOrder,
+                                 slots::CycleDetection detection)
+{
+    if (!card)
+        return;
+    const uint8_t slot = std::max(slotOrder, kSlotCardSlotBase);
+    for (const slots::PortClaim& claim : claims)
+        _fullDecodeClaims.Add(slots::MakeClaimEntry(claim, slot, card, detection));
+    RebuildFullDecodeClaims();
+}
+
+void PortDecoder::DetachSlotCard(PortDevice* card)
+{
+    if (card && _fullDecodeClaims.RemoveOwner(card))
+        RebuildFullDecodeClaims();
+}
+
+void PortDecoder::SetRemovedBuiltIn(std::span<const slots::PortClaim> claims)
+{
+    _removedBuiltInClaims.insert(_removedBuiltInClaims.end(), claims.begin(), claims.end());
+}
+
+bool PortDecoder::IsBuiltInShadowed(const char* builtInId) const
+{
+    const auto* builtIn = _fullDecodeClaims.FindBuiltIn(builtInId);   // auto: Qt units define `slots`
+    return builtIn != nullptr && builtIn->shadowed;
+}
+
+/// ReadCycle, a port whose first claim is a slot-built card's: the claim table resolves the cycle (which cards see
+/// it, IORQGE, the bus arbitration, the read rule); the board's decode is its board side
+uint8_t PortDecoder::ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDrove)
+{
+    bool boardRan = false;
+    bool boardDrove = false;
+    const slots::ReadResult read = _fullDecodeClaims.Read(port, [&](slots::BoardCycle, uint8_t& value) {
+        // The board decodes as if no card were fitted (no machine with an UlaOnly bus fits slot-built cards yet:
+        // UlaSilenced runs the whole decode too). Its claim override must not stand down for the card's low-byte
+        // claims: they are not legacy observers
+        boardRan = true;
+        _claimCycle = { port, true, false };
+        value = DecodePortIn(port, pc);
+        _claimCycle.active = false;
+        boardDrove = _lastPortDecoded;
+        // A chip out of its socket drives nothing, whatever the board's decode says about the port
+        for (const slots::PortClaim& claim : _removedBuiltInClaims)
+        {
+            if ((port & claim.mask) == (claim.match & claim.mask) &&
+                (static_cast<uint8_t>(claim.dir) & static_cast<uint8_t>(slots::Dir::In)) != 0)
+            {
+                boardDrove = false;
+                _lastPortDecoded = false;
+            }
+        }
+        return boardDrove;
+    });
+    cardDrove = read.drivers > (boardDrove ? 1 : 0);
+    if (!boardRan)
+    {
+        // A card's IORQGE hid the cycle from the board (CardWins): the board saw nothing, the CPU's access is still
+        // traced and still meets its breakpoints
+        _lastPortDecoded = false;
+        PortDecodeDisposition disp;
+        disp.wasFullDecodeClaimed = true;
+        OnPortInComplete(port, read.value, pc, disp);
+    }
+    _lastFullDecodeInPort = port;
+    _lastFullDecodeInValue = read.value;
+    return read.value;
+}
+
+/// WriteCycle, a port whose first claim is a slot-built card's: every card that sees the write gets it, the board
+/// unless a card's IORQGE hides the cycle
+void PortDecoder::WriteSlotCardCycle(uint16_t port, uint8_t value, uint16_t pc)
+{
+    bool boardRan = false;
+    _fullDecodeClaims.Write(port, value, [&](slots::BoardCycle) {
+        boardRan = true;
+        _claimCycle = { port, true, false };
+        DecodePortOut(port, value, pc);
+        _claimCycle.active = false;
+    });
+    if (!boardRan)
+    {
+        PortDecodeDisposition disp;
+        disp.wasFullDecodeClaimed = true;
+        OnPortOutComplete(port, value, pc, disp);
+    }
+}
+
+/// endregion </Slot-built cards>
 
 /// Whether a low-byte card stands the board's decode down for this cycle.
 /// A read only stands the model decode down when the card actually drives
@@ -1809,6 +1928,8 @@ uint8_t PortDecoder::ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrov
     // The one claim lookup of the cycle: the first card in slot order (the
     // exact 16-bit observer before the low-byte one) drives the bus
     const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    if (entry && entry->slot >= kSlotCardSlotBase) [[unlikely]]
+        return ReadSlotCardCycle(port, pc, cardDrove);
     PortDevice* card = entry ? entry->owner : nullptr;
     uint8_t cardValue = 0xFF;
     bool claimsBus = false;
@@ -1856,6 +1977,11 @@ void PortDecoder::WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc)
 {
     // The one claim lookup of the cycle (exact observer before the low-byte one)
     const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    if (entry && entry->slot >= kSlotCardSlotBase) [[unlikely]]
+    {
+        WriteSlotCardCycle(port, value, pc);
+        return;
+    }
     bool standDown = false;
     if (entry)
     {

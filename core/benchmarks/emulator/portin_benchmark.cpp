@@ -11,6 +11,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 
@@ -223,5 +224,91 @@ static void BM_PortCard(benchmark::State& state)
     manager->RemoveEmulator(emulator->GetUUID());
 }
 BENCHMARK(BM_PortCard)
+    ->ArgsProduct({ { 0, 1 }, { 0, 1 }, { 0, 1 }, { 0, 1 } })
+    ->Unit(benchmark::kMicrosecond);
+
+/// A slot-built card on the port path (ZX-MultiSound, docs/inprogress/2026-10-03-zx-multisound/tdd-integration.md
+/// MS-4): Pentagon (CardWins) / ATM3 (BoardWins, the card detects RD / WR) x [SLOTS] with no card / `zxbus.1 =
+/// multisound` x IN / OUT x port #00FD (no claim) / #FFFD (the card's IORQGE register port). Both sides run with a
+/// [SLOTS] section and nothing else in it, so the only difference is the card
+namespace
+{
+const uint16_t kSlotCardPorts[] = { 0x00FD, 0xFFFD };
+}  // namespace
+
+static void BM_PortSlotCard(benchmark::State& state)
+{
+    const char* model = kCardModels[state.range(0)];
+    const bool card = state.range(1) != 0;
+    const bool out = state.range(2) != 0;
+    const uint16_t port = kSlotCardPorts[state.range(3)];
+
+    const Config::ConfigLoadedHook previous = Config::GetConfigLoadedHook();
+    Config::SetConfigLoadedHook([previous, card](CONFIG& config)
+    {
+        if (previous)
+            previous(config);
+        config.slotConfig.Clear();
+        config.slotConfig.section = true;
+        if (card)
+            config.slotConfig.entries.push_back({ "zxbus.1", "multisound", "", "", false, "[bench]" });
+        SlotManager::Project(config.slotConfig, config);
+    });
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("bench-portslotcard", model, LoggerLevel::LogNone);
+    Config::SetConfigLoadedHook(previous);
+    if (!emulator)
+    {
+        state.SkipWithError("emulator creation failed");
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    if (card != (context->pSlotManager && !context->pSlotManager->Cards().empty()))
+    {
+        state.SkipWithError("MultiSound fitment differs from the request");
+        manager->RemoveEmulator(emulator->GetUUID());
+        return;
+    }
+    Z80* z80 = context->pCore->GetZ80();
+    Memory* memory = context->pMemory;
+    context->pScreen->InitFrame();
+    context->config.floatbus = 1;
+
+    // kBlock x IN A,(C) / OUT (C),A, then JP #8000
+    uint16_t a = 0x8000;
+    for (int i = 0; i < kBlock; i++)
+    {
+        memory->DirectWriteToZ80Memory(a++, 0xED);
+        memory->DirectWriteToZ80Memory(a++, out ? 0x79 : 0x78);
+    }
+    memory->DirectWriteToZ80Memory(a++, 0xC3);
+    memory->DirectWriteToZ80Memory(a++, 0x00);
+    memory->DirectWriteToZ80Memory(a, 0x80);
+
+    const uint32_t start = context->config.intstart + 1 + 14300;
+    z80->iff1 = 0;
+    z80->iff2 = 0;
+
+    for (auto _ : state)
+    {
+        z80->pc = 0x8000;
+        z80->bc = port;
+        z80->a = 0x07;   // a register number: OUT selects SSG register 7, IN reads it back
+        z80->t = start;
+        for (int i = 0; i < kBlock; i++)
+            z80->Z80Step();
+        uint8_t v = z80->a;
+        benchmark::DoNotOptimize(v);
+    }
+
+    state.SetItemsProcessed(state.iterations() * kBlock);
+    char label[64];
+    std::snprintf(label, sizeof(label), "%s %s %s #%04X", model, card ? "MultiSound" : "no card", out ? "OUT" : "IN",
+                  port);
+    state.SetLabel(label);
+    manager->RemoveEmulator(emulator->GetUUID());
+}
+BENCHMARK(BM_PortSlotCard)
     ->ArgsProduct({ { 0, 1 }, { 0, 1 }, { 0, 1 }, { 0, 1 } })
     ->Unit(benchmark::kMicrosecond);

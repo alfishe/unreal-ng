@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
@@ -494,6 +495,33 @@ protected:
 
     /// The low-byte observer covering this raw port (nullptr when none); claimed ports only
     PortDevice* LowByteObserver(uint16_t rawPort) const;
+
+#pragma push_macro("slots")
+#undef slots
+
+    /// The bus signals the claim table reads for ROM-locked and DOS-gated claims: the IN / OUT instruction's M1
+    /// address and the TR-DOS state
+    class ClaimSignals : public slots::IClaimSignals
+    {
+    public:
+        explicit ClaimSignals(const PortDecoder& decoder) : _decoder(decoder)
+        {
+        }
+        uint16_t LastM1Address() const override;
+        bool DosActive() const override;
+
+    private:
+        const PortDecoder& _decoder;
+    };
+    ClaimSignals _claimSignals{ *this };
+    /// The ports of built-in chips taken out of their sockets (SetRemovedBuiltIn): read on the slot-card path only
+    std::vector<slots::PortClaim> _removedBuiltInClaims;
+#pragma pop_macro("slots")
+
+    /// The claimed-port cycles of slot-built cards: the claim table's resolution (architecture.md §4.3) with the
+    /// board's decode as its board side; a board the cards hide gets no cycle (the trace still records the access)
+    uint8_t ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDrove);
+    void WriteSlotCardCycle(uint16_t port, uint8_t value, uint16_t pc);
 
     /// The claim resolution of the claimed cycle ReadCycle / WriteCycle is running: its port and whether a low-byte
     /// card stands the board's decode down (a write: always; a read: when the card claims it, portDeviceClaimsRead).
@@ -1072,6 +1100,33 @@ public:
     /// Remove a low-byte full-decode observer. The device pointer must match
     /// the registration - a stale observer would keep firing into a dead object.
     void UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);
+
+    /// region <Slot-built cards (ZX-bus slots, emulator/slots/card.h)>
+
+    /// Slot-built cards share the observers' claim table: their claims sit in slots kSlotCardSlotBase and up, after
+    /// the two legacy observer slots, so a port no card claims still costs the one bit test, and a claimed port's
+    /// first match tells which resolution runs. A port covered by a legacy observer first stays on the legacy path
+    /// (no slot-built card shares a port with one today)
+    static constexpr uint8_t kSlotCardSlotBase = 2;
+#pragma push_macro("slots")
+#undef slots
+
+    /// The bus the slot-built cards sit on: its arbitration, read rule and (BoardWins) the board ports hidden from
+    /// Iorq cards, and the machine's built-ins for the shadow report. SlotManager sets it before attaching the cards
+    void ConfigureSlotBus(slots::Arbitration arbitration, slots::ReadRule readRule,
+                          std::span<const slots::PortClaim> boardPorts, std::span<const slots::BuiltInDef> builtIns);
+    /// A card's claims in its slot order (>= kSlotCardSlotBase), cycle detection Iorq or RdWr
+    void AttachSlotCard(PortDevice* card, std::span<const slots::PortClaim> claims, uint8_t slotOrder,
+                        slots::CycleDetection detection);
+    void DetachSlotCard(PortDevice* card);
+    /// Whether a slot-built card's IORQGE claim hides this built-in's documented port from the board (CardWins)
+    bool IsBuiltInShadowed(const char* builtInId) const;
+    /// A socketed chip a card took out of its socket (Q7): the board's decode of its ports still runs, but nothing
+    /// on the board drives their reads any more
+    void SetRemovedBuiltIn(std::span<const slots::PortClaim> claims);
+#pragma pop_macro("slots")
+
+    /// endregion </Slot-built cards>
 
     /// Whether a full-decode low-byte card currently claims this raw port's
     /// low address byte (A0..A7 decode of a card like the ZXM-MoonSound)

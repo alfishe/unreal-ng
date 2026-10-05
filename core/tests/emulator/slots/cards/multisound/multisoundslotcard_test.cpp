@@ -15,8 +15,12 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/cards/multisound/multisoundslotcard.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace fs = std::filesystem;
@@ -84,6 +88,28 @@ private:
     std::unique_ptr<Emulator> _emulator;
     bool _ok = false;
 };
+
+constexpr uint16_t kPc = 0x8000;        // the IN / OUT instruction outside the ROM: no ROM-fetch lock
+constexpr uint16_t kRomPc = 0x3D2F;     // TR-DOS ROM: the SAA and SounDrive ports are locked
+
+/// One bus cycle as the Z80 runs it, the IN / OUT instruction's M1 at `m1`
+void Out(StagedMachine& m, uint16_t port, uint8_t value, uint16_t m1 = kPc)
+{
+    m.Context()->pCore->GetZ80()->m1_pc = m1;
+    m.Context()->pPortDecoder->WriteCycle(port, value, m1);
+}
+uint8_t In(StagedMachine& m, uint16_t port, bool& cardDrove, uint16_t m1 = kPc)
+{
+    m.Context()->pCore->GetZ80()->m1_pc = m1;
+    return m.Context()->pPortDecoder->ReadCycle(port, m1, cardDrove);
+}
+
+MultiSoundCardReport Report(const MultiSoundSlotCard& card)
+{
+    MultiSoundCardReport report;
+    card.Card().Describe(report);
+    return report;
+}
 
 const slots::CardDef& MultiSoundDef()
 {
@@ -178,6 +204,77 @@ TEST(MultiSoundSlotCard_Test, TakesTheZxEvoYm2149OutOfItsSocket)
         EXPECT_NE(slot->entry.disabledReason.find("socket"), std::string::npos) << slot->entry.disabledReason;
         EXPECT_NE(m.Context()->pSoundManager->getTurboSound(), nullptr);
     }
+}
+
+// endregion
+
+// region <Step 2: the card on the bus>
+
+/// Pentagon (CardWins, ~15 ms): the card's IORQGE on the #FFFD / #BFFD / #B3 / #BB families hides those cycles from
+/// the board, whose AY gets none of them; the passive SAA and SounDrive ports are written on both sides and locked
+/// while the IN / OUT runs from the ROM
+TEST(MultiSoundSlotCard_Test, PentagonCardShadowsTheBoardAy)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound");
+    ASSERT_TRUE(m.Ok());
+    MultiSoundSlotCard* card = m.Card();
+    ASSERT_NE(card, nullptr);
+    SoundChip_AY8910* boardAy = m.Context()->pSoundManager->getAYChip(0);
+    ASSERT_NE(boardAy, nullptr);
+    const uint8_t boardMixerBefore = boardAy->readRegister(7);
+    EXPECT_TRUE(m.Context()->pPortDecoder->IsBuiltInShadowed("ay"));
+
+    // YM2203 U4 (chip select 0 after the reset) register 7 through the card
+    Out(m, 0xFFFD, 0x07);
+    Out(m, 0xBFFD, 0x38);
+    EXPECT_EQ(Report(*card).ym[0].ssgRegisters[7], 0x38);
+    EXPECT_EQ(boardAy->readRegister(7), boardMixerBefore) << "the board AY saw no cycle";
+
+    // The read: the card drives it, the board is hidden
+    bool drove = false;
+    EXPECT_EQ(In(m, 0xFFFD, drove), 0x38);
+    EXPECT_TRUE(drove);
+    EXPECT_FALSE(m.Context()->pPortDecoder->WasLastPortDecoded()) << "the board decoded nothing";
+
+    // GS mailbox (IORQGE): the card's General Sound latches it
+    Out(m, 0x00B3, 0x5A);
+    EXPECT_EQ(Report(*card).gs.dataFromHost, 0x5A);
+
+    // SAA (passive, ROM-locked): register #1C from RAM code, nothing from the ROM
+    Out(m, 0x01FF, 0x1C);
+    Out(m, 0x00FF, 0x01);
+    EXPECT_EQ(Report(*card).saa.registers[0x1C], 0x01);
+    Out(m, 0x01FF, 0x1C, kRomPc);
+    Out(m, 0x00FF, 0x00, kRomPc);
+    EXPECT_EQ(Report(*card).saa.registers[0x1C], 0x01) << "locked while the OUT runs from #0000-#3FFF";
+
+    // SounDrive channel 0 (#0F, passive, ROM-locked)
+    Out(m, 0x000F, 0xC0);
+    EXPECT_EQ(card->Card().Logic().Dac(0).sample, MultiSoundLogic::ConvertSample(0xC0));
+    Out(m, 0x000F, 0x10, kRomPc);
+    EXPECT_EQ(card->Card().Logic().Dac(0).sample, MultiSoundLogic::ConvertSample(0xC0));
+}
+
+/// ZX-Evo (BoardWins, ~15 ms): the board keeps its ports from Iorq cards, but the MultiSound detects RD / WR and sees
+/// them; with the YM2149 out of its socket the card alone drives #FFFD reads, and its SounDrive channel on the board
+/// port #1F works
+TEST(MultiSoundSlotCard_Test, ZxEvoCardSeesTheBoardPorts)
+{
+    StagedMachine m("atm3", "zxbus.1 = multisound");
+    ASSERT_TRUE(m.Ok());
+    MultiSoundSlotCard* card = m.Card();
+    ASSERT_NE(card, nullptr);
+    EXPECT_FALSE(m.Context()->pPortDecoder->IsBuiltInShadowed("ay")) << "BoardWins: no shadowing";
+
+    Out(m, 0xFFFD, 0x07);
+    Out(m, 0xBFFD, 0x2A);
+    EXPECT_EQ(Report(*card).ym[0].ssgRegisters[7], 0x2A);
+    bool drove = false;
+    EXPECT_EQ(In(m, 0xFFFD, drove), 0x2A);
+    EXPECT_TRUE(drove);
+
+    Out(m, 0x001F, 0x90);
+    EXPECT_EQ(card->Card().Logic().Dac(1).sample, MultiSoundLogic::ConvertSample(0x90)) << "#1F: SounDrive channel 1";
 }
 
 // endregion

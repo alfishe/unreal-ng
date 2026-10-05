@@ -8,6 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/platform.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotvocabulary.h"
 
@@ -1047,15 +1048,57 @@ void SlotManager::BuildCards()
         cardContext.slot = slot.entry.slot;
         cardContext.options = slot.entry.options;
         std::unique_ptr<ICard> card = type->create(cardContext);
-        if (card != nullptr)
+        if (card == nullptr)
         {
-            _cards.push_back(std::move(card));
+            continue;
         }
+
+        // On the bus: the card's claims (with its options) in its slot order, resolved with the arbitration of the
+        // bus its slot is on - or of the adapter between them, when the adapter brings its own IORQGE chain
+        if (PortDecoder* decoder = _context->pPortDecoder)
+        {
+            const BusDef* bus = FindBus(_result.machine, BusOf(slot.entry.slot));
+            Arbitration arbitration = bus != nullptr ? bus->arbitration : Arbitration::None;
+            const ReadRule readRule = bus != nullptr ? bus->readRule : ReadRule::WiredAnd;
+            const AdapterDef* adapter = slot.entry.adapter.empty() ? nullptr : Planner().FindAdapter(slot.entry.adapter);
+            if (adapter != nullptr && adapter->hasArbitration)
+            {
+                arbitration = adapter->arbitration;
+            }
+            if (_cards.empty())
+            {
+                // One claim table per decoder: the first card's bus configures it (every bus of a machine that
+                // takes slot-built cards today is the one ZX-bus)
+                decoder->ConfigureSlotBus(arbitration, readRule,
+                                          bus != nullptr ? bus->boardPorts : std::span<const PortClaim>{},
+                                          _result.machine->builtIns);
+                for (const BuiltIn& builtIn : _result.builtIns)
+                {
+                    const BuiltInDef* builtInDef = builtIn.removed ? FindBuiltIn(_result.machine, builtIn.id) : nullptr;
+                    if (builtInDef != nullptr)
+                    {
+                        decoder->SetRemovedBuiltIn(builtInDef->claims);
+                    }
+                }
+            }
+            const std::vector<PortClaim> claims = CardClaims(*def, slot.entry.options);
+            const auto order = static_cast<uint8_t>(PortDecoder::kSlotCardSlotBase + _cards.size());
+            decoder->AttachSlotCard(card.get(), claims, order, def->detection);
+        }
+        _cards.push_back(std::move(card));
     }
 }
 
 void SlotManager::ReleaseCards()
 {
+    PortDecoder* decoder = _context != nullptr ? _context->pPortDecoder : nullptr;
+    for (const std::unique_ptr<ICard>& card : _cards)
+    {
+        if (decoder != nullptr)
+        {
+            decoder->DetachSlotCard(card.get());
+        }
+    }
     _cards.clear();
 }
 
