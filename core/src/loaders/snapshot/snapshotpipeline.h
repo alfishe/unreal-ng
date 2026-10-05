@@ -5,7 +5,7 @@
 /// writes the machine and whether the load is allowed. The order (proposal 4.4):
 ///   1. the caller named a commit        -> "legacy", or that registered policy (it may still Refuse); unknown = refused
 ///   2. the machine has a policy         -> its verdict: Take, Decline (go on) or Refuse
-///   3. the shared fit checks            -> P5 (not yet)
+///   3. the shared fit checks            -> the memory the snapshot carries must exist on the machine (P5)
 ///   4. nobody intervened                -> the legacy commit, the code that commits today
 /// Design: docs/inprogress/2026-10-02-snapshot-pipeline/proposal.md section 4.4.
 

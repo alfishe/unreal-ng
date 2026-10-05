@@ -339,3 +339,90 @@ TEST(SnapshotPolicies_Test, TheRegistryKeepsNamesSortedAndReplacesByName)
     snapshot::SnapshotPolicies::Unregister("never-there");
     EXPECT_EQ(snapshot::SnapshotPolicies::Names(), builtin);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The shared fit check (P5, owner Q1): the memory a snapshot carries must exist on the machine
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+uint64_t RamHash(Memory& memory, unsigned pages)
+{
+    uint64_t h = 14695981038346656037ull;
+    for (unsigned page = 0; page < pages; ++page)
+    {
+        const uint8_t* bytes = memory.RAMPageAddress(static_cast<uint16_t>(page));
+        for (size_t i = 0; i < PAGE_SIZE; ++i)
+        {
+            h ^= bytes[i];
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
+}
+}  // namespace
+
+TEST(SnapshotFit_Test, A128kSnapshotOnA48kMachineIsRefusedWithTheReason)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    Memory& memory = *emulator->GetContext()->pMemory;
+    const uint64_t before = RamHash(memory, 8);
+
+    for (const char* file : {"loaders/sna/action.sna", "loaders/z80/dizzyx.z80"})
+    {
+        EXPECT_FALSE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file))) << file;
+        const snapshot::Report& report = emulator->LastSnapshotReport();
+        EXPECT_TRUE(report.refused) << file;
+        EXPECT_EQ(report.needs, "model:128K") << file;
+        EXPECT_NE(report.reason.find("128K snapshot"), std::string::npos) << report.reason;
+        EXPECT_NE(report.reason.find("48K"), std::string::npos) << report.reason;
+        EXPECT_NE(report.reason.find("Pentagon"), std::string::npos) << "it names what would work";
+    }
+    EXPECT_EQ(RamHash(memory, 8), before) << "a refusal writes nothing";
+
+    // inspect says so before a load is tried
+    StateNode inspected;
+    std::string error;
+    ASSERT_TRUE(emulator->InspectSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), {}, inspected, error)) << error;
+    EXPECT_FALSE(inspected.find("would_load")->b);
+    EXPECT_EQ(inspected.find("plan")->find("needs")->s, "model:128K");
+
+    // A 48K file is all a 48K holds
+    EXPECT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/z80full.sna")));
+    EXPECT_FALSE(emulator->LastSnapshotReport().refused);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(SnapshotFit_Test, BanksBeyondTheMachinesRamAreRefused)
+{
+    // The Scorpion's 256K snapshot holds banks 8-15: a 128K machine has banks 0-7
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("128k", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    const std::string scorpion = TestPathHelper::GetTestDataPath("loaders/z80/libspectrum/synth-scorpion.z80");
+    EXPECT_FALSE(emulator->LoadSnapshot(scorpion));
+    const snapshot::Report& report = emulator->LastSnapshotReport();
+    EXPECT_TRUE(report.refused);
+    EXPECT_EQ(report.needs, "ram:256K");
+    EXPECT_NE(report.reason.find("bank 15"), std::string::npos) << report.reason;
+    EXPECT_NE(report.reason.find("at least 256 KB"), std::string::npos) << report.reason;
+    // A 128K file still loads there
+    EXPECT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna")));
+    EmulatorTestHelper::CleanupEmulator(emulator);
+
+    // A machine that has the banks takes it (the Scorpion's own, and a Pentagon with 512 KB)
+    Emulator* scorp = EmulatorTestHelper::CreateStandardEmulator("SCORPION", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(scorp, nullptr);
+    EXPECT_TRUE(scorp->LoadSnapshot(scorpion));
+    EmulatorTestHelper::CleanupEmulator(scorp);
+}
+
+TEST_F(SnapshotPlan_Test, AMachinePolicyIsAskedBeforeTheFitCheck)
+{
+    // The fit check is the default: a machine that owns a policy decides for itself (the Sprinter's own rules)
+    FakePolicy machine("fake-machine", snapshot::Verdict::Take());
+    SetMachinePolicy(machine);
+    ASSERT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/z80/libspectrum/synth-scorpion.z80")))
+        << "the policy took it; the 128 KB Pentagon's fit check never ran";
+    EXPECT_EQ(machine.committed, 1);
+}

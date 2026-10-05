@@ -6,7 +6,8 @@
 /// The table records TODAY's behavior on purpose, defects included (a 128K file on a 48K machine, #7FFD locks on a
 /// Pentagon 1024, the ATM / TS-Conf pagers after a cold reset: proposal section 3). Every later pipeline step must
 /// reproduce it; a row may change only in a commit that says so (P4: the 38 SPRINTER rows that loaded now say
-/// "refused", a fresh Sprinter is in no Spectrum mode). The defects the proposal suspects are named in the
+/// "refused", a fresh Sprinter is in no Spectrum mode; P5 fit check: 38 more, 128K files on the 48K and the Scorpion's
+/// banks 8-15 on 128 KB machines). The defects the proposal suspects are named in the
 /// SnapshotDefects_Test cases below: each pins the CURRENT behavior and says what the fix changes.
 ///
 /// Update after an approved change: UNREAL_SNAPSHOT_GOLDEN_UPDATE=1 core-tests --gtest_filter='SnapshotGoldenRewrite*'
@@ -275,13 +276,13 @@ TEST(SnapshotDefects_Test, AtmFamilyLeavesTheTopWindowUnmapped)
         EXPECT_EQ(LoadOn(Find(tag), path).bank3, 7u) << tag;
 }
 
-// DEFECT (P5, Q1): a 128K file loads on a 48K machine into pages the machine never shows. Expected after the fix:
-// refused with a reason (a 128K file locked with bank 0 on top is accepted as the 48K state it is)
-TEST(SnapshotDefects_Test, A128kFileIsAcceptedOnA48kMachine)
+// FIXED (P5, Q1, 2026-10-05): a 128K file used to load on a 48K machine into pages it never shows, and the program crashed
+// later. The plan's shared fit check refuses it with the reason (needs "model:128K"); a smarter answer (analyze the file and
+// offer a machine) comes later. Tested in snapshotpipeline_test.cpp (SnapshotFit_Test)
+TEST(SnapshotDefects_Test, A128kFileIsRefusedOnA48kMachine)
 {
     const Loaded r = LoadOn(Find("48K"), TestPathHelper::GetTestDataPath(kAcrossTheEdge));
-    EXPECT_TRUE(r.ok);
-    EXPECT_EQ(r.p7ffd, 0x17) << "a 48K machine now holds a 128K paging byte";
+    EXPECT_FALSE(r.ok);
 }
 
 // FIXED (P4, the Sprinter's Z5, 2026-10-05): SNA used to write physical pages 0-7 on the Sprinter, wrong even in the BIOS's

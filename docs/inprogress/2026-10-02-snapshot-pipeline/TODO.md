@@ -80,3 +80,18 @@ review the diff, list the changed rows in the commit message.
   is still open for the others.
 - **Not done:** the TR-DOS paging flag of an SNA 128 (the Sprinter follows its M1 trap rule), the interrupt shadow after
   EI, and a snapshot taken on the Sprinter (saving needs TTD, out of scope in the ZX-mode design).
+
+## P5 progress (2026-10-05)
+
+- **Q1 answered by the owner: refuse with the reason, for now.** "If the model is 48K and the snapshot is 128K: refusal. Later
+  we will analyze the file at start and offer options; for now a refusal with the reason." Built as the plan's shared fit check
+  (proposal 4.5): a 128K file on a 48K machine is refused (`needs: model:128K`, the reason says the snapshot holds bank N, was
+  made on X, and names a 128K machine or a Pentagon); a bank beyond the machine's RAM (a Scorpion 256K snapshot on a 128 KB
+  machine) is refused (`needs: ram:256K`). **The "locked 128K file = a 48K state in disguise" exception is dropped** (the owner
+  asked for a plain refusal). A machine that owns a policy decides for itself (the Sprinter). Golden: 38 rows changed to
+  `refused` (33 on the 48K, 5 Scorpion rows on 128K / +2 / +2A / +3 / Pentagon 128), nothing else.
+- **Q2 (48K SNA vs Z80 lock) left as it is**: both run the program; a shared rule is not needed until something breaks.
+- **Idea for later (owner):** analyze the file when it is opened and offer options (switch to the machine it was made on, enter
+  a Spectrum mode on the Sprinter); `image.machine_hint` and `inspect` are the inputs for it.
+- Still open in P5: Pentagon 1024 `#EFF7` compatibility bit, the ATM family's pager, TS-Conf's MemConfig (policies, not
+  decisions: they fix banks that land in the wrong place).

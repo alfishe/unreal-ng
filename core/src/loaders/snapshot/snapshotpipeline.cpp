@@ -1,5 +1,7 @@
 #include "snapshotpipeline.h"
 
+#include <algorithm>
+
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 
@@ -41,6 +43,41 @@ Decision Ask(ISnapshotCommitPolicy& policy, const char* asked, const Image& imag
             break;
     }
     return decision;
+}
+
+/// The shared fit check (proposal 4.5): does the machine have the memory the snapshot carries? A refusal names the bank
+/// and what would work; nothing is written. SPG (physical addresses), SZX (its own exact model check) and the Sprinter
+/// (its policy) are not judged here
+bool DoesNotFit(const Image& image, const EmulatorContext& context, Report& report)
+{
+    // SPG has its own machine (TS-Conf); SZX refuses any model but its own with both named (LoaderSZX::Commit)
+    if (image.memoryModel == MemoryModel::Physical || image.banks.empty() || image.format == "szx")
+        return false;
+    uint16_t highest = 0;
+    for (const auto& bank : image.banks)
+        highest = std::max(highest, bank.first);
+
+    const CONFIG& config = context.config;
+    const std::string madeOn = image.machineHint.empty() || image.machineHint == "unknown" ? std::string("a 128K machine")
+                                                                                          : image.machineHint;
+    if (config.mem_model == MM_SPECTRUM48)
+    {
+        // A 48K has banks 5, 2, 0 only and no paging: a 48K file is all it can hold
+        if (image.memoryModel == MemoryModel::Mem48k)
+            return false;
+        report.Refuse("this is a 128K snapshot (it holds Spectrum bank " + std::to_string(highest) + ", made on " + madeOn +
+                          "); a ZX Spectrum 48K has no such memory. Load it on a 128K machine or a Pentagon",
+                      "model:128K");
+        return true;
+    }
+    const unsigned banks = config.ramsize >> 4;   // 16 KB pages
+    if (highest < banks)
+        return false;
+    report.Refuse("the snapshot holds Spectrum bank " + std::to_string(highest) + " (made on " + madeOn + "); this machine has " +
+                      std::to_string(banks) + " banks (" + std::to_string(config.ramsize) + " KB of RAM). Load it on a machine with at least " +
+                      std::to_string((highest + 1) * 16) + " KB",
+                  "ram:" + std::to_string((highest + 1) * 16) + "K");
+    return true;
 }
 }  // namespace
 
@@ -100,7 +137,13 @@ Decision Pipeline::Plan(const Image& image, EmulatorContext* context, const Opti
         }
     }
 
-    // 3. The shared fit checks: P5
+    // 3. The shared fit checks
+    if (context && DoesNotFit(image, *context, report))
+    {
+        report.commit = "none";
+        report.verdicts.push_back("fit check: the snapshot does not fit this machine");
+        return {Decision::Action::Refuse, nullptr};
+    }
 
     // 4. Nobody intervened
     report.commit = "legacy";

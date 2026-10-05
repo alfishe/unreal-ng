@@ -58,6 +58,9 @@ void LoaderZ80_Test::SetUp()
 
         // Use Spectrum48K / Pentagon memory layout
         _cpu->GetMemory()->DefaultBanksFor48k();
+        // The memory is the Pentagon's (128K files load here): say so, the plan's fit check reads the configuration
+        _context->config.mem_model = MM_PENTAGON;
+        _context->config.ramsize = 128;
     }
     else
     {

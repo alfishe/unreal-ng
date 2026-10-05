@@ -176,6 +176,8 @@ TEST_F(SnapshotImageSna_Test, TheDumpNamesTheFileAndHashesTheBanks)
 TEST_F(SnapshotImageSna_Test, ThePlanStepReportsTodaysCommit)
 {
     const snapshot::Image image = ImageOf(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"));
+    _context.config.mem_model = MM_PENTAGON;   // a bare context is a 48K: the 128K image must find 128K of RAM (the fit check)
+    _context.config.ramsize = 128;
     snapshot::Report report;
     const snapshot::Decision decision = snapshot::Pipeline::Plan(image, &_context, snapshot::Options{}, report);
     EXPECT_EQ(decision.action, snapshot::Decision::Action::Legacy);
