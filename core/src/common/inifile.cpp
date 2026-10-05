@@ -57,24 +57,23 @@ namespace
         return text.substr(begin, end - begin);
     }
 
-    // Backward scan from end of line; the first ';' / '#' / '//' marker found
-    // from the end truncates the value. Reproduces the local SimpleIni patch the
-    // shipped parser carried (see core/tests - the old simpleini_test.cpp):
-    // heritage configs write "intlen=128 ; t-states" and expect 128, and a
-    // value containing '#'
-    // ("ffmpeg.vout=video#.avi" -> "video") is truncated as well.
+    // An inline comment runs from the FIRST ';' / '#' / '//' marker to the end of the line; whatever
+    // follows it, further markers included, is comment text. "intlen=128 ; t-states" parses as 128, and
+    // "CovoxFB=1 ; the board DAC (#FB ...)" as 1 (the earlier backward scan stopped at the LAST marker and
+    // kept "1 ; the board DAC (", so the TS-Conf line read as 0). A '#' inside a value starts a comment
+    // too ("ffmpeg.vout=video#.avi" -> "video", unchanged): values never start with '#' in the shipped configs.
     std::string_view StripInlineComment(std::string_view value)
     {
-        for (size_t i = value.size(); i > 0; i--)
+        for (size_t i = 0; i < value.size(); i++)
         {
-            const char c = value[i - 1];
+            const char c = value[i];
             if (c == ';' || c == '#')
             {
-                return value.substr(0, i - 1);
+                return value.substr(0, i);
             }
-            if (c == '/' && i >= 2 && value[i - 2] == '/')
+            if (c == '/' && i + 1 < value.size() && value[i + 1] == '/')
             {
-                return value.substr(0, i - 2);
+                return value.substr(0, i);
             }
         }
         return value;
