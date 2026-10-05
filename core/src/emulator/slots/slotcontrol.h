@@ -28,6 +28,12 @@
 ///   http.status = reply.httpStatus;  http.body = reply.ToJson();   // reply.emulator: the restarted machine
 /// @endcode
 
+// Qt defines `slots` / `signals` as macros; this header names the slots namespace
+#pragma push_macro("slots")
+#pragma push_macro("signals")
+#undef slots
+#undef signals
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -113,3 +119,6 @@ public:
     /// "save" / "discard" / "" -> the disposition; false for anything else
     static bool ParseMediaDisposition(const std::string& text, slots::MediaDisposition& out);
 };
+
+#pragma pop_macro("signals")
+#pragma pop_macro("slots")

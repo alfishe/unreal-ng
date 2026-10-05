@@ -1479,7 +1479,7 @@ void HudModel::onAudioActivity(int, Message* message)
             key = "cdda"; label = "CD"; icon = "cdaudio";  // Red Book audio from an ATAPI CD drive
             break;
         case AudioSource::MultiSound:
-            key = "multisound"; label = "MultiSound"; icon = "turbosound";  // any of the card's five rows
+            key = "multisound"; label = "MultiSound"; icon = "multisound";  // any of the card's five rows
             break;
         default:
             return;

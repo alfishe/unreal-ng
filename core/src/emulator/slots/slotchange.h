@@ -22,6 +22,12 @@
 /// plan (removed cards with their full options for an Undo, shadowed devices, lost functions, media, fit), the
 /// refusal and whether the instance was restarted (a new emulator id, like a model switch).
 
+// Qt defines `slots` / `signals` as macros; this header names the slots namespace
+#pragma push_macro("slots")
+#pragma push_macro("signals")
+#undef slots
+#undef signals
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -82,3 +88,6 @@ public:
     /// "applied" | "dry-run" | "refused" | "recording" | "no-machine" | "failed"
     static const char* StatusName(SlotChangeStatus status);
 };
+
+#pragma pop_macro("signals")
+#pragma pop_macro("slots")

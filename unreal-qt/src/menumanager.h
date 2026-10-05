@@ -51,6 +51,8 @@ public:
     /// Machine > Host Keyboard > Pass Command as Win Key (macOS only; a no-op elsewhere)
     void setCommandKeyToGuestChecked(bool checked);
     void setNetworkWindowChecked(bool checked);
+    void setSlotsWindowChecked(bool checked);
+    void setMidiActivityChecked(bool checked);
     void setFt812DebugChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
@@ -154,6 +156,8 @@ signals:
     void tapeManagerToggled(bool visible);
     void mediaPanelToggled(bool visible);
     void networkWindowToggled(bool visible);
+    void slotsWindowToggled(bool visible);      // Machine -> Slots (ZX-bus slots)
+    void midiActivityToggled(bool visible);     // Tools -> MIDI Activity
     void ft812DebugToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
@@ -245,6 +249,8 @@ private:
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;
     QAction* _networkWindowAction = nullptr;
+    QAction* _slotsWindowAction = nullptr;
+    QAction* _midiActivityAction = nullptr;
     QAction* _ft812DebugAction = nullptr;  // Debug -> FT812 Debug: only while the machine has the VDAC2 card
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;

@@ -603,6 +603,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdsessionobserver_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.h"
+        # The Slots window: plan preview, plug with the confirmation, removed cards named with Undo (ZX-bus slots)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slotswindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

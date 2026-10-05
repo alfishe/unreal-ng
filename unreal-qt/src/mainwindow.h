@@ -50,6 +50,9 @@
 #endif  // ENABLE_AUTOMATION
 
 class AudioSettingsWidget;
+class MidiActivityWindow;
+class SlotChangeController;
+class SlotsWindow;
 class HudOverlayWrapper;
 class HudModel;
 class TtdWidget;
@@ -167,6 +170,8 @@ private slots:
     void handleTapeManagerToggled(bool visible);
     void handleMediaPanelToggled(bool visible);
     void handleNetworkWindowToggled(bool visible);
+    void handleSlotsWindowToggled(bool visible);
+    void handleMidiActivityToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
     /// Dock the FT812 Debug window level with the picture (opening: also when undocked)
     void placeFt812DebugWindow(bool opening);
@@ -367,6 +372,9 @@ private:
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
     NetworkWindow* networkWindow = nullptr;
+    SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
+    MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity
+    SlotChangeController* _slotChangeController = nullptr;   // plan, confirm, restart, Undo (every slot change)
     Ft812DebugWindow* _ft812DebugWindow = nullptr;  // Debug -> FT812 Debug (VDAC2 machines only)
     DeviceScreenWrapper* _screenWrapper = nullptr;
     HudOverlayWrapper* _hudWrapper = nullptr;

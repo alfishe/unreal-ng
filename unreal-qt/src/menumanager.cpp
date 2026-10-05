@@ -540,6 +540,18 @@ void MenuManager::setMediaPanelChecked(bool checked)
         _mediaPanelAction->setChecked(checked);
 }
 
+void MenuManager::setSlotsWindowChecked(bool checked)
+{
+    if (_slotsWindowAction)
+        _slotsWindowAction->setChecked(checked);
+}
+
+void MenuManager::setMidiActivityChecked(bool checked)
+{
+    if (_midiActivityAction)
+        _midiActivityAction->setChecked(checked);
+}
+
 void MenuManager::setNetworkWindowChecked(bool checked)
 {
     if (_networkWindowAction)
@@ -823,6 +835,16 @@ void MenuManager::createMachineMenu()
         _machineModelActions[0]->setChecked(true);
         _currentModelShortName = _machineModelActions[0]->data().toString();
     }
+
+    _machineMenu->addSeparator();
+
+    // The machine's buses, slots and cards (ZX-bus slots): plug / remove / options, a change restarts the machine
+    _slotsWindowAction = _machineMenu->addAction(tr("S&lots..."));
+    _slotsWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_6));
+    _slotsWindowAction->setStatusTip(tr("Show/hide the slots window: buses, slots and cards; plug, remove, options"));
+    _slotsWindowAction->setCheckable(true);
+    _slotsWindowAction->setChecked(false);
+    connect(_slotsWindowAction, &QAction::triggered, this, &MenuManager::slotsWindowToggled);
 
     _machineMenu->addSeparator();
 
@@ -1186,6 +1208,14 @@ void MenuManager::createToolsMenu()
     _networkWindowAction->setCheckable(true);
     _networkWindowAction->setChecked(false);
     connect(_networkWindowAction, &QAction::triggered, this, &MenuManager::networkWindowToggled);
+
+    // The ZX-MultiSound's MIDI synthesizer as it plays: parts, programs, notes; Panic
+    _midiActivityAction = _toolsMenu->addAction(tr("M&IDI Activity"));
+    _midiActivityAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_7));
+    _midiActivityAction->setStatusTip(tr("Show/hide the MIDI activity window: the synthesizer's parts and notes"));
+    _midiActivityAction->setCheckable(true);
+    _midiActivityAction->setChecked(false);
+    connect(_midiActivityAction, &QAction::triggered, this, &MenuManager::midiActivityToggled);
 
     _toolsMenu->addSeparator();
 

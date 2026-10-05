@@ -287,8 +287,8 @@ void AudioSettingsWidget::createUI()
     _gsCardCombo->addItem("General Sound (classic)", static_cast<int>(GSTypeKind::Z80));
     _gsCardCombo->addItem("General Sound (lightweight player)", static_cast<int>(GSTypeKind::LW));
     _gsCardCombo->addItem("NeoGS", static_cast<int>(GSTypeKind::NGS));
-    _gsCardCombo->setToolTip("The card in the GS slot. Switched at the next frame; "
-                             "the host mailbox survives and an uploaded module is replayed");
+    _gsCardCombo->setToolTip("The card in the GS slot. Another card is a slot change: the machine restarts with it "
+                             "(its state is lost; disks and tapes stay in) - see Machine > Slots");
     cardRow->addWidget(_gsCardCombo, 1);
     gsLayout->addLayout(cardRow);
 
@@ -1122,12 +1122,15 @@ void AudioSettingsWidget::onGSCardChanged(int index)
     const auto target = static_cast<GSTypeKind>(_gsCardCombo->itemData(index).toInt());
     if (target == _shownGSSlot.kind)
         return;
-    if (_context->pSoundManager->requestGeneralSoundCardSwitch(target))
+    // The combo shows the card in the slot until the change is made: a slot change (owner decision Q10) that
+    // restarts the machine after a confirmation; the new machine's card shows when the panel follows it
     {
-        // Applied at the next frame boundary; the meter poll shows the new card
-        _gsStatusLabel->setText("Switching at the next frame (while paused: when execution continues)");
-        _gsStatusLabel->setVisible(true);
+        const QSignalBlocker blocker(_gsCardCombo);
+        const int shown = _gsCardCombo->findData(static_cast<int>(_shownGSSlot.kind));
+        if (shown >= 0)
+            _gsCardCombo->setCurrentIndex(shown);
     }
+    emit generalSoundCardRequested(static_cast<int>(target));
 }
 
 void AudioSettingsWidget::onNeoGSInsertSd()

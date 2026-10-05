@@ -42,6 +42,11 @@ public:
     void setContext(EmulatorContext* context);
     void refreshFromContext();
 
+signals:
+    /// The user chose another General Sound card (a GSTypeKind): a slot change that restarts the machine (Q10), made
+    /// by the main window
+    void generalSoundCardRequested(int kind);
+
 private slots:
     // Sources section
     void onSourceMuteChanged(int state);

@@ -1291,6 +1291,32 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         wave2.lineTo(cx + w / 2, y2 - waveH / 2);
         painter.drawPath(wave2);
     }
+    else if (iconName == "multisound")
+    {
+        // ZX-MultiSound icon: the card's sources stacked - a square wave (the YM2203 / SAA tone generators) over a
+        // sine (the General Sound's samples and the MIDI synthesizer), with a divider like a card edge between them
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int w = r.width() - 4;
+        int h = r.height() - 4;
+        int top = cy - h / 4;
+        QPainterPath square;
+        square.moveTo(cx - w / 2, top + h / 8);
+        square.lineTo(cx - w / 4, top + h / 8);
+        square.lineTo(cx - w / 4, top - h / 8);
+        square.lineTo(cx, top - h / 8);
+        square.lineTo(cx, top + h / 8);
+        square.lineTo(cx + w / 4, top + h / 8);
+        square.lineTo(cx + w / 4, top - h / 8);
+        square.lineTo(cx + w / 2, top - h / 8);
+        painter.drawPath(square);
+        int bottom = cy + h / 4;
+        QPainterPath sine;
+        sine.moveTo(cx - w / 2, bottom);
+        sine.cubicTo(cx - w / 4, bottom - h / 4, cx - w / 8, bottom - h / 4, cx, bottom);
+        sine.cubicTo(cx + w / 8, bottom + h / 4, cx + w / 4, bottom + h / 4, cx + w / 2, bottom);
+        painter.drawPath(sine);
+    }
     else if (iconName == "generalsound")
     {
         // General Sound icon: smooth sine curve, distinct from AY's square
