@@ -214,16 +214,59 @@ TEST_F(Config_Test, AYVoicingParsed)
     EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::SmallSpeaker);
 }
 
-TEST_F(Config_Test, AYVoicingDefaultsToSoftHighs)
+TEST_F(Config_Test, AYVoicingDefaultsToClassic)
 {
     // Missing key resets a stale value; unknown profile IDs warn and keep the
-    // default, which is the soft-highs headphones profile
-    ASSERT_EQ(FilterVoicing::DEFAULT_PRESET, FilterVoicing::Preset::Headphones);
+    // default, which is the classic profile
+    ASSERT_EQ(FilterVoicing::DEFAULT_PRESET, FilterVoicing::Preset::Classic);
     ASSERT_TRUE(LoadSoundKeys("AYVoicing=flat\n"));
     ASSERT_TRUE(LoadSoundKeys("TurboSound=AY\n"));
-    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Headphones);
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Classic);
     ASSERT_TRUE(LoadSoundKeys("AYVoicing=loud\n"));
-    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Headphones);
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Classic);
+}
+
+TEST_F(Config_Test, AYStereoParsesAndDefaultsToAbc)
+{
+    const auto load = [&](const std::string& keys)
+    {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath("aystereo_config_test.ini");
+        {
+            std::ofstream file(path, std::ios::binary);
+            file << "[AY]\n" << keys;
+        }
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+    ASSERT_TRUE(load("Stereo=ACB\n"));
+    EXPECT_EQ(_context->config.sound.ayStereo, AYStereoMode::ACB);
+    ASSERT_TRUE(load("Stereo=mono ; inline comment\n"));
+    EXPECT_EQ(_context->config.sound.ayStereo, AYStereoMode::Mono);
+    ASSERT_TRUE(load("Stereo=acb\n"));
+    ASSERT_TRUE(load("FQ=1774400\n"));
+    EXPECT_EQ(_context->config.sound.ayStereo, AYStereoMode::ABC) << "a missing key resets to the default";
+    ASSERT_TRUE(load("Stereo=acb\n"));
+    ASSERT_TRUE(load("Stereo=sideways\n"));
+    EXPECT_EQ(_context->config.sound.ayStereo, AYStereoMode::ABC) << "an unknown value keeps the default";
+}
+
+TEST_F(Config_Test, ShippedConfigsCarryTheExpectedAYStereo)
+{
+    // Profi (v3 and v5) wires its AY as ACB (Karabas-Pro RTL, Xpeccy+); the rest of
+    // the clones and the Sinclair line ship ABC. Research: docs/inprogress/2026-10-05-ay-stereo-scheme
+    const std::unordered_map<std::string, AYStereoMode> expected = {
+        {"profi", AYStereoMode::ACB},       {"profi3", AYStereoMode::ACB},
+        {"pentagon128k", AYStereoMode::ABC}, {"ts-conf", AYStereoMode::ABC},
+        {"atm710", AYStereoMode::ABC},       {"spectrum128", AYStereoMode::ABC},
+    };
+    for (const auto& [folder, mode] : expected)
+    {
+        const fs::path ini = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
+        ASSERT_TRUE(fs::exists(ini)) << ini;
+        Config config(_context);
+        ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
+        EXPECT_EQ(_context->config.sound.ayStereo, mode) << folder;
+    }
 }
 
 TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)

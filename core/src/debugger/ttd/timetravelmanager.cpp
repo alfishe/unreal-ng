@@ -1290,6 +1290,7 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // The CPU resumes where the frame's last instruction left it, a few
     // T-states in (the overshoot) - restored with the checkpoint
     out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
+    CaptureBankOverrides(out.bankOverrides);
 
     // --- Model-specific chipset state (TDD §6.4) ---
     // Whatever the active model registered serializes itself here. The
@@ -1712,6 +1713,29 @@ void TimeTravelManager::ReleaseModelPeripherals()
     _ownedPeripherals.clear();
 }
 
+void TimeTravelManager::CaptureBankOverrides(TTDBankOverrides& out) const
+{
+    out = TTDBankOverrides{};
+    if (!_memory)
+        return;
+    for (uint8_t bank = 1; bank <= 2; ++bank)
+        out.page[bank - 1] = _memory->GetDebuggerBankOverride(bank);  // MEMORY_UNMAPPABLE (0xFFFF) = none
+}
+
+void TimeTravelManager::ApplyBankOverrides(const TTDBankOverrides& in)
+{
+    if (!_memory)
+        return;
+    for (uint8_t bank = 1; bank <= 2; ++bank)
+    {
+        const uint16_t page = in.page[bank - 1];
+        if (page < MAX_RAM_PAGES)
+            _memory->SetDebuggerRAMPageToBank(bank, page);
+        else
+            _memory->RevertDebuggerBankOverride(bank);  // the checkpoint had none
+    }
+}
+
 void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
 {
     assert(_context && _memory);
@@ -1808,6 +1832,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // the four-bank mapping (ROM/RAM page in each 16 KB slot). Pentagon 128K
     // uses only p7FFD; extended models would extend this (Phase 2 carry).
     _memory->UpdateZ80Banks();
+    ApplyBankOverrides(cp.bankOverrides);
 
     // --- Step 3: RAM page content (TDD §8.1 step 2c) ---
     // Memcpy every referenced page from the COW page store into the live
@@ -7282,6 +7307,7 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
         out.cpu.nmi_pending = z80->IsNmiPending() ? 1 : 0;
     }
     out.chipset = CaptureChipsetState(_context->emulatorState, z80 ? static_cast<uint32_t>(z80->t) : 0u);
+    CaptureBankOverrides(out.bankOverrides);
     if (_context->pScreen)
     {
     }
@@ -7366,7 +7392,10 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
     }
     _peripherals.RestoreAll(snap.peripheralBlobs);
     if (_memory)
+    {
         _memory->UpdateZ80Banks();
+        ApplyBankOverrides(snap.bankOverrides);
+    }
 
     if (!snap.ram.empty() && _memory)
     {

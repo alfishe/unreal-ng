@@ -70,16 +70,40 @@ public:
 
     /// Framebuffer RGBA (0xAABBGGRR) of a CRAM word (hs §4.3). `vdac` = the
     /// build's STATUS VDAC_VER ([MISC] TS_VDAC): 0 = no VDAC (2-bit DAC + PWM,
-    /// time-averaged); 1 / 2 / 3 = a 3 / 4 / 5-bit video DAC: CRAM bit 15
-    /// set = the channel's DAC bits scaled to full, clear = the PWM-compatible
-    /// linear curve (levels 0..24, then full); 7 = the VDAC2 card, whose CPLD
-    /// table is used exactly (Vdac2Level)
+    /// time-averaged); 3 = the 5-bit VDAC board and 7 = the VDAC2 card, whose
+    /// CPLDs share one table (Vdac2Level); 1 / 2 = a 3 / 4-bit video DAC (no
+    /// board known): CRAM bit 15 set = the DAC bits scaled to full, clear = the
+    /// PWM-compatible linear curve (levels 0..24, then full)
     static uint32_t CramToRgba(uint16_t cram, uint8_t vdac = 0);
     /// One 5-bit channel through the VDAC2 card's CPLD: direct (PAL_SEL = 1)
     /// = level << 3, otherwise the card's linear table (vdac2-tdd.md D6)
     static uint32_t Vdac2Level(uint32_t level, bool direct);
     /// Video mode of a V_CONFIG value
     static VideoModeEnum ModeOf(uint8_t vConfig);
+
+    /// G_X_OFFS in ZX and TXT mode is not a pixel scroll: it loads the DRAM column counter (cstart = G_X_OFFS >> 2,
+    /// [V] video_mode.v x_offs_mode) and the counter picks what each fetch reads, so a window pixel can show
+    /// attribute bits, colors from pixel bytes, or a raw character code (found with tools/machines/tsconf/rtl-sim,
+    /// test GX1). These say where one pixel comes from; the renderer and the video mapper both use them.
+    struct ZxSource
+    {
+        uint8_t pixelColumn;   ///< byte column (0..31) of the pixel bits
+        uint8_t colorColumn;   ///< byte column of the colors
+        bool pixelFromAttr;    ///< the pixel bits are an attribute byte
+        bool colorFromPixels;  ///< the colors are a pixel byte
+        uint8_t bit;           ///< bit (7 = left) of the pixel byte
+    };
+    /// Window pixel `pixel` (0..255) of a ZX line
+    static ZxSource ZxSourceOf(uint16_t gxOffs, uint32_t pixel);
+    struct TxtSource
+    {
+        uint8_t codeColumn;  ///< character column (0..127) whose code gives the bits
+        uint8_t attrColumn;  ///< character column whose attribute gives the colors
+        bool glyph;          ///< the bits are the code's font line (else the raw code byte)
+        uint8_t bit;         ///< bit (7 = left)
+    };
+    /// Hires pixel `pixel` (2 per dot) of a TXT line
+    static TxtSource TxtSourceOf(uint16_t gxOffs, uint32_t pixel);
 
 private:
     /// The TS-Conf state (the port decoder owns it; null before it exists)

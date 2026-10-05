@@ -44,7 +44,7 @@ TEST_F(SoundCharacterSettings_Test, KnowsExactlyTheFourSettings)
 
 TEST_F(SoundCharacterSettings_Test, DefaultsReadBack)
 {
-    EXPECT_EQ(SoundCharacterSettings::Get(*_sound, "ay_voicing"), "headphones");
+    EXPECT_EQ(SoundCharacterSettings::Get(*_sound, "ay_voicing"), "classic");
     EXPECT_EQ(SoundCharacterSettings::Get(*_sound, "ay_punch"), "on");
     EXPECT_EQ(SoundCharacterSettings::Get(*_sound, "ay_room"), "9db");
     EXPECT_EQ(SoundCharacterSettings::Get(*_sound, "beeper_punch"), "off");
@@ -80,7 +80,7 @@ TEST_F(SoundCharacterSettings_Test, RejectsBadValues)
     EXPECT_FALSE(SoundCharacterSettings::Set(*_sound, "ay_room", "7db", error));
     EXPECT_FALSE(SoundCharacterSettings::Set(*_sound, "unknown", "on", error));
 
-    EXPECT_EQ(_sound->getAYVoicing(), FilterVoicing::Preset::Headphones) << "rejected input changes nothing";
+    EXPECT_EQ(_sound->getAYVoicing(), FilterVoicing::Preset::Classic) << "rejected input changes nothing";
     EXPECT_TRUE(_sound->getAYPunch());
 }
 

@@ -702,11 +702,13 @@ namespace PythonBindings
 
         // Snapshots by emulator id (default: the selected one). A file that
         // needs another model (an SPG: TS-Conf) switches it: emulator_id is the new one
-        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel) -> py::dict {
+        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel,
+                                  const std::string& commit) -> py::dict {
             SnapshotLoadRequest request;
             request.emulatorId = python_rzx::ResolveId(emulatorId);
             request.path = path;
             request.switchModel = switchModel;
+            request.commit = commit;
             if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(request.emulatorId))
             {
                 if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
@@ -720,9 +722,34 @@ namespace PythonBindings
             d["model_switched"] = result.modelSwitched;
             d["previous_emulator_id"] = result.previousEmulatorId;
             d["required_model"] = result.requiredModel;
+            // What the snapshot pipeline did: the commit that ran, or the refusal and why
+            d["report"] = result.report.format.empty() ? py::none() : StateNodeToPy(result.report.ToStateNode());
             return d;
-        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False",
-           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true);
+        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False. "
+           "commit chooses who writes the machine: '' = the plan decides (the machine's own policy, else the legacy "
+           "commit), 'legacy', or a registered policy name; the answer's report says what was done or why not",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true, py::arg("commit") = "");
+
+        // What loading a file would do on the machine (default: the selected one), nothing written: the file's image
+        // (format, banks as size + hash, CPU, paging, extensions) and the plan (who would commit, or the refusal)
+        m.def("snapshot_inspect", [](const std::string& path, const std::string& emulatorId,
+                                     const std::string& commit) -> py::object {
+            StateNode result;
+            std::string error;
+            if (!SnapshotLauncher::Inspect(python_rzx::ResolveId(emulatorId), path, commit, result, error))
+                throw std::runtime_error(error);
+            return StateNodeToPy(result);
+        }, "Inspect a snapshot file against a machine without loading it (RuntimeError when it cannot be read)",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("commit") = "");
+
+        // The snapshot pipeline's report of the last load (None before the first)
+        m.def("snapshot_report", [](const std::string& emulatorId) -> py::object {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator || emulator->LastSnapshotReport().format.empty())
+                return py::none();
+            return StateNodeToPy(emulator->LastSnapshotReport().ToStateNode());
+        }, "What the snapshot pipeline did with the last load: commit, verdicts, per-block outcomes, warnings, refusal",
+           py::arg("emulator_id") = "");
 
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
@@ -1658,7 +1685,7 @@ namespace PythonBindings
                py::arg("source"), py::arg("output"), py::arg("hysteresis") = py::none())
             
             // Snapshot operations
-            .def("snapshot_load", [](Emulator& self, const std::string& path) -> bool {
+            .def("snapshot_load", [](Emulator& self, const std::string& path, const std::string& commit) -> bool {
                 if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 // This object is one machine: a file for another model (an SPG:
@@ -1667,11 +1694,29 @@ namespace PythonBindings
                 request.emulatorId = self.GetId();
                 request.path = path;
                 request.switchModel = false;
+                request.commit = commit;
                 const SnapshotLoadResult result = SnapshotLauncher::Load(request);
                 if (result.modelMismatch)
                     throw std::runtime_error(result.message + " (unreal.snapshot_load switches it)");
+                if (!result.ok && result.report.refused)
+                    throw std::runtime_error(result.message);  // the pipeline refused: RuntimeError with the reason
                 return result.ok;
-            }, "Load snapshot file (RuntimeError while TTD records or when the file needs another model)", py::arg("path"))
+            }, "Load snapshot file (RuntimeError while TTD records, when the file needs another model, or when the "
+               "snapshot pipeline refuses it; commit as in unreal.snapshot_load)",
+               py::arg("path"), py::arg("commit") = "")
+            .def("snapshot_inspect", [](Emulator& self, const std::string& path, const std::string& commit) -> py::object {
+                StateNode result;
+                std::string error;
+                if (!SnapshotLauncher::Inspect(self.GetId(), path, commit, result, error))
+                    throw std::runtime_error(error);
+                return StateNodeToPy(result);
+            }, "What loading the file would do on this machine, nothing written (RuntimeError when it cannot be read)",
+               py::arg("path"), py::arg("commit") = "")
+            .def("snapshot_report", [](Emulator& self) -> py::object {
+                if (self.LastSnapshotReport().format.empty())
+                    return py::none();
+                return StateNodeToPy(self.LastSnapshotReport().ToStateNode());
+            }, "What the snapshot pipeline did with the last load (None before the first)")
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
             // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
             .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")

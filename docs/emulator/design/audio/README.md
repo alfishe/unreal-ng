@@ -15,9 +15,12 @@ The Unreal-NG audio subsystem uses [miniaudio](https://miniaud.io/) as a cross-p
 - **[Audio Sync Relay Thread](audio-sync-relay-thread.md)** — audio/video
   synchronization architecture.
 - **[AY Tone Voicing](ay-tone-voicing.md)** — the tonal balance profiles of
-  the AY / SSG output (Headphones by default, Classic, Flat, Warm, TV speaker,
+  the AY / SSG output (Classic by default, Headphones, Flat, Warm, TV speaker,
   Small speaker), click-free runtime switching, the `ay_voicing`
   (and punch / room) settings on every automation surface and in the GUI.
+- **[AY Stereo Scheme](../../../inprogress/2026-10-05-ay-stereo-scheme/research.md)** — `[AY] Stereo = ABC | ACB | MONO`
+  in `unreal.ini` sets the panning of every AY / SSG chip at start (ABC by default; Profi ships ACB), with the
+  research behind the per-machine choice.
 
 ## macOS Debug Build: Core Audio HAL Overload Warnings
 

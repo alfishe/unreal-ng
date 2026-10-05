@@ -56,6 +56,12 @@ uint32_t ZxAttrAddress(uint8_t vPage, uint32_t gx, uint32_t gy)
     return (static_cast<uint32_t>(vPage) << 14) + 0x1800 + ((gy & 0xFF) >> 3) * 32 + ((gx & 0xFF) >> 3);
 }
 
+/// The pixel or attribute byte of ZX byte column `column` (0..31)
+uint32_t ZxColumnAddress(uint8_t vPage, uint32_t column, uint32_t gy, bool attribute)
+{
+    return attribute ? ZxAttrAddress(vPage, column * 8, gy) : ZxPixelAddress(vPage, column * 8, gy);
+}
+
 /// The TS window of the frame: the graphics window, or all 360x288 with T_CONFIG[0]
 const TsConfGeometry::Window& TsuWindow(const TsConfVideoView& v)
 {
@@ -214,11 +220,12 @@ bool TsConfVideoMapper::SourcesAt(const VideoState& s, const MemView& m, size_t 
 
     switch (set->vConfig & 0x03)
     {
-        case 0:  // ZX
+        case 0:  // ZX: the fetches G_X_OFFS picks (ScreenTSConf::ZxSourceOf)
         {
-            const uint16_t bit = static_cast<uint16_t>(0x80 >> (gx & 7));
-            const SourceRef pixel = RamByte(ZxPixelAddress(vPage, gx, gy), bit, SourceRole::PixelBits);
-            SourceRef attr = RamByte(ZxAttrAddress(vPage, gx, gy), 0xFF, SourceRole::Attribute);
+            const ScreenTSConf::ZxSource src = ScreenTSConf::ZxSourceOf(set->gxOffs, dot);
+            const uint16_t bit = static_cast<uint16_t>(1u << src.bit);
+            const SourceRef pixel = RamByte(ZxColumnAddress(vPage, src.pixelColumn, gy, src.pixelFromAttr), bit, SourceRole::PixelBits);
+            SourceRef attr = RamByte(ZxColumnAddress(vPage, src.colorColumn, gy, !src.colorFromPixels), 0xFF, SourceRole::Attribute);
             const uint8_t a = m.Read(attr);
             bool ink = (m.Read(pixel) & bit) != 0;
             if ((a & 0x80) && v->state && ((v->state->frame_counter >> 4) & 1))
@@ -246,21 +253,29 @@ bool TsConfVideoMapper::SourcesAt(const VideoState& s, const MemView& m, size_t 
             out.sources = {byte, CramCell(out.colourIndex)};
             break;
         }
-        default:  // TXT: 14 MHz pixels, the character cell every 8
+        default:  // TXT: 14 MHz pixels, the cells and phase G_X_OFFS picks (ScreenTSConf::TxtSourceOf)
         {
-            const uint32_t px = (gx * 2 + (x & 1)) & 0x3FF;
-            const uint32_t column = (px >> 3) & 0x7F;
+            const ScreenTSConf::TxtSource src = ScreenTSConf::TxtSourceOf(set->gxOffs, x);
             const uint32_t row = (static_cast<uint32_t>(vPage) << 14) + ((gy >> 3) & 0x3F) * 256;
-            const SourceRef code = RamByte(row + column, 0xFF, SourceRole::CharCode);
-            SourceRef attr = RamByte(row + 128 + column, 0xFF, SourceRole::CharAttr);
+            const uint16_t bit = static_cast<uint16_t>(1u << src.bit);
+            SourceRef code = RamByte(row + src.codeColumn, src.glyph ? 0xFF : bit, SourceRole::CharCode);
+            SourceRef attr = RamByte(row + 128 + src.attrColumn, 0xFF, SourceRole::CharAttr);
             const uint8_t c = m.Read(code);
-            const uint16_t bit = static_cast<uint16_t>(0x80 >> (px & 7));
-            const SourceRef font = RamByte((static_cast<uint32_t>(vPage ^ 1) << 14) + c * 8u + (gy & 7), bit, SourceRole::FontRow);
-            const bool on = (m.Read(font) & bit) != 0;
+            bool on = (c & bit) != 0;  // a raw code shown as pixels
+            if (src.glyph)
+            {
+                const SourceRef font = RamByte((static_cast<uint32_t>(vPage ^ 1) << 14) + c * 8u + (gy & 7), bit, SourceRole::FontRow);
+                on = (m.Read(font) & bit) != 0;
+                const uint8_t a = m.Read(attr);
+                attr.bitMask = static_cast<uint16_t>(on ? 0x0F : 0xF0);
+                out.colourIndex = static_cast<uint8_t>(palBank | (on ? (a & 0x0F) : (a >> 4)));
+                out.sources = {code, attr, font, CramCell(out.colourIndex)};
+                break;
+            }
             const uint8_t a = m.Read(attr);
             attr.bitMask = static_cast<uint16_t>(on ? 0x0F : 0xF0);
             out.colourIndex = static_cast<uint8_t>(palBank | (on ? (a & 0x0F) : (a >> 4)));
-            out.sources = {code, attr, font, CramCell(out.colourIndex)};
+            out.sources = {code, attr, CramCell(out.colourIndex)};
             break;
         }
     }
@@ -274,8 +289,12 @@ void TsConfVideoMapper::BorderSources(const VideoState& s, LayerContribution& ou
     if (!v)
         return;
     out.layer = "border";
-    out.colourIndex = v->ts->regs[TsConfReg::Border];
-    // BORDER is TS register #0F (a CRAM index; #FE writes set it with PAL_SEL, hs §4.3)
+    // BORDER is TS register #0F (a CRAM index; #FE writes set it with PAL_SEL, hs §4.3); TXT shows it as
+    // {PAL_SEL[3:0], BORDER[3:0]} ([V] video_render.v, video_out.v; ScreenTSConf draws it so)
+    const uint8_t border = v->ts->regs[TsConfReg::Border];
+    out.colourIndex = IsText(CurrentVConfig(*v))
+                          ? static_cast<uint8_t>(((v->ts->regs[TsConfReg::PalSel] & 0x0F) << 4) | (border & 0x0F))
+                          : border;
     out.sources = {{Space::Register, 0, 0x0FAF, 0, 1, 0xFF, SourceRole::Border}, CramCell(out.colourIndex)};
     out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex], v->vdac);
 }
@@ -344,8 +363,9 @@ uint8_t TsConfVideoMapper::GraphicsIndex(const TsConfVideoView& v, const TsConfL
     {
         case 0:
         {
-            const uint8_t a = ram[ZxAttrAddress(vPage, gx, gy)];
-            bool ink = (ram[ZxPixelAddress(vPage, gx, gy)] >> (7 - (gx & 7))) & 1;
+            const ScreenTSConf::ZxSource src = ScreenTSConf::ZxSourceOf(set.gxOffs, x / 2);
+            const uint8_t a = ram[ZxColumnAddress(vPage, src.colorColumn, gy, !src.colorFromPixels)];
+            bool ink = (ram[ZxColumnAddress(vPage, src.pixelColumn, gy, src.pixelFromAttr)] >> src.bit) & 1;
             if ((a & 0x80) && v.state && ((v.state->frame_counter >> 4) & 1))
                 ink = !ink;
             return static_cast<uint8_t>(palBank | ((a & 0x40) ? 0x08 : 0x00) | (ink ? (a & 0x07) : ((a >> 3) & 0x07)));
@@ -359,12 +379,12 @@ uint8_t TsConfVideoMapper::GraphicsIndex(const TsConfVideoView& v, const TsConfL
             return ram[((static_cast<uint32_t>(vPage) & 0xF0) << 14) | (gy << 9) | gx];
         default:
         {
-            const uint32_t px = (gx * 2 + (x & 1)) & 0x3FF;
+            const ScreenTSConf::TxtSource src = ScreenTSConf::TxtSourceOf(set.gxOffs, x);
             const uint32_t row = (static_cast<uint32_t>(vPage) << 14) + ((gy >> 3) & 0x3F) * 256;
-            const uint32_t column = (px >> 3) & 0x7F;
-            const uint8_t code = ram[row + column];
-            const uint8_t a = ram[row + 128 + column];
-            const bool on = (ram[(static_cast<uint32_t>(vPage ^ 1) << 14) + code * 8u + (gy & 7)] >> (7 - (px & 7))) & 1;
+            const uint8_t code = ram[row + src.codeColumn];
+            const uint8_t a = ram[row + 128 + src.attrColumn];
+            const uint8_t bits = src.glyph ? ram[(static_cast<uint32_t>(vPage ^ 1) << 14) + code * 8u + (gy & 7)] : code;
+            const bool on = (bits >> src.bit) & 1;
             return static_cast<uint8_t>(palBank | (on ? (a & 0x0F) : (a >> 4)));
         }
     }
@@ -450,20 +470,40 @@ void TsConfVideoMapper::PixelsFor(const VideoState& s, const SourceRef& ref, std
                                    static_cast<uint16_t>(runLength * 2), 1});
             }
         };
+        // Surface pixels x (2 per dot) of this line for which `feeds(x)` holds, one area per run
+        auto pixelsWhere = [&](uint32_t step, auto feeds) {
+            uint32_t runStart = 0, runLength = 0;
+            for (uint32_t x = 0; x <= static_cast<uint32_t>(win.w) * 2u; x += step)
+            {
+                const bool hit = x < static_cast<uint32_t>(win.w) * 2u && feeds(x);
+                if (hit && runLength && x == runStart + runLength)
+                {
+                    runLength += step;
+                    continue;
+                }
+                if (runLength)
+                    out.push_back({id, static_cast<uint16_t>(runStart), static_cast<uint16_t>(y), static_cast<uint16_t>(runLength), 1});
+                runLength = 0;
+                if (hit)
+                {
+                    runStart = x;
+                    runLength = step;
+                }
+            }
+        };
         switch (set.vConfig & 0x03)
         {
-            case 0:  // ZX: a pixel byte is 8 dots of one row, an attribute byte 8 dots of 8 rows; columns wrap at 256
+            case 0:  // ZX: the pixel and color bytes each dot takes, as G_X_OFFS picks them (ScreenTSConf::ZxSourceOf)
             {
                 // Rows 192..255 (a Y offset) reach past #1800: pixel bytes up to #1FFF, attributes up to #1BFF
                 const uint32_t start = static_cast<uint32_t>(vPage) << 14;
                 if (physical < start || physical >= start + 0x2000)
                     break;
-                for (uint32_t col = 0; col < 32; col++)
-                {
-                    const uint32_t gx = col * 8;
-                    if (ZxPixelAddress(vPage, gx, gy) == physical || ZxAttrAddress(vPage, gx, gy) == physical)
-                        dotsOf(gx, 8, 256);
-                }
+                pixelsWhere(2, [&](uint32_t x) {
+                    const ScreenTSConf::ZxSource src = ScreenTSConf::ZxSourceOf(set.gxOffs, x / 2);
+                    return ZxColumnAddress(vPage, src.pixelColumn, gy, src.pixelFromAttr) == physical ||
+                           ZxColumnAddress(vPage, src.colorColumn, gy, !src.colorFromPixels) == physical;
+                });
                 break;
             }
             case 1:  // 16C: one byte = 2 dots
@@ -482,20 +522,16 @@ void TsConfVideoMapper::PixelsFor(const VideoState& s, const SourceRef& ref, std
                 dotsOf((physical - base) & 0x1FF, 1, 0);
                 break;
             }
-            default:  // TXT: a code / attribute byte feeds one cell (8 px of this row), a font byte every cell with that code
+            default:  // TXT: the code / attribute / font bytes each hires pixel takes (ScreenTSConf::TxtSourceOf)
             {
                 const uint32_t row = (static_cast<uint32_t>(vPage) << 14) + ((gy >> 3) & 0x3F) * 256;
                 const uint32_t font = static_cast<uint32_t>(vPage ^ 1) << 14;
-                for (uint32_t column = 0; column < 128; column++)
-                {
-                    const bool cell = physical == row + column || physical == row + 128 + column;
-                    const bool glyph = physical >= font && physical < font + 0x800 &&
-                                       v->ram && (physical - font) == 8u * v->ram[row + column] + (gy & 7);
-                    if (!cell && !glyph)
-                        continue;
-                    // Character column -> graphics x (4 dots per cell) -> window
-                    dotsOf(column * 4, 4, 0);
-                }
+                pixelsWhere(1, [&](uint32_t x) {
+                    const ScreenTSConf::TxtSource src = ScreenTSConf::TxtSourceOf(set.gxOffs, x);
+                    if (physical == row + src.codeColumn || physical == row + 128 + src.attrColumn)
+                        return true;
+                    return src.glyph && v->ram && physical == font + 8u * v->ram[row + src.codeColumn] + (gy & 7);
+                });
                 break;
             }
         }
@@ -516,11 +552,11 @@ bool TsConfVideoMapper::TextAt(const VideoState& s, const MemView& m, size_t lay
     const TsConfLine* set = LineOf(*v, vConfig, row * 8);
     if (!set)
         return false;
-    const uint32_t gx = (col * 4 + set->gxOffs) & 0x1FF;
-    const uint32_t column = ((gx * 2) >> 3) & 0x7F;
+    // The cell's first hires pixel names its code and attribute (G_X_OFFS: ScreenTSConf::TxtSourceOf)
+    const ScreenTSConf::TxtSource src = ScreenTSConf::TxtSourceOf(set->gxOffs, col * 8);
     const uint32_t base = (static_cast<uint32_t>(set->vPage) << 14) + (((set->cntRow & 0x1FF) >> 3) & 0x3F) * 256;
-    out.codeSource = RamByte(base + column, 0xFF, SourceRole::CharCode);
-    out.attrSource = RamByte(base + 128 + column, 0xFF, SourceRole::CharAttr);
+    out.codeSource = RamByte(base + src.codeColumn, 0xFF, SourceRole::CharCode);
+    out.attrSource = RamByte(base + 128 + src.attrColumn, 0xFF, SourceRole::CharAttr);
     out.code = m.Read(out.codeSource);
     out.attr = m.Read(out.attrSource);
     return true;

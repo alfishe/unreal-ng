@@ -145,6 +145,11 @@ protected:
     ttd::PhysPage _bank_ram_page_cache[4] = {ttd::kPhysPageNone, ttd::kPhysPageNone,
                                              ttd::kPhysPageNone, ttd::kPhysPageNone};
 
+    /// Windows 1/2 currently forced by the debugger (SetDebuggerRAMPageToBank);
+    /// cleared whenever UpdateZ80Banks() re-derives the mapping from the latches
+    bool _debugger_bank_forced[4] = {false, false, false, false};
+    uint16_t _debugger_bank_base[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};  // page before the force
+
     // Memory access tracker
     MemoryAccessTracker* _memoryAccessTracker = nullptr;  // Flexible memory access tracking system
 
@@ -406,6 +411,17 @@ public:
     void SetRAMPageToBank1(uint16_t page);
     void SetRAMPageToBank2(uint16_t page);
     void SetRAMPageToBank3(uint16_t page, bool updatePorts = false);
+
+    /// Debugger-forced mapping of RAM window 1 or 2 (0x4000 / 0x8000). No port latch
+    /// describes it, so the next UpdateZ80Banks() (any paging write, any TTD restore)
+    /// derives the window from the latches again and drops it - exactly like hardware.
+    /// The forced state is remembered so TTD checkpoints can carry it (see
+    /// GetDebuggerBankOverride) instead of silently losing it on restore.
+    void SetDebuggerRAMPageToBank(uint8_t bank, uint16_t page);
+    /// Forced RAM page of window 1 or 2, or MEMORY_UNMAPPABLE when it follows the latches
+    uint16_t GetDebuggerBankOverride(uint8_t bank) const;
+    /// Undo a debugger-forced window: back to the page it had before the first force
+    void RevertDebuggerBankOverride(uint8_t bank);
 
     bool IsBank0ROM();
     uint16_t GetROMPage();

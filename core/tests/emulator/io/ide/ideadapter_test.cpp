@@ -215,6 +215,24 @@ TEST(IdeAdapter_Test, EvoLatchRules)
     EXPECT_FALSE(b.Claims(0xFE, b.on));
 }
 
+/// ZX-Evo NemoIDE: among the odd ports only #11 is IDE ([V] TS-Conf zports.v:337-339 ide_even || #11, Base
+/// Configuration zports.v:539 ide_ports || #11). The decode took #31, #51 ... #F1 as registers 1-7, so a program
+/// touching #F1 wrote the IDE command register ([U] has the same over-decode; TS-Conf audit, memory-ports B3)
+TEST(IdeAdapter_Test, EvoOddPortsOtherThan11AreNotIde)
+{
+    Board b(IDE_NEMO_DIVIDE, MM_ATM3);
+    b.on = Dos(false);
+    for (uint16_t port = 0x31; port <= 0xF1; port += 0x20)
+    {
+        SCOPED_TRACE(port);
+        EXPECT_FALSE(b.Claims(port, b.on)) << "IN";
+        EXPECT_FALSE(b.adapter->Out(port, b.on, 0xEC)) << "OUT";
+    }
+    EXPECT_FALSE(b.Master().State().status & Status::DRQ) << "no IDENTIFY started";
+    EXPECT_TRUE(b.Claims(0x11, b.on));
+    EXPECT_TRUE(b.Claims(0x30, b.on)) << "the even ports stay";
+}
+
 TEST(IdeAdapter_Test, AtmDecodeGateAndIntrq)
 {
     Board b(IDE_ATM, MM_ATM710);

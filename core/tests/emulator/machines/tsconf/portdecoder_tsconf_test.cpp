@@ -223,10 +223,10 @@ TEST_F(PortDecoder_TSConf_Test, FM4_EnableBit)
     EXPECT_EQ(_decoder->GetState().cram[0], 0x0000);
 
     Reg(TsConfReg::FMaps, 0x14);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 1u);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "the FM window + the DRAM write counter";
     _decoder->reset();
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::FMaps], 0x04);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 0u);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write counter stays";
 }
 
 /// DOS trap (hs §2.2): #3Dxx in mapped mode with ROM128 = 1 pages TR-DOS for
@@ -286,6 +286,28 @@ TEST_F(PortDecoder_TSConf_Test, BetaPortsGatedByDosOrVgOpen)
     EXPECT_EQ(_decoder->ClassifyPort(0x009F), PortDecoder_TSConf::PortArm::ZxBus) << "there is no #9F";
 }
 
+/// #xxF7 belongs to the mainboard outside DOS, whatever A8 ([V] zports.v:330 porthit (loa == PORTF7) && !dos;
+/// :474-475 any other #xxF7 reads #FF), and to the ZX-Bus inside DOS - except the CMOS ports with A8 = 1 inside
+/// vdos (portf7_wr / portf7_rd allow vdos, :720-721). A8 = 0 went to the ZX-Bus outside DOS and A8 = 1 stayed
+/// on the mainboard in DOS (TS-Conf audit, memory-ports B5)
+TEST_F(PortDecoder_TSConf_Test, GlukPortOwnershipFollowsDos)
+{
+    TsConfState& ts = _decoder->GetState();
+    EXPECT_EQ(_decoder->ClassifyPort(0xFEF7), PortDecoder_TSConf::PortArm::Gluk) << "A8 = 0 outside DOS";
+    EXPECT_EQ(In(0xFEF7), 0xFF);
+    Out(0xEEF7, 0x80);  // A8 = 0: not #EFF7
+    EXPECT_EQ(ts.eff7, 0x00);
+    EXPECT_EQ(_decoder->ClassifyPort(0xBFF7), PortDecoder_TSConf::PortArm::Gluk);
+    ts.dos = 1;
+    EXPECT_EQ(_decoder->ClassifyPort(0xBFF7), PortDecoder_TSConf::PortArm::ZxBus) << "in DOS";
+    EXPECT_EQ(_decoder->ClassifyPort(0xFEF7), PortDecoder_TSConf::PortArm::ZxBus);
+    ts.vdos = 1;
+    EXPECT_EQ(_decoder->ClassifyPort(0xBFF7), PortDecoder_TSConf::PortArm::Gluk) << "the CMOS inside vdos";
+    EXPECT_EQ(_decoder->ClassifyPort(0xBEF7), PortDecoder_TSConf::PortArm::ZxBus) << "A8 = 0 inside vdos";
+    ts.vdos = 0;
+    ts.dos = 0;
+}
+
 /// JOY-5 (TS-Conf): #1F outside DOS answers the joystick device; with DOS open it is the VG93 again
 TEST_F(PortDecoder_TSConf_Test, JOY5_JoystickAtPort1F)
 {
@@ -334,10 +356,16 @@ TEST_F(PortDecoder_TSConf_Test, CmosGating)
     EXPECT_EQ(_decoder->GetState().eff7, 0x80) << "#EFF7 is not writable inside DOS";
 }
 
-/// #FE: BORDER = {PAL_SEL[3:0], 0, c} (hs §3.4)
+/// #FE: BORDER = {PAL_SEL[3:0], 0, c} with the PAL_SEL latched at the line start (hs §3.4; [V] video_ports.v:109
+/// takes `palsel`, the copy latched at line_start_s, :160). A PAL_SEL write shows in #FE from the next line on;
+/// it was taken at once (TS-Conf audit, video row 16)
 TEST_F(PortDecoder_TSConf_Test, BorderWriteUsesPalSel)
 {
+    _z80->tt = 10u << 8;
     Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x05);
+    EXPECT_EQ(_decoder->GetState().regs[TsConfReg::Border], 0xF5) << "the line still has the reset PAL_SEL #0F";
+    _z80->tt = 300u << 8;  // line 1: PAL_SEL latched at its start
     Out(0x00FE, 0x05);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::Border], 0xA5);
 }
@@ -446,4 +474,49 @@ TEST_F(PortDecoder_TSConf_Test, PS21_HostKeysReachTheAvrPs2Log)
     _context->pKeyboard->ApplyPcKey(PcKey::A, true);  // the TTD apply point, live and replay
     Out(0xDFF7, 0xF0);
     EXPECT_EQ(In(0xBFF7), 0x1C) << "set 2 make code of A";
+}
+
+/// NMI: TS-Conf has no NMI source ([V] top.v: znmi's ports are commented out, nmi_n = 1'bZ), so the machine's NMI
+/// button does nothing; it pulsed /NMI as on a Spectrum (TS-Conf audit, interrupts row 41)
+TEST_F(PortDecoder_TSConf_Test, NmiButtonDoesNothing)
+{
+    EXPECT_TRUE(_decoder->RequestBoardNmi()) << "the board takes the press";
+    EXPECT_FALSE(_z80->IsNmiPending()) << "and starts no NMI";
+}
+
+/// TIM-7: DOS entry and vdos exit stop the CPU clock for 4 fclk ([V] zclock.v:75,84-85: dos_stall = dos_on ||
+/// vdos_off loads stall_count 4, "4 tacts 28MHz"): half a T at 3.5 MHz, 2 T at 14 MHz. No wait was there (TS-Conf
+/// audit, interrupts row 37; the ATM3 decoder has its own)
+TEST_F(PortDecoder_TSConf_Test, TIM7_DosEntryAndVdosExitStall)
+{
+    TsConfState& ts = _decoder->GetState();
+    for (uint8_t clock : {uint8_t(0), uint8_t(2)})  // 3.5 and 14 MHz
+    {
+        SCOPED_TRACE(int(clock));
+        Reg(TsConfReg::SysConfig, clock);
+        const uint32_t fclkTicks = 256u * _context->emulatorState.current_z80_frequency_multiplier / 8u;
+
+        ts.dos = 0;
+        Reg(TsConfReg::MemConfig, 0x01);  // mapped, ROM128 = 1
+        _z80->tt = 1000u << 8;
+        _decoder->BeforeMachineM1(0x3D2F);
+        ASSERT_EQ(ts.dos, 1);
+        EXPECT_EQ(_z80->tt, (1000u << 8) + 4 * fclkTicks) << "DOS entry";
+        _z80->tt = 2000u << 8;
+        _decoder->BeforeMachineM1(0x3D30);
+        EXPECT_EQ(_z80->tt, 2000u << 8) << "already in DOS: no stall";
+
+        // vdos: a virtual drive's access enters it, a VG93 register access leaves it
+        Reg(TsConfReg::FddVirt, 0x02);
+        Out(0x00FF, 0x01);
+        In(0x001F);
+        _decoder->BeforeMachineM1(0x3D40);
+        ASSERT_EQ(ts.vdos, 1);
+        _z80->tt = 3000u << 8;
+        In(0x003F);
+        ASSERT_EQ(ts.vdos, 0);
+        EXPECT_EQ(_z80->tt, (3000u << 8) + 4 * fclkTicks) << "vdos exit";
+        Reg(TsConfReg::FddVirt, 0x00);
+        ts.dos = 0;
+    }
 }

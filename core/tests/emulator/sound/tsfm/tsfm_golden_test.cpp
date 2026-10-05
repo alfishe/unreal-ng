@@ -72,7 +72,10 @@ struct Access
     uint8_t value;
 };
 
-/// Deterministic generator (LCG) of a busy TSFM session
+/// Deterministic generator (LCG) of a busy TSFM session.
+/// Every Next() sits in its own statement: two calls in one expression or argument list are evaluated in an
+/// unspecified order (clang left to right, x86-64 gcc right to left for arguments), which made the script - and
+/// so every digest - differ between compilers
 class Script
 {
 public:
@@ -114,7 +117,9 @@ private:
     /// A full FM voice on channel ch (0..2) of the selected chip
     void Voice(int frame, uint32_t& t, uint8_t ch, uint8_t fnumLow, uint8_t block)
     {
-        Reg(frame, t, uint8_t(0xB0 + ch), uint8_t(Next(8) | (Next(8) << 3)));  // algorithm, feedback
+        const uint32_t algorithm = Next(8);
+        const uint32_t feedback = Next(8);
+        Reg(frame, t, uint8_t(0xB0 + ch), uint8_t(algorithm | (feedback << 3)));
         for (uint8_t op = 0; op < 4; op++)
         {
             const uint8_t base = uint8_t(ch + op * 4);
@@ -143,7 +148,11 @@ private:
                 {
                     Out(frame, t, PORT_FFFD, uint8_t(0xF8 | chip));
                     for (uint8_t ch = 0; ch < 3; ch++)
-                        Voice(frame, t, ch, uint8_t(0x40 + Next(0xA0)), uint8_t(3 + Next(4)));
+                    {
+                        const uint32_t fnumLow = 0x40 + Next(0xA0);
+                        const uint32_t block = 3 + Next(4);
+                        Voice(frame, t, ch, uint8_t(fnumLow), uint8_t(block));
+                    }
                     for (uint8_t r = 0; r < 6; r++)
                         Reg(frame, t, r, uint8_t(Next(r & 1 ? 4 : 256)));
                     Reg(frame, t, 6, uint8_t(Next(32)));
@@ -174,7 +183,11 @@ private:
                 else if (kind == 3)
                     In(frame, t, PORT_BFFD);
                 else if (kind < 8)
-                    Reg(frame, t, uint8_t(Next(16)), uint8_t(Next(256)));  // SSG
+                {
+                    const uint32_t reg = Next(16);  // SSG
+                    const uint32_t value = Next(256);
+                    Reg(frame, t, uint8_t(reg), uint8_t(value));
+                }
                 else if (kind < 11)
                 {
                     // FM operator / channel registers
@@ -190,9 +203,17 @@ private:
                     Reg(frame, t, uint8_t(0xA0 + ch), uint8_t(Next(256)));
                 }
                 else if (kind == 13)
-                    Reg(frame, t, 0x28, uint8_t((Next(16) << 4) | Next(3)));  // key on / off
+                {
+                    const uint32_t slots = Next(16);  // key on / off
+                    const uint32_t channel = Next(3);
+                    Reg(frame, t, 0x28, uint8_t((slots << 4) | channel));
+                }
                 else if (kind == 14)
-                    Reg(frame, t, 0x27, uint8_t((Next(256) & 0x3F) | (Next(4) == 0 ? 0x80 : 0)));  // timers, CSM
+                {
+                    const uint32_t control = Next(256) & 0x3F;  // timers, CSM
+                    const uint32_t csm = Next(4) == 0 ? 0x80 : 0;
+                    Reg(frame, t, 0x27, uint8_t(control | csm));
+                }
                 else
                 {
                     // Address-only write, then a register read through the new address

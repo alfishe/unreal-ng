@@ -100,6 +100,62 @@ Snapshot format notes:
   header's page, the header's PC, SP, CPU clock and INT enable; a corrupt file
   changes nothing. Load only - there is no SPG writer.
 
+### Who writes the machine: `commit`, `inspect` and the report (verified 2026-10-05)
+
+Every snapshot (SNA, Z80, SZX, SPG) goes through one **plan** step before anything is written. It asks, in order: the
+caller (`commit`), then the machine's own policy (none yet: every machine commits the way it always has), then the
+fit checks (not yet). The answer is the **report**: which commit wrote the machine, who was asked and what they said,
+what each block of the file did, and, when the load is refused, why (`reason`, `needs`).
+
+```bash
+# 1. Ask first: what would loading this file do here? Nothing is written.
+curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/inspect" -H 'Content-Type: application/json' \
+     -d '{"path":"/abs/scratch/action.sna"}' | jq '{would_load, would_commit, format: .image.format,
+                                                     made_on: .image.machine_hint, banks: (.image.banks|length),
+                                                     paging: .image.paging, verdicts: .plan.verdicts}'
+# {"would_load":true, "would_commit":"legacy", "format":"sna", "made_on":"128k-family", "banks":8,
+#  "paging":{"p7FFD":"19"}, "verdicts":["no caller, machine or fit-check intervention: legacy commit"]}
+
+# 2. Load; the answer carries the report.
+curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/load" -H 'Content-Type: application/json' \
+     -d '{"path":"/abs/scratch/action.sna","commit":"legacy"}' | jq .report
+# {"commit":"legacy","format":"sna","machine_hint":"128k-family","refused":false,"verdicts":["caller asked for the legacy commit"],...}
+
+# 3. The last load's report, any time later
+curl -s "$BASE/emulator/$EMU_ID/snapshot/info" | jq .report.commit
+```
+
+`commit` (JSON field, or `?commit=` for an upload): omitted = the plan decides; `"legacy"` = today's commit even where
+a machine has its own policy; or a registered policy name. An unknown name is **refused** and the answer lists the known
+ones (HTTP 400, `report.refused`, `report.reason`: `no snapshot commit policy named 'nonesuch'; known: legacy`); a
+named policy that does not apply to the file is refused too, never silently replaced by the legacy commit. A refusal
+writes nothing: the machine is as it was.
+
+`inspect` reads the same sources as a load (JSON `path`, multipart `file`, raw body with `X-Filename`). The `image` part
+is the file in the pipeline's neutral form: format and version, **the machine it was made on** (`machine_hint`: `48k`,
+`128k`, `128k-family` for an SNA, `plus3`, `pentagon512`, `scorpion256`, `tsconf`, ...), memory model, RAM banks as
+`{bank, size, hash}`, CPU, the paging latches the file carries, border, AY, the other blocks it holds (SZX: Beta 128,
+disks, tape, General Sound, ...) and warnings.
+
+| Surface | Load with a commit | Inspect | Last report |
+|:--|:--|:--|:--|
+| WebAPI | `POST /snapshot/load {"commit":...}` | `POST /snapshot/inspect` | `report` in the load answer and in `GET /snapshot/info` |
+| MCP | `load_software {"path":...,"commit":...}` | `load_software {"path":...,"inspect":true}` | in the answer |
+| CLI | `snapshot load <file> [--commit <name>]` | `snapshot inspect <file> [--commit <name>]` | `snapshot info` |
+| Lua | `snapshot_load(path [, commit])` -> `ok, reason, emulator_id` | `snapshot_inspect(path [, commit])` -> table, or `nil, error` | `snapshot_report()` |
+| Python | `unreal.snapshot_load(path, emulator_id, switch_model, commit)` -> dict with `report`; `emu.snapshot_load(path, commit)` | `unreal.snapshot_inspect(path, emulator_id, commit)`, `emu.snapshot_inspect(path, commit)` | `unreal.snapshot_report(emulator_id)`, `emu.snapshot_report()` |
+| Qt | File > Open, Open Snapshot, drag and drop: a refusal shows its reason in a message box; a non-default commit shows in the status bar | | |
+
+Machines can own a policy. The **Sprinter** does (`sprinter-zx`): a snapshot goes into its running Spectrum mode through the PLD cell table and is refused outside one (`report.needs`: `zx_mode`, `mode:128k`, ...) - see [sprinter.md](../machines/sprinter.md) §4. Every other machine commits the way it always has.
+
+```lua
+local ins = snapshot_inspect("scratch/action.sna")
+if ins and ins.would_load then
+  local ok, reason = snapshot_load("scratch/action.sna")
+  local report = snapshot_report()        -- report.commit, report.verdicts, report.items, report.warnings
+end
+```
+
 ### Save a snapshot
 
 ```bash
@@ -179,9 +235,10 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
   file is never written). Images embedded in an `.szx` from another emulator
   are loaded too. The classic GS card (GSType=Z80), the Covox level and the
   Kempston mouse type travel as well.
-- **Model mismatch**: a 128K snapshot loaded into a 48K instance (or vice
-  versa) either fails cleanly or drops extension state; create the right
-  model first ([setup.md](../_common/setup.md) §3).
+- **Model mismatch**: a 128K snapshot (or any snapshot with banks the machine does not have, e.g. a Scorpion 256K one on a 128K
+  machine) is **refused** with the reason and what would work (`report.needs`: `model:128K`, `ram:256K`); nothing is written. A 48K
+  snapshot loads on any machine. Create the right model first ([setup.md](../_common/setup.md) §3); `inspect` tells you before
+  you load.
 
 ## Pitfalls
 

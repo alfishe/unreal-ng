@@ -163,6 +163,9 @@ TEST_F(TsConfStorage_Test, VDOS1_VirtualDriveHidesTheController)
 /// VDOS-2 (hs §9): the CMOS answers inside vdos, not from the TR-DOS ROM
 TEST_F(TsConfStorage_Test, VDOS2_CmosInsideVdos)
 {
+    // [V] zports.v:330 porthit takes #xxF7 only while !dos, and dataout = porthit && iord (:347) is the only way
+    // the FPGA drives a port read: inside vdos (always in DOS) a CMOS read floats (#FF). Writes do reach the AVR
+    // (portf7_wr allows vdos, :720). The CMOS answered inside vdos (TS-Conf audit, memory-ports B1)
     TsConfState& ts = _decoder->GetState();
     Out(0xEFF7, 0x80);
     Out(0xDFF7, 0x0E);
@@ -171,7 +174,31 @@ TEST_F(TsConfStorage_Test, VDOS2_CmosInsideVdos)
     EXPECT_EQ(In(0xBFF7), 0xFF);
     ts.vdos = 1;
     Out(0xDFF7, 0x0E);
-    EXPECT_EQ(In(0xBFF7), 0x5A);
+    EXPECT_EQ(In(0xBFF7), 0xFF) << "the read floats inside vdos";
+    Out(0xBFF7, 0x33);  // the write lands
+    ts.vdos = 0;
+    ts.dos = 0;
+    Out(0xDFF7, 0x0E);
+    EXPECT_EQ(In(0xBFF7), 0x33);
+}
+
+/// VDOS-3: IN #FF (VGSYS) gives the controller's {INTRQ, DRQ, 111111} whatever the drive select (bits 5..0 were
+/// the Beta interface's 0s) ([V]
+/// zports.v:330,344-347,447-448: driven while dos || open_vg, not gated by the VG93 chip select); a virtual
+/// drive's read gave #FF (TS-Conf audit, memory-ports B4). The read still traps into vdos
+TEST_F(TsConfStorage_Test, VDOS3_SystemPortReadsTheControllerLines)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::FddVirt, 0x02);  // drive B is virtual
+    ts.dos = 1;
+    _decoder->ApplyState();
+    Out(0x00FF, 0x00);              // A: the real controller
+    const uint8_t lines = In(0x00FF);
+    EXPECT_EQ(lines & 0x3F, 0x3F) << "bits 5..0 are driven as 1";
+    ASSERT_NE(lines, 0xFF) << "a controller with INTRQ or DRQ low";
+    Out(0x00FF, 0x01);              // B: virtual
+    EXPECT_EQ(In(0x00FF), lines);
+    EXPECT_EQ(ts.preVdos, 1);
 }
 
 /// IDE-4 (hs §8.3): with [HDD] IdeStall=1 a bus cycle to the drive costs
@@ -187,7 +214,10 @@ TEST_F(TsConfStorage_Test, IDE4_Stall)
         In(port);
         return _z80->t - before;
     };
-    EXPECT_EQ(cost(0x00F0), 0u) << "IdeStall=0 (default): bypass";
+    // On by default, as the RTL (zclock.v:96 ide_stall in the IDE build; owner decision 2026-10-05, was off - D2)
+    EXPECT_EQ(cost(0x00F0), 1u) << "status register at 3.5 MHz";
+    _context->config.ide_stall = 0;
+    EXPECT_EQ(cost(0x00F0), 0u) << "IdeStall=0: bypass";
 
     _context->config.ide_stall = 1;
     EXPECT_EQ(cost(0x00F0), 1u) << "status register at 3.5 MHz";

@@ -6,7 +6,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
 
+#include "_helpers/testpathhelper.h"
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/video/tsconf/screentsconf.h"
 
@@ -27,12 +33,23 @@ namespace
         {
             case 0:
             {
+                // G_X_OFFS in ZX: the RTL's fetch order (GX-1, tools/machines/tsconf/rtl-sim): fetch k is the byte
+                // pair at column 2 ((k >> 1) & 15), pixels if k is even, attributes if odd; the 16-pixel group m of
+                // the stream (the window starts G_X_OFFS[1:0] pixels in) shows fetch c + 2m in the colors of c + 2m + 1,
+                // c = G_X_OFFS[6:2]; past the 16th group the 33rd fetch, in the colors of fetch c + 31
                 const uint32_t y = gy & 0xFF;
-                const uint32_t x = gx & 0xFF;
                 const uint8_t* page = ram + (vPage << 14);
-                const uint8_t pixels = page[((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | (x >> 3)];
-                const uint8_t attr = page[0x1800 + (y >> 3) * 32 + (x >> 3)];
-                bool ink = (pixels >> (7 - (x & 7))) & 1;
+                const uint32_t c = (set.gxOffs >> 2) & 0x1F;
+                const uint32_t s = wx + (set.gxOffs & 3);
+                const uint32_t m = s >> 4;
+                auto fetch = [&](uint32_t k) -> uint8_t {
+                    const uint32_t column = 2 * ((k >> 1) & 0x0F) + ((s >> 3) & 1);
+                    return (k & 1) ? page[0x1800 + (y >> 3) * 32 + column]
+                                   : page[((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | column];
+                };
+                const uint8_t pixels = fetch(c + 2 * m);
+                const uint8_t attr = fetch(m < 16 ? c + 2 * m + 1 : c + 31);
+                bool ink = (pixels >> (7 - (s & 7))) & 1;
                 if ((attr & 0x80) && ((frameCounter >> 4) & 1))
                     ink = !ink;
                 visible = ink;
@@ -54,12 +71,20 @@ namespace
             }
             default:
             {
-                const uint32_t px = (gx * 2 + sub) & 0x3FF;
+                // G_X_OFFS in TXT (GX-1): character pairs from (n + 3) >> 2, n = G_X_OFFS >> 2, the stream starting
+                // 2 G_X_OFFS[1:0] hires pixels in; phase n & 3: 0 glyphs, 1 and 2 raw codes (1 in the previous
+                // pair's attributes), 3 glyph then raw code
+                const uint32_t n = set.gxOffs >> 2;
+                const uint32_t phase = n & 3;
+                const uint32_t s = 2 * wx + sub + 2 * (set.gxOffs & 3);
+                const uint32_t pair = (((n + 3) >> 2) + (s >> 4)) & 0x3F;
+                const uint32_t half = (s >> 3) & 1;
                 const uint8_t* row = ram + (vPage << 14) + ((gy >> 3) & 0x3F) * 256;
-                const uint8_t code = row[(px >> 3) & 0x7F];
-                const uint8_t attr = row[128 + ((px >> 3) & 0x7F)];
-                const uint8_t font = ram[((vPage ^ 1) << 14) + code * 8 + (gy & 7)];
-                const bool on = (font >> (7 - (px & 7))) & 1;
+                const uint8_t code = row[2 * pair + half];
+                const uint8_t attr = row[128 + (phase == 1 ? (2 * pair + 126 + half) & 0x7F : 2 * pair + half)];
+                const bool glyph = phase == 0 || (phase == 3 && half == 0);
+                const uint8_t font = glyph ? ram[((vPage ^ 1) << 14) + code * 8 + (gy & 7)] : code;
+                const bool on = (font >> (7 - (s & 7))) & 1;
                 visible = on;
                 return static_cast<uint8_t>(palBank | (on ? (attr & 0x0F) : (attr >> 4)));
             }
@@ -174,10 +199,11 @@ TEST_F(ScreenTSConf_Test, VID3_ZxPaletteIndex)
     EXPECT_EQ(PixelAfterFrame(Fx(140) + 2, Fy(80)), ScreenTSConf::CramToRgba(ts.cram[0x28])) << "paper";
 }
 
-/// VID-4: BORDER from #FE uses PAL_SEL; drawn outside the window
+/// VID-4: BORDER from #FE uses PAL_SEL (as latched at the line start); drawn outside the window
 TEST_F(ScreenTSConf_Test, VID4_Border)
 {
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // the next line has latched it
     Out(0x00FE, 0x05);
     _decoder->GetState().cram[0xA5] = 0x03E0;  // green
     EXPECT_EQ(PixelAfterFrame(0, 0), ScreenTSConf::CramToRgba(0x03E0));
@@ -352,22 +378,24 @@ TEST_F(ScreenTSConf_Test, TSO2_RendererMatchesTheReference)
         std::printf("TSO2 hash 0x%016llXull, reference 0x%016llXull\n", static_cast<unsigned long long>(hash),
                     static_cast<unsigned long long>(refHash));
     else
-        // Re-recorded 2026-10-04: the random SFILE now ends at its third LEAP (TSU2b); the reference agrees pixel for pixel
-        EXPECT_EQ(hash, 0xB5A7D172B6701667ull) << "the renderer's output changed";
+        // Re-recorded 2026-10-05: G_X_OFFS in ZX / TXT follows the RTL's fetch order (GX1); the reference agrees pixel
+        // for pixel (before: 2026-10-04, the random SFILE ending at its third LEAP, TSU2b)
+        EXPECT_EQ(hash, 0x91937CB7D7649754ull) << "the renderer's output changed";
 }
 
 /// VDAC ([MISC] TS_VDAC, hs §0.1 / §4.3): with a video DAC, CRAM bit 15 set
-/// sends the channel's bits through the DAC (3 / 4 / 5 bit, full scale 255),
-/// clear gives the PWM-compatible linear curve (0..24, then full); no VDAC
-/// keeps the 2-bit DAC + PWM average. STATUS reports the build, the VDAC
-/// builds have BLT2, and the renderer follows the setting
+/// sends the channel's bits through the DAC, clear gives the PWM-compatible
+/// linear curve (0..24, then full); the 5-bit board's CPLD is the VDAC2 table
+/// (VDAC2_CardTable); no VDAC keeps the 2-bit DAC + PWM average. STATUS
+/// reports the build, the VDAC builds have BLT2, and the renderer follows the
+/// setting
 TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
 {
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x0010, 0), 0xFFAA0000u) << "no VDAC: unchanged";
     EXPECT_EQ(ScreenTSConf::CramToRgba(12 << 10, 3), 0xFF00007Fu) << "linear: 12 of 24";
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, 3), 0xFFFFFFFFu) << "linear saturates from 24";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 3), 0xFF000083u) << "5 bit: 16 of 31";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (31 << 10), 3), 0xFF0000FFu) << "5 bit: 31 is full";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 3), 0xFF000080u) << "5 bit: 16 << 3";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (31 << 10), 3), 0xFF0000F8u) << "5 bit: 31 is 248 (the CPLD's {in, 3'b0})";
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 1), 0xFF000091u) << "3 bit: code 4 of 7";
     EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | 16, 2), 0xFF880000u) << "4 bit: code 8 of 15";
 
@@ -384,25 +412,31 @@ TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
     _context->config.ts_vdac = 0;
 }
 
-/// D6 (vdac2-tdd.md §2.1): the VDAC2 build (STATUS 7) shows the Evo colors
-/// through the card's CPLD table exactly: PAL_SEL = 1 is level << 3 (top 248),
-/// PAL_SEL = 0 is the card's linear table, round(v * 255 / 24), full from 24
+/// D6 (vdac2-tdd.md §2.1): the VDAC2 build (STATUS 7) and the 5-bit VDAC build
+/// (STATUS 3) show the Evo colors through the board's CPLD table exactly - the
+/// two CPLDs have the same `lut` (vdac/vdac1/cpld/top.v, vdac/vdac2/cpld/top.v):
+/// PAL_SEL = 1 is level << 3 (top 248), PAL_SEL = 0 is the linear table,
+/// round(v * 255 / 24), full from 24. The 5-bit build used to scale 31 to 255
+/// and truncate the linear curve (seven levels one low): TS-Conf audit, video row 44
 TEST_F(ScreenTSConf_Test, VDAC2_CardTable)
 {
     static constexpr uint8_t kCard[25] = {0,   10,  21,  31,  42,  53,  63,  74,  85,  95,  106, 117, 127,
                                           138, 149, 159, 170, 181, 191, 202, 213, 223, 234, 245, 255};
-    for (uint32_t v = 0; v < 32; v++)
+    for (uint8_t vdac : {uint8_t(3), uint8_t(7)})
     {
-        const uint32_t linear = v < 25 ? kCard[v] : 255u;
-        EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(v), 7), 0xFF000000u | (linear << 16))
-            << "linear blue " << v;
-        EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(0x8000 | (v << 10)), 7), 0xFF000000u | (v << 3))
-            << "direct red " << v;
+        SCOPED_TRACE(int(vdac));
+        for (uint32_t v = 0; v < 32; v++)
+        {
+            const uint32_t linear = v < 25 ? kCard[v] : 255u;
+            EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(v), vdac), 0xFF000000u | (linear << 16))
+                << "linear blue " << v;
+            EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(0x8000 | (v << 10)), vdac), 0xFF000000u | (v << 3))
+                << "direct red " << v;
+        }
+        EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, vdac), 0xFFFFFFFFu) << "linear saturates";
+        EXPECT_EQ(ScreenTSConf::CramToRgba(0xFFFF, vdac), 0xFFF8F8F8u) << "direct white is 248";
+        EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, vdac), 0xFF007500u) << "117 where a truncating curve gives 116";
     }
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, 7), 0xFFFFFFFFu) << "linear saturates";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(0xFFFF, 7), 0xFFF8F8F8u) << "direct white is 248";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, 7), 0xFF007500u) << "117 where the truncating curve gives 116";
-    EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, 3), 0xFF007400u) << "the 5-bit VDAC build keeps its curve";
 }
 
 /// TIM-5: a DMA CRAM write lands at its dot. A RAM -> CRAM transfer of 200
@@ -478,6 +512,7 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
 {
     TsConfState& ts = _decoder->GetState();
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // #FE takes the PAL_SEL latched at the line start: the next line's
     Out(0x00FE, 0x06);
     // The border: green. The fixture's RAM is tagged (page 5 is all 0x05), so the ZX ink is color 5 and
     // the paper 0: the border takes color 6, and nothing in the window is green
@@ -536,6 +571,7 @@ TEST_F(ScreenTSConf_Test, VID6_ModeChangeMidFrameKeepsTheDrawnLines)
 {
     TsConfState& ts = _decoder->GetState();
     Reg(TsConfReg::PalSel, 0x0A);
+    _z80->tt = 300u << 8;  // #FE takes the PAL_SEL latched at the line start: the next line's
     Out(0x00FE, 0x06);
     ts.cram[0xA6] = 0x03E0;  // the border: green, nothing else in the picture is
     const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
@@ -604,4 +640,94 @@ TEST_F(ScreenTSConf_Test, GEOM2_WorkingWindowIncludesTheTsuWindow)
         EXPECT_EQ(w.width, c.expected.width);
         EXPECT_EQ(w.height, c.expected.height);
     }
+}
+
+/// GX-1: G_X_OFFS in ZX and TXT mode as the RTL draws it. The offset loads the DRAM column counter (cstart =
+/// G_X_OFFS >> 2, video_mode.v x_offs_mode) and the fetch type follows the counter, so it is not a pixel scroll:
+/// ZX scrolls 8 x G_X_OFFS[6:2] + G_X_OFFS[1:0] pixels and swaps pixels and attributes when G_X_OFFS[2] is odd,
+/// TXT scrolls by character pairs and shows raw codes for a nonzero G_X_OFFS[3:2] (TS-Conf audit, video rows
+/// 28-29). The reference lines come from the real Verilog run in tools/machines/tsconf/rtl-sim (Verilator):
+/// window line 9 with 8 border dots on each side, the memory filled as its harness does
+TEST_F(ScreenTSConf_Test, GX1_GxOffsMatchesTheRtl)
+{
+    // The harness's memory images (rtl-sim/harness.cpp FillZx / FillTxt)
+    for (int y = 0; y < 192; y++)
+        for (int c = 0; c < 32; c++)
+            Ram(0x05, static_cast<uint16_t>(((y & 0xC0) << 5) | ((y & 7) << 8) | ((y & 0x38) << 2) | c)) =
+                static_cast<uint8_t>(0x81 | ((c & 0x1F) << 1) | ((y & 1) << 6));
+    for (int r = 0; r < 24; r++)
+        for (int c = 0; c < 32; c++)
+        {
+            const int ink = c & 7;
+            const int paper = (ink + 1 + (c >> 3)) & 7;
+            Ram(0x05, static_cast<uint16_t>(0x1800 + r * 32 + c)) = static_cast<uint8_t>(((r & 1) << 6) | (paper << 3) | ink);
+        }
+    for (int r = 0; r < 64; r++)
+        for (int c = 0; c < 128; c++)
+        {
+            const int ink = c & 15;
+            const int paper = (ink + 1 + ((c >> 4) & 7)) & 15;
+            Ram(0x10, static_cast<uint16_t>(r * 256 + c)) = static_cast<uint8_t>(0x80 | (c & 0x7F));
+            Ram(0x10, static_cast<uint16_t>(r * 256 + 128 + c)) = static_cast<uint8_t>((paper << 4) | ink);
+        }
+    for (int ch = 0; ch < 256; ch++)
+        for (int l = 0; l < 8; l++)
+            Ram(0x11, static_cast<uint16_t>(ch * 8 + l)) = static_cast<uint8_t>(ch * 0x1D + 0x35 + l * 0x40);
+
+    // A distinct color per CRAM index, so the framebuffer gives the index back
+    TsConfState& ts = _decoder->GetState();
+    std::map<uint32_t, int> indexOf;
+    for (int i = 0; i < 256; i++)
+    {
+        ts.cram[i] = static_cast<uint16_t>(((i >> 4) << 10) | ((i & 15) << 5));
+        indexOf[ScreenTSConf::CramToRgba(ts.cram[i])] = i;
+    }
+    ASSERT_EQ(indexOf.size(), 256u);
+    Reg(TsConfReg::Border, 0xEE);
+    Reg(TsConfReg::PalSel, 0x00);
+
+    int lines = 0;
+    for (const char* name : {"machines/tsconf/rtl-sim/zx-gxoffs.txt", "machines/tsconf/rtl-sim/txt-gxoffs.txt"})
+    {
+        std::ifstream file(TestPathHelper::GetTestDataPath(name));
+        ASSERT_TRUE(file.good()) << name;
+        std::string text;
+        while (std::getline(file, text))
+        {
+            if (text.empty() || text[0] == '#')
+                continue;
+            std::istringstream in(text);
+            unsigned vConfig = 0, gx = 0, perDot = 0;
+            in >> std::hex >> vConfig >> std::dec >> gx >> perDot;
+            std::vector<int> expected;
+            for (unsigned v; in >> std::hex >> v;)
+                expected.push_back(static_cast<int>(v));
+            SCOPED_TRACE(std::string(name) + " V_CONFIG " + std::to_string(vConfig) + " G_X_OFFS " + std::to_string(gx));
+
+            Reg(TsConfReg::VConfig, static_cast<uint8_t>(vConfig));
+            Reg(TsConfReg::VPage, (vConfig & 3) == 3 ? 0x10 : 0x05);
+            Reg(TsConfReg::GXOffsL, static_cast<uint8_t>(gx));
+            Reg(TsConfReg::GXOffsH, static_cast<uint8_t>(gx >> 8));
+            const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(static_cast<uint8_t>(vConfig));
+            const uint32_t y = Fy(win.y0 + 9);
+            PixelAfterFrame(0, 0);
+            uint32_t* buffer = nullptr;
+            size_t size = 0;
+            Screen()->GetFramebufferData(&buffer, &size);
+
+            std::vector<int> actual;
+            for (uint32_t dot = win.x0 - 8u; dot < win.x0 + win.w + 8u; dot++)
+                for (uint32_t p = 0; p < perDot; p++)
+                    actual.push_back(indexOf.count(buffer[y * 720 + Fx(dot) + p]) ? indexOf[buffer[y * 720 + Fx(dot) + p]] : -1);
+            ASSERT_EQ(actual.size(), expected.size());
+            size_t first = 0;
+            while (first < actual.size() && actual[first] == expected[first])
+                first++;
+            EXPECT_EQ(first, actual.size()) << "first difference at index " << first << ": "
+                                            << (first < actual.size() ? actual[first] : 0) << " vs the RTL's "
+                                            << (first < actual.size() ? expected[first] : 0);
+            lines++;
+        }
+    }
+    EXPECT_EQ(lines, 174);
 }

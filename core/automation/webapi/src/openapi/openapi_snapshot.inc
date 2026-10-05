@@ -16,6 +16,11 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["switch_model"]["description"] =
         "A file that needs another model (.spg: TSL): switch the model first (true, default) or refuse (false). Also a query parameter for uploads";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["commit"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["commit"]["description"] =
+        "Who writes the machine: omitted = the plan decides (the machine's own policy, else the legacy commit that has always loaded snapshots), 'legacy' = the legacy commit even where the machine has a policy, or a registered policy name (an unknown name is refused and the answer lists the known ones). Also a query parameter for uploads. The answer's report shows the commit that ran";
     // Multipart upload option
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
          ["properties"]["file"]["type"] = "string";
@@ -31,7 +36,7 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["200"]["description"] =
         "Snapshot loaded successfully";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["400"]["description"] =
-        "Invalid path or file format";
+        "Invalid path or file format, or the load was refused (report.refused, report.reason, report.needs say why: a machine policy that cannot take the snapshot in the machine's current state, an unknown commit name)";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["413"]["description"] =
         "File too large (max 4 MB)";
@@ -69,7 +74,33 @@
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["responses"]["200"]["description"] =
-        "Snapshot status information";
+        "Snapshot status information; report = what the snapshot pipeline did with the last load (commit, verdicts, per-block outcomes, warnings, refusal)";
+
+    // POST /api/v1/emulator/{id}/snapshot/inspect - what a load would do, nothing written
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/snapshot/inspect"]["post"];
+        op["summary"] = "Inspect a snapshot file against this machine";
+        op["tags"].append("Snapshot Control");
+        op["description"] =
+            "Read a snapshot (.sna, .z80, .szx, .spg) and report what loading it here would do, without touching the "
+            "machine: 'image' = the file in the pipeline's neutral form (format and version, the machine it was made on, "
+            "memory model, RAM banks as size + hash, CPU, paging latches, border, AY, extensions, warnings), 'plan' = who "
+            "would commit it (the caller's commit, the machine's own policy, or the legacy commit) or the refusal and its "
+            "reason, would_load and would_commit. Decide with it before a load. Accepts the same sources as snapshot/load "
+            "(JSON path, multipart file, raw body).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& props = op["requestBody"]["content"]["application/json"]["schema"]["properties"];
+        props["path"]["type"] = "string";
+        props["path"]["description"] = "Path to the snapshot file";
+        props["commit"]["type"] = "string";
+        props["commit"]["description"] = "As in snapshot/load: see what the plan would do for this commit choice";
+        op["responses"]["200"]["description"] = "The image and the plan";
+        op["responses"]["400"]["description"] = "Not a snapshot this emulator can read (the message says why)";
+        op["responses"]["404"]["description"] = "Emulator not found";
+    }
 
 
     // POST /api/v1/emulator/{id}/snapshot/transfer - in-memory state transfer (MachineStateTransfer)
