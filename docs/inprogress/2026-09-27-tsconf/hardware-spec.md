@@ -370,7 +370,8 @@ palette, `[14]` XF, `[15]` YF ([V] `video_ts.v:75-78,132,135`). **Tile number 0
 is skipped (transparent) unless TxZ is set** (`T1Z` = bit 3, `T0Z` = bit 2),
 then drawn like any tile ([V] `video_ts.v:202`). Pixel index =
 `{PAL_SEL[5:4] or [7:6], entry.pal[1:0], nibble}`. First tile starts at
-`-(Xoffs & 7) - 8`.
+`-(Xoffs & 7)` ([V] `video_ts.v:170`; [U] and unreal-ng the same - the `- 8`
+this line had until the 2026-10-05 audit was wrong).
 
 **Sprites** (SFILE, 85 descriptors = words 0-254):
 
@@ -708,7 +709,7 @@ for an empty unit (#FFFF), and the transfer completes.
 | Sprites | `snum < 85` | ≤85 | ≤85 | 85 (SFILE = 256 words) → all agree |
 | Tile 0 | skipped unless TxZ | — | — | skipped unless TxZ → [V] |
 | T_CONFIG[1:0] | `t0ys_en/t1ys_en` | interleave | interleave | bit 0 = 360 TS window, bit 1 unused → [V] |
-| Line INT position | `line_t` += 224 | every line | HBlank start | dot 447, all 320 lines → [V] |
+| Line INT position | `line_t` += 224 | every line | HBlank start | strobe on dot 447, latched from raster tact 224 n (the next line's first tact; [U] the same), all 320 lines → [V] |
 | INT during vdos | frame deferred, line lost, DMA deferred | all lost | — | all deferred → [V] |
 | Reset HS_INT | 2 | 0 | 0 | 1 → [V] |
 | DMA writes while busy | dropped | — | — | live / relaunch → [V] |
@@ -718,11 +719,16 @@ for an empty unit (#FFFF), and the transfer completes.
 | Clock switch | immediate | immediate | immediate | immediate → [V] |
 | zclk = 3 | 14 MHz | 28 MHz (bug) | 14 | 14 → [V] |
 | AY clock | fixed | fixed | fixed | fixed 1.75 (no `ayclk` decode) → [V] |
-| CMOS in DOS | allowed | — | — | blocked in DOS, allowed in vdos → [V] |
+| CMOS in DOS | allowed | — | — | blocked in DOS; inside vdos writes reach the AVR, reads float (`#FF`) → [V] |
 | 0x77 read | 0x00 | — | inserted/WP bits | 0x00 → [V] |
 | Floating bus | — | — | attribute byte | 0xFF → [V] |
 | BLT2 | additive+sat | absent | nibble blend | byte/nibble add, OPT saturates, XTR_FEAT → [V] (D1 superset) |
 | SPG versions | 0x00-0x02, 0x10 | v1.0 | — | accept v1.0 and v1.1 |
+| CPU DRAM cycles in the budget | reads and writes (`memcpucyc`, `z80_main.inl:143-150`) | — | — | reads and writes to writable RAM ([V] `zmem.v:121`) |
+| Border via `#FE`, which PAL_SEL | bank F (fixed) | bank F | — | the PAL_SEL latched at the line start (`video_ports.v:109,160`) → [V] |
+| 5-bit VDAC levels | `{level, 3'b0}` / rounded table | — | — | the board CPLD's table ([V] `pentevo/vdac/vdac1/cpld/top.v`), as [U] |
+| Frame INT pulse during vdos | frozen | — | — | frozen from `pre_vdos` ([V] `zint.v:194`, `top.v:1106`) |
+| INT vector moment | re-checked 3 tacts later | — | — | at the INTA IORQ; `int_sel` kept when nothing is left ([V] `zint.v:117-132`) |
 
 ## 13. Corrections from v1 (2026-09-27)
 
