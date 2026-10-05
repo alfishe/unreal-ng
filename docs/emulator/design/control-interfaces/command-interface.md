@@ -1391,11 +1391,11 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native\|1080p\|1440p\|4k] [--acceleration auto\|hardware\|software]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frames, region, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+| `videorecord status` | | Show recording state, output file, frames, region, output profile, acceleration, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -1404,6 +1404,21 @@ has no audio track, so `gif` + `--audio` is refused. On macOS h264/hevc + aac in
 the native encoder; every other combination needs ffmpeg. The WebAPI (`"audio"`), MCP
 (`capture_media record_start` `audio`), Lua and Python (`audio` option) follow the same rules.
 Example: `videorecord start h264 scratch/run.mp4 --scale 2 --audio aac`.
+
+**Output profiles (1080p / 1440p / 4K)**: `--profile 4k` (WebAPI/MCP/Lua/Python `profile`) records a fixed
+3840x2160 frame (`1080p` 1920x1080, `1440p` 2560x1440; aliases `uhd` / `2160p`). The picture is scaled into it
+sharply - nearest neighbor, the largest INTEGER factor that fits (352x288 -> 7x = 2464x2016), aspect kept,
+centered, black bars: every source pixel becomes the same k x k block, nothing is blurred (the algorithm of the
+emulator window, which samples with Nearest). `native` (the default) keeps the old behavior (picture x `--scale`).
+A fixed frame takes **h264 or h265 only**, in any container (mp4/mov: native macOS encoder; mkv and the rest:
+ffmpeg); `--scale` is ignored; the default video bitrate of 4k is 35000 kbps; the other formats are refused
+(`400` on the WebAPI) with the reason. `--acceleration auto|hardware|software` (alias `gpu` / `cpu`) picks the
+encoder: `auto` a GPU encoder (VideoToolbox, NVENC, QuickSync, VA-API, AMF) when the machine has one,
+`hardware` GPU only (the start fails without one), `software` libx264 / libx265 through ffmpeg even when a GPU
+encoder exists. Both choices are reported by `videorecord status` / `GET /video/record/status`
+(`profile`, `acceleration`). The Qt app has them in the Tools > Video Recording... dialog and on the recording
+toolbar; the videowall records its wall with the same profiles. Example:
+`videorecord start h264 scratch/wall.mkv --profile 4k --acceleration software`.
 
 **Audio rate**: `--audio-rate N` (one of 44100, 48000, 88200, 96000, 176400, 192000)
 pins the core audio rate before the first sample is stamped, so the whole

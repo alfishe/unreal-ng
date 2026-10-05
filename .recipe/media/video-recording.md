@@ -43,6 +43,31 @@ Verified 2026-10-02 on macOS GUI builds: WebAPI, MCP, CLI, Lua and Python (`tool
 Timestamps are emulated time: a recording made in turbo mode plays at normal speed, and the
 sound track has exactly the frames' length.
 
+## 4K / 1080p profile (sharp scale, GPU or software encoder)
+
+`profile` records a fixed frame: `1080p` (1920x1080), `1440p` (2560x1440) or `4k` (3840x2160). The picture is
+scaled into it with nearest neighbor and the largest integer factor that fits (352x288 -> 7x), centered, black
+bars - no blur, the same sampling as the emulator window. h264 / h265 only, any container (mp4/mov native on
+macOS, mkv and the others through ffmpeg); `scale` is ignored; the default 4k bitrate is 35000 kbps.
+`acceleration`: `auto` (GPU encoder when there is one), `hardware` (GPU only, fails without), `software`
+(libx264 / libx265).
+
+```text
+capture_media {"action":"record_start","format":"h264","profile":"4k","filename":"/abs/path/scratch/run4k.mp4"}
+capture_media {"action":"record_start","format":"h265","profile":"4k","acceleration":"software","filename":"/abs/path/scratch/run4k.mkv"}
+curl -s -X POST $BASE/emulator/$EMU_ID/video/record -H 'Content-Type: application/json' \
+     -d '{"action":"start","format":"h264","profile":"4k","filename":"scratch/run4k.mp4"}' | jq -c '{profile, output_width, output_height, acceleration}'
+#  {"profile":"4k","output_width":3840,"output_height":2160,"acceleration":"auto"}
+videorecord start h264 scratch/run4k.mp4 --profile 4k [--acceleration auto|hardware|software]
+```
+
+```lua
+video_record("start", {format = "h264", filename = "scratch/run4k.mp4", profile = "4k", acceleration = "auto"})
+```
+
+Check the file with `ffprobe -v error -show_entries stream=codec_name,width,height scratch/run4k.mp4`
+(`h264,3840,2160`). `gif` / `vp9` with a profile answer 400 (`The 4k profile takes h264 or h265 only`).
+
 ## MCP (preferred)
 
 ```text

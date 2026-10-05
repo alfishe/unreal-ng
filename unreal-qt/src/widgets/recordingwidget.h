@@ -55,6 +55,8 @@ private slots:
     void onBackendChanged(int index);
     void onQualityChanged(int index);
     void onRegionChanged(int index);
+    void onProfileChanged(int index);
+    void onAccelerationChanged(int index);
     void onUpdateStats();
 
 private:
@@ -78,6 +80,8 @@ private:
     QComboBox* _backendCombo = nullptr;
     QComboBox* _qualityCombo = nullptr;
     QComboBox* _regionCombo = nullptr;
+    QComboBox* _profileCombo = nullptr;  ///< Native / 1080p / 1440p / 4K (fixed frame, sharp scale)
+    QComboBox* _accelCombo = nullptr;    ///< Encoder: Auto / GPU / CPU
     QLabel* _statusLabel = nullptr;
     QToolButton* _advancedBtn = nullptr;
     QToolButton* _closeBtn = nullptr;

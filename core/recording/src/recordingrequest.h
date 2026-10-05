@@ -40,4 +40,17 @@ std::string ValidateBitrates(uint32_t videoKbps, uint32_t audioKbps, const std::
 
 /// True when the native macOS encoder can write this request (h264/hevc + aac or no audio, in mp4/mov)
 bool IsNativeCombination(const std::string& format, const std::string& container, const std::string& audioCodec);
+
+/// Output profile: "" / "native" (the picture at its own size times scale), "1080p", "1440p" or "4k" (aliases "uhd",
+/// "2160p"): a fixed frame, the picture scaled sharply into it (nearest, integer factor, black bars). Returns the
+/// canonical id ("native", "1080p", "1440p", "4k"), or "" for an unknown name
+std::string NormalizeProfile(const std::string& profile);
+
+/// "" when the (normalized) profile can be recorded as this format, otherwise the reason. A fixed frame takes
+/// H.264 / H.265 only, in any container
+std::string ValidateProfile(const std::string& profile, const std::string& format);
+
+/// Encoder acceleration: "auto", "hardware" (alias "gpu") or "software" (alias "cpu"); "" is "auto".
+/// Returns the canonical name, or "" for an unknown one
+std::string NormalizeAcceleration(const std::string& acceleration);
 }  // namespace RecordingRequest

@@ -541,9 +541,11 @@ GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statis
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
 POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
                                                "format", "filename", "fps", "scale", "region",
-                                               "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate"})
+                                               "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate",
+                                               "profile": "native|1080p|1440p|4k" (a fixed frame, h264/h265 only),
+                                               "acceleration": "auto|hardware|software"})
 GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
-                                               audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration)
+                                               audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration; profile, acceleration)
 ```
 
 #### Disassembly Response

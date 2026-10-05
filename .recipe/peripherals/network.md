@@ -68,6 +68,16 @@ TrafficStream=auto`, CLI `network traffic stream`) serves the traffic as a pcapn
 packet as it passes. The extcap script [tools/wireshark/](../../tools/wireshark/README.md) lists running emulators in
 Wireshark's interface list instead. `{"action":"stream-stop"}` ends it.
 
+**In the Qt UI**: Tools > Network traffic (Ctrl+6). The newest records (up to 20000) with their frame and the time
+since the record above; a filter (every word must appear in the adapter, direction, operation or summary, e.g.
+`isa2 dns`) and a kind (frames / socket operations); below, a decode of the selected record (Ethernet, ARP, IPv4,
+ICMP, UDP, TCP, DHCP, DNS, or the socket operation's fields) and its hex dump. **Seek here** (or a double click)
+pauses the machine, ends a running TTD recording (its history stays: a seek is refused while recording, as on the
+WebAPI) and time-travels to the record's moment (`frame`, `t_in_frame`). It needs a TTD recording that covers that
+frame - start one before the network program runs (`time_travel` action `start`); the button's tooltip says why it is
+off. Buttons: Clear, Save pcapng (the ring), Record to file / Stop recording, Start / Stop stream (the
+status line shows the `wireshark` command).
+
 In the pcapng a socket adapter's operations are **synthetic packets** Wireshark decodes (HTTP, DNS, "Follow TCP
 Stream"): a connect is a SYN / SYN-ACK / ACK, data are segments of up to 1460 bytes with chained sequence numbers, a
 close a FIN, a reset an RST. The bytes are exact; the TCP framing and the adapter's address (10.0.2.15 and up, one per

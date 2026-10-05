@@ -13,4 +13,12 @@
   macOS, Linux, Windows; the ring first, then each packet; a reader 16 MiB behind is dropped), `[NETWORK]
   TrafficStream=off|auto|<port>`, actions `stream` / `stream-stop` on every surface, the Wireshark extcap script
   `tools/wireshark/unreal-ng-extcap.py` (+ `.bat` for Windows) with its README
-- [ ] T4 Qt window with Seek here
+- [x] T4 (2026-10-05): the Qt window Tools > Network traffic (Ctrl+6, dockable): the newest 20000 records polled
+  through `TrafficAccess` (frame, time since the row above, adapter, direction, length, summary), word filter + kind,
+  decode tree (Ethernet / ARP / IPv4 / ICMP / UDP / TCP / DHCP / DNS, socket operation fields), hex dump; Seek here
+  (pauses, ends a running TTD recording - a seek is refused while recording - and seeks to `frame` / `t_in_frame`;
+  off with the reason outside a recording), Clear, Save pcapng, Record to file / stop, stream start / stop. Qt-free
+  model `unreal-qt/src/network/core/trafficpanelmodel` (hud-core-tests), the window on a real machine in
+  unreal-qt-tests (`trafficwindow_test.cpp`). Fixed with it: the stream server handled a reader accepted in the
+  same round as the polled ones (a read past its poll items, which could close the new reader; 50 of 300 runs of
+  `TrafficStream_Test` failed under load, 0 of 600 after)

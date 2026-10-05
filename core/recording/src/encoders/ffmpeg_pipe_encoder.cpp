@@ -107,6 +107,11 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _outputFilename = filename;
     _width = config.videoWidth;
     _height = config.videoHeight;
+    {
+        const size_t frameBytes = static_cast<size_t>(_width) * _height * 4;
+        MAX_QUEUE_FRAMES = frameBytes == 0 ? kMaxQueueFrames
+                                           : std::clamp<size_t>(kQueueBudgetBytes / frameBytes, 4, kMaxQueueFrames);
+    }
     _fps = config.frameRate;
     _hasVideo = !config.videoCodec.empty() && config.videoWidth > 0 && config.videoHeight > 0;
     _hasAudio = (config.audioChannels > 0);
@@ -192,6 +197,8 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
 
     // Prepare queues
     _videoQueue.clear();
+    _framePool.clear();
+    _lentFrame = std::vector<uint8_t>();
     _audioQueue.clear();
     _cancelRequested = false;
     _drainRequested = false;
@@ -233,11 +240,21 @@ void FFmpegPipeEncoder::Stop()
     if (!_isRecording)
         return;
 
-    // Hard deadline: entire stop must complete in ~1 second. A slower graceful
-    // drain is not worth hanging the UI — the file is already on disk and
-    // playable; at worst we lose the last fraction of a second.
+    // Deadline: a stop with nothing queued completes in ~1 second (a slower graceful drain is not worth hanging the
+    // UI). A stop with a BACKLOG - a software 4K encoder runs behind the emulation - waits while the queue keeps
+    // shrinking (each step of progress buys 2 more seconds, 2 minutes at most): cutting the drain kills ffmpeg before
+    // it finalizes and leaves a file without its index (an unplayable mkv / mp4)
     constexpr int STOP_TIMEOUT_MS = 1000;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(STOP_TIMEOUT_MS);
+    constexpr int PROGRESS_GRACE_MS = 2000;
+    constexpr int DRAIN_CAP_MS = 120000;
+    constexpr int FINALIZE_MS = 20000;  // ffmpeg flushes its encoder (x265 lookahead) after the pipe closes
+    const auto stopStart = std::chrono::steady_clock::now();
+    auto deadline = stopStart + std::chrono::milliseconds(STOP_TIMEOUT_MS);
+    size_t lastQueued = 0;
+    {
+        std::lock_guard<std::mutex> lock(_queueMutex);
+        lastQueued = _videoQueue.size();
+    }
 
     auto msRemaining = [&]() {
         auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -255,7 +272,19 @@ void FFmpegPipeEncoder::Stop()
         std::atomic<bool> done{false};
         std::thread waiter([&]() { t.join(); done = true; });
         while (!done && msRemaining() > 0)
+        {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+            size_t queued = 0;
+            {
+                std::lock_guard<std::mutex> lock(_queueMutex);
+                queued = _videoQueue.size();
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (queued < lastQueued && now - stopStart < std::chrono::milliseconds(DRAIN_CAP_MS))
+                deadline = std::max(deadline, now + std::chrono::milliseconds(PROGRESS_GRACE_MS));
+            lastQueued = queued;
+        }
         if (done) {
             waiter.join();
             return true;
@@ -281,7 +310,7 @@ void FFmpegPipeEncoder::Stop()
     _ffmpegProcess.closeStdin();
 
     // 3. Wait for ffmpeg to finalize (remaining time budget)
-    int exitCode = _ffmpegProcess.waitForFinished(msRemaining());
+    int exitCode = _ffmpegProcess.waitForFinished(std::max(msRemaining(), FINALIZE_MS));
     if (exitCode == -1)
     {
         _ffmpegProcess.kill();
@@ -333,10 +362,84 @@ void FFmpegPipeEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, d
     }
 
     FrameData data;
-    data.data.assign((const uint8_t*)framebuffer.memoryBuffer, (const uint8_t*)framebuffer.memoryBuffer + expectedSize);
+    data.data = takeFrameBuffer(expectedSize);
+    std::memcpy(data.data.data(), framebuffer.memoryBuffer, expectedSize);
     _videoQueue.push_back(std::move(data));
 
     _queueCond.notify_one();
+}
+
+std::vector<uint8_t> FFmpegPipeEncoder::takeFrameBuffer(size_t size)
+{
+    std::vector<uint8_t> buffer;
+    if (!_framePool.empty())
+    {
+        buffer = std::move(_framePool.back());
+        _framePool.pop_back();
+    }
+    if (buffer.size() != size)
+        buffer.resize(size);
+    return buffer;
+}
+
+void FFmpegPipeEncoder::recycleFrameBuffer(std::vector<uint8_t>&& buffer)
+{
+    if (_framePool.size() < kMaxQueueFrames + 2)
+        _framePool.push_back(std::move(buffer));
+}
+
+FrameTargetResult FFmpegPipeEncoder::AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target)
+{
+    if (!_isRecording || !_hasVideo || _workerFailed)
+        return FrameTargetResult::Dropped;
+    if (width != _width || height != _height || width == 0 || height == 0)
+        return FrameTargetResult::Unsupported;
+
+    std::unique_lock<std::mutex> lock(_queueMutex);
+    if (_blocking)
+    {
+        // Non-realtime mode: the emulation waits for the encoder, so every frame is recorded
+        _queueCond.wait(lock, [this]() {
+            return _videoQueue.size() < MAX_QUEUE_FRAMES || _cancelRequested || _drainRequested || _workerFailed;
+        });
+    }
+    if (_videoQueue.size() >= MAX_QUEUE_FRAMES || _cancelRequested || _drainRequested || _workerFailed)
+        return FrameTargetResult::Dropped;
+
+    _lentFrame = takeFrameBuffer(static_cast<size_t>(width) * height * 4);
+    target.data = _lentFrame.data();
+    target.stride = static_cast<size_t>(width) * 4;
+    target.width = width;
+    target.height = height;
+    target.swapRedBlue = false;  // ffmpeg reads rgba: the emulator's own byte order
+    target.handle = &_lentFrame;
+    return FrameTargetResult::Ready;
+}
+
+void FFmpegPipeEncoder::SubmitFrameTarget(FrameTarget& target, double timestampSec)
+{
+    (void)timestampSec;
+    if (target.handle != &_lentFrame)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(_queueMutex);
+        FrameData data;
+        data.data = std::move(_lentFrame);
+        _videoQueue.push_back(std::move(data));
+    }
+    _queueCond.notify_one();
+    target = FrameTarget();
+}
+
+void FFmpegPipeEncoder::ReleaseFrameTarget(FrameTarget& target)
+{
+    if (target.handle != &_lentFrame)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(_queueMutex);
+        recycleFrameBuffer(std::move(_lentFrame));
+    }
+    target = FrameTarget();
 }
 
 void FFmpegPipeEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec)
@@ -428,7 +531,11 @@ void FFmpegPipeEncoder::videoWriterMain()
         }
         _framesEncoded++;
 
-        // Space freed — wake producers blocked on backpressure
+        // Space freed — the buffer goes back to the pool, producers blocked on backpressure wake
+        {
+            std::lock_guard<std::mutex> lock(_queueMutex);
+            recycleFrameBuffer(std::move(frame.data));
+        }
         _queueCond.notify_all();
     }
 }
@@ -530,6 +637,15 @@ std::string FFmpegPipeEncoder::resolveVideoEncoder(const EncoderConfig& config, 
 
     // Detect hardware acceleration support
     FFmpegProbe::HWAccelInfo hwInfo = FFmpegProbe::detectHWAccel(_ffmpegPath);
+    if (!config.useHardwareAccel)
+    {
+        // Software only (libx264 / libx265): the same file without the GPU
+        hwInfo.videoToolbox = false;
+        hwInfo.nvenc = false;
+        hwInfo.qsv = false;
+        hwInfo.vaapi = false;
+        hwInfo.amf = false;
+    }
 
     // Platform-specific encoder selection
     if (codec == "h264" || codec == "h.264" || codec == "avc")

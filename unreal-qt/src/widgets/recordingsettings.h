@@ -20,6 +20,13 @@ struct RecordingSettings
     // Scale factor: 1, 2, 3, 4 (integer nearest-neighbor)
     int scaleFactor = 2;
 
+    // Output profile id: "native" (picture x scale factor) or a fixed frame "1080p" / "1440p" / "4k"
+    // (nearest-neighbor, integer factor, black bars; H.264 / H.265 only)
+    QString profile = QStringLiteral("native");
+
+    // Encoder acceleration: 0 = Auto, 1 = Hardware (GPU), 2 = Software
+    int acceleration = 0;
+
     // Include audio in video recording
     bool includeAudio = true;
 
@@ -40,6 +47,8 @@ struct RecordingSettings
         quality = settings.value(QStringLiteral("quality"), 2).toInt();
         captureRegion = settings.value(QStringLiteral("captureRegion"), 0).toInt();
         scaleFactor = settings.value(QStringLiteral("scaleFactor"), 2).toInt();
+        profile = settings.value(QStringLiteral("profile"), QStringLiteral("native")).toString();
+        acceleration = settings.value(QStringLiteral("acceleration"), 0).toInt();
         includeAudio = settings.value(QStringLiteral("includeAudio"), true).toBool();
         videoCodec = settings.value(QStringLiteral("videoCodec"), QString()).toString();
         audioCodec = settings.value(QStringLiteral("audioCodec"), QString()).toString();
@@ -54,6 +63,8 @@ struct RecordingSettings
         settings.setValue(QStringLiteral("quality"), quality);
         settings.setValue(QStringLiteral("captureRegion"), captureRegion);
         settings.setValue(QStringLiteral("scaleFactor"), scaleFactor);
+        settings.setValue(QStringLiteral("profile"), profile);
+        settings.setValue(QStringLiteral("acceleration"), acceleration);
         settings.setValue(QStringLiteral("includeAudio"), includeAudio);
         settings.setValue(QStringLiteral("videoCodec"), videoCodec);
         settings.setValue(QStringLiteral("audioCodec"), audioCodec);

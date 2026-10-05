@@ -157,6 +157,21 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "gif has no audio (refused)";
     schema["properties"]["video_bitrate"]["type"] = "integer";
     schema["properties"]["video_bitrate"]["description"] = "record_start: video bitrate kbps (0 = default, 100-200000)";
+    schema["properties"]["profile"]["type"] = "string";
+    schema["properties"]["profile"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* name : {"native", "1080p", "1440p", "4k"})
+        schema["properties"]["profile"]["enum"].append(name);
+    schema["properties"]["profile"]["description"] =
+        "record_start: output profile. native (default) = the picture at its own size times scale. 1080p / 1440p / 4k "
+        "= a fixed frame (4k = 3840x2160): the picture is scaled sharply into it (nearest, the largest integer "
+        "factor that fits, aspect kept, black bars - no blur). h264 / h265 only, any container";
+    schema["properties"]["acceleration"]["type"] = "string";
+    schema["properties"]["acceleration"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* name : {"auto", "hardware", "software"})
+        schema["properties"]["acceleration"]["enum"].append(name);
+    schema["properties"]["acceleration"]["description"] =
+        "record_start: encoder acceleration. auto (default) = a GPU encoder when the machine has one; hardware = "
+        "GPU only (fails without one); software = libx264 / libx265";
     schema["properties"]["audio_bitrate"]["type"] = "integer";
     schema["properties"]["audio_bitrate"]["description"] = "record_start: audio bitrate kbps (0 = default, 32-512)";
     schema["properties"]["region"]["type"] = "string";
@@ -383,7 +398,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             (*body)["fps"] = fps;
                         }
                         for (const char* field : {"format", "fps", "scale", "region", "filename", "audio",
-                                                  "video_bitrate", "audio_bitrate"})
+                                                  "video_bitrate", "audio_bitrate", "profile", "acceleration"})
                         {
                             if (args.isMember(field) && !args[field].isNull())
                             {

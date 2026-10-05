@@ -148,7 +148,7 @@ public:
     void Close();
 
 private:
-    std::string _error;   ///< before _file: the constructor fills it while opening the file
+    std::string _error;  // declared before _file: _file's initializer writes into it
     std::unique_ptr<platform::AppendFile> _file;
 };
 
@@ -163,7 +163,7 @@ public:
     bool ReadAt(uint64_t offset, uint8_t* out, size_t size) const override;
 
 private:
-    std::string _error;   ///< before _file: the constructor fills it while opening the file
+    std::string _error;  // declared before _file: _file's initializer writes into it
     std::unique_ptr<platform::RandomAccessFile> _file;
 };
 
