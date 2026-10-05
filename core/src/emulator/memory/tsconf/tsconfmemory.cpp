@@ -99,20 +99,23 @@ namespace
     }
 }
 
+/// Every CPU read from RAM takes a DRAM cycle that writes the entry ([V]
+/// zmem.v:121 ramreq, arbiter.v:214 cpu_strobe = every CPU read cycle,
+/// zmem.v:229,265 the cache RAM written on cpu_strobe), unless CACHE_CONFIG
+/// enables the window and the entry hits (zmem.v:213-214 cache_hit_en: no
+/// DRAM cycle, the word comes from the cache). So the cache fills with the
+/// cache off too, and a hit answers whatever word the entry was filled with,
+/// even if a DMA wrote DRAM since. The DRAM cycle also comes off the DMA's
+/// budget (technical-design §3.8); ROM is a separate chip, never cached
 uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal, bool& dram)
 {
-    dram = false;
     const uint8_t bank = static_cast<uint8_t>(addr >> 14);
     if (_bank_mode[bank] != BANK_RAM)
-        return normal;  // ROM is never cached
+        return normal;
 
-    // The RAM page behind the window (the read pointer: W0 may be write-protected)
-    const uint8_t page = static_cast<uint8_t>((_bank_read[bank] - RAMPageAddress(0)) / PAGE_SIZE);
     const uint8_t index = static_cast<uint8_t>(addr >> 1);
-    const uint16_t tag = CacheTag(page, addr);
-
-    const bool enabled = (_ts->regs[TsConfReg::CacheConfig] >> bank) & 1;
-    if (enabled && _ts->cacheTag[index] == tag)
+    const uint16_t tag = CacheTag(WindowPage(bank), addr);
+    if (_ts->cacheTag[index] == tag && ((_ts->regs[TsConfReg::CacheConfig] >> bank) & 1))
     {
         const uint16_t word = _ts->cacheWord[index];
         return static_cast<uint8_t>((addr & 1) ? (word >> 8) : word);  // a hit takes no DRAM cycle
@@ -125,40 +128,6 @@ uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal, bool& dram)
     _ts->cacheTag[index] = tag;
     _ts->cacheWord[index] = static_cast<uint16_t>(even[0] | (even[1] << 8));
     return normal;
-}
-
-void TsConfMemory::CacheInvalidate(uint16_t addr)
-{
-    if (!_ts)
-        return;
-
-    const uint8_t bank = static_cast<uint8_t>(addr >> 14);
-    if (_bank_mode[bank] != BANK_RAM)
-        return;
-
-    const uint8_t page = static_cast<uint8_t>((_bank_read[bank] - RAMPageAddress(0)) / PAGE_SIZE);
-    const uint8_t index = static_cast<uint8_t>(addr >> 1);
-    if (_ts->cacheTag[index] == CacheTag(page, addr))
-        _ts->cacheTag[index] = 0;
-}
-
-void TsConfMemory::CacheClear()
-{
-    if (!_ts)
-        return;
-
-    for (uint16_t& tag : _ts->cacheTag)
-        tag = 0;
-}
-
-/// A CPU read from RAM takes a DRAM cycle the DMA cannot use (the engine's
-/// budget, technical-design §3.8); ROM is a separate chip
-inline bool TsConfMemory::CountDramRead(uint16_t addr)
-{
-    if (!_ts || _bank_mode[addr >> 14] != BANK_RAM)
-        return false;
-    _ts->cpuAccesses++;
-    return true;
 }
 
 /// 14 MHz: a CPU access that goes to DRAM waits for the arbiter
@@ -214,20 +183,25 @@ void TsConfMemory::AfterWrite(uint16_t addr)
         return;
     }
     // A RAM write takes a DRAM cycle the DMA and the TSU cannot use ([V] zmem.v:121 memwr && ramwr_en)
+    // and invalidates the cache entry it hits, cache on or off ([V] zmem.v:215 cache_inv: the tag
+    // compare alone, without cache_en; a write never fills)
     if (_ts)
+    {
         _ts->cpuAccesses++;
+        const uint8_t index = static_cast<uint8_t>(addr >> 1);
+        if (_ts->cacheTag[index] == CacheTag(WindowPage(bank), addr))
+            _ts->cacheTag[index] = 0;
+    }
     if (_waitCpu) [[unlikely]]
         DramWait(TsConfArbiter::Access::Write);
 }
 
 inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
 {
-    bool dram;
+    bool dram = false;
     uint8_t value = normal;
-    if (_cacheActive) [[unlikely]]
+    if (_ts) [[likely]]
         value = CacheRead(addr, normal, dram);
-    else
-        dram = CountDramRead(addr);
     if (_waitCpu) [[unlikely]]
     {
         const bool m1 = _nextIsM1;
@@ -242,10 +216,8 @@ inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
 
 /// Cache model on the CPU read path. The normal read runs first, so access
 /// tracking, breakpoints and TTD see every read; a hit only changes the byte
-/// the CPU gets. Filling happens only while the cache is active: entries the
-/// hardware fills while every window has the cache off are not modeled (they
-/// only differ from RAM after a DMA write, and CacheClear drops them when the
-/// cache goes off) - technical-design §3.5 item 3
+/// the CPU gets. Every RAM read that takes a DRAM cycle fills its entry, with
+/// the cache on or off (CacheRead) - technical-design §3.5 item 3
 uint8_t TsConfMemory::MemoryReadFast(uint16_t addr, bool isExecution)
 {
     return AfterRead(addr, Memory::MemoryReadFast(addr, isExecution));

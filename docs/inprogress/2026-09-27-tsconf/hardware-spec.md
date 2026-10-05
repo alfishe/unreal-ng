@@ -195,7 +195,15 @@ each with its own 13-bit tag `{page[7:0], A[13:9]}` + valid bit ([V] `zmem.v:210
 - **Fill**: every CPU DRAM read fills its entry, whatever `CACHE_CONFIG` says.
 - **Hit**: used (no DRAM request, data from cache) when `CACHE_CONFIG[window]`
   is set, **at every CPU speed**; only the timing benefit is 14 MHz-specific.
-- **Invalidate**: a CPU RAM write that hits the entry. ROM is never cached.
+- **Invalidate**: a CPU RAM write that hits the entry, **with the cache on or
+  off** (`cache_inv` compares the tag without `cache_en`, [V] `zmem.v:215`); a
+  write never fills. ROM is never cached.
+- **Never cleared**: the cache RAM has no clear ([V] `zmem.v:231,267`); a reset
+  only sets `CACHE_CONFIG` to 0, switching the cache off keeps the entries.
+  Only the FPGA configuration (power-on) starts it all-invalid. So a word read
+  with the cache off, then changed by DMA, is answered stale once the cache
+  is switched on, even across a reset (checked on the running RTL:
+  `tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim cache`).
   **DMA and video writes do not invalidate** → stale reads after DMA are
   hardware-correct (software invalidates by writing 512 bytes, `tsconf_en.md:247-256`).
 - Any write to `SYS_CONFIG` copies its bit 2 into all four `CACHE_CONFIG` bits.

@@ -58,7 +58,7 @@ bug); `ng differs from both` (an unreal-ng bug); `unclear`.
 | 27 | CACHE_CONFIG[3:0] per window; a SYS_CONFIG write copies bit 2 into all four bits | `zports.v:593-603`; `zmem.v:214` | `io.cpp:1448-1456`; `z80_main.inl:37` | `PD:707-712,720-722`; `TM:114` | MT `CCH2`, `CacheOnlyForEnabledWindows` | match |
 | 28 | Cache: 256 x 16-bit entries indexed by A[8:1], tag `{page, A[13:9]}`, a miss fills the word, ROM is never cached | `zmem.v:120,209-292` | `z80_main.inl:27-50` (byte arrays, both bytes filled) | `TM:96-128` | MT `CCH1` | match |
 | 29 | Invalidation: a CPU write to a hit entry (RTL also requires `ramwr_en`); DMA and video writes do not invalidate | `zmem.v:215,262-265` | every write invalidates both bytes (`z80_main.inl:143-150`) | on a tag match (`TM:130-143`, `PD:1090-1095`), write-protected windows included | MT `CCH1` | match (the variants differ only in hit rate) |
-| 30 | Cache contents are never cleared: not by reset, not when disabled; reads fill even with every window disabled | `zmem.v:222-292` (no `aclr`), `:214` | cleared on reset (`tsconf.cpp:921,876-880`); fills while disabled (`z80_main.inl:37`) | not filled while every window is off, cleared when the cache goes off and so at every reset (`TM:207-212`, `PD:1063-1072`); `PD:220-222` says "Not reset: ... the cache contents" | none | ng-matches-Unreal, RTL differs |
+| 30 | Cache contents are never cleared: not by reset, not when disabled; reads fill even with every window disabled | `zmem.v:222-292` (no `aclr`), `:214` | cleared on reset (`tsconf.cpp:921,876-880`); fills while disabled (`z80_main.inl:37`) | not filled while every window is off, cleared when the cache goes off and so at every reset (`TM:207-212`, `PD:1063-1072`); `PD:220-222` says "Not reset: ... the cache contents" | none | ng-matches-Unreal, RTL differs; **fixed 2026-10-05** (gap G1): fills on every CPU DRAM read, cleared only at power-on, MT `CCH3` |
 | 31 | SYS_CONFIG[1:0] = 3.5 / 7 / 14 / 14 MHz (`turbo14 = turbo[1]`); [4:3] AY clock is not connected (`.ay_mod(2'b00)`) | `top.v:224-229,530-533`; `zmem.v:149` | `z80.cpp:190-198`; `ayclk` unused | `PD:1099-1124` | PDT `SysConfigClock` | match |
 | 32 | Warm reset (AVR `genrst`): PAGE `{0,5,2,0}`, MEM_CONFIG `#04`, SYS_CONFIG 0, CACHE_CONFIG 0, INT_MASK 1, FDD_VIRT 0, FMAPS.MEN 0, V_CONFIG 0, V_PAGE 5, PAL_SEL `#0F`, T_CONFIG 0, G_X/G_Y 0, HS_INT **1**, VS_INT 0 (+ increment 0), lock48 0, EFF7 0, DOS 0, vdos 0, SPI CS all high | `zports.v:558-576,626-628,668-680,724-727`; `video_ports.v:77-82,95-105,137-148`; `zmem.v:91-93,107-112`; `top.v:536-541`, `common/slavespi.v:77,197` | `tsinit()` (`tsconf.cpp:883-924`): `hsint = 2`, MEM_CONFIG per ResetRom (row 14), FMAPS address cleared (row 26) | `PD:223-299` | PDT `RST1` | ng-matches-RTL, Unreal differs |
 | 33 | Not reset by a warm reset: BORDER, T_MAP_PAGE, T0/T1_G_PAGE, SG_PAGE, T0/T1 offsets, DMA_WPD, the FDC drive latch, CRAM, SFILE | registers without a reset branch: `video_ports.v:45-72,107-134`; `zports.v:599-600,654-656` | CRAM `#F0-#FF` is reloaded at every reset (`z80.cpp:174`, `draw.cpp:820-827`) | `PD:220-299` (not touched) | PDT `RST2`, `FM4` | ng-matches-RTL, Unreal differs |
@@ -163,6 +163,13 @@ claims none. unreal-ng sends A8 = 0 to the ZX-Bus and keeps A8 = 1 as `Gluk` ins
   arm that reads `#FF`, not `ZxBus`; with `dos = 1`, `#BFF7` is `ZxBus`.
 
 ### Gap G1 (row 30): the cache is cleared by reset and when disabled; the RTL never clears it
+
+**Fixed 2026-10-05.** Checked on the running RTL (`tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim cache`, 10
+scenarios, `results/cache-retention.txt`): the entries survive a reset and `CACHE_CONFIG` = 0, reads fill with the
+cache off, and a CPU write invalidates the entry it hits with the cache on or off (`zmem.v:215` `cache_inv` has no
+`cache_en`). unreal-ng now models the retention (`TsConfMemory::CacheRead` / `AfterWrite`; the cache is zeroed
+only at power-on, the reset comment is true); test `TsConfMemory_Test.CCH3_CacheFillAndRetentionMatchTheRtl`. The
+text below is the finding as audited.
 
 This deviation is documented (technical-design §3.5 item 3). It matters only for reads that hit stale
 entries after DMA. However, the reset comment `PD:220-222` lists "the cache contents" as not reset,

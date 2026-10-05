@@ -118,7 +118,6 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
     if (core)
     {
         core->RemoveBusOverlay(&_fmWindow);
-        core->RemoveBusOverlay(&_cacheSnoop);
         core->RemoveBusOverlay(&_dramWriteWait);
         Z80* z80 = core->GetZ80();
         if (z80 && z80->machineM1Hook == this)
@@ -130,10 +129,7 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
     }
 
     if (_tsMemory)
-    {
-        _tsMemory->SetCacheActive(false);
         _tsMemory->AttachState(nullptr);
-    }
 
     // Battery-backed state outlives the machine ([EVO] NvramFile, shared with ATM3)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
@@ -218,8 +214,9 @@ size_t PortDecoder_TSConf::Vdac2LineSource::TakeLineEdges(uint32_t raster, uint3
 }
 
 /// Warm reset (hardware-spec §10). Not reset: BORDER, T_MAP_PAGE, T0/T1_G_PAGE,
-/// SG_PAGE, the T0/T1 offsets, CRAM, SFILE, the cache contents, the FM
-/// window address nibble
+/// SG_PAGE, the T0/T1 offsets, CRAM, SFILE, the cache contents (only
+/// CACHE_CONFIG goes to 0; the entries live until the power is cut, [V]
+/// zmem.v:231,267 no clear), the FM window address nibble
 void PortDecoder_TSConf::reset()
 {
     if (!_poweredOn)
@@ -310,7 +307,6 @@ void PortDecoder_TSConf::ApplyState()
     UpdateBanks();
     RefreshM1Hook();
     RefreshFmWindow();
-    RefreshCache();
     ApplyClock();
     ApplyVideoPage();
 }
@@ -718,7 +714,6 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
         case TsConfReg::SysConfig:
             // Bit 2 is copied into all four CACHE_CONFIG bits (§2.5); the clock switches now (§11)
             _ts.regs[TsConfReg::CacheConfig] = (value & 0x04) ? 0x0F : 0x00;
-            RefreshCache();
             ApplyClock();
             break;
         case TsConfReg::MemConfig:
@@ -729,8 +724,7 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
             UpdateBanks();  // CF_DOSPORTS follows VG_OPEN
             break;
         case TsConfReg::CacheConfig:
-            RefreshCache();
-            break;
+            break;  // read live by every CPU RAM read (TsConfMemory::CacheRead)
         case TsConfReg::IntMask:
             _interrupts.OnMaskWrite(value);
             break;
@@ -1093,38 +1087,11 @@ void PortDecoder_TSConf::CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>&
     out.push_back(_sfileRegion.get());
 }
 
-void PortDecoder_TSConf::RefreshCache()
-{
-    const bool active = _ts.regs[TsConfReg::CacheConfig] & 0x0F;
-    Core* core = _context->pCore;
-
-    if (_tsMemory)
-    {
-        if (!active)
-            _tsMemory->CacheClear();
-        _tsMemory->SetCacheActive(active);
-    }
-
-    if (!core)
-        return;
-    if (active)
-        core->AddBusOverlay(&_cacheSnoop);
-    else
-        core->RemoveBusOverlay(&_cacheSnoop);
-}
-
 void PortDecoder_TSConf::DramWriteWait::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
                                                 [[maybe_unused]] bool romPaged)
 {
     if (_owner._tsMemory)
         _owner._tsMemory->AfterWrite(addr);
-}
-
-void PortDecoder_TSConf::CacheWriteSnoop::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
-                                                  [[maybe_unused]] bool romPaged)
-{
-    if (_owner._tsMemory)
-        _owner._tsMemory->CacheInvalidate(addr);
 }
 
 /// SYS_CONFIG[1:0]: 3.5, 7, 14, 14 MHz, switched right after the OUT (§11).

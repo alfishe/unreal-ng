@@ -40,8 +40,19 @@ first; tests that assert the current wrong value are named and change with the f
   decision 2026-10-05 (was D2, off); `IdeStall=0` stays as the bypass. Test IDE4.
 - ~~The NMI button works on TS-Conf, whose board never drives /NMI - row 41.~~ **Fixed:** `RequestBoardNmi` takes the press and does nothing (test `NmiButtonDoesNothing`); the debugger's direct NMI request stays.
 - ~~A frame pulse running across a CPU clock switch is cut short - row 25.~~ **Fixed:** `TsConfInterrupts::BeforeClockSwitch / AfterClockSwitch` carry the counted clocks across (`intFrameAdjust` keeps the CPU-clock part, the blob size is unchanged); tests CLK3, CLK3b.
-- The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at
-  `portdecoder_tsconf.cpp:220-222` says so, contradicting the code) - [memory-ports.md](memory-ports.md).
+- ~~The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at
+  `portdecoder_tsconf.cpp:220-222` says so, contradicting the code) - [memory-ports.md](memory-ports.md).~~
+  **Fixed 2026-10-05**, checked on the running RTL (`tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim cache`, 10
+  scenarios): every CPU DRAM read fills its entry whatever `CACHE_CONFIG` says, nothing clears the cache (switching
+  it off, reset), and a CPU write invalidates the entry it hits with the cache on or off. `TsConfMemory::CacheRead`
+  / `AfterWrite` do the same; the invalidation snoop overlay and `CacheClear` are gone; the reset comment is now
+  true. Test `TsConfMemory_Test.CCH3_CacheFillAndRetentionMatchTheRtl` replays the scenarios
+  (`testdata/machines/tsconf/rtl-sim/cache-retention.txt`). Every TS-Conf CPU read now goes through the fill path; A/B of the
+  host-frame benchmarks, 7 interleaved rounds (machine load 22-78, above the usual threshold, so indicative):
+  `BM_HostFrame_TSConf_Fast` -1.1%, `_Debug` -1.3%, `BM_HostFrame_TSConf14_256C_Fast` +1.3% (rounds at the lowest
+  load; equal in two rounds). Other machines do not use `TsConfMemory`. `testdata/machines/tsconf/ttd/sprites.ttd`
+  no longer replays (`TTD_Corpus_Test`: the TS-Conf blob differs from byte 1024, `cacheTag`, because the recording
+  has no entries for reads made with the cache off): it needs re-recording.
 - W0_WE with ROM in window 0 should write the flash (`zmem.v:297`); both emulators drop the write.
 
 ## Known approximations (documented in unreal-ng, kept unless a program needs them)
@@ -50,7 +61,8 @@ first; tests that assert the current wrong value are named and change with the f
   continuously ([tsu.md](tsu.md) rows 47-48).
 - ~~Tile cost counts only tiles touching the window ([tsu.md](tsu.md) row 30).~~ **Fixed** with item 13: `width / 8 + 1`
   tiles per layer, as the RTL.
-- Cache not filled while every window has it off ([interrupts.md](interrupts.md) row 31).
+- ~~Cache not filled while every window has it off ([interrupts.md](interrupts.md) row 31).~~ **Fixed** with the
+  cache gap above: it fills on every CPU DRAM read, as the RTL.
 - DMA device 7 (wait port, AVR) not served ([dma.md](dma.md) row 19).
 - GFXOVR and the 360-wide TSU window (T_CONFIG bit 0) on in every build, decision D1 (`hardware-spec.md` §0.1).
 

@@ -548,10 +548,22 @@ store through `_bank_write[bank]`. TSConf needs:
    mechanism serves the Sprinter (video shadow, graphics pages; its bank
    `_bank_write` points to the trash page where the plain store must not land)
    and ZX-Evo flash writes (PLAN #55 E8).
-3. **Cache** (functional, phase 1): 256 entries `{tag13, valid, word}`;
-   filled on every CPU RAM read; hit returns the cached byte when
-   `CACHE_CONFIG[bank]`; invalidated by a CPU write that hits; not touched by
-   DMA. Timing (miss waits at 14 MHz) phase 8.
+3. **Cache** (functional, phase 1): 256 entries `{tag13, valid, word}` in
+   `TsConfState` (`cacheTag` / `cacheWord`, so TTD and snapshots carry them);
+   filled on every CPU RAM read that takes a DRAM cycle, **whatever
+   `CACHE_CONFIG` says**; hit returns the cached byte when
+   `CACHE_CONFIG[bank]`; invalidated by a CPU write that hits, with the cache
+   on or off; not touched by DMA; **never cleared** - not by a reset, not when
+   switched off - only zeroed at power-on (hardware-spec §2.5). Until
+   2026-10-05 it filled only while a window had the cache on and was cleared
+   when the last one turned it off (and so at every reset), so DMA-stale
+   words read with the cache off were lost; the RTL simulation
+   (`tsconf-cpu-sim cache`, test `CCH3_CacheFillAndRetentionMatchTheRtl`)
+   settled it. `TsConfMemory::CacheRead` runs on every TS-Conf CPU read (it
+   also counts the read's DRAM cycle); the invalidation is in `AfterWrite`,
+   called by the always-installed DRAM write overlay, so there is no cache
+   overlay. Cost: an A/B of the TS-Conf host-frame benchmarks (see the audit
+   TODO). Timing (miss waits at 14 MHz) phase 8.
 4. **RAM page 0xFF** (vdos maps exactly that page): ~~sentinel collision~~ —
    **resolved on master in `3a6eabc6`** (PLAN #40 Phase 0, Step 1): the bank cache holds a
    16-bit `ttd::PhysPage` with `kPhysPageNone = 0xFFFF` (`ttdphyspage.h`), so

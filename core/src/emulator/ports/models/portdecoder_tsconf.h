@@ -202,21 +202,9 @@ private:
         PortDecoder_TSConf& _owner;
     };
 
-    /// Cache invalidation (§2.5): a write-only overlay over the whole space,
-    /// installed while any window has the cache enabled
-    class CacheWriteSnoop : public HostBusOverlay
-    {
-    public:
-        explicit CacheWriteSnoop(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
-        uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
-        void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
-
-    private:
-        PortDecoder_TSConf& _owner;
-    };
-
-    /// CPU writes to DRAM: counted in the DRAM budget, and the 14 MHz write
-    /// waits (TsConfArbiter); a write-only overlay, always installed
+    /// CPU writes to DRAM: counted in the DRAM budget, the cache entry they hit
+    /// invalidated (§2.5), and the 14 MHz write waits (TsConfArbiter); a
+    /// write-only overlay, always installed
     class DramWriteWait : public HostBusOverlay
     {
     public:
@@ -241,7 +229,6 @@ private:
     void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();
     void RefreshFmWindow();
-    void RefreshCache();
     void ApplyClock();
     void ApplyVideoPage();
     void UpdateBanks();
@@ -269,7 +256,6 @@ private:
     FmWindow _fmWindow{*this};
     std::unique_ptr<IDeviceMemoryRegion> _cramRegion;
     std::unique_ptr<IDeviceMemoryRegion> _sfileRegion;
-    CacheWriteSnoop _cacheSnoop{*this};
     DramWriteWait _dramWriteWait{*this};
 
     // The board's AVR behind the Gluk CMOS ports (clock, NVRAM, extension
