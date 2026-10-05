@@ -594,6 +594,26 @@ TEST_F(McpTools_Test, ControlExecution_PortOut_PostsPortAndValue)
     EXPECT_TRUE(RunTool(*_registry, "control_execution", missing, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, ControlExecution_Wait_LongPolls)
+{
+    Json::Value reply;
+    reply["seq"] = 43;
+    reply["changed"] = true;
+    reply["state"] = "paused";
+    reply["pause"]["reason"] = "breakpoint";
+    reply["pause"]["breakpoint_id"] = 3;
+    reply["pause"]["address"] = 0x8000;
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/wait?timeout_ms=5000&since=42"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "wait";
+    args["since"] = 42;
+    args["timeout_ms"] = 5000;
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Changed: seq 43, paused at breakpoint #3 (8000)");
+}
+
 // ===========================================================================
 // inspect_state
 // ===========================================================================

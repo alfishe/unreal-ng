@@ -3510,6 +3510,22 @@ bool Emulator::RunAtFrameBoundary(const std::function<void()>& work, uint32_t ti
     return _mainloop && _isRunning && _mainloop->RunAtFrameBoundary(work, timeoutMs);
 }
 
+void Emulator::NoteDebugChange()
+{
+    _debugSeq.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> lock(_debugSeqMutex);  // a waiter between its check and its wait sees it
+    }
+    _debugSeqChanged.notify_all();
+}
+
+uint64_t Emulator::WaitDebugChange(uint64_t since, uint32_t timeoutMs)
+{
+    std::unique_lock<std::mutex> lock(_debugSeqMutex);
+    _debugSeqChanged.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&]() { return DebugSeq() != since; });
+    return DebugSeq();
+}
+
 Emulator::CoherentMoment Emulator::RunAtCoherentMoment(const std::function<void()>& work, uint32_t timeoutMs)
 {
     if (RunWhileParked(work))

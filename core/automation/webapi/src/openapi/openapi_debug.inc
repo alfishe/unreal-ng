@@ -245,6 +245,34 @@
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
 
     // Disassembly endpoint
+    // GET /api/v1/emulator/{id}/debug/wait - long-poll on the snapshot's seq (debugger additions tdd §6)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/debug/wait"]["get"];
+        op["summary"] = "Wait until something a debugger shows changes (long-poll)";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "Answers when the debugger snapshot's seq moves past `since` - a stop (pause, breakpoint, the end of a "
+            "step), a run start or a tool edit - or after timeout_ms: {seq, changed, state, pause {reason, "
+            "breakpoint_id, address}}. `since` omitted = the current seq (wait for the next change); already behind = "
+            "an immediate answer. No server thread waits, so many clients can wait at once. For clients without "
+            "WebSocket; /api/v1/websocket pushes the same stops.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "since";
+        op["parameters"][1]["in"] = "query";
+        op["parameters"][1]["schema"]["type"] = "integer";
+        op["parameters"][1]["description"] = "The seq the client last saw (default: the current one)";
+        op["parameters"][2]["name"] = "timeout_ms";
+        op["parameters"][2]["in"] = "query";
+        op["parameters"][2]["schema"]["type"] = "integer";
+        op["parameters"][2]["description"] = "0..60000, default 10000 (0 = answer now)";
+        op["responses"]["200"]["description"] = "{seq, changed, state: paused | running | stopped, pause}";
+        op["responses"]["400"]["description"] = "Bad since / timeout_ms";
+        op["responses"]["404"]["description"] = "No such emulator (or it was removed while waiting)";
+    }
+
     // GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end (D7 + E3)
     {
         Json::Value& op = paths["/api/v1/emulator/{id}/debug/snapshot"]["get"];

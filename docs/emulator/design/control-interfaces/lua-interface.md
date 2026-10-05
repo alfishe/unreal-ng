@@ -587,6 +587,9 @@ page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 -- A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
 -- breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 ok, err = port_out(0x13AF, 0x20)            -- TS-Conf: RAM page #20 into window 3 -> true
+
+-- Long-poll: block until the debugger snapshot's seq moves past `since` (default: now) or the timeout (ms)
+w = debug_wait(snap.seq, 5000)              -- {seq, changed, state, pause = {reason, breakpoint_id, address}}
 ok, err = port_out(0x7FFD, 256)             -- nil, "bad value '256' (0..#FF)"
 
 -- Get memory configuration

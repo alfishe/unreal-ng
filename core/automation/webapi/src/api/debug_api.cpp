@@ -9,9 +9,13 @@
 #include "../emulator_api.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
+#include <drogon/HttpAppFramework.h>
 #include <drogon/HttpResponse.h>
+#include <trantor/net/EventLoop.h>
 #include <drogon/utils/Utilities.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -2674,6 +2678,79 @@ void EmulatorAPI::postPortOut(const HttpRequestPtr& req, std::function<void(cons
     auto resp = HttpResponse::newHttpJsonResponse(body);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/debug/wait?since=N&timeout_ms=M - long-poll (debugger additions tdd §6): the
+/// answer comes when the snapshot's seq moves past `since` (default: the current seq) or after timeout_ms (default
+/// 10000, at most 60000): {seq, changed, state, pause}. No thread waits: a 10 ms timer on this worker's event loop
+/// checks seq, so many clients can wait at once
+void EmulatorAPI::getDebugWait(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto number = [&](const char* key, uint64_t fallback, uint64_t max, uint64_t& out) {
+        const std::string text = req->getParameter(key);
+        out = fallback;
+        return text.empty() || (StringHelper::TryParseUInt64(text, out) && out <= max);
+    };
+    uint64_t since = 0;
+    uint64_t timeoutMs = 0;
+    if (!number("since", emulator->DebugSeq(), UINT64_MAX, since) || !number("timeout_ms", 10000, 60000, timeoutMs))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "since is an unsigned number, timeout_ms 0..60000";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    auto answer = [since](const std::shared_ptr<Emulator>& target, std::function<void(const HttpResponsePtr&)>& reply) {
+        auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(DebugSnapshot::WaitAnswer(target.get(), since)));
+        addCorsHeaders(resp);
+        reply(resp);
+    };
+    if (emulator->DebugSeq() != since || timeoutMs == 0)
+        return answer(emulator, callback);
+
+    struct Waiter
+    {
+        std::function<void(const HttpResponsePtr&)> callback;
+        std::weak_ptr<Emulator> emulator;
+        uint64_t since = 0;
+        std::chrono::steady_clock::time_point deadline;
+        trantor::TimerId timer = 0;
+        bool done = false;
+    };
+    auto waiter = std::make_shared<Waiter>();
+    waiter->callback = std::move(callback);
+    waiter->emulator = emulator;
+    waiter->since = since;
+    waiter->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    trantor::EventLoop* loop = trantor::EventLoop::getEventLoopOfCurrentThread();
+    if (!loop)
+        loop = drogon::app().getLoop();
+    waiter->timer = loop->runEvery(0.01, [waiter, loop, answer]() {
+        if (waiter->done)
+            return;
+        std::shared_ptr<Emulator> target = waiter->emulator.lock();
+        if (target && target->DebugSeq() == waiter->since && std::chrono::steady_clock::now() < waiter->deadline)
+            return;
+        waiter->done = true;
+        loop->invalidateTimer(waiter->timer);
+        if (target)
+            return answer(target, waiter->callback);
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "the emulator was removed while waiting";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        waiter->callback(resp);
+    });
 }
 
 void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

@@ -1932,6 +1932,46 @@ void CLIProcessor::HandlePortOut(const ClientSession& session, const std::vector
     session.SendResponse(std::string(text) + NEWLINE);
 }
 
+// HandleDebugWait - debug-wait [since] [--timeout ms]: long-poll on the debugger snapshot's seq (core
+// DebugSnapshot::Wait, the WebAPI GET /debug/wait)
+void CLIProcessor::HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    uint64_t since = emulator->DebugSeq();
+    uint32_t timeoutMs = 10000;
+    try
+    {
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (args[i] == "--timeout" && i + 1 < args.size())
+                timeoutMs = std::min<uint32_t>(static_cast<uint32_t>(std::stoul(args[++i])), 60000);
+            else
+                since = std::stoull(args[i]);
+        }
+    }
+    catch (const std::exception&)
+    {
+        session.SendResponse("Usage: debug-wait [since] [--timeout ms]" + std::string(NEWLINE));
+        return;
+    }
+    const StateNode answer = DebugSnapshot::Wait(emulator.get(), since, timeoutMs);
+    const StateNode* pause = answer.find("pause");
+    std::ostringstream ss;
+    ss << (answer.find("changed")->b ? "Changed: seq " : "No change: seq ") << answer.find("seq")->i << ", "
+       << answer.find("state")->s;
+    if (pause && pause->find("reason")->s == "breakpoint")
+        ss << " at breakpoint #" << pause->find("breakpoint_id")->i << " (" << std::hex << std::uppercase
+           << std::setw(4) << std::setfill('0') << pause->find("address")->i << ")";
+    else if (pause && pause->find("reason")->s != "none")
+        ss << " (last stop: " << pause->find("reason")->s << ")";
+    session.SendResponse(ss.str() + NEWLINE);
+}
+
 // HandleDebugSnapshot - one coherent debugger snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot) as text
 void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args)
 {

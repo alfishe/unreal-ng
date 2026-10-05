@@ -5,6 +5,8 @@
 
 #include "_helpers/testwaithelper.h"
 
+#include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 
@@ -215,5 +217,43 @@ TEST_F(DebugSnapshot_Test, PausedAndRunningMachines)
     const uint64_t seq = static_cast<uint64_t>(paused.snapshot.find("seq")->i);
     EXPECT_EQ(static_cast<uint64_t>(DebugSnapshot::Build(_emulator.get(), options).snapshot.find("seq")->i), seq)
         << "nothing happened: the same seq";
+    _emulator->Stop();
+}
+
+// --- Long-poll (debugger additions tdd §6) ----------------------------------------------------------------------
+
+TEST_F(DebugSnapshot_Test, WaitTimesOutWithoutAChange)
+{
+    const uint64_t since = _emulator->DebugSeq();
+    const auto start = std::chrono::steady_clock::now();
+    const StateNode answer = DebugSnapshot::Wait(_emulator.get(), since, 20);
+    EXPECT_GE(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(15));
+    EXPECT_FALSE(answer.find("changed")->b);
+    EXPECT_EQ(static_cast<uint64_t>(answer.find("seq")->i), since);
+    EXPECT_EQ(answer.find("state")->s, "stopped");
+}
+
+TEST_F(DebugSnapshot_Test, WaitAnswersAtOnceWhenSeqMovedAlready)
+{
+    const uint64_t since = _emulator->DebugSeq();
+    _emulator->EditMemoryFromTool("test", [this]() { Poke(0x9000, {0x55}); });
+    const auto start = std::chrono::steady_clock::now();
+    const StateNode answer = DebugSnapshot::Wait(_emulator.get(), since, 5000);
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(1000));
+    EXPECT_TRUE(answer.find("changed")->b);
+    EXPECT_GT(static_cast<uint64_t>(answer.find("seq")->i), since);
+}
+
+TEST_F(DebugSnapshot_Test, WaitEndsWhenTheMachinePauses)
+{
+    _emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->IsRunning(); }));
+    const uint64_t since = _emulator->DebugSeq();
+    auto waiter = std::async(std::launch::async, [&]() { return DebugSnapshot::Wait(_emulator.get(), since, 5000); });
+    _emulator->Pause();
+    ASSERT_EQ(waiter.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    const StateNode answer = waiter.get();
+    EXPECT_TRUE(answer.find("changed")->b);
+    EXPECT_EQ(answer.find("pause")->find("reason")->s, "pause");
     _emulator->Stop();
 }

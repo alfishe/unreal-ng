@@ -138,6 +138,8 @@ protected:
     // The debugger snapshot's change counter and the registers at the previous stop (tdd 2026-10-04-debugger-snapshot
     // §4.5): updated at stops, run starts and tool edits, never per instruction
     std::atomic<uint64_t> _debugSeq{0};
+    std::mutex _debugSeqMutex;              ///< WaitDebugChange's condition variable only
+    std::condition_variable _debugSeqChanged;
     mutable std::mutex _prevStopMutex;
     Z80State _prevStopState{};
     bool _hasPrevStop = false;
@@ -681,7 +683,10 @@ public:
     /// changed for a debugger view)
     uint64_t DebugSeq() const { return _debugSeq.load(std::memory_order_acquire); }
     /// Something a debugger view shows changed (a stop, a tool's register or memory edit)
-    void NoteDebugChange() { _debugSeq.fetch_add(1, std::memory_order_acq_rel); }
+    void NoteDebugChange();
+    /// Block until DebugSeq() differs from `since` or `timeoutMs` passes; returns DebugSeq() (debugger additions
+    /// tdd §6: long-poll). NoteDebugChange wakes it
+    uint64_t WaitDebugChange(uint64_t since, uint32_t timeoutMs);
     /// A run starts (resume, a direct step / run): the registers now become "the previous stop" (prev_regs), seq grows
     void NoteRunStart();
     /// The registers at the stop before the current one; false before the first run start

@@ -231,6 +231,25 @@ const char* BankKind(MemoryBankModeEnum mode)
     }
 }
 
+/// Why it stopped last: {reason, breakpoint_id, address}
+StateNode PauseNode(Emulator* emulator)
+{
+    const Emulator::DebugStop stop = emulator->LastStop();
+    StateNode pause = StateNode::Object();
+    pause["reason"] = std::string(StopReason(stop.reason));
+    if (stop.reason == Emulator::DebugStop::Reason::Breakpoint)
+    {
+        pause["breakpoint_id"] = static_cast<int>(stop.breakpoint.breakpointId);
+        pause["address"] = static_cast<int>(stop.breakpoint.address);
+    }
+    return pause;
+}
+
+std::string StateName(Emulator* emulator)
+{
+    return emulator->IsPaused() ? "paused" : emulator->IsRunning() ? "running" : "stopped";
+}
+
 /// Every part, read now: the caller guarantees nothing runs the machine meanwhile. `consistency` is the caller's
 /// to fill (where it ran Capture); the key is placed here to keep the field order
 StateNode Capture(Emulator* emulator, const Options& options)
@@ -242,16 +261,8 @@ StateNode Capture(Emulator* emulator, const Options& options)
     StateNode node = StateNode::Object();
     node["seq"] = emulator->DebugSeq();
     node["cpu"] = std::string("z80");
-    node["state"] = std::string(emulator->IsPaused() ? "paused" : emulator->IsRunning() ? "running" : "stopped");
-    const Emulator::DebugStop stop = emulator->LastStop();
-    StateNode pause = StateNode::Object();
-    pause["reason"] = std::string(StopReason(stop.reason));
-    if (stop.reason == Emulator::DebugStop::Reason::Breakpoint)
-    {
-        pause["breakpoint_id"] = static_cast<int>(stop.breakpoint.breakpointId);
-        pause["address"] = static_cast<int>(stop.breakpoint.address);
-    }
-    node["pause"] = pause;
+    node["state"] = StateName(emulator);
+    node["pause"] = PauseNode(emulator);
     node["consistency"] = std::string();
     node["regs"] = Registers(context);
     Z80State previous;
@@ -355,5 +366,21 @@ Result Build(Emulator* emulator, const Options& options)
     result.busy = true;
     result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";
     return result;
+}
+StateNode WaitAnswer(Emulator* emulator, uint64_t since)
+{
+    StateNode node = StateNode::Object();
+    const uint64_t seq = emulator->DebugSeq();
+    node["seq"] = seq;
+    node["changed"] = seq != since;
+    node["state"] = StateName(emulator);
+    node["pause"] = PauseNode(emulator);
+    return node;
+}
+
+StateNode Wait(Emulator* emulator, uint64_t since, uint32_t timeoutMs)
+{
+    emulator->WaitDebugChange(since, timeoutMs);
+    return WaitAnswer(emulator, since);
 }
 }  // namespace DebugSnapshot

@@ -273,11 +273,53 @@ Live (core-tests cannot link drogon): three never-ending `skip_until` calls at o
 within a second; each long call still returns its JSON. MCP / CLI unit level: `CLIProcessor` answers `stepout`,
 `skip_until`, `run_frames` with the claim message while a fake claim is held (`RunControlClaim_Test` style).
 
-## 6. The rest (outline; designed when reached)
+## 6. E8: wait for a change (long-poll)
+
+### 6.1 The problem in one example
+
+A simple client (a shell script, a browser page without WebSocket code) runs the machine and wants to know when it
+stops at a breakpoint. Today it polls `GET /debug/snapshot` every 50 ms. After this step it asks once and the
+answer comes when something changed:
+
+```text
+GET /api/v1/emulator/{id}/debug/wait?since=42&timeout_ms=5000
+-> {"seq":43,"changed":true,"state":"paused","pause":{"reason":"breakpoint","breakpoint_id":3,"address":32768}}
+-> {"seq":42,"changed":false,"state":"running","pause":{"reason":"none"}}          (5 s, nothing happened)
+```
+
+### 6.2 Design
+
+- **What "changed" means**: the debugger snapshot's `seq` (§ snapshot tdd) moved past `since`: a stop, a run start,
+  a tool edit. `since` omitted = the current `seq` (wait for the next change). `seq` already different = an
+  immediate answer.
+- **Core**: `Emulator::WaitDebugChange(since, timeoutMs)` blocks on a condition variable that `NoteDebugChange`
+  signals (all its callers are rare paths: stops, run starts, tool edits); `DebugSnapshot::WaitAnswer` builds the
+  reply (`seq`, `changed`, `state`, `pause` as in the snapshot). CLI, Lua and Python call the blocking form.
+- **WebAPI without holding a worker**: the handler answers at once when `seq` already moved; otherwise it puts a
+  10 ms repeating timer on drogon's event loop that checks `seq` and answers on a change or at the deadline. No
+  thread waits; many clients can wait at once. `timeout_ms` 0..60000 (default 10000).
+- **MCP**: `control_execution` action `wait` (`since`, `timeout_ms`) -> one line "changed: seq 43, paused at
+  breakpoint #3 (8000)" or "no change in 5000 ms (seq 42, running)".
+- **Qt**: none needed - the GUI gets the core notifications directly.
+
+| Surface | Form |
+|---|---|
+| WebAPI | `GET /debug/wait?since=&timeout_ms=` |
+| MCP | `control_execution` `wait` |
+| CLI | `debug-wait [since] [--timeout ms]` |
+| Lua | `debug_wait([since [, timeout_ms]])` -> table |
+| Python | `emu.debug_wait(since=None, timeout_ms=10000)` -> dict |
+
+### 6.3 Tests
+
+`DebugSnapshot_Test`: a wait on a paused machine with no change times out after its timeout (small, 20 ms); a wait
+while another thread pauses a running machine returns `changed` with reason `pause`; `since` already behind
+answers at once. MCP unit test for `wait`; WebAPI live: a wait, then a pause from another request ends it.
+
+## 7. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| E8 | Long-poll `GET /debug/wait?since=<seq>&timeout_ms=` | answers when the snapshot's `seq` moves; async (no worker held) |
 | E2 | PC history with page, `GET /debug/pchist?depth=` | per-instruction ring armed only while a debugger asks for it; A/B benchmark |
 | D9 | `read_write` per window in `/state/paging` for TS-Conf | verify first |
 | E7 | Label import (XAS / ALASM) | low priority |

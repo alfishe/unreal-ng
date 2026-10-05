@@ -15,6 +15,7 @@ memory reads come as **raw bytes**. Design:
 |---|---|
 | One redraw of a debugger window | the snapshot (`disasm`, `stack`, `memory` windows as needed) |
 | "Did anything change since my last redraw?" | the snapshot's `seq`: equal = nothing changed |
+| "Tell me when it changes" (no WebSocket) | `GET /debug/wait?since=<seq>` (long-poll) |
 | What changed in the registers | `regs` vs `prev_regs` (the registers at the previous stop) |
 | A whole 64K or page dump for a tool | `format=binary` on the memory reads (WebAPI), `mem_read_bytes` (Lua / Python), `memory save` (CLI) |
 
@@ -52,7 +53,17 @@ curl -s "$BASE/emulator/$EMU_ID/memory/0x0000?len=65536&format=binary" -o all.bi
 curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/5?offset=0&length=16384&format=binary" -o ram5.bin
 ```
 
-A polling client keeps the last `seq` and skips the redraw while it stays the same. A 503 answer means no
+A polling client keeps the last `seq` and skips the redraw while it stays the same. Better: ask once and get the
+answer when something changed (long-poll; no server thread waits):
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/debug/wait?since=42&timeout_ms=5000" | jq -c .
+# -> {"seq":43,"changed":true,"state":"paused","pause":{"reason":"breakpoint","breakpoint_id":3,"address":32768}}
+# -> {"seq":42,"changed":false,"state":"running","pause":{"reason":"none"}}     (5 s, nothing happened)
+```
+
+MCP `control_execution {"action":"wait","since":42,"timeout_ms":5000}`, CLI `debug-wait 42 --timeout 5000`, Lua
+`debug_wait(42, 5000)`, Python `emu.debug_wait(since=42, timeout_ms=5000)`. A 503 answer means no
 coherent moment came within 500 ms (the emulator was being stepped from another client): ask again.
 
 ## Lua / Python / CLI

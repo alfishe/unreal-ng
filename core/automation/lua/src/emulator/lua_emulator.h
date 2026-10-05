@@ -14,6 +14,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include <algorithm>
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -840,6 +841,18 @@ public:
         // debug_snapshot{disasm = 21, stack = 8, memory = {"cpu:0x8000:256", "ram5:0:6912"}} - one coherent debugger
         // snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot): memory windows carry their bytes as Lua strings
         // (field bytes); nil, error when refused
+        // Long-poll (debugger additions tdd §6): blocks until the snapshot's seq moves past `since` (default: the
+        // current one) or timeout_ms (default 10000, at most 60000) -> {seq, changed, state, pause} | nil, error
+        lua.set_function("debug_wait", [this](sol::this_state s, sol::optional<double> since, sol::optional<uint32_t> timeoutMs)
+                                           -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const uint64_t from = since ? static_cast<uint64_t>(*since) : emulator->DebugSeq();
+            const uint32_t timeout = std::min<uint32_t>(timeoutMs.value_or(10000), 60000);
+            return {StateNodeToLua(s, DebugSnapshot::Wait(emulator, from, timeout)), sol::make_object(s, sol::lua_nil)};
+        });
+
         lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator)

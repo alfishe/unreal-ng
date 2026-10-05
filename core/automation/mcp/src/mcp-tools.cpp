@@ -742,7 +742,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "port_out"})
+                               "bp_list", "bp_reset_hits", "port_out", "wait"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -788,6 +788,11 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
     schema["properties"]["value"]["type"] = "string";
     schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms";
+    schema["properties"]["since"]["type"] = "integer";
+    schema["properties"]["since"]["description"] =
+        "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
+    schema["properties"]["timeout_ms"]["type"] = "integer";
+    schema["properties"]["timeout_ms"]["description"] = "For wait: 0..60000, default 10000";
     schema["required"].append("action");
 
     registry.Register(
@@ -797,6 +802,7 @@ void RegisterControlExecution(ToolRegistry& registry)
         "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
+        "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit) or timeout_ms passes. "
         "Stepping actions automatically include the new register snapshot.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -890,6 +896,36 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (args.isMember(key))
                             body[key] = args[key];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
+                    return;
+                }
+                if (action == "wait")
+                {
+                    std::string path = Endpoint(id, "/debug/wait") + "?timeout_ms=" +
+                                       std::to_string(args.isMember("timeout_ms") ? args["timeout_ms"].asUInt() : 10000u);
+                    if (args.isMember("since"))
+                        path += "&since=" + std::to_string(args["since"].asUInt64());
+                    caller.Call("GET", path, nullptr, [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error("wait failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response)));
+                            return;
+                        }
+                        const Json::Value& pause = response["pause"];
+                        std::string text = response.get("changed", false).asBool() ? "Changed: seq " : "No change: seq ";
+                        text += std::to_string(response.get("seq", 0).asUInt64()) + ", " +
+                                response.get("state", "").asString();
+                        if (pause.get("reason", "none").asString() == "breakpoint")
+                        {
+                            char where[48];
+                            std::snprintf(where, sizeof(where), " at breakpoint #%u (%04X)", pause.get("breakpoint_id", 0).asUInt(),
+                                          pause.get("address", 0).asUInt());
+                            text += where;
+                        }
+                        else if (pause.get("reason", "none").asString() != "none")
+                            text += " (last stop: " + pause.get("reason", "").asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
                     return;
                 }
                 if (action == "port_out")

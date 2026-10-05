@@ -54,4 +54,11 @@ std::string Base64(const std::vector<uint8_t>& bytes);
 /// The whole snapshot at one moment: read while the emulator stays parked ("paused"), at the next frame boundary of a
 /// running machine ("frame"), or directly when it does not run ("stopped"). Memory windows carry their bytes as base64
 Result Build(Emulator* emulator, const Options& options);
+
+/// The long-poll answer (debugger additions tdd §6): {seq, changed (seq != since), state, pause} - `pause` as in the
+/// snapshot. Reads only atomics and the last stop, so any thread may build it
+StateNode WaitAnswer(Emulator* emulator, uint64_t since);
+/// Block until the snapshot's seq moves past `since` or `timeoutMs` passes, then WaitAnswer (CLI, Lua, Python; the
+/// WebAPI waits on its event loop instead)
+StateNode Wait(Emulator* emulator, uint64_t since, uint32_t timeoutMs);
 }  // namespace DebugSnapshot

@@ -9,6 +9,7 @@
 #include "debugger/search/memorysearch.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
+#include <algorithm>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -954,6 +955,17 @@ namespace PythonBindings
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
             }, "Write 16-bit word to memory")
+            .def("debug_wait", [](Emulator& self, std::optional<uint64_t> since, uint32_t timeoutMs) -> py::object {
+                const uint64_t from = since ? *since : self.DebugSeq();
+                StateNode answer;
+                {
+                    py::gil_scoped_release release;  // other Python threads keep running while this one waits
+                    answer = DebugSnapshot::Wait(&self, from, std::min<uint32_t>(timeoutMs, 60000));
+                }
+                return StateNodeToPy(answer);
+            }, "Long-poll: block until the debugger snapshot's seq moves past `since` (default: the current one) or "
+               "timeout_ms (at most 60000) passes -> dict {seq, changed, state, pause}",
+               py::arg("since") = py::none(), py::arg("timeout_ms") = 10000)
             .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory) -> py::object {
                 DebugSnapshot::Options options;
                 options.disasm = std::min(disasm, 100u);

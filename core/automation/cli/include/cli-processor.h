@@ -124,6 +124,7 @@ private:
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortOut(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
     bool RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
