@@ -172,6 +172,7 @@ private:
     bool Allocate(std::string* error, GraftFailure* failure);
     void Encode();
     void PatchFsInfo();
+    bool PatchBoot(std::string* error);
 
     void SetFat(uint32_t cluster, uint32_t value);
     void Chain(const std::vector<uint32_t>& clusters);
@@ -219,6 +220,11 @@ bool GraftBuilder::Build(std::string* error, GraftFailure* failure)
         return false;
     Encode();
     PatchFsInfo();
+    if (!PatchBoot(error))
+    {
+        *failure = GraftFailure::DoesNotFit;
+        return false;
+    }
 
     // Every changed FAT sector, in every FAT copy
     for (const auto& [index, bytes] : _fat)
@@ -672,6 +678,51 @@ void GraftBuilder::PatchFsInfo()
     }
     Put32(s + 488, _volume._freeClusters);
     Put32(s + 492, _firstFree ? _firstFree : 0xFFFFFFFF);
+}
+
+bool GraftBuilder::PatchBoot(std::string* error)
+{
+    if (!_options.boot || _options.boot->Empty())
+        return true;
+    const FatBootPlan& boot = *_options.boot;
+    auto fail = [error](const std::string& text) {
+        if (error)
+            *error = text;
+        return false;
+    };
+    const bool fat32 = _reader.Type() == FatReaderType::Fat32;
+    if (!boot.mbrCode.empty())
+    {
+        if (_volumeStart == 0)
+            return fail("boot: the base has no MBR for the MBR code");
+        if (boot.mbrCode.size() > 446)
+            return fail("boot: the MBR code is " + std::to_string(boot.mbrCode.size()) + " bytes, the MBR holds 446");
+        std::copy(boot.mbrCode.begin(), boot.mbrCode.end(), PatchSector(0, true));
+    }
+    if (!boot.volumeCode.empty())
+    {
+        const size_t codeStart = fat32 ? 90 : 62;
+        uint8_t* s = PatchSector(_volumeStart, true);
+        const bool partitionEntry = _volumeStart == 0 && std::any_of(s + 446, s + 510, [](uint8_t b) { return b != 0; });
+        const size_t codeEnd = partitionEntry ? 446 : 510;
+        if (boot.volumeCode.size() > codeEnd - codeStart)
+            return fail("boot: the volume boot code is " + std::to_string(boot.volumeCode.size()) + " bytes, the base's boot sector holds " +
+                        std::to_string(codeEnd - codeStart));
+        std::copy(boot.volumeCode.begin(), boot.volumeCode.end(), s + codeStart);
+        const uint32_t backup = fat32 ? static_cast<uint32_t>(s[50] | (s[51] << 8)) : 0;
+        if (backup != 0 && backup < _reader.ReservedSectors())
+            std::copy(boot.volumeCode.begin(), boot.volumeCode.end(), PatchSector(_volumeStart + backup, true) + codeStart);
+    }
+    for (const auto& [lba, sector] : boot.reserved)
+    {
+        if (lba >= _reader.ReservedSectors())
+            return fail("boot: reserved sector " + std::to_string(lba) + " is past the base's " + std::to_string(_reader.ReservedSectors()) +
+                        " reserved sectors (a graft keeps the base's layout)");
+        if (fat32 && (lba == _reader.FsInfoSector() || lba == 6 || lba == 7))
+            return fail("boot: reserved sector " + std::to_string(lba) + " is the base's FSInfo or boot record backup");
+        std::memcpy(PatchSector(_volumeStart + lba, false), sector.data(), kSector);
+    }
+    return true;
 }
 
 uint32_t GraftBuilder::EndOfChain() const

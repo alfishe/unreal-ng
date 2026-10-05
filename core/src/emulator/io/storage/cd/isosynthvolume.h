@@ -18,10 +18,19 @@
 #include <vector>
 
 #include "emulator/io/storage/cd/cdimage.h"
+#include "emulator/io/storage/cd/iso9660reader.h"
 #include "emulator/io/storage/compose/extentreader.h"
 #include "emulator/io/storage/compose/filetree.h"
 
 class SourcePool;
+
+/// An El Torito boot image of the target (D-6)
+struct IsoBootImage
+{
+    IsoBootEntry entry;                      ///< platform, emulation, load segment, system type, sector count
+    uint32_t unionNode = FileTree::kNone;    ///< the image is this file of the union: its extent is shared
+    FileData data;                           ///< otherwise: where its bytes are (an extent of a source, a host file)
+};
 
 struct IsoTargetOptions
 {
@@ -30,6 +39,7 @@ struct IsoTargetOptions
     bool relaxDepth = false;               ///< allow more than 8 directory levels
     std::string volumeId = "UNREAL_NG";    ///< d-characters, up to 32
     std::optional<int64_t> fixedTimeUtc;   ///< tests / reproducible builds: every date this value
+    std::vector<IsoBootImage> boot;        ///< El Torito entries, the default first; empty: not bootable
 };
 
 class IsoSynthVolume : public cd::IFrameSource
@@ -52,6 +62,8 @@ public:
     std::string Describe() const override { return "ISO 9660 volume"; }
 
     uint32_t Blocks() const { return _blocks; }
+    /// The boot catalog's block, 0 when the volume is not bootable
+    uint32_t BootCatalogBlock() const { return _bootCatalog; }
     uint32_t MetadataBlocks() const { return static_cast<uint32_t>(_metadata.size() / kBlock); }
 
 private:
@@ -62,7 +74,7 @@ private:
         uint32_t firstBlock;
         uint32_t blocks;
         uint64_t fileBlockStart;  ///< the file's block index at firstBlock
-        uint32_t node;
+        const FileData* data;     ///< a union file's, or a hidden boot image's
     };
 
     friend class IsoLayout;
@@ -74,6 +86,8 @@ private:
     ExtentReader _reader;
     std::vector<uint8_t> _metadata;  ///< blocks [0, metadata end): descriptors, path tables, directories
     std::vector<Run> _runs;          ///< sorted by firstBlock
+    std::vector<FileData> _bootData; ///< hidden boot images (Run::data points here)
+    uint32_t _bootCatalog = 0;
     size_t _lastRun = 0;
     uint32_t _blocks = 0;
 };

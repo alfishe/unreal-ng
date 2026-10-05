@@ -19,6 +19,7 @@
 #include "common/unicodehelper.h"
 #include "emulator/io/storage/compose/extentreader.h"
 #include "emulator/io/storage/compose/filetree.h"
+#include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/iblockdevice.h"
 
@@ -29,6 +30,8 @@ struct GraftOptions
     CodePage codePage = CodePage::Cp866;   ///< the base's short names (new names are made in it)
     std::optional<uint32_t> partition;      ///< the base layer's explicit MBR partition (1-4)
     std::optional<int64_t> fixedTimeUtc;    ///< tests: every new entry's time
+    /// The descriptor's boot section (D-6): patched over the base's own boot structures
+    std::shared_ptr<const FatBootPlan> boot;
 };
 
 /// Why a graft was not built: DT-4 falls back to a rebuild on these when the

@@ -95,6 +95,33 @@ struct ComposeTarget
     bool relaxDepth = false;                ///< optical: allow more than 8 directory levels
 };
 
+/// A file the boot section names: a file of the union (target path) or a host file
+struct ComposeBootFile
+{
+    std::string unionPath;              ///< "/BOOT/boot.img" (target path), or empty
+    std::filesystem::path host;         ///< a host file, or empty
+    bool Set() const { return !unionPath.empty() || !host.empty(); }
+};
+
+/// One El Torito entry of the boot section (optical targets)
+struct ComposeElTorito
+{
+    ComposeBootFile image;
+    uint8_t emulation = 0;              ///< 0 none, 1 1.2M, 2 1.44M, 3 2.88M floppy, 4 hard disk
+    uint8_t platform = 0;               ///< 0 x86, 1 PowerPC, 2 Mac, 0xEF EFI
+    uint16_t loadSegment = 0;           ///< 0: the BIOS default (#07C0)
+    uint16_t sectors = 0;               ///< no emulation: 512-byte sectors loaded (0: 4)
+};
+
+/// The descriptor's boot layer (D-6): wins over the bottom source's boot structures
+struct ComposeBoot
+{
+    std::vector<ComposeElTorito> eltorito;
+    ComposeBootFile mbrCode;            ///< FAT: bytes 0-445 of LBA 0
+    ComposeBootFile volumeCode;         ///< FAT: the boot sector's code area
+    std::vector<std::pair<uint32_t, ComposeBootFile>> reserved;  ///< FAT: whole reserved sectors (volume-relative LBA)
+};
+
 struct ComposeWrites
 {
     AccessMode access = AccessMode::Session;
@@ -109,7 +136,8 @@ struct ComposeDescriptor
     ComposeTarget target;
     std::vector<ComposeLayer> layers;
     bool hasPartitions = false;             ///< partitions mode (phase C7)
-    bool hasBoot = false;                   ///< boot layer (phases C5 / C8)
+    bool hasBoot = false;                   ///< a boot section is present
+    ComposeBoot boot;                       ///< the boot section (D-6)
     ComposeWrites writes;
 
     std::filesystem::path file;             ///< empty for an inline descriptor

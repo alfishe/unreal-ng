@@ -3,11 +3,14 @@
 #include "compositemediumfactory.h"
 
 #include <algorithm>
+#include <array>
 
 #include "common/filehelper.h"
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/cd/cdimageformats.h"
+#include "emulator/io/storage/cd/iso9660reader.h"
 #include "emulator/io/storage/cd/isosynthvolume.h"
+#include "emulator/io/storage/compose/extentreader.h"
 #include "emulator/io/storage/compose/fatimagesource.h"
 #include "emulator/io/storage/compose/isoimagesource.h"
 #include "emulator/io/storage/compose/graftvolume.h"
@@ -92,6 +95,157 @@ namespace
         }
         return true;
     }
+
+    /// Every byte of a file of the union or a hidden image
+    bool ReadAll(SourcePool& pool, const FileTree& tree, const FileData& data, std::vector<uint8_t>& out)
+    {
+        out.clear();
+        ExtentReader reader(pool, tree.Extents());
+        uint8_t sector[512];
+        for (uint64_t s = 0; s * 512 < data.bytes; s++)
+        {
+            if (!reader.ReadFileSector(data, s, sector))
+                return false;
+            out.insert(out.end(), sector, sector + std::min<uint64_t>(512, data.bytes - s * 512));
+        }
+        return true;
+    }
+
+    /// A boot file of the descriptor: a file of the union (its node) or a host file (registered in the pool)
+    bool BootFileData(const ComposeBootFile& file, const FileTree& tree, SourcePool& pool, FileData& data, uint32_t& node,
+                      std::string& error)
+    {
+        node = FileTree::kNone;
+        if (!file.unionPath.empty())
+        {
+            node = tree.Find(file.unionPath);
+            if (node == FileTree::kNone || tree.Node(node).isDirectory)
+            {
+                error = "boot: " + file.unionPath + " is not a file of the union";
+                return false;
+            }
+            data = tree.Node(node).data;
+            return true;
+        }
+        std::error_code ec;
+        const uint64_t size = std::filesystem::file_size(file.host, ec);
+        if (ec)
+        {
+            error = "boot: no host file " + PathText(file.host);
+            return false;
+        }
+        data = FileData();
+        data.bytes = size;
+        if (size > 0)
+        {
+            data.storage = FileData::Storage::HostFile;
+            data.hostFile = pool.AddHostFile(file.host, size);
+        }
+        return true;
+    }
+
+    /// The FAT part of the descriptor's boot section
+    bool PlanFromDescriptor(const ComposeBoot& boot, const FileTree& tree, SourcePool& pool, FatBootPlan& plan, std::string& error)
+    {
+        auto bytes = [&](const ComposeBootFile& file, std::vector<uint8_t>& out) {
+            FileData data;
+            uint32_t node = 0;
+            if (!BootFileData(file, tree, pool, data, node, error))
+                return false;
+            if (!ReadAll(pool, tree, data, out))
+            {
+                error = "boot: cannot read " + (file.unionPath.empty() ? PathText(file.host) : file.unionPath);
+                return false;
+            }
+            return true;
+        };
+        if (boot.mbrCode.Set() && !bytes(boot.mbrCode, plan.mbrCode))
+            return false;
+        if (boot.volumeCode.Set() && !bytes(boot.volumeCode, plan.volumeCode))
+            return false;
+        for (const auto& [lba, file] : boot.reserved)
+        {
+            std::vector<uint8_t> data;
+            if (!bytes(file, data))
+                return false;
+            // A file of several sectors fills consecutive reserved sectors
+            for (size_t at = 0, s = 0; at < data.size() || (data.empty() && s == 0); at += 512, s++)
+            {
+                std::array<uint8_t, 512> sector{};
+                std::copy(data.begin() + static_cast<std::ptrdiff_t>(std::min(at, data.size())),
+                          data.begin() + static_cast<std::ptrdiff_t>(std::min(at + 512, data.size())), sector.begin());
+                plan.reserved[lba + static_cast<uint32_t>(s)] = sector;
+                if (data.empty())
+                    break;
+            }
+        }
+        return true;
+    }
+
+    /// The boot structures of the bottom FAT image, carried into a rebuilt volume (D-6, DT-5)
+    void PlanFromBase(SourcePool& pool, uint16_t device, std::optional<uint32_t> partition, FatBootPlan& plan,
+                      std::vector<std::string>& carried)
+    {
+        IBlockDevice& image = pool.Device(device);
+        std::shared_ptr<IBlockDevice> window;
+        uint64_t offset = 0;
+        if (partition)
+        {
+            FatPartition part;
+            if (!FatVolumeReader::FindPartition(image, *partition, part))
+                return;
+            offset = part.first;
+            window = std::make_shared<SubRangeDevice>(pool.DevicePtr(device), part.first, part.count);
+        }
+        FatVolumeReader reader;
+        if (!reader.Open(window ? *window : image))
+            return;
+        const uint64_t start = offset + reader.VolumeStart();
+        uint8_t s[512];
+        auto nonZero = [](const uint8_t* p, size_t n) { return std::any_of(p, p + n, [](uint8_t b) { return b != 0; }); };
+        if (start > 0 && image.ReadSector(0, s) && nonZero(s, 446))
+        {
+            plan.mbrCode.assign(s, s + 446);
+            carried.push_back("MBR code");
+        }
+        const bool fat32 = reader.Type() == FatReaderType::Fat32;
+        if (image.ReadSector(start, s))
+        {
+            const size_t codeStart = fat32 ? 90 : 62;
+            // A superfloppy's sector 0 may carry a partition entry over itself at 446 (mformat, our own
+            // builder): a FAT type, starting at LBA 0. Then the code ends there; otherwise it runs to 510
+            const uint8_t* entry = s + 446;
+            const uint8_t type = entry[4];
+            const bool fatType = type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0B || type == 0x0C || type == 0x0E;
+            const uint32_t entryStart = entry[8] | (entry[9] << 8) | (entry[10] << 16) | (static_cast<uint32_t>(entry[11]) << 24);
+            const uint32_t entrySize = entry[12] | (entry[13] << 8) | (entry[14] << 16) | (static_cast<uint32_t>(entry[15]) << 24);
+            const bool partitionEntry = start == 0 && fatType && entryStart == 0 && entrySize > 0 && entrySize <= image.SectorCount();
+            size_t codeEnd = partitionEntry ? 446 : 510;
+            while (codeEnd > codeStart && s[codeEnd - 1] == 0)
+                codeEnd--;
+            if (codeEnd > codeStart)
+            {
+                plan.volumeCode.assign(s + codeStart, s + codeEnd);
+                carried.push_back("volume boot code");
+            }
+        }
+        const uint32_t backup = fat32 ? static_cast<uint32_t>(s[50] | (s[51] << 8)) : 0;
+        uint32_t sectors = 0;
+        for (uint32_t lba = 1; lba < reader.ReservedSectors(); lba++)
+        {
+            if (fat32 && (lba == reader.FsInfoSector() || lba == 2 || (backup && lba >= backup && lba <= backup + 2)))
+                continue;
+            if (!image.ReadSector(start + lba, s) || !nonZero(s, 512))
+                continue;
+            std::array<uint8_t, 512> sector{};
+            std::copy(s, s + 512, sector.begin());
+            plan.reserved[lba] = sector;
+            sectors++;
+        }
+        if (sectors)
+            carried.push_back(std::to_string(sectors) + " reserved sector(s)");
+        plan.bestEffort = true;
+    }
 }  // namespace
 
 std::vector<FatType> CompositeMediumFactory::FsCandidates(std::optional<FatType> want, const std::vector<FatType>& allowed,
@@ -160,8 +314,6 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     const bool optical = wantsIso || options.slotKind == MediaKind::Optical;
     if (optical && d.target.build == ComposeTarget::Build::Graft)
         return MediaResult::Fail(MediaError::BadRequest, "build: graft is for FAT images; an ISO 9660 target is always rebuilt");
-    if (d.hasBoot)
-        result.report.push_back("boot: not applied yet (a later phase of the multi-source work)");
     if (d.target.onBadName == "replace")
         result.report.push_back("target.onBadName: replace is not implemented yet; names a FAT volume cannot hold are skipped");
 
@@ -170,6 +322,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     std::vector<FileTree> trees(d.layers.size());
     std::vector<UnionLayer> layers;
     int baseDevice = -1;  ///< the bottom layer's image (the whole file), a graft candidate
+    int isoBottom = -1;   ///< the bottom layer's CD image, an El Torito source
+    std::vector<std::pair<size_t, int>> isoLayers;  ///< (layer, device) of every ISO layer
     info = CompositeInfo{};
     info.descriptor = d.file.empty() ? "(inline)" : PathText(d.file);
     info.normalized = d.Normalized();
@@ -207,6 +361,9 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                     return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + path + ": " + error);
                 device = pool->AddDevice(std::shared_ptr<IBlockDevice>(std::move(disc)), key);
             }
+            if (i == 0)
+                isoBottom = device;
+            isoLayers.push_back({i, device});
             IsoImageSourceOptions source;
             source.from = layer.from;
             source.include = layer.include;
@@ -332,6 +489,78 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         iso.fixedTimeUtc = d.target.fixedTimeUtc;
         if (d.target.label)
             iso.volumeId = *d.target.label;
+
+        // El Torito (D-6, DT-5): the boot section's list, else the bottom ISO layer's catalog
+        if (!d.boot.eltorito.empty())
+        {
+            for (const ComposeElTorito& e : d.boot.eltorito)
+            {
+                IsoBootImage image;
+                image.entry.platform = e.platform;
+                image.entry.emulation = e.emulation;
+                image.entry.loadSegment = e.loadSegment;
+                image.entry.sectorCount = e.sectors;
+                FileData data;
+                uint32_t node = FileTree::kNone;
+                if (!BootFileData(e.image, *tree, *pool, data, node, error))
+                    return MediaResult::Fail(MediaError::BadRequest, error);
+                image.unionNode = node;
+                image.data = data;
+                iso.boot.push_back(image);
+            }
+            result.report.push_back("boot: El Torito, " + std::to_string(iso.boot.size()) + " entries from the boot section");
+        }
+        else if (isoBottom >= 0)
+        {
+            Iso9660Reader bottom;
+            std::vector<IsoBootEntry> entries;
+            std::string why;
+            if (bottom.Open(pool->Device(static_cast<uint16_t>(isoBottom))) && bottom.BootCatalogBlock() != 0)
+            {
+                if (!bottom.ReadBootCatalog(entries, &why))
+                    result.report.push_back("boot: the bottom layer's El Torito catalog is not carried: " + why);
+                for (const IsoBootEntry& entry : entries)
+                {
+                    IsoBootImage image;
+                    image.entry = entry;
+                    // A boot image that is also a visible file shares its extent
+                    for (uint32_t n = 0; n < tree->NodeCount() && image.unionNode == FileTree::kNone; n++)
+                    {
+                        const TreeNode& node = tree->Node(n);
+                        if (node.isDirectory || node.data.storage != FileData::Storage::DeviceExtents ||
+                            node.data.source != static_cast<uint16_t>(isoBottom) || node.data.extentCount == 0 ||
+                            tree->Extents()[node.data.firstExtent].sourceLba != static_cast<uint64_t>(entry.loadBlock) * 4)
+                            continue;
+                        if (tree->Find(tree->PathOf(n)) == n)
+                            image.unionNode = n;
+                    }
+                    if (image.unionNode == FileTree::kNone)
+                    {
+                        image.data.storage = FileData::Storage::DeviceExtents;
+                        image.data.source = static_cast<uint16_t>(isoBottom);
+                        image.data.firstExtent = static_cast<uint32_t>(tree->Extents().size());
+                        image.data.extentCount = 1;
+                        image.data.bytes = entry.imageBytes;
+                        tree->Extents().push_back(Extent{static_cast<uint64_t>(entry.loadBlock) * 4,
+                                                         static_cast<uint32_t>((entry.imageBytes + 511) / 512), 0});
+                    }
+                    iso.boot.push_back(image);
+                }
+                if (!iso.boot.empty())
+                    result.report.push_back("boot: El Torito carried from layer '" + d.layers.front().name + "', " +
+                                            std::to_string(iso.boot.size()) + " entries");
+            }
+        }
+        for (const auto& [layerIndex, device] : isoLayers)
+        {
+            Iso9660Reader upper;
+            if (layerIndex > 0 && upper.Open(pool->Device(static_cast<uint16_t>(device))) && upper.BootCatalogBlock() != 0)
+                result.report.push_back("boot data in layer '" + d.layers[layerIndex].name +
+                                        "' ignored: only the bottom layer or a boot section provides it");
+        }
+        if (d.boot.mbrCode.Set() || d.boot.volumeCode.Set() || !d.boot.reserved.empty())
+            result.report.push_back("boot.mbrCode, volumeCode, reserved: ignored, a CD has none");
+
         std::vector<std::string> isoReport;
         auto iso9660 = IsoSynthVolume::Build(tree, pool, iso, &error, &isoReport);
         if (!iso9660)
@@ -369,6 +598,17 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         want = FatType::Fat16;
     if (!want && d.target.fs == ComposeTarget::Fs::Fat32)
         want = FatType::Fat32;
+
+    // --- The boot section's FAT structures (D-6): for a graft and a rebuild alike ---
+    std::shared_ptr<FatBootPlan> descriptorBoot;
+    if (d.boot.mbrCode.Set() || d.boot.volumeCode.Set() || !d.boot.reserved.empty())
+    {
+        descriptorBoot = std::make_shared<FatBootPlan>();
+        if (!PlanFromDescriptor(d.boot, *tree, *pool, *descriptorBoot, error))
+            return MediaResult::Fail(MediaError::BadRequest, error);
+    }
+    if (!d.boot.eltorito.empty())
+        result.report.push_back("boot.eltorito: ignored, a FAT volume has no El Torito catalog");
 
     // --- DT-4: graft onto the bottom image, or rebuild ---
     if (d.target.build != ComposeTarget::Build::Rebuild)
@@ -420,6 +660,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                 graft.codePage = basePage;
                 graft.partition = bottom.source.partition;
                 graft.fixedTimeUtc = d.target.fixedTimeUtc;
+                graft.boot = descriptorBoot;
                 std::vector<std::string> graftReport;
                 GraftFailure failure = GraftFailure::None;
                 auto grafted = GraftVolume::Build(tree, pool, static_cast<uint16_t>(baseDevice), graft, identity, info.descriptor,
@@ -476,6 +717,23 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     if (d.target.label)
         fat.label = *d.target.label;
     fat.freeBytes = d.target.free.value_or(options.freeBytes.value_or(kDefaultFree));
+    // Boot structures (D-6, DT-5): the boot section's, else the bottom FAT image's
+    if (descriptorBoot)
+        fat.boot = descriptorBoot;
+    else if (baseDevice >= 0)
+    {
+        auto carried = std::make_shared<FatBootPlan>();
+        std::vector<std::string> what;
+        PlanFromBase(*pool, static_cast<uint16_t>(baseDevice), d.layers.front().source.partition, *carried, what);
+        if (!carried->Empty())
+        {
+            std::string list;
+            for (const std::string& w : what)
+                list += (list.empty() ? "" : ", ") + w;
+            result.report.push_back("boot: carried from layer '" + d.layers.front().name + "': " + list);
+            fat.boot = carried;
+        }
+    }
 
     std::unique_ptr<FatSynthVolume> rebuilt;
     for (size_t c = 0; c < candidates.size() && !rebuilt; c++)

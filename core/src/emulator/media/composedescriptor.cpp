@@ -165,7 +165,10 @@ namespace
                 else if (key == "partitions")
                     _d.hasPartitions = true;
                 else if (key == "boot")
+                {
                     _d.hasBoot = true;
+                    Boot(child);
+                }
                 else if (key == "writes")
                     Writes(child);
                 else
@@ -383,6 +386,136 @@ namespace
                         }
                         else
                             Report(at, "unknown key, ignored");
+                    }
+                }
+                else
+                    Report(where, "unknown key, ignored");
+            }
+        }
+
+        /// A boot file: "/UNION/path" (a file of the union) or {host: path}
+        ComposeBootFile BootFile(ryml::ConstNodeRef node, const std::string& where)
+        {
+            ComposeBootFile file;
+            if (node.is_map())
+            {
+                for (ryml::ConstNodeRef child : node.children())
+                {
+                    if (Text(child.key()) == "host")
+                    {
+                        if (const auto v = String(child, where + ".host"))
+                            file.host = Resolve(*v, _d.baseDir);
+                    }
+                    else
+                        Report(where + "." + Text(child.key()), "unknown key, ignored (expected host)");
+                }
+            }
+            else if (const auto v = String(node, where))
+                file.unionPath = NormalizeTargetPath(*v);
+            if (!file.Set())
+                Report(where, "expected a target path or {host: path}");
+            return file;
+        }
+
+        void Boot(ryml::ConstNodeRef node)
+        {
+            if (!node.is_map())
+            {
+                Report("boot", "expected a map");
+                return;
+            }
+            for (ryml::ConstNodeRef child : node.children())
+            {
+                const std::string key = Text(child.key());
+                const std::string where = "boot." + key;
+                if (key == "mbrCode")
+                    _d.boot.mbrCode = BootFile(child, where);
+                else if (key == "volumeCode")
+                    _d.boot.volumeCode = BootFile(child, where);
+                else if (key == "reserved" && child.is_seq())
+                {
+                    int index = 0;
+                    for (ryml::ConstNodeRef item : child.children())
+                    {
+                        const std::string at = where + "[" + std::to_string(index++) + "]";
+                        std::optional<uint64_t> lba;
+                        ComposeBootFile file;
+                        for (ryml::ConstNodeRef field : item.children())
+                        {
+                            const std::string name = Text(field.key());
+                            if (name == "lba")
+                                lba = Number(field, at + ".lba", 0xFFFF);
+                            else if (name == "file")
+                                file = BootFile(field, at + ".file");
+                            else
+                                Report(at + "." + name, "unknown key, ignored");
+                        }
+                        if (!lba || *lba == 0 || !file.Set())
+                            Report(at, "expected {lba: 1.., file: ...}; ignored");
+                        else
+                            _d.boot.reserved.push_back({static_cast<uint32_t>(*lba), file});
+                    }
+                }
+                else if (key == "eltorito" && child.is_seq())
+                {
+                    int index = 0;
+                    for (ryml::ConstNodeRef item : child.children())
+                    {
+                        const std::string at = where + "[" + std::to_string(index++) + "]";
+                        ComposeElTorito entry;
+                        for (ryml::ConstNodeRef field : item.children())
+                        {
+                            const std::string name = Text(field.key());
+                            const std::string fat = at + "." + name;
+                            if (name == "image")
+                                entry.image = BootFile(field, fat);
+                            else if (name == "emulation")
+                            {
+                                const std::string v = Lower(String(field, fat).value_or(""));
+                                if (v == "none")
+                                    entry.emulation = 0;
+                                else if (v == "floppy" || v == "1.44m")
+                                    entry.emulation = 2;
+                                else if (v == "1.2m")
+                                    entry.emulation = 1;
+                                else if (v == "2.88m")
+                                    entry.emulation = 3;
+                                else if (v == "hdd")
+                                    entry.emulation = 4;
+                                else
+                                    Report(fat, "expected none, floppy, 1.2m, 1.44m, 2.88m or hdd");
+                            }
+                            else if (name == "platform")
+                            {
+                                const std::string v = Lower(String(field, fat).value_or(""));
+                                if (v == "x86")
+                                    entry.platform = 0;
+                                else if (v == "ppc")
+                                    entry.platform = 1;
+                                else if (v == "mac")
+                                    entry.platform = 2;
+                                else if (v == "efi")
+                                    entry.platform = 0xEF;
+                                else
+                                    Report(fat, "expected x86, ppc, mac or efi");
+                            }
+                            else if (name == "loadSegment")
+                            {
+                                if (const auto v = Number(field, fat, 0xFFFF))
+                                    entry.loadSegment = static_cast<uint16_t>(*v);
+                            }
+                            else if (name == "sectors")
+                            {
+                                if (const auto v = Number(field, fat, 0xFFFF))
+                                    entry.sectors = static_cast<uint16_t>(*v);
+                            }
+                            else
+                                Report(fat, "unknown key, ignored");
+                        }
+                        if (entry.image.Set())
+                            _d.boot.eltorito.push_back(entry);
+                        else
+                            Report(at, "an El Torito entry needs an image; ignored");
                     }
                 }
                 else
@@ -775,6 +908,25 @@ std::string ComposeDescriptor::Normalized() const
         o << ",\"opaque\":" << JsonList(l.opaque) << ",\"whiteout\":" << JsonList(l.whiteout);
         o << ",\"conflict\":\"" << conflictName(l.conflict) << "\"}";
     }
-    o << "]}";
+    o << "]";
+    if (hasBoot)
+    {
+        auto file = [](const ComposeBootFile& f) {
+            return f.host.empty() ? JsonString(f.unionPath) : "{\"host\":" + JsonString(PathText(f.host)) + "}";
+        };
+        o << ",\"boot\":{\"mbrCode\":" << (boot.mbrCode.Set() ? file(boot.mbrCode) : "null")
+          << ",\"volumeCode\":" << (boot.volumeCode.Set() ? file(boot.volumeCode) : "null") << ",\"reserved\":[";
+        for (size_t i = 0; i < boot.reserved.size(); i++)
+            o << (i ? "," : "") << "{\"lba\":" << boot.reserved[i].first << ",\"file\":" << file(boot.reserved[i].second) << "}";
+        o << "],\"eltorito\":[";
+        for (size_t i = 0; i < boot.eltorito.size(); i++)
+        {
+            const ComposeElTorito& e = boot.eltorito[i];
+            o << (i ? "," : "") << "{\"image\":" << file(e.image) << ",\"emulation\":" << int(e.emulation)
+              << ",\"platform\":" << int(e.platform) << ",\"loadSegment\":" << e.loadSegment << ",\"sectors\":" << e.sectors << "}";
+        }
+        o << "]}";
+    }
+    o << "}";
     return o.str();
 }

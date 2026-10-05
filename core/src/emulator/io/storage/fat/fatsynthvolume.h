@@ -26,7 +26,9 @@
 /// Design: docs/inprogress/2026-09-28-storage-manager/technical-design.md §6,
 /// docs/inprogress/2026-10-05-media-multisource/tdd.md §5.
 
+#include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,6 +42,22 @@
 
 class SourcePool;
 
+/// Boot structures a rebuilt volume carries (D-6): taken from the bottom FAT
+/// image or from the descriptor's boot section. The BPB, the partition table and
+/// FAT32's FSInfo / backup sectors stay the builder's
+struct FatBootPlan
+{
+    std::vector<uint8_t> mbrCode;      ///< up to 446 bytes into LBA 0 before the partition table (volumes with an MBR)
+    std::vector<uint8_t> volumeCode;   ///< the boot sector's code area after the BPB (FAT32: the backup's too)
+    std::map<uint32_t, std::array<uint8_t, 512>> reserved;  ///< whole reserved sectors, volume-relative (1..)
+    /// Carried implicitly from the bottom image: what does not fit the target is
+    /// left out with a report line instead of failing the build
+    bool bestEffort = false;
+
+    bool Empty() const { return mbrCode.empty() && volumeCode.empty() && reserved.empty(); }
+    uint64_t Identity() const;
+};
+
 struct FatVolumeOptions
 {
     FatType fs = FatType::Fat16;
@@ -50,6 +68,7 @@ struct FatVolumeOptions
     std::string label = "UNREAL NG";
     uint32_t serial = 0x554E4721;              ///< "UNG!", fixed: the same folder gives the same bytes
     std::optional<int64_t> fixedTimeUtc;       ///< tests: every timestamp this value
+    std::shared_ptr<const FatBootPlan> boot;   ///< D-6 boot structures; null: the builder's own (no code)
 };
 
 class FatSynthVolume : public IBlockDevice

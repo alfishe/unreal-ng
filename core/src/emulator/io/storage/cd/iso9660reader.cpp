@@ -126,6 +126,81 @@ bool Iso9660Reader::Open(IBlockDevice& device, std::string* error, bool useJolie
     return true;
 }
 
+bool Iso9660Reader::ReadBootCatalog(std::vector<IsoBootEntry>& entries, std::string* error)
+{
+    entries.clear();
+    auto fail = [error](const std::string& text) {
+        if (error)
+            *error = text;
+        return false;
+    };
+    if (_bootCatalog == 0)
+        return fail("no El Torito boot record");
+    uint8_t block[kBlock];
+    if (!ReadBlock(_bootCatalog, block))
+        return fail("cannot read the boot catalog at block " + std::to_string(_bootCatalog));
+    // Validation entry: header #01, key #55 #AA, the 16-bit words summing to 0
+    uint16_t sum = 0;
+    for (int i = 0; i < 32; i += 2)
+        sum = static_cast<uint16_t>(sum + (block[i] | (block[i + 1] << 8)));
+    if (block[0] != 0x01 || block[30] != 0x55 || block[31] != 0xAA || sum != 0)
+        return fail("the boot catalog's validation entry is damaged (checksum or key)");
+
+    auto entry = [this](const uint8_t* e, uint8_t platform) {
+        IsoBootEntry b;
+        b.platform = platform;
+        b.bootable = e[0] == 0x88;
+        b.emulation = e[1] & 0x0F;
+        b.loadSegment = static_cast<uint16_t>(e[2] | (e[3] << 8));
+        b.systemType = e[4];
+        b.sectorCount = static_cast<uint16_t>(e[6] | (e[7] << 8));
+        b.loadBlock = Get32(e + 8);
+        switch (b.emulation)
+        {
+            case 1: b.imageBytes = 1228800; break;
+            case 2: b.imageBytes = 1474560; break;
+            case 3: b.imageBytes = 2949120; break;
+            case 4:
+            {
+                // The disk its MBR's partitions span
+                uint8_t mbr[kBlock];
+                if (ReadBlock(b.loadBlock, mbr))
+                {
+                    for (int p = 0; p < 4; p++)
+                    {
+                        const uint8_t* pe = mbr + 446 + p * 16;
+                        b.imageBytes = std::max<uint64_t>(b.imageBytes, (static_cast<uint64_t>(Get32(pe + 8)) + Get32(pe + 12)) * 512);
+                    }
+                }
+                break;
+            }
+            default: b.imageBytes = static_cast<uint64_t>(b.sectorCount ? b.sectorCount : 4) * 512; break;
+        }
+        return b;
+    };
+    entries.push_back(entry(block + 32, block[1]));
+    // Section headers (#90: more follow, #91: the last) with their entries
+    for (uint32_t at = 64; at + 32 <= kBlock;)
+    {
+        const uint8_t header = block[at];
+        if (header != 0x90 && header != 0x91)
+            break;
+        const uint8_t platform = block[at + 1];
+        const uint16_t count = static_cast<uint16_t>(block[at + 2] | (block[at + 3] << 8));
+        at += 32;
+        for (uint16_t i = 0; i < count && at + 32 <= kBlock; i++, at += 32)
+        {
+            while (at + 32 <= kBlock && block[at] == 0x44)
+                at += 32;  // an entry extension
+            if (at + 32 <= kBlock)
+                entries.push_back(entry(block + at, platform));
+        }
+        if (header == 0x91)
+            break;
+    }
+    return true;
+}
+
 bool Iso9660Reader::List(const IsoDirEntry& directory, std::vector<IsoDirEntry>& entries, std::string* error)
 {
     entries.clear();

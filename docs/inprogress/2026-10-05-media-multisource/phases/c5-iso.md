@@ -1,6 +1,6 @@
 # C5 — ISO 9660: ISO images as layers, ISO targets, boot carry-over (D-6)
 
-**Status:** C5a done 2026-10-05 (as-built notes in §9); C5b next. Phase C5 of [tdd.md](../tdd.md) §13 (§7 there is the outline). Exit: ACC-C5,
+**Status:** done 2026-10-05: C5a (as-built notes in §9) and C5b (§10). Phase C5 of [tdd.md](../tdd.md) §13 (§7 there is the outline). Exit: ACC-C5,
 [fs-compatibility.md](../fs-compatibility.md) S-7, S-8. The phase lands in two commits:
 
 | Part | Scope |
@@ -179,3 +179,46 @@ Benchmark: `IsoSynthSeqRead` (a file read block by block through the `CdImage`) 
 
 - **Not yet:** `media targets` does not offer a descriptor to a CD slot (it does not read the descriptor's target
   kind); inserting into the CD slot by name works.
+
+## 10. As built (C5b)
+
+- **Descriptor:** the `boot:` section is parsed (`eltorito`, `mbrCode`, `volumeCode`, `reserved`) and is part of the
+  normalized form, so it changes the content id. A file is a target path of the union or `{host: path}`.
+- **El Torito** (optical):
+  - `Iso9660Reader::ReadBootCatalog` reads the validation entry (key and checksum), the default entry and the
+    section entries. An image's size is the floppy's for floppy emulation, what the image's MBR partitions span for
+    hard-disk emulation, and the sector count × 512 without emulation.
+  - `IsoSynthVolume` writes the Boot Record at block 17 (SVD and terminator move up by one). It also writes a
+    one-block catalog: the validation entry with checksum, the default entry, and one section per run of the same
+    platform.
+  - An image that is a file of the union shares that file's extent. Any other image (a host file, or a hidden image
+    of the bottom ISO) is placed after the files and served from where it is.
+  - The source: the boot section's list, else the bottom ISO layer's catalog. A bootable ISO above the bottom is
+    reported and not carried; a catalog that fails its checksum is reported and not carried.
+- **FAT rebuilds:**
+  - `FatBootPlan` in `FatVolumeOptions` carries MBR code (bytes 0-445 of LBA 0), the boot sector's code area after the
+    BPB (and FAT32's backup boot sector) and whole reserved sectors (the reserved count grows to hold them).
+  - The BPB, the partition table and FAT32's FSInfo / backup sectors stay the builder's.
+  - Without a plan the output is unchanged (parity test).
+  - The source: the boot section, else the bottom FAT image:
+    - its MBR code, when it has an MBR and the code is not all zeros;
+    - its code area, up to the last non-zero byte, stopping at 446 when a superfloppy's sector 0 holds a FAT
+      partition entry over itself;
+    - its non-zero reserved sectors, except FSInfo and the backup boot record.
+  - An implicit carry that does not fit the target is left out with a report line (`bestEffort`). An explicit
+    boot section that does not fit fails with `DoesNotFit`.
+- **Grafts:** a graft keeps the base's own boot structures. The boot section patches them through the patch map:
+  MBR code, code area (and the FAT32 backup), reserved sectors within the base's reserved count. A reserved
+  sector past that count fails the graft, and `auto` then rebuilds.
+- **Tests:** `ComposeBoot_Test` (8), each under 10 ms in the run that passed:
+  - El Torito from the boot section (a hidden floppy image and a shared visible one);
+  - carried from the bottom ISO with relocated blocks;
+  - an upper bootable ISO, and a bad checksum, both reported;
+  - the DSS floppy's code and 3-sector loader carried into a FAT16 rebuild;
+  - MBR / volume code and a 3-sector reserved file from the boot section;
+  - code too large, and FSInfo taken, both failing;
+  - a graft patching the base's boot sector, and a graft falling back.
+- Full build without warnings; `core-tests` pass but the known `TsfmGolden_Test.*` (see C1) and, once in the C5b run,
+  `DZRPServer_test.ClientDropWhileRunningCleansUpAndReconnects`: a break notification arrived with reason 2 instead
+  of MANUAL (1), a timing race in the DeZog server test under the 4-way parallel run. The branch does not touch DeZog;
+  the test passes 5 of 5 when run alone.

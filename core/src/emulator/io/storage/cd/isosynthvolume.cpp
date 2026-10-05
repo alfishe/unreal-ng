@@ -568,6 +568,8 @@ bool IsoLayout::Build(std::string* error)
     // Layout
     uint32_t block = 16;
     const uint32_t pvdBlock = block++;
+    const bool bootable = !_options.boot.empty();
+    const uint32_t bootRecordBlock = bootable ? block++ : 0;
     const uint32_t svdBlock = _options.joliet ? block++ : 0;
     const uint32_t terminatorBlock = block++;
     const uint32_t isoTable = PathTableBytes(false);
@@ -601,7 +603,14 @@ bool IsoLayout::Build(std::string* error)
             block += _dirs[d].jolietBytes / kBlock;
         }
     }
+    const uint32_t catalogBlock = bootable ? block++ : 0;
     const uint32_t metadataEnd = block;
+    if (bootable && _options.boot.size() * 2 + 2 > 64)
+    {
+        if (error)
+            *error = "boot: more El Torito entries than one catalog block holds";
+        return false;
+    }
     if (static_cast<uint64_t>(block) + fileBlocks > 0xFFFFFFFFull)
     {
         if (error)
@@ -620,13 +629,44 @@ bool IsoLayout::Build(std::string* error)
             {
                 const uint32_t blocks = blocksOf(section.second);
                 section.first = block;
-                _volume._runs.push_back({block, blocks, fileBlock, item.node});
+                _volume._runs.push_back({block, blocks, fileBlock, &_tree.Node(item.node).data});
                 fileBlock += blocks;
                 block += blocks;
             }
         }
     }
+    // Boot images that are not files of the union: after the files, served from where they are
+    std::vector<uint32_t> bootBlock(_options.boot.size(), 0);
+    _volume._bootData.reserve(_options.boot.size());
+    for (size_t i = 0; i < _options.boot.size(); i++)
+    {
+        const IsoBootImage& image = _options.boot[i];
+        if (image.unionNode != FileTree::kNone)
+        {
+            for (const Dir& dir : _dirs)
+            {
+                for (const Item& item : dir.items)
+                {
+                    if (item.node == image.unionNode && !item.sections.empty())
+                        bootBlock[i] = item.sections.front().first;
+                }
+            }
+            if (bootBlock[i] == 0)
+            {
+                if (error)
+                    *error = "boot: El Torito image " + _tree.PathOf(image.unionNode) + " is not a file of the volume (or empty)";
+                return false;
+            }
+            continue;
+        }
+        _volume._bootData.push_back(image.data);
+        const uint32_t blocks = blocksOf(image.data.bytes);
+        bootBlock[i] = block;
+        _volume._runs.push_back({block, blocks, 0, &_volume._bootData.back()});
+        block += blocks;
+    }
     _volume._blocks = block;
+    _volume._bootCatalog = catalogBlock;
 
     // Metadata bytes
     _volume._metadata.assign(static_cast<size_t>(metadataEnd) * kBlock, 0);
@@ -634,6 +674,49 @@ bool IsoLayout::Build(std::string* error)
     WriteDescriptor(m + static_cast<size_t>(pvdBlock) * kBlock, false, isoTable, isoL, isoM);
     if (_options.joliet)
         WriteDescriptor(m + static_cast<size_t>(svdBlock) * kBlock, true, jolietTable, jolietL, jolietM);
+    if (bootable)
+    {
+        uint8_t* br = m + static_cast<size_t>(bootRecordBlock) * kBlock;
+        std::memcpy(br + 1, "CD001", 5);
+        br[6] = 1;
+        std::memcpy(br + 7, "EL TORITO SPECIFICATION", 23);
+        Le32(br + 71, catalogBlock);
+
+        uint8_t* c = m + static_cast<size_t>(catalogBlock) * kBlock;
+        c[0] = 0x01;
+        c[1] = _options.boot.front().entry.platform;
+        std::memcpy(c + 4, "UNREAL-NG", 9);
+        c[30] = 0x55;
+        c[31] = 0xAA;
+        uint16_t sum = 0;
+        for (int k = 0; k < 32; k += 2)
+            sum = static_cast<uint16_t>(sum + (c[k] | (c[k + 1] << 8)));
+        Le16(c + 28, static_cast<uint16_t>(0x10000 - sum));
+        auto entry = [](uint8_t* e, const IsoBootEntry& b, uint32_t loadBlock) {
+            e[0] = b.bootable ? 0x88 : 0x00;
+            e[1] = b.emulation;
+            Le16(e + 2, b.loadSegment);
+            e[4] = b.systemType;
+            Le16(e + 6, b.emulation == 0 ? (b.sectorCount ? b.sectorCount : 4) : 1);
+            Le32(e + 8, loadBlock);
+        };
+        entry(c + 32, _options.boot.front().entry, bootBlock[0]);
+        // The other entries: one section per run of the same platform
+        uint32_t at = 64;
+        for (size_t i = 1; i < _options.boot.size();)
+        {
+            size_t j = i;
+            while (j < _options.boot.size() && _options.boot[j].entry.platform == _options.boot[i].entry.platform)
+                j++;
+            c[at] = j == _options.boot.size() ? 0x91 : 0x90;
+            c[at + 1] = _options.boot[i].entry.platform;
+            Le16(c + at + 2, static_cast<uint16_t>(j - i));
+            at += 32;
+            for (size_t k = i; k < j; k++, at += 32)
+                entry(c + at, _options.boot[k].entry, bootBlock[k]);
+            i = j;
+        }
+    }
     uint8_t* t = m + static_cast<size_t>(terminatorBlock) * kBlock;
     t[0] = 255;
     std::memcpy(t + 1, "CD001", 5);
@@ -722,7 +805,7 @@ bool IsoSynthVolume::ReadBlock(uint32_t block, uint8_t* dst)
         std::memset(dst, 0, kBlock);
         return true;
     }
-    const FileData& data = _tree->Node(run->node).data;
+    const FileData& data = *run->data;
     const uint64_t first = (run->fileBlockStart + (block - run->firstBlock)) * 4;
     bool ok = true;
     for (uint32_t i = 0; i < 4; i++)

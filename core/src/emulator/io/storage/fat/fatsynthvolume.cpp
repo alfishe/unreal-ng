@@ -186,6 +186,75 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
     _volumeStart = options.mbr ? options.partitionStart : 0;
     _totalSectors = _volumeStart + _volumeSectors;
 
+    // --- Boot structures (D-6): sizes and places checked before anything is laid out from them ---
+    if (options.boot && !options.boot->Empty())
+    {
+        auto boot = std::make_shared<FatBootPlan>(*options.boot);
+        // Too big or in the wrong place: an explicit boot section fails, an implicit carry drops it and says so
+        auto refuse = [error, report, &boot](const std::string& text) {
+            if (boot->bestEffort)
+            {
+                if (report)
+                    report->push_back(text + ": not carried");
+                return true;
+            }
+            if (error)
+                *error = text;
+            return false;
+        };
+        if (boot->mbrCode.size() > 446)
+        {
+            if (!refuse("boot: the MBR code is " + std::to_string(boot->mbrCode.size()) + " bytes, the MBR holds 446"))
+                return false;
+            boot->mbrCode.clear();
+        }
+        if (!boot->mbrCode.empty() && _volumeStart == 0)
+        {
+            if (report && !boot->bestEffort)
+                report->push_back("boot: the MBR code is not used, the volume has no MBR (partition: none)");
+            boot->mbrCode.clear();
+        }
+        const size_t codeStart = fat32 ? 90 : 62;
+        const size_t codeEnd = _volumeStart == 0 ? 446 : 510;  // a superfloppy's sector 0 carries a partition entry
+        if (boot->volumeCode.size() > codeEnd - codeStart)
+        {
+            if (!refuse("boot: the volume boot code is " + std::to_string(boot->volumeCode.size()) +
+                        " bytes, the boot sector holds " + std::to_string(codeEnd - codeStart)))
+                return false;
+            boot->volumeCode.clear();
+        }
+        for (auto it = boot->reserved.begin(); it != boot->reserved.end();)
+        {
+            const uint32_t lba = it->first;
+            if (fat32 && (lba == 1 || lba == 2 || lba == 6 || lba == 7))
+            {
+                if (!refuse("boot: reserved sector " + std::to_string(lba) + " is FAT32's FSInfo or boot record backup"))
+                    return false;
+                it = boot->reserved.erase(it);
+            }
+            else if (lba >= 0xFFFF)
+            {
+                if (!refuse("boot: reserved sector " + std::to_string(lba) + " is past what a BPB can reserve"))
+                    return false;
+                it = boot->reserved.erase(it);
+            }
+            else
+                ++it;
+        }
+        if (!boot->reserved.empty())
+        {
+            const uint32_t needed = boot->reserved.rbegin()->first + 1;
+            if (needed > _reservedSectors)
+            {
+                // More reserved sectors: the layout moves by the difference
+                _volumeSectors += needed - _reservedSectors;
+                _reservedSectors = needed;
+                _totalSectors = _volumeStart + _volumeSectors;
+            }
+        }
+        _options.boot = boot;
+    }
+
     // --- Clusters: directories first (breadth-first), then files ---
     const uint64_t clusterBytes = static_cast<uint64_t>(_sectorsPerCluster) * kSector;
     uint32_t next = 2;
@@ -302,8 +371,32 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
     mix(options.serial);
     for (char c : options.label)
         mix(static_cast<uint8_t>(c));
+    if (_options.boot && !_options.boot->Empty())
+        mix(_options.boot->Identity());
     _contentId = id;
     return true;
+}
+
+uint64_t FatBootPlan::Identity() const
+{
+    uint64_t h = 0xcbf29ce484222325ULL;
+    auto mix = [&h](uint8_t b) {
+        h ^= b;
+        h *= 0x100000001b3ULL;
+    };
+    for (uint8_t b : mbrCode)
+        mix(b);
+    mix(0xFF);
+    for (uint8_t b : volumeCode)
+        mix(b);
+    for (const auto& [lba, sector] : reserved)
+    {
+        for (int i = 0; i < 4; i++)
+            mix(static_cast<uint8_t>(lba >> (8 * i)));
+        for (uint8_t b : sector)
+            mix(b);
+    }
+    return h;
 }
 
 const std::vector<std::string>& FatSynthVolume::Warnings() const
@@ -316,11 +409,16 @@ bool FatSynthVolume::ReadSector(uint64_t lba, uint8_t* dst)
     if (lba >= _totalSectors)
         return false;
 
+    const FatBootPlan* boot = _options.boot && !_options.boot->Empty() ? _options.boot.get() : nullptr;
     if (lba < _volumeStart)
     {
         std::memset(dst, 0, kSector);
         if (lba == 0)
+        {
             BuildMbr(dst);
+            if (boot)
+                std::copy(boot->mbrCode.begin(), boot->mbrCode.end(), dst);
+        }
         return true;
     }
 
@@ -329,6 +427,15 @@ bool FatSynthVolume::ReadSector(uint64_t lba, uint8_t* dst)
     if (rel < _reservedSectors)
     {
         std::memset(dst, 0, kSector);
+        if (boot)
+        {
+            const auto it = boot->reserved.find(static_cast<uint32_t>(rel));
+            if (it != boot->reserved.end())
+            {
+                std::memcpy(dst, it->second.data(), kSector);
+                return true;
+            }
+        }
         if (rel == 0)
             BuildBootSector(dst, false);
         else if (fat32 && rel == 1)
@@ -472,6 +579,8 @@ void FatSynthVolume::BuildBootSector(uint8_t* s, bool) const
         // volume through it; loaders that check for a BPB first see one
         BuildMbr(s);
     }
+    if (_options.boot && !_options.boot->volumeCode.empty())
+        std::copy(_options.boot->volumeCode.begin(), _options.boot->volumeCode.end(), s + (fat32 ? 90 : 62));
     s[510] = 0x55;
     s[511] = 0xAA;
 }

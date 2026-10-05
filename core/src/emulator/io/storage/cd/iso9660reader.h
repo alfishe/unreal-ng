@@ -29,6 +29,21 @@ struct IsoDirEntry
     uint32_t Block() const { return sections.empty() ? 0 : sections.front().first; }
 };
 
+/// One boot entry of an El Torito catalog
+struct IsoBootEntry
+{
+    uint8_t platform = 0;       ///< 0 x86, 1 PowerPC, 2 Mac, 0xEF EFI
+    bool bootable = true;       ///< indicator #88 (else #00)
+    uint8_t emulation = 0;      ///< 0 none, 1 1.2M, 2 1.44M, 3 2.88M floppy, 4 hard disk
+    uint16_t loadSegment = 0;
+    uint8_t systemType = 0;
+    uint16_t sectorCount = 0;   ///< 512-byte sectors loaded (no emulation)
+    uint32_t loadBlock = 0;     ///< the image's first block
+    /// The image's size: the floppy for floppy emulation, the disk its MBR
+    /// describes for hard-disk emulation, sectorCount x 512 without emulation
+    uint64_t imageBytes = 0;
+};
+
 class Iso9660Reader
 {
 public:
@@ -43,6 +58,9 @@ public:
     uint32_t VolumeBlocks() const { return _volumeBlocks; }
     /// The block of the Boot Record's catalog, 0 without El Torito
     uint32_t BootCatalogBlock() const { return _bootCatalog; }
+    /// The El Torito catalog's entries (default first, then the sections'), in order.
+    /// False with `error` when there is no catalog or its validation entry fails
+    bool ReadBootCatalog(std::vector<IsoBootEntry>& entries, std::string* error = nullptr);
     /// The root directory as an entry (its block and size)
     const IsoDirEntry& Root() const { return _root; }
 
