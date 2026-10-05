@@ -1,0 +1,109 @@
+        org #61A8
+        ei
+        call 49152
+        ld b,#3000
+R3
+        push bc
+        call 49158
+        halt
+        pop bc
+        djnz R3
+        call 49158
+        call 26500      ;SPR I.SOFT A4
+        call 49158
+        ld b,#3000
+R2
+        push bc
+        call 49158
+        halt
+        pop bc
+        djnz R2
+        call 49158
+        halt
+        call 49158
+        halt
+        call 49158
+        call 28000      ;SPR RAMKA  A5
+        ld b,150
+B1      push bc
+        call 49158
+        halt
+        pop bc
+        djnz B1
+        call 49158
+        call MET
+        ld b,#3000
+A1      push bc
+        call 49158
+        halt
+        pop bc
+        djnz A1
+        ld b,#3000
+A2      push bc
+        call 49158
+        halt
+        pop bc
+        djnz A2
+        ld b,#3000
+A3      push bc
+        call 49158
+        halt
+        pop bc
+        djnz A3
+        ld b,40
+A4      push bc
+        call 49158
+        halt
+        pop bc
+        djnz A4
+        call 49158
+        halt
+        call 30200      ;SPR SK. A2
+        call 31000      ;SPR SK. A3
+        call 49158
+        call 30200
+        call 31000
+MET     ld      de,#4829
+        ld      b,#08
+        ld      hl,SPR
+
+        call    PROGA
+
+        ret
+PROGA   ld      b,086
+CIKL    push    bc
+        push    de
+        ld      b,014
+CIKL1   ld      a,(hl)
+        ld      (de),a
+        inc     hl
+        inc     e
+        djnz    CIKL1
+        pop     de
+        inc     d
+        ld      a,d
+        and     #07
+        jr      nz,ART
+        ld      a,e
+        add     a,#20
+        ld      e,a
+        jr      c,ART
+        ld      a,d
+        sub     #08
+        ld      d,a
+ART     pop     bc
+        push af
+        push bc
+        push de
+        push hl
+        call 49158
+        halt
+        pop hl
+        pop de
+        pop bc
+        pop af
+        djnz    CIKL
+        ret
+SPR
+        .INCBIN a1
+

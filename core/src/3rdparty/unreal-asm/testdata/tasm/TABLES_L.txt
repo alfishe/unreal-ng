@@ -1,0 +1,12 @@
+        unphase
+        org $+#00FF&#FF00
+        phase $-#8000
+INTTAB  defs #101,INTAREA{
+
+INTTB   dw INT0,INT1,INT1,INT2,INT1,INT3,INT2,INT4,INT1,INT5
+        dw INT3,INT6,INT2,INT7,INT4,#0000
+INTOFF  db 0,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0
+
+
+
+

@@ -65,6 +65,9 @@ found tokens it could not place: `I`, `R`, `IM`, `IN` / `AND` by context; L1's t
 differently); what the byte after each record is; how labels and local labels are written (plain ASCII at the line
 start in the files seen); whether TASM keeps a label table in RAM after assembling (a live scanner).
 
+**Settled** ([research-tasm.md](research-tasm.md)): L1's table is TASM 4.0 XL Design / 4.4 KVA (`#E7`-`#F0` exist
+only there); TASM 3.x has the same table up to `#E6`; 4.12 is a separate Rst7 line with direct blank counts.
+
 ### 1.3 Comparison of the local implementations
 
 | | L1 (owner, 2012) | L2 (port, 2025) | L3 (doc, 2025) | L4 (Python, 2025) |

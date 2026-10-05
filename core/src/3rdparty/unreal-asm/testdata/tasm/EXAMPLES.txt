@@ -1,0 +1,53 @@
+;
+        org     #8000
+;
+        defmac  MOVE
+        ld      hl,/0
+        ld      de,/1
+        ld      bc,/2
+        ldir
+        endmac
+;
+        defmac  hl*8
+;
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl
+        jp      ...1
+...1
+;
+        endmac
+;
+        defmac  hl*16
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl
+        add     hl,hl
+        jr      ...1
+...1
+        endmac
+;
+        .LOCAL
+        ld      b,0
+...1
+        dec     b
+        jp      nz,...1
+;
+        ld      hl,10
+        hl*8
+        display ...1
+        .LOCAL
+        ld      c,0
+...1
+        dec     c
+        jp      nz,...1
+;
+        ld      hl,4
+        hl*16
+        display ...1
+        ld      hl,0
+        hl*8
+        display ...1
+        MOVE    0,16384,6144
+        ret
+

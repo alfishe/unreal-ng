@@ -11,7 +11,7 @@ using unrealasm::testing::ReadTestData;
 
 TEST(Trdos_Test, HobetaReadAndWriteBack)
 {
-    const auto bytes = ReadTestData("tasm3/000LOAD.$A");
+    const auto bytes = ReadTestData("tasm/000LOAD.$A");
     TrdosFile file;
     std::string error;
     ASSERT_TRUE(ReadHobeta(bytes, file, error)) << error;
@@ -27,7 +27,7 @@ TEST(Trdos_Test, HobetaReadAndWriteBack)
 
 TEST(Trdos_Test, HobetaChecksumMismatchIsRejected)
 {
-    auto bytes = ReadTestData("tasm3/000LOAD.$A");
+    auto bytes = ReadTestData("tasm/000LOAD.$A");
     bytes[0] ^= 1;
     TrdosFile file;
     std::string error;

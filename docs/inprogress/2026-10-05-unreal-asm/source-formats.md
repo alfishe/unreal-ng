@@ -12,7 +12,7 @@
 | Codec id | Assembler / sub-version | Dialect | Detection | Known from | Confidence | Phase |
 |---|---|---|---|---|---|---|
 | `text` | any text source (code page CP866 / KOI8-R / CP1251 / ASCII / UTF-8; CR, LF, CRLF) | any (chosen or guessed) | decodes as text; code page by statistics | — | high | A1 |
-| `tasm` | TASM 3.x (version `3`), 4.x (`4`); 2.0 queued | `tasm` | TR-DOS type `A`; version: start 39221 / 40872 → 3, ≤ 4096 → 4 (P1), else the space-run byte | L5 data, L1, P1; [research-tasm.md](research-tasm.md) | 3: confirmed on real files; 4: provisional | A2 |
+| `tasm` | TASM 3.0-3.5 (`3`), 4.0 XLD / 4.4 KVA (`4.0`), 4.12 (`4.12`); 2.0 queued | `tasm` | TR-DOS type `A`; version: start 39221 → 3, 40872 → 4.0, ≤ 4096 → 4.12, else from the bytes | every release's binary; [research-tasm.md](research-tasm.md) | confirmed on 127 real files | A2, A3 |
 | `alasm` | ALASM 3.8, 4.2, 4.42, 4.5, 4.44, 5.07-5.09 | `alasm` | type `H`; signature `F3 76 C7 DD FD ED B0 D9` at `+#28`; version: the newest that re-tokenizes the file exactly | ALASM 5.09's own sources (P9), every release's binary; [research-alasm.md](research-alasm.md) | confirmed on 429 real files | A3 |
 | `storm` | STORM 1.x | `storm` | type `C` start `#C00B` / `#C003`, or type `R` start `#C00B` (P1) | P1 | medium | A4 |
 | `zxasm` | ZX-ASM 2.5 / 3.x, ZAsm 3.01 / 3.10 | `zxasm` | types `a` / `z` / `C` with P1's start rules | P3 (written spec), P1 | medium-high | A4 |
@@ -66,7 +66,7 @@ upper case where the assembler shows upper case).
 
 | From → to | Through | Expected losses |
 |---|---|---|
-| tasm 3 ↔ 4 | `tasm` text | a keyword only one version has is written as text with a warning (TASM 3 `defm` / TASM 4 `defmac` share #97) |
+| tasm 3 ↔ 4.0 ↔ 4.12 | `tasm` text | a keyword only one version has is written as text with a warning (4.0 `db`, 4.12 `defmac` on #97 where 3 / 4.0 have `defm`) |
 | alasm 3.8 … 5.07 | `alasm` text | the same rule (5.x `DD` = hex bytes, 3.8-4.5 `DEFM` = a string; 5.x `IF0`, 4.x `IF`) |
 | any tokenized → text | its dialect text | none in text; attributes dropped |
 | text → any tokenized | the codec's canonical form | lines with keywords the table lacks (DT-3) |

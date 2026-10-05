@@ -1,10 +1,11 @@
 #pragma once
 
-// TASM tokenized sources, every version the library knows: 3.x and 4.x (TR-DOS type 'A'; research-tasm.md).
+// TASM tokenized sources (TR-DOS type 'A'), every version the library knows: 3.0-3.5, 4.0 XLD / 4.4 KVA, 4.12
+// (research-tasm.md).
 //
-// Stream: one record per line, [length n][n body bytes][n again]; a length byte #FF ends the source (the files seen
-// end with #FF #FF). In a body: #20-#7E are ASCII; the run byte followed by a count is that many blanks (TASM 3: #0A,
-// TASM 4: #01); #80-#F0 are tokens. Anything else (other control bytes, #F1-#FF) is kept as U+F700 + byte.
+// Stream: one record per line, [length n][n body bytes][n again]; a length byte #FF ends the source (files end with
+// #FF #FF). In a body: #20-#7E are ASCII; blanks are #0A n (3.x, 4.0) or a direct count #02-#1F (4.12); #80-#F0 are
+// keywords of the version's table. Anything else is kept as U+F700 + byte.
 //
 // Byte-exact: every line keeps its body bytes as attributes and is written back from them while its text is
 // unchanged; an edited or foreign line is tokenized canonically (canonical rules: research-tasm.md §4).
@@ -23,16 +24,17 @@ public:
     DecodeResult Decode(std::span<const uint8_t> bytes, const DecodeOptions& options) const override;
     EncodeResult Encode(const SourceDocument& document, const EncodeOptions& options) const override;
 
-    /// The version of a stream: from the catalog's start field, else from the space-run byte; "" = not TASM
-    static std::string DetectVersion(std::span<const uint8_t> bytes, const CatalogHints& hints);
+    /// The version of a stream: from the catalog's start field, else the newest version whose tokenizer writes the most
+    /// lines back unchanged; "" = not TASM. `consistent` gets every version with that much evidence
+    static std::string DetectVersion(std::span<const uint8_t> bytes, const CatalogHints& hints, std::vector<std::string>* consistent = nullptr);
     /// One line body -> text (no framing) as `version` shows it
     static std::string DecodeBody(std::span<const uint8_t> body, const std::string& version);
     /// Text -> one line body by the canonical rules of `version`; false with the reason when the text cannot be held
     static bool EncodeBody(const std::string& text, const std::string& version, std::vector<uint8_t>& body, std::string& error);
 
 private:
-    /// Line records walked from the start: their count when the framing holds to an end marker, else 0
-    static size_t WalkFraming(std::span<const uint8_t> bytes, size_t* runs01, size_t* runs0A);
+    /// The line bodies walked from the start; `ended` = the walk reached the end marker
+    static std::vector<std::span<const uint8_t>> Bodies(std::span<const uint8_t> bytes, bool& ended);
 
     CodecInfo _info;
 };

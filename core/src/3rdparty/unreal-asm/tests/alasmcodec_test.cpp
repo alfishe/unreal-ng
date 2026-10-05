@@ -169,7 +169,7 @@ TEST(AlasmCodec_Test, Detection)
     const codecs::AlasmCodec codec;
     const containers::TrdosFile file = Unwrap("fibo");
     EXPECT_EQ(codec.Detect(file.data, file.Hints()), 95);
-    EXPECT_EQ(codec.Detect(ReadTestData("tasm3/000LOAD.$A"), {}), 0);
+    EXPECT_EQ(codec.Detect(ReadTestData("tasm/000LOAD.$A"), {}), 0);
     EXPECT_EQ(codec.Detect(ReadTestData("sjasmplus/hello.asm"), {}), 0);
     const DetectResult detected = CodecRegistry::Builtin().Detect(file.data, file.Hints());
     ASSERT_NE(detected.chosen, nullptr) << detected.reason;

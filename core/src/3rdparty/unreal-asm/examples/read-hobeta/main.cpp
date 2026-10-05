@@ -3,7 +3,7 @@
 // unchanged lines keep their original bytes, the edited one is tokenized again.
 //
 //   unrealasmexamplereadhobeta <file.$A> [<out.$A>]
-//   e.g. unrealasmexamplereadhobeta testdata/tasm3/CALLLOAD.$A scratch/CALLLOAD.$A
+//   e.g. unrealasmexamplereadhobeta testdata/tasm/CALLLOAD.$A scratch/CALLLOAD.$A
 
 #include <fstream>
 #include <iostream>

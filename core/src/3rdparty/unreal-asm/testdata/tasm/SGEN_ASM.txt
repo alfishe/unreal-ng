@@ -1,0 +1,39 @@
+        org #8000
+        incbin STUFF
+
+        org   #A000
+        phase #2000
+
+        include SGEN
+        include SGEN1_L
+        include SGEN2_L
+        include SGEN3
+        include SGEN4
+        include SGEN5
+        include SGEN6
+        include SGEN7
+        include SGEN8
+___END
+        org   #BE00
+        phase #3E00
+
+DIVTAB3 incbin  DIVTAB3
+
+        org #8000
+        unphase
+        di
+        ld a,#00
+        ld hl,#9100
+        ld de,#9001
+        ld bc,#0000
+        exx
+        ld de,#0201
+        exx
+        ld lx,#FF
+        call SGEN
+        ld iy,#5C3A
+        exx
+        ld hl,#2758
+        exx
+        ei
+        ret

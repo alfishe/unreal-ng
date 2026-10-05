@@ -4,9 +4,9 @@ namespace unrealasm::codecs::tasm
 {
 namespace
 {
-// TASM 3.x, #80-#F0. Confirmed on the TASM 3.2 disk's sources (testdata/tasm3): every line of them decodes to valid
-// Z80 source with this table
-constexpr TokenTable kTasm3 = {
+// TASM 4.0 XLD / 4.4 KVA, #80-#F0 (the owner's 2012 converter's table; #80-#E6 are the table in the TASM 3.0 and 3.5
+// binaries, word for word). Confirmed on 91 real 4.0 / 4.4 sources, which use #E7-#F0 too
+constexpr TokenTable kTasm40 = {
     "a",     "adc ",   "add ",     "af'",     "af",     "and ",   "b",      "bc",        // 80-87
     "bit ",  "c",      "call ",    "ccf",     "cp ",    "cpd",    "cpdr",   "cpi",       // 88-8F
     "cpir",  "cpl",    "d",        "daa",     "de",     "dec ",   "defb ",  "defm ",     // 90-97
@@ -24,24 +24,46 @@ constexpr TokenTable kTasm3 = {
     "dw ",                                                                               // F0
 };
 
-TokenTable MakeTasm4()
+void Clear(TokenTable& table, uint8_t from, uint8_t to)
 {
-    TokenTable table = kTasm3;
+    for (int code = from; code <= to; ++code)
+        table[code - kFirstToken] = {};
+}
+
+// TASM 3.0 / 3.5: the binary's table ends after incbin (#E6)
+TokenTable MakeTasm3()
+{
+    TokenTable table = kTasm40;
+    Clear(table, 0xE7, kLastToken);
+    return table;
+}
+
+// TASM 4.12: the binary's table ends after z (#E4) and renames three codes
+TokenTable MakeTasm412()
+{
+    TokenTable table = kTasm40;
+    Clear(table, 0xE5, kLastToken);
     table[0x97 - kFirstToken] = "defmac ";
     table[0x9B - kFirstToken] = "display ";
-    table[0x9F - kFirstToken] = "endmac ";
+    table[0x9F - kFirstToken] = "endmac";
     return table;
 }
 }  // namespace
 
 const TokenTable& Tasm3Tokens()
 {
-    return kTasm3;
+    static const TokenTable table = MakeTasm3();
+    return table;
 }
 
-const TokenTable& Tasm4Tokens()
+const TokenTable& Tasm40Tokens()
 {
-    static const TokenTable table = MakeTasm4();
+    return kTasm40;
+}
+
+const TokenTable& Tasm412Tokens()
+{
+    static const TokenTable table = MakeTasm412();
     return table;
 }
 }  // namespace unrealasm::codecs::tasm

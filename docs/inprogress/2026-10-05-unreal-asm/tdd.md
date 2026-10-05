@@ -58,7 +58,7 @@ core/src/3rdparty/unreal-asm/
 ├── examples/                           # D-14: small programs on the public API, built with the library
 │   ├── decode/  encode/  convert/  detect-encoding/  symbols/
 └── testdata/                           # D-14: the corpus of every codec and plugin, with README provenance
-    ├── tasm3/  alasm/  text/  sjasmplus/ ...
+    ├── tasm/  alasm/  text/  sjasmplus/ ...
 
 core/src/debugger/asm/                  # emulator adapters: DiskFileSource / Sink, CatalogHints from TR-DOS,
                                         # the surfaces' shared functions (decode / encode / convert / detect)

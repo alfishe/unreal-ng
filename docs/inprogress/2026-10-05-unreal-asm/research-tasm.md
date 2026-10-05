@@ -1,97 +1,101 @@
-# unreal-asm: TASM 3 / TASM 4 source format research (phase A2)
+# unreal-asm: TASM source format research, every version (phases A2, A3)
 
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
-| **Codec** | `tasm`, versions `3` and `4` (`core/src/3rdparty/unreal-asm/src/codecs/tasm/`; one codec for every version, D-15) |
-| **Sources** | prior-art L1 (the owner's `ZConverter_TASM4.cpp`, 2012), L2/L3, L5 (real TASM 3.2 files), P1 (ZX-M8XXX `asm-detok.js`); `TASM30.DOC` from the TASM 3.01 archive |
-| **Status** | TASM 3: confirmed byte for byte on real files. TASM 4: **provisional**, from L1 and P1 only (no TASM 4 file found yet) |
+| **Codec** | `tasm`, versions `3` (3.0-3.5), `4.0` (4.0 XL Design, 4.4 KVA), `4.12` (`core/src/3rdparty/unreal-asm/src/codecs/tasm/`; one codec for every version, D-15) |
+| **Programs** | [TASM 2.0](https://zxart.ee/releasefile/id:249301/TASM2_0.zip), [3.0](https://zxart.ee/releasefile/id:249302/TASM3_0.zip), [3.02](https://zxart.ee/releasefile/id:249303/TASM3_2.zip), [3.5](https://vtrd.in/system/TASM_3_5.zip), [4.0 XLD](https://zxart.ee/releasefile/id:249304/TASM4_0.zip), [4.4 KVA](https://zxart.ee/releasefile/id:249307/TASM4_4.zip), [4.12](https://zxart.ee/releasefile/id:249305/TASM_412.ZIP) (also [TRD](https://zxart.ee/releasefile/id:155527/TASMV4.12.trd.zip)); keyword tables read from each binary |
+| **Corpus** | 127 distinct type-`A` sources: 24 TASM 3 (from [Legend of Kyrandia demo](https://zxart.ee/releasefile/id:168024/LegendOfKyrandiaDemo.trd.zip)), 91 TASM 4.0 / 4.4 (General Sound ROM 1.04 sources, Sprinter BIOS and 2D Studio sources, the TASM 3.02 disk's examples), 12 TASM 4.12 (the program's own examples, Kyrandia, [sobdemo](https://zxart.ee/releasefile/id:298066/sobdemo.zip), J7N's HD formatter) |
+| **Result** | all 127 decode and encode back **byte for byte**; the version from the catalog is never contradicted by the bytes; the canonical tokenizer alone writes 99.78 % of the lines exactly as TASM stored them (§5) |
 
 ## 1. Example first
 
-The first line of `000LOAD` (TASM 3.2, a loader) is stored as 12 bytes:
+The first line of `000LOAD` (saved by TASM 4.0 / 4.4, catalog start 40872) is stored as 12 bytes:
 
 ```
 0A | 0A 08 | BF | 0A 04 | 32 35 30 30 30 | 0A
 len  8 blanks "org "  4 blanks  "25000"        len
 ```
 
-and decodes to `        org     25000`. The opcode is at column 8 and the operand at column 16: that is how TASM
-lays out the line on its screen. The old converter (L2) printed the same line with columns 12 and 22 because it
-re-aligns the output. unreal-asm keeps TASM's own layout, so the text encodes back to the same bytes.
+and decodes to `        org     25000`: the opcode in column 8, the operand in column 16, TASM's own layout. TASM 4.12
+stores the same line as `08 BF 04 "25000"`: it writes a blank count directly (`08` = eight blanks).
 
-## 2. The stream
+## 2. Versions
+
+"TASM" is three families with different authors (findings: the research agent's notes in the collection, the
+binaries themselves):
+
+| Version | Who, year | Catalog start of a saved source | Blanks | Keyword table |
+|---|---|---|---|---|
+| 2.0 | Rst7, 1993 | type `C`, 38750 | — | `#9B` DISP, `#9F` ENT, ends at `#E4` (101 words) |
+| 3.0-3.5 | Rst7 (3.5 with Alex Raider), 1994-95 | 39221 | `#0A n` | ends at `#E6` incbin (103 words) |
+| 4.0, 4.4 | Sergey Pavlov / XL Design 1996; KVA 1996 | 40872 | `#0A n` | 3.x plus `#E7`-`#F0` sli inf lx hx ly hy db dm ds dw |
+| 4.12 | Rst7 (Code Busters), 1997 | ≤ 4096 (the editor's line: 0, 17, 32, ...) | a byte `#02`-`#1F` is that many blanks; `#01 n` = n blanks | 3.x with `#97` defmac, `#9B` display, `#9F` endmac; ends at `#E4` |
+
+The start values are words in each binary. TASM 2.0 sources are a different format altogether ("TASM 3.0's text is
+not compatible with TASM 2.0", TASM 3.0's help, which imports 2.0 files); no 2.0 source has been found yet (§7).
+
+The owner's 2012 converter ("TASM4") used the 4.0 XLD table; the ZX-M8XXX references ("TASM 4.x": run byte `#01`,
+defmac / display / endmac) describe 4.12, whose real files use direct counts (no `#01` in any of them).
+
+## 3. The stream
 
 | Part | Bytes | Notes |
 |---|---|---|
-| line record | `[n] [n body bytes] [n]` | the length is repeated after the body so the editor can scroll backwards; `n` ≤ 254 |
-| end | `FF FF` | a length byte `FF` ends the source; both real files end with exactly `FF FF` at the catalog's length |
+| line record | `[n] [n body bytes] [n]` | the length is repeated after the body so the editor can scroll backwards; `n` ≤ 254; an empty line is `00 00` |
+| end | `FF FF` | a length byte `FF` ends the source |
 | after the end | — | in a hobeta file the rest of the last sector is left-over memory (kept by the container as its `tail`) |
 
-Body bytes:
-
-| Byte | TASM 3 | TASM 4 |
-|---|---|---|
-| `#0A n` | `n` blanks | (a plain control byte) |
-| `#01 n` | (a plain control byte) | `n` blanks |
-| `#20-#7E` | ASCII | ASCII |
-| `#80-#F0` | a token (table in `tasmtokens.cpp`, 113 entries) | the same table, except `#97` `defmac `, `#9B` `display `, `#9F` `endmac ` |
-| anything else | kept as U+F700 + byte | same |
-
-A token that is an instruction or directive carries its trailing blank (`#B3` = `ld `, `#BF` = `org `). Register and
-condition names do not (`#85` = `hl`, `#BD` = `nz`); `#83` is `af'` with its apostrophe. A single blank is a literal
-`#20`, two or more are a run.
-
-## 3. What the real files show (L5)
-
-| File | Catalog | Lines | Runs (length × count) | Literal double blanks |
-|---|---|---|---|---|
-| `000LOAD.$A` | type `A`, start 40872, length 2187 | 171 | 3×25, 4×55, 5×100, 6×8, 8×133 | none |
-| `CALLLOAD.$A` | type `A`, start 40872, length 2083 | 184 | 2×3, 3×43, 4×49, 5×97, 6×7, 8×147, 12×2 | none |
-
-- Labels are in column 0 and stay as written (upper case in these files). Mnemonics and registers are tokens, so they
-  show in lower case. Operands that are labels or numbers stay as written.
-- Comments after `;` hold plain ASCII.
-- Every multi-blank gap is a run, including the gap before a comment (`ld b,91` + run 12 + `; SECTORS`).
+Body bytes: `#20`-`#7E` ASCII, blanks as in §2, `#80`-`#F0` the version's keywords; a keyword that is an instruction or
+directive carries its trailing blank (`#B3` = `ld `), register and condition names do not (`#85` = `hl`); `#83` is
+`af'`. Any other byte (and a keyword code the version does not have) decodes as U+F700 + byte.
 
 ## 4. Canonical tokenizer (how an edited or foreign line is written)
 
-A line keeps its original body while its text does not change, which makes the round trip exact. An edited line,
-or a line decoded by another codec, goes through these rules:
+A line keeps its original body while its text does not change. An edited line, or a line from another version or
+codec, goes through these rules (derived from the corpus, §5):
 
-1. Two or more blanks become run bytes (chunks of at most 255). A single blank stays literal.
-2. The label field (text from column 0 up to the first blank) is literal.
-3. From `;` on, the rest is literal except for the blank runs. So is everything inside `'...'` or `"..."`.
-4. Elsewhere, a whole lower-case word that matches a token becomes that token. The word must not have a letter,
-   digit, `_`, `.`, `@`, `$` or `#` before or after it. A token with a trailing blank is used only when a blank
-   follows, and it absorbs that blank. `af'` is matched with its apostrophe.
-5. A character TASM cannot hold is an error naming the line and the column. Characters outside ASCII are an example;
-   the exception is U+F700 + byte, which is written back as that byte.
+1. Blank gaps of two or more: `#0A n` runs (3, 4.0; up to 255) or direct counts (4.12; up to 31 per byte). A single
+   blank stays literal.
+2. **Every** whole lower-case word that is a keyword of the version becomes its token, wherever it stands: label
+   field (`include FILE` at column 0), operands, strings (`"(c) 2000"`) and comments (`;ld a,(hl)`). A word must not
+   touch a letter, digit, `_`, `.`, `@`, `$` or `#`. A keyword with a trailing blank is used only when a blank
+   follows and takes that blank. `af'` takes its apostrophe.
+3. A character constant `"x"` stays as typed (`cp "a"`, `.IF KEY-"p"`).
+4. A character TASM cannot hold is an error naming the line and the column; U+F700 + byte is written as that byte.
 
-**Check:** take the decoded text of both real files, drop every kept body, and encode with these rules alone. The
-result equals TASM's own bytes (test `CanonicalTokenizerReproducesTasmsOwnBytes`). The tokenizer therefore writes
-what TASM 3.2 writes, at least for these files.
+## 5. What the corpus shows
 
-## 5. Detection
+| Version (catalog) | Files | Lines | Canonical tokenizer exact | Version from the bytes alone |
+|---|---|---|---|---|
+| 3 | 24 | 1349 | all | 3 or 4.0 (no keyword tells them apart) |
+| 4.0 / 4.4 | 91 | 38208 | 99.7 % | 4.0 for 50 files (they use db / dw / lx …), 3 or 4.0 for 40, one 4-byte file fits all |
+| 4.12 | 12 | 4740 | 99.9 % | 4.12 (direct blank counts) |
 
-| Evidence | Score |
-|---|---|
-| catalog type `A` and start 39221 / 40872 (TASM 3) or 1-4096 (TASM 4, P1) | 95 for the matching version, 20 for the other |
-| no catalog: framing holds to the end marker; more `#0A` than `#01` bytes in bodies means TASM 3, otherwise TASM 4 | 80 (≥ 3 lines) or 60 for the matching version, 40 below that for the other |
-| framing broken anywhere | 0 |
+The lines the canonical tokenizer writes differently are all in the Sprinter BIOS / tools sources and TOOLS: some
+comments and strings there keep keyword words as plain text (`in`, `or`, `bit`, `(l,h)`) while the rest of the same
+files tokenizes them: those files were most likely produced by a text-to-TASM converter, not typed in TASM. Their
+bytes are kept exactly.
 
-## 6. Sub-version conversion
+**Version detection.** The catalog's start field decides when the file comes with one. Without it, every version
+decodes and re-tokenizes each line; a line counts for a version when it comes back unchanged and holds no byte the
+version gives no meaning (a direct blank count in a 3.x reading, `#ED` in a 3.x reading). All versions with the most
+lines are reported (`DecodeResult::subversions`), the newest is chosen.
 
-TASM 3 ↔ TASM 4 (`EncodeOptions::subversion`) goes through the text. The kept bodies belong to the other version, so every line is tokenized
-canonically with the target's run byte and table. The three TASM 4-only directive names (`defmac`, `display`,
-`endmac`) have no TASM 3 token and are written as plain text. Converting TASM 3 → TASM 4 → TASM 3 gives TASM 3's
-original bytes (test `SubVersionConversionThroughTheText`).
+## 6. Test data (`testdata/tasm/`)
+
+| File | Version | Why |
+|---|---|---|
+| `PRINTHL`, `APEAR` | 3 | Kyrandia, start 39221 |
+| `000LOAD`, `CALLLOAD` | 4.0 | from the TASM 3.02 disk, but start 40872: saved by 4.0 / 4.4; `db` / `dw` |
+| `TABLES_L`, `SGEN_ASM` | 4.0 | General Sound 1.04 sources: `db` / `dw` / `lx` |
+| `EXAMPLES`, `SINUS`, `SNAKE` | 4.12 | TASM 4.12's own examples: `defmac` / `endmac`, direct counts, `"p"` constants |
+| `ODNO` | 4.12 | start 71 |
 
 ## 7. Open items
 
-| Item | Why open |
+| Item | Note |
 |---|---|
-| A real TASM 4 file | the TASM 4 table and run byte come from L1 and P1; with a sample, add `testdata/tasm4/` and the same tests as TASM 3 |
-| Emulator oracle | load a file converted by `zxasm` into TASM 3.2 (on `TASM3_2.SCL.trd`) and compare the screen. For TASM 3 the byte equality already proves it; for TASM 4 this needs the program |
-| TASM 2.0 sources | stored in another format (TASM 3 imports them); queued as a `tasm2` codec |
-| Blanks inside strings and comments | the files have no multi-blank gap inside a string; rule 1 encodes them as runs like every other gap (TASM's editor compresses on line entry) — to confirm on the emulator |
+| TASM 2.0 | no saved source anywhere; make one in the emulator (TASM 2.0 on its disk) and add version `2.0` to the codec |
+| 4.0 vs 4.4 | same start and table in the files seen; a file showing a difference would split the version |
+| Emulator oracle | a converted file loaded in each TASM version on screen |
