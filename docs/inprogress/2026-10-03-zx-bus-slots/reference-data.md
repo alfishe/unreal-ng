@@ -83,7 +83,7 @@ struct When                    // "this entry applies when ..."
 constexpr PortClaim kMultiSoundClaims[] = {
     { 0xE00F, 0xE00D, Dir::InOut, Iorqge::Yes, RomLock::No,  { Opt::Dip, Dip::Ym  } },   // #FFFD family
     { 0xE00F, 0xC00D, Dir::InOut, Iorqge::No,  RomLock::No,  { Opt::Dip, Dip::Ym  } },   // #DFFD family
-    { 0xC00F, 0x800D, Dir::Out,   Iorqge::Yes, RomLock::No,  { Opt::Dip, Dip::Ym  } },   // #BFFD family
+    { 0xC00F, 0x800D, Dir::InOut, Iorqge::Yes, RomLock::No,  { Opt::Dip, Dip::Ym  } },   // #BFFD family (a read: IORQGE, not driven)
     { 0x00FF, 0x00FF, Dir::Out,   Iorqge::No,  RomLock::Yes, { Opt::Dip, Dip::Saa } },   // SAA #FF / #1FF
     { 0x00FF, 0x00B3, Dir::InOut, Iorqge::Yes, RomLock::No,  { Opt::Dip, Dip::Gs  } },
     { 0x00FF, 0x00BB, Dir::InOut, Iorqge::Yes, RomLock::No,  { Opt::Dip, Dip::Gs  } },

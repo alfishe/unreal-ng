@@ -644,3 +644,13 @@ ZX-Evo refused with their rules; the 128K edge without IORQGE still starts witho
 `TakesTheZxEvoYm2149OutOfItsSocket` (the explicit `ay-socket = ay` is refused). No catalog pair produces a D7 clash
 today (the matrix has no **P** cell), so that path is covered by the plan engine's own tests only.
 
+**`#BFFD` claimed In + Out (2026-10-05).** The ZX-MultiSound's CPLD decodes IORQGE from the address and M1 only, so an
+`IN #BFFD` asserts it while the card leaves the data bus alone (its YM data port is write-only). The reference data
+claimed `#BFFD` for writes only, so a Pentagon read of `#BFFD` went to the board's decode and its shadowed AY answered.
+The claim is `InOut` now; the card's read returns "not driving", the claim table hides the cycle from the board
+(CardWins) and nobody drives: the read floats. On the ZX-Evo (BoardWins, RdWr) nothing changes: the board AY's
+`#BFFD` claim is write-only, so the planner sees no new read overlap. Regenerated tables: only the card row's
+`#C00F/#800D` cell lost its "write" note. Tests: `MultiSoundSlotCard_Test.ClaimsAssertIorqgeWhereTheRtlDoes` (every
+port, both directions, claims against the RTL's IORQGE term), `PentagonCardShadowsTheBoardAy` (`IN #BFFD` floats, the
+board decodes nothing).
+

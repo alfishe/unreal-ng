@@ -108,9 +108,10 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
     machine with the reason ([architecture.md](architecture.md) §6 "As built"); no shipped config fits the card
   - [ ] owner review: the card's axis is `CPU_CLOCK_RATE` on every machine, not the machine's T-state rate
     ([tdd-integration.md](tdd-integration.md) §3.2 deviation)
-  - [ ] the RTL asserts IORQGE on a `#BFFD` read too (no direction term), the reference data claims `#BFFD` for
-    writes only: a Pentagon read of `#BFFD` reaches the board (the shadowed AY). Decide whether the claim becomes
-    `InOut` with the card not driving (the matrix and its generated tables change)
+  - [x] the RTL asserts IORQGE on a `#BFFD` read too (no direction term, hardware-reference.md §3.1 / §3.4): the
+    claim is `InOut` since 2026-10-05, the card does not drive that read, so on the Pentagon it floats instead of
+    reaching the shadowed board AY; the generated card table changed in that one cell
+    (`MultiSoundSlotCard_Test.ClaimsAssertIorqgeWhereTheRtlDoes`, `PentagonCardShadowsTheBoardAy`)
 - [ ] MS-5..MS-8 TTD, surfaces, real software, docs (after slots SL-5); TTD needs the adapter's time base and the
   pair's ratio phase in the card's blob set. Until MS-5 a TTD session recorded with the card fitted does not capture
   the card (no session refusal yet)

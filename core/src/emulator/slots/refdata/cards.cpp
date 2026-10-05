@@ -172,7 +172,9 @@ constexpr PortClaim kMultisoundClaims[] = {
     // with the machine's own #DFFD
     { .mask = 0xE00F, .match = 0xE00D, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xFFFD },
     { .mask = 0xE00F, .match = 0xC00D, .dir = Dir::InOut, .when = kDipYm, .port = 0xDFFD },
-    { .mask = 0xC00F, .match = 0x800D, .dir = Dir::Out, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xBFFD },
+    // YM data: the CPLD's IORQGE has no direction term, so an IN #BFFD asserts it too while the card leaves the data
+    // bus alone (hardware reference §3.1, §3.4): the read is hidden from the board and floats
+    { .mask = 0xC00F, .match = 0x800D, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xBFFD },
     // SAA #FF data / #1FF address: passive since 2023-12, ROM-fetch lock
     { .mask = 0x00FF, .match = 0x00FF, .dir = Dir::Out, .romLock = true, .when = kDipSaa },
     { .mask = 0x00FF, .match = 0x00B3, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipGs },

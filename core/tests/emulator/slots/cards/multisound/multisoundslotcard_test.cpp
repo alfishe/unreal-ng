@@ -232,6 +232,13 @@ TEST(MultiSoundSlotCard_Test, PentagonCardShadowsTheBoardAy)
     EXPECT_TRUE(drove);
     EXPECT_FALSE(m.Context()->pPortDecoder->WasLastPortDecoded()) << "the board decoded nothing";
 
+    // IN #BFFD: the card's IORQGE hides it from the board too, and the card does not drive the data bus (its YM data
+    // port is write-only): nobody drives, the read floats. Before, the board's decode answered with its AY's register
+    drove = true;
+    EXPECT_EQ(In(m, 0xBFFD, drove), 0xFF);
+    EXPECT_FALSE(drove) << "the card leaves the data bus alone";
+    EXPECT_FALSE(m.Context()->pPortDecoder->WasLastPortDecoded()) << "the board AY saw no read cycle";
+
     // GS mailbox (IORQGE): the card's General Sound latches it
     Out(m, 0x00B3, 0x5A);
     EXPECT_EQ(Report(*card).gs.dataFromHost, 0x5A);
@@ -249,6 +256,34 @@ TEST(MultiSoundSlotCard_Test, PentagonCardShadowsTheBoardAy)
     EXPECT_EQ(card->Card().Logic().Dac(0).sample, MultiSoundLogic::ConvertSample(0xC0));
     Out(m, 0x000F, 0x10, kRomPc);
     EXPECT_EQ(card->Card().Logic().Dac(0).sample, MultiSoundLogic::ConvertSample(0xC0));
+}
+
+/// The reference data's IORQGE claims follow the CPLD: for every port and both directions a claim asserting IORQGE
+/// covers the port exactly when the RTL's IORQGE term is true (it has no direction term: `IN #BFFD` asserts it too).
+/// Pure, no machine (~5 ms: 2 x 65536 ports)
+TEST(MultiSoundSlotCard_Test, ClaimsAssertIorqgeWhereTheRtlDoes)
+{
+    const slots::CardDef& def = MultiSoundDef();
+    const std::vector<slots::PortClaim> claims = slots::CardClaims(def, {});
+    const MultiSoundLogic logic(MultiSoundSlotCard::OptionsFrom(def, {}));
+    for (const slots::Dir dir : { slots::Dir::In, slots::Dir::Out })
+    {
+        size_t mismatches = 0;
+        for (uint32_t port = 0; port <= 0xFFFF; port++)
+        {
+            bool claimed = false;
+            for (const slots::PortClaim& claim : claims)
+            {
+                const bool covers = (port & claim.mask) == claim.match;
+                const bool direction = claim.dir == slots::Dir::InOut || claim.dir == dir;
+                claimed = claimed || (covers && direction && claim.iorqge == slots::Iorqge::Yes);
+            }
+            if (claimed != logic.Iorqge(static_cast<uint16_t>(port)) && mismatches++ < 4)
+                ADD_FAILURE() << (dir == slots::Dir::In ? "IN #" : "OUT #") << std::hex << port << ": claim " << claimed
+                              << ", RTL " << logic.Iorqge(static_cast<uint16_t>(port));
+        }
+        EXPECT_EQ(mismatches, 0u);
+    }
 }
 
 /// ZX-Evo (BoardWins, ~15 ms): the board keeps its ports from Iorq cards, but the MultiSound detects RD / WR and sees
