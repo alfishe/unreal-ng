@@ -128,6 +128,33 @@ TEST(MultiSoundSlotCard_Test, TakesTheZxEvoYm2149OutOfItsSocket)
     }
 }
 
+/// [MIDI] Bank=NONE: no bank is looked up or loaded, the report says why. The test runner's policy turns an unset
+/// Bank= into NONE (SoundCardScope: the shipped default is opt-in, TestSound::DefaultMidiBank)
+TEST(MultiSoundSlotCard_Test, BankNoneLoadsNothing)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound");
+    ASSERT_TRUE(m.Ok());
+    ASSERT_NE(m.Card(), nullptr);
+    EXPECT_EQ(m.Card()->Card().Config().midiBankPath, "") << "the policy's NONE";
+    const MultiSoundCardReport report = Report(*m.Card());
+    EXPECT_EQ(report.midi.bankStatus, "no bank");
+    EXPECT_EQ(report.midi.bankError, "no bank configured ([MIDI] Bank=NONE)");
+}
+
+/// The shipped default bank (data/midi/generaluser-gs.sf2, copied next to the executables by the build) is found
+/// without any [MIDI] Bank= entry. Loading the 30 MB bank takes ~165 ms - the one test that pays for it
+TEST(MultiSoundSlotCard_Test, ShippedDefaultBankLoadsWithoutAnOverride)
+{
+    SoundCardScope bank(TestSound::DefaultMidiBank);
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound");
+    ASSERT_TRUE(m.Ok());
+    ASSERT_NE(m.Card(), nullptr);
+    EXPECT_EQ(m.Card()->Card().Config().midiBankPath, "midi/generaluser-gs.sf2") << "the card's default";
+    const MultiSoundCardReport report = Report(*m.Card());
+    ASSERT_TRUE(m.Card()->Card().MidiBankLoaded()) << report.midi.bankError;
+    EXPECT_EQ(report.midi.bankName.rfind("GeneralUser GS", 0), 0u) << report.midi.bankName;
+}
+
 // endregion
 
 // region <Step 2: the card on the bus>

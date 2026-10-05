@@ -11,6 +11,10 @@ enum class TestSound : uint8_t
     MoonSound    = 1 << 1,  ///< MoonSound (OPL4) card
     TurboSound   = 1 << 2,  ///< TurboSound slot: AY / TurboSound (2 x AY) / TSFM, whichever the config names
     All          = GeneralSound | MoonSound | TurboSound,
+    /// The shipped default General MIDI bank of a slot card's synthesizer (data/midi, 30 MB, about 165 ms to load per
+    /// card): not part of All, a test that wants the real bank names it. Without it an unset [MIDI] Bank= reads as
+    /// NONE (an explicit Bank= path is kept)
+    DefaultMidiBank = 1 << 3,
 };
 
 constexpr TestSound operator|(TestSound a, TestSound b)
@@ -29,7 +33,8 @@ constexpr TestSound operator|(TestSound a, TestSound b)
 /// runner leaves all of them out of every machine it creates
 /// (Config::SetConfigLoadedHook, installed in main() by InstallPolicy): the
 /// TurboSound slot is empty (TurboSound=None - AY ports on the floating bus),
-/// no GS, no MoonSound.
+/// no GS, no MoonSound, and no default MIDI bank (Config::SetMidiBankHook: an
+/// unset [MIDI] Bank= becomes NONE; TestSound::DefaultMidiBank opts back in).
 ///
 /// A test that needs a device opts back in for the machines it creates by
 /// holding a SoundCardScope while the emulator is initialized (typically a

@@ -129,6 +129,7 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
   effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
   (machines without the card pay nothing)
-- [ ] `data/midi/generaluser-gs.sf2` + license tracked (Q4) - the recipe verification put a local copy next to the
-  executable; without it the MIDI row stays silent (`bank: no bank`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
+- [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the
+  executables by every target that ships `data/rom`; `[MIDI] Bank=NONE`; the test runner's policy keeps the default bank
+  out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research

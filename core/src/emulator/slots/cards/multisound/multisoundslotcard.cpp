@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/config.h"
 #include "emulator/cpu/z80.h"
@@ -71,7 +72,11 @@ MultiSoundCardConfig MultiSoundSlotCard::ConfigFrom(const CardContext& context)
     }
     const Config* loader = emulator != nullptr && emulator->pEmulator != nullptr ? emulator->pEmulator->GetConfigLoader()
                                                                                 : nullptr;
-    if (loader != nullptr && !loader->GetMidiBank().empty())
+    if (loader != nullptr && StringHelper::ToLower(loader->GetMidiBank()) == "none")
+    {
+        config.midiBankPath.clear();   // [MIDI] Bank=NONE: no bank, the synthesizer stays silent
+    }
+    else if (loader != nullptr && !loader->GetMidiBank().empty())
     {
         config.midiBankPath = loader->GetMidiBank();
     }

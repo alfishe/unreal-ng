@@ -373,6 +373,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
@@ -426,6 +428,7 @@ if(APPLE)
         # 3. Inject Resources before signing
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/midi" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
@@ -461,6 +464,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/midi" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
@@ -490,6 +494,7 @@ if(WIN32)
         # Copy only necessary resources
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/UnrealNG/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/UnrealNG/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/UnrealNG/resources/html"
@@ -513,6 +518,7 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-qt" "${CMAKE_BINARY_DIR}/packages/unreal-qt"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/resources/html"

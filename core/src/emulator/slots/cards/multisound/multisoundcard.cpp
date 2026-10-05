@@ -164,6 +164,10 @@ void MultiSoundCard::LoadMidiBank()
     {
         _bankSource = "(supplied)";
     }
+    else if (_config.midiBankPath.empty())
+    {
+        _bankError = "no bank configured ([MIDI] Bank=NONE)";
+    }
     else
     {
         const std::string resolved = ResolveDataFile(_config.midiBankPath);

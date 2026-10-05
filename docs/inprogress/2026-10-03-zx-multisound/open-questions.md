@@ -40,6 +40,10 @@ For development, every GM bank we can reach is downloaded to `testdata/midi/` (o
 **Owner decision (2026-10-03): A.** One file is tracked in the repository, `data/midi/generaluser-gs.sf2`, with the
 author's license next to it (like the ROMs in `data/`). Installation copies it next to the application. Builds and
 CI work offline, and the library tests pin the bank by SHA-256. The one-time cost is about 30 MB of git history.
+**Done 2026-10-05:** `data/midi/generaluser-gs.sf2` (2.0.3, SHA-256 `9575028c...` as in `testdata/midi/README.md`),
+`LICENSE-generaluser-gs.txt` and `README.md` in `data/midi/`; every build target that ships `data/rom` ships `data/midi`
+(`midi/` beside `rom/`, macOS bundles in `Contents/Resources/midi`, Linux packages `lib/unreal-ng/midi`); the card finds
+it without `[MIDI] Bank=`. `Bank=NONE` loads no bank; the test runner sets it unless a test asks for the default bank.
 
 ## Q5. Which variants of the card are modeled?
 

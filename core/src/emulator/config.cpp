@@ -1252,6 +1252,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	{
 		const char* bank = inimanager.GetValue(midi, "Bank", nullptr);
 		_midiBank = bank != nullptr ? bank : "";
+		if (const MidiBankHook& hook = MidiBankHookStorage())
+			hook(_midiBank);
 	}
 
 	// Make sure we're emulating valid model & configuration
@@ -1295,6 +1297,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 
 	return result;
+}
+
+Config::MidiBankHook& Config::MidiBankHookStorage()
+{
+	static MidiBankHook hook;
+	return hook;
+}
+
+void Config::SetMidiBankHook(MidiBankHook hook)
+{
+	MidiBankHookStorage() = std::move(hook);
 }
 
 Config::ConfigLoadedHook& Config::ConfigLoadedHookStorage()

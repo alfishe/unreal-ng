@@ -88,7 +88,8 @@ struct MultiSoundCardConfig
     MultiSoundRenderMode renderMode = MultiSoundRenderMode::HiFi;
     /// GS firmware (resolved like [ROM] entries: working dir, executable dir, resources)
     std::string gsRomPath = GSProfile::kMultiSoundRomPath;
-    /// [MIDI] Bank= (resolved like the ROM); a missing or unreadable bank leaves the synthesizer silent ("no bank")
+    /// [MIDI] Bank= (resolved like the ROM; the default ships from data/midi); a missing or unreadable bank, or an
+    /// empty path ([MIDI] Bank=NONE), leaves the synthesizer silent ("no bank")
     std::string midiBankPath = "midi/generaluser-gs.sf2";
     /// A bank object instead of the file (tests, one bank shared by several cards); overrides midiBankPath
     std::shared_ptr<const sam2695::ISoundBank> midiBank;

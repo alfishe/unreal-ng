@@ -8,7 +8,7 @@
 namespace
 {
 /// One counter per TestSound bit (scopes nest and overlap)
-std::atomic<int> g_activeScopes[3]{};
+std::atomic<int> g_activeScopes[4]{};
 
 /// GeneralSoundFitScope's kind (GSTypeKind::NONE = 0: as configured)
 std::atomic<uint8_t> g_fitGeneralSound{0};
@@ -16,7 +16,7 @@ std::atomic<uint8_t> g_fitGeneralSound{0};
 template <typename F>
 void ForEachDevice(TestSound devices, F&& f)
 {
-    for (int bit = 0; bit < 3; bit++)
+    for (int bit = 0; bit < 4; bit++)
     {
         if (static_cast<uint8_t>(devices) & (1u << bit))
             f(g_activeScopes[bit]);
@@ -26,7 +26,7 @@ void ForEachDevice(TestSound devices, F&& f)
 int BitIndex(TestSound device)
 {
     const auto value = static_cast<uint8_t>(device);
-    for (int bit = 0; bit < 3; bit++)
+    for (int bit = 0; bit < 4; bit++)
     {
         if (value == (1u << bit))
             return bit;
@@ -68,6 +68,11 @@ void SoundCardScope::InstallPolicy()
             config.sound.moonsound = 0;
         if (!Active(TestSound::TurboSound))
             config.sound.turboSoundKind = TurboSoundKind::None;
+    });
+    Config::SetMidiBankHook([](std::string& bank)
+    {
+        if (bank.empty() && !Active(TestSound::DefaultMidiBank))
+            bank = "NONE";
     });
 }
 

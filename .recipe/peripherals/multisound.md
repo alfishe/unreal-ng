@@ -29,11 +29,12 @@ Ground truth: the card [multisoundcard.h](../../core/src/emulator/slots/cards/mu
 `d[7:3] = 11111` while the SAA DIP is off). The card also takes the jobs of a TurboSound FM, a General Sound and a
 SounDrive in other slots: fitting it removes those cards (and the plan says so).
 
-**The MIDI bank.** The synthesizer needs a General MIDI SoundFont: `[MIDI] Bank=` (default `midi/generaluser-gs.sf2`,
-looked up in the working directory, next to the executable, then in the resources). The repository does not ship it
-yet; without one `audio_midi` reports `bank: no bank` and the MIDI row stays silent. For a local check, put a GM bank
-at `midi/generaluser-gs.sf2` next to the executable (on macOS `unreal-qt.app/Contents/MacOS/midi/`). The bank is read
-when the card is built: a machine created before the file was there needs a restart (any slot change).
+**The MIDI bank.** The synthesizer plays a General MIDI SoundFont: by default GeneralUser GS 2.0.3, shipped from
+[data/midi/](../../data/midi/README.md) next to the executables (`midi/generaluser-gs.sf2`; macOS bundles:
+`Contents/Resources/midi/`), found without any setting: `audio_midi` reports `bank loaded` with its name. `[MIDI]
+Bank=` names another bank (looked up in the working directory, next to the executable, then in the resources);
+`Bank=NONE` loads none (`bank: no bank`, the MIDI row stays silent). The bank is read when the card is built: a bank
+change needs a restart (any slot change).
 
 ## MCP (preferred)
 
