@@ -19,7 +19,9 @@
             "'vram' (256 KB video RAM: row x 1024 + column; mode table at columns #300-#39F, palettes at #3E0-#3FF, "
             "R, G, B per pen); TS-Conf has 'cram' (palette) and 'sfile' (sprite table), 512 bytes each: word n at "
             "offset 2n, low byte first, the FM window's layout (CRAM: bits 14-10 R, 9-5 G, 4-0 B, bit 15 VDAC; sprite "
-            "d = SFILE words 3d..3d+2). Other machines list none yet.";
+            "d = SFILE words 3d..3d+2). Every machine with a CMOS clock has 'cmos' (the cells as the guest addresses "
+            "them; a write is a guest write, the time registers set the clock), the ZX-Evo also 'eeprom' (the AVR's "
+            "4 KiB EEPROM).";
         idParam(kList, "get");
         paths[kList]["get"]["responses"]["200"]["description"] = "Regions (an empty list on machines without any)";
         paths[kList]["get"]["responses"]["404"]["description"] = "Emulator not found";

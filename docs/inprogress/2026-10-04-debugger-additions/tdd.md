@@ -203,11 +203,44 @@ the image dirty, keeps the address mark; offset + length past the field, a missi
 write-protected disk are refused with their reasons; a WD1793 `READ SECTOR` after the write returns the new bytes;
 TTD gets a debugger-edit marker. Qt: `DiskSectorDialog_Test`.
 
-## 4. The rest (outline; designed when reached)
+## 4. E5: CMOS and NVRAM
+
+### 4.1 What was there and what was missing
+
+The CMOS clock's cells were already on most surfaces: WebAPI `GET/POST /rtc/cells`, CLI `rtc read / write`, Lua /
+Python `rtc_read` / `rtc_write`, MCP `inspect_state` `rtc` (writes through `invoke_api`); the one path is
+`RtcAccess`. Missing: the Qt debugger, and the ZX-Evo AVR's 4 KiB EEPROM (what Unreal's `ED_NVRAM` editor shows),
+which no surface could reach except 16 bytes at a time through the clock's `#F0-#FF` window as the guest does.
+
+### 4.2 Design
+
+Two device memory regions, so every region surface and the Qt "Device memory" dialog (§2.2) cover both without new
+routes:
+
+| Region | On | Size | Read | Write |
+|---|---|---|---|---|
+| `cmos` | every machine with a CMOS clock (ATM3 / TS-Conf, Profi, Scorpion SMUC, ...) | the chip's cells (128 or 256) | `Ds12887::PeekRegister`: side-effect free, register C keeps its flags | `Ds12887::WriteRegister`, a guest write: the time registers set the clock, C and D ignore it - the same as `RtcAccess::Write` |
+| `eeprom` | ZX-Evo (`EvoAvr`: ATM3, TS-Conf) | 4096 | the byte | the byte (plain storage, no side effect) |
+
+The clock is not part of a port decoder's own regions: `DeviceMemory::Regions` adds the regions of the machine's
+clock (`RtcAccess::Find`, whichever board carries it) after the decoder's. The chip owns its region objects
+(`Ds12887::CollectMemoryRegions`, `EvoAvr` adds `eeprom`). Writes are tool edits (`DeviceMemory::Write`); the EEPROM
+is a region the TTD engine already compares at each capture (`EvoAvr::TTDRegions`), the cells are in the chip's
+TTD state.
+
+`/rtc/cells` and the `rtc_*` functions stay: they answer in the clock's terms (time, registers) and take the same
+path.
+
+### 4.3 Tests
+
+`RtcAccess_Test.CmosRegionIsTheSamePath` on every clock machine (a region write reads back through `RtcAccess` and
+the region); `RtcEepromRegion_Test` (a region write is the EEPROM byte; past the end refused); the TS-Conf region list
+is cram, sfile, cmos, eeprom.
+
+## 5. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| E5 | NVRAM (CMOS) read and write | check what `/rtc/cells` already covers first |
 | F4 | `/stepout`, `/skip_until` (and the long `/steps`) start the run and report through events, not by holding an HTTP worker | the same pattern as Continue |
 | F5 | `/stepout`, `/skip_until` and the run_* calls check the run-control claim (409 when another surface holds it) like `/step` does | |
 | E8 | Long-poll `GET /debug/wait?since=<seq>&timeout_ms=` | answers when the snapshot's `seq` moves; async (no worker held) |

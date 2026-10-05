@@ -71,6 +71,19 @@ curl -s $B/$ID/state/rtc | jq -r .time.text      # 99-12-31 23:59:58
 The ZX-Evo AVR ignores SET: there each field reads back as written until
 the next update, so the fields can be written in any order.
 
+### The cells as a memory region; the ZX-Evo EEPROM
+
+The same cells are the device memory region `cmos` (same read and write path), and on ZX-Evo (ATM3, TS-Conf) the
+AVR's 4 KiB EEPROM is the region `eeprom` - otherwise reachable only 16 bytes at a time through the `#F0-#FF` window:
+
+```bash
+curl -s "$B/$ID/memory/region/cmos?offset=0x0E&length=16&format=hex" | jq -r .hex
+curl -s "$B/$ID/memory/region/eeprom?offset=0&length=4096&format=binary" -o scratch/eeprom.bin
+curl -s -X POST $B/$ID/memory/region/eeprom -H 'Content-Type: application/json' -d '{"offset":291,"hex":"ABCD"}'
+```
+
+Qt: debugger toolbar "Device memory" lists both.
+
 ## CLI / Lua / Python
 
 ```text

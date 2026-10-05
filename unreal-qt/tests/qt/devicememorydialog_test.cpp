@@ -44,7 +44,7 @@ TEST_F(DeviceMemoryDialog_Test, TypedBytesReachTheTsConfPalette)
     auto* view = dialog.findChild<QHexView*>();
     ASSERT_NE(regions, nullptr);
     ASSERT_NE(view, nullptr);
-    ASSERT_EQ(regions->count(), 2);
+    ASSERT_EQ(regions->count(), 4);  // cram, sfile, cmos, eeprom
     EXPECT_EQ(regions->currentData().toString(), "cram");
     ASSERT_NE(view->getDocument(), nullptr);
     EXPECT_EQ(view->getDocument()->length(), 512);
