@@ -315,8 +315,24 @@ Evidence: `video_mode.v:204-220`, `video_render.v:43-54`.
 - **TXT flattens everything to 4 bits**: border and TSU pixels are cut to their
   low nibble in the `PAL_SEL[3:0]` bank and doubled to 14 MHz
   ([V] `video_render.v:82`, `video_out.v:61`). No flash/bright in TXT.
-- Gfx X/Y offsets are 9-bit, wrap 512 px / 512 rows; they apply in ZX (row wrap
-  256) and TXT (pixel-line vertical scroll) too ([V] `video_sync.v:176-181`).
+- Gfx X/Y offsets are 9-bit, wrap 512 px / 512 rows; the Y offset applies in
+  ZX (row wrap 256) and TXT (pixel-line vertical scroll) too ([V]
+  `video_sync.v:176-181`).
+- **`G_X_OFFS` is a pixel scroll only in 16C / 256C.** It loads the DRAM column
+  counter (`cstart = G_X_OFFS >> 2`, fine shift `G_X_OFFS[1:0]` dots; [V]
+  `video_mode.v` `x_offs_mode`, `video_sync.v` `cnt_col` / `cptr`), and in ZX and
+  TXT the counter also picks what each fetch reads. Measured on the Verilog
+  with `tools/machines/tsconf/rtl-sim` (test GX1, 174 lines):
+  - ZX: only `G_X_OFFS[6:0]` counts; scroll `8 × G_X_OFFS[6:2] + G_X_OFFS[1:0]`
+    pixels; an odd `G_X_OFFS[6:2]` swaps pixel and attribute bytes on the whole
+    line; the last `G_X_OFFS[1:0]` pixels come from a 33rd fetch.
+  - TXT: whole character pairs from `((G_X_OFFS >> 2) + 3) >> 2`, fine shift
+    `2 × G_X_OFFS[1:0]` hires pixels; a nonzero `G_X_OFFS[3:2]` shows raw
+    character codes instead of glyphs (one or both per pair, phase 1 in the
+    previous pair's colors).
+  - The rules: `ScreenTSConf::ZxSourceOf` / `TxtSourceOf`. (Until the
+    2026-10-05 audit the emulator, like [U] apart from ignoring it, treated it
+    as a pixel scroll.)
 - `G_Y_OFFS` write: at the next line start the row counter reloads with the new
   value (not value + elapsed lines); the first reload per frame is on line 31
   ([V] `video_sync.v:176-199`).

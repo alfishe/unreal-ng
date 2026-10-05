@@ -6,7 +6,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
 
+#include "_helpers/testpathhelper.h"
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/video/tsconf/screentsconf.h"
 
@@ -27,12 +33,23 @@ namespace
         {
             case 0:
             {
+                // G_X_OFFS in ZX: the RTL's fetch order (GX-1, tools/machines/tsconf/rtl-sim): fetch k is the byte
+                // pair at column 2 ((k >> 1) & 15), pixels if k is even, attributes if odd; the 16-pixel group m of
+                // the stream (the window starts G_X_OFFS[1:0] pixels in) shows fetch c + 2m in the colors of c + 2m + 1,
+                // c = G_X_OFFS[6:2]; past the 16th group the 33rd fetch, in the colors of fetch c + 31
                 const uint32_t y = gy & 0xFF;
-                const uint32_t x = gx & 0xFF;
                 const uint8_t* page = ram + (vPage << 14);
-                const uint8_t pixels = page[((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | (x >> 3)];
-                const uint8_t attr = page[0x1800 + (y >> 3) * 32 + (x >> 3)];
-                bool ink = (pixels >> (7 - (x & 7))) & 1;
+                const uint32_t c = (set.gxOffs >> 2) & 0x1F;
+                const uint32_t s = wx + (set.gxOffs & 3);
+                const uint32_t m = s >> 4;
+                auto fetch = [&](uint32_t k) -> uint8_t {
+                    const uint32_t column = 2 * ((k >> 1) & 0x0F) + ((s >> 3) & 1);
+                    return (k & 1) ? page[0x1800 + (y >> 3) * 32 + column]
+                                   : page[((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | column];
+                };
+                const uint8_t pixels = fetch(c + 2 * m);
+                const uint8_t attr = fetch(m < 16 ? c + 2 * m + 1 : c + 31);
+                bool ink = (pixels >> (7 - (s & 7))) & 1;
                 if ((attr & 0x80) && ((frameCounter >> 4) & 1))
                     ink = !ink;
                 visible = ink;
@@ -54,12 +71,20 @@ namespace
             }
             default:
             {
-                const uint32_t px = (gx * 2 + sub) & 0x3FF;
+                // G_X_OFFS in TXT (GX-1): character pairs from (n + 3) >> 2, n = G_X_OFFS >> 2, the stream starting
+                // 2 G_X_OFFS[1:0] hires pixels in; phase n & 3: 0 glyphs, 1 and 2 raw codes (1 in the previous
+                // pair's attributes), 3 glyph then raw code
+                const uint32_t n = set.gxOffs >> 2;
+                const uint32_t phase = n & 3;
+                const uint32_t s = 2 * wx + sub + 2 * (set.gxOffs & 3);
+                const uint32_t pair = (((n + 3) >> 2) + (s >> 4)) & 0x3F;
+                const uint32_t half = (s >> 3) & 1;
                 const uint8_t* row = ram + (vPage << 14) + ((gy >> 3) & 0x3F) * 256;
-                const uint8_t code = row[(px >> 3) & 0x7F];
-                const uint8_t attr = row[128 + ((px >> 3) & 0x7F)];
-                const uint8_t font = ram[((vPage ^ 1) << 14) + code * 8 + (gy & 7)];
-                const bool on = (font >> (7 - (px & 7))) & 1;
+                const uint8_t code = row[2 * pair + half];
+                const uint8_t attr = row[128 + (phase == 1 ? (2 * pair + 126 + half) & 0x7F : 2 * pair + half)];
+                const bool glyph = phase == 0 || (phase == 3 && half == 0);
+                const uint8_t font = glyph ? ram[((vPage ^ 1) << 14) + code * 8 + (gy & 7)] : code;
+                const bool on = (font >> (7 - (s & 7))) & 1;
                 visible = on;
                 return static_cast<uint8_t>(palBank | (on ? (attr & 0x0F) : (attr >> 4)));
             }
@@ -353,8 +378,9 @@ TEST_F(ScreenTSConf_Test, TSO2_RendererMatchesTheReference)
         std::printf("TSO2 hash 0x%016llXull, reference 0x%016llXull\n", static_cast<unsigned long long>(hash),
                     static_cast<unsigned long long>(refHash));
     else
-        // Re-recorded 2026-10-04: the random SFILE now ends at its third LEAP (TSU2b); the reference agrees pixel for pixel
-        EXPECT_EQ(hash, 0xB5A7D172B6701667ull) << "the renderer's output changed";
+        // Re-recorded 2026-10-05: G_X_OFFS in ZX / TXT follows the RTL's fetch order (GX1); the reference agrees pixel
+        // for pixel (before: 2026-10-04, the random SFILE ending at its third LEAP, TSU2b)
+        EXPECT_EQ(hash, 0x91937CB7D7649754ull) << "the renderer's output changed";
 }
 
 /// VDAC ([MISC] TS_VDAC, hs §0.1 / §4.3): with a video DAC, CRAM bit 15 set
@@ -614,4 +640,94 @@ TEST_F(ScreenTSConf_Test, GEOM2_WorkingWindowIncludesTheTsuWindow)
         EXPECT_EQ(w.width, c.expected.width);
         EXPECT_EQ(w.height, c.expected.height);
     }
+}
+
+/// GX-1: G_X_OFFS in ZX and TXT mode as the RTL draws it. The offset loads the DRAM column counter (cstart =
+/// G_X_OFFS >> 2, video_mode.v x_offs_mode) and the fetch type follows the counter, so it is not a pixel scroll:
+/// ZX scrolls 8 x G_X_OFFS[6:2] + G_X_OFFS[1:0] pixels and swaps pixels and attributes when G_X_OFFS[2] is odd,
+/// TXT scrolls by character pairs and shows raw codes for a nonzero G_X_OFFS[3:2] (TS-Conf audit, video rows
+/// 28-29). The reference lines come from the real Verilog run in tools/machines/tsconf/rtl-sim (Verilator):
+/// window line 9 with 8 border dots on each side, the memory filled as its harness does
+TEST_F(ScreenTSConf_Test, GX1_GxOffsMatchesTheRtl)
+{
+    // The harness's memory images (rtl-sim/harness.cpp FillZx / FillTxt)
+    for (int y = 0; y < 192; y++)
+        for (int c = 0; c < 32; c++)
+            Ram(0x05, static_cast<uint16_t>(((y & 0xC0) << 5) | ((y & 7) << 8) | ((y & 0x38) << 2) | c)) =
+                static_cast<uint8_t>(0x81 | ((c & 0x1F) << 1) | ((y & 1) << 6));
+    for (int r = 0; r < 24; r++)
+        for (int c = 0; c < 32; c++)
+        {
+            const int ink = c & 7;
+            const int paper = (ink + 1 + (c >> 3)) & 7;
+            Ram(0x05, static_cast<uint16_t>(0x1800 + r * 32 + c)) = static_cast<uint8_t>(((r & 1) << 6) | (paper << 3) | ink);
+        }
+    for (int r = 0; r < 64; r++)
+        for (int c = 0; c < 128; c++)
+        {
+            const int ink = c & 15;
+            const int paper = (ink + 1 + ((c >> 4) & 7)) & 15;
+            Ram(0x10, static_cast<uint16_t>(r * 256 + c)) = static_cast<uint8_t>(0x80 | (c & 0x7F));
+            Ram(0x10, static_cast<uint16_t>(r * 256 + 128 + c)) = static_cast<uint8_t>((paper << 4) | ink);
+        }
+    for (int ch = 0; ch < 256; ch++)
+        for (int l = 0; l < 8; l++)
+            Ram(0x11, static_cast<uint16_t>(ch * 8 + l)) = static_cast<uint8_t>(ch * 0x1D + 0x35 + l * 0x40);
+
+    // A distinct color per CRAM index, so the framebuffer gives the index back
+    TsConfState& ts = _decoder->GetState();
+    std::map<uint32_t, int> indexOf;
+    for (int i = 0; i < 256; i++)
+    {
+        ts.cram[i] = static_cast<uint16_t>(((i >> 4) << 10) | ((i & 15) << 5));
+        indexOf[ScreenTSConf::CramToRgba(ts.cram[i])] = i;
+    }
+    ASSERT_EQ(indexOf.size(), 256u);
+    Reg(TsConfReg::Border, 0xEE);
+    Reg(TsConfReg::PalSel, 0x00);
+
+    int lines = 0;
+    for (const char* name : {"machines/tsconf/rtl-sim/zx-gxoffs.txt", "machines/tsconf/rtl-sim/txt-gxoffs.txt"})
+    {
+        std::ifstream file(TestPathHelper::GetTestDataPath(name));
+        ASSERT_TRUE(file.good()) << name;
+        std::string text;
+        while (std::getline(file, text))
+        {
+            if (text.empty() || text[0] == '#')
+                continue;
+            std::istringstream in(text);
+            unsigned vConfig = 0, gx = 0, perDot = 0;
+            in >> std::hex >> vConfig >> std::dec >> gx >> perDot;
+            std::vector<int> expected;
+            for (unsigned v; in >> std::hex >> v;)
+                expected.push_back(static_cast<int>(v));
+            SCOPED_TRACE(std::string(name) + " V_CONFIG " + std::to_string(vConfig) + " G_X_OFFS " + std::to_string(gx));
+
+            Reg(TsConfReg::VConfig, static_cast<uint8_t>(vConfig));
+            Reg(TsConfReg::VPage, (vConfig & 3) == 3 ? 0x10 : 0x05);
+            Reg(TsConfReg::GXOffsL, static_cast<uint8_t>(gx));
+            Reg(TsConfReg::GXOffsH, static_cast<uint8_t>(gx >> 8));
+            const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(static_cast<uint8_t>(vConfig));
+            const uint32_t y = Fy(win.y0 + 9);
+            PixelAfterFrame(0, 0);
+            uint32_t* buffer = nullptr;
+            size_t size = 0;
+            Screen()->GetFramebufferData(&buffer, &size);
+
+            std::vector<int> actual;
+            for (uint32_t dot = win.x0 - 8u; dot < win.x0 + win.w + 8u; dot++)
+                for (uint32_t p = 0; p < perDot; p++)
+                    actual.push_back(indexOf.count(buffer[y * 720 + Fx(dot) + p]) ? indexOf[buffer[y * 720 + Fx(dot) + p]] : -1);
+            ASSERT_EQ(actual.size(), expected.size());
+            size_t first = 0;
+            while (first < actual.size() && actual[first] == expected[first])
+                first++;
+            EXPECT_EQ(first, actual.size()) << "first difference at index " << first << ": "
+                                            << (first < actual.size() ? actual[first] : 0) << " vs the RTL's "
+                                            << (first < actual.size() ? expected[first] : 0);
+            lines++;
+        }
+    }
+    EXPECT_EQ(lines, 174);
 }
