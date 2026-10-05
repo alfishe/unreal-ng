@@ -12,6 +12,16 @@ Turbo 2+ through its keyboard controller, the Sprinter through the Z84C15 SIO). 
 | `ps2` | no | yes |
 | `both` | yes | yes |
 
+## Keyboard layouts
+
+The ZX key normally comes from the character the host layout puts on the key, so a Latin layout keeps
+its own symbols. A layout without Latin letters (Russian, Greek) reports a character the map does not
+know; the key's position then decides: the key where `K` sits on a US keyboard is `K` under any
+layout. This covers the letters, the digits and the keys the ZX extended keys use (`,` `.` `-` `=`
+`\` and the backquote). Other punctuation of such a layout (`;` `'` `/`) has no ZX key and sends nothing
+to the matrix. The physical key for a PS/2 machine always comes from the native key code and never
+depended on the layout.
+
 ## Host keys on macOS
 
 A Mac keyboard has Control and Command where a PC has Ctrl and Win. The emulator follows the key

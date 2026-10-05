@@ -184,6 +184,30 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(int qtKey, Qt::Keyboa
     return result;
 }
 
+quint8 KeyboardManager::mapPcKeyToEmulatorKey(PcKey pcKey)
+{
+    static constexpr ZXKeysEnum kLetters[26] = {
+        ZXKEY_A, ZXKEY_B, ZXKEY_C, ZXKEY_D, ZXKEY_E, ZXKEY_F, ZXKEY_G, ZXKEY_H, ZXKEY_I, ZXKEY_J, ZXKEY_K, ZXKEY_L, ZXKEY_M,
+        ZXKEY_N, ZXKEY_O, ZXKEY_P, ZXKEY_Q, ZXKEY_R, ZXKEY_S, ZXKEY_T, ZXKEY_U, ZXKEY_V, ZXKEY_W, ZXKEY_X, ZXKEY_Y, ZXKEY_Z};
+    static constexpr ZXKeysEnum kDigits[10] = {ZXKEY_1, ZXKEY_2, ZXKEY_3, ZXKEY_4, ZXKEY_5,
+                                               ZXKEY_6, ZXKEY_7, ZXKEY_8, ZXKEY_9, ZXKEY_0};
+    const int code = static_cast<int>(pcKey);
+    if (code >= static_cast<int>(PcKey::A) && code <= static_cast<int>(PcKey::Z))
+        return kLetters[code - static_cast<int>(PcKey::A)];
+    if (code >= static_cast<int>(PcKey::Digit1) && code <= static_cast<int>(PcKey::Digit0))
+        return kDigits[code - static_cast<int>(PcKey::Digit1)];
+    switch (pcKey)
+    {
+        case PcKey::Backquote: return ZXKEY_EXT_EDIT;
+        case PcKey::Minus: return ZXKEY_EXT_MINUS;
+        case PcKey::Equal: return ZXKEY_EXT_EQUAL;
+        case PcKey::Backslash: return ZXKEY_EXT_BACKSLASH;
+        case PcKey::Comma: return ZXKEY_EXT_COMMA;
+        case PcKey::Period: return ZXKEY_EXT_DOT;
+        default: return ZXKEY_NONE;
+    }
+}
+
 PcKey KeyboardManager::mapQtKeyToPcKey(int qtKey)
 {
     qtKey = physicalQtKey(qtKey);
@@ -273,6 +297,19 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
 
     quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(physicalQtKey(event->key()), event->modifiers());
     PcKey pcKey = mapQtEventToPcKey(event);
+
+    // A layout without the Latin letters (Russian, Greek...) gives a Qt key the map does not know: the physical
+    // key stands in, so the key of the K position is K under any layout. A Latin layout keeps its own symbols
+    if (zxKey == ZXKEY_NONE)
+    {
+        const quint8 physical = mapPcKeyToEmulatorKey(pcKey);
+        // Letters and digits always; a punctuation key only where the layout put a non-ASCII letter on it
+        // (a Latin layout's unmapped ';' or '_' stays silent, as before)
+        const int qtKey = event->key();
+        const bool nonLatin = qtKey > 0x7F && qtKey < 0x01000000;
+        if (physical < ZXKEY_EXT_CTRL || nonLatin)
+            zxKey = physical;
+    }
 
     // macOS: the Command key belongs to the host (docs/features/keyboard.md "Host keys on macOS")
     bool hostChord = false;
