@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "common/filehelper.h"
+#include "emulator/io/network/traffic/socketpacketizer.h"
 #include "emulator/io/network/vnet/ethernetaccess.h"
 
 namespace
@@ -68,19 +69,22 @@ std::vector<uint8_t> InterfaceDescription(const std::string& name)
     Option(body, 0, nullptr, 0);
     return Block(1, body);
 }
-std::vector<uint8_t> EnhancedPacket(uint32_t interfaceId, const TrafficRecord& r)
+std::vector<uint8_t> EnhancedPacket(uint32_t interfaceId, const TrafficRecord& r, const std::vector<uint8_t>& bytes)
 {
     std::vector<uint8_t> body;
     Put32(body, interfaceId);
     Put32(body, static_cast<uint32_t>(r.time.us >> 32));
     Put32(body, static_cast<uint32_t>(r.time.us));
-    Put32(body, static_cast<uint32_t>(r.bytes.size()));
-    Put32(body, static_cast<uint32_t>(r.bytes.size()));
-    body.insert(body.end(), r.bytes.begin(), r.bytes.end());
+    Put32(body, static_cast<uint32_t>(bytes.size()));
+    Put32(body, static_cast<uint32_t>(bytes.size()));
+    body.insert(body.end(), bytes.begin(), bytes.end());
     Pad(body);
-    // The TTD position, so a packet seen in Wireshark can be found on the timeline
-    const std::string comment = "#" + std::to_string(r.index) + " frame " + std::to_string(r.time.frame) + " t " +
-                                std::to_string(r.time.tInFrame) + (r.out ? " out" : " in");
+    // The TTD position, so a packet seen in Wireshark can be found on the timeline; a socket operation says what it
+    // really was (its TCP framing is synthetic)
+    std::string comment = "#" + std::to_string(r.index) + " frame " + std::to_string(r.time.frame) + " t " +
+                          std::to_string(r.time.tInFrame) + (r.out ? " out" : " in");
+    if (r.kind == TrafficRecord::Kind::Socket)
+        comment += " - socket " + std::to_string(r.socket) + " " + r.op + " (synthetic packet)";
     Option(body, 1, comment.data(), comment.size());   // opt_comment
     Option(body, 0, nullptr, 0);
     return Block(6, body);
@@ -110,6 +114,10 @@ const char* ProtoName(NetProto p)
     }
 }
 }  // namespace
+
+NetworkTrafficTap::NetworkTrafficTap(std::function<TrafficTime()> clock) : _clock(std::move(clock))
+{
+}
 
 NetworkTrafficTap::~NetworkTrafficTap()
 {
@@ -208,10 +216,13 @@ std::vector<uint8_t> NetworkTrafficTap::Pcapng(const Filter& filter) const
     const std::vector<TrafficRecord> records = Records(filter);
     std::vector<uint8_t> out = SectionHeader();
     std::map<std::string, uint32_t> interfaces;
+    SocketPacketizer packetizer;
     for (const TrafficRecord& r : records)
     {
-        if (r.kind != TrafficRecord::Kind::Frame)
-            continue;   // socket operations as packets: phase T2
+        const std::vector<std::vector<uint8_t>> packets =
+            r.kind == TrafficRecord::Kind::Frame ? std::vector<std::vector<uint8_t>>{r.bytes} : packetizer.Packets(r);
+        if (packets.empty())
+            continue;
         auto it = interfaces.find(r.adapter);
         if (it == interfaces.end())
         {
@@ -219,8 +230,11 @@ std::vector<uint8_t> NetworkTrafficTap::Pcapng(const Filter& filter) const
             out.insert(out.end(), idb.begin(), idb.end());
             it = interfaces.emplace(r.adapter, static_cast<uint32_t>(interfaces.size())).first;
         }
-        const std::vector<uint8_t> epb = EnhancedPacket(it->second, r);
-        out.insert(out.end(), epb.begin(), epb.end());
+        for (const std::vector<uint8_t>& packet : packets)
+        {
+            const std::vector<uint8_t> epb = EnhancedPacket(it->second, r, packet);
+            out.insert(out.end(), epb.begin(), epb.end());
+        }
     }
     return out;
 }
@@ -239,6 +253,7 @@ bool NetworkTrafficTap::StartFile(const std::string& path, std::string& error)
     const std::vector<uint8_t> shb = SectionHeader();
     _file->write(reinterpret_cast<const char*>(shb.data()), static_cast<std::streamsize>(shb.size()));
     _filePath = path;
+    _filePacketizer = std::make_unique<SocketPacketizer>();
     _fileInterfaces.clear();
     _fileRecords = 0;
     return true;
@@ -252,8 +267,12 @@ void NetworkTrafficTap::StopFile()
 
 void NetworkTrafficTap::WriteToFile(const TrafficRecord& r)
 {
-    if (r.kind != TrafficRecord::Kind::Frame)
-        return;   // socket operations as packets: phase T2
+    if (!_filePacketizer)
+        _filePacketizer = std::make_unique<SocketPacketizer>();
+    const std::vector<std::vector<uint8_t>> packets =
+        r.kind == TrafficRecord::Kind::Frame ? std::vector<std::vector<uint8_t>>{r.bytes} : _filePacketizer->Packets(r);
+    if (packets.empty())
+        return;
     auto it = _fileInterfaces.find(r.adapter);
     if (it == _fileInterfaces.end())
     {
@@ -261,8 +280,11 @@ void NetworkTrafficTap::WriteToFile(const TrafficRecord& r)
         _file->write(reinterpret_cast<const char*>(idb.data()), static_cast<std::streamsize>(idb.size()));
         it = _fileInterfaces.emplace(r.adapter, static_cast<uint32_t>(_fileInterfaces.size())).first;
     }
-    const std::vector<uint8_t> epb = EnhancedPacket(it->second, r);
-    _file->write(reinterpret_cast<const char*>(epb.data()), static_cast<std::streamsize>(epb.size()));
+    for (const std::vector<uint8_t>& packet : packets)
+    {
+        const std::vector<uint8_t> epb = EnhancedPacket(it->second, r, packet);
+        _file->write(reinterpret_cast<const char*>(epb.data()), static_cast<std::streamsize>(epb.size()));
+    }
     _file->flush();   // a live reader (tail, Wireshark on the file) sees each packet
     ++_fileRecords;
 }

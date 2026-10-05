@@ -51,7 +51,7 @@ curl -s "$B/$ID/network/traffic?last=8" | jq -r '.records[] | "#\(.index) f\(.fr
 #  #12 f4504 isa2.eth out ARP who-has 10.0.2.2 tell 10.0.2.15
 #  #41 f9122 zxnetusb in TCP data from 93.184.216.34:80, 1460 bytes: HTTP/1.0 200 OK
 curl -s "$B/$ID/network/traffic?since=42"            # poll: pass the previous tap.next_index
-curl -s "$B/$ID/network/traffic?format=pcapng" -o run.pcapng      # the ring for Wireshark (frames now; socket packets: phase T2)
+curl -s "$B/$ID/network/traffic?format=pcapng" -o run.pcapng      # the ring for Wireshark: frames + socket operations as packets
 curl -s -X POST $B/$ID/network/traffic -H 'Content-Type: application/json' -d '{"action":"start","path":"/abs/run.pcapng"}'
 curl -s -X POST $B/$ID/network/traffic -d '{"action":"stop"}'
 ```
@@ -61,6 +61,12 @@ Filters: `adapter=isa2.eth` (or `zxnetusb`, `com.esp`, `isa1.esp`, `isa1.modem`,
 `network traffic start <file.pcapng> | stop | clear`; Lua: `network_traffic{since=, adapter=, kind=, last=}`,
 `network_traffic_control(action, path, ring_bytes)`; Python: `network_traffic(...)`, `network_traffic_pcapng()`,
 `network_traffic_control(...)`; MCP: `inspect_state` aspect `network` (its `traffic` part) and `invoke_api`.
+
+In the pcapng a socket adapter's operations are **synthetic packets** Wireshark decodes (HTTP, DNS, "Follow TCP
+Stream"): a connect is a SYN / SYN-ACK / ACK, data are segments of up to 1460 bytes with chained sequence numbers, a
+close a FIN, a reset an RST. The bytes are exact; the TCP framing and the adapter's address (10.0.2.15 and up, one per
+adapter) are made up - each packet's comment says what really happened (`#41 frame 9122 t 1203 in - socket 3 data
+(synthetic packet)`).
 
 ## Fitting the card
 

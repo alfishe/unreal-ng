@@ -24,6 +24,8 @@
 #include "common/network/nettypes.h"
 #include "emulator/state/statenode.h"
 
+class SocketPacketizer;
+
 struct TrafficTime
 {
     uint64_t frame = 0;       ///< the machine frame (TTD position, with tInFrame)
@@ -59,7 +61,7 @@ class NetworkTrafficTap
 public:
     static constexpr size_t kDefaultRingBytes = 8u << 20;   ///< owner Q1: 8 MiB of packet bytes
 
-    explicit NetworkTrafficTap(std::function<TrafficTime()> clock) : _clock(std::move(clock)) {}
+    explicit NetworkTrafficTap(std::function<TrafficTime()> clock);
     ~NetworkTrafficTap();
 
     NetworkTrafficTap(const NetworkTrafficTap&) = delete;
@@ -86,7 +88,8 @@ public:
     size_t RingBytes() const;
     uint64_t NextIndex() const;
 
-    /// The ring as a pcapng file (frames; socket operations follow with phase T2)
+    /// The ring as a pcapng file: frames as they are, socket operations as synthetic TCP / UDP / ICMP packets
+    /// (SocketPacketizer), every packet with its record's TTD position as the comment
     std::vector<uint8_t> Pcapng(const Filter& filter) const;
 
     // --- The file (unbounded, from Start to Stop) --------------------------------------------------------------------
@@ -119,4 +122,5 @@ private:
     std::string _filePath;
     std::map<std::string, uint32_t> _fileInterfaces;   ///< adapter -> pcapng interface id in the file
     uint64_t _fileRecords = 0;
+    std::unique_ptr<SocketPacketizer> _filePacketizer;   ///< the file's socket conversations (T2)
 };
