@@ -33,6 +33,7 @@ namespace
     /// `media compose` / `media layers`: the layout and one line per layer
     void CompositeText(std::ostringstream& out, const StateNode& value)
     {
+        constexpr const char* NEWLINE = CLIProcessor::NEWLINE;
         out << "  " << value.find("descriptor")->s << ": " << value.find("fs")->s << ", " << value.find("sectors")->i
             << " sectors (" << value.find("clusters")->i << " clusters of " << value.find("sectorsPerCluster")->i * 512
             << " bytes), " << value.find("files")->i << " files, " << value.find("fileBytes")->i << " bytes, content "

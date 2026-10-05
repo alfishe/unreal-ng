@@ -104,6 +104,10 @@ void IdeController::BuildUnit(int unit)
         d.tags.push_back(channelName);
     if (FirstOfKind(unit))
         d.aliases.push_back(ide.cd ? "cd" : "hd");
+    // Estex DSS reads FAT12 / FAT16 only (the Sprinter hardware reference §9.3): a FAT32
+    // folder volume or composite on a Sprinter disk is refused, never built
+    if (_scheme == IDE_SPRINTER && !ide.cd)
+        d.fsCompatibility = {FatType::Fat16};
     _slots[unit] = std::move(slot);
 }
 

@@ -1,6 +1,6 @@
 # Multi-source media — TODO
 
-**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C1 done, C2 in verification.
+**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C2 done.
 PLAN.md row **#95**.
 
 ## Owner decisions (2026-10-05)
@@ -21,8 +21,7 @@ PLAN.md row **#95**.
 - [x] Owner questions answered 2026-10-05 (D-4…D-9 in [goals-and-requirements.md](goals-and-requirements.md) §3; guest FS support researched in [fs-compatibility.md](fs-compatibility.md) §6)
 - [x] C0 baseline: `HostFolderFat` corpus hashes and read benchmark numbers on master
 - [x] C1 core + `HostFolderFat` parity refactor
-- [ ] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`); Sprinter IDE slots `fsCompatibility = {Fat16}`
-  (code and tests in; full build and `core-tests` pending)
+- [x] C2 descriptor, validation, manager integration, surfaces (`compose`, `layers`); Sprinter IDE slots `fsCompatibility = {Fat16}`
 - [ ] C3 FAT image sources
 - [ ] C4 graft
 - [ ] C5 ISO reader, ISO target
@@ -48,8 +47,11 @@ PLAN.md row **#95**.
 - NFR-P1 A/B (`hostfolderfat_benchmark.cpp`, Linux, 4 cores), before -> after: SeqRead fat16 618 -> 571 ns,
   RandRead 1554 -> 1361 ns, MetaRead 2357 -> 1998 ns; Build unchanged. The extent last-hit cache pays for the
   extra indirection.
-- Full build: zero warnings. `core-tests`: all pass except `TsfmGolden_Test.*` (3 audio digests). The branch does not
-  touch sound code; these digests differ on Linux x86 gcc from the host they were recorded on.
+- Full build: zero warnings (C1 and C2). `core-tests` on Linux x86 gcc: all pass except two failures outside this
+  work. (1) `TsfmGolden_Test.*`: all four fail even when run alone; the branch does not touch sound code, and the
+  digests were most likely recorded on the macOS host. (2) `TTDContainer_Test.RealFile` crashes: `TTDFileSink` /
+  `TTDFileSource` pass `&_error` while initializing `_file`, which is declared before `_error`, so the string is
+  written before it exists. The fix is to declare `_error` first.
 
 ### C2
 
@@ -63,7 +65,8 @@ PLAN.md row **#95**.
 - Surfaces: `media compose <descriptor>` (slotless: builds, reports, inserts nothing; options `fs`, `codepage`,
   `free`) and `media layers <slot>`. WebAPI: `GET /media/compose?path=` and `POST /media/{slot}/layers`; MCP
   actions `compose` / `layers`; Lua `media_compose` / `media_layers`; Python `media_compose` / `media_layers`.
-- Sprinter IDE disks: `fsCompatibility = {Fat16}` (Estex DSS reads FAT12 / FAT16 only).
+- Sprinter IDE disks: `fsCompatibility = {Fat16}` (Estex DSS reads FAT12 / FAT16 only), set by `IdeController` for
+  `[HDD] Scheme=SPRINTER`, so shared code names no Sprinter model id (`SprinterIsolation_Test`).
 - ACC-C1: `ZXEvoErs_Test.NedoOsBootsFromTwoComposedFolders`. The upper layer's `bin/AUTOEXEC.BAT` shadows
   the lower layer's `bin/autoexec.bat` (FAT names fold case).
 - ACC-C2: `TsConfBootSd_Test.ComposeWildCommanderListsFilteredFat32Layers` on Wild Commander Improved v1.11i
