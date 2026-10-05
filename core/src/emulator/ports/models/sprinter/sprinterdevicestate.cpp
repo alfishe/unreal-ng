@@ -2800,7 +2800,7 @@ StateNode SprinterJournal(EmulatorContext* context, const SprinterJournalQuery& 
     }
     else
     {
-        ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+        const ttd::ITimeTravelHooks* mgr = context->pTimeTravelHooks;
         StateNode events = StateNode::Array();
         if (!mgr)
             ret["error"] = "no TTD manager";

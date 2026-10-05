@@ -863,13 +863,13 @@ public:
     ///
     /// @param key   ZXKeysEnum value (callers cast from the typed enum).
     /// @param pressed true for press, false for release.
-    void RecordInputEvent(uint8_t key, bool pressed);
+    void RecordInputEvent(uint8_t key, bool pressed) override;
 
     /// @brief Journal a Kempston Mouse mutation (same contract as RecordInputEvent:
     /// callers gate on IsRecording() and !IsReplayActive(), and call BEFORE applying).
-    void RecordMouseMove(int dx, int dy);
-    void RecordMouseButtons(uint8_t activeLowMask);
-    void RecordMouseWheel(int steps);
+    void RecordMouseMove(int dx, int dy) override;
+    void RecordMouseButtons(uint8_t activeLowMask) override;
+    void RecordMouseWheel(int steps) override;
     void RecordMouseCounters(uint8_t x, uint8_t y);
 
     /// @brief Journal a whole-matrix keyboard reset (release of every key)
@@ -886,7 +886,7 @@ public:
     /// (ttdportsearch.h): no replay, works on loaded files. Fails with a reason
     /// when the session has no port journals, or while a recording is running
     /// (pause it: the journals are only written by the running emulation)
-    TTDPortSearchResult SearchPortEvents(const TTDPortQuery& q) const;
+    TTDPortSearchResult SearchPortEvents(const TTDPortQuery& q) const override;
 
     /// @brief The same search over a .ttd file on disk, without loading it:
     /// the current session and machine are not touched. The whole file is
@@ -994,6 +994,7 @@ public:
     /// EmulatorState: `frame = frame_counter`, `tInFrame` = z80->t in TTD
     /// time units (TInFrameNow).
     TTDTimePoint CurrentPosition() const;
+    uint64_t CurrentFrame() const override { return CurrentPosition().frame; }
 
     /// @brief TTD time. A position's tInFrame counts T-states at the model's
     /// TOP CPU clock (EmulatorState::ttd_clock_units per base T-state: 1 on

@@ -716,7 +716,7 @@ TTDReply TTDControl::Resume(const TTDRequest& request)
     const bool ok = _manager->ResumeRecordingFrom(from);
     // Recording again: the machine runs so the capture continues (a seek left it paused)
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    if (ok && emulator && !OnMachineThread())
+    if (ok && emulator && !OnMachineThread() && emulator->IsRunning() && emulator->IsPaused())
         emulator->Resume();
 
     TTDReply reply;
@@ -1450,8 +1450,10 @@ bool TTDControl::OnMachineThread() const
 
 void TTDControl::PauseAndConfirm()
 {
+    // Only a machine whose own loop runs: a stopped one, or a ZX-Poly member stepped by
+    // its master, has nothing to park
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    if (!emulator || OnMachineThread())
+    if (!emulator || OnMachineThread() || !emulator->IsRunning() || emulator->IsPaused())
         return;
     emulator->Pause();
     emulator->WaitForPauseConfirmation(1000);

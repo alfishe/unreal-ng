@@ -12,6 +12,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <3rdparty/message-center/messagecenter.h>
@@ -889,21 +890,21 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else
                 {
-                    if (ttd->StartRecording())
+                    const ttd::TTDReply started = ttd::TTDControl(_context).Execute({"start", {}});
+                    if (started.Ok() && (started.body.find("started")->b || started.body.find("already_active")->b))
                     {
                         response = "TTD recording started\n";
                     }
                     else
                     {
-                        const std::string& reason = ttd->GetUnavailableReason();
-                        response = "Error: TTD recording failed to start" + (reason.empty() ? "" : ": " + reason) +
-                                   "\n";
+                        response = "Error: TTD recording failed to start" +
+                                   (started.message.empty() ? "" : ": " + started.message) + "\n";
                     }
                 }
             }
             else if (subcmd == "stop")
             {
-                ttd->StopRecording();
+                (void)ttd::TTDControl(_context).Execute({"stop", {}});
                 response = "TTD recording stopped\n";
             }
             else if (subcmd.starts_with("seek "))
@@ -911,22 +912,18 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 std::string frameStr = subcmd.substr(5);
                 try
                 {
-                    uint64_t frame = std::stoull(frameStr);
-                    if (!_emulator->IsPaused())
-                    {
-                        _emulator->Pause();
-                    }
-                    ttd::TTDTimePoint target{frame, 0};
-                    ttd::TimeTravelManager::TTDSeekResult result;
-                    if (ttd->SeekTo(target, &result))
+                    const uint64_t frame = std::stoull(frameStr);
+                    const ttd::TTDReply sought =
+                        ttd::TTDControl(_context).Execute({"seek", {{"frame", std::to_string(frame)}}});
+                    if (sought.Ok() && sought.body.find("reached")->b)
                     {
                         std::ostringstream ss;
-                        ss << "Seeked to frame " << result.arrivedAt.frame << "\n";
+                        ss << "Seeked to frame " << sought.body.find("arrived_at")->find("frame")->i << "\n";
                         response = ss.str();
                     }
                     else
                     {
-                        response = "Error: seek failed\n";
+                        response = "Error: seek failed" + (sought.message.empty() ? "" : ": " + sought.message) + "\n";
                     }
                 }
                 catch (...)
@@ -945,52 +942,42 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else
                 {
-                    char accessType = args[0];
-                    std::string addrStr = args.substr(spacePos + 1);
-
-                    ttd::TTDAccessType access;
-                    if (accessType == 'w' || accessType == 'W')
-                        access = ttd::TTDAccessType::Write;
-                    else if (accessType == 'r' || accessType == 'R')
-                        access = ttd::TTDAccessType::Read;
-                    else if (accessType == 'x' || accessType == 'X')
-                        access = ttd::TTDAccessType::Execute;
-                    else
+                    const char accessType = static_cast<char>(std::tolower(static_cast<unsigned char>(args[0])));
+                    const char* access = accessType == 'w' ? "write" : accessType == 'r' ? "read"
+                                                             : accessType == 'x' ? "execute" : nullptr;
+                    if (!access)
                     {
                         response = "Error: access type must be w, r, or x\n";
                         goto done_ttd;
                     }
 
-                    auto addrOpt = GDBPacket::parseHex(addrStr);
+                    // The address is hex without a prefix here (GDB's convention)
+                    auto addrOpt = GDBPacket::parseHex(args.substr(spacePos + 1));
                     if (!addrOpt)
                     {
                         response = "Error: invalid address\n";
                         goto done_ttd;
                     }
 
-                    uint16_t addr = static_cast<uint16_t>(*addrOpt);
-
-                    ttd::TTDSearchQuery query;
-                    query.addrFrom = addr;
-                    query.addrTo = addr;
-                    query.access = access;
-
-                    ttd::TTDExternalEvent marker;
-                    auto result = ttd->FindLastAccess(query, &marker);
-
-                    if (result)
+                    const ttd::TTDReply found = ttd::TTDControl(_context).Execute(
+                        {"find-last", {{"addr", std::to_string(*addrOpt)}, {"access", access}}});
+                    const StateNode& b = found.body;
+                    if (!found.Ok())
+                    {
+                        response = "Error: " + found.message + "\n";
+                    }
+                    else if (b.find("found")->b)
                     {
                         std::ostringstream ss;
-                        ss << "Found at frame " << result->time.frame
-                           << ", t=" << result->time.tInFrame;
-                        if (access == ttd::TTDAccessType::Write)
-                            ss << ", value=0x" << std::hex << static_cast<int>(result->value);
-                        ss << ", pc=0x" << std::hex << result->pc << "\n";
+                        ss << "Found at frame " << b.find("frame")->i << ", t=" << b.find("tinframe")->i;
+                        if (accessType == 'w')
+                            ss << ", value=0x" << std::hex << b.find("value")->i;
+                        ss << ", pc=0x" << std::hex << b.find("pc")->i << "\n";
                         response = ss.str();
                     }
-                    else if (marker.reason[0] != '\0')
+                    else if (const StateNode* reason = b.find("marker_reason"))
                     {
-                        response = "Blocked by barrier: " + std::string(marker.reason) + "\n";
+                        response = "Blocked by barrier: " + reason->s + "\n";
                     }
                     else
                     {
@@ -1570,18 +1557,13 @@ std::string GDBSession::handleBackwardStep()
         return "E01";  // No TTD session active
     }
 
-    if (!_emulator->IsPaused())
-    {
-        _emulator->Pause();
-    }
-
-    // Stop recording to allow reverse execution (transitions to Detached)
+    // GDB reverse execution while recording: stop the recording first (it keeps the history)
+    ttd::TTDControl control(_context);
     if (state == ttd::TTDSessionState::Recording)
-    {
-        ttd->StopRecording();
-    }
+        (void)control.Execute({"stop", {}});
 
-    if (!ttd->StepBackInstruction())
+    const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
+    if (!stepped.Ok() || !stepped.body.find("stepped")->b)
     {
         // At beginning of history
         _lastStopReason = StopReason::Step;
@@ -1607,16 +1589,10 @@ std::string GDBSession::handleBackwardContinue()
         return "E01";  // No TTD session active
     }
 
-    if (!_emulator->IsPaused())
-    {
-        _emulator->Pause();
-    }
-
-    // Stop recording to allow reverse execution
+    // GDB reverse execution while recording: stop the recording first (it keeps the history)
+    ttd::TTDControl control(_context);
     if (state == ttd::TTDSessionState::Recording)
-    {
-        ttd->StopRecording();
-    }
+        (void)control.Execute({"stop", {}});
 
     // Gather active execution breakpoints
     std::vector<uint16_t> breakpoints;
@@ -1640,7 +1616,8 @@ std::string GDBSession::handleBackwardContinue()
     if (breakpoints.empty())
     {
         // No breakpoints to search for - step back one instruction instead
-        if (!ttd->StepBackInstruction())
+        const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
+        if (!stepped.Ok() || !stepped.body.find("stepped")->b)
         {
             return "T05replaylog:begin;thread:01;";
         }
@@ -1648,14 +1625,17 @@ std::string GDBSession::handleBackwardContinue()
         return formatStopReply();
     }
 
-    auto result = ttd->ReverseContinue(breakpoints);
+    std::string pcs;
+    for (uint16_t pc : breakpoints)
+        pcs += (pcs.empty() ? "" : ",") + std::to_string(pc);
+    const ttd::TTDReply result = control.Execute({"reverse-continue", {{"pcs", pcs}}});
 
-    if (result.matched)
+    if (result.Ok() && result.body.find("matched")->b)
     {
         _lastStopReason = StopReason::Breakpoint;
         return "T05swbreak:;thread:01;";
     }
-    else if (result.blockingMarker.reason[0] != '\0')
+    else if (result.Ok() && result.body.find("blocked_by_marker"))
     {
         // Hit a barrier (tape, disk, etc)
         _lastStopReason = StopReason::Step;

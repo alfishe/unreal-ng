@@ -21,6 +21,8 @@ namespace ttd
 {
 struct TTDInputEvent;
 struct TTDNetInput;
+struct TTDPortQuery;
+struct TTDPortSearchResult;
 class TTDSerializable;
 enum class TTDReplaySource : uint8_t;
 enum class TTDExternalEventKind : uint8_t;
@@ -137,11 +139,22 @@ public:
     virtual void SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor) = 0;
     /// Run @p task on the machine's thread (a device the executing thread may be using)
     virtual TTDMachineTaskResult SubmitMachineTask(std::function<void()> task) = 0;
+    /// Journal input a lockstep group applies itself (ZX-Poly gives every member the same
+    /// input at one frame boundary): call before applying it, while recording
+    virtual void RecordInputEvent(uint8_t key, bool pressed) = 0;
+    virtual void RecordMouseMove(int dx, int dy) = 0;
+    virtual void RecordMouseButtons(uint8_t activeLowMask) = 0;
+    virtual void RecordMouseWheel(int steps) = 0;
 
     // State the core asks about
     virtual TTDSessionState GetState() const = 0;
     virtual bool IsRecording() const = 0;
     virtual bool IsReplayActive() const = 0;
+    /// The frame the session's position is in (the recording's present, or where a seek left it)
+    virtual uint64_t CurrentFrame() const = 0;
+    /// The session's port journals searched (ttdportsearch.h): device reports that read the
+    /// recorded OUTs (the Sprinter PLD journal, source=ttd)
+    virtual TTDPortSearchResult SearchPortEvents(const TTDPortQuery& q) const = 0;
     /// True when the session holds any recorded history
     virtual bool HasHistory() const = 0;
     /// Empty when @p action may run now; otherwise one sentence saying why not

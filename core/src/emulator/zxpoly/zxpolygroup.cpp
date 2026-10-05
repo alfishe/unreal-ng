@@ -17,6 +17,7 @@
 #include "emulator/zxpoly/zxpolyscreencomposer.h"
 #include "emulator/zxpoly/zxpolyworkers.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/mouse/mouse.h"
@@ -193,8 +194,8 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
     // timeline (StartRecording) lifts it while it records
     for (size_t m = 0; m < MODULES; m++)
     {
-        if (ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager)
-            ttd->SetUnavailableReason(TTD_UNAVAILABLE);
+        if (ttd::ITimeTravelHooks* hooks = GetContext(m)->pTimeTravelHooks)
+            hooks->SetUnavailableReason(TTD_UNAVAILABLE);
     }
 
     // Automation input of the machine (WebAPI, MCP, CLI, Lua, Python: keys,
@@ -202,7 +203,7 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
     // live-input gateway. Handed to one member it would split the machine, so
     // the group queues it and gives it to all four at one frame boundary.
     // Other events (General Sound stimuli) stay the master's own
-    if (ttd::TimeTravelManager* ttd = GetContext(0)->pTimeTravelManager)
+    if (ttd::ITimeTravelHooks* ttd = GetContext(0)->pTimeTravelHooks)
     {
         ttd->SetLiveInputInterceptor([this](const ttd::TTDInputEvent& ev) {
             switch (ev.kind)
@@ -255,8 +256,8 @@ void ZXPolyGroup::Destroy()
         if (_instances[m])
         {
             _instances[m]->SetSpeedChangeInterceptor(nullptr);
-            if (EmulatorContext* context = GetContext(m); context && context->pTimeTravelManager)
-                context->pTimeTravelManager->SetLiveInputInterceptor(nullptr);
+            if (EmulatorContext* context = GetContext(m); context && context->pTimeTravelHooks)
+                context->pTimeTravelHooks->SetLiveInputInterceptor(nullptr);
             if (EmulatorContext* context = GetContext(m); context && context->pCore)
             {
                 context->pCore->GetZ80()->SetPortInterceptor(nullptr);
@@ -1039,7 +1040,7 @@ void ZXPolyGroup::ApplyInput(size_t module, const std::vector<InputOp>& input)
         // Journal it in the module's TTD session first (the contract of
         // TimeTravelManager::RecordInputEvent: before applying), so a replay
         // feeds every module the same input at the same T
-        ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+        ttd::ITimeTravelHooks* ttd = context->pTimeTravelHooks;
         if (ttd && ttd->IsRecording() && !ttd->IsReplayActive())
         {
             switch (op.kind)
@@ -1482,20 +1483,19 @@ bool ZXPolyGroup::StartRecording(std::string* error)
     WaitForSlaves();
     for (size_t m = 0; m < MODULES; m++)
     {
-        ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager;
-        if (ttd)
-            ttd->SetUnavailableReason("");
-        if (ttd == nullptr || !ttd->StartRecording())
+        // The members record only as one group: the lifted reason is set again on failure / stop
+        if (ttd::ITimeTravelHooks* hooks = GetContext(m)->pTimeTravelHooks)
+            hooks->SetUnavailableReason("");
+        const ttd::TTDReply started = ttd::TTDControl(GetContext(m)).Execute({"start", {}});
+        if (!started.Ok() || !started.body.find("started")->b)
         {
             if (error)
                 *error = StringHelper::Format("module %zu: TTD recording could not start", m);
             for (size_t started = 0; started < MODULES; started++)
             {
-                if (ttd::TimeTravelManager* session = GetContext(started)->pTimeTravelManager)
-                {
-                    session->StopRecording();
-                    session->SetUnavailableReason(TTD_UNAVAILABLE);
-                }
+                (void)ttd::TTDControl(GetContext(started)).Execute({"stop", {}});
+                if (ttd::ITimeTravelHooks* hooks = GetContext(started)->pTimeTravelHooks)
+                    hooks->SetUnavailableReason(TTD_UNAVAILABLE);
             }
             return false;
         }
@@ -1511,19 +1511,17 @@ void ZXPolyGroup::StopRecording()
     WaitForSlaves();
     for (size_t m = 0; m < MODULES; m++)
     {
-        if (ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager)
-        {
-            ttd->StopRecording();
-            ttd->SetUnavailableReason(TTD_UNAVAILABLE);    // the group timeline ends here
-        }
+        (void)ttd::TTDControl(GetContext(m)).Execute({"stop", {}});
+        if (ttd::ITimeTravelHooks* hooks = GetContext(m)->pTimeTravelHooks)
+            hooks->SetUnavailableReason(TTD_UNAVAILABLE);    // the group timeline ends here
     }
     _recording = false;
 }
 
 uint64_t ZXPolyGroup::GetRecordedPosition() const
 {
-    const ttd::TimeTravelManager* ttd = GetContext(0)->pTimeTravelManager;
-    return ttd ? ttd->CurrentPosition().frame : 0;
+    const ttd::ITimeTravelHooks* ttd = GetContext(0)->pTimeTravelHooks;
+    return ttd ? ttd->CurrentFrame() : 0;
 }
 
 void ZXPolyGroup::SnapshotPlatform()
@@ -1562,10 +1560,10 @@ bool ZXPolyGroup::SeekToFrame(uint64_t frame, std::string* error)
     // anything, so no module executes (and no group hook fires) during the seek
     for (size_t m = 0; m < MODULES; m++)
     {
-        ttd::TimeTravelManager* session = GetContext(m)->pTimeTravelManager;
-        if (session->IsRecording())
-            session->StopRecording();
-        if (!session->SeekTo(ttd::TTDTimePoint{frame, 0}))
+        ttd::TTDControl session(GetContext(m));
+        (void)session.Execute({"stop", {}});
+        const ttd::TTDReply sought = session.Execute({"seek", {{"frame", std::to_string(frame)}, {"tinframe", "0"}}});
+        if (!sought.Ok() || !sought.body.find("reached")->b)
         {
             if (error)
                 *error = StringHelper::Format("module %zu: TTD cannot seek to frame %llu", m,
@@ -1613,8 +1611,8 @@ bool ZXPolyGroup::ResumeRecording(std::string* error)
     }
     for (size_t m = 0; m < MODULES; m++)
     {
-        ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager;
-        if (!ttd->ResumeRecordingFrom(ttd->CurrentPosition()))
+        const ttd::TTDReply resumed = ttd::TTDControl(GetContext(m)).Execute({"resume", {}});
+        if (!resumed.Ok() || !resumed.body.find("resumed")->b)
         {
             if (error)
                 *error = StringHelper::Format("module %zu: TTD cannot resume recording", m);
