@@ -8,6 +8,43 @@
 
 ---
 
+2026-10-05
+## 🔴 [Open] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** -
+* **Commit ID:** -
+* **Found by:** the D13 test (`TTDControl_Test.AFrameWithoutATStateIsItsEnd`, Phase 5 of the TTD v2 migration,
+  branch `ttd-engine`), 2026-10-05.
+
+### Description
+A machine created with `new Emulator` + `Init()` whose PC is moved to a RAM program before the ROM runs (so nothing
+has written port `#FE` yet) shows a black border in the live framebuffer: border pixels are `0xFF000000` while
+`emulatorState.pFE` is `0xFF` (border color 7, white). A TTD seek to any position in the same session composes the
+picture (`TimeTravelController::ComposeDisplay`, its static base `RenderOnlyMainScreen` + `FillBorderWithColor(pFE & 7)`)
+and shows a white border (`0xFFCACACA`). The two pictures of the same machine state differ in all 52,224 border pixels
+(352x288 - 256x192).
+
+### Repro
+1. Create an emulator (`new Emulator(LoggerLevel::LogError); Init()`), Pentagon default.
+2. Write a program at `#8000` that never executes `OUT (#FE)` (e.g. `DI; LD HL,#4000; loop: INC (HL); INC HL; JR loop`),
+   set PC to `#8000`.
+3. Start TTD, run a few frames, read the framebuffer: border black.
+4. Seek to a recorded frame: border white.
+
+Once the program writes `#FE` (the D13 test does `LD A,2; OUT (#FE),A`) both pictures agree.
+
+### Open questions (triage)
+- Which one is right: the live renderer draws the border only after a `#FE` write, or the initial `pFE` value
+  (`0xFF`) is not what a power-on machine has. Real hardware: the ULA border latch is undefined / zero at power-on on
+  most models; the ROM sets it.
+- Whether a live machine started normally (ROM boot) can ever hit this - the ROM writes `#FE` early, so it may be
+  limited to tests and automation that skip the ROM.
+
+### Requirements / Acceptance Criteria
+- The live picture and a TTD-composed picture of the same machine state are identical, border included, whether or
+  not `#FE` was ever written.
+- A test that reproduces the case above and fails before the fix.
+
 2026-10-04
 ## 🔴 [Open] #1: unreal-qt runs at 2x-4x speed while a TTD recording is active (recording must hold 1x)
 * **Date Opened:** 2026-10-04
