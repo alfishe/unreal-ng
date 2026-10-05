@@ -49,5 +49,8 @@ TEST_F(TTDTsConfState_Test, TTD1_RoundTripRestoresStateAndMapping)
     EXPECT_EQ(Tag(0xC000), 0x03);
     EXPECT_TRUE(_decoder->IsPagingLocked());
     EXPECT_EQ(_decoder->GetState().fmStash, 0x21);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 3u) << "the DRAM write counter + FM window + cache snoop";
+    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "the DRAM write counter + FM window";
+    const TsConfState& ts = _decoder->GetState();
+    EXPECT_EQ(ts.cacheTag[0], 0x8000 | (2 << 5)) << "the cache entry filled by the read came back (page 2, A[13:9] = 0)";
+    EXPECT_EQ(ts.cacheWord[0], 0x0202);
 }

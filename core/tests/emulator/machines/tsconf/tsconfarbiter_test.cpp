@@ -297,7 +297,10 @@ TEST_F(TsConfArbiter_Test, ARB6_CpuWaitsMatchTheRtl)
             Reg(TsConfReg::Page2, 0x21);
             Reg(TsConfReg::Page3, 0x22);
             Mode(t.vConfig);
-            Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, a fresh arbiter; cache off: drops the previous group's entries
+            Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, a fresh arbiter
+            // Each group is a fresh simulation: the cache RAM starts invalid (the FPGA configuration). Nothing
+            // else clears it (zmem.v), so the previous group's entries go here
+            std::memset(_decoder->GetState().cacheTag, 0, sizeof(_decoder->GetState().cacheTag));
             ASSERT_EQ(_context->emulatorState.hw_turbo_ratio, 4);
             Reg(TsConfReg::CacheConfig, t.cache);
             _z80->machineM1Hook = &probe;

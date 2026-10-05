@@ -14,9 +14,11 @@ class Z80;
 ///   protection, vdos -> RAM page 0xFF writable;
 /// - windows 1-3: PAGE1-3, RAM only.
 /// And the functional CPU cache (§2.5): 256 one-word entries indexed by
-/// A[8:1], filled by CPU RAM reads, hit when CACHE_CONFIG enables the window,
-/// invalidated by a CPU write to the entry. DMA and video writes do not
-/// invalidate (stale reads after DMA are hardware-correct).
+/// A[8:1], filled by every CPU DRAM read whatever CACHE_CONFIG says, hit only
+/// when CACHE_CONFIG enables the window, invalidated by a CPU write to the
+/// entry (cache on or off), never cleared (not by a reset, not by switching
+/// it off). DMA and video writes do not invalidate: stale reads after DMA are
+/// hardware-correct, also for words read while the cache was off.
 /// At 14 MHz a read that takes a DRAM cycle waits for the arbiter (phase 8
 /// TIM-1, DramWait); at 3.5 / 7 MHz the read path pays one pointer test.
 ///
@@ -40,15 +42,6 @@ public:
     void AttachState(TsConfState* state) { _ts = state; }
     TsConfState* GetState() const { return _ts; }
 
-    /// Cache (§2.5): the read path fills / hits only while any window has the
-    /// cache enabled (see CacheRead), so the plain path is one bool test
-    void SetCacheActive(bool active) { _cacheActive = active; }
-    /// A CPU write to addr: drop the entry it hits (the decoder's write overlay)
-    void CacheInvalidate(uint16_t addr);
-    /// Drop every entry (cache switched off: entries filled while disabled are
-    /// not modeled, see CacheRead)
-    void CacheClear();
-
     /// 14 MHz DRAM waits (phase 8 TIM-1, hardware-spec §2.5, TsConfArbiter):
     /// `cpu` while the CPU runs at 14 MHz, null otherwise (the read path then
     /// pays one test)
@@ -58,8 +51,9 @@ public:
         _arbiter = arbiter;
     }
     /// A CPU write at addr has just been done: if it went to DRAM (a RAM window
-    /// that takes writes) it counts in the DRAM budget and, at 14 MHz, waits.
-    /// The decoder's write overlay calls it on every write
+    /// that takes writes) it invalidates the cache entry it hits, counts in the
+    /// DRAM budget and, at 14 MHz, waits. The decoder's write overlay calls it
+    /// on every write
     void AfterWrite(uint16_t addr);
     /// The next read is an opcode fetch (M1): the decoder's M1 hook says so
     /// right before it (at 14 MHz), so an M1 miss waits one fclk longer than a
@@ -79,10 +73,15 @@ protected:
     /// endregion </Latch-to-bank translation>
 
 private:
-    /// The cached byte for a CPU RAM read at addr (fills the entry on a miss)
-    /// @param dram set when the read took a DRAM cycle (a miss or an uncached window)
+    /// The byte a CPU read at addr gets: the cached word on a hit, else the
+    /// normal byte, the read taking a DRAM cycle that fills the entry
+    /// @param dram set when the read took a DRAM cycle (RAM: a miss or a window without the cache)
     uint8_t CacheRead(uint16_t addr, uint8_t normal, bool& dram);
-    bool CountDramRead(uint16_t addr);
+    /// The RAM page behind a RAM window (the read pointer: W0 may be write-protected)
+    uint8_t WindowPage(uint8_t bank) const
+    {
+        return static_cast<uint8_t>(static_cast<size_t>(_bank_read[bank] - _ramBase) / PAGE_SIZE);
+    }
     /// Cache, DRAM accounting and 14 MHz waits after the normal read
     uint8_t AfterRead(uint16_t addr, uint8_t normal);
     void DramWait(TsConfArbiter::Access kind);
@@ -91,7 +90,6 @@ private:
     void RefusedBeforeM1();
 
     TsConfState* _ts = nullptr;
-    bool _cacheActive = false;
     Z80* _waitCpu = nullptr;
     TsConfArbiter* _arbiter = nullptr;
     bool _nextIsM1 = false;

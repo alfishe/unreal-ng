@@ -5,10 +5,15 @@
 #include "tsconffixture.h"
 
 #include <cstring>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
+#include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/video/tsconf/screentsconf.h"
 
 class TsConfEngine_Test : public TsConfFixture
@@ -261,4 +266,135 @@ TEST_F(TsConfEngine_Test, TSU6_TsuDrawsDuringThePreviousLine)
     EXPECT_EQ(Engine().TsuPixel(100, x0 + 8) & 0x0F, 5) << "line 100: drawn with line 99's latch";
     EXPECT_EQ(Engine().TsuPixel(101, x0 + 4) & 0x0F, 5) << "line 101: the offset latched at line 100";
     EXPECT_EQ(Engine().TsuPixel(101, x0 + 12), 0);
+}
+
+/// TSU-9: the pass that draws line L runs from ts_start of L - 1 to the next ts_start and on a busy line crosses
+/// line_start of L. An object handed to the renderer after line_start takes L's latched T0/T1_G_PAGE, T0/T1_X_OFFS
+/// and PAL_SEL ([V] video_ports.v:153-165, video_ts.v:162-171; TS-Conf audit tsu row 49): the engine draws the
+/// pass up to the DRAM position of line_start at ts_start and the rest at line_start. The reference lines come
+/// from the real Verilog (tools/machines/tsconf/rtl-sim tsulatch): the "before" registers latched for L - 1, the
+/// "after" ones written at dot 420 of L - 1 (after ts_start, before line_start), one TS line captured (window line
+/// 20, or a bottom line, where the tilemap prefetch has stopped). `split` is the RTL's count of TSU DRAM cycles
+/// before line_start; TXT cases check it only (a TXT line mixes the TS layer in hi-res)
+TEST_F(TsConfEngine_Test, TSU9_ObjectsAfterLineStartTakeTheNewLatch)
+{
+    // The harness's memory (rtl-sim/harness.cpp FillTsuMemory): graphics pages 80h..AFh, the tile map at 30h
+    // (layer l, column c = tile c of bitmap row 1 + l, palette c & 3), V_PAGE C0h zero
+    for (uint16_t page = 0x80; page < 0xB0; page++)
+        for (uint32_t offset = 0; offset < PAGE_SIZE; offset++)
+        {
+            const uint32_t a = page * PAGE_SIZE + offset;
+            Ram(page, static_cast<uint16_t>(offset)) = static_cast<uint8_t>(a * 7 + (a >> 8) * 13 + (a >> 17) * 101);
+        }
+    for (uint16_t page = 0xC0; page < 0xD0; page++)
+        std::memset(_memory->RAMPageAddress(page), 0, PAGE_SIZE);
+    for (uint32_t row = 0; row < 64; row++)
+        for (uint32_t l = 0; l < 2; l++)
+            for (uint32_t c = 0; c < 64; c++)
+            {
+                const uint16_t entry = static_cast<uint16_t>(c | ((1 + l) << 6) | ((c & 3) << 12));
+                Ram(0x30, static_cast<uint16_t>(row * 256 + l * 128 + c * 2)) = static_cast<uint8_t>(entry);
+                Ram(0x30, static_cast<uint16_t>(row * 256 + l * 128 + c * 2 + 1)) = static_cast<uint8_t>(entry >> 8);
+            }
+    TsConfState& ts = _decoder->GetState();
+    auto tileRegs = [&](unsigned palSel, unsigned t0Page, unsigned t1Page, unsigned t0x, unsigned t1x) {
+        Reg(TsConfReg::PalSel, static_cast<uint8_t>(palSel));
+        Reg(TsConfReg::T0GPage, static_cast<uint8_t>(t0Page));
+        Reg(TsConfReg::T1GPage, static_cast<uint8_t>(t1Page));
+        Reg(TsConfReg::T0XOffsL, static_cast<uint8_t>(t0x));
+        Reg(TsConfReg::T0XOffsL + 1, static_cast<uint8_t>(t0x >> 8));
+        Reg(TsConfReg::T0XOffsL + 4, static_cast<uint8_t>(t1x));
+        Reg(TsConfReg::T0XOffsL + 5, static_cast<uint8_t>(t1x >> 8));
+    };
+
+    std::ifstream file(TestPathHelper::GetTestDataPath("machines/tsconf/rtl-sim/tsu-latch.txt"));
+    ASSERT_TRUE(file.good());
+    std::string text, name, goes;
+    unsigned vConfig = 0, tConfig = 0, tsLine = 0, s0 = 0, s1 = 0, split = 0;
+    unsigned before[5] = {}, after[5] = {};
+    int cases = 0, crossing = 0;
+    while (std::getline(file, text))
+    {
+        if (text.rfind("case ", 0) == 0)
+        {
+            char buffer[64] = {};
+            ASSERT_EQ(std::sscanf(text.c_str(), "case %63s vconf=%x tsconf=%x line=%u s0=%u s1=%u before=%x,%x,%x,%u,%u after=%x,%x,%x,%u,%u split=%u",
+                                  buffer, &vConfig, &tConfig, &tsLine, &s0, &s1, &before[0], &before[1], &before[2], &before[3],
+                                  &before[4], &after[0], &after[1], &after[2], &after[3], &after[4], &split),
+                      17)
+                << text;
+            name = buffer;
+            continue;
+        }
+        if (text.rfind("go", 0) == 0)
+        {
+            goes = text;
+            continue;
+        }
+        if (text.rfind("idx", 0) != 0)
+            continue;
+        std::istringstream in(text.substr(3));
+        std::vector<int> expected;
+        for (unsigned v; in >> std::hex >> v;)
+            expected.push_back(static_cast<int>(v));
+        SCOPED_TRACE(name);
+        cases++;
+
+        // SFILE as the harness writes it: S0 = s0 sprites 64x8 on the TS line (LEAP on the last), S1 = s1
+        // sprites, an inactive LEAP descriptor for an empty layer and one that ends S2
+        std::memset(ts.sfile, 0, sizeof(ts.sfile));
+        uint32_t d = 0;
+        auto sprite = [&](bool leap) {
+            ts.sfile[d * 3] = static_cast<uint16_t>(tsLine | 0x2000u | (leap ? 0x4000u : 0u));
+            ts.sfile[d * 3 + 1] = static_cast<uint16_t>(((d * 23) & 0x1FF) | (7 << 9));
+            ts.sfile[d * 3 + 2] = static_cast<uint16_t>(((d * 8) & 0x3F) | ((d & 7) << 6) | ((d & 15) << 12));
+            d++;
+        };
+        for (unsigned i = 0; i < s0; i++)
+            sprite(i == s0 - 1);
+        if (s0 == 0)
+            ts.sfile[d++ * 3] = 0x4000;
+        for (unsigned i = 0; i < s1; i++)
+            sprite(i == s1 - 1);
+        if (s1 == 0)
+            ts.sfile[d++ * 3] = 0x4000;
+        ts.sfile[d++ * 3] = 0x4000;
+
+        Reg(TsConfReg::VConfig, static_cast<uint8_t>(vConfig));
+        Reg(TsConfReg::VPage, 0xC0);
+        Reg(TsConfReg::TMapPage, 0x30);
+        Reg(TsConfReg::SGPage, 0xA0);
+        for (uint8_t r = 0; r < 8; r++)
+            Reg(static_cast<uint8_t>(TsConfReg::T0XOffsL + r), 0);
+        tileRegs(before[0], before[1], before[2], before[3], before[4]);
+        Reg(TsConfReg::TConfig, static_cast<uint8_t>(tConfig));
+
+        const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(static_cast<uint8_t>(vConfig));
+        const uint32_t line = win.y0 + tsLine;
+        NewFrame();
+        RunTo(T(line - 1, 210));  // dot 420
+        tileRegs(after[0], after[1], after[2], after[3], after[4]);
+        RunTo(T(line + 1, 0));
+
+        // The pass crossed line_start when the RTL handed an object over after it
+        if (goes.find(":L") != std::string::npos)
+        {
+            crossing++;
+            EXPECT_EQ(Engine().Line(line).tsuSplit, split) << "TSU DRAM cycles before line_start";
+        }
+        if ((vConfig & 3) == 3)
+            continue;
+        ASSERT_EQ(expected.size(), win.w);
+        std::vector<int> actual;
+        for (uint32_t x = 0; x < win.w; x++)
+            actual.push_back(Engine().TsuPixel(line, win.x0 + x));
+        size_t first = 0;
+        while (first < actual.size() && actual[first] == expected[first])
+            first++;
+        EXPECT_EQ(first, actual.size()) << "first difference at TS x " << first << ": "
+                                        << (first < actual.size() ? actual[first] : 0) << " vs the RTL's "
+                                        << (first < actual.size() ? expected[first] : 0);
+    }
+    EXPECT_EQ(cases, 12);
+    EXPECT_EQ(crossing, 10);
 }

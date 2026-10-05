@@ -21,7 +21,7 @@ first; tests that assert the current wrong value are named and change with the f
 | 10 | `#BFF7` (CMOS) reads return AVR data inside vdos; RTL reads `#FF` (`zports.v:330` `!dos`) | [memory-ports.md](memory-ports.md) B1 | DOS code reading the clock inside vdos sees data the hardware hides | `VDOS2_CmosInsideVdos` | **fixed**: `DecodeF7In` gives `#FF` in DOS (the AVR still sees the read); VDOS2 checks the floating read and the write landing |
 | 11 | IDE over-decode: `(low & 0x1E) == 0x10` takes `#31..#F1` as IDE registers; RTL only `#11` among the odd ports (the fork has the same bug) | [memory-ports.md](memory-ports.md) B3 | ports of other devices answered by the IDE | - | **fixed** in the shared `IdeAdapter::EvoIn / EvoOut` (TS-Conf and ATM3: the Base Configuration RTL decodes the same); test `IdeAdapter_Test.EvoOddPortsOtherThan11AreNotIde` |
 | 12 | A cut-off sprite / tile at the end of the TSU line is dropped whole; RTL and the fork draw it up to the cut, 4 px per DRAM word | [tsu.md](tsu.md) row 39 | missing partial objects on overloaded lines | `TSU8_StarvedObjectsAreDropped` | **fixed**: `DrawSprites` / `DrawTiles` draw the fetched words of a cut object (bitmap order, X flip included); test TSU8b; TSU8 still right (no word left for the third sprite) |
-| 13 | Tiles processed after `line_start` of L use the L-1 G_PAGE / X offsets / PAL_SEL; RTL uses L's latched set (the fork behaves like unreal-ng) | [tsu.md](tsu.md) row 49 | only on busy lines where these registers change | - | **deferred**: the TSU renders a line whole at `ts_start` of L-1, before L's latch exists (a write up to `line_start` can still change it); doing it right splits the pass at `line_start` - an engine change for objects past ~309-361 slots of work |
+| 13 | Tiles processed after `line_start` of L use the L-1 G_PAGE / X offsets / PAL_SEL; RTL uses L's latched set (the fork behaves like unreal-ng) | [tsu.md](tsu.md) row 49 | only on busy lines where these registers change | - | **fixed**: confirmed and measured with `tools/machines/tsconf/rtl-sim` (`tsulatch`: an object is late after `split` TSU DRAM cycles of the pass, 179-277 by mode); the engine draws the pass up to that position at `ts_start` and the rest at `line_start` with L's latch (`TsConfTsu::BeginLine` / `FinishLine`); the tile count per layer (row 30) and the prefetch's extra cycle (row 42) follow the RTL too; test `TsConfEngine_Test.TSU9_ObjectsAfterLineStartTakeTheNewLatch` |
 | 14 | G_X_OFFS in ZX and TXT is a pixel scroll; RTL loads the fetch column with G_X_OFFS[8:2] (ZX: 16 px steps, bit 2 swaps pixel / attribute fetch; TXT: counted in 14 MHz pixels) | [video.md](video.md) rows 28-29 | wrong scroll in ZX / TXT with a nonzero X offset (rare) | `TSO2_RendererMatchesTheReference` used the same rule in its reference | **fixed** from the Verilog itself: `tools/machines/tsconf/rtl-sim` (Verilator) captured 174 lines; `ScreenTSConf::ZxSourceOf / TxtSourceOf` drive the renderer and the video mapper; test GX1 compares every captured line index for index; TSO2 reference and hash updated |
 | 15 | INT vector chosen when INT is sampled, not at the acknowledge (~3 clocks later) | [interrupts.md](interrupts.md) row 20 | edge case | - | **fixed**: `AcknowledgeInterrupt` latches up to the IORQ (+3 clocks), drops a frame pulse that ended there, keeps `int_sel` (`TsConfState::intSel`) when nothing is left; tests INT12, INT12b |
 | 16 | VGSYS IN `#FF` returns `#FF` for a virtual drive / inside vdos; RTL drives `{intrq, drq, 111111}` | [memory-ports.md](memory-ports.md) B4 | small | - | **fixed**: VGSYS reads `{INTRQ, DRQ, 111111}` for every drive select and inside vdos (the low 6 bits were the Beta interface's 0s too); test VDOS3 |
@@ -40,15 +40,29 @@ first; tests that assert the current wrong value are named and change with the f
   decision 2026-10-05 (was D2, off); `IdeStall=0` stays as the bypass. Test IDE4.
 - ~~The NMI button works on TS-Conf, whose board never drives /NMI - row 41.~~ **Fixed:** `RequestBoardNmi` takes the press and does nothing (test `NmiButtonDoesNothing`); the debugger's direct NMI request stays.
 - ~~A frame pulse running across a CPU clock switch is cut short - row 25.~~ **Fixed:** `TsConfInterrupts::BeforeClockSwitch / AfterClockSwitch` carry the counted clocks across (`intFrameAdjust` keeps the CPU-clock part, the blob size is unchanged); tests CLK3, CLK3b.
-- The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at
-  `portdecoder_tsconf.cpp:220-222` says so, contradicting the code) - [memory-ports.md](memory-ports.md).
+- ~~The cache is cleared at reset and when disabled; the RTL never clears it (and the comment at
+  `portdecoder_tsconf.cpp:220-222` says so, contradicting the code) - [memory-ports.md](memory-ports.md).~~
+  **Fixed 2026-10-05**, checked on the running RTL (`tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim cache`, 10
+  scenarios): every CPU DRAM read fills its entry whatever `CACHE_CONFIG` says, nothing clears the cache (switching
+  it off, reset), and a CPU write invalidates the entry it hits with the cache on or off. `TsConfMemory::CacheRead`
+  / `AfterWrite` do the same; the invalidation snoop overlay and `CacheClear` are gone; the reset comment is now
+  true. Test `TsConfMemory_Test.CCH3_CacheFillAndRetentionMatchTheRtl` replays the scenarios
+  (`testdata/machines/tsconf/rtl-sim/cache-retention.txt`). Every TS-Conf CPU read now goes through the fill path; A/B of the
+  host-frame benchmarks, 7 interleaved rounds (machine load 22-78, above the usual threshold, so indicative):
+  `BM_HostFrame_TSConf_Fast` -1.1%, `_Debug` -1.3%, `BM_HostFrame_TSConf14_256C_Fast` +1.3% (rounds at the lowest
+  load; equal in two rounds). Other machines do not use `TsConfMemory`. `testdata/machines/tsconf/ttd/sprites.ttd`
+  no longer replays (`TTD_Corpus_Test`: the TS-Conf blob differs from byte 1024, `cacheTag`, because the recording
+  has no entries for reads made with the cache off): it needs re-recording.
 - W0_WE with ROM in window 0 should write the flash (`zmem.v:297`); both emulators drop the write.
 
 ## Known approximations (documented in unreal-ng, kept unless a program needs them)
 
-- TSU registers and SFILE read as one snapshot at `ts_start` ([tsu.md](tsu.md) rows 47-48).
-- Tile cost counts only tiles touching the window ([tsu.md](tsu.md) row 30).
-- Cache not filled while every window has it off ([interrupts.md](interrupts.md) row 31).
+- TSU registers and SFILE read at two points, `ts_start` and `line_start` (for the objects after it), not
+  continuously ([tsu.md](tsu.md) rows 47-48).
+- ~~Tile cost counts only tiles touching the window ([tsu.md](tsu.md) row 30).~~ **Fixed** with item 13: `width / 8 + 1`
+  tiles per layer, as the RTL.
+- ~~Cache not filled while every window has it off ([interrupts.md](interrupts.md) row 31).~~ **Fixed** with the
+  cache gap above: it fills on every CPU DRAM read, as the RTL.
 - DMA device 7 (wait port, AVR) not served ([dma.md](dma.md) row 19).
 - GFXOVR and the 360-wide TSU window (T_CONFIG bit 0) on in every build, decision D1 (`hardware-spec.md` §0.1).
 
