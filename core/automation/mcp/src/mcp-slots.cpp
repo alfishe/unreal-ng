@@ -36,6 +36,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
         {"protect", {"on"}},
+        {"compose", {"fs", "codepage", "free"}},
+        {"layers", {}},
     };
     return actions;
 }
@@ -97,6 +99,18 @@ namespace
         }
         if (action == "formats")
             return "Accepted formats per kind (structuredContent.formats)";
+        if (action == "compose" || action == "layers")
+        {
+            const Json::Value& value = reply[action];
+            out << value["descriptor"].asString() << ": " << value["fs"].asString() << ", " << value["sectors"].asUInt64()
+                << " sectors, " << value["files"].asUInt64() << " files, content " << value["contentId"].asString();
+            for (const Json::Value& layer : value["layers"])
+                out << "\n" << layer["name"].asString() << " (" << layer["kind"].asString() << " " << layer["path"].asString()
+                    << ") -> " << layer["mount"].asString() << ": " << layer["files"].asUInt64() << " files";
+            for (const Json::Value& line : reply["report"])
+                out << "\nnote: " << line.asString();
+            return out.str();
+        }
         if (action == "targets")
         {
             const Json::Value& file = reply["file"];
@@ -154,7 +168,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
-        "or folder to place";
+        "or folder to place; compose: a *.ucompose.yaml descriptor";
+    schema["properties"]["descriptor"]["type"] = "object";
+    schema["properties"]["descriptor"]["description"] =
+        "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
     const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate"};
@@ -197,7 +214,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "ISO / CUE / raw BIN / CD CHD images (multisession too) and folders of MP3 / FLAC / WAV files (an audio CD; "
         "info shows the disc's tracks). Actions: list, info, "
         "formats, targets (where a file can go: what it is, the slots that take it in order, the default, or why "
-        "nothing does), insert, swap, eject, save, export, discard, rescan, create, protect. Operations are synchronous (the reply "
+        "nothing does), insert, swap, eject, save, export, discard, rescan, create, protect, compose (build a "
+        "*.ucompose.yaml - several folders layered into one FAT disk - without inserting it; insert takes the "
+        "descriptor like a file), layers (a composite medium's layers). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true. The reply's 'revision' increases with every change. "
         "Options per action:" + perVerb,
@@ -241,6 +260,24 @@ void RegisterMediaSlots(ToolRegistry& registry)
                 {
                     method = "GET";
                     path = Endpoint(id, "/media/targets?path=" + EncodeSegment((*body).get("path", "").asString()));
+                    payload = nullptr;
+                }
+                else if (action == "compose")
+                {
+                    std::string descriptor = (*body).get("path", "").asString();
+                    if ((*body)["descriptor"].isObject())
+                    {
+                        Json::StreamWriterBuilder writer;
+                        writer["indentation"] = "";
+                        descriptor = Json::writeString(writer, (*body)["descriptor"]);
+                    }
+                    method = "GET";
+                    path = Endpoint(id, "/media/compose?path=" + EncodeSegment(descriptor));
+                    for (const char* option : {"fs", "codepage", "free"})
+                    {
+                        if (body->isMember(option))
+                            path += std::string("&") + option + "=" + EncodeSegment((*body)[option].asString());
+                    }
                     payload = nullptr;
                 }
                 else if (action == "info")

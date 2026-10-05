@@ -15,7 +15,7 @@ namespace
     std::string MakeSourceKey(const MediaSource& source)
     {
         if ((source.type == MediaSourceType::File || source.type == MediaSourceType::Folder ||
-             source.type == MediaSourceType::Upload) &&
+             source.type == MediaSourceType::Upload || source.type == MediaSourceType::Composite) &&
             !source.path.empty())
         {
             // Absolute, "~" expanded, symlinks resolved: two spellings of one file are one source

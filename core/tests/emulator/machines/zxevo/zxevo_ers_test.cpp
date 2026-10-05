@@ -1153,3 +1153,45 @@ TEST_F(ZXEvoErs_Test, NedoOsShellRunsATypedCommand)
     EXPECT_TRUE(screenHas("M:/bin>free")) << "the typed command echoed";
     EXPECT_TRUE(screenHas("free pages=")) << "the command ran and printed";
 }
+
+/// ACC-C1 (media-multisource): NedoOS boots from a composite of two folders. The lower layer is the boot
+/// folder above; the upper one holds only bin/AUTOEXEC.BAT (another case: FAT names fold) echoing another
+/// marker. The shell runs the upper batch file and never sees the lower one: upper shadows lower
+/// Real-ROM boot plus a whole OS boot (~300 frames): slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, NedoOsBootsFromTwoComposedFolders)
+{
+    const std::filesystem::path card = TestPathHelper::FindProjectRoot() / "testdata/machines/zxevo/nedoos/sdcard";
+    ASSERT_TRUE(std::filesystem::is_directory(card)) << Utf8(card);
+    ScratchFolder folder("nedoos-compose");
+    folder.File("patch/bin/AUTOEXEC.BAT", "echo UNREALNGCOMPOSE\r\n");
+    const auto descriptor = folder.File("sd.ucompose.yaml", "version: 1\n"
+                                                            "target: {free: 16MiB}\n"
+                                                            "layers:\n"
+                                                            "  - {name: nedoos, source: {folder: '" + card.generic_string() + "'}}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+
+    Create();
+    MediaSource source;
+    source.path = Utf8(descriptor);
+    const MediaResult inserted = _context->pMediaManager->Insert("sd.zc", source, InsertOptions{});
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    ASSERT_EQ(_context->pMediaManager->GetMedium("sd.zc")->Source().type, MediaSourceType::Composite);
+    ASSERT_TRUE(RunToMainMenu());
+
+    auto inRam = [this](const std::string& needle) {
+        for (uint16_t page = 0; page < 256; page++)
+        {
+            const uint8_t* bytes = _context->pMemory->RAMPageAddress(page);
+            if (bytes && std::search(bytes, bytes + PAGE_SIZE, needle.begin(), needle.end()) != bytes + PAGE_SIZE)
+                return true;
+        }
+        return false;
+    };
+
+    Tap(ZXKEY_5);  // "5. SDcard boot" -> SD_BOOT.$C -> the NedoOS kernel
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return inRam("M:/bin>") && inRam("UNREALNGCOMPOSE"); }, 800, 20);
+    EXPECT_TRUE(inRam("M:/bin>")) << "the NedoOS shell prompt";
+    EXPECT_TRUE(inRam("UNREALNGCOMPOSE")) << "the shell ran the upper layer's autoexec.bat";
+    EXPECT_FALSE(inRam("UNREALNGSDBOOT")) << "the lower layer's autoexec.bat is shadowed";
+    EXPECT_FALSE(_context->pMediaManager->Info("sd.zc")->dirty) << "booting writes nothing to the card";
+}

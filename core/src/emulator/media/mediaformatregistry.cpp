@@ -2,6 +2,9 @@
 
 #include "mediaformatregistry.h"
 
+#include "emulator/media/composedescriptor.h"
+#include "emulator/media/compositemediumfactory.h"
+
 #include "emulator/io/storage/hostwritehold.h"
 #include "emulator/io/storage/mediareadtap.h"
 
@@ -289,6 +292,12 @@ static MediaResult OpenOptical(const OpenRequest& request, std::unique_ptr<Mediu
 MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     medium.reset();
+
+    // A composition descriptor (a file named *.ucompose.yaml / .json, or an inline body)
+    const MediaSource& candidate = request.source;
+    if (!candidate.inlineBody.empty() || candidate.type == MediaSourceType::Composite ||
+        (!candidate.path.empty() && ComposeDescriptor::IsDescriptorName(candidate.path) && !FileHelper::IsFolder(candidate.path)))
+        return CompositeMediumFactory::Open(request, medium);
 
     if (request.kind == MediaKind::Floppy)
         return OpenFloppy(request, medium);

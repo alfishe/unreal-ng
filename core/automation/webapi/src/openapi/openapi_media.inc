@@ -46,7 +46,11 @@
             "GET /media/targets?path=<file>: what the file is (reply field 'file': kinds, format, evidence) and where "
             "it can go on this machine (field 'targets', in the order a chooser lists them; 'default': the index used "
             "without asking, null when the caller should ask; 'refusal': why nothing takes it). A refusal is an answer: "
-            "ok stays true";
+            "ok stays true. "
+            "GET /media/compose?path=<descriptor>[&fs=fat16|fat32&codepage=&free=]: build a composition descriptor "
+            "(a *.ucompose.yaml / .json file, or its JSON text) without inserting it (reply field 'compose': fs, sectors, "
+            "clusters, contentId, files, layers; 'report': shadowed, whited-out and skipped entries). Insert takes the "
+            "descriptor like any file";
         info["tags"].append("Media");
         idParameter(info, 0);
         slotParameter(info, 1);
@@ -54,13 +58,13 @@
         info["parameters"][2]["in"] = "query";
         info["parameters"][2]["required"] = false;
         info["parameters"][2]["schema"]["type"] = "string";
-        info["parameters"][2]["description"] = "targets: the file or folder to place";
+        info["parameters"][2]["description"] = "targets: the file or folder to place; compose: the descriptor";
         replyRef(info);
 
         std::string verbs;
         for (const std::string& v : MediaControl::Verbs())
         {
-            if (v == "list" || v == "info" || v == "formats" || v == "targets")
+            if (v == "list" || v == "info" || v == "formats" || v == "targets" || v == "compose")
                 continue;
             std::string options;
             for (const std::string& o : MediaControl::OptionsFor(v))
@@ -68,7 +72,7 @@
             verbs += "\n- **" + v + "**: " + (options.empty() ? "no options" : options);
         }
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
-        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect";
+        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
@@ -85,13 +89,16 @@
         post["parameters"][2]["schema"]["type"] = "string";
         for (const std::string& v : MediaControl::Verbs())
         {
-            if (v != "list" && v != "info" && v != "formats" && v != "targets")
+            if (v != "list" && v != "info" && v != "formats" && v != "targets" && v != "compose")
                 post["parameters"][2]["schema"]["enum"].append(v);
         }
         Json::Value& body = post["requestBody"]["content"]["application/json"]["schema"];
         body["type"] = "object";
         body["properties"]["path"]["type"] = "string";
         body["properties"]["path"]["description"] = "insert / swap: the source; save / export: the target";
+        body["properties"]["descriptor"]["type"] = "object";
+        body["properties"]["descriptor"]["description"] =
+            "insert / swap: a composition descriptor inline (the *.ucompose.json body) instead of a path";
         body["properties"]["access"]["type"] = "string";
         body["properties"]["access"]["enum"].append("readonly");
         body["properties"]["access"]["enum"].append("session");

@@ -1,5 +1,7 @@
 #include "emulator/media/mediatargets.h"
 
+#include "emulator/media/composedescriptor.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -174,6 +176,14 @@ FileClass MediaTargets::Classify(const std::string& path)
     if (!FileHelper::FileExists(path))
     {
         file.evidence.push_back("file not found");
+        return file;
+    }
+    if (ComposeDescriptor::IsDescriptorName(path))
+    {
+        // A composite medium: a FAT volume built from the layers it names
+        file.kinds = {FileKind::SdCard, FileKind::Hdd};
+        file.format = "compose";
+        file.evidence.push_back("a composition descriptor (*.ucompose)");
         return file;
     }
 

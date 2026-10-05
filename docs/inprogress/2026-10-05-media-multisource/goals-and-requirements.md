@@ -201,8 +201,8 @@ nanosecond counts during DMA-like bulk reads (ATA READ MULTIPLE, SD multi-block,
 
 | ID | Scenario | Pass when |
 |---|---|---|
-| ACC-C1 | ZX-Evo `sd.zc` from a descriptor: NedoOS SD folder + a second folder with `term.com` replaced (upper shadows lower) | NedoOS boots to `M:/bin>`; the replaced `term.com` runs (its version string) |
-| ACC-C2 | Wild Commander (ZX-Evo) on a FAT32 composite of 3 folders with filters | WC lists exactly the filtered files under each mount, with the expected 8.3 names |
+| ACC-C1 | ZX-Evo `sd.zc` from a descriptor: NedoOS SD folder + a second folder with `bin/AUTOEXEC.BAT` replaced (upper shadows lower) | NedoOS boots to `M:/bin>`; the shell runs the upper batch file (its marker), never the lower one |
+| ACC-C2 | Wild Commander (ZX-Evo with TS-Conf) on a FAT32 composite of 3 folders with filters | WC lists exactly the filtered files under each mount, with the expected 8.3 names |
 | ACC-C3 | Sprinter: DSS 1.71 HDD image (graft base) + host folder at `/UTIL` | DSS boots; `DIR C:\UTIL` lists the folder; a file written by the guest appears in `media changes` attributed to the right layer; a FAT32 target on a Sprinter slot is refused |
 | ACC-C4 | Profi: PQ-DOS image as partition 1 + a composed FAT16 as partition 2; then the same with a FAT32 partition 2 | PQ-DOS sees both drives; the FAT32 run records whether PQ-DOS reads FAT32, and the Profi slot descriptor is set from that result |
 | ACC-C5 | ATAPI CD on ZX-Evo: ISO composite of two folders | NedoOS lists the CD contents; `AUTORUN.ZX` boot works from the ERS menu |

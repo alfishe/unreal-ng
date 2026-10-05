@@ -2,6 +2,10 @@
 
 #include "mediacontrol.h"
 
+#include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/media/composedescriptor.h"
+#include "emulator/media/compositemediumfactory.h"
+
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/hddimageformats.h"
@@ -29,6 +33,50 @@ namespace
         for (const std::string& item : items)
             array.push(item);
         return array;
+    }
+
+    /// "{...}": a composition descriptor's JSON text instead of a path
+    bool IsInlineDescriptor(const std::string& path)
+    {
+        const size_t first = path.find_first_not_of(" \t\r\n");
+        return first != std::string::npos && path[first] == '{';
+    }
+
+    std::string Hex64(uint64_t value)
+    {
+        char text[24];
+        std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(value));
+        return text;
+    }
+
+    /// The `compose` / `layers` body: the layout and every layer
+    StateNode CompositeValue(const CompositeInfo& info)
+    {
+        StateNode value = StateNode::Object();
+        value["descriptor"] = info.descriptor;
+        value["fs"] = info.fs == FatType::Fat32 ? "fat32" : "fat16";
+        value["sectors"] = info.sectors;
+        value["bytes"] = info.sectors * 512;
+        value["clusters"] = static_cast<uint64_t>(info.clusterCount);
+        value["sectorsPerCluster"] = static_cast<uint64_t>(info.sectorsPerCluster);
+        value["contentId"] = Hex64(info.contentId);
+        value["files"] = info.files;
+        value["fileBytes"] = info.bytes;
+        StateNode layers = StateNode::Array();
+        for (const CompositeLayerInfo& layer : info.layers)
+        {
+            StateNode l = StateNode::Object();
+            l["name"] = layer.name;
+            l["kind"] = layer.kind;
+            l["path"] = layer.path;
+            l["mount"] = layer.mount;
+            l["from"] = layer.from;
+            l["files"] = layer.files;
+            l["bytes"] = layer.bytes;
+            layers.push(std::move(l));
+        }
+        value["layers"] = std::move(layers);
+        return value;
     }
 
     std::string Lower(std::string text)
@@ -195,7 +243,8 @@ MediaControl::MediaControl(EmulatorContext* context)
 const std::vector<std::string>& MediaControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
-                                                   "save", "export", "discard", "rescan", "create", "protect"};
+                                                   "save", "export", "discard", "rescan", "create", "protect",
+                                                   "compose", "layers"};
     return verbs;
 }
 
@@ -215,6 +264,8 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
         {"protect", {"on"}},
+        {"compose", {"fs", "codepage", "free"}},
+        {"layers", {}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -282,10 +333,75 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Rescan(request);
     else if (verb == "create")
         reply = Create(request);
+    else if (verb == "compose")
+        reply = Compose(request);
+    else if (verb == "layers")
+        reply = Layers(request);
     else
         reply = Protect(request);
     return reply;
 }
+
+/// region <Composite media>
+
+MediaReply MediaControl::Compose(const MediaRequest& request)
+{
+    MediaReply reply;
+    const Options& o = request.options;
+    CompositeBuildOptions options;
+    if (auto it = o.find("fs"); it != o.end())
+    {
+        const std::string fs = Lower(Trim(it->second));
+        if (fs == "fat16")
+            options.fs = FatType::Fat16;
+        else if (fs == "fat32")
+            options.fs = FatType::Fat32;
+        else
+            return Fail(MediaError::BadRequest, "fs '" + it->second + "': expected fat16 or fat32");
+    }
+    if (auto it = o.find("codepage"); it != o.end())
+    {
+        CodePage page;
+        if (!UnicodeHelper::ParseCodePage(it->second, page))
+            return Fail(MediaError::BadRequest, "codepage '" + it->second + "': expected cp866 or cp1251");
+        options.codePage = page;
+    }
+    if (auto it = o.find("free"); it != o.end())
+    {
+        uint64_t bytes = 0;
+        if (!ComposeDescriptor::ParseSize(it->second, bytes))
+            return Fail(MediaError::BadRequest, "free '" + it->second + "': expected a size (256MiB, 1048576)");
+        options.freeBytes = bytes;
+    }
+    if (Trim(request.path).empty())
+        return Fail(MediaError::BadRequest, "name a descriptor file (*.ucompose.yaml) or give its JSON text");
+
+    const ComposeDescriptor descriptor = IsInlineDescriptor(request.path)
+                                             ? ComposeDescriptor::Parse(request.path, std::filesystem::current_path(), "(inline)")
+                                             : ComposeDescriptor::Load(FileHelper::ToFsPath(request.path));
+    std::unique_ptr<FatSynthVolume> volume;
+    CompositeInfo info;
+    reply.result = CompositeMediumFactory::Build(descriptor, options, volume, info);
+    if (reply.result.Ok())
+        reply.body["compose"] = CompositeValue(info);
+    return reply;
+}
+
+MediaReply MediaControl::Layers(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    Medium* medium = _manager->GetMedium(reply.slot);
+    if (!medium || !medium->Composite())
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' does not hold a composite medium");
+    reply.body["layers"] = CompositeValue(*medium->Composite());
+    reply.result.report = medium->Report();
+    return reply;
+}
+
+/// endregion <Composite media>
 
 /// region <Selectors>
 
@@ -759,6 +875,13 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     source.path = path;
     source.type = request.upload ? MediaSourceType::Upload
                                  : FileHelper::IsFolder(path) ? MediaSourceType::Folder : MediaSourceType::File;
+    if (IsInlineDescriptor(path))
+    {
+        // A composition descriptor given as text (WebAPI / MCP / scripts) instead of a file
+        source.inlineBody = path;
+        source.path.clear();
+        source.type = MediaSourceType::Composite;
+    }
     if (auto it = o.find("format"); it != o.end())
         source.formatHint = Lower(Trim(it->second));
 

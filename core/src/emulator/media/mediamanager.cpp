@@ -2,6 +2,8 @@
 
 #include "mediamanager.h"
 
+#include "emulator/media/composedescriptor.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -192,10 +194,14 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     request.access = options.access.value_or(descriptor.defaultAccess);
     // A folder is never written: a slot whose images default to write-through
     // (an IDE hard disk) keeps a folder's writes for the session
-    const bool folder = source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path);
+    // A composite reads folders and images and is never written in place either
+    const bool folder = source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path) ||
+                        source.type == MediaSourceType::Composite || !source.inlineBody.empty() ||
+                        ComposeDescriptor::IsDescriptorName(source.path);
     if (!options.access && folder && request.access == AccessMode::WriteThrough)
         request.access = AccessMode::Session;
     request.fs = options.fs.value_or(descriptor.defaultFs);
+    request.explicitFs = options.fs.has_value();
     request.allowedFs = descriptor.fsCompatibility;
     request.mbr = descriptor.folderMbr;
     request.codePage = options.codePage;
@@ -543,8 +549,9 @@ MediaResult MediaManager::Rescan(const std::string& slotId)
     if (it == _slots.end())
         return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
     SlotState& state = it->second;
-    if (!state.attached || state.attached->Source().type != MediaSourceType::Folder)
-        return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "' does not hold a folder");
+    if (!state.attached || (state.attached->Source().type != MediaSourceType::Folder &&
+                            state.attached->Source().type != MediaSourceType::Composite))
+        return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "' does not hold a folder or a composite");
     const uint64_t changed = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
     if (changed > 0)
         return MediaResult::Fail(MediaError::Dirty, "slot '" + slotId + "' has " + std::to_string(changed) +

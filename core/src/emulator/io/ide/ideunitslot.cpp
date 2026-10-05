@@ -23,6 +23,10 @@ IdeUnitSlot::IdeUnitSlot(EmulatorContext* context, std::string id, AtaDevice& de
     _descriptor.acceptsFolder = true;  // a disk: a FAT volume; a CD drive: an audio CD of MP3 / FLAC / WAV files
     _descriptor.defaultAccess = cd ? AccessMode::ReadOnly : AccessMode::WriteThrough;
     _descriptor.defaultFs = FatType::Fat16;
+    // Estex DSS reads FAT12 / FAT16 only (the Sprinter hardware reference §9.3): a FAT32
+    // folder volume or composite on a Sprinter disk is refused, never built
+    if (!cd && context && context->config.mem_model == MM_SPRINTER)
+        _descriptor.fsCompatibility = {FatType::Fat16};
     _descriptor.hasWriteProtectSwitch = !cd;
 
     const std::string slotId = _descriptor.id;

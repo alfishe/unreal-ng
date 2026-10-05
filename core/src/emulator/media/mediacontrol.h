@@ -13,7 +13,8 @@
 /// (§3.3 selectors, §3.4 verbs and options, §3.5 auto, §3.8 this layer).
 ///
 /// Verbs: list, info, formats, insert, eject, swap, save, export, discard,
-/// rescan, create, protect.
+/// rescan, create, protect, compose (build a composition descriptor without
+/// inserting it: report and layout), layers (a slot's composite medium).
 ///
 /// Example (what a surface does):
 /// @code
@@ -112,6 +113,8 @@ private:
     MediaReply Rescan(const MediaRequest& request);
     MediaReply Create(const MediaRequest& request);
     MediaReply Protect(const MediaRequest& request);
+    MediaReply Compose(const MediaRequest& request);
+    MediaReply Layers(const MediaRequest& request);
 
     /// The slot `insert auto` picks for `path` (§3.5)
     MediaResult ChooseSlot(const std::string& path, const std::map<std::string, std::string>& options, std::string& slotId);

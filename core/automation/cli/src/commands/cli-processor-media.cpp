@@ -26,7 +26,27 @@ namespace
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
     {
-        return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets";
+        return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets" ||
+               verb == "compose";
+    }
+
+    /// `media compose` / `media layers`: the layout and one line per layer
+    void CompositeText(std::ostringstream& out, const StateNode& value)
+    {
+        out << "  " << value.find("descriptor")->s << ": " << value.find("fs")->s << ", " << value.find("sectors")->i
+            << " sectors (" << value.find("clusters")->i << " clusters of " << value.find("sectorsPerCluster")->i * 512
+            << " bytes), " << value.find("files")->i << " files, " << value.find("fileBytes")->i << " bytes, content "
+            << value.find("contentId")->s << NEWLINE;
+        int index = 0;
+        for (const StateNode& layer : value.find("layers")->items)
+        {
+            out << "  " << index++ << " " << std::left << std::setw(12) << layer.find("name")->s << std::setw(7)
+                << layer.find("kind")->s << layer.find("path")->s;
+            if (!layer.find("from")->s.empty() && layer.find("from")->s != "/")
+                out << " from " << layer.find("from")->s;
+            out << " -> " << layer.find("mount")->s << "  " << layer.find("files")->i << " files, "
+                << layer.find("bytes")->i << " bytes" << NEWLINE;
+        }
     }
 
     std::string MediumText(const StateNode* medium)
@@ -112,7 +132,7 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         request.options[name] = value;
     }
 
-    const bool slotless = verb == "list" || verb == "formats" || verb == "targets";
+    const bool slotless = verb == "list" || verb == "formats" || verb == "targets" || verb == "compose";
     size_t next = 0;
     if (!slotless && next < positional.size())
         request.selector = positional[next++];
@@ -202,6 +222,15 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         if (chosen < 0 && index > 1)
             out << "  several targets: name the slot (media insert <slot> <path>)" << NEWLINE;
     }
+    else if (verb == "compose")
+    {
+        CompositeText(out, *body.find("compose"));
+    }
+    else if (verb == "layers")
+    {
+        out << "  slot " << reply.slot << NEWLINE;
+        CompositeText(out, *body.find("layers"));
+    }
     else
     {
         out << "ok: " << reply.slot;
@@ -235,7 +264,10 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  discard <slot>               - drop the unsaved writes" << NEWLINE;
     out << "  rescan <slot>                - rebuild a folder medium" << NEWLINE;
     out << "  create <slot> [--size bytes] - a blank floppy or card" << NEWLINE;
-    out << "  protect <slot> --on true|false - the write-protect switch" << NEWLINE << NEWLINE;
+    out << "  protect <slot> --on true|false - the write-protect switch" << NEWLINE;
+    out << "  compose <descriptor>         - build a *.ucompose.yaml without inserting it: layout and report" << NEWLINE;
+    out << "                                 (insert takes the descriptor like any file)" << NEWLINE;
+    out << "  layers <slot>                - a composite medium's layers" << NEWLINE << NEWLINE;
     out << "Slot: id (fdd.b), alias (B, b:, sd, hd), kind:index (floppy:1), tag:a+b" << NEWLINE;
     out << "A dirty medium leaves only with --save, --export <path> or --discard" << NEWLINE;
     out << "Options per verb:" << NEWLINE;

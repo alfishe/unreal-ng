@@ -75,6 +75,13 @@ namespace
             {
                 if (name == "path")
                     request.path = (*json)[name].asString();
+                else if (name == "descriptor" && (*json)[name].isObject())
+                {
+                    // A composition descriptor inline: MediaControl takes its JSON text as the path
+                    Json::StreamWriterBuilder writer;
+                    writer["indentation"] = "";
+                    request.path = Json::writeString(writer, (*json)[name]);
+                }
                 else
                     request.options[name] = OptionText((*json)[name]);
             }
@@ -95,7 +102,8 @@ void EmulatorAPI::getMediaList(const HttpRequestPtr& req, std::function<void(con
     RespondReply(callback, MediaControl(emulator->GetContext()).Execute(request));
 }
 
-/// @brief GET /api/v1/emulator/{id}/media/{slot}  (and /media/formats, /media/targets?path=)
+/// @brief GET /api/v1/emulator/{id}/media/{slot}  (and /media/formats, /media/targets?path=,
+/// /media/compose?path=<descriptor file or JSON text>[&fs=&codepage=&free=])
 void EmulatorAPI::getMediaSlot(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id, const std::string& slot) const
 {
@@ -115,6 +123,17 @@ void EmulatorAPI::getMediaSlot(const HttpRequestPtr& req, std::function<void(con
         request.verb = "targets";
         request.path = req->getParameter("path");
     }
+    else if (slot == "compose")
+    {
+        request.verb = "compose";
+        request.path = req->getParameter("path");
+        for (const char* option : {"fs", "codepage", "free"})
+        {
+            const std::string value = req->getParameter(option);
+            if (!value.empty())
+                request.options[option] = value;
+        }
+    }
     else
     {
         request.verb = "info";
@@ -124,7 +143,7 @@ void EmulatorAPI::getMediaSlot(const HttpRequestPtr& req, std::function<void(con
 }
 
 /// @brief POST /api/v1/emulator/{id}/media/{slot}/{verb}
-/// verb: insert, swap, eject, save, export, discard, rescan, create, protect.
+/// verb: insert, swap, eject, save, export, discard, rescan, create, protect, layers.
 /// insert / swap also take the file itself (multipart/form-data or a raw body
 /// with X-Filename), staged like the /disk upload and deleted on eject
 void EmulatorAPI::postMediaVerb(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
