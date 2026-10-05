@@ -10,7 +10,7 @@ Status: proposal written 2026-10-02 (documents only, no code). Open questions Q1
 | Step | Item | Size | Status |
 |:--|:--|:--|:--|
 | P0 | Golden commit digests for every SNA / Z80 / SZX fixture × creatable model on `master`; pin the suspected defects (Pentagon 1024 lock, ATM / TS-Conf after a cold reset, 128K on 48K) as current behavior | S-M | **done 2026-10-05** (branch `snapshot-pipeline`): `testdata/loaders/golden/commit-digests.txt` (884 rows: 52 fixtures × 17 machines; ram / ports / cpu / ay / misc hashes), `core/tests/loaders/snapshot/snapshotgolden_test.cpp` (one test per machine, ~0.3 s each), helper `_helpers/snapshotdigest.{h,cpp}`; defects pinned in `SnapshotDefects_Test`, see "P0 findings" |
-| P1 | `SnapshotImage` + `SnapshotReport`; parsers (SNA, Z80, SZX, SPG, ZXP) fill the image; pipeline inside `LoadSnapshotStaged`; `LegacyCommit` = today's code | M | open |
+| P1 | `SnapshotImage` + `SnapshotReport`; parsers (SNA, Z80, SZX, SPG, ZXP) fill the image; pipeline inside `LoadSnapshotStaged`; `LegacyCommit` = today's code | M | **done 2026-10-05** (branch `snapshot-pipeline`): `snapshotimage` / `snapshotreport` / `snapshotpipeline` in `core/src/loaders/snapshot/`; each loader builds its image from the staging and calls `snapshot::Pipeline::Plan` before its unchanged commit (SNA, Z80, SZX, SPG; ZXP builds one image per module, its group-level plan waits for Q7); `Emulator::LastSnapshotReport()` on every load path; SP-2 in `snapshotimage_test.cpp` (oracles: the raw bytes, libspectrum, the mhmt-verified SPG hashes); the P0 table is unchanged |
 | P2 | Plan step, `ISnapshotCommitPolicy`, named-policy registry, `GetSnapshotPolicy()` on the port decoder | S | open |
 | P3 | `commit` option + `inspect` on WebAPI / OpenAPI, MCP, CLI, Lua, Python; recipe `.recipe/media/load-snapshot.md` | S-M | open |
 | P4 | Sprinter ZX commit (= Sprinter Z5): cell-table mapping, refusal outside ZX mode, T-ZX-11 / T-ZX-12 | M | open |
@@ -40,3 +40,18 @@ The table records `master` as it is. Facts it and `SnapshotDefects_Test` pin (ea
 
 To rewrite after an approved change: `UNREAL_SNAPSHOT_GOLDEN_UPDATE=1 core-tests --gtest_filter='SnapshotGoldenRewrite*'`,
 review the diff, list the changed rows in the commit message.
+
+## P1 notes (2026-10-05)
+
+- **The image is built beside the staging, not instead of it.** `LegacyCommit` still reads each loader's private staging,
+  so the P0 golden table is bit-for-bit the same; moving the commits onto the image is P9.
+- **Oracles for SP-2** are independent of the loaders: the raw bytes of the file sliced by the published layout (SNA, Z80
+  with its own RLE unpacker, ZXP), libspectrum's dump next to each SZX file, and the SPG hashes verified against lvd's mhmt.
+- **Found on the way:** a 128K SNA whose paged bank is 5 or 2 is 147487 bytes (six further banks, the third bank repeats one
+  already stored), not 131103; the staging handles it, the oracle now states it. The Z80 v2 staging does not keep the model
+  byte (`_modelCode` is set for v3 only), so the image reads it from the header.
+- **Extensions are descriptors** (origin, kind, size, note); payloads stay with the stage until a commit reads the image (P9).
+- **ZXP** gives four images (`LoaderZXP::BuildImage(module)`) with the group registers in an extension; no plan hook yet.
+- SZX's `Outcome` and the report's differ in numbering: `LoaderSZX::AppendReport` is the one place that maps them.
+- Open for P2: the plan step takes `Options` (`commit`) and returns legacy or a refusal for an unknown name; the machine
+  policy and the registry come next.

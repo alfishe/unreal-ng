@@ -7,6 +7,9 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "loaders/snapshot/snapshotimage.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "loaders/snapshot/snapshotreport.h"
 #include "stdafx.h"
 
 /// region <Info>
@@ -185,6 +188,11 @@ protected:
     uint8_t _borderColor = 0x00;
     uint8_t _ayRegisters[16] = {};
     bool _hasAyRegisters = false;
+
+    // Snapshot pipeline (PLAN #84): the image built from the staging and the report of the plan step
+    snapshot::Options _options;
+    snapshot::Image _image;
+    snapshot::Report _report;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -200,9 +208,19 @@ public:
     bool load();
     bool save();
 
+    /// What the caller asked for (call before load(); the default lets the plan decide)
+    void SetOptions(const snapshot::Options& options) { _options = options; }
+    /// The pipeline's view of the last load: the image of the file and the report of the plan step
+    const snapshot::Image& GetSnapshotImage() const { return _image; }
+    const snapshot::Report& GetSnapshotReport() const { return _report; }
+    /// The staging as a SnapshotImage; nothing touches the machine
+    snapshot::Image BuildImage() const;
+
 protected:
     bool validate();
     bool stageLoad();
+    /// Image + plan step between staging and commit; false = refused (the report says why)
+    bool planSnapshot();
     void commitFromStage();
 
     // Save helpers
@@ -307,6 +325,7 @@ public:
 
     // Load methods
     using LoaderZ80::commitFromStage;
+    using LoaderZ80::planSnapshot;
     using LoaderZ80::stageLoad;
     using LoaderZ80::validate;
 

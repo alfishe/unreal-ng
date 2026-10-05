@@ -1648,6 +1648,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 /// region <Load SNA snapshot>
                 LoaderSNA loaderSna(_context, absolutePath);
                 result = loaderSna.load();
+                _lastSnapshotReport = loaderSna.GetSnapshotReport();
 
                 /// region <Info logging>
                 if (result)
@@ -1665,6 +1666,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 /// region <Load Z80 snapshot>
                 LoaderZ80 loaderZ80(_context, absolutePath);
                 result = loaderZ80.load();
+                _lastSnapshotReport = loaderZ80.GetSnapshotReport();
 
                 /// region <Info logging>
                 if (result)
@@ -1682,6 +1684,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 // TS-Conf SDK program (loaderspg.h): the TS-Conf machine only
                 LoaderSPG loaderSpg(_context, absolutePath);
                 result = loaderSpg.load();
+                _lastSnapshotReport = loaderSpg.GetSnapshotReport();
                 if (!result)
                     error = loaderSpg.GetError();
             }
@@ -1690,6 +1693,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 /// region <Load SZX snapshot>
                 LoaderSZX loaderSzx(_context, absolutePath);
                 result = loaderSzx.load();
+                _lastSnapshotReport = loaderSzx.GetSnapshotReport();
                 if (result)
                     MLOGINFO("SZX file loaded:\n%s", loaderSzx.GetReport().ToText().c_str());
                 else
@@ -1730,7 +1734,9 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
     if (ext == "sna")
     {
         LoaderSNA loader(_context, data, "memory");
-        if (loader.load())
+        const bool loaded = loader.load();
+        _lastSnapshotReport = loader.GetSnapshotReport();
+        if (loaded)
             return true;
         error = "the SNA image did not load";
         return false;
@@ -1738,7 +1744,9 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
     if (ext == "z80")
     {
         LoaderZ80 loader(_context, data, "memory");
-        if (loader.load())
+        const bool loaded = loader.load();
+        _lastSnapshotReport = loader.GetSnapshotReport();
+        if (loaded)
             return true;
         error = "the Z80 image did not load";
         return false;
@@ -1748,16 +1756,31 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
         szx::Stage stage;
         if (!SzxReader::Parse(data.data(), data.size(), stage, error))
             return false;
-        szx::Report report;
-        if (!LoaderSZX::Commit(_context, stage, report, error))
+        // The same road as a file: the image, the plan step, today's commit
+        snapshot::Image image = LoaderSZX::BuildImage(stage, "memory");
+        _lastSnapshotReport = snapshot::Report();
+        if (!snapshot::Pipeline::Plan(image, _context, snapshot::Options{}, _lastSnapshotReport))
+        {
+            error = _lastSnapshotReport.reason;
             return false;
+        }
+        szx::Report report;
+        const bool committed = LoaderSZX::Commit(_context, stage, report, error);
+        LoaderSZX::AppendReport(report, _lastSnapshotReport);
+        if (!committed)
+        {
+            _lastSnapshotReport.Refuse(error);
+            return false;
+        }
         MLOGINFO("SZX image loaded:\n%s", report.ToText().c_str());
         return true;
     }
     if (ext == "spg")
     {
         LoaderSPG loader(_context, data, "memory");
-        if (loader.load())
+        const bool loaded = loader.load();
+        _lastSnapshotReport = loader.GetSnapshotReport();
+        if (loaded)
             return true;
         error = loader.GetError();
         return false;

@@ -29,6 +29,7 @@
 #include "emulatorcontext.h"
 #include "emulator/notifications.h"
 #include "emulator/rzx/rzxsession.h"
+#include "loaders/snapshot/snapshotreport.h"
 
 
 class BreakpointManager;
@@ -127,6 +128,8 @@ protected:
     /// The common body of the snapshot loads: RZX stop, TTD guard, pause,
     /// `load`, frame restart, resume, NC_FILE_LOADED
     bool LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath);
+    /// What the snapshot pipeline did with the last load (empty before the first one)
+    snapshot::Report _lastSnapshotReport;
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -415,6 +418,9 @@ public:
     /// `reportedPath`: the file named in the load notification and the core
     /// state instead of `path` (an RZX start snapshot written to a temporary file)
     bool LoadSnapshot(const std::string& path, const std::string& reportedPath = {});
+    /// The snapshot pipeline's report of the last load: the commit that ran (or the refusal and why), the verdicts that
+    /// led to it, the format's per-block outcomes, warnings. Read it after the load returned
+    const snapshot::Report& LastSnapshotReport() const { return _lastSnapshotReport; }
     /// A snapshot image already in memory (`extension`: sna, z80, szx), loaded
     /// like a file: paused, TTD rules, the frame restarted, NC_FILE_LOADED with
     /// `reportedPath`

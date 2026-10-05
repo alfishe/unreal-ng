@@ -102,7 +102,157 @@ bool LoaderSZX::load()
     if (!SzxReader::Parse(data.data(), data.size(), stage, _error))
         return false;
     stage.folder = PathToUtf8(FileHelper::ToFsPath(_path).parent_path());
-    return Commit(_context, stage, _report, _error);
+
+    // Snapshot pipeline: the image of the file and the plan step, then today's commit
+    _image = BuildImage(stage, _path);
+    _snapshotReport = snapshot::Report();
+    if (!snapshot::Pipeline::Plan(_image, _context, _options, _snapshotReport))
+    {
+        _error = _snapshotReport.reason;
+        return false;
+    }
+    const bool committed = Commit(_context, stage, _report, _error);
+    // SZX's own per-block outcomes ride on the pipeline's report
+    AppendReport(_report, _snapshotReport);
+    if (!committed)
+        _snapshotReport.Refuse(_error);
+    return committed;
+}
+
+void LoaderSZX::AppendReport(const Report& from, snapshot::Report& to)
+{
+    for (const ReportEntry& entry : from.entries)
+    {
+        snapshot::Outcome outcome = snapshot::Outcome::Applied;
+        switch (entry.outcome)
+        {
+            case Outcome::Applied: outcome = snapshot::Outcome::Applied; break;
+            case Outcome::Approximated: outcome = snapshot::Outcome::Approximated; break;
+            case Outcome::Ignored: outcome = snapshot::Outcome::Ignored; break;
+            case Outcome::Unknown: outcome = snapshot::Outcome::Unknown; break;
+        }
+        to.Add(entry.block, outcome, entry.note);
+    }
+    to.warnings.insert(to.warnings.end(), from.warnings.begin(), from.warnings.end());
+}
+
+snapshot::Image LoaderSZX::BuildImage(const Stage& stage, const std::string& path)
+{
+    snapshot::Image image;
+    image.format = "szx";
+    image.sourcePath = path;
+    image.formatVersion = std::to_string(stage.versionMajor) + "." + std::to_string(stage.versionMinor);
+    image.rawMachineId = "szx " + std::to_string(stage.machineId);
+    image.warnings = stage.warnings;
+
+    const uint8_t id = stage.machineId;
+    switch (id)
+    {
+        case Mid16K:
+        case Mid48K:
+        case MidNtsc48K: image.machineHint = "48k"; break;
+        case Mid128K:
+        case Mid128Ke: image.machineHint = "128k"; break;
+        case MidPlus2: image.machineHint = "plus2"; break;
+        case MidPlus2A: image.machineHint = "plus2a"; break;
+        case MidPlus3:
+        case MidPlus3E: image.machineHint = "plus3"; break;
+        case MidPentagon128: image.machineHint = "pentagon128"; break;
+        case MidPentagon512: image.machineHint = "pentagon512"; break;
+        case MidPentagon1024: image.machineHint = "pentagon1024"; break;
+        case MidScorpion: image.machineHint = "scorpion256"; break;
+        case MidTc2048:
+        case MidTc2068:
+        case MidTs2068:
+        case MidSe: image.machineHint = "timex"; break;
+        default: image.machineHint = "unknown"; break;
+    }
+    const bool is48 = id == Mid16K || id == Mid48K || id == MidNtsc48K;
+    image.memoryModel = is48 ? snapshot::MemoryModel::Mem48k
+                        : (id == MidPentagon512 || id == MidPentagon1024 || id == MidScorpion)
+                            ? snapshot::MemoryModel::Extended
+                            : snapshot::MemoryModel::Mem128k;
+    image.timingHint = is48 ? "48k" : (id == MidPentagon128 || id == MidPentagon512 || id == MidPentagon1024) ? "pentagon" : "128k";
+
+    for (const auto& page : stage.pages)
+        image.banks[page.first] = page.second;
+
+    if (stage.z80)
+    {
+        const Z80Regs& z = *stage.z80;
+        snapshot::Cpu& cpu = image.cpu;
+        cpu.af = z.af;
+        cpu.bc = z.bc;
+        cpu.de = z.de;
+        cpu.hl = z.hl;
+        cpu.af2 = z.af1;
+        cpu.bc2 = z.bc1;
+        cpu.de2 = z.de1;
+        cpu.hl2 = z.hl1;
+        cpu.ix = z.ix;
+        cpu.iy = z.iy;
+        cpu.sp = z.sp;
+        cpu.pc = z.pc;
+        cpu.i = z.i;
+        cpu.r = z.r;
+        cpu.iff1 = z.iff1 != 0;
+        cpu.iff2 = z.iff2 != 0;
+        cpu.im = z.im;
+        cpu.memptr = z.memptr;
+        cpu.halted = (z.flags & kHalted) != 0;
+        cpu.eiShadow = (z.flags & kSuppressInts) != 0;
+        image.framePosition = z.cyclesStart;
+    }
+    if (stage.spec)
+    {
+        image.border = stage.spec->border & 7u;
+        image.paging.p7FFD = stage.spec->port7FFD;
+        if (HasPort1FFD(id))
+            image.paging.p1FFD = stage.spec->port1FFDorEFF7;
+        if (HasPortEFF7(id))
+            image.paging.pEFF7 = stage.spec->port1FFDorEFF7;
+    }
+    if (stage.beta && (stage.beta->flags & kBetaPaged))
+        image.trdosPaged = true;
+    if (stage.ay)
+    {
+        snapshot::Ay ay;
+        ay.registers = stage.ay->registers;
+        ay.selected = stage.ay->currentRegister;
+        image.ay.push_back(ay);
+    }
+
+    // What else the file carries (descriptors; the payloads stay with the stage until a commit reads the image)
+    auto add = [&](const char* origin, const char* kind, size_t size, std::string note = {}) {
+        image.extensions.push_back({origin, kind, size, std::move(note), {}});
+    };
+    if (stage.beta)
+        add("szx:B128", "beta128", kBeta128Size, "Beta 128 interface and its WD1793");
+    for (const BetaDisk& d : stage.betaDisks)
+        add("szx:BDSK", "disk", d.image.size(), (d.image.empty() ? "linked " + d.fileName : std::string("embedded")) +
+                                                    ", drive " + std::to_string(d.drive));
+    if (stage.plus3)
+        add("szx:+3", "plus3-fdc", 2);
+    for (const DskFile& d : stage.dskFiles)
+        add("szx:DSK", "disk", 0, "linked " + d.fileName + ", drive " + std::to_string(d.drive));
+    if (stage.tape)
+        add("szx:TAPE", "tape", stage.tape->image.size(),
+            stage.tape->image.empty() ? "linked " + stage.tape->fileName : std::string("embedded ") + stage.tape->extension);
+    if (stage.gs)
+        add("szx:GS", "general-sound", kGsSize, "General Sound, " + std::to_string(stage.gsPages.size()) + " RAM pages");
+    if (stage.keyboard)
+        add("szx:KEYB", "keyboard", 5);
+    if (stage.joysticks)
+        add("szx:JOY", "joystick", 6);
+    if (stage.mouse)
+        add("szx:AMXM", "mouse", 7);
+    if (stage.covox)
+        add("szx:COVX", "covox", 1);
+    if (stage.specDrum)
+        add("szx:DRUM", "specdrum", 1);
+    for (const auto& other : stage.otherBlocks)
+        add(("szx:" + other.first).c_str(), "unhandled", other.second, "a block this emulator does not take");
+    return image;
 }
 
 bool LoaderSZX::save()
