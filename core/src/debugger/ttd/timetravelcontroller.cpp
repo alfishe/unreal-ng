@@ -755,14 +755,13 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     TTDSessionInfo info;
     info.state = _state;
     info.checkpointCount    = _timeline.size();
-    info.pageStoreBytes     = _pageStore.GetCapacityBytes();
-    info.pageStoreUsedBytes = _pageStore.GetUsedBytes();
-    // Distinct RAM snapshots currently live in the page store. Each slot
-    // is a 4 KB sub-page captured at some frame; slots are shared across
-    // checkpoints via refcount when a sub-page hasn't changed. This is
-    // the most direct measure of "how much unique state has been captured"
-    // and tracks the working-set size of the session.
-    info.baselineFramesCaptured = _pageStore.GetUsedSlots();
+    // The engine's piece store (Phase 5, C4a): its arena, the compressed
+    // pieces in it, and the distinct 4 KB versions it holds - the most direct
+    // measure of how much unique state has been captured
+    const TTDPieceStore& store = _engine->PieceStore();
+    info.pageStoreBytes     = store.ArenaBytes();
+    info.pageStoreUsedBytes = store.PayloadBytes();
+    info.baselineFramesCaptured = store.LiveVersions();
 
     // Real heap footprint — the actual number to display for "session
     // size". Distinct from pageStore* above: this includes checkpoint
@@ -788,9 +787,9 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         info.machine.modelId = info.modelId;
         info.machine.ramPageBound = _modelRamPages;
         info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
-        for (const auto& blob : _timeline.front().peripheralBlobs)
-            if (blob.first < 64)
-                info.machine.peripheralMask |= uint64_t(1) << blob.first;
+        for (const TTDDeviceEntry& device : _engine->Devices().Entries())
+            if (const uint8_t id = static_cast<uint8_t>(device.descriptor.legacyId); id < 64)
+                info.machine.peripheralMask |= uint64_t(1) << id;
         info.machine.notRecordedMask = NotRecordedMask();
         ttd::DescribeRecordedMachine(info.machine);
     }
@@ -830,17 +829,13 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
-    info.compressionRatio = _pageStore.GetCompressionRatio();
-    info.livePayloadBytes = _pageStore.GetLivePayloadBytes();
-    info.keyFrameCount    = 0;
-    info.deltaFrameCount  = 0;
-    for (const auto& cp : _timeline)
-    {
-        if (cp.frameKind == TTDFrameKind::KeyFrame)
-            ++info.keyFrameCount;
-        else
-            ++info.deltaFrameCount;
-    }
+    // Key frames: where a segment starts, every piece stored whole (D41)
+    info.livePayloadBytes = store.PayloadBytes();
+    info.compressionRatio = info.livePayloadBytes
+                                ? static_cast<double>(store.LiveVersions()) * kTTDPieceSize / static_cast<double>(info.livePayloadBytes)
+                                : 0.0;
+    info.keyFrameCount    = _timeline.empty() ? 0 : _engine->Segments().size();
+    info.deltaFrameCount  = _timeline.size() - info.keyFrameCount;
 
     if (!_timeline.empty())
     {
@@ -1055,35 +1050,25 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 {
     TTDHeapBreakdown h;
 
-    // Page store: slot table plus every compressed payload allocation (the
-    // payloads are separate heap blocks; the slot table alone left out the
-    // pages themselves - B7). Allocated, not live: free-list slots keep
-    // their capacity until reused.
-    const size_t payloadCapacity = _pageStore.PayloadCapacityBytes();
-    h.pageStoreTable = _pageStore.HeapBytes() - payloadCapacity;
-    h.ramPayload = _pageStore.GetLivePayloadBytes();
-    h.ramPayloadSlack = payloadCapacity - h.ramPayload;
-
-    // Per-checkpoint: the struct itself + every vector's allocated backing
-    // (capacity, not size — capacity is what's actually on the heap).
-    //sizeof(TTDCheckpoint) covers time, globalT, cpu, chipset, journal
-    // offsets, and the std::vector headers (pointer/size/capacity triple).
-    // The vector capacity × element-size additions below account for the
-    // heap allocations those vector headers point at.
+    // The engine (Phase 5, C4a): its piece store, reference tables and
+    // capture state; checkpoints with the frame table; device state is in its
+    // pieces. Its copies of the journals are counted with v1's below
+    const TTDEngineHeapBreakdown e = _engine->HeapBreakdown();
+    h.pageStoreTable = e.pieceVersions + e.referenceTables + e.deltaBase + e.bookkeeping;
+    h.ramPayload = e.piecePayload;
+    h.ramPayloadSlack = e.arenaSlack;
+    h.checkpoints = e.checkpoints + e.frameTable + _timeline.capacity() * sizeof(TTDCheckpoint);
+    h.deviceBlobs = e.deviceBlobs + e.frameStreams;
     for (const TTDCheckpoint& cp : _timeline)
-    {
-        h.checkpoints += sizeof(TTDCheckpoint);
         for (const auto& entry : cp.peripheralBlobs)
-            h.deviceBlobs += entry.second.capacity() * sizeof(uint8_t);
-        h.pageRefs += cp.ramPages.capacity() * sizeof(TTDPageRef);
-    }
+            h.deviceBlobs += entry.second.capacity();
 
     // Input journal + external-event journal — same pattern: capacity is
     // what's allocated, size is what's logically used. Plus the session-scope
     // dirty-page scratch buffer (reused every frame, counted once).
     h.inputJournals = _inputJournal.Events().capacity() * sizeof(TTDInputEvent) +
                       _externalEvents.Events().capacity() * sizeof(TTDExternalEvent) +
-                      _dirtyScratch.capacity() * sizeof(uint16_t);
+                      _dirtyScratch.capacity() * sizeof(uint16_t) + e.eventLog;
 
     // Write journal (committed ring chunks, not the nominal 64 MB), coverage
     // index and the decoded-frame cache hold the session's data; without a
@@ -1096,11 +1081,12 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
             const size_t used = _writeJournal->Size() * sizeof(TTDWriteRecord);
             h.writeJournalSlack = h.writeJournal > used ? h.writeJournal - used : 0;
         }
+        h.writeJournal += e.writeJournal;
         h.coverage = _coverageIndex.HeapBytes();
         h.coverageSlack = _coverageIndex.CompressedSlackBytes();
-        h.portReads = _portReads.HeapBytes();
-        h.portWrites = _portWrites.HeapBytes();
-        h.portJournalSlack = _portReads.CompressedSlackBytes() + _portWrites.CompressedSlackBytes();
+        h.portReads = _portReads.HeapBytes() + e.portReads + e.busVectors + e.mediaReads;
+        h.portWrites = _portWrites.HeapBytes() + e.portWrites;
+        h.portJournalSlack = _portReads.CompressedSlackBytes() + _portWrites.CompressedSlackBytes() + e.portJournalSlack;
         if (_frameCache)
             h.frameCache = _frameCache->Bytes();
     }
@@ -2076,38 +2062,22 @@ void TimeTravelController::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
     RestoreCheckpoint(cp);
     ArmInputPlayback();
 
-    // Phase 3 A/B: the engine's bus journals from its checkpoint's cursors
-    if (_replayEngine)
+    // The CPU replays the recorded IN results from the engine's bus journals,
+    // from its checkpoint's cursors; the live devices still answer, and a
+    // differing answer is counted, not used
+    const int64_t index = _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0});
+    _portReads.Stop();
+    _portWrites.Stop();
+    if (index >= 0 && _portJournalRecorded)
     {
-        const int64_t index = _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0});
-        _portReads.Stop();
-        _portWrites.Stop();
-        if (index >= 0 && _portJournalRecorded)
-        {
-            const TTDEngineCheckpoint* ecp = _replayEngine->Checkpoint(size_t(index));
-            _replayEngine->PlayBus(ecp->busReadCursor, ecp->busWriteCursor, ecp->busVectorCursor);
-            _replayEngine->MediaReads().StartPlayback(ecp->mediaReadCursor);
-            _context->ttdPortReads = _replayEngine->BusReadsForPlayback();
-            _context->ttdPortWrites = _replayEngine->BusWritesForPlayback();
-        }
-        else
-            SyncPortJournalHook();
-        return;
-    }
-
-    // The CPU replays the recorded IN results from here; the live devices
-    // still answer, and a differing answer is counted, not used
-    if (_portJournalValid)
-    {
-        _portReads.StartPlayback(cp.portReadCursor);
-        _portWrites.StartPlayback(cp.portWriteCursor);
+        const TTDEngineCheckpoint* ecp = _replayEngine->Checkpoint(size_t(index));
+        _replayEngine->PlayBus(ecp->busReadCursor, ecp->busWriteCursor, ecp->busVectorCursor);
+        _replayEngine->MediaReads().StartPlayback(ecp->mediaReadCursor);
+        _context->ttdPortReads = _replayEngine->BusReadsForPlayback();
+        _context->ttdPortWrites = _replayEngine->BusWritesForPlayback();
     }
     else
-    {
-        _portReads.Stop();
-        _portWrites.Stop();
-    }
-    SyncPortJournalHook();
+        SyncPortJournalHook();
 }
 
 const char* TimeTravelController::PortJournalUnsupportedReason() const

@@ -485,3 +485,26 @@ TEST_F(TimeTravelController_Test, BuiltJournalAnswersAsV1)
         EXPECT_EQ(_controller->CurrentPosition(), end) << "answered from the index: the machine stays";
     }
 }
+
+/// Status from the engine (C4a): the recorded machine described as v1
+/// describes it, the store's figures and key frames from the engine
+TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordBoth());
+    const ttd::TTDSessionInfo a = _v1->GetSessionInfo();
+    const ttd::TTDSessionInfo b = _controller->GetSessionInfo();
+    EXPECT_EQ(a.checkpointCount, b.checkpointCount);
+    EXPECT_EQ(a.sessionStartFrame, b.sessionStartFrame);
+    EXPECT_EQ(a.currentEndFrame, b.currentEndFrame);
+    EXPECT_EQ(a.machine.peripheralMask, b.machine.peripheralMask) << "the same devices recorded";
+    EXPECT_NE(b.machine.peripheralMask, 0u);
+    EXPECT_EQ(a.inputEventCount, b.inputEventCount);
+
+    const ttd::TimeTravelEngine& engine = _controller->GetEngine();
+    EXPECT_EQ(b.pageStoreUsedBytes, engine.PieceStore().PayloadBytes());
+    EXPECT_EQ(b.baselineFramesCaptured, engine.PieceStore().LiveVersions());
+    EXPECT_GT(b.compressionRatio, 1.0);
+    EXPECT_EQ(b.keyFrameCount, engine.Segments().size()) << "a key frame starts each segment";
+    EXPECT_EQ(b.keyFrameCount + b.deltaFrameCount, b.checkpointCount);
+    EXPECT_GE(_controller->GetHeapBreakdown().Total(), engine.HeapBreakdown().Total()) << "the engine's memory is counted";
+}
