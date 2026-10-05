@@ -88,7 +88,7 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
         request.ramPowerOn ? *request.ramPowerOn
                            : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
     // The new machine's config: the old instance's own override (a restart of the same model), the power-on RAM,
-    // then the slot set
+    // the running settings the request carries, then the slot set
     // (exact, or the old machine's cards carried and planned against the new model)
     std::optional<SlotManager::Result> carried;
     if (!request.slotSet && old->GetContext()->pSlotManager != nullptr)
@@ -96,10 +96,13 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     auto carryReport = std::make_shared<SlotManager::CarryReport>();
     std::function<void(CONFIG&)> configOverride =
         [instance = request.keepConfigOverride ? old->GetConfigOverride() : std::function<void(CONFIG&)>{},
-         ram = Config::RamPowerOnOverride(ramPowerOn), slotSet = request.slotSet, carried, carryReport](CONFIG& config) {
+         ram = Config::RamPowerOnOverride(ramPowerOn), carrySettings = request.carrySettings, slotSet = request.slotSet,
+         carried, carryReport](CONFIG& config) {
             if (instance)
                 instance(config);
             ram(config);
+            if (carrySettings)
+                carrySettings(config);
             if (slotSet)
                 SlotManager::UseSlots(*slotSet, config);
             else if (carried)

@@ -105,7 +105,9 @@ ConnectTimeoutMs=10000
 ```
 
 The runtime feature `network` (alias `net`, on by default) unplugs a fitted
-card and plugs it back: `PUT /api/v1/emulator/{id}/feature/network`.
+card and plugs it back: `PUT /api/v1/emulator/{id}/feature/network`. It is a
+power switch, not a slot change: the slot report keeps the card in its slot,
+with `state` = `feature network off` while the feature is off.
 
 The same settings change at runtime (refused while a TTD recording runs). The
 ZX-bus cards are slots: a `card` value that adds or removes ZXNETUSB or
@@ -114,7 +116,9 @@ ZX-WiFi is a slot change applied by a **restart** of the machine (like
 (`restart.emulatorId` in the reply), the machine state is lost, the media
 follow, and the other keys of the same request are applied to the restarted
 machine. Settings without a card change apply in place (status `accepted`: the
-devices are fitted again, every connection closes).
+devices are fitted again, every connection closes). Every slot restart (also a
+`slots plug` of an unrelated card) keeps the network settings the machine runs
+with, those changed at run time included; the request's own keys win.
 
 ```json
 {"tool": "emulator_manage", "arguments": {"action": "network_configure",

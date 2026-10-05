@@ -159,3 +159,6 @@ curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
   change applied by a restart (owner decision Q11): the same plan, flags and reply as `plug` / `remove` here, then the
   other settings of the request go to the restarted machine. Settings without a card change apply in place (status
   `accepted`, no restart). ATM2IOESP (the ATM Turbo 2+ INTERNAL connector, not a bus slot) still changes in place.
+  Every slot restart keeps the running network settings (also those changed at run time); the request's keys win.
+- **The runtime feature `network` off** is a power switch: a fitted `zxnetusb` / `zx-wifi` stays in the report with
+  `state` = `feature network off`.

@@ -518,6 +518,85 @@ TEST_F(SlotControl_Test, NetworkSettingsWithoutCardChangeStayInPlace)
     ttd->StopRecording();
 }
 
+/// The running [NETWORK] settings are configuration, not machine state (owner decision 2026-10-05): a slot restart
+/// carries them, also the plug of a card that has nothing to do with the network; the keys of a network request win
+/// over the carried ones, and the slot set decides the ZX-bus card bits
+TEST_F(SlotControl_Test, SlotRestartCarriesTheRunningNetworkSettings)
+{
+    std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"zxbus.1", "zxnetusb"}});
+    ASSERT_NE(emulator, nullptr);
+    const std::string id = emulator->GetId();
+    const uint8_t hostAccess = emulator->GetContext()->config.network.hostAccess;
+    const std::string flipped = hostAccess != 0 ? "off" : "on";
+    emulator.reset();
+
+    // Changed at run time, in place (no card change)
+    const SlotControlReply inPlace = Run(NetworkRequest(
+        id, {{"hosts", "carry.test=10.0.2.55"}, {"connect_timeout_ms", "7777"}, {"host_access", flipped}}));
+    ASSERT_EQ(inPlace.status, "accepted") << inPlace.message;
+
+    // An unrelated card: the restart keeps the settings
+    const SlotControlReply plug = Run(Request("plug", id, "zxbus.next", "gs"));
+    ASSERT_EQ(plug.status, "applied") << plug.message;
+    ASSERT_NE(plug.emulator, nullptr);
+    EXPECT_NE(plug.emulator->GetId(), id) << "a restart";
+    const auto& net = plug.emulator->GetContext()->config.network;
+    EXPECT_STREQ(net.hosts, "carry.test=10.0.2.55");
+    EXPECT_EQ(net.connectTimeoutMs, 7777u);
+    EXPECT_EQ(net.hostAccess, hostAccess != 0 ? 0 : 1);
+    EXPECT_EQ(net.card & NetworkManager::kZxBusCards, networkspec::kCardZxNetUsb) << "the slot set's card";
+    ASSERT_NE(plug.emulator->GetContext()->pVirtualNetwork, nullptr) << "the live network follows the settings";
+    EXPECT_EQ(plug.emulator->GetContext()->pVirtualNetwork->Config().hosts.at("carry.test"), NetIp(10, 0, 2, 55));
+
+    // A network request with a card change: its own keys win, the others are carried, the card bits follow the plan
+    const SlotControlReply swap =
+        Run(NetworkRequest(plug.emulator->GetId(), {{"card", "zxwifi"}, {"connect_timeout_ms", "9000"}}));
+    ASSERT_EQ(swap.status, "applied") << swap.message;
+    ASSERT_NE(swap.emulator, nullptr);
+    const auto& after = swap.emulator->GetContext()->config.network;
+    EXPECT_EQ(after.connectTimeoutMs, 9000u) << "the request's value wins";
+    EXPECT_STREQ(after.hosts, "carry.test=10.0.2.55") << "carried";
+    EXPECT_EQ(after.hostAccess, hostAccess != 0 ? 0 : 1) << "carried";
+    EXPECT_EQ(after.card & NetworkManager::kZxBusCards, networkspec::kCardZxWifi);
+
+    // A remove is a slot restart too: the network card goes, the settings stay
+    std::string wifiSlot;
+    for (const SlotManager::Slot& slot : swap.emulator->GetContext()->pSlotManager->Current().entries)
+    {
+        if (slot.entry.card == "zx-wifi")
+            wifiSlot = slot.entry.slot;
+    }
+    ASSERT_FALSE(wifiSlot.empty());
+    const SlotControlReply undone = Run(Request("remove", swap.emulator->GetId(), wifiSlot));
+    ASSERT_EQ(undone.status, "applied") << undone.message;
+    EXPECT_STREQ(undone.emulator->GetContext()->config.network.hosts, "carry.test=10.0.2.55");
+    EXPECT_EQ(undone.emulator->GetContext()->config.network.card & NetworkManager::kZxBusCards, 0);
+}
+
+/// The runtime feature `network` is a power switch of the network devices (owner decision 2026-10-05): with it off a
+/// fitted ZX-bus network card stays in its slot and the slot report's state says "feature network off"
+TEST_F(SlotControl_Test, NetworkFeatureOffShowsInTheSlotState)
+{
+    std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"zxbus.1", "zxnetusb"}, {"zxbus.2", "gs"}});
+    ASSERT_NE(emulator, nullptr);
+    auto states = [&emulator]() {
+        std::vector<std::string> out;
+        const StateNode report = DeviceState::Slots(emulator->GetContext());
+        for (const StateNode& slot : Field(report, "slots").items)
+            out.push_back(Field(slot, "card").s + ": " + Field(slot, "state").s);
+        return out;
+    };
+    EXPECT_EQ(states(), (std::vector<std::string>{"zxnetusb: active", "gs: active"}));
+
+    emulator->GetFeatureManager()->setFeature(Features::kNetwork, false);
+    EXPECT_EQ(states(), (std::vector<std::string>{"zxnetusb: feature network off", "gs: active"}));
+    EXPECT_EQ(FittedOf(*emulator), (std::vector<std::string>{"zxbus.1 = zxnetusb", "zxbus.2 = gs"}))
+        << "the card stays in its slot";
+
+    emulator->GetFeatureManager()->setFeature(Features::kNetwork, true);
+    EXPECT_EQ(states(), (std::vector<std::string>{"zxnetusb: active", "gs: active"}));
+}
+
 /// Several slot requests planned into one change: each against the set the previous one leaves
 TEST_F(SlotControl_Test, PlanChangesChainsTheRequests)
 {

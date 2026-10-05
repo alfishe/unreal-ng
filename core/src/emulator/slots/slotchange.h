@@ -12,7 +12,8 @@
 /// the media follow into the slots with the same id, the media of a removed card (`sd.ngs` of a NeoGS) are reported
 /// as closed or detached, and a dirty one needs the request's disposition (save / discard, R-OP-6). If the new
 /// machine cannot be created (a card that cannot be built), the old machine stays as it was and the result carries
-/// the error.
+/// the error. The running [NETWORK] settings (changed at run time or not) are carried into the restarted machine:
+/// they are configuration, not machine state; the slot set decides the ZX-bus network cards.
 ///
 /// Example: a Pentagon with `ay-socket = tsfm`, `zxbus.1 = neogs`; the request "plug multisound into zxbus.next"
 /// without replaceIfIncompatible is refused, listing the TSFM and the NeoGS it would displace; with the flag the

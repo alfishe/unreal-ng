@@ -152,11 +152,13 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     25 checks; [tdd.md](tdd.md) §16)
   - [x] side note (not SL-7): the plan of a MultiSound removal listed `ay-socket` among the lost functions although the
     board AY comes back un-shadowed - fixed 2026-10-05 in the planner (D10 lists only what nothing offers afterwards)
-  - [ ] owner question: a restart (every slot change, also the network card change) starts the machine from its
-    configuration, so network settings changed at run time and not repeated in the request are lost (hosts, com_port,
-    ...). Carry the running machine's `[NETWORK]` settings across every slot restart? Recommendation: yes, in
-    `SlotChange::Run` for every restart (the settings are configuration, not machine state)
-  - [ ] owner question: the runtime feature `network` (on / off) still unplugs and plugs the fitted cards in place,
-    while the slot report keeps naming them. Keep it as a power switch (the report shows the feature state), or make it a
-    slot change too? Recommendation: keep it a power switch and show "feature network off" in the slot report's state
+  - [x] owner decision 2026-10-05: a slot restart (every `SlotChange::Run`, also the network card change) carries the
+    running `[NETWORK]` settings (configuration, not machine state); the request's own keys win, the slot set decides
+    the ZX-bus card bits - done 2026-10-05 ([tdd.md](tdd.md) §16, `SlotControl_Test.SlotRestartCarriesTheRunningNetworkSettings`)
+  - [x] owner decision 2026-10-05: the runtime feature `network` stays a power switch; the slot report's state of a
+    fitted ZX-bus network card says `feature network off` while it is off - done 2026-10-05 ([tdd.md](tdd.md) §16,
+    `SlotControl_Test.NetworkFeatureOffShowsInTheSlotState`)
+  - [ ] owner question: `avr_firmware` / `kbc_firmware` (keys of the network settings, but `[EVO] Avr=` / `[ATM] Kbc=`,
+    not `[NETWORK]`) are not carried across a slot restart. Carry them too? Recommendation: yes (a chosen firmware is
+    configuration as well); left out until decided because the decision named `[NETWORK]`
 - [ ] SL-8 Sprinter ISA slots in the report; ZX-bus adapter as a bus host (ISA I5)

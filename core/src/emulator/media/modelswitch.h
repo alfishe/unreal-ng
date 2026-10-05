@@ -63,6 +63,10 @@ struct ModelSwitchRequest
     /// machine too (a restart of the same model: a machine variant's board, a
     /// create-time option); off for a switch to another model
     bool keepConfigOverride = false;
+    /// Running settings the new machine takes over from the old one (configuration, not machine state), applied
+    /// after the instance override and before the slot set: a slot restart carries [NETWORK] this way (owner decision
+    /// 2026-10-05, ZX-bus slots tdd §16). Empty: the new machine starts from its configuration alone
+    std::function<void(CONFIG&)> carrySettings;
 };
 
 struct ModelSwitchResult

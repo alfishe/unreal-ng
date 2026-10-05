@@ -94,6 +94,11 @@ SlotChangeResult SlotChange::Run(const SlotChangeRequest& request)
     restart.beforeRelease = request.beforeRelease;
     restart.slotSet = out.plan.config;
     restart.keepConfigOverride = true;
+    // The running [NETWORK] settings are configuration, not machine state (owner decision 2026-10-05): the restarted
+    // machine keeps them - a hosts entry or host_access changed at run time survives the plug of an unrelated card. The
+    // slot set then decides the ZX-bus card bits of Card=; a request's own settings (verb network) are applied to the
+    // restarted machine afterwards, so they win
+    restart.carrySettings = [network = context->config.network](CONFIG& config) { config.network = network; };
     out.previousEmulatorId = request.emulatorId;
     out.wasRunning = old->IsRunning() && !old->IsPaused();
     context = nullptr;

@@ -121,8 +121,13 @@ changes; a ZX-bus card behind the ATM Turbo 2+ CPU-socket adapter is an unrealis
 
 Settings without a card change (`hosts`, `com_port`, `zx_wifi`, ...) apply to the running machine, without a restart
 (status `accepted`). The ATM2IOESP card sits on the ATM Turbo 2+ INTERNAL connector, not on a bus slot: it still
-changes in place. A restart starts the new machine from its configuration: network settings changed earlier at run
-time and not repeated in the request are not carried over.
+changes in place. Every restart (a network card change, a plug, a remove, an Undo) keeps the network settings the
+machine runs with, also those changed earlier at run time: they are configuration, not machine state. The keys of the
+request itself win over them, and the slot set decides which ZX-bus network cards are fitted. Example: `network set
+hosts=a.test=10.0.2.77`, then `slots plug zxbus.next gs`: the restarted machine still resolves `a.test`.
+
+The runtime feature `network` is a power switch: off, the fitted ZX-bus network cards stay in their slots without
+power, and the slot report shows their state as `feature network off`.
 
 ## Model switch
 

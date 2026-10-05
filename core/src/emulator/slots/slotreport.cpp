@@ -3,6 +3,7 @@
 
 #include "emulator/state/devicestate.h"
 
+#include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/slots/slotmanager.h"
@@ -45,7 +46,9 @@ bool Applies(const CardDef& card, const CardOptions& options, const When& when)
     return when.option == Opt::None || (OptionBits(card, options, when.option) & when.anyOf) != 0;
 }
 
-StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner)
+/// `networkOff`: the runtime feature `network` is off - a power switch of the network devices (owner decision
+/// 2026-10-05): a fitted ZX-bus network card stays in its slot, unpowered, and its state says so
+StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner, bool networkOff)
 {
     StateNode node = StateNode::Object();
     node["slot"] = slot.entry.slot;
@@ -62,7 +65,9 @@ StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner)
     }
     node["adapter"] = slot.entry.adapter;
     node["fit"] = FitName(slot.fit);
-    node["state"] = slot.entry.disabled ? "disabled" : "active";
+    node["state"] = slot.entry.disabled                                     ? "disabled"
+                    : networkOff && slot.group == SlotCardGroup::Network ? "feature network off"
+                                                                         : "active";
     if (slot.entry.disabled)
     {
         node["reason"] = slot.entry.disabledReason;
@@ -157,10 +162,11 @@ StateNode Slots(EmulatorContext* context)
     }
     node["buses"] = std::move(buses);
 
+    const bool networkOff = context->pFeatureManager != nullptr && !context->pFeatureManager->isEnabled(Features::kNetwork);
     StateNode slotList = StateNode::Array();
     for (const SlotManager::Slot& slot : result.entries)
     {
-        slotList.push(SlotNode(slot, planner));
+        slotList.push(SlotNode(slot, planner, networkOff));
     }
     node["slots"] = std::move(slotList);
 

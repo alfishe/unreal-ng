@@ -914,15 +914,27 @@ an unrealistic fit that needs the replace flag (Q5).
 
 **Network state across the restart** follows SL-6: the machine state is lost (every connection closes, as an in-place
 refit closed them too), the media follow, the new machine starts from its configuration (INI + the instance's create
-override + the new `[SLOTS]`), then the request's other keys are applied. Network settings changed at run time earlier
-and not repeated in the request are not carried (owner question in [TODO.md](TODO.md)).
+override + the new `[SLOTS]`), then the request's other keys are applied.
+
+**Running network settings across every slot restart (owner decision 2026-10-05).** The `[NETWORK]` settings are
+configuration, not machine state: `SlotChange::Run` hands the old machine's `config.network` to the restart
+(`ModelSwitchRequest::carrySettings`, applied after the instance's create override and before the slot set), so a
+hosts entry, `host_access`, `connect_timeout_ms`, a `com_port` peer changed at run time survive every slot change -
+the plug of an unrelated card, a remove, an Undo, the network card change. The slot set then writes the ZX-bus card
+bits of `Card=` (ATM2IOESP, not a bus card, is carried), and the network verb applies the request's own keys to the
+restarted machine afterwards, so they win. Example: `network set hosts=carry.test=10.0.2.55` (in place), then
+`slots plug zxbus.next gs`: the restarted machine resolves `carry.test`; `network set card=zxwifi
+connect_timeout_ms=9000` afterwards keeps the hosts entry and takes 9000 ms. Not carried: `avr_firmware` /
+`kbc_firmware` (`[EVO]` / `[ATM]`, owner question in [TODO.md](TODO.md)); a model switch to another model starts from
+its configuration as before.
 
 **Deviations, with the reason:**
 
 1. A ZX-Poly machine's network cards cannot change at run time any more: `SlotChange` refuses ZX-Poly (its modules
    share one configuration). Settings without a card change still apply there.
 2. The runtime feature `network` (on / off) still unplugs and plugs the fitted cards in place: it is a power switch of
-   the network devices, not a card change; the slot report keeps naming the cards (owner question in [TODO.md](TODO.md)).
+   the network devices, not a card change (owner decision 2026-10-05); the slot report keeps naming the cards and their
+   `state` reads `feature network off` while the feature is off (`active` again when it is on).
 3. Tests that used the in-place change to fit a card (`ComPort_Test`, `Atm2KbcSerial_Test`, `NetworkManager_Test`) go
    through the verb now (`core/tests/_helpers/networksettings.h`); the ZX-WiFi clash tests on the ZX-Evo and TS-Conf
    expect the plan's refusal instead of a "not fitted" note.
@@ -935,7 +947,10 @@ the flag, recording), `PlanChangesChainsTheRequests`; `CliSlots_Test.NetworkSetI
 `McpTools_Test.EmulatorManage_NetworkConfigure_PostsTheSettings`; `NetworkManager_Test.SettingsChangeAtRuntime`
 (rewritten: `RequestChange` refuses the card, the verb restarts with it, in-place settings), `ComPort_Test.*` and
 `Atm2KbcSerial_Test.ZxWifiFitsBeside` through the verb; `NetworkPanelModel_Test.TheZxBusCardsGoThroughTheSlots`
-(`hud-core-tests`), `SlotsWindow_Test.NetworkCardsAreASlotChange` (`unreal-qt-tests`). MinGW `-fsyntax-only -Werror`
+(`hud-core-tests`), `SlotsWindow_Test.NetworkCardsAreASlotChange` (`unreal-qt-tests`);
+`SlotControl_Test.SlotRestartCarriesTheRunningNetworkSettings` (settings changed in place survive the plug of a GS,
+the request's `connect_timeout_ms` wins over the carried one, a remove keeps them, the card bits follow the slot set),
+`SlotControl_Test.NetworkFeatureOffShowsInTheSlotState`. MinGW `-fsyntax-only -Werror`
 clean on every changed core file. No per-instruction or per-port path changed, no `CONFIG` / `EmulatorContext` field.
 
 **Planner (side note of SL-7, closed):** a plan's lost functions (D10) list only what nothing offers once the plan is
