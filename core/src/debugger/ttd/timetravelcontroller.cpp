@@ -1564,6 +1564,23 @@ void TimeTravelController::FlushToEngine()
                  &_shadowFacts);
     _shadowFacts.clear();
     _shadowEvents.facts = 0;
+    SyncEngineWrites(false);
+}
+
+void TimeTravelController::SyncEngineWrites(bool whole)
+{
+    TTDWriteIndex& writes = _engine->Writes();
+    if (whole)
+    {
+        writes.Clear();
+        _shadowJournalSeq = 0;
+    }
+    if (!_writeJournal || !_engine->IsSessionOpen())
+        return;
+    _shadowJournalSeq = std::max(_shadowJournalSeq, _writeJournal->SeqTail());
+    for (; _shadowJournalSeq < _writeJournal->SeqHead(); ++_shadowJournalSeq)
+        writes.Append(_writeJournal->RecordAt(_shadowJournalSeq));
+    writes.SetSegments(JournalSegments());
 }
 
 std::optional<TTDExternalEvent> TimeTravelController::FirstBarrierBetween(const TTDTimePoint& from,
@@ -3397,6 +3414,7 @@ void TimeTravelController::SyncTimelineFront()
 
     // The journals start where the history now starts
     const TTDCheckpoint& front = _timeline.front();
+    _engine->Writes().DropBefore(CheckpointStartT(front));
     _inputJournal.DropBefore(front.time);
     _externalEvents.DropBefore(front.time);
     _bookmarks.DropBefore(front.time);
@@ -3812,13 +3830,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         return false;
     }
     // The write journal's new records and its spans (D40)
-    if (_writeJournal)
-    {
-        _shadowJournalSeq = std::max(_shadowJournalSeq, _writeJournal->SeqTail());
-        for (; _shadowJournalSeq < _writeJournal->SeqHead(); ++_shadowJournalSeq)
-            engine.Writes().Append(_writeJournal->RecordAt(_shadowJournalSeq));
-        engine.Writes().SetSegments(JournalSegments());
-    }
+    SyncEngineWrites(false);
     // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
     FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads,
                  &_shadowFacts);
@@ -3920,15 +3932,8 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
             _shadowBusReads = std::min<uint64_t>(_shadowBusReads, _portReads.Size());
             _shadowBusWrites = std::min<uint64_t>(_shadowBusWrites, _portWrites.Size());
         }
-        // The write journal is v1's until C3: the engine takes it again whole
-        _engine->Writes().Clear();
-        if (_writeJournal)
-        {
-            for (_shadowJournalSeq = _writeJournal->SeqTail(); _shadowJournalSeq < _writeJournal->SeqHead();
-                 ++_shadowJournalSeq)
-                _engine->Writes().Append(_writeJournal->RecordAt(_shadowJournalSeq));
-            _engine->Writes().SetSegments(JournalSegments());
-        }
+        // The live ring was cut at the resume point: the engine takes it again whole
+        SyncEngineWrites(true);
         // The next capture continues from the kept checkpoint's time
         const TTDEngineCheckpoint* cp = _engine->Checkpoint(keepEngine);
         const TTDEngineCheckpoint* before = keepEngine > _engine->FirstCheckpoint() ? _engine->Checkpoint(keepEngine - 1) : nullptr;
@@ -5879,7 +5884,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
                 joined.push_back(s);
         }
         _journalSegments = std::move(joined);
-        ResetShadow();   // the shadow engine takes the rebuilt journal with its next session
+        SyncEngineWrites(true);   // the engine's write index, rebuilt from the merged journal
     }
 
     // Back where the machine stood
@@ -6043,8 +6048,9 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     // Write journal segments (D40). A frame runs from where its checkpoint's
     // CPU stood (the frame before ended past its boundary) to where the next
     // one's stands: (startT(i), startT(i + 1)]
+    const TTDWriteIndex& writes = _engine->Writes();
     const std::vector<TTDJournalSegment> segments =
-        (q.access == TTDAccessType::Write && _writeJournal) ? JournalSegments() : std::vector<TTDJournalSegment>{};
+        q.access == TTDAccessType::Write ? writes.Segments() : std::vector<TTDJournalSegment>{};
     auto startT = [&](size_t index) { return CheckpointStartT(_timeline[index]); };
     auto segmentOf = [&](uint64_t after, uint64_t upTo) -> int {
         for (size_t k = 0; k < segments.size(); ++k)
@@ -6076,7 +6082,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                 size_t first = i;
                 while (first > 0 && segmentOf(startT(first - 1), startT(first)) == seg)
                     --first;
-                if (auto rec = _writeJournal->FindLastInRange(startT(first), upTo, journalPred))
+                if (auto rec = writes.FindLastInRange(startT(first), upTo, journalPred))
                 {
                     answer.time = TimePointAt(rec->globalT);
                     answer.pc = rec->m1pc;

@@ -544,11 +544,11 @@ Rough totals: ~2900 lines copy verbatim, ~1900 lines mechanical (checkpoint inde
 ### Engine gaps the controller must solve (found while mapping)
 
 1. **Checkpoint selection by time** (solved in C2: `CheckpointAtOrBefore`): engine `CheckpointIndexOf` matches an exact frame only; v1 uses `upper_bound` / `lower_bound` over `_timeline` in 8 places (3004, 3227, 4193, 5957, 6146, 6273, 6597, 7676). Needs an "at or before" lookup (binary search over `Checkpoint(i)->position` from `FirstCheckpoint()`).
-2. **Time base**: v1 `GlobalT = frame * FrameSpan()`; the engine's machine time comes from its frame table (`Frames().Start`), which diverges when a frame length changes (Sprinter 320/312 lines). Write journal records, journal segments, `beforeGlobalT` in queries and `CheckpointStartT` are in v1 GlobalT; the engine is fed those records unchanged (4127).
+2. **Time base** (solved in C3: `GlobalT` / `TimePointAt` on the frame table): v1 `GlobalT = frame * FrameSpan()`; the engine's machine time comes from its frame table (`Frames().Start`), which diverges when a frame length changes (Sprinter 320/312 lines). Write journal records, journal segments, `beforeGlobalT` in queries and `CheckpointStartT` are in v1 GlobalT; the engine is fed those records unchanged (4127).
 3. **Truncate / resume-from-past** (solved in C2: `TruncateAfter`): no engine API (only `parent` / `branch` fields); v1 ends the engine session on truncate (4204, `ResetShadow`).
 4. **History limit** (solved in C2: the controller drops whole segments, `DropOldestHeldSegment`): v1 frame/byte limits vs engine `TTDHistoryPolicy` (Ring window/segment frames).
 5. **Coverage index and bookmarks**: not in the engine; keep `TTDCoverageIndex` / `TTDBookmarkJournal` as controller members (and in the session file if they must persist).
-6. **Barriers in queries**: `FindLastAccess`, `EnumerateM1InRange`, `RegenerateFrameWrites`, `ReverseContinue` use v1 `_externalEvents` even with a replay engine.
+6. **Barriers in queries** (solved in C3: `FirstBarrierBetween`): `FindLastAccess`, `EnumerateM1InRange`, `RegenerateFrameWrites`, `ReverseContinue` use v1 `_externalEvents` even with a replay engine.
 7. **Network device restore** reads `pTimeTravelManager->GetInputJournal().NetAt(index)` (4 serializers) - must point at the engine's payloads when the controller drives replay.
 8. **Hot-path calls** (solved in C1d: `ttdWriteSink`, `ttdCoverage`) (`RecordMemoryWrite`, `RecordReadCoverage`, `RecordExecutedCoverage`, `RecordIoWrite`) go through `pTimeTravelManager`, not the hooks interface.
 9. **Restore order**: v1 devices -> banks -> RAM; engine branch RAM/regions -> devices -> banks. The engine branch skips `_perf.lastRestore*Ns`.

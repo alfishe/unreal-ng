@@ -447,3 +447,41 @@ TEST_F(TimeTravelController_Test, TapeControlIsNoBarrierForTheController)
     EXPECT_GT(windowA.from.frame, _v1->GetCheckpoint(0)->time.frame) << "v1 stops at the tape marker";
     EXPECT_EQ(windowB.from, _controller->GetCheckpoint(0)->time) << "the controller reaches the session start";
 }
+
+/// The write journal built afterwards by replay (C3c): recorded without it,
+/// both build it for the whole session; the controller's engine index then
+/// covers the session and answers find-last as v1's journal does
+TEST_F(TimeTravelController_Test, BuiltJournalAnswersAsV1)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordBoth(/*journal=*/false));
+    const ttd::TTDJournalBuildResult a = _v1->BuildWriteJournal(0, UINT64_MAX);
+    const ttd::TTDJournalBuildResult b = _controller->BuildWriteJournal(0, UINT64_MAX);
+    ASSERT_TRUE(a.ok) << a.error;
+    ASSERT_TRUE(b.ok) << b.error;
+    EXPECT_EQ(a.framesBuilt, b.framesBuilt);
+    EXPECT_EQ(a.records, b.records);
+    EXPECT_GT(b.records, 0u);
+    const ttd::TTDWriteIndex& writes = _controller->GetEngine().Writes();
+    EXPECT_EQ(writes.Size(), b.records) << "the engine's index holds the built journal";
+    ASSERT_EQ(writes.Segments().size(), 1u);
+
+    const ttd::TTDTimePoint end = _v1->SessionEndPosition();
+    ttd::TTDSeekResult r;
+    ASSERT_TRUE(_v1->SeekTo(end, &r));
+    ASSERT_TRUE(_controller->SeekTo(end, &r));
+    for (uint16_t addr : {uint16_t(0xC000), uint16_t(0xC07F), uint16_t(0xC0FF)})
+    {
+        SCOPED_TRACE(addr);
+        ttd::TTDSearchQuery q;
+        q.addrFrom = q.addrTo = addr;
+        q.access = ttd::TTDAccessType::Write;
+        const auto x = _v1->FindLastAccess(q);
+        const auto y = _controller->FindLastAccess(q);
+        ASSERT_TRUE(x.has_value());
+        ASSERT_TRUE(y.has_value());
+        EXPECT_EQ(x->time, y->time);
+        EXPECT_EQ(x->pc, y->pc);
+        EXPECT_EQ(x->value, y->value);
+        EXPECT_EQ(_controller->CurrentPosition(), end) << "answered from the index: the machine stays";
+    }
+}

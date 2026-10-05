@@ -86,3 +86,29 @@ TEST(TTDWriteIndex_Test, FindsTheNewestWriteInARangeAcrossBlocks)
     EXPECT_TRUE(index.Segments().empty());
     EXPECT_FALSE(index.FindLastInRange(0, UINT64_MAX, [](const TTDWriteRecord&) { return true; }));
 }
+
+/// A history limit releases the oldest blocks: the rest still answers, and
+/// the segments no longer claim the released span
+TEST(TTDWriteIndex_Test, DropBeforeReleasesWholeOldBlocks)
+{
+    const std::vector<TTDWriteRecord> records = MakeRecords(3 * kWriteBlockRecords + 500);
+    TTDWriteIndex index;
+    for (const TTDWriteRecord& r : records)
+        index.Append(r);
+    index.SetSegments({{0, records.back().globalT}});
+    const uint64_t cut = records[kWriteBlockRecords + 10].globalT;   // inside the second block
+    index.DropBefore(cut);
+    EXPECT_EQ(index.Size(), records.size() - kWriteBlockRecords) << "only the first block lies wholly before";
+    const uint64_t firstDropped = records[kWriteBlockRecords - 1].globalT;
+    ASSERT_EQ(index.Segments().size(), 1u);
+    EXPECT_EQ(index.Segments()[0].from, firstDropped) << "covered only after the newest record released";
+    index.SetSegments({{0, records.back().globalT}});
+    EXPECT_EQ(index.Segments()[0].from, firstDropped) << "a later SetSegments stays clipped";
+    const auto pred = [](const TTDWriteRecord&) { return true; };
+    const auto newest = index.FindLastInRange(firstDropped, cut, pred);
+    ASSERT_TRUE(newest.has_value());
+    EXPECT_GT(uint64_t(newest->globalT), firstDropped);
+    index.Clear();
+    index.SetSegments({{0, 10}});
+    EXPECT_EQ(index.Segments()[0].from, 0u) << "a new session starts unclipped";
+}

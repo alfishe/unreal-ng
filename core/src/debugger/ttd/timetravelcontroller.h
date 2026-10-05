@@ -714,6 +714,10 @@ public:
     /// (bus records, input, markers, facts): at a stop, and before a replay
     /// while recording
     void FlushToEngine();
+    /// @brief The engine's write index takes the live write journal's new
+    /// records and its spans; @p whole: it is rebuilt from the journal (after
+    /// a resume from the past cut it, after a journal build merged into it)
+    void SyncEngineWrites(bool whole);
 
     /// @brief Upper bound of the recorded timeline.
     ///

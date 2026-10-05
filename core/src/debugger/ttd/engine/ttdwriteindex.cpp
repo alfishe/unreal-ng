@@ -1,5 +1,7 @@
 #include "ttdwriteindex.h"
 
+#include <algorithm>
+
 #include "debugger/ttd/ttdcompression.h"
 
 namespace ttd
@@ -98,8 +100,39 @@ void TTDWriteIndex::Clear()
     _open.clear();
     _segments.clear();
     _size = 0;
+    _droppedUpTo = 0;
     _cachedBlock = -1;
     _cached.clear();
+}
+
+void TTDWriteIndex::DropBefore(uint64_t globalT)
+{
+    size_t count = 0;
+    uint64_t droppedUpTo = 0;
+    while (count < _blocks.size() && _blocks[count].lastT < globalT)
+    {
+        droppedUpTo = _blocks[count].lastT;
+        _size -= _blocks[count].count;
+        ++count;
+    }
+    if (count == 0)
+        return;
+    _blocks.erase(_blocks.begin(), _blocks.begin() + static_cast<std::ptrdiff_t>(count));
+    _cachedBlock = -1;
+    _droppedUpTo = std::max(_droppedUpTo, droppedUpTo);
+    SetSegments(std::move(_segments));
+}
+
+void TTDWriteIndex::SetSegments(std::vector<TTDJournalSegment> segments)
+{
+    // Records at the newest dropped time may be gone with it: covered only after it
+    _segments.clear();
+    for (TTDJournalSegment s : segments)
+    {
+        s.from = std::max(s.from, _droppedUpTo);
+        if (s.to > s.from)
+            _segments.push_back(s);
+    }
 }
 
 size_t TTDWriteIndex::HeapBytes() const
