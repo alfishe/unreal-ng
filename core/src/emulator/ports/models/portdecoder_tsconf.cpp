@@ -813,14 +813,20 @@ uint8_t PortDecoder_TSConf::FdcAccess(uint8_t port, bool isWrite, uint8_t value)
     if (isWrite && systemPort)
         _ts.vgDrive = value & 0x03;
 
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (_ts.dos && !_ts.vdos && virtualDrive)
     {
+        // The interrupt controller's vdos is pre_vdos: it holds INT from this access on ([V] top.v:1106)
+        if (!_ts.preVdos && z80)
+            _interrupts.OnVdosEnter(z80->t);
         _ts.preVdos = 1;
         RefreshM1Hook();
     }
     else if (_ts.vdos && !systemPort)
     {
         _ts.vdos = 0;
+        if (z80)
+            _interrupts.OnVdosExit(z80->t);
         UpdateBanks();
         RefreshM1Hook();
     }

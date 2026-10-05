@@ -425,6 +425,10 @@ act ~16 lines late, bits [2:0] immediately ([V] `video_ts.v:127-139,163,224`,
   set. **Frame, line and DMA events are deferred, not lost** — they fire after
   vdos ends ([V] `zint.v:89-91,194` code; the `zint.v:29-31` comment says
   otherwise and is wrong). [U] loses line INT during vdos, [M] loses frame+line+DMA.
+  The controller's `vdos` is `pre_vdos` ([V] `top.v:1106`): the gate and the
+  frozen pulse counter start at the trapped VG93 I/O cycle, one M1 before the
+  RAM page #FF is mapped. A frame pulse running then has its remaining clocks
+  after vdos; one whose event falls inside vdos runs its 32 clocks from the end.
 - In the VDAC2 build with `V_CONFIG[2]` set the line source becomes the FT812
   INT — not modeled (D1).
 

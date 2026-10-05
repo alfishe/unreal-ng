@@ -10,6 +10,7 @@ void TsConfInterrupts::Reset()
     _ts.intPending = 0;
     _ts.intLastRaster = 0;
     _ts.intFrameRaster = 0;
+    _ts.intVdosClock = 0;
 }
 
 void TsConfInterrupts::OnMaskWrite(uint8_t mask)
@@ -107,16 +108,58 @@ bool TsConfInterrupts::FramePulseActive(uint32_t t) const
     return static_cast<int64_t>(t) - start < static_cast<int64_t>(kFramePulseClocks);
 }
 
+bool TsConfInterrupts::VdosFrozen() const
+{
+    return _ts.vdos || _ts.preVdos;
+}
+
 bool TsConfInterrupts::IsIntAsserted(uint32_t t)
 {
     CatchUp(RasterAt(t));
+
+    // vdos gates the output; the latches keep their events and the frame pulse stands still (§5)
+    if (VdosFrozen())
+        return false;
 
     // The frame pulse ends by itself after 32 CPU clocks
     if ((_ts.intPending & TsConfInt::Frame) && !FramePulseActive(t))
         _ts.intPending &= static_cast<uint8_t>(~TsConfInt::Frame);
 
-    // vdos gates the output; the latches keep their events (§5)
-    return _ts.intPending != 0 && !_ts.vdos;
+    return _ts.intPending != 0;
+}
+
+void TsConfInterrupts::OnVdosEnter(uint32_t t)
+{
+    // Events up to the trapped access are latched; a pulse that is over by then is dropped (as IsIntAsserted does)
+    CatchUp(RasterAt(t));
+    if ((_ts.intPending & TsConfInt::Frame) && !FramePulseActive(t))
+        _ts.intPending &= static_cast<uint8_t>(~TsConfInt::Frame);
+    _ts.intVdosClock = t;
+}
+
+void TsConfInterrupts::OnVdosExit(uint32_t t)
+{
+    CatchUp(RasterAt(t));
+    ThawFramePulse(t);
+}
+
+void TsConfInterrupts::ThawFramePulse(uint32_t t)
+{
+    if (!(_ts.intPending & TsConfInt::Frame))
+        return;
+    const uint32_t multiplier = Multiplier();
+    const int64_t start = static_cast<int64_t>(_ts.intFrameRaster) * multiplier;
+    if (start < static_cast<int64_t>(_ts.intVdosClock))
+    {
+        // Running when vdos began: the counter stood still for the whole interval
+        const uint32_t frozen = t - _ts.intVdosClock;
+        _ts.intFrameRaster += static_cast<int32_t>((frozen + multiplier - 1) / multiplier);
+    }
+    else
+    {
+        // The event fell inside vdos: the counter was reset there and counts from the end
+        _ts.intFrameRaster = static_cast<int32_t>((t + multiplier - 1) / multiplier);
+    }
 }
 
 uint8_t TsConfInterrupts::AcknowledgeInterrupt([[maybe_unused]] uint32_t t)
@@ -147,6 +190,8 @@ void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
 {
     if (!(_ts.regs[TsConfReg::IntMask] & TsConfInt::Frame)) [[unlikely]]
         return;  // no frame INT to freeze
+    if (VdosFrozen()) [[unlikely]]
+        return;  // vdos already holds the counter; OnVdosExit moves the pulse past the whole interval
 
     const uint32_t multiplier = Multiplier();
     const uint32_t t0 = ttBefore >> 8;                                  // CPU clocks, the stall's start
@@ -182,6 +227,12 @@ void TsConfInterrupts::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLen
     // Finish the old frame (its last line event sits on the last tact), then
     // start the new one; a running frame pulse carries over
     CatchUp(kFrameTacts - 1);
+    if (VdosFrozen())
+    {
+        // vdos goes on: close the frozen interval at the frame end and reopen it at the new frame's start
+        ThawFramePulse(kFrameTacts * Multiplier());
+        _ts.intVdosClock = 0;
+    }
     _ts.intLastRaster = 0;
     _ts.intFrameRaster -= static_cast<int32_t>(kFrameTacts);
 
@@ -191,7 +242,7 @@ void TsConfInterrupts::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLen
     // the frame was lost whenever the stall straddled the frame end - the instruction's own clocks never reach 32
     Core* core = _context->pCore;
     Z80* z80 = core ? core->GetZ80() : nullptr;
-    if (z80 && (_ts.regs[TsConfReg::IntMask] & TsConfInt::Frame))
+    if (z80 && (_ts.regs[TsConfReg::IntMask] & TsConfInt::Frame) && !VdosFrozen())
     {
         const uint32_t residue = z80->t;
         if (residue > kFramePulseClocks)

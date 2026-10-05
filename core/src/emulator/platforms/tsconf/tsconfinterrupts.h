@@ -38,8 +38,9 @@ struct ITsConfLineSource
 ///
 /// Priority frame > line > DMA > wait-port; an acknowledge clears only the
 /// source it served. An event latches only while its mask bit is set;
-/// clearing a mask bit clears that latch. While vdos the output is gated and
-/// the latches keep their events (deferred, not lost).
+/// clearing a mask bit clears that latch. While vdos - from the trapped VG93
+/// access on (pre_vdos) - the output is gated, the latches keep their events
+/// and the frame pulse stands still (deferred, not lost).
 ///
 /// Raster tact = Z80::t / current_z80_frequency_multiplier: the frame always
 /// has 71680 raster tacts, the CPU runs 1, 2 or 4 clocks per tact (SYS_CONFIG).
@@ -64,6 +65,12 @@ public:
     void RaiseDma();
     /// The AVR's wait-port strobe (TS firmware: on every main-loop pass while its ZiFi ISR is not zero)
     void RaiseWaitPort();
+    /// vdos starts at a trapped VG93 access (pre_vdos) at CPU clock t: the output is gated and the frame pulse's
+    /// counter stands still from here ([V] zint.v:194 `!vdos`, top.v:1106 vdos = pre_vdos)
+    void OnVdosEnter(uint32_t t);
+    /// vdos ends at CPU clock t: a frame pulse frozen by it runs on for the clocks it had left, one whose event
+    /// fell inside vdos starts its 32 clocks here
+    void OnVdosExit(uint32_t t);
     /// The line INT's other source (the VDAC2 card), nullptr = line starts only
     void SetLineSource(ITsConfLineSource* source) { _lineSource = source; }
     static constexpr size_t kMaxLineEdges = 8;
@@ -94,6 +101,10 @@ private:
     void CatchUpLineWithSource(uint32_t from, uint32_t raster, bool latch);
     /// Is the frame pulse (32 CPU clocks from its event) still running at t?
     bool FramePulseActive(uint32_t t) const;
+    /// vdos (or the trapped access that starts it) holds the output and the frame pulse
+    bool VdosFrozen() const;
+    /// The frozen interval [intVdosClock, t) ends at CPU clock t: move the frame pulse past it
+    void ThawFramePulse(uint32_t t);
     uint32_t Multiplier() const;
 
     EmulatorContext* _context;

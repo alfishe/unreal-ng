@@ -1,6 +1,7 @@
 # TS-Conf audit - TODO
 
-The audit itself is done (2026-10-05, [README.md](README.md)). What it found is open: nothing below is fixed yet.
+The audit itself is done (2026-10-05, [README.md](README.md)). The fixes go one at a time from master; the Status
+column says which are in.
 Each item names the area file and row with the evidence and the suggested test. A fix starts with that test, failing
 first; tests that assert the current wrong value are named and change with the fix.
 
@@ -8,8 +9,8 @@ first; tests that assert the current wrong value are named and change with the f
 
 | # | Bug | Where | Effect | Tests asserting the wrong value | Status |
 |--:|:--|:--|:--|:--|:--|
-| 1 | Frame INT pulse keeps counting during vdos and is lost after 32 clocks; RTL and the fork freeze it (`zint.v:194` `!vdos`) | [interrupts.md](interrupts.md) row 7 | frame interrupts lost during long virtual-drive sessions | - | open |
-| 2 | vdos blocks INT only from the next M1; RTL blocks with `pre_vdos` during the trapped VG93 cycle | [interrupts.md](interrupts.md) row 8 | an INT right after a trapped access runs the IM1 handler from RAM page `#FF` | - | open |
+| 1 | Frame INT pulse keeps counting during vdos and is lost after 32 clocks; RTL and the fork freeze it (`zint.v:194` `!vdos`) | [interrupts.md](interrupts.md) row 7 | frame interrupts lost during long virtual-drive sessions | - | **fixed** with #2: `TsConfInterrupts::OnVdosEnter / OnVdosExit` freeze the pulse over `pre_vdos || vdos`; tests `TsConfVdosInt_Test` INT11a-e |
+| 2 | vdos blocks INT only from the next M1; RTL blocks with `pre_vdos` during the trapped VG93 cycle | [interrupts.md](interrupts.md) row 8 | an INT right after a trapped access runs the IM1 handler from RAM page `#FF` | - | **fixed** with #1 (the gate is `pre_vdos || vdos`) |
 | 3 | Line INT fires at tact 224n-1; RTL and the fork at 224n (tact 0 of the next line) | [interrupts.md](interrupts.md) row 11 | one tact early; raster code timed to the line INT drifts by a tact | `INT3_LineInterrupts` (asserts 223) | open |
 | 4 | 5-bit VDAC levels: unreal-ng scales 31 to 255 and truncates; the VDAC1 CPLD (`vdac/vdac1/cpld/top.v`) is the VDAC2 table - `{level,3'b0}` with PAL_SEL, the rounded 0..24 table without | [video.md](video.md) row 44 | colors off by one level (white 255 instead of 248) on VDAC boards; fix: route `vdac == 3` through `Vdac2Level` | `VDAC_CurvesStatusAndRender`, `VDAC2_CardTable` | open |
 | 5 | OUT `#FE` builds BORDER from the unlatched PAL_SEL; RTL uses the copy latched at line start (`video_ports.v:109`) | [video.md](video.md) row 16, [memory-ports.md](memory-ports.md) B2 | wrong border bank when PAL_SEL changes within a line before an OUT `#FE` | `BorderWriteUsesPalSel`, `VID4_Border` | open |

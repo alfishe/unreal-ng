@@ -155,6 +155,99 @@ TEST_F(TsConfInterrupts_Test, INT8_VdosGatesWithoutLosing)
     EXPECT_TRUE(Ints().IsIntAsserted(6));
 }
 
+/// INT-11: vdos freezes the frame pulse ([V] zint.v:194: intctr counts on `zpos && !intctr_fin && !wait_r && !vdos`)
+/// and gates the output from the trapped access on ([V] top.v:1106: the controller's vdos is `pre_vdos`, set during
+/// the trapped I/O cycle). The pulse went on counting through vdos and was gone after 32 clocks: a long virtual-drive
+/// session lost the frame INT. [U] tsconf.cpp:940 freezes it too
+class TsConfVdosInt_Test : public TsConfInterrupts_Test
+{
+protected:
+    /// Drive B virtual, in DOS, B selected: the next VG93 access is trapped
+    void ArmVirtualDrive()
+    {
+        Reg(TsConfReg::FddVirt, 0x02);
+        _decoder->GetState().dos = 1;
+        _decoder->ApplyState();
+        Out(0x00FF, 0x01);
+    }
+    /// A trapped VG93 access at CPU clock t (vdos starts at the next M1)
+    void EnterVdos(uint32_t t)
+    {
+        _z80->tt = t << 8;
+        In(0x001F);
+        _decoder->BeforeMachineM1(0x3D30);
+        ASSERT_EQ(_decoder->GetState().vdos, 1);
+    }
+    /// A VG93 register access inside vdos at CPU clock t ends it
+    void LeaveVdos(uint32_t t)
+    {
+        _z80->tt = t << 8;
+        In(0x003F);
+        ASSERT_EQ(_decoder->GetState().vdos, 0);
+    }
+};
+
+TEST_F(TsConfVdosInt_Test, INT11a_TheTrappedAccessGatesAtOnce)
+{
+    ArmVirtualDrive();
+    ASSERT_TRUE(Ints().IsIntAsserted(10)) << "the reset pulse, clocks 1..32";
+    _z80->tt = 10u << 8;
+    In(0x001F);
+    ASSERT_EQ(_decoder->GetState().preVdos, 1);
+    EXPECT_FALSE(Ints().IsIntAsserted(10)) << "gated by pre_vdos, before the M1 that maps the virtual drive";
+}
+
+TEST_F(TsConfVdosInt_Test, INT11b_VdosFreezesARunningPulse)
+{
+    ArmVirtualDrive();
+    ASSERT_TRUE(Ints().IsIntAsserted(10));
+    EnterVdos(10);  // 9 clocks of the pulse are over
+    EXPECT_FALSE(Ints().IsIntAsserted(400));
+    LeaveVdos(500);
+    EXPECT_TRUE(Ints().IsIntAsserted(500)) << "the pulse was frozen, not used up";
+    EXPECT_TRUE(Ints().IsIntAsserted(522)) << "23 clocks were left";
+    EXPECT_FALSE(Ints().IsIntAsserted(523));
+}
+
+TEST_F(TsConfVdosInt_Test, INT11c_APulseThatStartsInsideVdosBeginsWhenItEnds)
+{
+    Reg(TsConfReg::VsIntL, 1);
+    Reg(TsConfReg::HsInt, 0);  // raster tact 224
+    ArmVirtualDrive();
+    EnterVdos(100);
+    EXPECT_FALSE(Ints().IsIntAsserted(300));
+    LeaveVdos(1000);
+    EXPECT_TRUE(Ints().IsIntAsserted(1000));
+    EXPECT_TRUE(Ints().IsIntAsserted(1031));
+    EXPECT_FALSE(Ints().IsIntAsserted(1032)) << "32 clocks after vdos ended";
+}
+
+TEST_F(TsConfVdosInt_Test, INT11d_VdosAcrossTheFrameEnd)
+{
+    Reg(TsConfReg::VsIntL, 0x3F);
+    Reg(TsConfReg::VsIntH, 0x01);
+    Reg(TsConfReg::HsInt, 223);  // raster tact 71679, the frame's last
+    ArmVirtualDrive();
+    EnterVdos(71600);
+    _z80->tt = 0;  // the rebase of the frame end
+    Ints().OnMachineFrameRollover(TsConfInterrupts::kFrameTacts);
+    EXPECT_FALSE(Ints().IsIntAsserted(20));
+    LeaveVdos(50);
+    EXPECT_TRUE(Ints().IsIntAsserted(50)) << "the event of the old frame's last tact, deferred";
+    EXPECT_TRUE(Ints().IsIntAsserted(81));
+    EXPECT_FALSE(Ints().IsIntAsserted(82));
+}
+
+TEST_F(TsConfVdosInt_Test, INT11e_AWaitInsideVdosDoesNotShiftTwice)
+{
+    ArmVirtualDrive();
+    EnterVdos(10);
+    Ints().OnWait(100u << 8, 200u << 8);  // the counter already stands still
+    LeaveVdos(500);
+    EXPECT_TRUE(Ints().IsIntAsserted(522));
+    EXPECT_FALSE(Ints().IsIntAsserted(523));
+}
+
 /// TTD-2: the latches live in the TTD blob
 TEST_F(TsConfInterrupts_Test, TTD2_LatchesAreState)
 {
