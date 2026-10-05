@@ -177,3 +177,20 @@ plan and the TTD fingerprint follow it.
 machine for it would surprise), **A** for the explicit personality switch on the surfaces, so a user-visible card change
 behaves like every other slot change.
 
+
+## Q11. Does the network card change of a running machine go through the slots?
+
+**Open (raised in SL-7, 2026-10-05).**
+
+The network settings (`network set card=...`, WebAPI `POST /network/config {card}`, Lua / Python `network_configure`,
+the Qt Network window's ZXNETUSB / ZX-WiFi boxes) still unplug and fit the ZX-bus network cards of a running machine in
+place (`NetworkManager::RequestChange`), as before the slots. The slot report, the plan and the TTD fingerprint keep the
+configured set, so after such a change they disagree with the machine until the next restart.
+
+- **A:** like the General Sound personality (Q10): a `card` change becomes a slot change applied by a restart (the
+  network settings call SlotControl for the card part, then apply the other keys to the new machine); the Network
+  window's card boxes open the slot change's confirmation.
+- **B:** keep the in-place change and make the plan follow it (as SL-6 did for the GS switch before Q10).
+- **C:** refuse `card` in the network settings and point to `slots plug / remove`.
+
+**Recommendation: A** - every card change behaves the same (Q6), and the surfaces keep their `card` key.

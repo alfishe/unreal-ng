@@ -167,6 +167,7 @@ call.
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
 | [machines/sprinter-software.md](machines/sprinter-software.md) | Sprinter Sp2000: run software the shortest way - a native `.EXE` from Flex Navigator's command line, a Spectrum TRD in the SP (21 MHz) and P128 (3.5 MHz) launcher modes from the hard disk, the Scorpion SC256 mode from a floppy; TTD first |
+| [machines/slots.md](machines/slots.md) | ZX-bus slots on every machine: the slot report, the card catalog, plan a plug (what it removes), apply it (a machine restart, new id), options, remove, the GS personality, create with `"slots"`, the model switch carrying the cards |
 | [machines/sprinter.md](machines/sprinter.md) | Sprinter Sp2000 (`SPRINTER`): BIOS selection at create / runtime and full / fast start, DSS from a 1.44 MB floppy, typing DSS commands, Spectrum mode + TR-DOS, `state sprinter` (PLD, windows, accelerator, waits, Z84C15), video modes per square, palettes, video RAM (`vram` region), the video change log, digest / raw framebuffer, the port table and its codes, screen text |
 
 ### `peripherals/` — sound cards and DACs
@@ -174,6 +175,7 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `gs` / `gs-lw` / `neogs` slot cards (legacy `GSType`), personality switch (a slot change, machine restart), `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
+| [peripherals/multisound.md](peripherals/multisound.md) | ZX-MultiSound card: fit it in the slots, a TSFM tune, a SAA tone and MIDI notes from a test program, `audio_multisound` / `audio_midi` state, capture by source (`ms_fm` .. `ms_midi`), MIDI panic, the GM bank |
 | [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card: `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, per-model `MoonSound=` defaults, state and capture sources, known issues |
 | [peripherals/neogs.md](peripherals/neogs.md) | NeoGS card (`neogs` in `[SLOTS]`, shipped on the clones; not on the Sinclair, Profi or Sprinter configs): SD slot `sd.ngs`, flash save, stereo mode, personality switch, MP3 path |
 | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | Per-device mixer (gain, mute, solo), audio capture by source, analyzing a capture |

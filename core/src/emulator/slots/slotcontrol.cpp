@@ -421,12 +421,20 @@ std::vector<std::string> SlotControl::PlanLines(const SlotPlan& plan)
     lines.push_back(head);
     for (const PlanReason& reason : plan.reasons)
     {
-        lines.push_back(std::string(reason.hard ? "refused" : "reason") + " (" + RuleName(reason.rule) + "): " + reason.text);
+        // A displacement's reason is its "removes" line below
+        const bool displacement = reason.rule == Rule::D1 || reason.rule == Rule::D3 || reason.rule == Rule::D12 ||
+                                  (reason.rule == Rule::Request && plan.op == SlotRequest::Op::Remove);
+        if (reason.hard || !displacement || plan.removed.empty())
+        {
+            lines.push_back(std::string(reason.hard ? "refused" : "reason") + " (" + RuleName(reason.rule) + "): " +
+                            reason.text);
+        }
     }
     for (const RemovedCard& removed : plan.removed)
     {
         lines.push_back("removes " + removed.slot + " = " + removed.card +
-                        (removed.optionsText.empty() ? "" : " [" + removed.optionsText + "]") + ": " + removed.reason);
+                        (removed.optionsText.empty() ? "" : " [" + removed.optionsText + "]") + " (" +
+                        RuleName(removed.rule) + "): " + removed.reason);
     }
     for (const ShadowedDevice& shadowed : plan.shadowed)
     {
@@ -632,12 +640,7 @@ StateNode SlotControl::PlanValue(const SlotManager::ChangePlan& change)
         }
     }
     node["slotsSection"] = Strings(section);
-    std::vector<std::string> lines = PlanLines(plan);
-    if (!change.refusal.empty())
-    {
-        lines.insert(lines.begin(), change.refusal);
-    }
-    node["lines"] = Strings(lines);
+    node["lines"] = Strings(PlanLines(plan));
     return node;
 }
 

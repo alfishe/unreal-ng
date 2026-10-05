@@ -40,10 +40,12 @@ buses:
 slots:
   ay-socket = tsfm  fit real, active
   zxbus.1 = neogs [ram=2m]  fit real, active
-  ...
+  zxbus.2 = moonsound [jp1=open]  fit real, active
+  zxbus.3 = soundrive [mode=both]  fit real, active
 built-in devices:
   ay (YM2149 / AY-3-8910): replaced by tsfm
   beta128 (Beta-128 (VG93)): active
+  kempston-joystick (Kempston joystick): active
 ```
 
 `slots catalog` lists every card with its options and how it would fit this machine now: where the planner would put
@@ -63,15 +65,19 @@ Every change is **planned first**. Worked example: on that Pentagon, plugging th
 
 ```
 slots plug zxbus.next multisound --dry-run
-needs replaceIfIncompatible: removes `ay-socket` `tsfm`: ...; removes `zxbus.1` `neogs`: shares `gs`
-  plug multisound -> zxbus.2: needs replaceIfIncompatible, fit real
-  removes ay-socket = tsfm: ...
-  removes zxbus.1 = neogs [ram=2m]: shares `gs`
+refused: needs replaceIfIncompatible: removes `zxbus.1` `neogs`: shares `gs`; ...
+  plug multisound -> zxbus.4: needs replaceIfIncompatible, fit real
+  removes zxbus.1 = neogs [ram=2m] (D1): shares `gs`
+  removes zxbus.3 = soundrive [mode=both] (D1): shares `soundrive`
+  removes ay-socket = tsfm (D3): pointless pair: `zxbus.4` would shadow it (`#FFFD`, `#BFFD`); the socket returns to the machine's chip
+  shadows the built-in ay (#FFFD #BFFD)
+  the machine loses: covox-fb
   releases sd.ngs of zxbus.1 = neogs
 ```
 
-The MultiSound carries a TurboSound FM and a General Sound of its own, so the TSFM and the NeoGS would have nothing to
-do: the plan removes them. Automation refuses such a change unless the request says so (`--replace`,
+The MultiSound carries a TurboSound FM, a General Sound and a SounDrive of its own, so the TSFM, the NeoGS and the
+SounDrive card would have nothing to do: the plan removes them, and says that the `#FB` Covox the SounDrive card also
+answered goes with it. Automation refuses such a change unless the request says so (`--replace`,
 `replaceIfIncompatible: true`; owner decision Q1). The Qt window asks for a confirmation instead and, after the
 change, names the cards it removed with an **Undo** button. `--dry-run` (`dryRun`) only shows the plan.
 
@@ -106,7 +112,8 @@ the new machine's own configured cards fill the slots left free (owner decision 
 take is dropped and listed with the reason:
 
 ```
-zxbus.1 = multisound not carried to ZX-Spectrum 128k: the bus has no IORQGE ...
+Slots: zxbus.1 = neogs not carried to ZX-Spectrum 48k: `neogs` is a `zxbus` card; `edge` is `sinclair-edge`; behind
+`zxbus-to-sinclair-edge` it still lacks /CSROM (fit `unrealistic` with the override)
 ```
 
 Removed cards are not remembered: a card you took out comes back if the new machine's configuration fits it.

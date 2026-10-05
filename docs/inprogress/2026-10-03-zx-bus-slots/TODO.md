@@ -1,8 +1,8 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
 **Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04; owner decision Q8 (conflicting configs refuse the machine), slot-built cards under TTD (MultiSound MS-5) and the quiet-machine A/B rerun built 2026-10-05; SL-6 (slot changes applied
-by a restart, the model switch carrying the slot set, the General Sound personality on the plan) built 2026-10-05 (not
-committed). PLAN row #82.
+by a restart, the model switch carrying the slot set, the General Sound personality on the plan) built 2026-10-05; SL-7
+(the surfaces, Qt, recipe, user doc) built 2026-10-05 (not committed). PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -15,7 +15,7 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [reference-data.md](reference-data.md): the matrix as a reference data collection in the code (`core/src/emulator/slots/refdata/`)
 - [research.md](research.md) (+ machines, cards): SL-0 findings and code inventory
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
-- [open-questions.md](open-questions.md): owner decisions Q1-Q10
+- [open-questions.md](open-questions.md): owner decisions Q1-Q10, open Q11
 
 ## Pause (owner decision 2026-10-04) - lifted
 
@@ -87,7 +87,8 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     and its report until SL-6 builds the restart path - the GS switch is planned and followed by the plan since SL-6
     ([tdd.md](tdd.md) §14); `NetworkManager::RequestChange` still bypasses it (SL-7 puts the network card change on
     `SlotChange::Run`)
-  - [ ] recipes / user docs still name the legacy keys (`[SOUND] GSType`, `TurboSound`, `[NETWORK] Card`): SL-7
+  - [x] recipes / user docs still name the legacy keys (`[SOUND] GSType`, `TurboSound`, `[NETWORK] Card`): moved to
+    `[SLOTS]` in SL-7 (the legacy keys are documented as translated)
   - [ ] side note (not slots): the old ts-conf line `CovoxFB=1 ; ... (#FB and the #FE beeper bit ...)` parsed as 0
     (IniFile strips the inline comment at the last `#`); the converted config says `builtin.covox = on`, same devices
 - [x] Slot-built cards for the ZX-MultiSound (MultiSound MS-4, 2026-10-04, committed on `zx-bus-slots`; [tdd.md](tdd.md) §9): `ICard` / `CardType` (`slots/card.{h,cpp}`), `SlotManager::BuildCards` /
@@ -132,10 +133,19 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   `TtdSlots_Test.RuntimePersonalitySwitchMovesThePlanAndTheFingerprint`; full `core-tests` green
   - [x] Q9 decided 2026-10-05 ([open-questions.md](open-questions.md)): a model switch merges the carried cards with the
     new machine's own configured cards (as built); removals are not carried
-  - [ ] Q10 decided 2026-10-05: the explicit personality switch on every surface moves to the restart in SL-7; the
-    in-place switch stays only for the `gs_lightweight` feature
+  - [x] Q10 decided 2026-10-05: the explicit personality switch on every surface moves to the restart in SL-7 (done:
+    WebAPI, CLI, MCP, Lua, Python, Qt); the in-place switch stays only for the `gs_lightweight` feature
   - [ ] side note (not slots): `EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind` segfaults alone
     within 40 repeats (`BreakpointManager::GetBreakpointById` on the emulation thread while the test stops the machine);
     it cost one `core-tests` shard once during SL-6
-- [ ] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc
+- [x] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc (2026-10-05, working tree of
+  `zx-bus-slots`, not committed; [tdd.md](tdd.md) §15): `SlotControl` behind WebAPI `/slots` (+ OpenAPI tag `Slots`),
+  CLI `slots`, MCP `slots_*` / aspect `slots`, Lua / Python `slots_*`, create-time `"slots"`, the model switch's carry
+  on every reply; the GS personality switch on every surface is a slot replace applied by a restart (Q10); Qt Machine >
+  Slots with plan preview, confirmation, removed cards named with Undo; recipe [.recipe/machines/slots.md](../../../.recipe/machines/slots.md),
+  user doc [docs/features/slots.md](../../features/slots.md); recipes and docs naming the legacy keys moved to `[SLOTS]`
+  - [ ] Q11 (open): the network card change (`network set card=`) still swaps in place; recommendation: a slot change
+  - [ ] Python bindings not verified live (the build has `ENABLE_PYTHON_AUTOMATION=OFF`; `-fsyntax-only` clean)
+  - [ ] side note (not SL-7): the plan of a MultiSound removal lists `ay-socket` among the lost functions although the
+    board AY comes back un-shadowed
 - [ ] SL-8 Sprinter ISA slots in the report; ZX-bus adapter as a bus host (ISA I5)

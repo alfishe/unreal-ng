@@ -122,9 +122,13 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
     running instance (`SlotChange::Run`, a plug applied by a restart, [slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md)
     §14); a model switch carries it (Pentagon -> ZX-Evo keeps it, ZX-Evo -> 128K reports it as not carried)
   - [ ] the ids 58-60 / region 17 were free on this branch: a merge with master renumbers them if master took them
-- [ ] MS-6..MS-8 surfaces, real software, docs
+- [x] MS-6 surfaces (2026-10-05, working tree of `zx-bus-slots`, not committed; [tdd-integration.md](tdd-integration.md)
+  §5.1): `DeviceState::MultiSound` / `Midi` on every surface, MIDI panic as TTD input `MidiPanic`, Qt slot window card
+  options, MIDI activity window, HUD icon; recipe [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md)
+- [ ] MS-7 / MS-8 real software (tdd-integration §6), docs
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
   effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
   (machines without the card pay nothing)
-- [ ] `data/midi/generaluser-gs.sf2` + license tracked (Q4); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
+- [ ] `data/midi/generaluser-gs.sf2` + license tracked (Q4) - the recipe verification put a local copy next to the
+  executable; without it the MIDI row stays silent (`bank: no bank`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research

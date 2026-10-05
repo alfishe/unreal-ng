@@ -20,7 +20,7 @@
 | **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L; **built 2026-10-04**, see §8 |
 | **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M; **built 2026-10-04**, see §10 |
 | **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M; **built 2026-10-05**, see §14 |
-| **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M |
+| **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M; **built 2026-10-05**, see §15 |
 | **SL-8** | Sprinter: `isa1` / `isa2` in the slot report, the ZX-bus adapter as a `zxbus` host (ISA phase I5 folded in) | Sprinter ISA tests unchanged; a GS card behind the adapter listed as `zxbus` in the report | M |
 
 The ZX-MultiSound ([integration TDD](../2026-10-03-zx-multisound/tdd-integration.md)) starts after SL-4 (it needs the
@@ -837,3 +837,47 @@ on every changed core translation unit. No benchmark: no per-instruction or per-
 **Not in SL-6:** the surfaces (SL-7: `SlotControl` over `SlotChange::Run` and `PlanChange`, 1:1 with the request and
 result types above); `NetworkManager::RequestChange` (the runtime network card change) still bypasses the slot set;
 snapshots that carry a slot set (architecture.md §8).
+
+## 15. SL-7 as built (2026-10-05; MultiSound MS-6 alongside)
+
+Every surface reads and changes the slots through one core layer, `SlotControl` (`core/src/emulator/slots/slotcontrol.{h,cpp}`):
+`Execute(SlotControlRequest) -> SlotControlReply` with the verbs `list` (DeviceState::Slots), `catalog` (every card of
+the reference data with its options, functions, ports, media and how it fits this machine: the planner's suggested
+slot, fit, `fits` / `needs-replace` / `refused`, what it would remove), `matrix` (the generated tables), `plug` /
+`remove` / `set` (SlotChange::Run; the reply 1:1 from SlotChangeResult: status, message, plan with every removed card's
+options and `undo`, shadowed devices, lost functions, media, the new `[SLOTS]` lines, the restart with the new id, the
+media report) and `gs` (the General Sound personality, Q10). HTTP status: 200 applied / dry-run, 409 refused /
+recording, 400 bad request, 404 no machine, 500 failed. `SlotControl::CarryValue` is the model switch's slot carry on
+every surface, `SlotControl::CreateOverride` the create-time `"slots": {...}` form (architecture §9).
+
+| Surface | As built |
+|---|---|
+| WebAPI | `GET /slots`, `/slots/catalog`, `/slots/matrix[?table=]`, `POST /slots/{slot}/plug|remove|options`, `PUT /slots/{slot}/options` (`api/slots_api.cpp`); create / start take `"slots"`; the model switch reply has `slots` (SlotCarry) and `report`; `POST /control/audio/gs` `switch_personality` is the `gs` verb; OpenAPI `openapi_slots.inc`, `openapi_slots_schemas.inc` (tag `Slots`) |
+| CLI | `slots [list|catalog|matrix|plug|remove|set|gs] ... [--replace] [--dry-run] [--media] [--adapter] [--json]` (`cli-slots.h`, header-only, parsed and rendered in core-tests); `gs switch_personality` -> `slots gs`; `model` prints the carry lines |
+| MCP | `inspect_state` aspect `slots`; `emulator_manage` `slots_catalog`, `slots_matrix`, `slots_plug`, `slots_remove`, `slots_set` (`replace_if_incompatible`, `dry_run`, `media_disposition`), create `slots`, `switch_model` prints the carry, `gs_switch_personality` shows the plan and the restart |
+| Lua | `slots_state()`, `slots_catalog()`, `slots_matrix([table])`, `slots_plug(slot, card, opts)`, `slots_remove(slot, opts)`, `slots_set(slot, opts)`, `slots_gs(card, opts)`; an interpreter bound to the restarted instance follows it |
+| Python | module functions `unreal.slots_*` with `emulator_id` (a change replaces the machine, so not on `Emulator`); `Emulator.gs_switch_personality` -> the restart |
+| Qt | Machine > Slots (`unreal-qt/src/cardslots/slotswindow.*`): the tree, the catalog with fit / outcome, option editors (sets as check boxes: the MultiSound DIP), live plan preview; `SlotChangeController`: plan with the replace flag (Q1), confirm the restart (Q6), dirty media save / discard, the removed cards named with Undo (`SlotChangeRequest::slotSet`, `SlotManager::PlanSet`); the audio settings' GS combo goes through it (Q10); the model switch names the cards not carried |
+
+**Core additions:** `SlotManager::PlanSet` / `CreationRefusal` (an exact slot set checked as a creation, the TTD guard),
+`SlotChangeRequest::slotSet` (Undo); `slotchange.h` / `slotcontrol.h` guard the Qt `slots` macro.
+
+**Deviations, with the reason:**
+
+1. `GET /slots/matrix` returns the markdown tables (the reviewed document's form); the per-machine fit of every card is
+   the catalog's `thisMachine`.
+2. Python's slot functions are module functions with `emulator_id`, not `Emulator` methods: a change destroys the
+   object the method was called on.
+3. The MultiSound recipe is `.recipe/peripherals/multisound.md` (the library keeps sound cards in `peripherals/`), not
+   `.recipe/sound/`.
+4. File names `slots_api.cpp`, `openapi_slots.inc` follow their directories (`*_api.cpp`, `openapi_*.inc`).
+5. The runtime network card change (`network set card=`) still works in place: open question Q11.
+
+**Tests:** `SlotControl_Test.*` (8: the §2.5 parity script - list, catalog, matrix, refused plug with the plan equal
+to `SlotManager::PlanChange` field by field, the plug with the flag, options, remove, dry run -, GS personality, the
+recording refusal, bad requests, the create-time form, Undo by slot set, the carry value), `CliSlots_Test.*` (2),
+`McpTools_Test` slot tests (7, the GS switch test updated to the restart reply), `SlotsWindow_Test.*` in
+`unreal-qt-tests` (3: preview, plug + warning + Undo, cancel; options + Undo button; the MIDI view). The WebAPI routes
+and the Lua / Python bindings are thin adapters over the tested layer; they were verified against a running unreal-qt
+(own ports, `.recipe/machines/slots.md`): MCP, WebAPI, CLI and Lua live; Python by `-fsyntax-only` (the build does not
+enable it).

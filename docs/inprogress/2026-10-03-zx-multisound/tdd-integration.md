@@ -167,6 +167,23 @@ the card is left out there - and `SoundChip_GeneralSound_Profile_Test.MultiSound
 | Qt | slot window card panel (DIP checkboxes, gsRam, ctrlMask with the "unofficial" note), mixer rows, a MIDI activity view (channels, programs, note activity) |
 | Recipe | `.recipe/sound/multisound.md`: fit the card, play a TSFM tune, a SAA tune, a MIDI file through WC, record each source |
 
+### 5.1 As built (MS-6, 2026-10-05; with slots SL-7)
+
+| Item | As built |
+|---|---|
+| Fitting | the slots surfaces (`slots plug zxbus.next multisound gsRam=2m`, WebAPI `/slots/{slot}/plug`, MCP `slots_plug`, Lua / Python `slots_plug`, create with `"slots"`, Qt Machine > Slots with check boxes for the DIP set) |
+| State | `DeviceState::MultiSound` / `DeviceState::Midi` (`slots/cards/multisound/multisounddevicestate.cpp`): slot, options with `ctrl_mask_note`, fit, `shadowed_devices`, `logic` (CPLD latches + the four DAC registers as latched), `ym.chips[2]` with `ssg` = `DeviceState::AyChipReport` and `fm` = `DeviceState::Ym2203ChipReport` (the TSFM report's builder, now shared), `saa`, `gs` = `DeviceState::GeneralSoundReport` (the GS slot's builder) plus firmware state, `dac` (output stage), `midi`; `Midi()`: line, bank, 16 parts (program 1-128, preset name from the bank, volume, pan, expression, pitch bend, voices, `keys` / `notes` sounding), polyphony, effects, counters |
+| MIDI panic | `MidiControl::Execute(context, "panic")` -> TTD live input `TTDInputKind::MidiPanic` (17) -> `ICard::MidiPanic` -> `sam2695::Synth::Panic(t)`: a queued event that kills every voice (All Sound Off on all parts) and leaves controllers, programs and the parser's running status; journaled while recording, replayed by a seek |
+| Library | `sam2695::Synth::Panic`, `SynthReport::ChannelView::keys` (the keys sounding, 2 x 64 bits) |
+| Surfaces | WebAPI `GET /state/audio/multisound`, `GET /state/audio/midi`, `POST /control/audio/midi` (+ OpenAPI `openapi_multisound.inc`); CLI `multisound [--full|--json]`, `midi [--json]`, `midi panic` (`cli-multisound.h`); MCP aspects `audio_multisound`, `audio_midi`, the panic through `invoke_api`; Lua `multisound_state()`, `midi_state()`, `midi_panic()`; Python `emu.multisound_state()`, `emu.midi_state()`, `emu.midi_panic()` |
+| Qt | the card's options in the slots window (DIP check boxes, gsRam, ctrlMask with the note on the unofficial `classic`); the five mixer rows (MS FM / SSG / SAA / DAC / MIDI) are SoundManager devices and show in the audio settings as every device does; Tools > MIDI Activity (parts, presets, a 16 x 128 key strip of the notes sounding, Panic); a HUD icon of its own (`multisound`) |
+| Recipe | [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md) (not `.recipe/sound/`: the library keeps sound cards in `peripherals/`), verified 2026-10-05 on a Pentagon: a TSFM tune (`tech_support.sna`) on the card's FM, a SAA tone (653 Hz), two MIDI notes bit-banged through YM IOA2 (C4, E4 on GeneralUser GS), each captured by its own source (`ms_fm`, `ms_saa`, `ms_midi`), the panic replayed by a TTD seek |
+
+Tests: `MultiSoundDeviceState_Test.*` (3), `CliMultiSound_Test.SummaryAndMidiText`, `McpTools_Test.InspectState_MultiSoundAndMidiAspects`,
+`SlotsWindow_Test.MidiActivityListsTheParts` (unreal-qt-tests), `sam2695tests` `Synth.PanicStopsEveryVoiceKeepsTheStream`.
+The MultiSound test helpers (`StagedMachine`, `Out`, `ParkCpu`, `WriteTestBank`) moved to
+`core/tests/emulator/slots/cards/multisound/multisoundstagedmachine.h`.
+
 ## 6. Real-software verification (MS-7)
 
 Each run as a user would run it, TTD recording on (rolling limit), results in the folder TODO:

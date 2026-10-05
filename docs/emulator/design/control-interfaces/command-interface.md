@@ -3312,19 +3312,23 @@ into the slots with the same id. A removed card's medium with unsaved writes (`s
 | `slots gs` | `gs switch_personality` | `<gs\|gs-lw\|neogs>` (also `z80`, `lw`, `ngs`) `[--replace] [--dry-run]` | The General Sound personality: the card in the GS slot replaced by the other one (owner decision Q10), applied by the restart like every change. Only the `gs_lightweight` feature still swaps the card in place | ✅ Implemented |
 
 The reply of a change: the status (`applied`, `dry-run`, `refused`, `recording`, `failed`), the plan line by line
-(`removes zxbus.1 = gs [ram=512k rom=1.05]: shares gs` - the options are the ones that put the card back), the restart
+(`removes zxbus.1 = gs [ram=512k rom=1.05] (D1): shares gs` - the options are the ones that put the card back, the
+rule in brackets), the restart
 (`restarted: emulator <old> -> <new> (running)`) and where the media went. `--json` prints the same object the WebAPI
 returns.
 
-**Worked example** (a Pentagon with the shipped TurboSound FM and a General Sound):
+**Worked example** (the shipped Pentagon: TSFM in the AY socket, NeoGS, MoonSound, SounDrive):
 
 ```
 slots plug zxbus.next multisound --dry-run
-# needs replaceIfIncompatible: removes `ay-socket` `tsfm`: ...; removes `zxbus.1` `gs`: shares `gs`
+# refused: needs replaceIfIncompatible: removes `zxbus.1` `neogs`: shares `gs`; ...
+#   removes zxbus.1 = neogs [ram=2m] (D1): shares `gs`
+#   removes zxbus.3 = soundrive [mode=both] (D1): shares `soundrive`
+#   removes ay-socket = tsfm (D3): pointless pair: `zxbus.4` would shadow it ...
 slots plug zxbus.next multisound gsRam=2m --replace
-# applied ... restarted: emulator 3f2a... -> 9c41... (running)
-slots set zxbus.1 ctrlMask=classic
-slots remove zxbus.1
+# applied ... restarted: emulator 8618a033-... -> ed55c5ad-... (running)
+slots set zxbus.4 ctrlMask=classic
+slots remove zxbus.4
 ```
 
 A model switch (`model <name>`) carries the cards: each stays in its slot where the new machine has that bus, moves

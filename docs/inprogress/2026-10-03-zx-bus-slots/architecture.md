@@ -501,6 +501,12 @@ the shared report builder.
 | Qt | Machine > Slots window: one row per slot (bus, card, options, state, fit), the catalog with the matrix (incompatible entries marked, tooltip with the reason), plan preview, warning toast with Undo, override confirmation |
 | Recipe | `.recipe/machines/slots.md` (plug, replace, dry-run, undo) |
 
+As built (SL-7, [tdd.md](tdd.md) §15): `SlotControl::Execute(SlotControlRequest)` with the verbs list, catalog,
+matrix, plug, remove, set, gs; WebAPI `POST /slots/{slot}/{plug|remove|options}` and `PUT .../options` (body as above,
+`{slot}` = `auto` lets the planner choose); MCP `emulator_manage` also `slots_matrix`; Lua `slots_gs`; Python module
+functions `unreal.slots_*(..., emulator_id)`; the GS personality on every surface is the `gs` verb (Q10); Qt
+Machine > Slots with Undo through `SlotChangeRequest::slotSet`.
+
 The create-time options (`"sprinter": {"isa_slot1": ...}`, `[ISA] SlotN`) stay for the Sprinter and gain the general
 `"slots": {...}` form on create.
 
