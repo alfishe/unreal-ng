@@ -3307,11 +3307,12 @@ public:
             return StateNodeToLua(s, TrafficAccess::Records(emulator->GetContext(), query));
         });
         lua.set_function("network_traffic_control", [this](sol::this_state s, const std::string& action, sol::optional<std::string> path,
-                                                           sol::optional<uint64_t> ringBytes) -> sol::variadic_results {
+                                                           sol::optional<uint64_t> value) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");
             std::string error;
-            if (!TrafficAccess::Control(emulator->GetContext(), action, path.value_or(""), ringBytes.value_or(0), error))
+            // value: ring -> its bytes, stream -> the TCP port (0 = any free one)
+            if (!TrafficAccess::Control(emulator->GetContext(), action, path.value_or(""), value.value_or(0), error))
                 return mouseError(s, error);
             sol::variadic_results r;
             r.push_back(sol::make_object(s, true));

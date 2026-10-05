@@ -2624,12 +2624,14 @@ namespace PythonBindings
                 return py::bytes(reinterpret_cast<const char*>(file.data()), file.size());
             }, py::arg("adapter") = "", "The traffic ring as a pcapng file (bytes) for Wireshark")
             .def("network_traffic_control", [](Emulator& self, const std::string& action, const std::string& path,
-                                               uint64_t ringBytes) {
+                                               uint64_t value) {
                 std::string error;
-                if (!TrafficAccess::Control(self.GetContext(), action, path, ringBytes, error))
+                if (!TrafficAccess::Control(self.GetContext(), action, path, value, error))
                     throw py::value_error(error);
-            }, py::arg("action"), py::arg("path") = "", py::arg("ring_bytes") = 0,
-               "clear | start (record into the pcapng file `path`, unbounded) | stop | ring (set ring_bytes)")
+            }, py::arg("action"), py::arg("path") = "", py::arg("value") = 0,
+               "clear | start (record into the pcapng file `path`, unbounded) | stop | ring (value: its bytes) | stream (the "
+               "live pcapng stream for Wireshark on TCP port `value`, 0 = any free one; network_traffic()['stream'] has it) | "
+               "stream-stop")
             .def("network_adapters", [](Emulator&) -> py::object {
                 return StateNodeToPy(EthernetAccess::Adapters());
             }, "The host adapters the bridge can use (ethernet_mode='bridge'): name, ipv4, wireless, bridgeable; library, error")

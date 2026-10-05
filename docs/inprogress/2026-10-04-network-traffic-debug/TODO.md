@@ -9,5 +9,8 @@
 - [x] T2 (2026-10-04): `SocketPacketizer` - socket operations as synthetic TCP (handshake, chained segments of up
   to 1460 bytes, FIN, RST) / UDP / ICMP packets in the ring's pcapng and the file, one synthetic adapter address per
   adapter (10.0.2.15 and up), each packet's comment naming the real operation; summaries were already in T1
-- [ ] T3 live stream (TCP port, extcap)
+- [x] T3 (2026-10-04): `TrafficStream` - the tap's live readers served as a pcapng stream on a TCP port (netsock:
+  macOS, Linux, Windows; the ring first, then each packet; a reader 16 MiB behind is dropped), `[NETWORK]
+  TrafficStream=off|auto|<port>`, actions `stream` / `stream-stop` on every surface, the Wireshark extcap script
+  `tools/wireshark/unreal-ng-extcap.py` (+ `.bat` for Windows) with its README
 - [ ] T4 Qt window with Seek here

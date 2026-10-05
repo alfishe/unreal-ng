@@ -943,7 +943,10 @@ void EmulatorAPI::postNetworkTraffic(const HttpRequestPtr& req, std::function<vo
     std::string error;
     const std::string action = (*body)["action"].asString();
     const std::string path = body->isMember("path") ? (*body)["path"].asString() : std::string();
-    const uint64_t ringBytes = body->isMember("ring_bytes") ? (*body)["ring_bytes"].asUInt64() : 0;
+    // ring: ring_bytes; stream: port
+    const uint64_t ringBytes = body->isMember("ring_bytes") ? (*body)["ring_bytes"].asUInt64()
+                               : body->isMember("port")     ? (*body)["port"].asUInt64()
+                                                            : 0;
     if (!TrafficAccess::Control(emulator->GetContext(), action, path, ringBytes, error))
         return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
     TrafficAccess::Query query;
@@ -952,6 +955,7 @@ void EmulatorAPI::postNetworkTraffic(const HttpRequestPtr& req, std::function<vo
     StateNode ok = StateNode::Object();
     ok["ok"] = true;
     ok["tap"] = *reply.find("tap");
+    ok["stream"] = *reply.find("stream");
     ReplyState(ok, callback);
 }
 

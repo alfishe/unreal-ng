@@ -115,6 +115,34 @@ const char* ProtoName(NetProto p)
 }
 }  // namespace
 
+struct NetworkTrafficTap::Encoder
+{
+    std::map<std::string, uint32_t> interfaces;   ///< adapter -> pcapng interface id
+    SocketPacketizer packetizer;                  ///< socket operations as packets (T2)
+
+    /// The pcapng blocks of one record (an interface description first for a new adapter); nothing for an operation
+    /// with no packet
+    void Encode(const TrafficRecord& r, std::vector<uint8_t>& out)
+    {
+        const std::vector<std::vector<uint8_t>> packets =
+            r.kind == TrafficRecord::Kind::Frame ? std::vector<std::vector<uint8_t>>{r.bytes} : packetizer.Packets(r);
+        if (packets.empty())
+            return;
+        auto it = interfaces.find(r.adapter);
+        if (it == interfaces.end())
+        {
+            const std::vector<uint8_t> idb = InterfaceDescription(r.adapter);
+            out.insert(out.end(), idb.begin(), idb.end());
+            it = interfaces.emplace(r.adapter, static_cast<uint32_t>(interfaces.size())).first;
+        }
+        for (const std::vector<uint8_t>& packet : packets)
+        {
+            const std::vector<uint8_t> epb = EnhancedPacket(it->second, r, packet);
+            out.insert(out.end(), epb.begin(), epb.end());
+        }
+    }
+};
+
 NetworkTrafficTap::NetworkTrafficTap(std::function<TrafficTime()> clock) : _clock(std::move(clock))
 {
 }
@@ -163,6 +191,19 @@ void NetworkTrafficTap::Add(TrafficRecord r)
     _bytes += r.bytes.size();
     if (_file)
         WriteToFile(r);
+    for (LiveReader& reader : _live)
+    {
+        if (reader.dropped)
+            continue;
+        reader.encoder->Encode(r, reader.pending);
+        if (reader.pending.size() > kMaxLivePending)
+        {
+            // Too slow (or gone without a word): drop it rather than grow without end
+            reader.dropped = true;
+            reader.pending.clear();
+            ++_liveDropped;
+        }
+    }
     _ringBytes += r.bytes.size() + 64;   // the bytes and the record's own fields
     _ring.push_back(std::move(r));
     while (_ringBytes > _ringBudget && _ring.size() > 1)
@@ -215,27 +256,9 @@ std::vector<uint8_t> NetworkTrafficTap::Pcapng(const Filter& filter) const
 {
     const std::vector<TrafficRecord> records = Records(filter);
     std::vector<uint8_t> out = SectionHeader();
-    std::map<std::string, uint32_t> interfaces;
-    SocketPacketizer packetizer;
+    Encoder encoder;
     for (const TrafficRecord& r : records)
-    {
-        const std::vector<std::vector<uint8_t>> packets =
-            r.kind == TrafficRecord::Kind::Frame ? std::vector<std::vector<uint8_t>>{r.bytes} : packetizer.Packets(r);
-        if (packets.empty())
-            continue;
-        auto it = interfaces.find(r.adapter);
-        if (it == interfaces.end())
-        {
-            const std::vector<uint8_t> idb = InterfaceDescription(r.adapter);
-            out.insert(out.end(), idb.begin(), idb.end());
-            it = interfaces.emplace(r.adapter, static_cast<uint32_t>(interfaces.size())).first;
-        }
-        for (const std::vector<uint8_t>& packet : packets)
-        {
-            const std::vector<uint8_t> epb = EnhancedPacket(it->second, r, packet);
-            out.insert(out.end(), epb.begin(), epb.end());
-        }
-    }
+        encoder.Encode(r, out);
     return out;
 }
 
@@ -253,8 +276,7 @@ bool NetworkTrafficTap::StartFile(const std::string& path, std::string& error)
     const std::vector<uint8_t> shb = SectionHeader();
     _file->write(reinterpret_cast<const char*>(shb.data()), static_cast<std::streamsize>(shb.size()));
     _filePath = path;
-    _filePacketizer = std::make_unique<SocketPacketizer>();
-    _fileInterfaces.clear();
+    _fileEncoder = std::make_unique<Encoder>();
     _fileRecords = 0;
     return true;
 }
@@ -267,24 +289,11 @@ void NetworkTrafficTap::StopFile()
 
 void NetworkTrafficTap::WriteToFile(const TrafficRecord& r)
 {
-    if (!_filePacketizer)
-        _filePacketizer = std::make_unique<SocketPacketizer>();
-    const std::vector<std::vector<uint8_t>> packets =
-        r.kind == TrafficRecord::Kind::Frame ? std::vector<std::vector<uint8_t>>{r.bytes} : _filePacketizer->Packets(r);
-    if (packets.empty())
+    std::vector<uint8_t> blocks;
+    _fileEncoder->Encode(r, blocks);
+    if (blocks.empty())
         return;
-    auto it = _fileInterfaces.find(r.adapter);
-    if (it == _fileInterfaces.end())
-    {
-        const std::vector<uint8_t> idb = InterfaceDescription(r.adapter);
-        _file->write(reinterpret_cast<const char*>(idb.data()), static_cast<std::streamsize>(idb.size()));
-        it = _fileInterfaces.emplace(r.adapter, static_cast<uint32_t>(_fileInterfaces.size())).first;
-    }
-    for (const std::vector<uint8_t>& packet : packets)
-    {
-        const std::vector<uint8_t> epb = EnhancedPacket(it->second, r, packet);
-        _file->write(reinterpret_cast<const char*>(epb.data()), static_cast<std::streamsize>(epb.size()));
-    }
+    _file->write(reinterpret_cast<const char*>(blocks.data()), static_cast<std::streamsize>(blocks.size()));
     _file->flush();   // a live reader (tail, Wireshark on the file) sees each packet
     ++_fileRecords;
 }
@@ -356,6 +365,8 @@ StateNode NetworkTrafficTap::Describe() const
     f["path"] = _filePath;
     f["records"] = _fileRecords;
     d["file"] = f;
+    d["live_readers"] = static_cast<uint64_t>(_live.size());
+    d["live_dropped"] = _liveDropped;
     return d;
 }
 
@@ -381,4 +392,40 @@ std::string NetworkTrafficTap::FilePath() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     return _filePath;
+}
+
+uint32_t NetworkTrafficTap::AttachLive()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    LiveReader reader;
+    reader.id = _nextLiveId++;
+    reader.encoder = std::make_unique<Encoder>();
+    reader.pending = SectionHeader();
+    for (const TrafficRecord& r : _ring)
+        reader.encoder->Encode(r, reader.pending);   // what already happened comes first
+    const uint32_t id = reader.id;
+    _live.push_back(std::move(reader));
+    return id;
+}
+
+bool NetworkTrafficTap::TakeLive(uint32_t id, std::vector<uint8_t>& out)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (LiveReader& reader : _live)
+    {
+        if (reader.id != id)
+            continue;
+        if (reader.dropped)
+            return false;
+        out.swap(reader.pending);
+        reader.pending.clear();
+        return true;
+    }
+    return false;
+}
+
+void NetworkTrafficTap::DetachLive(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _live.erase(std::remove_if(_live.begin(), _live.end(), [id](const LiveReader& r) { return r.id == id; }), _live.end());
 }
