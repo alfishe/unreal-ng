@@ -237,12 +237,46 @@ path.
 the region); `RtcEepromRegion_Test` (a region write is the EEPROM byte; past the end refused); the TS-Conf region list
 is cram, sfile, cmos, eeprom.
 
-## 5. The rest (outline; designed when reached)
+## 5. F4 + F5: long run-control calls and the run-control claim
+
+### 5.1 The problems in one example
+
+The WebAPI server has two HTTP worker threads. `POST /skip_until {"pc":"0x8000"}` with a target that is never
+reached runs up to 700 million T-states (minutes) on one of them; a second such call takes the other, and from
+then on nothing answers, not even the TUI's own `GET /debug/snapshot` polling (F4). Separately, `/step`, `/steps`
+and `/stepover` answer `409 Conflict` while another surface (GDB) holds run control, but `/stepout`, `/skip_until`
+and the `run_*` calls step the machine under GDB's feet (F5). The CLI has the same split.
+
+### 5.2 Design
+
+**F4: long calls leave the HTTP worker.** `steps`, `stepover`, `stepout`, `skip_until`, `run_tstates`,
+`run_to_scanline`, `run_scanlines`, `run_to_pixel`, `run_to_interrupt`, `run_frame` and `run_frames` run on a small
+pool of their own (4 threads, `LongCallPool`); the handler returns at once, the pool thread does the work and calls
+drogon's `callback` when it is done (drogon allows answering from any thread). The answer, its fields and its
+status codes are exactly as before: a client sees no difference except that the server keeps answering everything
+else meanwhile. A fifth concurrent long call waits for a pool thread. The single `step` stays on the worker (one
+instruction).
+
+Stop notifications already exist on the WebSocket (`paused` / `step_done` with `seq`, F2); nothing new is needed for
+a client that prefers not to wait on the reply.
+
+**F5: one claim rule.** Every call that advances the CPU checks the run-control claim first and answers `409
+Conflict` "Run-control held by <surface>" while another surface holds it: WebAPI `/stepout`, `/skip_until` and every
+`run_*` join `/step`, `/steps`, `/stepover` and `/resume`; the CLI's `stepout`, `skip_until` and `run_*` join its
+`step`, `stepover` and `steps`. One helper per surface (`RunControlHeldReply` in the WebAPI, `RunControlHeld` in
+the CLI) so the message is the same everywhere. Lua and Python run inside the emulator's own process and check no
+claim on any call today; they stay as they are (a separate decision if wanted).
+
+### 5.3 Tests
+
+Live (core-tests cannot link drogon): three never-ending `skip_until` calls at once, then `GET /emulator/{id}` answers
+within a second; each long call still returns its JSON. MCP / CLI unit level: `CLIProcessor` answers `stepout`,
+`skip_until`, `run_frames` with the claim message while a fake claim is held (`RunControlClaim_Test` style).
+
+## 6. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| F4 | `/stepout`, `/skip_until` (and the long `/steps`) start the run and report through events, not by holding an HTTP worker | the same pattern as Continue |
-| F5 | `/stepout`, `/skip_until` and the run_* calls check the run-control claim (409 when another surface holds it) like `/step` does | |
 | E8 | Long-poll `GET /debug/wait?since=<seq>&timeout_ms=` | answers when the snapshot's `seq` moves; async (no worker held) |
 | E2 | PC history with page, `GET /debug/pchist?depth=` | per-instruction ring armed only while a debugger asks for it; A/B benchmark |
 | D9 | `read_write` per window in `/state/paging` for TS-Conf | verify first |

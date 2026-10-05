@@ -59,9 +59,14 @@ the values depend on the model.)
 - `run_scanlines` is capped at 1000, `run_frames` at 10 000, `steps` at 100 000.
 - `run_to_scanline` completes the current frame first when the position is already past the
   target line, so it never runs backward.
-- `resume`, `step`, `steps` and `stepover` are refused with **409 `Run-control held`** while another
-  surface (a GDB client) holds the run-control claim; the message names it. `resume` of a
+- Every call that advances the CPU - `resume`, `step`, `steps`, `stepover`, `stepout`, `skip_until` and every
+  `run_*` (WebAPI; the CLI's commands of the same names too) - is refused with **409 `Run-control held`**
+  while another surface (a GDB client) holds the run-control claim; the message names it. `resume` of a
   machine that is not paused returns 400.
+- The long calls (`steps`, `stepover`, `stepout`, `skip_until`, `run_*`) run on a pool of their own (4
+  threads), not on the server's two HTTP workers: while one runs, everything else (snapshots, status,
+  polling) keeps answering. The reply is the same JSON when the call finishes; a fifth long call at once
+  waits for a free pool thread.
 - A **TTD replay** drives the machine from the journal; direct runs during a replay are
   not covered by this recipe (unconfirmed; use `time_travel` to move through a replay).
 
@@ -207,5 +212,6 @@ handler converts it with `std::stoul` and is not guarded: unconfirmed what the c
   `run_to_interrupt` or `run_to_scanline 0` first when a frame-aligned start matters.
 - **Beam position while running.** `video/beam` on a running machine returns whatever instant
   it hits; pause (or `run_to_*`) first.
-- **Clients holding run-control.** A GDB client or another surface claims it; steps and
-  `resume` get 409 until it releases.
+- **Clients holding run-control.** A GDB client or another surface claims it; steps, runs and
+  `resume` get 409 until it releases. A test instance's GDB server listens on `UNREAL_GDB_PORT`
+  (default 2000) so it does not collide with another instance's.

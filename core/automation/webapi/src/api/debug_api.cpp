@@ -3,6 +3,7 @@
 // Created 2026-01-21
 
 #include "../common/binaryresponse.h"
+#include "../common/longcallpool.h"
 #include "../common/jsonnumber.h"
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
@@ -69,6 +70,24 @@ static std::shared_ptr<Emulator> getEmulatorOrError(
     }
     
     return emulator;
+}
+
+/// 409 "Run-control held by <surface>" when another surface (GDB) holds run control: the one rule for every call
+/// that advances the CPU (debugger additions tdd §5, F5). True when it answered
+static bool RunControlHeldReply(const std::shared_ptr<Emulator>& emulator,
+                                std::function<void(const HttpResponsePtr&)>& callback)
+{
+    EmulatorContext* ctx = emulator->GetContext();
+    if (!ctx || !ctx->IsRunControlClaimed())
+        return false;
+    Json::Value error;
+    error["error"] = "Run-control held";
+    error["message"] = "Run-control held by " + ctx->GetRunControlState().surfaceLabel + ". Use that surface to step.";
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k409Conflict);
+    addCorsHeaders(resp);
+    callback(resp);
+    return true;
 }
 
 // region Stepping Commands
@@ -205,7 +224,7 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
 /// @brief POST /api/v1/emulator/{id}/steps
 /// @brief Execute N CPU instructions
 /// @brief Request body: {"count": N}
-void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepsNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                         const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -271,7 +290,7 @@ void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const Http
 
 /// @brief POST /api/v1/emulator/{id}/stepover
 /// @brief Step over call instructions
-void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -329,7 +348,7 @@ void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const H
 /// @brief POST /api/v1/emulator/{id}/stepout
 /// @brief Step out of the current subroutine (SP-tracking: runs until a RET-family
 /// @brief instruction at/above the entry stack level, then executes it)
-void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -374,7 +393,7 @@ void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const Ht
 /// @brief same no-trap rule as step out. Frames rendered during the skip are
 /// @brief not captured by the recording subsystem (raw CPU stepping path).
 /// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000}
-void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::skipUntilNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -477,7 +496,7 @@ void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const 
 /// @brief POST /api/v1/emulator/{id}/run_tstates
 /// @brief Run for N t-states
 /// @brief Request body: {"tstates": N}
-void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runTStatesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -525,7 +544,7 @@ void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const
 /// @brief POST /api/v1/emulator/{id}/run_to_scanline
 /// @brief Run until target scanline
 /// @brief Request body: {"scanline": N}
-void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToScanlineNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -583,7 +602,7 @@ void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(co
 /// @brief POST /api/v1/emulator/{id}/run_scanlines
 /// @brief Run N scanlines from current position
 /// @brief Request body: {"count": N}
-void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runNScanlinesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -630,7 +649,7 @@ void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief POST /api/v1/emulator/{id}/run_to_pixel
 /// @brief Run until next screen pixel (skip vblank/borders)
-void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -671,7 +690,7 @@ void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const
 
 /// @brief POST /api/v1/emulator/{id}/run_to_interrupt
 /// @brief Run until Z80 accepts maskable interrupt
-void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -712,7 +731,7 @@ void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(c
 
 /// @brief POST /api/v1/emulator/{id}/run_frame
 /// @brief Run one complete video frame
-void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runFrameNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -754,7 +773,7 @@ void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const H
 /// @brief POST /api/v1/emulator/{id}/run_frames
 /// @brief Run N complete video frames
 /// @brief Request body: {"count": N} (alias "frames" also accepted; other keys are rejected with 400)
-void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runFramesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -4167,6 +4186,120 @@ void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(con
 }
 
 // endregion Assembler
+
+// region <Long run-control calls: off the HTTP worker (tdd §5, F4), one claim rule (F5)>
+
+void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepsNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepOverNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepOutNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { skipUntilNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runTStatesNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToScanlineNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runNScanlinesNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToPixelNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToInterruptNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runFrameNow(req, std::move(*answer), id); });
+}
+
+void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runFramesNow(req, std::move(*answer), id); });
+}
+
+// endregion </Long run-control calls>
 
 } // namespace v1
 } // namespace api
