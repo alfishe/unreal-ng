@@ -30,8 +30,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget", "compression"}},
-        {"export", {"compression", "parent"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size"}},
+        {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
@@ -174,7 +174,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -199,6 +199,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "save / export of a hard disk or SD card to a .chd: none, default (lzma,zlib,huff,flac) or up to four of zlib, lzma, "
         "huff, flac, zstd";
     schema["properties"]["parent"]["description"] = "export to a .chd: write a child of this parent CHD";
+    schema["properties"]["compact"]["description"] =
+        "save / export of a FAT disk or card: write a re-synthesized volume (every file contiguous; fs converts, size "
+        "resizes) instead of the layout as it is. .vhd targets get a fixed VHD footer";
     schema["properties"]["format"]["description"] =
         "insert / swap: 'audio-cd' - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a "
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "

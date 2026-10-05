@@ -766,6 +766,65 @@ TEST_F(SprinterBoot_Test, ComposeDssGraftedUtilFolder)
     std::remove(image.c_str());
 }
 
+// ACC-C6 (media-multisource S1): the ACC-C3 session - a DSS hard disk image with a host folder grafted at /UTIL - and a
+// guest MKDIR, exported to a raw .img, a fixed .vhd and a compacted .img (the merged volume re-synthesized, the DSS
+// loader in the MBR gap and the boot sector code carried). Each file then boots DSS alone on a reset machine: the
+// guest's directory and the folder's file are in it. The upper SYSTEM.BAT makes the directory and lists C:\UTIL.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk, four boots): ~2000 frames of real ROM, turbo mode
+TEST_F(SprinterBoot_Test, ComposeFlatImageBootsAlone)
+{
+    const std::string image = DssHddFile("dss-flat-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-flat");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "ver\r\nmkdir c:\\s6\r\ncd \\util\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\s6")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("HELLO")) << ScreenText();
+
+    const std::string img = TestPathHelper::GetUniqueTestScratchPath("dss-flat.img");
+    const std::string vhd = TestPathHelper::GetUniqueTestScratchPath("dss-flat.vhd");
+    const std::string compact = TestPathHelper::GetUniqueTestScratchPath("dss-compact.img");
+    ASSERT_TRUE(_context->pMediaManager->Export("ide0.master", img).Ok());
+    ASSERT_TRUE(_context->pMediaManager->Export("ide0.master", vhd).Ok());
+    BlockWriteOptions compacted;
+    compacted.compact = true;
+    const MediaResult result = _context->pMediaManager->Export("ide0.master", compact, compacted);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    std::string report;
+    for (const std::string& line : result.report)
+        report += line + "\n";
+    EXPECT_NE(report.find("after the MBR"), std::string::npos) << "the DSS loader is carried\n" << report;
+    EXPECT_TRUE(RootHasDirectory(ReadAll(img), "S6         ")) << "the guest's MKDIR is in the flat image";
+
+    for (const std::string& path : {img, vhd, compact})
+    {
+        EjectOptions discard;
+        discard.disposition = Disposition::Discard;
+        ASSERT_TRUE(_context->pMediaManager->Eject("ide0.master", discard).Ok());
+        InsertHdd(path);
+        _emulator->Reset();
+        // The last boot's screen goes first (the BIOS clears it), then this boot's DIR
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas("file(s)"); }, 300, 5);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+        EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << path << "\n" << ScreenText();
+        EXPECT_TRUE(ScreenHas("HELLO")) << path << ": the folder's file\n" << ScreenText();
+    }
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->format, "raw");
+    DestroyEmulator();
+    for (const std::string& path : {image, img, vhd, compact})
+        std::remove(path.c_str());
+}
+
 // T-IDE-8: BIOS 3.04 probes ide0.slave whatever it holds: with an empty CD unit there (CD1=1, the configuration
 // MAME ships, sprinter.cpp:1967) it reports the drive by its IDENTIFY PACKET DEVICE model at once, and the boot from
 // the master is unaffected. With no device there it reports "None" (Dss162_BootsFromAHardDiskImage).

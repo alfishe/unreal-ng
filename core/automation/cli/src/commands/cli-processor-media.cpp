@@ -261,7 +261,8 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  swap <slot> <path>           - eject + insert in one step" << NEWLINE;
     out << "  eject <slot>                 - take the medium out" << NEWLINE;
     out << "  save <slot> [path]           - floppies: write back (or to path)" << NEWLINE;
-    out << "  export <slot> <path>         - a copy of the medium as it is now" << NEWLINE;
+    out << "  export <slot> <path>         - a copy of the medium as it is now (.img, .vhd, .chd)" << NEWLINE;
+    out << "                                 --compact [--fs fat32] [--size 64MiB]: a defragmented FAT volume" << NEWLINE;
     out << "  discard <slot>               - drop the unsaved writes" << NEWLINE;
     out << "  rescan <slot>                - rebuild a folder medium" << NEWLINE;
     out << "  create <slot> [--size bytes] - a blank floppy or card" << NEWLINE;

@@ -18,6 +18,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <optional>
+#include <vector>
 #include <string>
 
 #include "emulator/media/mediatypes.h"
@@ -33,12 +36,21 @@ struct BlockWriteOptions
     std::string compression;
     /// CHD: write a child of this CHD file (only hunks that differ are stored)
     std::string parent;
+    /// S1 compact: write a re-synthesized FAT volume (every file contiguous) instead of the layout as it is
+    bool compact = false;
+    std::optional<FatType> fs;             ///< compact: the target's FAT type (default: the volume's)
+    std::optional<uint64_t> size;          ///< compact: total bytes (default: the medium's, or the content's)
 };
 
 class BlockFormats
 {
 public:
-    /// The format a target path is written in: "chd" for `.chd`, else "raw"
+    /// The merged FAT volume on `device`, re-synthesized (S1 compact): the volume read through
+    /// FatImageSource becomes the single layer of a new FatSynthVolume. Its label, MBR and boot
+    /// structures are carried. `device` must outlive `volume`
+    static MediaResult Compact(IBlockDevice& device, const BlockWriteOptions& options, std::unique_ptr<IBlockDevice>& volume);
+
+    /// The format a target path is written in: "chd" for `.chd`, "vhd" for `.vhd`, else "raw"
     static std::string WriterFor(const std::string& path);
 
     /// Write `device` as the guest sees it to `path` (export). `unchanged(h)`

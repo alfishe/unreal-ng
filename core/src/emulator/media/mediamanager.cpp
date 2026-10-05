@@ -904,9 +904,12 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
 
     if (FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true) == medium.SourceKey())
         return MediaResult::Fail(MediaError::InUse, "the export target is the medium's own source");
+    if (!medium.Block() && (options.compact || options.fs || options.size))
+        return MediaResult::Fail(MediaError::BadRequest, "compact, fs and size apply to block media (FAT disks and cards)");
     if (!medium.Block() && (!options.compression.empty() || !options.parent.empty()))
         return MediaResult::Fail(MediaError::BadRequest, "compression and parent apply to block media exported as .chd");
 
+    std::vector<std::string> exportReport;
     if (DiskImage* disk = medium.Floppy())
     {
         // The format writers mark the disk clean and rename it: an export is a
@@ -929,6 +932,7 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
         const MediaResult written = BlockFormats::Write(*medium.Block(), path, options, unchanged);
         if (!written.Ok())
             return written;
+        exportReport = written.report;
     }
     else if (const TapeImage* tape = medium.Tape())
     {
@@ -946,7 +950,9 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
     }
 
     Post(NC_MEDIA_EXPORTED, slotId, &medium, path);
-    return MediaResult::Success();
+    MediaResult exported = MediaResult::Success();
+    exported.report = exportReport;
+    return exported;
 }
 
 MediaResult MediaManager::SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot,
@@ -1008,6 +1014,11 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
     const std::string before = medium.Source().path;
     BlockWriteOptions write;
     write.compression = options.compression;
+    write.compact = options.compact;
+    write.fs = options.fs;
+    write.size = options.size;
+    if (options.compact && options.path.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "compact writes a new image: name the path to save to");
     std::string savedPath;
     MediaResult result = BlockFormats::Save(medium, options.path, write, savedPath);
     if (!result.Ok())

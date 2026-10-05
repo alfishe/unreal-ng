@@ -26,6 +26,8 @@ media {"action":"insert","slot":"hd","path":"/mame/sp_hdd_sys.chd"}       # a MA
 media {"action":"save","slot":"hd"}                                  # write the guest's changes into the CHD
 media {"action":"export","slot":"hd","path":"scratch/disk.chd","compression":"zstd"}
 media {"action":"export","slot":"hd","path":"scratch/diff.chd","parent":"/mame/sp_hdd_sys.chd"}  # only the changes
+media {"action":"export","slot":"hd","path":"scratch/disk.vhd"}                     # raw data + a fixed VHD footer
+media {"action":"export","slot":"hd","path":"scratch/flat.img","compact":true}      # FAT re-synthesized: files contiguous
 media {"action":"eject","slot":"B","discard":true}
 media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)
 media {"action":"formats","kind":"floppy"}                           # accepted extensions per kind: floppy, tape, block, optical
@@ -42,6 +44,10 @@ media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cd
   `kind`, `device`, `immediate` (skip the swap delay), plus `save` / `export` / `discard` / `end_recording` / `async`.
   `swap` takes every `insert` option.
 - `save` takes `retarget` (a disk that no longer fits its format is kept losslessly as `.udi`) and `compression`; `export` takes `compression` and `parent`.
+  Both take `compact` (a FAT disk or card written as a new volume: every file contiguous, deleted data and lost
+  clusters gone, label / MBR / boot code carried), with `fs` (`fat16` / `fat32`: converts; a FAT12 floppy needs it)
+  and `size` (bytes or `64MiB`; default: the medium's size). `save` with `compact` needs a `path`; the medium then
+  reads the new file. Raw exports are sparse (zero sectors not written); a `.vhd` target gets a fixed VHD footer.
 
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
 - Paths are read by the **emulator** process (the `media` tool does not upload; `load_software` does, and the WebAPI `insert` / `swap` also take a multipart file or a raw body with `X-Filename`).

@@ -182,70 +182,6 @@ namespace
         return true;
     }
 
-    /// The boot structures of the bottom FAT image, carried into a rebuilt volume (D-6, DT-5)
-    void PlanFromBase(SourcePool& pool, uint16_t device, std::optional<uint32_t> partition, FatBootPlan& plan,
-                      std::vector<std::string>& carried)
-    {
-        IBlockDevice& image = pool.Device(device);
-        std::shared_ptr<IBlockDevice> window;
-        uint64_t offset = 0;
-        if (partition)
-        {
-            FatPartition part;
-            if (!FatVolumeReader::FindPartition(image, *partition, part))
-                return;
-            offset = part.first;
-            window = std::make_shared<SubRangeDevice>(pool.DevicePtr(device), part.first, part.count);
-        }
-        FatVolumeReader reader;
-        if (!reader.Open(window ? *window : image))
-            return;
-        const uint64_t start = offset + reader.VolumeStart();
-        uint8_t s[512];
-        auto nonZero = [](const uint8_t* p, size_t n) { return std::any_of(p, p + n, [](uint8_t b) { return b != 0; }); };
-        if (start > 0 && image.ReadSector(0, s) && nonZero(s, 446))
-        {
-            plan.mbrCode.assign(s, s + 446);
-            carried.push_back("MBR code");
-        }
-        const bool fat32 = reader.Type() == FatReaderType::Fat32;
-        if (image.ReadSector(start, s))
-        {
-            const size_t codeStart = fat32 ? 90 : 62;
-            // A superfloppy's sector 0 may carry a partition entry over itself at 446 (mformat, our own
-            // builder): a FAT type, starting at LBA 0. Then the code ends there; otherwise it runs to 510
-            const uint8_t* entry = s + 446;
-            const uint8_t type = entry[4];
-            const bool fatType = type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0B || type == 0x0C || type == 0x0E;
-            const uint32_t entryStart = entry[8] | (entry[9] << 8) | (entry[10] << 16) | (static_cast<uint32_t>(entry[11]) << 24);
-            const uint32_t entrySize = entry[12] | (entry[13] << 8) | (entry[14] << 16) | (static_cast<uint32_t>(entry[15]) << 24);
-            const bool partitionEntry = start == 0 && fatType && entryStart == 0 && entrySize > 0 && entrySize <= image.SectorCount();
-            size_t codeEnd = partitionEntry ? 446 : 510;
-            while (codeEnd > codeStart && s[codeEnd - 1] == 0)
-                codeEnd--;
-            if (codeEnd > codeStart)
-            {
-                plan.volumeCode.assign(s + codeStart, s + codeEnd);
-                carried.push_back("volume boot code");
-            }
-        }
-        const uint32_t backup = fat32 ? static_cast<uint32_t>(s[50] | (s[51] << 8)) : 0;
-        uint32_t sectors = 0;
-        for (uint32_t lba = 1; lba < reader.ReservedSectors(); lba++)
-        {
-            if (fat32 && (lba == reader.FsInfoSector() || lba == 2 || (backup && lba >= backup && lba <= backup + 2)))
-                continue;
-            if (!image.ReadSector(start + lba, s) || !nonZero(s, 512))
-                continue;
-            std::array<uint8_t, 512> sector{};
-            std::copy(s, s + 512, sector.begin());
-            plan.reserved[lba] = sector;
-            sectors++;
-        }
-        if (sectors)
-            carried.push_back(std::to_string(sectors) + " reserved sector(s)");
-        plan.bestEffort = true;
-    }
 }  // namespace
 
 std::vector<FatType> CompositeMediumFactory::FsCandidates(std::optional<FatType> want, const std::vector<FatType>& allowed,
@@ -722,9 +658,9 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         fat.boot = descriptorBoot;
     else if (baseDevice >= 0)
     {
-        auto carried = std::make_shared<FatBootPlan>();
         std::vector<std::string> what;
-        PlanFromBase(*pool, static_cast<uint16_t>(baseDevice), d.layers.front().source.partition, *carried, what);
+        auto carried = std::make_shared<FatBootPlan>(
+            FatBootPlan::FromVolume(pool->DevicePtr(static_cast<uint16_t>(baseDevice)), d.layers.front().source.partition, &what));
         if (!carried->Empty())
         {
             std::string list;
@@ -741,49 +677,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         fat.fs = candidates[c];
         std::vector<std::string> buildReport;
         if (d.target.size)
-        {
-            // A fixed size: lay out with no room first, then give the rest of the size to free space
-            FatVolumeOptions bare = fat;
-            bare.freeBytes = 0;
-            auto probe = FatSynthVolume::Build(tree, pool, bare, identity, info.descriptor, &error, nullptr);
-            if (!probe)
-                continue;
-            const uint64_t minimum = probe->SectorCount() * 512;
-            if (minimum > *d.target.size)
-            {
-                error = "the content needs " + std::to_string(minimum) + " bytes as " + FsName(fat.fs) +
-                        ", more than target.size " + std::to_string(*d.target.size);
-                continue;
-            }
-            // Free space turns into clusters, FAT and cluster size grow with the volume: correct the
-            // estimate a few times and keep the largest volume not over the size
-            fat.freeBytes = *d.target.size - minimum;
-            for (int pass = 0; pass < 6; pass++)
-            {
-                std::vector<std::string> passReport;
-                auto candidate = FatSynthVolume::Build(tree, pool, fat, identity, info.descriptor, &error, &passReport);
-                if (!candidate)
-                    break;
-                const uint64_t bytes = candidate->SectorCount() * 512;
-                const uint64_t cluster = uint64_t(candidate->SectorsPerCluster()) * 512;
-                if (bytes > *d.target.size)
-                {
-                    fat.freeBytes -= std::min(fat.freeBytes, bytes - *d.target.size + cluster);
-                    continue;
-                }
-                const bool closeEnough = *d.target.size - bytes < cluster;
-                if (!rebuilt || bytes > rebuilt->SectorCount() * 512)
-                {
-                    rebuilt = std::move(candidate);
-                    buildReport = std::move(passReport);
-                }
-                if (closeEnough)
-                    break;
-                fat.freeBytes += *d.target.size - bytes;
-            }
-            if (!rebuilt)
-                rebuilt = std::move(probe);  // nothing fits under the size: the smallest layout
-        }
+            rebuilt = FatSynthVolume::BuildToSize(tree, pool, fat, *d.target.size, identity, info.descriptor, &error, &buildReport);
         else
             rebuilt = FatSynthVolume::Build(tree, pool, fat, identity, info.descriptor, &error, &buildReport);
         if (rebuilt)

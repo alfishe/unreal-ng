@@ -73,6 +73,9 @@ struct SaveOptions
     std::string path;           ///< empty: the medium's own image file
     bool allowRetarget = true;  ///< floppies: save as <stem>.udi when the format cannot hold the disk
     std::string compression;    ///< block media saved as a CHD: the codecs (BlockWriteOptions)
+    bool compact = false;       ///< block media: a re-synthesized FAT volume (S1 compact)
+    std::optional<FatType> fs;  ///< compact: the FAT type
+    std::optional<uint64_t> size;  ///< compact: total bytes
 };
 
 /// What a save did

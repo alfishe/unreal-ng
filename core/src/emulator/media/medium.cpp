@@ -3,7 +3,12 @@
 #include "medium.h"
 
 #include <atomic>
+#include <algorithm>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <system_error>
 
 #include "common/filehelper.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -136,8 +141,12 @@ bool ExportBlockDevice(IBlockDevice& device, const std::string& path, std::strin
         return false;
     }
 
+    // All-zero sectors are skipped, not written: on a host file system with sparse files they take
+    // no room (the free space of a synthesized volume, a mostly empty card)
     uint8_t sector[IBlockDevice::kSectorSize];
-    for (uint64_t lba = 0; lba < device.SectorCount(); lba++)
+    bool behind = false;  // zero sectors skipped since the last write: seek before the next one
+    const uint64_t sectors = device.SectorCount();
+    for (uint64_t lba = 0; lba < sectors; lba++)
     {
         if (!device.ReadSector(lba, sector))
         {
@@ -145,11 +154,33 @@ bool ExportBlockDevice(IBlockDevice& device, const std::string& path, std::strin
                 *error = "cannot read sector " + std::to_string(lba);
             return false;
         }
+        uint64_t words[IBlockDevice::kSectorSize / 8];
+        std::memcpy(words, sector, sizeof words);
+        if (std::all_of(std::begin(words), std::end(words), [](uint64_t w) { return w == 0; }))
+        {
+            behind = true;
+            continue;
+        }
+        if (behind)
+        {
+            out.seekp(static_cast<std::streamoff>(lba * IBlockDevice::kSectorSize));
+            behind = false;
+        }
         out.write(reinterpret_cast<const char*>(sector), static_cast<std::streamsize>(IBlockDevice::kSectorSize));
     }
 
     out.flush();
-    if (!out && error)
-        *error = "write error on " + path;
-    return static_cast<bool>(out);
+    if (!out)
+    {
+        if (error)
+            *error = "write error on " + path;
+        return false;
+    }
+    out.close();
+    // Trailing zero sectors were skipped too: the file gets its full size
+    std::error_code ec;
+    std::filesystem::resize_file(FileHelper::ToFsPath(path), sectors * IBlockDevice::kSectorSize, ec);
+    if (ec && error)
+        *error = "cannot size " + path + ": " + ec.message();
+    return !ec;
 }

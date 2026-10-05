@@ -1,6 +1,6 @@
 # C6 — flat images (S1), change attribution, session delta (S2)
 
-**Status:** design, 2026-10-05. Phase C6 of [tdd.md](../tdd.md) §13 (§9, §10 there), strategies S1 and S2 of
+**Status:** C6a built 2026-10-05 (as-built notes in §6); C6b and C6c designed. Phase C6 of [tdd.md](../tdd.md) §13 (§9, §10 there), strategies S1 and S2 of
 [flatten-strategies.md](../flatten-strategies.md) (its decision trees DT-8, DT-9, DT-13 apply as written). Exit:
 ACC-C3 (attribution), ACC-C6, ACC-C7. The phase lands in three commits:
 
@@ -84,3 +84,22 @@ flowchart TD
 | C6b | ACC-C3 `SprinterBoot_Test.ComposeDssGuestWriteAttributed` | the guest's `mkdir` and a file it writes show in `media changes` |
 | C6c | `ComposeDelta_Test.RoundTrip` / `.IdMismatchRefusedWithReason` / `.TruncatedFileRefused` | S2 |
 | C6c | ACC-C7 `ComposeAcceptance_Test.DeltaSurvivesRestart` | a new emulator, the same descriptor: the guest reads its earlier write; a changed source refuses the delta with the layer named |
+
+## 6. As built: C6a
+
+| Piece | Where | Notes |
+|---|---|---|
+| Sparse raw writing | `ExportBlockDevice` (`media/medium.cpp`) | An all-zero sector is skipped and the next written one is reached with a seek; `resize_file` gives the file its full size. Every raw, `.vhd` and compact export goes through it. |
+| Fixed VHD | `BlockFormats::WriterFor` → `vhd`, `AppendVhdFooter` (`media/blockformats.cpp`) | The footer as in §2. CHS: the device's native geometry when it fits the footer's fields, else the VHD specification's algorithm. The UUID is mixed from the content id, the timestamp is 0, so the same disk gives the same file. A medium opened from a `.vhd` and saved in place keeps its footer (only sectors are written back). |
+| `compact` | `BlockFormats::Compact` | The medium's stack is borrowed into a `SourcePool` (no-op deleter) and read by `FatImageSource`. The type is the volume's own unless `fs` is given; FAT12 is refused without `fs`, because `FatSynthVolume` writes FAT16 / FAT32 only. The volume start, so the MBR or not and the partition offset, and the label are kept. The size is `size`, else the medium's; when the medium's own size cannot hold the volume as the type asks (FAT32's minimum is 256 MiB with 4 KiB clusters), the smallest volume that fits is written and the report says so. An explicit `size` that is too small fails with `does-not-fit`. |
+| Boot structures | `FatBootPlan::FromVolume` (moved from the factory), new field `gap` | The non-zero sectors between the MBR and the partition (up to LBA 2047) are now carried too: the DSS loader at LBA 1-3 is there. `FatSynthVolume` emits them for `lba < volumeStart`, and a gap sector at or past the new volume start is dropped with a report line. Rebuild composites over an image get the same carry. |
+| `FatSynthVolume::BuildToSize` | moved from the factory | The factory's `target.size` path and compact share it. |
+| Save | `BlockFormats::Save` | `compact` always writes a whole new file (never sectors in place) and needs a `path` (`MediaManager::SaveBlockMedium`); the medium is then rebased on that file as any save to a path. The report of the compact goes back with the save's result. |
+| Surfaces | `MediaControl::OptionsFor` (`save`, `export`: `compact`, `fs`, `size`), `CompactOptions` | `fs` and `size` without `compact` are refused. MCP `media` takes the `compact` boolean (the `fs` and `size` fields exist already); OpenAPI documents `compact`; CLI help lists the options; Lua and Python go through `MediaControl`. |
+
+Tests (all under 50 ms but the boot-bound one): `BlockFormats_Test.VhdFixedFooter`, `.SparseRawExport`;
+`FlattenFlat_Test.ImgVhdChdEqualMergedView`, `.CompactDefragmentsAndOracleAgrees` (a FAT16 image whose two files
+interleave cluster by cluster and with a deleted file's data left behind; compacted as FAT16 and as FAT32; a too
+small `size`; a FAT12 floppy), `.SaveCompactRebasesTheMedium`; ACC-C6 `SprinterBoot_Test.ComposeFlatImageBootsAlone`
+(the graft session with a guest `mkdir`, exported to `.img`, `.vhd` and a compact `.img`: each boots DSS 1.62 alone
+and lists the grafted folder; ~7 s, four boots).

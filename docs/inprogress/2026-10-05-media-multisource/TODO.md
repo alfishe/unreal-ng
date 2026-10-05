@@ -28,6 +28,9 @@ PLAN.md row **#95**.
 - [x] C5b D-6 boot carry-over (El Torito, and FAT rebuilds: `BootPlan`, the `boot:` section; its
   tests are in C5's list, [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §3.5)
 - [ ] C6 provenance, attribution (`changes`), S1 flat (+ VHD writer, compact), S2 delta
+  - [x] C6a S1: sparse raw export, fixed VHD writer, `compact` on export / save, ACC-C6
+  - [ ] C6b provenance, `ChangeAttributor`, `media changes`, ACC-C3 attribution
+  - [ ] C6c S2 delta file, DT-13 restore, DT-9, ACC-C7
 - [ ] C7 partitions
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)

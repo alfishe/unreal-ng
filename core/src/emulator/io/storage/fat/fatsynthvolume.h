@@ -50,12 +50,20 @@ struct FatBootPlan
     std::vector<uint8_t> mbrCode;      ///< up to 446 bytes into LBA 0 before the partition table (volumes with an MBR)
     std::vector<uint8_t> volumeCode;   ///< the boot sector's code area after the BPB (FAT32: the backup's too)
     std::map<uint32_t, std::array<uint8_t, 512>> reserved;  ///< whole reserved sectors, volume-relative (1..)
+    /// Whole sectors between the MBR and the partition, absolute (1..): a loader there (DSS reads LBA 1-3)
+    std::map<uint32_t, std::array<uint8_t, 512>> gap;
     /// Carried implicitly from the bottom image: what does not fit the target is
     /// left out with a report line instead of failing the build
     bool bestEffort = false;
 
-    bool Empty() const { return mbrCode.empty() && volumeCode.empty() && reserved.empty(); }
+    bool Empty() const { return mbrCode.empty() && volumeCode.empty() && reserved.empty() && gap.empty(); }
     uint64_t Identity() const;
+
+    /// The boot structures of a FAT volume on `image` (its first FAT partition, or MBR entry `partition`):
+    /// its MBR code and the non-zero sectors between the MBR and the partition when it has an MBR, its boot
+    /// sector's code area, its non-zero reserved sectors but FSInfo and the backup boot record. Best effort (bestEffort is set); `carried` names what was found
+    static FatBootPlan FromVolume(std::shared_ptr<IBlockDevice> image, std::optional<uint32_t> partition,
+                                  std::vector<std::string>* carried = nullptr);
 };
 
 struct FatVolumeOptions
@@ -83,6 +91,13 @@ public:
                                                  const FatVolumeOptions& options, uint64_t sourceIdentity,
                                                  std::string description, std::string* error,
                                                  std::vector<std::string>* report);
+
+    /// Build to a total size in bytes (MBR included): the largest layout not over `bytes`, the free space
+    /// filling the rest. Nullptr with `error` when the content alone needs more than `bytes`
+    static std::unique_ptr<FatSynthVolume> BuildToSize(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool,
+                                                       FatVolumeOptions options, uint64_t bytes, uint64_t sourceIdentity,
+                                                       const std::string& description, std::string* error,
+                                                       std::vector<std::string>* report);
 
     uint64_t SectorCount() const override { return _totalSectors; }
     bool ReadSector(uint64_t lba, uint8_t* dst) override;

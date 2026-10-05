@@ -126,6 +126,10 @@
         body["properties"]["export"]["type"] = "string";
         body["properties"]["export"]["description"] = "Disposition: write a dirty medium to this new file first";
         body["properties"]["discard"]["type"] = "boolean";
+        body["properties"]["compact"]["type"] = "boolean";
+        body["properties"]["compact"]["description"] =
+            "save / export of a FAT disk or card: a re-synthesized volume (every file contiguous; with fs: fat16 / fat32 "
+            "converts, with size resizes). A .vhd path gets a fixed VHD footer";
         body["properties"]["wp"]["type"] = "boolean";
         body["properties"]["on"]["type"] = "boolean";
         body["properties"]["on"]["description"] = "protect: the slot's write-protect switch";

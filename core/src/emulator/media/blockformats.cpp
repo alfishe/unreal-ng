@@ -3,12 +3,18 @@
 #include "blockformats.h"
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/io/storage/chd/chdimage.h"
+#include "emulator/io/storage/compose/fatimagesource.h"
+#include "emulator/io/storage/compose/sourcepool.h"
+#include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostwritehold.h"
@@ -104,6 +110,106 @@ namespace
         return MediaResult::Success();
     }
 
+    void Be16(uint8_t* p, uint32_t v)
+    {
+        p[0] = static_cast<uint8_t>(v >> 8);
+        p[1] = static_cast<uint8_t>(v);
+    }
+    void Be32(uint8_t* p, uint32_t v)
+    {
+        for (int i = 0; i < 4; i++)
+            p[3 - i] = static_cast<uint8_t>(v >> (8 * i));
+    }
+    void Be64(uint8_t* p, uint64_t v)
+    {
+        for (int i = 0; i < 8; i++)
+            p[7 - i] = static_cast<uint8_t>(v >> (8 * i));
+    }
+
+    /// CHS of a VHD footer: the device's own geometry, else the VHD specification's algorithm
+    void VhdGeometry(const IBlockDevice& device, uint32_t& cylinders, uint32_t& heads, uint32_t& sectors)
+    {
+        if (const auto native = device.NativeGeometry();
+            native && native->cylinders && native->cylinders <= 65535 && native->heads && native->heads <= 255 && native->sectors &&
+            native->sectors <= 255)
+        {
+            cylinders = native->cylinders;
+            heads = native->heads;
+            sectors = native->sectors;
+            return;
+        }
+        uint64_t total = std::min<uint64_t>(device.SectorCount(), 65535ull * 16 * 255);
+        uint64_t cylinderTimesHeads = 0;
+        if (total >= 65535ull * 16 * 63)
+        {
+            sectors = 255;
+            heads = 16;
+            cylinderTimesHeads = total / sectors;
+        }
+        else
+        {
+            sectors = 17;
+            cylinderTimesHeads = total / sectors;
+            heads = static_cast<uint32_t>((cylinderTimesHeads + 1023) / 1024);
+            if (heads < 4)
+                heads = 4;
+            if (cylinderTimesHeads >= heads * 1024ull || heads > 16)
+            {
+                sectors = 31;
+                heads = 16;
+                cylinderTimesHeads = total / sectors;
+            }
+            if (cylinderTimesHeads >= heads * 1024ull)
+            {
+                sectors = 63;
+                heads = 16;
+                cylinderTimesHeads = total / sectors;
+            }
+        }
+        cylinders = static_cast<uint32_t>(cylinderTimesHeads / heads);
+    }
+
+    /// A fixed VHD: the raw data, then a 512-byte footer (Microsoft VHD specification 1.0)
+    bool AppendVhdFooter(IBlockDevice& device, const std::string& path, std::string* error)
+    {
+        const uint64_t size = device.SectorCount() * IBlockDevice::kSectorSize;
+        uint8_t f[512] = {};
+        std::memcpy(f, "conectix", 8);
+        Be32(f + 8, 2);               // features: reserved bit set
+        Be32(f + 12, 0x00010000);     // version 1.0
+        Be64(f + 16, ~0ULL);          // data offset: none (fixed disk)
+        Be32(f + 24, 0);              // timestamp: 0, so the same disk gives the same file
+        std::memcpy(f + 28, "ung ", 4);
+        Be32(f + 32, 0x00010000);
+        Be32(f + 36, 0x5769326B);     // "Wi2k"
+        Be64(f + 40, size);           // original size
+        Be64(f + 48, size);           // current size
+        uint32_t cylinders = 0, heads = 0, sectors = 0;
+        VhdGeometry(device, cylinders, heads, sectors);
+        Be16(f + 56, cylinders);
+        f[58] = static_cast<uint8_t>(heads);
+        f[59] = static_cast<uint8_t>(sectors);
+        Be32(f + 60, 2);              // fixed hard disk
+        uint64_t id = device.ContentId();
+        for (int i = 0; i < 16; i++)
+        {
+            id ^= id >> 29;
+            id *= 0xBF58476D1CE4E5B9ULL;
+            f[68 + i] = static_cast<uint8_t>(id >> 56);
+        }
+        uint32_t sum = 0;
+        for (uint8_t b : f)
+            sum += b;
+        Be32(f + 64, ~sum);
+        std::fstream out(FileHelper::ToFsPath(path), std::ios::binary | std::ios::in | std::ios::out);
+        out.seekp(static_cast<std::streamoff>(size));
+        out.write(reinterpret_cast<const char*>(f), sizeof f);
+        out.flush();
+        if (!out && error)
+            *error = "cannot write the VHD footer of " + path;
+        return static_cast<bool>(out);
+    }
+
     MediaResult WriteImage(IBlockDevice& device, const std::string& path, const std::string& format, const BlockWriteOptions& options,
                            chd::ChdFile* inheritedParent, const std::function<bool(uint64_t, uint64_t)>& unchanged)
     {
@@ -120,7 +226,7 @@ namespace
         else
         {
             std::string error;
-            if (!ExportBlockDevice(device, temp, &error))
+            if (!ExportBlockDevice(device, temp, &error) || (format == "vhd" && !AppendVhdFooter(device, temp, &error)))
                 result = MediaResult::Fail(MediaError::IoError, error);
         }
         if (!result.Ok())
@@ -131,7 +237,72 @@ namespace
 
 std::string BlockFormats::WriterFor(const std::string& path)
 {
-    return StringHelper::ToLower(FileHelper::GetFileExtension(path)) == "chd" ? "chd" : "raw";
+    const std::string extension = StringHelper::ToLower(FileHelper::GetFileExtension(path));
+    return extension == "chd" ? "chd" : extension == "vhd" ? "vhd" : "raw";
+}
+
+MediaResult BlockFormats::Compact(IBlockDevice& device, const BlockWriteOptions& options, std::unique_ptr<IBlockDevice>& volume)
+{
+    volume.reset();
+    MediaResult result = MediaResult::Success();
+    // The medium's stack outlives the compacted volume (written, then dropped): the pool borrows it
+    auto pool = std::make_shared<SourcePool>();
+    const uint16_t index = pool->AddDevice(std::shared_ptr<IBlockDevice>(&device, [](IBlockDevice*) {}));
+    FatVolumeReader reader;
+    std::string error;
+    if (!reader.Open(device, CodePage::Cp866, &error))
+        return MediaResult::Fail(MediaError::BadRequest, "compact needs a FAT volume: " + error);
+    if (reader.Type() == FatReaderType::Fat12 && !options.fs)
+        return MediaResult::Fail(MediaError::NotSupported,
+                                 "compact writes FAT16 or FAT32 volumes and this one is FAT12: pass fs to convert it");
+    auto tree = std::make_shared<FileTree>();
+    std::vector<std::string> report;
+    if (!FatImageSource::Enumerate(index, {}, *pool, *tree, &report, &error))
+        return MediaResult::Fail(MediaError::UnreadableSource, "compact: " + error);
+    for (const std::string& line : report)
+        result.report.push_back("compact: " + line);
+
+    FatVolumeOptions fat;
+    fat.fs = options.fs.value_or(reader.Type() == FatReaderType::Fat32 ? FatType::Fat32 : FatType::Fat16);
+    fat.mbr = reader.VolumeStart() > 0;
+    if (fat.mbr)
+        fat.partitionStart = static_cast<uint32_t>(reader.VolumeStart());
+    if (!reader.Label().empty())
+        fat.label = reader.Label();
+    std::vector<std::string> carried;
+    auto boot = std::make_shared<FatBootPlan>(FatBootPlan::FromVolume(pool->DevicePtr(index), std::nullopt, &carried));
+    if (!boot->Empty())
+        fat.boot = boot;
+
+    std::vector<std::string> buildReport;
+    std::unique_ptr<FatSynthVolume> built;
+    const uint64_t size = options.size.value_or(device.SectorCount() * IBlockDevice::kSectorSize);
+    built = FatSynthVolume::BuildToSize(tree, pool, fat, size, device.ContentId(), device.Describe() + ", compacted", &error,
+                                        &buildReport);
+    if (!built && options.size)
+        return MediaResult::Fail(MediaError::DoesNotFit, "compact: " + error);
+    if (!built)
+    {
+        // The medium's own size does not hold the content as asked (a FAT32 minimum, say): as small as it fits
+        fat.freeBytes = 0;
+        built = FatSynthVolume::Build(tree, pool, fat, device.ContentId(), device.Describe() + ", compacted", &error, &buildReport);
+        if (!built)
+            return MediaResult::Fail(MediaError::DoesNotFit, "compact: " + error);
+        result.report.push_back("compact: the medium's size does not hold it as " + std::string(fat.fs == FatType::Fat32 ? "fat32" : "fat16") +
+                                "; written at " + std::to_string(built->SectorCount() * IBlockDevice::kSectorSize) + " bytes");
+    }
+    for (const std::string& line : buildReport)
+        result.report.push_back("compact: " + line + ": skipped");
+    if (!carried.empty())
+    {
+        std::string list;
+        for (const std::string& c : carried)
+            list += (list.empty() ? "" : ", ") + c;
+        result.report.push_back("compact: boot structures carried: " + list);
+    }
+    // The compacted volume keeps reading the pool's borrowed device; the pool lives as long as the volume
+    volume = std::move(built);
+    return result;
 }
 
 ChdImage* BlockFormats::FindChd(IBlockDevice* device)
@@ -158,6 +329,18 @@ MediaResult BlockFormats::Write(IBlockDevice& device, const std::string& path, c
                                 const std::function<bool(uint64_t, uint64_t)>& unchanged)
 {
     const std::string format = WriterFor(path);
+    if (options.compact)
+    {
+        std::unique_ptr<IBlockDevice> compacted;
+        MediaResult compactResult = Compact(device, options, compacted);
+        if (!compactResult.Ok())
+            return compactResult;
+        BlockWriteOptions plain = options;
+        plain.compact = false;
+        MediaResult written = Write(*compacted, path, plain);
+        written.report.insert(written.report.begin(), compactResult.report.begin(), compactResult.report.end());
+        return written;
+    }
     MediaResult result = WriteImage(device, path, format, options, nullptr, unchanged);
     if (!result.Ok())
         return result;
@@ -198,11 +381,20 @@ MediaResult BlockFormats::Save(Medium& medium, const std::string& target, const 
     }
 
     const bool rawFamily = format == "raw" || format == "hdf" || format == "vhd" || format == "hdi";
+    // Compact: a new layout, so always a whole new file (never sectors written back in place)
+    std::unique_ptr<IBlockDevice> compacted;
+    MediaResult compactResult = MediaResult::Success();
+    if (options.compact)
+    {
+        compactResult = Compact(*stack, options, compacted);
+        if (!compactResult.Ok())
+            return compactResult;
+    }
     if (toOwnFile && !rawFamily && format != "chd")
         return MediaResult::Fail(MediaError::NotSupported, "a " + format + " medium cannot be written back: export it");
 
     // The raw family: the changed sectors go back into the file, in place
-    if (toOwnFile && rawFamily)
+    if (toOwnFile && rawFamily && !compacted)
     {
         std::string error;
         {
@@ -233,7 +425,12 @@ MediaResult BlockFormats::Save(Medium& medium, const std::string& target, const 
     chd::ChdFile* inheritedParent = toOwnFile && sourceChd ? sourceChd->File().Parent() : nullptr;
     const auto unchanged = [session](uint64_t first, uint64_t count) { return !session->ChangedIn(first, count); };
     const std::string newFormat = WriterFor(path);
-    MediaResult result = WriteImage(*stack, path, newFormat, options, inheritedParent, unchanged);
+    BlockWriteOptions plain = options;
+    plain.compact = false;
+    MediaResult result = compacted ? WriteImage(*compacted, path, newFormat, plain, nullptr, {})
+                                   : WriteImage(*stack, path, newFormat, options, inheritedParent, unchanged);
+    compacted.reset();  // it reads the old stack, which goes away below
+    result.report.insert(result.report.begin(), compactResult.report.begin(), compactResult.report.end());
     if (!result.Ok())
         return result;
 
@@ -272,5 +469,7 @@ MediaResult BlockFormats::Save(Medium& medium, const std::string& target, const 
         medium.SetFormat(openFormat);
     }
     savedPath = path;
-    return MediaResult::Success();
+    MediaResult saved = MediaResult::Success();
+    saved.report = result.report;
+    return saved;
 }

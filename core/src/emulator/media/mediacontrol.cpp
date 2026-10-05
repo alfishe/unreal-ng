@@ -260,8 +260,8 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget", "compression"}},
-        {"export", {"compression", "parent"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size"}},
+        {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
@@ -921,6 +921,50 @@ MediaReply MediaControl::Eject(const MediaRequest& request)
     return reply;
 }
 
+/// `compact`, `fs`, `size` of save / export (S1 compact); a reply with an error when one is malformed
+static MediaReply CompactOptions(const std::map<std::string, std::string>& o, bool& compact, std::optional<FatType>& fs,
+                                 std::optional<uint64_t>& size)
+{
+    MediaReply reply;
+    if (auto it = o.find("compact"); it != o.end())
+    {
+        const std::string v = Lower(Trim(it->second));
+        if (v.empty() || v == "true" || v == "1" || v == "yes" || v == "on")
+            compact = true;
+        else if (v != "false" && v != "0" && v != "no" && v != "off")
+        {
+            reply.result = MediaResult::Fail(MediaError::BadRequest, "compact '" + it->second + "': expected true or false");
+            return reply;
+        }
+    }
+    if (auto it = o.find("fs"); it != o.end())
+    {
+        const std::string v = Lower(Trim(it->second));
+        if (v == "fat16")
+            fs = FatType::Fat16;
+        else if (v == "fat32")
+            fs = FatType::Fat32;
+        else
+        {
+            reply.result = MediaResult::Fail(MediaError::BadRequest, "fs '" + it->second + "': expected fat16 or fat32");
+            return reply;
+        }
+    }
+    if (auto it = o.find("size"); it != o.end())
+    {
+        uint64_t bytes = 0;
+        if (!ComposeDescriptor::ParseSize(it->second, bytes) || bytes == 0)
+        {
+            reply.result = MediaResult::Fail(MediaError::BadRequest, "size '" + it->second + "': expected a size (64MiB, 67108864)");
+            return reply;
+        }
+        size = bytes;
+    }
+    if ((fs || size) && !compact)
+        reply.result = MediaResult::Fail(MediaError::BadRequest, "fs and size go with compact (a re-synthesized volume)");
+    return reply;
+}
+
 MediaReply MediaControl::Save(const MediaRequest& request)
 {
     MediaReply reply;
@@ -935,6 +979,8 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         return Fail(MediaError::BadRequest, "retarget '" + it->second + "': expected true or false");
     if (auto compression = request.options.find("compression"); compression != request.options.end())
         options.compression = Trim(compression->second);
+    if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
+        return bad;
 
     SaveOutcome outcome;
     {
@@ -964,6 +1010,8 @@ MediaReply MediaControl::Export(const MediaRequest& request)
         options.compression = Trim(it->second);
     if (auto it = request.options.find("parent"); it != request.options.end())
         options.parent = Trim(it->second);
+    if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
+        return bad;
 
     ParkedEmulator parked(_context);
     reply.result = _manager->Export(reply.slot, path, options);

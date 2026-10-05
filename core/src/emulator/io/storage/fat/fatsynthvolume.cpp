@@ -2,6 +2,9 @@
 
 #include "fatsynthvolume.h"
 
+#include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/subrangedevice.h"
+
 #include <algorithm>
 #include <cstring>
 #include <unordered_map>
@@ -208,6 +211,17 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
                 return false;
             boot->mbrCode.clear();
         }
+        for (auto it = boot->gap.begin(); it != boot->gap.end();)
+        {
+            if (it->first == 0 || it->first >= _volumeStart)
+            {
+                if (!refuse("boot: sector " + std::to_string(it->first) + " is not between the MBR and the partition"))
+                    return false;
+                it = boot->gap.erase(it);
+            }
+            else
+                ++it;
+        }
         if (!boot->mbrCode.empty() && _volumeStart == 0)
         {
             if (report && !boot->bestEffort)
@@ -377,6 +391,146 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
     return true;
 }
 
+std::unique_ptr<FatSynthVolume> FatSynthVolume::BuildToSize(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool,
+                                                            FatVolumeOptions options, uint64_t bytes, uint64_t sourceIdentity,
+                                                            const std::string& description, std::string* error,
+                                                            std::vector<std::string>* report)
+{
+    // Lay out with no room first, then give the rest of the size to free space
+    FatVolumeOptions bare = options;
+    bare.freeBytes = 0;
+    auto probe = Build(tree, pool, bare, sourceIdentity, description, error, nullptr);
+    if (!probe)
+        return nullptr;
+    const uint64_t minimum = probe->SectorCount() * kSector;
+    if (minimum > bytes)
+    {
+        if (error)
+            *error = "the content needs " + std::to_string(minimum) + " bytes as " +
+                     (options.fs == FatType::Fat32 ? "fat32" : "fat16") + ", more than " + std::to_string(bytes);
+        return nullptr;
+    }
+    // Free space turns into clusters, FAT and cluster size grow with the volume: correct the
+    // estimate a few times and keep the largest volume not over the size
+    std::unique_ptr<FatSynthVolume> best;
+    std::vector<std::string> bestReport;
+    options.freeBytes = bytes - minimum;
+    for (int pass = 0; pass < 6; pass++)
+    {
+        std::vector<std::string> passReport;
+        auto candidate = Build(tree, pool, options, sourceIdentity, description, error, &passReport);
+        if (!candidate)
+            break;
+        const uint64_t size = candidate->SectorCount() * kSector;
+        const uint64_t cluster = uint64_t(candidate->SectorsPerCluster()) * kSector;
+        if (size > bytes)
+        {
+            options.freeBytes -= std::min(options.freeBytes, size - bytes + cluster);
+            continue;
+        }
+        const bool closeEnough = bytes - size < cluster;
+        if (!best || size > best->SectorCount() * kSector)
+        {
+            best = std::move(candidate);
+            bestReport = std::move(passReport);
+        }
+        if (closeEnough)
+            break;
+        options.freeBytes += bytes - size;
+    }
+    if (!best)
+    {
+        best = std::move(probe);  // nothing fits under the size: the smallest layout
+        bestReport.clear();
+    }
+    if (report)
+        report->insert(report->end(), bestReport.begin(), bestReport.end());
+    return best;
+}
+
+FatBootPlan FatBootPlan::FromVolume(std::shared_ptr<IBlockDevice> image, std::optional<uint32_t> partition,
+                                    std::vector<std::string>* carried)
+{
+    FatBootPlan plan;
+    plan.bestEffort = true;
+    std::shared_ptr<IBlockDevice> window;
+    uint64_t offset = 0;
+    if (partition)
+    {
+        FatPartition part;
+        if (!FatVolumeReader::FindPartition(*image, *partition, part))
+            return plan;
+        offset = part.first;
+        window = std::make_shared<SubRangeDevice>(image, part.first, part.count);
+    }
+    FatVolumeReader reader;
+    if (!reader.Open(window ? *window : *image))
+        return plan;
+    const uint64_t start = offset + reader.VolumeStart();
+    uint8_t s[kSector];
+    auto nonZero = [](const uint8_t* p, size_t n) { return std::any_of(p, p + n, [](uint8_t b) { return b != 0; }); };
+    auto note = [carried](const std::string& what) {
+        if (carried)
+            carried->push_back(what);
+    };
+    if (start > 0 && image->ReadSector(0, s) && nonZero(s, 446))
+    {
+        plan.mbrCode.assign(s, s + 446);
+        note("MBR code");
+    }
+    // The gap after the MBR: whole non-zero sectors (a loader there). A partition at 1 MiB or less is scanned
+    uint32_t gapSectors = 0;
+    for (uint64_t lba = 1; lba < start && lba < 2048; lba++)
+    {
+        if (!image->ReadSector(lba, s) || !nonZero(s, kSector))
+            continue;
+        std::array<uint8_t, 512> sector{};
+        std::copy(s, s + kSector, sector.begin());
+        plan.gap[static_cast<uint32_t>(lba)] = sector;
+        gapSectors++;
+    }
+    if (gapSectors)
+        note(std::to_string(gapSectors) + " sector(s) after the MBR");
+    const bool fat32 = reader.Type() == FatReaderType::Fat32;
+    uint32_t backup = 0;
+    if (image->ReadSector(start, s))
+    {
+        const size_t codeStart = fat32 ? 90 : 62;
+        // A superfloppy's sector 0 may carry a partition entry over itself at 446 (mformat, our own
+        // builder): a FAT type, starting at LBA 0. Then the code ends there; otherwise it runs to 510
+        const uint8_t* entry = s + 446;
+        const uint8_t type = entry[4];
+        const bool fatType = type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0B || type == 0x0C || type == 0x0E;
+        const uint32_t entryStart = entry[8] | (entry[9] << 8) | (entry[10] << 16) | (static_cast<uint32_t>(entry[11]) << 24);
+        const uint32_t entrySize = entry[12] | (entry[13] << 8) | (entry[14] << 16) | (static_cast<uint32_t>(entry[15]) << 24);
+        const bool partitionEntry = start == 0 && fatType && entryStart == 0 && entrySize > 0 && entrySize <= image->SectorCount();
+        size_t codeEnd = partitionEntry ? 446 : 510;
+        while (codeEnd > codeStart && s[codeEnd - 1] == 0)
+            codeEnd--;
+        if (codeEnd > codeStart)
+        {
+            plan.volumeCode.assign(s + codeStart, s + codeEnd);
+            note("volume boot code");
+        }
+        backup = fat32 ? static_cast<uint32_t>(s[50] | (s[51] << 8)) : 0;
+    }
+    uint32_t sectors = 0;
+    for (uint32_t lba = 1; lba < reader.ReservedSectors(); lba++)
+    {
+        if (fat32 && (lba == reader.FsInfoSector() || lba == 2 || (backup && lba >= backup && lba <= backup + 2)))
+            continue;
+        if (!image->ReadSector(start + lba, s) || !nonZero(s, kSector))
+            continue;
+        std::array<uint8_t, 512> sector{};
+        std::copy(s, s + kSector, sector.begin());
+        plan.reserved[lba] = sector;
+        sectors++;
+    }
+    if (sectors)
+        note(std::to_string(sectors) + " reserved sector(s)");
+    return plan;
+}
+
 uint64_t FatBootPlan::Identity() const
 {
     uint64_t h = 0xcbf29ce484222325ULL;
@@ -390,6 +544,14 @@ uint64_t FatBootPlan::Identity() const
     for (uint8_t b : volumeCode)
         mix(b);
     for (const auto& [lba, sector] : reserved)
+    {
+        for (int i = 0; i < 4; i++)
+            mix(static_cast<uint8_t>(lba >> (8 * i)));
+        for (uint8_t b : sector)
+            mix(b);
+    }
+    mix(0xFE);
+    for (const auto& [lba, sector] : gap)
     {
         for (int i = 0; i < 4; i++)
             mix(static_cast<uint8_t>(lba >> (8 * i)));
@@ -418,6 +580,12 @@ bool FatSynthVolume::ReadSector(uint64_t lba, uint8_t* dst)
             BuildMbr(dst);
             if (boot)
                 std::copy(boot->mbrCode.begin(), boot->mbrCode.end(), dst);
+        }
+        else if (boot)
+        {
+            const auto it = boot->gap.find(static_cast<uint32_t>(lba));
+            if (it != boot->gap.end())
+                std::memcpy(dst, it->second.data(), kSector);
         }
         return true;
     }
