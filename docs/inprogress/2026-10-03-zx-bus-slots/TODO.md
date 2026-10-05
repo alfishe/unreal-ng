@@ -1,6 +1,6 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) built 2026-10-04, uncommitted; the first slot-built card (ZX-MultiSound, MS-4) built 2026-10-04, uncommitted. PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04. PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -34,7 +34,7 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   `SlotPlanner_Test.*` (WorkedPlans A-H + the §2.1 plan tests), `SlotMatrix_Test.*`. As-built notes and deviations:
   [tdd.md](tdd.md) §5. Files under `core/src/emulator/slots/` and `core/tests/emulator/slots/`
   - [ ] owner review of the SL-1 data choices (tdd.md §5, deviations 3-5)
-  - [ ] skipped plan tests, later phases: `RefusedWhileTtdRecords` (SL-5), `IniLoadUsesSamePlan`,
+  - [x] skipped plan tests, later phases: `RefusedWhileTtdRecords` (SL-5, built as `TtdSlots_Test.RefusedWhileTtdRecords`), `IniLoadUsesSamePlan`,
     `LegacyKeysTranslated` (SL-4)
 - [x] SL-2 port claim table, IORQGE, shadowing (2026-10-04, working tree of `zx-bus-slots`, not committed):
   `slots/portclaimtable.{h,cpp}` (claimed-port bitmap, per-low-byte buckets in slot order, board-port bitmap,
@@ -86,18 +86,27 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   - [ ] recipes / user docs still name the legacy keys (`[SOUND] GSType`, `TurboSound`, `[NETWORK] Card`): SL-7
   - [ ] side note (not slots): the old ts-conf line `CovoxFB=1 ; ... (#FB and the #FE beeper bit ...)` parsed as 0
     (IniFile strips the inline comment at the last `#`); the converted config says `builtin.covox = on`, same devices
-- [x] Slot-built cards for the ZX-MultiSound (MultiSound MS-4, 2026-10-04, working tree of `zx-bus-slots`, not
-  committed; [tdd.md](tdd.md) §9): `ICard` / `CardType` (`slots/card.{h,cpp}`), `SlotManager::BuildCards` /
+- [x] Slot-built cards for the ZX-MultiSound (MultiSound MS-4, 2026-10-04, committed on `zx-bus-slots`; [tdd.md](tdd.md) §9): `ICard` / `CardType` (`slots/card.{h,cpp}`), `SlotManager::BuildCards` /
   `ReleaseCards`, the claim table's `Read` / `Write` in production for those cards (slots 2+ of the observers' table),
   `SoundManager` rows for card rows, a socketed chip taken out at creation when the INI leaves the socket unconfigured
   - [ ] owner review: the unconfigured-socket rule (an explicit `ay-socket = ay` keeps the chip and refuses the card)
   - [ ] the three role tables still stand: legacy observers and slot-built cards share `_fullDecodeClaims`, a port
     both cover resolves by whichever claims it first (none today); the single table waits for the legacy cards' moves
-  - [ ] a TTD session recorded with a slot-built card does not capture it until SL-5 / MS-5 (no refusal yet)
+  - [ ] a TTD session recorded with a slot-built card does not capture it until MS-5 (no refusal yet; SL-5 put the
+    slot set in the fingerprint but the card has no blob)
   - [ ] quiet-machine rerun of the MS-4 A/B: machines without the card at parity or faster except the 48K / 128K
     writes (+1.3 to +6.5 %, code placement: the step-2 binary with every port-path change was at parity there;
     [tdd.md](tdd.md) §9)
-- [ ] SL-5 TTD fingerprint and session guard
+- [x] SL-5 TTD fingerprint and session guard (2026-10-04, branch `slots-ttd` `29250c546`, merged; [tdd.md](tdd.md) §10):
+  `slots.<slot>` / `slots.builtin.<id>` in the configuration fingerprint (affectsRestore); slot cards named by slot in
+  the engine's device table and checked against the plan at registration; one slot-set guard on load replacing the
+  TurboSound / GS guards and serving the Sprinter ISA check; the registry refuses a second device under a held id;
+  `ChangeRefusal()` names the recording session (R-OP-7). Corpus, bench gate, CoreGolden unchanged
+  - [ ] owner: the session id in the R-OP-7 refusal is a per-instance recording number (`#n, started at frame f`):
+    v1 sessions have none; switch to the v2 session UUID with Phase 5?
+  - [ ] the guard is symmetric now (a session without a card no longer loads where one is fitted): owner check
+  - [ ] two instances of one module (MultiSound + GS / SAA cards): needs the v1 per-id checkpoint gone (TTD Phase 5)
+  - [ ] the GS runtime switch leaves the plan (and the fingerprint) naming the configured personality until SL-6
 - [ ] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it
 - [ ] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc
 - [ ] SL-8 Sprinter ISA slots in the report; ZX-bus adapter as a bus host (ISA I5)

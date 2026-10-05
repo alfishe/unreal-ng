@@ -30,6 +30,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "emulator/slots/slotconfig.h"
@@ -41,6 +43,11 @@ class ICard;
 namespace slots
 {
 class IClaimSignals;
+}
+namespace ttd
+{
+class TTDPeripheralRegistry;
+struct TTDConfigFingerprint;
 }
 
 /// The card groups SL-4 moves onto slots, one per step
@@ -152,11 +159,64 @@ public:
         return _result;
     }
 
+    // region <TTD (SL-5, slotttd.cpp; architecture.md §8)>
+
+    /// The devices of a TTD checkpoint: the blob ids it holds and the devices fitted but deliberately not recorded
+    /// (TTDPeripheralRegistry::MarkNotRecorded, the lightweight General Sound). Ids are ttd::PeripheralId values
+    struct TtdDeviceSet
+    {
+        std::vector<uint8_t> ids;
+        uint64_t notRecorded = 0;   ///< bit per PeripheralId
+
+        static TtdDeviceSet Of(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, uint64_t notRecorded);
+        static TtdDeviceSet Of(const ttd::TTDPeripheralRegistry& registry);
+    };
+
+    /// The slot set as configuration fingerprint fields (R-NF-2), `affectsRestore` (a checkpoint holds the devices of
+    /// its slot set): `slots.<slot>` = FNV-1a 64 over the card id, every option's effective value and the adapter, per
+    /// fitted slot; `slots.builtin.<id>` = 1 / 0 per switchable built-in. Disabled cards are not fitted, not listed
+    static std::vector<std::pair<std::string, uint64_t>> TtdFingerprintFields(const Result& result);
+    /// Adds this instance's fields (computed once, at creation) to a fingerprint
+    void AddTtdFingerprint(ttd::TTDConfigFingerprint& fingerprint) const;
+
+    /// The TTD device instance of a slot card's device: "<slot>.<module>" ("zxbus.1.neogs", "ay-socket.tsfm"), so
+    /// two cards carrying one module type get two device keys; "" when the plan fits no card of the group there (the
+    /// device keeps its own name). Socket, General Sound and MoonSound: the groups with a device of their own
+    static std::string TtdInstance(const Result& result, SlotCardGroup group, const std::string& module);
+    std::string TtdInstance(SlotCardGroup group, const std::string& module) const
+    {
+        return TtdInstance(_result, group, module);
+    }
+
+    /// The registered slot-card devices against the plan: a card the plan fits has its device, a device has its
+    /// card. The General Sound personality may differ from the plan (the runtime switch, until SL-6 moves it onto
+    /// the plan). False with every difference in `why`
+    static bool TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& live, std::string& why);
+
+    /// The slot-set guard on a session load: the cards the recording held (its baseline checkpoint) against the
+    /// cards of this machine, per slot (AY socket, General Sound card, MoonSound card). False with every difference
+    /// listed in `why` ("ay-socket: recorded tsfm, this machine ay / ts; zxbus.1: ..."). The AY socket's `ay` and
+    /// `ts` share one blob id: a v1 file cannot tell them apart (the configuration fingerprint can)
+    static bool TtdSlotSetMatches(const Result& result, const TtdDeviceSet& recorded, const TtdDeviceSet& live,
+                                  std::string& why);
+    /// The same for this machine, then its machine slots (the Sprinter's ISA slots, the port decoder's
+    /// TtdSessionMatches until SL-8 puts them in the slot set). `blobs` as stored (the baseline checkpoint's)
+    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, uint64_t notRecordedMask,
+                           const ttd::TTDPeripheralRegistry& live, std::string& why) const;
+
+    /// R-OP-7: why a slot change is refused now, naming the recording session; "" when allowed. The device set is
+    /// fixed for a TTD session (D38): no slot change while a user recording runs (a debugger's live history is
+    /// dropped by the change instead, as for the General Sound personality switch)
+    std::string ChangeRefusal() const;
+
+    // endregion </TTD>
+
 private:
     EmulatorContext* _context = nullptr;
     Result _result;
     std::vector<std::unique_ptr<ICard>> _cards;
     std::unique_ptr<slots::IClaimSignals> _signals;   ///< the claim table's view of M1 and DOS, while cards exist
+    std::vector<std::pair<std::string, uint64_t>> _ttdFingerprint;   ///< TtdFingerprintFields(_result)
 };
 
 #pragma pop_macro("signals")

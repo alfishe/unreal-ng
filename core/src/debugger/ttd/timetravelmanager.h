@@ -64,6 +64,7 @@
 #include "ttdfileinfo.h"
 #include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
+#include "ttdmachineperipherals.h"
 #include "ttdv1events.h"
 #include "engine/ttdrestoreresult.h"
 #include "engine/ttdwriteindex.h"
@@ -363,7 +364,8 @@ enum class TTDGuardedAction : uint8_t
     DisableTimeTravel,   ///< capture stops mid-session
     DisableDebugMode,    ///< writes stop reaching the history
     SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
-    CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
+    CdFrontPanel,        ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
+    ChangeSlots          ///< a slot change (plug, remove, options) changes the device set (D38, ZX-bus slots R-OP-7)
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -505,6 +507,10 @@ public:
     /// act on. Every automation surface shows it verbatim, and the core paths
     /// that perform the action refuse with it too.
     std::string RecordingGuard(TTDGuardedAction action) const;
+
+    /// The recording session as a refusal names it: "#3, started at frame 1200" (the instance's recordings
+    /// counted from 1; v1 sessions carry no id of their own). Empty while nothing records
+    std::string RecordingSessionLabel() const;
 
     /// @brief InvalidateSession requested from inside emulation, by a device
     /// whose state TTD cannot follow yet (storage: the SD card, IDE).
@@ -716,29 +722,6 @@ private:
     bool DeserializeSessionImpl(std::istream& in, std::string& err, FilePortJournals* journalsOnly);
 
 public:
-
-    /// @brief Session-kind guard decision core (TSFM design §8.2).
-    ///
-    /// Pure decision: does a recorded session's TurboSound-slot blob set
-    /// agree with the live slot device? The slot has exactly two
-    /// inhabitants - the legacy two-AY device (PeripheralId::TurboSound, 0)
-    /// and TSFM (PeripheralId::TSFM, 4). A session recorded with one,
-    /// loaded into an instance running the other, would restore NEITHER
-    /// device (RestoreAll counts the live one under missingBlobs and leaves
-    /// it holding pre-load state) - a silent divergence, so the load is
-    /// refused instead. A session with no slot blob at all (recorded on a
-    /// machine without the device) is not a mismatch.
-    ///
-    /// Exposed as a public static for unit tests; DeserializeSession applies
-    /// it to the baseline checkpoint's blob map.
-    ///
-    /// @param sessionBlobs   Baseline checkpoint peripheral blob map
-    ///                       (keyed by PeripheralId).
-    /// @param liveSlotDevice The device currently in the TurboSound slot.
-    /// @return true when the kinds agree (or the session has no slot blob).
-    static bool TurboSoundSessionKindMatches(
-        const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
-        const TTDSerializable& liveSlotDevice);
 
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
@@ -1764,13 +1747,14 @@ public:
     /// time) is harmless - Unregister on an absent id is a no-op.
     inline void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device)
     {
-        if (oldId != newId)
-            _peripherals.Unregister(oldId);
+        // The outgoing device leaves its id, also when the new one takes the same id (the registry refuses a
+        // second device under a held id)
+        _peripherals.Unregister(oldId);
         // The lightweight GS is fitted but not recorded (state registry)
         if (newId == PeripheralId::GeneralSoundLightweight)
             _peripherals.MarkNotRecorded(newId);
         else
-            _peripherals.Register(newId, device);
+            _peripherals.Register(newId, device, SlotCardInstance(_context, device));
     }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
@@ -2260,6 +2244,7 @@ private:
     std::string _sourcePath;
     uint64_t    _capturedAtUnixMs = 0;
     uint8_t     _sessionModelId = 0;
+    uint32_t    _recordingNumber = 0;   ///< recordings this instance started (RecordingSessionLabel)
     uint64_t    _loadedRomSignature = 0;  ///< The loaded file's rom_signature
     uint64_t    _loadedNotRecordedMask = 0;  ///< The loaded file's not-recorded mask (kFlagsHasNotRecordedMask)
     std::string _loadedRecordedBy;        ///< The loaded file's emulator_id

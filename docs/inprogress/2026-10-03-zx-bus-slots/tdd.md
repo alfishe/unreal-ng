@@ -18,7 +18,7 @@
 | **SL-2** | `PortClaimTable` with IORQGE and passive claims, shadowing, read-conflict rule, ROM-fetch lock; wired into the Z80 funnel behind the existing mechanisms (they register into it) | claim tests §2.2 green; all of `core-tests` green; A/B benchmark: no regression on the port hot path, the no-card case at least as fast |L; **built 2026-10-04**, see §6 |
 | **SL-3** | Rule migration: R6, `OverrideDecodeForFullDecodeClaim`, self-decoding dispatch, the exact port map's peripheral entries become claims; the three old mechanisms removed one at a time | each removal its own merge with the TTD corpus and machine boot tests green | L; **built 2026-10-04**, see §7 |
 | **SL-4** | Card migration, one per merge: `ay`/`ts`/`tsfm` (socket), `gs`/`gs-lw`/`neogs`, `moonsound`, `covox-fb`/`soundrive`, `zxnetusb`/`zx-wifi`; `[SLOTS]` config + legacy key translation; `data/configs` converted | per card: its existing tests unchanged and green, A/B on its port path, TTD fixtures unchanged | L; **built 2026-10-04**, see §8 |
-| **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M |
+| **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M; **built 2026-10-04**, see §10 |
 | **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M |
 | **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M |
 | **SL-8** | Sprinter: `isa1` / `isa2` in the slot report, the ZX-bus adapter as a `zxbus` host (ISA phase I5 folded in) | Sprinter ISA tests unchanged; a GS card behind the adapter listed as `zxbus` in the report | M |
@@ -78,13 +78,17 @@ one to one, except as noted in §5.
 | `SlotManagerApply_Test.GsPersonalitySwitchIsSlotReplace` | the GS personality switch goes through the plan and a restart |
 | `SlotManagerApply_Test.ModelSwitchCarriesSlots` | Pentagon -> ZX-Evo keeps fitting cards; ZX-Evo -> 128K reports the MultiSound as not fitting |
 
-### 2.4 TTD (`ttdslots_test.cpp`)
+### 2.4 TTD (`slotttd_test.cpp`, after `slots/slotttd.cpp`)
 
 | Test | Checks |
 |---|---|
 | `TtdSlots_Test.FingerprintHasSlotSet` | slot set and options in the session fingerprint |
 | `TtdSlots_Test.SessionMismatchRefused` | load a session into a machine with another slot set: refused, difference listed |
 | `TtdSlots_Test.MigratedCardsKeepBlobIds` | blob ids and layouts unchanged after SL-4 (corpus round-trip) |
+| `TtdSlots_Test.SessionMismatchListsEveryDifference` | the guard's decision per position (socket kinds both ways, empty socket, both socket ids, GS personality incl. the not-recorded lightweight card, MoonSound on one side) |
+| `TtdSlots_Test.RegistryFollowsThePlan` | the registered slot-card devices against the plan |
+| `TtdSlots_Test.TwoInstancesOfOneModuleAreRefusedByName` | two devices under one blob id: the second refused and named, recording refused |
+| `TtdSlots_Test.RefusedWhileTtdRecords` | R-OP-7: a slot change refused while recording, the reason names the session (§2.1's `SlotManager_Test.RefusedWhileTtdRecords`) |
 
 ### 2.5 Surfaces
 
@@ -127,7 +131,7 @@ adapter, Scorpion without +12 V), `FixedBuiltInBlocksEvenWithFlag`, `SwitchableB
 `SlotMatrix_Test.MatrixMatchesDocs` (all of §1-§4, not only §2). Added: `WorkedPlans`,
 `ResultDoesNotDependOnInsertionOrder`, `DisplacementIsOneStep`, `SocketBoardOnBoardWinsMachine`,
 `BoardPortsAreDeadForIorqCards`, `RemoveReleasesMedia`, `MalformedRequestsRefused`, `OptionsParseAndFormat`.
-**Skipped (later phases):** `RefusedWhileTtdRecords` (SL-5: the TTD session guard), `IniLoadUsesSamePlan` and
+**Skipped (later phases):** `RefusedWhileTtdRecords` (SL-5: the TTD session guard; built in SL-5 as `TtdSlots_Test.RefusedWhileTtdRecords`, §10), `IniLoadUsesSamePlan` and
 `LegacyKeysTranslated` (SL-4: `[SLOTS]` and legacy key translation; built in SL-4 as `SlotManager_Test.*` in
 `core/tests/emulator/slots/slotmanager_test.cpp`, §8).
 
@@ -500,7 +504,7 @@ loads: compare within a pair).
 ## 9. Slot-built cards: the ZX-MultiSound (MultiSound MS-4, 2026-10-04)
 
 The first card written for slots ([MultiSound tdd-integration.md](../2026-10-03-zx-multisound/tdd-integration.md) §3.2)
-needed the framework pieces SL-4 left for later. Not committed; per-step patches in the agent's scratch folder.
+needed the framework pieces SL-4 left for later. Committed on `zx-bus-slots` (`cdac570ec`..`dcaf21a18`).
 
 | Step | What changed in the framework |
 |---|---|
@@ -580,3 +584,32 @@ interleaved A B, B A, ...; 1-minute load per run start -> end: 16.1 -> 12.7, 12.
   ZX-Evo (BoardWins, RdWr: the board decodes too, the board-port and removed-chip checks run) IN 54.2 vs 32.2, OUT
   50.8 vs 33.1 us, about 20 ns per access - a few hundred accesses per frame, against the card's ~1 ms frame render.
 
+## 10. SL-5 as built (2026-10-04)
+
+Built on branch `slots-ttd` (from `zx-bus-slots` at `140979aee`, commit `29250c546`, merged after MS-4), TTD and
+slot-report code only: card building and the claim table are untouched (MS-4, §9). New file `slots/slotttd.cpp` (the `SlotManager` TTD members, declared in
+`slotmanager.h`); `slotmanager.cpp` changed by one line (the fingerprint fields computed in `PlanAtCreate`).
+
+| Item | As built |
+|---|---|
+| Fingerprint (R-NF-2) | `CaptureConfigFingerprint` adds `SlotManager::AddTtdFingerprint`: `slots.<slot>` = FNV-1a 64 of `card\|options\|adapter` (options as `FormatCardOptions`: every option's effective value) per fitted slot, `slots.builtin.<id>` = 1 / 0 per switchable built-in; all `affectsRestore`. Disabled cards are not fitted, not listed. Computed once at creation (the fingerprint is taken every frame by the engine). The GS RAM keeps its older field `sound.gs_ram_kb` too |
+| Registration | `RegisterMachinePeripherals` registers the AY socket's board, the GS card and MoonSound as before (same ids, same blobs) but names each engine device by its slot (`SlotCardInstance`: `ay-socket.tsfm`, `zxbus.1.neogs`, `zxbus.2.moonsound`), then checks the registry against the plan (`TtdDevicesMatchPlan`): a card the plan fits has its device and the other way round, the socket's board decides the id; the GS personality may differ from the plan (the runtime switch, SL-6). A mismatch refuses recording with the slots named. `UpdatePeripheral` (the GS switch) keeps the slot name. Covox (one module for the board Covox and the cards) and the network cards keep their registration |
+| Session guard | The TurboSound-slot guard, the General Sound personality guard and `PortDecoder::TtdSessionMatches` (Sprinter ISA) are one call: `SlotManager::TtdSessionMatches` compares the cards the baseline checkpoint holds (blob ids + not-recorded mask) with the live registry per position (AY socket, GS card, MoonSound card), lists every difference under the plan's slot id (`slot set differs from the recording: ay-socket: recorded tsfm, this machine ay / ts; zxbus.1: recorded gs, this machine neogs; ...`), then asks the port decoder for the machine's own slots (the Sprinter ISA population, until SL-8). `TimeTravelManager::TurboSoundSessionKindMatches` and its six unit tests are removed (cases moved to `SessionMismatchListsEveryDifference`) |
+| Two instances of one module | Verified on this base: `TTDPeripheralRegistry::Register` still let a second device under a held id silently replace the first (the v1 checkpoint is keyed by the blob id). `Register` now refuses it (returns false), keeps the first and `CheckDeviceTable` names both (`two devices under id 53: zxbus.1.saa and zxbus.2.saa`), so recording is refused instead of losing a card's state. The engine side is ready (`TTDDeviceKey{type, instance}` with slot instances). No card pair of today's catalog fits two of one module (the MultiSound is not emulated), hence the registry-level test |
+| R-OP-7 | `SlotManager::ChangeRefusal()` -> `RecordingGuard(TTDGuardedAction::ChangeSlots)`: `Cannot change the slot set while TTD is recording session #<n>, started at frame <f>: ...`. v1 sessions have no id: `#<n>` counts the instance's recordings (`RecordingSessionLabel`). No production caller yet (SL-6's restart path) |
+
+**Behavior changes (intended):** the guard is symmetric - a session recorded without a socket device / GS / MoonSound
+no longer loads into a machine that has one (before: loaded, the live card's state kept and counted as a missing
+blob); a session recorded with a MoonSound is refused on a machine without one. The refusal texts changed:
+`TtdTsfm_Test.SessionKindMismatchRefused`, `SessionWithSlotDeviceRefusedOnEmptySlot` and two
+`TTDGeneralSoundSwitch_Test` cases now match the new wording. The `ay` / `ts` socket boards share blob id 0, so a v1
+file cannot tell them apart; the fingerprint (v2) can.
+
+**Unchanged:** every blob id and layout; the TTD corpus (`TTD_Corpus_Test`), the bench gate byte counts
+(`TTDBench_Test.CiGate`, v1 files carry no fingerprint) and `CoreGolden` green without touching `testdata/`. v2 session
+files written by the engine gain the `slots.*` fingerprint fields and the slot instance names in their device table
+(no file compatibility before release).
+
+**Checks:** full build without compiler warnings; full `core-tests` green (20 shards); MinGW `-fsyntax-only -Werror`
+on every changed core translation unit; mutations (the guard always matching, the registry overwriting again) fail
+`SessionMismatchListsEveryDifference`, `SessionMismatchRefused` and `TwoInstancesOfOneModuleAreRefusedByName`.

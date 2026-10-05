@@ -1050,6 +1050,7 @@ void SlotManager::PlanAtCreate()
         }
     }
     Apply(_result, _context->config);
+    _ttdFingerprint = TtdFingerprintFields(_result);
 }
 
 void SlotManager::BuildCards()

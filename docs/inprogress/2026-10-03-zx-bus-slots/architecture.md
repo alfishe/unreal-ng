@@ -444,6 +444,15 @@ module's decode.
   instance}` and refuses duplicates, but the per-id map still collapses them before. Rule: cards name their chip
   instances by slot (`zxbus.1.saa`); a configuration with two instances of one id lands only after `ttd-engine` (and
   its id-keyed map is replaced by the device key). Until then the plan refuses such a set with that reason.
+- **As built in SL-5** ([tdd.md](tdd.md) §10): the fingerprint fields as above plus `slots.builtin.<id>` per
+  switchable built-in; `SlotManager` refuses changes while recording through `ChangeRefusal()` (`Request` comes with
+  SL-6). The cards are still built by `SoundManager`: `RegisterMachinePeripherals` registers them as before, names
+  each engine device by its slot (`ay-socket.tsfm`, `zxbus.1.neogs`) and checks the registry against the plan. The
+  load guard compares per card position (AY socket, GS card, MoonSound) from the blob ids, since a v1 file carries no
+  slot set; the TurboSound and GS guards are folded into it, the Sprinter ISA check is still the decoder's (SL-8).
+  The id-keyed registry now refuses a second device under a held id and names both (recording refused), instead of
+  the silent overwrite; two instances of one module still need the v1 checkpoint to go (Phase 5), so the plan rule
+  above stays.
 - **Fixture corpus:** the Sprinter and TS-Conf fixtures were recorded with the classic GS swapped in; card migration must
   keep every blob byte-identical (`TTD_Corpus_Test.EveryFixtureLoadsRestoresAndReplaysExactly`).
 - **Snapshots** (SZX and our own): the slot set is written where the format allows (SZX has blocks for some cards);
