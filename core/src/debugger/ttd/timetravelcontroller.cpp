@@ -125,12 +125,6 @@ TimeTravelController::~TimeTravelController()
     if (_context && _context->ttdPortWrites == &_portWrites)
         _context->ttdPortWrites = nullptr;
 
-    // Release all page-store refs held by the timeline before the page store
-    // itself goes away (it's a member, destroyed right after this dtor body).
-    for (auto& cp : _timeline)
-    {
-        ReleaseCheckpointRefs(cp);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -249,11 +243,8 @@ bool TimeTravelController::StartRecording()
     ResetShadow();
     if (!_timeline.empty())
     {
-        for (auto& cp : _timeline)
-            ReleaseCheckpointRefs(cp);
         _timeline.clear();
         _blobBytes = 0;
-        _pageStore.Reset();
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
@@ -354,9 +345,8 @@ bool TimeTravelController::StartRecording()
     _loadedRecordedBy.clear();
     _liveRomSignature = ComputeRomSignature();  // the ROM this session relies on
 
-    MLOGINFO("TimeTravelController::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu, debugMemIf=%s",
-             static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes(),
-             (_toggledDebugModeOn ? "switched-on" : "already-on"));
+    MLOGINFO("TimeTravelController::StartRecording — baseline captured: modelRamPages=%u, timeline=1, debugMemIf=%s",
+             static_cast<unsigned>(_modelRamPages), (_toggledDebugModeOn ? "switched-on" : "already-on"));
 
     // Sector reads from media go into the shadow engine (Phase 3)
     SyncMediaReadJournal();
@@ -505,11 +495,8 @@ void TimeTravelController::InvalidateSession(const char* reason)
     ResetShadow();
     _lastDropReason = reason ? reason : "";
 
-    for (auto& cp : _timeline)
-        ReleaseCheckpointRefs(cp);
     _timeline.clear();
     _blobBytes = 0;
-    _pageStore.Reset();
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
@@ -543,9 +530,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     SetState(TTDSessionState::Idle);
 
     // Reset Phase 5 codec state.
-    _lastKeyFrameIdx = 0;
     _evictedCheckpoints = 0;
-    _forceNextKeyFrame = true;
 
 
     // Reset the dirty tracker too — the session-scoped _everDirty set is part
@@ -1303,24 +1288,6 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
         out.peripheralBlobs.clear();
     _perf.lastCaptureWork = _captureWork;
     return taken;
-}
-
-void TimeTravelController::ReleaseCheckpointRefs(TTDCheckpoint& cp)
-{
-    for (auto& ref : cp.ramPages)
-    {
-        if (!ref.IsNeverTouched())
-        {
-            for (uint32_t s = 0; s < 4; ++s)
-            {
-                if (ref.pageSlots[s] != TTDPageRef::kNeverTouched)
-                {
-                    _pageStore.Release(ref.pageSlots[s]);
-                    ref.pageSlots[s] = TTDPageRef::kNeverTouched;
-                }
-            }
-        }
-    }
 }
 
 uint16_t TimeTravelController::ResolveModelRamPages() const
@@ -3378,7 +3345,6 @@ void TimeTravelController::SyncTimelineFront()
     const size_t count = _timeline.size() - held;
     for (size_t i = 0; i < count; ++i)
     {
-        ReleaseCheckpointRefs(_timeline[i]);
         _blobBytes -= BlobBytes(_timeline[i]);
     }
     _timeline.erase(_timeline.begin(), _timeline.begin() + static_cast<std::ptrdiff_t>(count));
@@ -3930,7 +3896,6 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
         return;
     for (size_t i = static_cast<size_t>(keep) + 1; i < _timeline.size(); ++i)
     {
-        ReleaseCheckpointRefs(_timeline[i]);
         _blobBytes -= BlobBytes(_timeline[i]);
     }
     _timeline.resize(static_cast<size_t>(keep) + 1);
@@ -4018,7 +3983,6 @@ TimeTravelController::SelfTestResult TimeTravelController::CaptureRestoreSelfTes
         return result;
     }
     RestoreCheckpoint(cp);
-    ReleaseCheckpointRefs(cp);  // Don't leak page refs from the test capture.
     ResetShadow();              // ...nor the engine session it opened
 
     // Hash the post-restore state. Identical to pre_hash iff capture and
@@ -5505,7 +5469,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     // only a verbatim copy restores the caller's memory exactly.
     if (_memory)
     {
-        const size_t pageBytes = 4 * TTDCodecPageStore::kPageSize;  // 16 KB
+        const size_t pageBytes = 4 * kTTDPieceSize;  // 16 KB
         out.ram.resize(static_cast<size_t>(_modelRamPages) * pageBytes);
         for (uint16_t p = 0; p < _modelRamPages; ++p)
         {
@@ -5547,7 +5511,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 
     if (!snap.ram.empty() && _memory)
     {
-        const size_t pageBytes = 4 * TTDCodecPageStore::kPageSize;  // 16 KB
+        const size_t pageBytes = 4 * kTTDPieceSize;  // 16 KB
         const uint16_t pages = static_cast<uint16_t>(std::min<size_t>(
             _modelRamPages, snap.ram.size() / pageBytes));
         for (uint16_t p = 0; p < pages; ++p)

@@ -640,3 +640,40 @@ TEST_F(TimeTravelController_Test, FileInfoAndPortSearchReadTheEngineFile)
     std::filesystem::remove(FileHelper::ToFsPath(ours), ec);
     std::filesystem::remove(FileHelper::ToFsPath(theirs), ec);
 }
+
+/// Clip export walks the session on the engine (C4c): every frame's composed
+/// picture and its latches equal v1's
+TEST_F(TimeTravelController_Test, ClipFramesEqualV1s)
+{
+    // The loop sends the refresh register to the border (LD A,R; OUT (#FE),A
+    // in place of the keyboard read): the border stripes differ every frame
+    for (Emulator* emulator : {_a, _b})
+    {
+        emulator->GetFeatureManager()->setFeature(Features::kScreenHQ, true);   // the picture is drawn as the frame runs
+        Memory* memory = emulator->GetContext()->pMemory;
+        const uint8_t patch[] = {0xED, 0x5F, 0xD3, 0xFE};
+        for (uint16_t i = 0; i < 4; ++i)
+            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8004 + i), patch[i]);
+    }
+    ASSERT_NO_FATAL_FAILURE(RecordBoth());
+    const uint64_t first = _v1->GetCheckpoint(2)->time.frame;
+    const uint64_t last = _v1->GetCheckpoint(_v1->GetCheckpointCount() - 2)->time.frame;
+    std::vector<std::vector<uint8_t>> a, b;
+    std::vector<uint32_t> latchesA, latchesB;
+    auto collect = [](std::vector<std::vector<uint8_t>>& pictures, std::vector<uint32_t>& latches) {
+        return [&pictures, &latches](const ttd::TTDComposedFrame& f) {
+            pictures.emplace_back(f.rgba, f.rgba + f.rgbaBytes);
+            latches.push_back(uint32_t(f.p7FFD) | uint32_t(f.border) << 8 | uint32_t(f.activeScreen) << 16);
+            return true;
+        };
+    };
+    EXPECT_EQ(_v1->VisitComposedFrames(first, last, collect(a, latchesA)), "");
+    EXPECT_EQ(_controller->VisitComposedFrames(first, last, collect(b, latchesB)), "");
+    ASSERT_EQ(a.size(), last - first + 1);
+    ASSERT_EQ(a.size(), b.size());
+    EXPECT_EQ(latchesA, latchesB);
+    EXPECT_FALSE(a.front() == a.back()) << "the pictures change over the clip";
+    for (size_t i = 0; i < a.size(); ++i)
+        EXPECT_TRUE(a[i] == b[i]) << "frame " << first + i;
+    EXPECT_NE(_controller->VisitComposedFrames(last, last + 50, collect(b, latchesB)), "") << "past the session";
+}

@@ -202,11 +202,8 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
 {
     // The old session goes, with its files and its engine
     ResetShadow();
-    for (auto& cp : _timeline)
-        ReleaseCheckpointRefs(cp);
     _timeline.clear();
     _blobBytes = 0;
-    _pageStore.Reset();
     _engine = std::move(loaded);
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();

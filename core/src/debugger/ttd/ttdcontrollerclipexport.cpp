@@ -17,6 +17,7 @@
 #include <sstream>
 
 #include "ttdcompression.h"
+#include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/video/screen.h"
@@ -122,7 +123,7 @@ TimeTravelController::TTDClipExportResult TimeTravelController::ExportClip(const
     }
 
     std::error_code ec;
-    const std::filesystem::path dir(options.directory);
+    const std::filesystem::path dir = FileHelper::ToFsPath(options.directory);   // UTF-8: non-ASCII names on Windows
     std::filesystem::create_directories(dir, ec);
     if (ec)
     {

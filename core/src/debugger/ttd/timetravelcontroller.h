@@ -3,12 +3,13 @@
 /// @file timetravelcontroller.h
 /// @brief TimeTravelController — the engine's playback controller (Phase 5, item 2): a
 /// copy of v1's TimeTravelManager that records into and restores from its own
-/// TimeTravelEngine. v1's own storage (the page store, the timeline's pages, the v1
-/// file format) leaves it step by step; until then the description below is v1's.
+/// TimeTravelEngine: the engine holds the history (checkpoints, pieces, events,
+/// bus and write journals) and writes the session file; v1's page store and file
+/// format are gone (Phase 5, C1-C4). Parts of the description below are still v1's.
 ///
 /// Per parent TDD §7.1, §10.2. This class owns:
-///   - The COW page store (TTDPageStore)
-///   - The timeline (std::vector<TTDCheckpoint>)
+///   - The engine (TimeTravelEngine) - the history's store
+///   - The timeline: one side record per engine checkpoint (time, CPU, chipset)
 ///   - Session state (Idle / Recording / Detached)
 ///
 /// It does NOT own:
@@ -79,7 +80,6 @@
 #include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
-#include "ttdcodecpagestore.h"
 #include "ttdcoverageindex.h"
 #include "ttdperipheralregistry.h"
 #include "ttdportjournal.h"
@@ -101,14 +101,6 @@ namespace ttd {
 class TimeTravelController final : public ITimeTravelHooks, public ITTDWriteSink
 {
 public:
-    /// @brief I-frame / P-frame discriminator.
-    ///
-    /// Per Phase 5 PoC: every K-th frame is a key frame (full RAM snapshot);
-    /// frames in between are delta frames (only dirty pages, XOR-encoded).
-    /// K=50 gives ~2 ms average seek and ~50 ms worst case (full chain walk).
-    /// See docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md
-    static constexpr uint32_t kKeyFrameInterval = 50;
-
     /// @brief Construct the manager. Does NOT start recording.
     /// @param context  Emulator context (provides Memory, EmulatorState, Z80).
     explicit TimeTravelController(EmulatorContext* context);
@@ -1318,8 +1310,6 @@ public:
     /// Returns nullptr if idx is out of range.
     const TTDCheckpoint* GetCheckpoint(size_t idx) const;
 
-    /// @brief Read-only access to the page store (for tests / budget checks).
-    inline const TTDCodecPageStore& GetPageStore() const { return _pageStore; }
 
     /// @brief Last capture / restore timings (benchmark harness, BM-2 / BM-6).
     inline const TTDPerfCounters& GetPerfCounters() const { return _perf; }
@@ -1404,7 +1394,6 @@ private:
 
     /// @brief Release every page ref held by a checkpoint (used when
     /// invalidating or thinning).
-    void ReleaseCheckpointRefs(TTDCheckpoint& cp);
 
 
     /// @brief Read the active model's RAM page count from the Memory / config.
@@ -1696,9 +1685,6 @@ private:
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;
 
-    /// Backing codec page store (4 KB pages, XOR+zstd-1 compression).
-    TTDCodecPageStore _pageStore;
-
     /// Model-specific peripheral serializers. The framework never names a
     /// machine: it registers whatever the active model provides (see
     /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
@@ -1794,10 +1780,6 @@ private:
     /// another image would silently produce wrong pages rather than an error.
     uint64_t ComputeRomSignature() const;
 
-    /// Last captured keyframe index. P-frames between this and the next
-    /// I-frame restore by walking deltas from this anchor. Updated on
-    /// every OnFrameBoundary when an I-frame is emitted.
-    uint64_t _lastKeyFrameIdx = 0;
     /// SetHistoryLimit (0 = no limit). Atomic: a control thread sets them while
     /// the machine's thread enforces them after every capture
     std::atomic<uint64_t> _historyLimitFrames{0};
@@ -1806,11 +1788,6 @@ private:
     uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _timeline (kept with it)
     static uint64_t BlobBytes(const TTDCheckpoint& cp);
 
-    /// Force the next OnFrameBoundary capture to be an I-frame regardless
-    /// of the periodic interval. Set when the session is replaced
-    /// (InvalidateSession, a file load) so the next capture anchors a fresh
-    /// key frame.
-    bool _forceNextKeyFrame = true;
 
     /// Exclusive page-index bound for the active model (set at StartRecording).
     /// Pages in [0, _modelRamPages) are captured; pages in [_modelRamPages,
